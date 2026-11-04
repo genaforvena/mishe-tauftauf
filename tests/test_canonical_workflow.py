@@ -2,183 +2,22 @@
 import json
 import subprocess
 import pytest
-from mishe_tauftauf import seed, wall, observations, ci_watch, post_check, clear_journal
+from mishe_tauftauf import wall, observations, ci_watch, post_check
 from mishe_tauftauf.feed import Feed
 
 
 from datetime import datetime, timezone
 
-def test_seed_recovers_only_a_fresh_wedge_bound_to_live_pane(tmp_path, monkeypatch):
-    from subprocess import CompletedProcess
-    home = tmp_path / "site"
-    discovery_dir = home / "discovery"
-    discovery_dir.mkdir(parents=True)
-    created = datetime.now(timezone.utc).isoformat()
-    (discovery_dir / "scan-1.json").write_text(json.dumps({
-        "created": created,
-        "observations": [{"id": "sense.mind.wedge-suspect", "state": "verified",
-                          "suspects": [{"window": "genome", "pid": 42, "chain": 12}]}],
-    }))
-    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
-                        CompletedProcess(a, 0, b"0 42\n", b""))
-    assert seed._mind_pane_wedged(home, "owned-session", "genome")
-    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
-                        CompletedProcess(a, 0, b"0 43\n", b""))
-    assert not seed._mind_pane_wedged(home, "owned-session", "genome")
 
 
-def test_seed_does_not_recover_a_provider_error_suspect(tmp_path, monkeypatch):
-    # A provider-error suspect can name a working pane: omp's session log also
-    # carries the title generator's and subagents' provider errors. Only an open
-    # retry chain, which cannot end by itself, justifies a destructive respawn.
-    from subprocess import CompletedProcess
-    home = tmp_path / "site"
-    discovery_dir = home / "discovery"
-    discovery_dir.mkdir(parents=True)
-    created = datetime.now(timezone.utc).isoformat()
-    (discovery_dir / "scan-1.json").write_text(json.dumps({
-        "created": created,
-        "observations": [{"id": "sense.mind.wedge-suspect", "state": "verified",
-                          "suspects": [{"window": "genome", "pid": 42, "chain": 0,
-                                        "rule": "provider-error",
-                                        "cause": "provider-error:429"}]}],
-    }))
-    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
-                        CompletedProcess(a, 0, b"0 42\n", b""))
-    assert not seed._mind_pane_wedged(home, "owned-session", "genome")
 
 
-@pytest.mark.parametrize("chain, recover", [(0, False), (1, True), (2, True)])
-def test_seed_recovers_a_provider_error_suspect_only_with_an_open_chain(
-        tmp_path, monkeypatch, chain, recover):
-    # The gate's invariant is an open retry chain, which cannot end by itself;
-    # the rule name is not the test. A provider-error suspect with an open
-    # chain is therefore recovery evidence, while the chainless one is not: it
-    # can name another agent's transient failure, and a 429 quota ends by itself.
-    from subprocess import CompletedProcess
-    home = tmp_path / "site"
-    discovery_dir = home / "discovery"
-    discovery_dir.mkdir(parents=True)
-    created = datetime.now(timezone.utc).isoformat()
-    (discovery_dir / "scan-1.json").write_text(json.dumps({
-        "created": created,
-        "observations": [{"id": "sense.mind.wedge-suspect", "state": "verified",
-                          "suspects": [{"window": "genome", "pid": 42,
-                                        "chain": chain,
-                                        "rule": "provider-error",
-                                        "cause": "provider-error:429"}]}],
-    }))
-    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
-                        CompletedProcess(a, 0, b"0 42\n", b""))
-    assert seed._mind_pane_wedged(home, "owned-session", "genome") is recover
 
 
-def test_seed_uses_newest_scan_timestamp_not_filename_order(tmp_path, monkeypatch):
-    from datetime import timedelta
-    from subprocess import CompletedProcess
-    home = tmp_path / "site"
-    discovery_dir = home / "discovery"
-    discovery_dir.mkdir(parents=True)
-    now = datetime.now(timezone.utc)
-    suspect = {"id": "sense.mind.wedge-suspect", "state": "verified",
-               "suspects": [{"window": "genome", "pid": 42}]}
-    clear = {"id": "sense.mind.wedge-suspect", "state": "verified", "suspects": []}
-    (discovery_dir / "scan-z.json").write_text(json.dumps({
-        "created": (now - timedelta(seconds=2)).isoformat(), "observations": [suspect],
-    }))
-    (discovery_dir / "scan-a.json").write_text(json.dumps({
-        "created": (now - timedelta(seconds=1)).isoformat(), "observations": [clear],
-    }))
-    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
-                        CompletedProcess(a, 0, b"0 42\n", b""))
-    assert not seed._mind_pane_wedged(home, "owned-session", "genome")
-
-    (discovery_dir / "scan-b.json").write_text(json.dumps({
-        "created": (now - timedelta(milliseconds=500)).isoformat(), "observations": [suspect],
-    }))
-    assert seed._mind_pane_wedged(home, "owned-session", "genome")
 
 
-def test_seed_does_not_recover_dead_or_stale_wedge_evidence(tmp_path, monkeypatch):
-    from datetime import timedelta
-    from subprocess import CompletedProcess
-    home = tmp_path / "site"
-    discovery_dir = home / "discovery"
-    discovery_dir.mkdir(parents=True)
-    stale = (datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat()
-    (discovery_dir / "scan-1.json").write_text(json.dumps({
-        "created": stale,
-        "observations": [{"id": "sense.mind.wedge-suspect", "suspects": [
-            {"window": "genome", "pid": 42},
-        ]}],
-    }))
-    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
-                        CompletedProcess(a, 0, b"1 42\n", b""))
-    assert not seed._mind_pane_wedged(home, "owned-session", "genome")
-    monkeypatch.setattr(seed, "_tmux", lambda *a, **k:
-                        CompletedProcess(a, 0, b"0 42\n", b""))
-    assert not seed._mind_pane_wedged(home, "owned-session", "genome")
 
 
-@pytest.mark.parametrize("suspects, duplicate_reading, recover", [
-    ([{"window": "genome", "pid": 42}], False, True),
-    ([{"window": "genome", "pid": 42}], True, False),
-    ([{"window": "genome", "pid": 42}, 5], False, False),
-    ([{"window": "genome", "pid": "42"}], False, False),
-])
-def test_seed_start_recovers_only_valid_aggregate(
-        tmp_path, monkeypatch, suspects, duplicate_reading, recover):
-    from subprocess import CompletedProcess
-    home = tmp_path / "site"
-    (home / "top-pains").mkdir(parents=True)
-    (home / "top-pains" / "genome").write_text("#!/bin/sh\nexit 0\n")
-    (home / "top-pains" / "genome").chmod(0o755)
-    (home / "minds").mkdir()
-    (home / "minds" / "genome").write_text("#!/bin/sh\nexec true\n")
-    (home / "minds" / "genome").chmod(0o755)
-    discovery_dir = home / "discovery"
-    discovery_dir.mkdir()
-    readings = [{"id": "sense.mind.wedge-suspect", "state": "verified",
-                 "suspects": suspects}]
-    if duplicate_reading:
-        readings.append({"id": "sense.mind.wedge-suspect", "state": "verified",
-                         "suspects": []})
-    (discovery_dir / "scan-1.json").write_text(json.dumps({
-        "created": datetime.now(timezone.utc).isoformat(),
-        "observations": readings,
-    }))
-    monkeypatch.setattr(seed, "await_owned", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_launch_argv", lambda *a: ("mind-launcher",))
-    monkeypatch.setattr(seed, "_record_mind_model", lambda *a: None)
-    monkeypatch.setattr(seed, "_state", lambda *a, **k: (None, None, None, None, None, None, None, None))
-    monkeypatch.setattr(seed.time, "sleep", lambda *a: None)
-    pid = ["42"]
-    respawns = []
-
-    def command(*args, **kwargs):
-        if args[0] == "respawn-pane":
-            respawns.append(args)
-            pid[0] = "43"
-        if args[-1] == "#{session_id}":
-            output = "$1\n"
-        elif args[0] == "list-windows":
-            output = "genome\n"
-        elif args[0] == "list-panes":
-            output = "0\n1\n"
-        elif args[-1] == "#{pane_dead} #{pane_pid}":
-            output = f"0 {pid[0]}\n"
-        elif args[-1] == "#{pane_dead}":
-            output = "0\n"
-        elif args[-1] == "#{pane_pid}":
-            output = f"{pid[0]}\n"
-        else:
-            output = "0\n"
-        return CompletedProcess(args, 0, output.encode(), b"")
-
-    monkeypatch.setattr(seed, "_tmux", command)
-    assert seed.start(home, "owned-session", "genome", 5).startswith("seed genome ready")
-    assert [call[call.index("-t") + 1] for call in respawns] == (
-        ["owned-session:genome.1"] if recover else [])
 
 
 def test_missing_configuration_means_open_wall_workflow(tmp_path):
@@ -197,13 +36,6 @@ def test_configuration_can_omit_historical_mode_key(tmp_path):
     assert wall.settings(tmp_path)["mode"] == "wall"
 
 
-def test_default_planning_settlement_without_ledger_claim(tmp_path):
-    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nChoose useful work.")
-    note = tmp_path / "note.md"
-    note.write_text("Investigated the mechanism; next bounded step is a live experiment.")
-    seed.yield_wake(tmp_path, "genome", wake.sequence, note, continue_task=True, result="verified")
-    assert (tmp_path / "walls/genome.md").read_text() == note.read_text()
-    assert seed._state(tmp_path, "genome")[1] is None
 
 
 def test_default_feed_never_runs_semantic_publication_gate(tmp_path, monkeypatch):
@@ -214,22 +46,8 @@ def test_default_feed_never_runs_semantic_publication_gate(tmp_path, monkeypatch
     assert Feed(tmp_path).append("genome", "Planning an authorized experiment; checks follow.").sequence == 1
 
 
-def test_default_frame_shows_wall_and_sensor_failure(tmp_path, monkeypatch):
-    wall.write(tmp_path, "health", "Diagnosing the failed reading.")
-    monkeypatch.setattr(observations, "run_renderer", lambda *a, **k: observations.RenderedPain("health", "STATE: RED failure\n", False))
-    frame = observations.compose_frame(tmp_path, "health")
-    assert not frame.ok
-    assert "Diagnosing the failed reading." in frame.body and "RENDERER: RED" in frame.body
 
 
-@pytest.mark.parametrize("role", ["genome", "health", "witness", "docs", "research-methods"])
-def test_fresh_seed_renders_canonical_view(tmp_path, role):
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    home = tmp_path / "site"
-    seed.init(home, role, "true")
-    script = (home / "top-pains" / role).read_text()
-    assert "mishe_tauftauf.wall_view" in script
-    assert wall.settings(home)["mode"] == "wall"
 
 
 def test_default_ci_routes_a_message_without_delivery_scheduler(tmp_path, monkeypatch):
@@ -260,46 +78,8 @@ def test_retired_cli_cannot_restart_alternate_workflow(tmp_path, command):
     assert Feed(tmp_path).tail_sequence() == 0
 
 
-def test_settlement_retry_cannot_claim_different_notes(tmp_path):
-    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
-    note = tmp_path / "note.md"
-    note.write_text("Investigated source; no delivery claim.")
-    seed.yield_wake(tmp_path, "genome", wake.sequence, note, result="verified")
-    note.write_text("Different effect falsely attributed to the settled turn.")
-    with pytest.raises(ValueError, match="differ"):
-        seed.yield_wake(tmp_path, "genome", wake.sequence, note, result="verified")
 
 
-def test_clear_retry_records_rotated_process_without_rotating_twice(tmp_path, monkeypatch):
-    from subprocess import CompletedProcess
-    from mishe_tauftauf import tmux
-    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
-    note = tmp_path / "note.md"
-    note.write_text("Investigated source; next trigger is changed evidence.")
-    seed.yield_wake(tmp_path, "genome", wake.sequence, note, result="verified")
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    pid = ["101"]
-    rotations = []
-    def command(*args, **kwargs):
-        if args[0] == "respawn-pane":
-            rotations.append(args)
-            pid[0] = "102"
-        value = pid[0] if args[-1] == "#{pane_pid}" else "0"
-        return CompletedProcess(args, 0, value.encode(), b"")
-    monkeypatch.setattr(seed, "_tmux", command)
-    original = Feed.append
-    def fail_receipt(self, source, body, **kwargs):
-        if body.startswith("seed clear "):
-            raise RuntimeError("receipt unavailable after rotation")
-        return original(self, source, body, **kwargs)
-    monkeypatch.setattr(Feed, "append", fail_receipt)
-    with pytest.raises(RuntimeError, match="receipt unavailable"):
-        seed.clear(tmp_path, "session", "genome")
-    monkeypatch.setattr(Feed, "append", original)
-    assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
-    assert len(rotations) == 1
-    assert seed._state(tmp_path, "genome")[3] == wake.sequence
 
 
 def _rotated_journal(home, settled, **overrides):
@@ -350,597 +130,48 @@ def _settled_genome(tmp_path):
     return wake
 
 
-def test_clear_recovers_when_a_resurrection_replaced_the_recorded_pid(tmp_path, monkeypatch):
-    from mishe_tauftauf import tmux
-    wake = _settled_genome(tmp_path)
-    path = _rotated_journal(tmp_path, wake.sequence)
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    monkeypatch.setattr(seed, "_tmux", _pane_command("3135499"))
-    assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
-    journal = json.loads(path.read_text())
-    assert journal["phase"] == "committed"
-    assert journal["after_pid"] == "3135499"
-    assert journal["reconciled_resurrection"] is True
-    assert seed._state(tmp_path, "genome")[3] == wake.sequence
-
-
-def test_clear_still_holds_when_the_resurrected_launcher_differs(tmp_path, monkeypatch):
-    from mishe_tauftauf import tmux
-    wake = _settled_genome(tmp_path)
-    _rotated_journal(tmp_path, wake.sequence)
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    monkeypatch.setattr(seed, "_tmux", _pane_command("3135499", start="sleep 999"))
-    with pytest.raises(ValueError, match="rotated mind process changed"):
-        seed.clear(tmp_path, "session", "genome")
-
-
-def test_clear_still_holds_when_the_resurrected_pane_is_dead(tmp_path, monkeypatch):
-    from mishe_tauftauf import tmux
-    wake = _settled_genome(tmp_path)
-    _rotated_journal(tmp_path, wake.sequence)
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    monkeypatch.setattr(seed, "_tmux", _pane_command("", dead="1"))
-    with pytest.raises(ValueError, match="missing or dead"):
-        seed.clear(tmp_path, "session", "genome")
-
-
-def test_clear_still_holds_when_the_resurrected_mind_is_busy(tmp_path, monkeypatch):
-    from mishe_tauftauf import tmux
-    wake = _settled_genome(tmp_path)
-    _rotated_journal(tmp_path, wake.sequence)
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: False)
-    monkeypatch.setattr(seed, "_tmux", _pane_command("3135499"))
-    with pytest.raises(ValueError, match="rotated mind process changed"):
-        seed.clear(tmp_path, "session", "genome")
-
-
-def test_clear_commits_a_resurrected_journal_when_turn_already_cleared(tmp_path, monkeypatch):
-    from mishe_tauftauf import tmux
-    wake = _settled_genome(tmp_path)
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    monkeypatch.setattr(seed, "_tmux", _respawning_pane_command("102", "103"))
-    assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
-    # A crash after the receipt plus a resurrection: the journal stays in the
-    # rotated phase while the live pane now runs a different pid.
-    path = _rotated_journal(tmp_path, wake.sequence, phase="rotated", after_pid="103")
-    monkeypatch.setattr(seed, "_tmux", _pane_command("3135499"))
-    assert seed.clear(tmp_path, "session", "genome").startswith("held seed")
-    journal = json.loads(path.read_text())
-    assert journal["phase"] == "committed"
-    assert journal["after_pid"] == "3135499"
-    assert journal["reconciled_resurrection"] is True
-
-
-def test_clear_journal_stall_detector_names_stuck_rotation(tmp_path):
-    import os
-    import time
-    from mishe_tauftauf import seed_culture_views as views
-    checks = tmp_path / "checks"
-    checks.mkdir()
-    (checks / "wall-clear-genome-5.json").write_text(
-        json.dumps({"phase": "committed", "role": "genome", "settled": 5}))
-    assert views._clear_journal_stalls(tmp_path) == ("CLEAR JOURNAL: PASS", [])
-    fresh = checks / "wall-clear-genome-6.json"
-    fresh.write_text(json.dumps({"phase": "rotated", "role": "genome", "settled": 6}))
-    assert views._clear_journal_stalls(tmp_path) == ("CLEAR JOURNAL: PASS", [])
-    old = time.time() - 120
-    os.utime(fresh, (old, old))
-    line, causes = views._clear_journal_stalls(tmp_path)
-    assert line.startswith("CLEAR JOURNAL: RED stuck=genome/6:rotated")
-    assert causes == ["clear-journal-stuck=1"]
-    # Unreadable monitoring damage stays visible next to the stuck phase.
-    (checks / "wall-clear-genome-7.json").write_text("{not json")
-    line, causes = views._clear_journal_stalls(tmp_path)
-    assert line.startswith("CLEAR JOURNAL: RED stuck=genome/6:rotated")
-    assert "journal unreadable" in line
-    assert causes == ["clear-journal-stuck=1"]
-    os.remove(fresh)
-    line, causes = views._clear_journal_stalls(tmp_path)
-    assert line == "CLEAR JOURNAL: UNKNOWN — journal unreadable"
-    assert causes == []
-
-
-def test_clear_journal_detector_names_a_collided_committed_journal(tmp_path):
-    """The class that held the witness 09:47-15:23Z 2026-10-14 stays named.
-
-    A committed journal is written only after the feed records that turn's own
-    clear, so one naming the role's current settled turn is a journal from an
-    earlier feed numbering whose settled number collided. A runtime without the
-    retire path rejects every retry, so the pane names the collision instead of
-    leaving the hold to the generic overdue-clear RED.
-    """
-    import os
-    import time
-    from mishe_tauftauf import seed_culture_views as views
-    checks = tmp_path / "checks"
-    checks.mkdir()
-    settled = _settled_genome(tmp_path).sequence
-    journal = checks / f"wall-clear-genome-{settled}.json"
-    journal.write_text(json.dumps({"phase": "committed", "role": "genome",
-                                   "settled": settled}))
-    # A rotation may still be committing, so the budget holds a fresh journal.
-    assert views._clear_journal_stalls(tmp_path) == ("CLEAR JOURNAL: PASS", [])
-    old = time.time() - 120
-    os.utime(journal, (old, old))
-    line, causes = views._clear_journal_stalls(tmp_path)
-    assert line.startswith(f"CLEAR JOURNAL: RED stuck=genome/{settled}:committed-collision")
-    assert causes == ["clear-journal-collision=1"]
-    # The site keeps thousands of committed journals for earlier turns; only the
-    # current settled turn can be the collision.
-    earlier = checks / "wall-clear-genome-4.json"
-    earlier.write_text(json.dumps({"phase": "committed", "role": "genome", "settled": 4}))
-    os.utime(earlier, (old, old))
-    line, causes = views._clear_journal_stalls(tmp_path)
-    assert "genome/4" not in line
-    assert causes == ["clear-journal-collision=1"]
-    # The turn's own clear in the feed retires the concern: the journal then
-    # describes a completed rotation.
-    Feed(tmp_path).append("seed", f"seed clear genome after={settled}\nIdle mind rotated.")
-    assert views._clear_journal_stalls(tmp_path) == ("CLEAR JOURNAL: PASS", [])
-
-
-def test_fresh_seed_records_a_stable_activity_origin(tmp_path):
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    home = tmp_path / "site"
-    seed.init(home, "genome", "true")
-    first = wall.settings(home)
-    assert first.get("started")
-    seed.init(home, "health", "true")
-    assert wall.settings(home)["started"] == first["started"]
-
-
-def test_actual_plant_contract_replaces_once_and_preserves_local_instructions():
-    from pathlib import Path
-    from mishe_tauftauf.plant import refresh_contract
-    import mishe_tauftauf.seed as seed_module
-    contract = (Path(seed_module.__file__).parent / "seed_agent_contract.md").read_text()
-    first = refresh_contract("Local project instructions.\n", contract)
-    assert refresh_contract(first, contract) == first
-    assert first.count("# Working in Mishe") == 1
-    assert "Local project instructions." in first
-
-
-def test_clear_recovers_crash_after_respawn_before_rotation_journal(tmp_path, monkeypatch):
-    from subprocess import CompletedProcess
-    from mishe_tauftauf import tmux, post_check
-    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
-    note = tmp_path / "note.md"; note.write_text("Investigated source; wait for changed evidence.")
-    seed.yield_wake(tmp_path, "genome", wake.sequence, note, result="verified")
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_launch_argv", lambda *a: ("-c", str(tmp_path.parent), "env", "PYTHONPATH=/reviewed/src", "/site/minds/genome"))
-    pid=["101"]; rotations=[]
-    def command(*args, **kwargs):
-        if args[0]=="respawn-pane": rotations.append(args); pid[0]="102"
-        value = pid[0] if args[-1]=="#{pane_pid}" else "env PYTHONPATH=/reviewed/src /site/minds/genome" if args[-1]=="#{pane_start_command}" else "0"
-        return CompletedProcess(args,0,value.encode(),b"")
-    monkeypatch.setattr(seed,"_tmux",command)
-    save=post_check._save
-    def interrupted(path,value):
-        if "wall-clear" in path.name and value.get("phase")=="rotated": raise RuntimeError("crash before rotated journal")
-        return save(path,value)
-    monkeypatch.setattr(post_check,"_save",interrupted)
-    with pytest.raises(RuntimeError,match="crash before"):
-        seed.clear(tmp_path,"session","genome")
-    monkeypatch.setattr(post_check,"_save",save)
-    assert seed.clear(tmp_path,"session","genome").startswith("clear seed")
-    assert len(rotations)==1
-    assert seed._state(tmp_path,"genome")[3]==wake.sequence
-
-
-def test_clear_interruption_recovers_with_real_tmux_launcher(tmp_path, monkeypatch):
-    import shutil, uuid
-    from mishe_tauftauf import post_check, tmux
-    if not shutil.which("tmux"):
-        pytest.skip("tmux unavailable")
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    home=tmp_path/"site"; seed.init(home,"genome","sleep 30")
-    session="mishe-canonical-recovery-"+uuid.uuid4().hex[:10]
-    def run(*args):
-        return subprocess.run(["tmux",*args],check=True,capture_output=True,text=True)
-    run("new-session","-d","-s",session,"-n","genome","-c",str(tmp_path),"sleep 30")
-    try:
-        run("set-option","-t",session,"@mishe-tauftauf-home",str(home))
-        run("split-window","-d","-v","-t",session+":genome","-c",str(tmp_path),"sleep 30")
-        assert tmux.owns_session(home,session)
-        wake=Feed(home).append("seed","seed wake genome observation=1\nInvestigate.")
-        note=home/"note.md";note.write_text("Checked an isolated rotation recovery.")
-        seed.yield_wake(home,"genome",wake.sequence,note,result="verified")
-        monkeypatch.setattr(seed,"_mind_idle",lambda *a:True)
-        save=post_check._save
-        def interrupted(path,value):
-            if "wall-clear" in path.name and value.get("phase")=="rotated": raise RuntimeError("interrupt after actual respawn")
-            return save(path,value)
-        monkeypatch.setattr(post_check,"_save",interrupted)
-        with pytest.raises(RuntimeError,match="actual respawn"):
-            seed.clear(home,session,"genome")
-        after=run("display-message","-p","-t",session+":genome.1","#{pane_pid}").stdout.strip()
-        monkeypatch.setattr(post_check,"_save",save)
-        assert seed.clear(home,session,"genome").startswith("clear seed")
-        assert run("display-message","-p","-t",session+":genome.1","#{pane_pid}").stdout.strip()==after
-        journal=json.loads((home/"checks"/f"wall-clear-genome-{wake.sequence}.json").read_text())
-        assert journal["reconciled_intent"] and journal["phase"]=="committed"
-    finally:
-        run("kill-session","-t",session)
-
-
-def test_a_clear_rotation_records_the_model_the_new_mind_runs(tmp_path, monkeypatch):
-    """The wall-clear respawn is the only moment the running model can change."""
-    from subprocess import CompletedProcess
-    from mishe_tauftauf import tmux
-
-    launcher = tmp_path / "minds" / "genome"
-    launcher.parent.mkdir(parents=True)
-    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
-    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
-    note = tmp_path / "note.md"
-    note.write_text("Investigated source; wait for changed evidence.")
-    seed.yield_wake(tmp_path, "genome", wake.sequence, note, result="verified")
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    monkeypatch.setattr(seed.time, "sleep", lambda *a: None)
-    pid = ["101"]
-    def command(*args, **kwargs):
-        if args[0] == "respawn-pane":
-            pid[0] = "102"
-        value = pid[0] if args[-1] == "#{pane_pid}" else "0"
-        return CompletedProcess(args, 0, value.encode(), b"")
-    monkeypatch.setattr(seed, "_tmux", command)
-    assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
-    bodies = [e.body.splitlines()[0] for e in Feed(tmp_path).entries()
-              if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
-    assert bodies == [f"mind model top-pain genome launcher={launcher} reason=clear model=vendor/model-a"]
-
-
-def test_a_seed_start_records_the_model_at_the_first_respawn(tmp_path, monkeypatch):
-    """A first start respawns the mind pane, so it records identity too."""
-    from subprocess import CompletedProcess
-    from mishe_tauftauf import tmux
-
-    home = tmp_path / "site"
-    (home / "top-pains").mkdir(parents=True)
-    probe = home / "top-pains" / "genome"
-    probe.write_text("#!/bin/sh\nexit 0\n")
-    probe.chmod(0o755)
-    launcher = home / "minds" / "genome"
-    launcher.parent.mkdir(parents=True, exist_ok=True)
-    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
-    launcher.chmod(0o755)
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_new_session", lambda *a: None)
-    monkeypatch.setattr(seed, "_send", lambda *a: None)
-    monkeypatch.setattr(seed.time, "sleep", lambda *a: None)
-    monkeypatch.setattr(seed, "_state", lambda home, slug, **kw: (None, None, None, None, None, None, None, None))
-    pids = iter(["101\n", "202\n"])
-    def command(*args, **kwargs):
-        if args[0] == "has-session":
-            return CompletedProcess(args, 1, b"", b"")
-        if args[-1] == "#{session_id}":
-            return CompletedProcess(args, 0, b"$1\n", b"")
-        if args[-1] == "#{pane_pid}":
-            return CompletedProcess(args, 0, next(pids).encode(), b"")
-        return CompletedProcess(args, 0, b"0\n", b"")
-    monkeypatch.setattr(seed, "_tmux", command)
-    assert seed.start(home, "session", "genome", 5).startswith("seed genome ready")
-    bodies = [e.body.splitlines()[0] for e in Feed(home).entries()
-              if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
-    assert bodies == [f"mind model top-pain genome launcher={launcher} reason=start model=vendor/model-a"]
-
-
-def test_seed_start_waits_for_a_concurrent_raise_to_record_its_owner(tmp_path, monkeypatch):
-    """Boot race: a peer creates the session, then records the owning home.
-
-    A second supervisor that observes the session between those two steps must
-    wait for the owner, not report the still-unowned session as foreign. On the
-    host's default.target start this window crash-looped permissions,
-    research-methods and senses once each before their systemd restart.
-    """
-    from subprocess import CompletedProcess
-    from mishe_tauftauf import tmux
-
-    home = tmp_path / "site"
-    (home / "top-pains").mkdir(parents=True)
-    probe = home / "top-pains" / "genome"
-    probe.write_text("#!/bin/sh\nexit 0\n")
-    probe.chmod(0o755)
-    launcher = home / "minds" / "genome"
-    launcher.parent.mkdir(parents=True, exist_ok=True)
-    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
-    launcher.chmod(0o755)
-    owners = iter(["", str(home.resolve())])
-
-    def owner_tmux(*args, **kwargs):
-        if args[0] == "show-option":
-            return CompletedProcess(args, 0, (next(owners, str(home.resolve())) + "\n").encode())
-        return CompletedProcess(args, 0, b"")
-
-    monkeypatch.setattr(tmux, "_tmux", owner_tmux)
-    monkeypatch.setattr(tmux.time, "sleep", lambda *a: None)
-    monkeypatch.setattr(seed, "_send", lambda *a: None)
-    monkeypatch.setattr(seed.time, "sleep", lambda *a: None)
-    monkeypatch.setattr(seed, "_state", lambda home, slug, **kw: (None, None, None, None, None, None, None, None))
-    pids = iter(["101\n", "202\n"])
-
-    def command(*args, **kwargs):
-        if args[0] == "has-session":
-            return CompletedProcess(args, 0, b"$1\n", b"")
-        if args[-1] == "#{pane_pid}":
-            return CompletedProcess(args, 0, next(pids).encode(), b"")
-        return CompletedProcess(args, 0, b"0\n", b"")
-
-    monkeypatch.setattr(seed, "_tmux", command)
-    assert seed.start(home, "session", "genome", 5).startswith("seed genome ready")
-
-
-def test_a_seed_start_reheals_a_lost_session_receipt(tmp_path, monkeypatch):
-    """An owned live session whose receipt was lost must not stay unreadable.
-
-    The receipt is durable state for senses, the CLI's default-session
-    fallback and stop's safety guard; a start that sees the owned session
-    but no receipt rewrites it from the live session identity.
-    """
-    from subprocess import CompletedProcess
-    from mishe_tauftauf import tmux
-
-    home = tmp_path / "site"
-    (home / "top-pains").mkdir(parents=True)
-    probe = home / "top-pains" / "genome"
-    probe.write_text("#!/bin/sh\nexit 0\n")
-    probe.chmod(0o755)
-    launcher = home / "minds" / "genome"
-    launcher.parent.mkdir(parents=True, exist_ok=True)
-    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
-    launcher.chmod(0o755)
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(tmux, "_tmux", lambda *a, **k: CompletedProcess(a, 0,
-        (str(home.resolve()) + "\n").encode() if a[0] == "show-option" else b""))
-    monkeypatch.setattr(tmux.time, "sleep", lambda *a: None)
-    monkeypatch.setattr(seed, "_send", lambda *a: None)
-    monkeypatch.setattr(seed.time, "sleep", lambda *a: None)
-    monkeypatch.setattr(seed, "_state", lambda home, slug, **kw: (None, None, None, None, None, None, None, None))
-    pids = iter(["101\n", "202\n"])
-
-    def command(*args, **kwargs):
-        if args[0] == "has-session":
-            return CompletedProcess(args, 0, b"$1\n", b"")
-        if args[-1] == "#{session_id}":
-            return CompletedProcess(args, 0, b"$7\n", b"")
-        if args[-1] == "#{pane_pid}":
-            return CompletedProcess(args, 0, next(pids).encode(), b"")
-        return CompletedProcess(args, 0, b"0\n", b"")
-
-    monkeypatch.setattr(seed, "_tmux", command)
-    assert not (home / ".seed-raised").exists()
-    assert seed.start(home, "session", "genome", 5).startswith("seed genome ready")
-    assert (home / ".seed-raised").read_text(encoding="utf-8") == "session $7\n"
-
-
-def test_a_seed_start_reheals_an_undecodable_session_receipt(tmp_path, monkeypatch):
-    """A corrupted receipt must not crash the start that adopts the session."""
-    from subprocess import CompletedProcess
-    from mishe_tauftauf import tmux
-
-    home = tmp_path / "site"
-    (home / "top-pains").mkdir(parents=True)
-    probe = home / "top-pains" / "genome"
-    probe.write_text("#!/bin/sh\nexit 0\n")
-    probe.chmod(0o755)
-    launcher = home / "minds" / "genome"
-    launcher.parent.mkdir(parents=True, exist_ok=True)
-    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
-    launcher.chmod(0o755)
-    (home / ".seed-raised").write_bytes(b"\xff\xfe not utf-8\n")
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(tmux, "_tmux", lambda *a, **k: CompletedProcess(a, 0,
-        (str(home.resolve()) + "\n").encode() if a[0] == "show-option" else b""))
-    monkeypatch.setattr(tmux.time, "sleep", lambda *a: None)
-    monkeypatch.setattr(seed, "_send", lambda *a: None)
-    monkeypatch.setattr(seed.time, "sleep", lambda *a: None)
-    monkeypatch.setattr(seed, "_state", lambda home, slug, **kw: (None, None, None, None, None, None, None, None))
-    pids = iter(["101\n", "202\n"])
-
-    def command(*args, **kwargs):
-        if args[0] == "has-session":
-            return CompletedProcess(args, 0, b"$1\n", b"")
-        if args[-1] == "#{session_id}":
-            return CompletedProcess(args, 0, b"$7\n", b"")
-        if args[-1] == "#{pane_pid}":
-            return CompletedProcess(args, 0, next(pids).encode(), b"")
-        return CompletedProcess(args, 0, b"0\n", b"")
-
-    monkeypatch.setattr(seed, "_tmux", command)
-    assert seed.start(home, "session", "genome", 5).startswith("seed genome ready")
-    assert (home / ".seed-raised").read_text(encoding="utf-8") == "session $7\n"
-
-
-def test_a_failed_respawn_records_no_model_identity(tmp_path, monkeypatch):
-    """A respawn that never happened must not be attributed a model."""
-    from subprocess import CompletedProcess
-    from mishe_tauftauf import tmux
-
-    launcher = tmp_path / "minds" / "genome"
-    launcher.parent.mkdir(parents=True)
-    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
-    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
-    note = tmp_path / "note.md"
-    note.write_text("Investigated source; wait for changed evidence.")
-    seed.yield_wake(tmp_path, "genome", wake.sequence, note, result="verified")
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    def command(*args, **kwargs):
-        if args[0] == "respawn-pane":
-            raise RuntimeError("tmux refused the respawn")
-        value = "0" if args[-1] == "#{pane_dead}" else "101\n"
-        return CompletedProcess(args, 0, value.encode(), b"")
-    monkeypatch.setattr(seed, "_tmux", command)
-    with pytest.raises(RuntimeError, match="refused the respawn"):
-        seed.clear(tmp_path, "session", "genome")
-    bodies = [e.body.splitlines()[0] for e in Feed(tmp_path).entries()
-              if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
-    assert bodies == [], "no respawn means nothing to attribute a model to"
-
-
-def test_the_record_fires_only_after_the_process_actually_rotated(tmp_path, monkeypatch):
-    """A respawn whose pid never changes raises, and no identity is recorded."""
-    from subprocess import CompletedProcess
-    from mishe_tauftauf import tmux
-
-    launcher = tmp_path / "minds" / "genome"
-    launcher.parent.mkdir(parents=True)
-    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
-    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
-    note = tmp_path / "note.md"
-    note.write_text("Investigated source; wait for changed evidence.")
-    seed.yield_wake(tmp_path, "genome", wake.sequence, note, result="verified")
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    def command(*args, **kwargs):
-        value = "101\n" if args[-1] == "#{pane_pid}" else "0\n"
-        return CompletedProcess(args, 0, value.encode(), b"")
-    monkeypatch.setattr(seed, "_tmux", command)
-    with pytest.raises(ValueError, match="mind process did not rotate"):
-        seed.clear(tmp_path, "session", "genome")
-    bodies = [e.body.splitlines()[0] for e in Feed(tmp_path).entries()
-              if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
-    assert bodies == [], "a respawn that did not rotate is not a new invocation"
-
-
-def test_a_rotation_reconciled_from_the_rotating_phase_still_records(tmp_path, monkeypatch):
-    """A respawn that finished before its journal write must still be recorded."""
-    from subprocess import CompletedProcess
-    from mishe_tauftauf import tmux, wall
-
-    launcher = tmp_path / "minds" / "genome"
-    launcher.parent.mkdir(parents=True)
-    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
-    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
-    note = tmp_path / "note.md"
-    note.write_text("Investigated source; wait for changed evidence.")
-    seed.yield_wake(tmp_path, "genome", wake.sequence, note, result="verified")
-    (tmp_path / "checks").mkdir()
-    argv = list(seed._mind_launch_argv(tmp_path, "genome")[2:])
-    (tmp_path / "checks" / f"wall-clear-genome-{wake.sequence}.json").write_text(
-        '{"phase":"rotating","session":"session","role":"genome","settled":%d,'
-        '"before_pid":"101","launch_command":%s}' % (wake.sequence, json.dumps(argv)))
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    def command(*args, **kwargs):
-        if args[-1] == "#{pane_start_command}":
-            return CompletedProcess(args, 0, " ".join(argv).encode(), b"")
-        if args[-1] == "#{pane_pid}":
-            return CompletedProcess(args, 0, b"202\n", b"")
-        return CompletedProcess(args, 0, b"0\n", b"")
-    monkeypatch.setattr(seed, "_tmux", command)
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
-    bodies = [e.body.splitlines()[0] for e in Feed(tmp_path).entries()
-              if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
-    assert bodies == [f"mind model top-pain genome launcher={launcher} reason=clear model=vendor/model-a"]
-
-
-def test_a_failed_rotated_journal_save_records_no_model_identity(tmp_path, monkeypatch):
-    """The durable rotated journal must land before the feed claims a new model."""
-    from subprocess import CompletedProcess
-    from mishe_tauftauf import post_check, tmux
-
-    launcher = tmp_path / "minds" / "genome"
-    launcher.parent.mkdir(parents=True)
-    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
-    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
-    note = tmp_path / "note.md"
-    note.write_text("Investigated source; wait for changed evidence.")
-    seed.yield_wake(tmp_path, "genome", wake.sequence, note, result="verified")
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    pids = iter(["101\n", "202\n", "202\n", "202\n", "202\n"])
-    def command(*args, **kwargs):
-        if args[-1] == "#{pane_pid}":
-            return CompletedProcess(args, 0, next(pids).encode(), b"")
-        return CompletedProcess(args, 0, b"0\n", b"")
-    monkeypatch.setattr(seed, "_tmux", command)
-    real_save = post_check._save
-    def save(path, report):
-        if report.get("phase") == "rotated":
-            raise OSError("journal write failed")
-        return real_save(path, report)
-    monkeypatch.setattr(post_check, "_save", save)
-    with pytest.raises(OSError, match="journal write failed"):
-        seed.clear(tmp_path, "session", "genome")
-    bodies = [e.body.splitlines()[0] for e in Feed(tmp_path).entries()
-              if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
-    assert bodies == [], "a rotation whose journal did not land is not established"
-
-
-def test_a_seed_start_records_only_a_live_respawned_mind(tmp_path, monkeypatch):
-    """A respawn that leaves a dead mind pane records nothing."""
-    from subprocess import CompletedProcess
-    from mishe_tauftauf import tmux
-
-    home = tmp_path / "site"
-    (home / "top-pains").mkdir(parents=True)
-    probe = home / "top-pains" / "genome"
-    probe.write_text("#!/bin/sh\nexit 0\n")
-    probe.chmod(0o755)
-    launcher = home / "minds" / "genome"
-    launcher.parent.mkdir(parents=True, exist_ok=True)
-    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
-    launcher.chmod(0o755)
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_new_session", lambda *a: None)
-    monkeypatch.setattr(seed, "_send", lambda *a: None)
-    monkeypatch.setattr(seed.time, "sleep", lambda *a: None)
-    monkeypatch.setattr(seed, "_state", lambda home, slug, **kw: (None, None, None, None, None, None, None, None))
-    def command(*args, **kwargs):
-        if args[0] == "has-session":
-            return CompletedProcess(args, 1, b"", b"")
-        if args[-1] == "#{pane_dead}":
-            return CompletedProcess(args, 0, b"1\n", b"")
-        return CompletedProcess(args, 0, b"0\n", b"")
-    monkeypatch.setattr(seed, "_tmux", command)
-    with pytest.raises(ValueError, match="mind pane session:genome.1 did not respawn"):
-        seed.start(home, "session", "genome", 5)
-    bodies = [e.body.splitlines()[0] for e in Feed(home).entries()
-              if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
-    assert bodies == [], "a mind that is still dead has not started"
-
-
-def test_an_interrupted_rotated_clear_records_the_model_on_retry(tmp_path, monkeypatch):
-    """A crash between the durable rotated save and the record is repaired on retry."""
-    from subprocess import CompletedProcess
-    from mishe_tauftauf import tmux
-
-    launcher = tmp_path / "minds" / "genome"
-    launcher.parent.mkdir(parents=True)
-    launcher.write_text("#!/bin/sh\nexec omp --model vendor/model-a --cwd /repo\n")
-    wake = Feed(tmp_path).append("seed", "seed wake genome observation=1\nInvestigate.")
-    note = tmp_path / "note.md"
-    note.write_text("Investigated source; wait for changed evidence.")
-    seed.yield_wake(tmp_path, "genome", wake.sequence, note, result="verified")
-    (tmp_path / "checks").mkdir()
-    argv = list(seed._mind_launch_argv(tmp_path, "genome")[2:])
-    (tmp_path / "checks" / f"wall-clear-genome-{wake.sequence}.json").write_text(
-        '{"phase":"rotated","session":"session","role":"genome","settled":%d,'
-        '"before_pid":"101","after_pid":"202","launch_command":%s}' % (wake.sequence, json.dumps(argv)))
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    def command(*args, **kwargs):
-        value = "202\n" if args[-1] == "#{pane_pid}" else "0\n"
-        return CompletedProcess(args, 0, value.encode(), b"")
-    monkeypatch.setattr(seed, "_tmux", command)
-    marker = f"mind model top-pain genome launcher={launcher} reason=clear model=vendor/model-a"
-    assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
-    bodies = [e.body.splitlines()[0] for e in Feed(tmp_path).entries()
-              if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
-    assert bodies == [marker], "the interrupted rotation is recorded when the clear is retried"
-    assert seed.clear(tmp_path, "session", "genome").startswith("held seed")
-    bodies = [e.body.splitlines()[0] for e in Feed(tmp_path).entries()
-              if e.source == "mishe-tauftauf" and e.body.startswith("mind model ")]
-    assert bodies == [marker], "the repaired record is emitted exactly once"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _committed_journal(home, settled, **overrides):
@@ -961,36 +192,5 @@ def _committed_journal(home, settled, **overrides):
     return path
 
 
-def test_clear_retires_a_renumbered_feeds_collided_committed_journal(tmp_path, monkeypatch):
-    from mishe_tauftauf import tmux
-    wake = _settled_genome(tmp_path)
-    path = _committed_journal(tmp_path, wake.sequence)
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    monkeypatch.setattr(seed, "_tmux", _respawning_pane_command("900001", "900002"))
-    assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
-    assert seed._state(tmp_path, "genome")[3] == wake.sequence
-    stale = list((tmp_path / "checks").glob("wall-clear-genome-*.stale-*.json"))
-    assert len(stale) == 1
-    preserved = json.loads(stale[0].read_text())
-    assert preserved["phase"] == "committed" and preserved["after_pid"] == "204172"
-    assert stale[0].name in [item.name for item in clear_journal.paths(tmp_path)], \
-        "retiring preserves the journal for the monitoring consumer"
-    fresh = json.loads((tmp_path / "checks" / path.name).read_text())
-    assert fresh["phase"] == "committed" and fresh["after_pid"] == "900002"
 
 
-def test_clear_keeps_a_committed_journal_for_its_own_cleared_turn(tmp_path, monkeypatch):
-    from mishe_tauftauf import tmux
-    wake = _settled_genome(tmp_path)
-    monkeypatch.setattr(tmux, "owns_session", lambda *a: True)
-    monkeypatch.setattr(seed, "_mind_idle", lambda *a: True)
-    monkeypatch.setattr(seed, "_tmux", _respawning_pane_command("102", "103"))
-    assert seed.clear(tmp_path, "session", "genome").startswith("clear seed")
-    before = Feed(tmp_path).read_bytes()
-    path = tmp_path / "checks" / f"wall-clear-genome-{wake.sequence}.json"
-    assert seed.clear(tmp_path, "session", "genome").startswith("held seed")
-    assert Feed(tmp_path).read_bytes() == before
-    assert path.exists(), "a journal for its own cleared turn stays put"
-    assert json.loads(path.read_text())["phase"] == "committed"
-    assert not list((tmp_path / "checks").glob("wall-clear-genome-*.stale-*.json"))

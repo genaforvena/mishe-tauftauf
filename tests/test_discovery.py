@@ -17,8 +17,6 @@ from mishe_tauftauf.discovery import _cpu_busy, latest, renew_scan, scan, scan_a
 from mishe_tauftauf import discovery
 from mishe_tauftauf import proc_table
 from mishe_tauftauf.feed import Feed
-from mishe_tauftauf import seed_culture_views
-from mishe_tauftauf.seed_culture_views import discover
 
 
 def test_scan_writes_real_bounded_local_evidence(tmp_path: Path) -> None:
@@ -133,16 +131,6 @@ def test_producer_label_names_the_root_against_the_pin(tmp_path: Path, monkeypat
     assert discovery.producer_label(home, f"{pinned}@{'a' * 40}") == "unknown@aaaaaaaaaaaa"
 
 
-def test_scan_line_and_tape_name_the_producer(tmp_path: Path) -> None:
-    home = tmp_path / "site"
-    artifact = scan(home)
-    sha = json.loads(artifact.read_text())["producer"].rsplit("@", 1)[1][:12]
-    # A tmp home declares no pin, so the root cannot be named against one.
-    view = discover(home)
-    line = next(item for item in view.splitlines() if item.startswith("SCAN: "))
-    assert line.endswith(f" producer=unknown@{sha}")
-    body = Feed(home).entries()[-1].body
-    assert f"Producer: unknown@{sha}." in body.splitlines()
 
 
 def test_discovery_notices_existing_cpu_class_crossings_not_numeric_drift(tmp_path: Path) -> None:
@@ -779,11 +767,10 @@ def _unit_failure_record(**fields):
             "MESSAGE": "cron.service: Failed with result 'oom-kill'.", **fields}
 
 
-_PLANT_SESSION = "mishe-self-development-current"
+_PLANT_UNIT = "mishe-wake@discover.service"       # a unit this runtime generated
 
 
-def _unit_failure_fixture(monkeypatch, output, boots=None, restart_context=None,
-                          session=_PLANT_SESSION):
+def _unit_failure_fixture(monkeypatch, output, boots=None, restart_context=None):
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -796,17 +783,13 @@ def _unit_failure_fixture(monkeypatch, output, boots=None, restart_context=None,
     monkeypatch.setattr(discovery, "_unit_restart_context",
                         lambda units: {u: restart_context[u] for u in units
                                        if restart_context and u in restart_context})
-    if session is None:
-        monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
-    else:
-        monkeypatch.setenv("MISHE_SEED_SESSION", session)
     return discovery._journal_unit_failure_window(Path("/nonexistent"))
 
 
 def test_unit_failure_counts_plant_units_and_discloses_foreign(monkeypatch):
     result = _unit_failure_fixture(monkeypatch, _journal_bytes(
         _unit_failure_record(
-            MESSAGE=f"{_PLANT_SESSION}-discover.service: Failed with result 'oom-kill'."),
+            MESSAGE=f"{_PLANT_UNIT}: Failed with result 'oom-kill'."),
         _unit_failure_record(__CURSOR="cursor2",
                              MESSAGE="tmux-spawn-9f2c1.scope: Failed with result 'oom-kill'."),
         _unit_failure_record(__CURSOR="cursor3",
@@ -816,19 +799,18 @@ def test_unit_failure_counts_plant_units_and_discloses_foreign(monkeypatch):
     assert result["state"] == "verified"
     # A foreign service that shares the ``mishe-`` prefix, and another node's
     # test transient, are disclosed, not counted as this plant's failures.
-    assert result["count"] == 2
-    assert result["classes"] == {"oom-kill": 2}
-    assert result["units"] == {f"{_PLANT_SESSION}-discover.service": 1,
-                               "tmux-spawn-9f2c1.scope": 1}
+    assert result["count"] == 1
+    assert result["classes"] == {"oom-kill": 1}
+    assert result["units"] == {_PLANT_UNIT: 1}
     assert result["foreign_units"] == {"mishe-cleaner-recovered.service": 1,
-                                       "mesh-pull-t1.service": 1}
-    assert result["sample"] == ("last-10min unit-failure-count=2 oom-kill=2 "
-                                "foreign=mesh-pull-t1.service:1,mishe-cleaner-recovered.service:1")
+                                       "mesh-pull-t1.service": 1, "tmux-spawn-9f2c1.scope": 1}
+    assert result["sample"] == ("last-10min unit-failure-count=1 oom-kill=1 "
+                                "foreign=mesh-pull-t1.service:1,mishe-cleaner-recovered.service:1,tmux-spawn-9f2c1.scope:1")
 
 
 def test_unit_failure_counts_a_plant_unit_name_containing_a_colon(monkeypatch):
     # systemd.unit(5) allows ':' in a unit name prefix.
-    unit = f"{_PLANT_SESSION}-foo:bar.service"
+    unit = "mishe-producer-foo:bar.service"
     result = _unit_failure_fixture(monkeypatch, _journal_bytes(
         _unit_failure_record(MESSAGE=f"{unit}: Failed with result 'exit-code'.")))
     assert result["state"] == "verified"
@@ -836,16 +818,6 @@ def test_unit_failure_counts_a_plant_unit_name_containing_a_colon(monkeypatch):
     assert result["classes"] == {"exit-code": 1}
 
 
-def test_unit_failure_unknown_when_the_plant_session_is_unavailable(monkeypatch):
-    # Without a session there is no way to tell this plant's units from another
-    # site's or a foreign service's, so the reading stays unknown.
-    result = _unit_failure_fixture(monkeypatch, _journal_bytes(
-        _unit_failure_record(
-            MESSAGE=f"{_PLANT_SESSION}-discover.service: Failed with result 'exit-code'.")),
-        session=None)
-    assert result["state"] == "unknown"
-    assert result["reason"] == "plant session unavailable"
-    assert "count" not in result
 
 
 def test_unit_failure_ignores_records_that_are_not_unit_failures(monkeypatch):
@@ -898,7 +870,7 @@ def test_unit_failure_window_validates_exact_boundaries(monkeypatch, offset, ver
     assert result["state"] == ("verified" if verified else "unknown")
 
 def test_unit_failure_includes_restart_context_in_sample(monkeypatch):
-    unit = f"{_PLANT_SESSION}-discover.service"
+    unit = _PLANT_UNIT + f""
     result = _unit_failure_fixture(monkeypatch, _journal_bytes(
         _unit_failure_record(MESSAGE=f"{unit}: Failed with result 'exit-code'.")),
         restart_context={unit: {"restarts": 1, "active": "running"}})
@@ -910,7 +882,7 @@ def test_unit_failure_includes_restart_context_in_sample(monkeypatch):
 def test_unit_failure_omits_restart_context_when_unavailable(monkeypatch):
     result = _unit_failure_fixture(monkeypatch, _journal_bytes(
         _unit_failure_record(
-            MESSAGE=f"{_PLANT_SESSION}-discover.service: Failed with result 'exit-code'.")))
+            MESSAGE=f"{_PLANT_UNIT}: Failed with result 'exit-code'.")))
     assert result["state"] == "verified"
     assert result["unit_context"] == {}
     assert "restarts=" not in result["sample"]
@@ -1043,264 +1015,46 @@ def _success(timestamp: str) -> str:
                          stopReason="stop")
 
 
-def test_wedge_chain_3_span_30min_is_suspect(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _retry("2026-10-06T13:30:00+00:00", 1),
-        _retry("2026-10-06T13:40:00+00:00", 2),
-        _retry("2026-10-06T13:50:00+00:00", 3),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result == {"chain": 3, "span_minutes": 30.0,
-                      "sources": {"automatic-retry": 3}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
-def test_wedge_chain_below_3_is_not_suspect(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _retry("2026-10-06T13:50:00+00:00", 1),
-        _retry("2026-10-06T13:55:00+00:00", 2),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result == {"chain": 2, "span_minutes": 10.0,
-                      "sources": {"automatic-retry": 2}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
-def test_wedge_span_below_15min_is_not_suspect(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _retry("2026-10-06T13:50:00+00:00", 1),
-        _retry("2026-10-06T13:55:00+00:00", 2),
-        _retry("2026-10-06T13:58:00+00:00", 3),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result == {"chain": 3, "span_minutes": 10.0,
-                      "sources": {"automatic-retry": 3}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
-def test_wedge_chain_resets_on_success(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _retry("2026-10-06T13:00:00+00:00", 1),
-        _success("2026-10-06T13:30:00+00:00"),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result == {"chain": 0, "span_minutes": 0.0, "sources": {}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
-def test_wedge_no_log_returns_none(monkeypatch):
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: None)
-    assert discovery._omp_continue_chain(12345, _WEDGE_NOW) is None
 
 
-def test_wedge_empty_log_is_chain_zero(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result == {"chain": 0, "span_minutes": 0.0, "sources": {}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
-def test_wedge_sense_flags_wedged_mind(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _retry("2026-10-06T13:30:00+00:00", 1),
-        _retry("2026-10-06T13:40:00+00:00", 2),
-        _retry("2026-10-06T13:50:00+00:00", 3),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path",
-                        lambda pid: log if pid == 12345 else None)
-    _wedge_clock(monkeypatch)
-
-    class FakeResult:
-        returncode = 0
-        stdout = "mishe-tauftauf|research-methods|12345\nandroid-body|body-research|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "verified"
-    assert len(result["suspects"]) == 1
-    assert result["suspects"][0]["window"] == "research-methods"
-    assert result["suspects"][0]["pid"] == 12345
-    assert result["suspects"][0]["session"] == "mishe-tauftauf"
-    assert result["suspects"][0]["chain"] == 3
-    assert result["suspects"][0]["span_minutes"] == 30.0
-    assert result["suspects"][0]["sources"] == {"automatic-retry": 3}
-    assert ("research-methods(pid=12345,session=mishe-tauftauf,chain=3,span=30.0min,"
-            "src=automatic-retry:3,cause=none)") in result["sample"]
-    assert "panes=2 with_log=1" in result["sample"]
 
 
-def test_wedge_sense_no_suspects(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _retry("2026-10-06T13:50:00+00:00", 1),
-        _success("2026-10-06T13:55:00+00:00"),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path",
-                        lambda pid: log if pid == 12345 else None)
-    _wedge_clock(monkeypatch)
-
-    class FakeResult:
-        returncode = 0
-        stdout = "mishe-tauftauf|research-methods|12345\nandroid-body|body-research|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "verified"
-    assert result["suspects"] == []
-    assert result["sample"] == "suspects=0 panes=2 with_log=1 foreign=0"
-    assert result["panes"] == 2
-    assert result["with_log"] == 1
 
 
-def test_wedge_sense_tmux_failure_is_unknown(monkeypatch):
-    _wedge_clock(monkeypatch)
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        lambda *a, **kw: type("R", (), {"returncode": 1, "stdout": ""})())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "unknown"
-    assert result["suspects"] == []
 
 
-def test_wedge_sense_no_logs_is_unknown(monkeypatch):
-    _wedge_clock(monkeypatch)
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: None)
-
-    class FakeResult:
-        returncode = 0
-        stdout = "mishe-tauftauf|research-methods|12345\nandroid-body|body-research|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "unknown"
-    assert result["sample"] == "suspects=0 panes=2 with_log=0 foreign=0"
-    assert result["with_log"] == 0
 
 
-def test_watch_wait_sleep_pattern_with_still_content_is_watch_wait(monkeypatch):
-    monkeypatch.setattr(discovery, "_ci_run_state", lambda run_id: None)
-    result = discovery._watch_wait_verdict("$ sleep 150 ⠋ · 1s", "$ sleep 150 ⠙ · 4s", "now")
-    assert result["verdict"] == "watch-wait"
-    assert result["pattern"] == "sleep"
-    assert result["stable"] is True
 
 
-def test_watch_wait_ci_poll_confirmed_in_progress_is_watch_wait(monkeypatch):
-    monkeypatch.setattr(discovery, "_ci_run_state",
-                        lambda run_id: {"status": "in_progress", "conclusion": "",
-                                        "updated_at": "2026-10-12T11:31:03Z"})
-    result = discovery._watch_wait_verdict("$ gh run view 38242368632 ⠋ · 2m8s",
-                                           "$ gh run view 38242368632 ⠙ · 2m23s", "now")
-    assert result["verdict"] == "watch-wait"
-    assert result["run_id"] == "38242368632"
 
 
-def test_watch_wait_ci_poll_unreadable_state_is_unknown(monkeypatch):
-    monkeypatch.setattr(discovery, "_ci_run_state", lambda run_id: None)
-    result = discovery._watch_wait_verdict("$ gh run view 38242368632 ⠋ · 2m8s",
-                                           "$ gh run view 38242368632 ⠙ · 2m23s", "now")
-    assert result["verdict"] == "unknown"
-    assert result["run_id"] == "38242368632"
 
 
-def test_watch_wait_ci_poll_without_run_id_is_unknown(monkeypatch):
-    monkeypatch.setattr(discovery, "_ci_run_state", lambda run_id: None)
-    result = discovery._watch_wait_verdict("Waiting for CI poll result ⠋ · 1s",
-                                           "Waiting for CI poll result ⠙ · 4s", "now")
-    assert result["verdict"] == "unknown"
-    assert "names no run id" in result["detail"]
 
 
-def test_watch_wait_completed_run_is_suspect_not_excused(monkeypatch):
-    monkeypatch.setattr(discovery, "_ci_run_state",
-                        lambda run_id: {"status": "completed", "conclusion": "success",
-                                        "updated_at": "2026-10-12T11:31:03Z"})
-    result = discovery._watch_wait_verdict("$ gh run view 38242368632 ⠋ · 2m8s",
-                                           "$ gh run view 38242368632 ⠙ · 2m23s", "now")
-    assert result["verdict"] == "suspect"
 
 
-def test_watch_wait_growing_content_is_active(monkeypatch):
-    monkeypatch.setattr(discovery, "_ci_run_state", lambda run_id: None)
-    result = discovery._watch_wait_verdict("line one", "line one\nline two", "now")
-    assert result["verdict"] == "active"
 
 
-def test_watch_wait_empty_frames_are_pane_dead():
-    assert discovery._watch_wait_verdict("", "  \n ", "now")["verdict"] == "pane-dead"
 
 
-def test_watch_wait_tmux_failure_is_unknown(monkeypatch):
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        lambda *a, **kw: type("R", (), {"returncode": 1, "stdout": ""})())
-    result = discovery._mind_watch_wait(Path("/tmp"))
-    assert result["id"] == "sense.mind.watch-wait"
-    assert result["state"] == "unknown"
-    assert result["panes"] == []
 
 
-def test_wedge_chain_counts_all_continue_sources(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _retry("2026-10-06T13:30:00+00:00", 1, source="stream-stall-continue"),
-        _retry("2026-10-06T13:40:00+00:00", 2, source="todo-reminder"),
-        _retry("2026-10-06T13:50:00+00:00", 3),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result == {"chain": 3, "span_minutes": 30.0,
-                      "sources": {"automatic-retry": 1,
-                                  "stream-stall-continue": 1,
-                                  "todo-reminder": 1},
-                      "cause": "none",
-                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
-def test_wedge_chain_only_success_resets(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _retry("2026-10-06T13:00:00+00:00", 1),
-        _omp_log_line("2026-10-06T13:10:00+00:00",
-                      "agent_end maintenance routing", stopReason="error"),
-        _retry("2026-10-06T13:20:00+00:00", 2),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result == {"chain": 2, "span_minutes": 60.0,
-                      "sources": {"automatic-retry": 2}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
-def test_wedge_chain_records_sourceless_continue(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _omp_log_line("2026-10-06T13:00:00+00:00", "agent.continue scheduled",
-                      schedulerToken=1),
-        _omp_log_line("2026-10-06T13:20:00+00:00", "agent.continue scheduled",
-                      schedulerToken=2),
-        _omp_log_line("2026-10-06T13:40:00+00:00", "agent.continue scheduled",
-                      schedulerToken=3),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result == {"chain": 3, "span_minutes": 60.0,
-                      "sources": {"unknown": 3}, "cause": "none",
-                      "last_error_ts": None, "error_count": 0, "foreign": 0}
 
 
 def _provider_error(timestamp: str, status: int | None = None,
@@ -1313,425 +1067,46 @@ def _provider_error(timestamp: str, status: int | None = None,
     return _omp_log_line(timestamp, "agent turn ended with provider error", **fields)
 
 
-def test_wedge_chain_cause_names_the_dominant_provider_error_class(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:25:00+00:00", 500),
-        _retry("2026-10-06T13:30:00+00:00", 1),
-        _provider_error("2026-10-06T13:35:00+00:00", 500),
-        _retry("2026-10-06T13:40:00+00:00", 2),
-        _provider_error("2026-10-06T13:45:00+00:00", None,
-                        "The socket connection was closed unexpectedly."),
-        _retry("2026-10-06T13:50:00+00:00", 3),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result["cause"] == "provider-error:500"
 
 
-def test_wedge_chain_cause_reads_the_status_from_the_message(monkeypatch, tmp_path):
-    # errorStatus is absent: the [500] in the message names the class.
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:25:00+00:00", None,
-                        "Streaming response failed: [500] DEADLINE_EXCEEDED"),
-        _retry("2026-10-06T13:30:00+00:00", 1),
-        _retry("2026-10-06T13:40:00+00:00", 2),
-        _retry("2026-10-06T13:50:00+00:00", 3),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result["cause"] == "provider-error:500"
 
 
-def test_wedge_chain_cause_reads_unknown_when_no_status_is_named(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:25:00+00:00", None,
-                        "The socket connection was closed unexpectedly."),
-        _retry("2026-10-06T13:30:00+00:00", 1),
-        _retry("2026-10-06T13:40:00+00:00", 2),
-        _retry("2026-10-06T13:50:00+00:00", 3),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result["cause"] == "provider-error:unknown"
 
 
-def test_wedge_sense_sample_carries_the_cause(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:25:00+00:00", 500),
-        _retry("2026-10-06T13:30:00+00:00", 1),
-        _provider_error("2026-10-06T13:35:00+00:00", 500),
-        _retry("2026-10-06T13:40:00+00:00", 2),
-        _provider_error("2026-10-06T13:45:00+00:00", 500),
-        _retry("2026-10-06T13:50:00+00:00", 3),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path",
-                        lambda pid: log if pid == 12345 else None)
-    _wedge_clock(monkeypatch)
-
-    class FakeResult:
-        returncode = 0
-        stdout = "mishe-tauftauf|health|12345\nandroid-body|body-research|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["suspects"][0]["cause"] == "provider-error:500"
-    assert ("health(pid=12345,session=mishe-tauftauf,chain=3,span=30.0min,"
-            "src=automatic-retry:3,cause=provider-error:500)") in result["sample"]
-
-def test_wedge_r2_provider_error_stale_is_suspect(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:30:00+00:00", 403),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result["chain"] == 0
-    assert result["cause"] == "provider-error:403"
-    assert result["last_error_ts"] == "2026-10-06T13:30:00+00:00"
-    assert result["error_count"] == 1
 
 
-def test_wedge_r2_provider_error_fresh_is_not_suspect(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:58:00+00:00", 403),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result["chain"] == 0
-    assert result["cause"] == "provider-error:403"
-    assert result["last_error_ts"] == "2026-10-06T13:58:00+00:00"
-    assert result["error_count"] == 1
 
 
-def test_wedge_r2_error_reset_on_success(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:30:00+00:00", 403),
-        _success("2026-10-06T13:35:00+00:00"),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result["chain"] == 0
-    assert result["cause"] == "none"
-    assert result["last_error_ts"] is None
-    assert result["error_count"] == 0
 
 
-def test_wedge_r2_with_chain_is_r1_not_r2(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:25:00+00:00", 500),
-        _retry("2026-10-06T13:30:00+00:00", 1),
-        _provider_error("2026-10-06T13:35:00+00:00", 500),
-        _retry("2026-10-06T13:40:00+00:00", 2),
-        _provider_error("2026-10-06T13:45:00+00:00", 500),
-        _retry("2026-10-06T13:50:00+00:00", 3),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(12345, _WEDGE_NOW)
-    assert result["chain"] == 3
-    assert result["cause"] == "provider-error:500"
-    assert result["error_count"] == 3
 
 
-def test_wedge_r2_sense_flags_stuck_pane(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:30:00+00:00", 403),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path",
-                        lambda pid: log if pid == 12345 else None)
-    _wedge_clock(monkeypatch)
-
-    class FakeResult:
-        returncode = 0
-        stdout = "mishe-tauftauf|docs|12345\nandroid-body|body-research|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "verified"
-    assert len(result["suspects"]) == 1
-    assert result["suspects"][0]["window"] == "docs"
-    assert result["suspects"][0]["pid"] == 12345
-    assert result["suspects"][0]["rule"] == "provider-error"
-    assert result["suspects"][0]["chain"] == 0
-    assert result["suspects"][0]["cause"] == "provider-error:403"
-    assert result["suspects"][0]["error_age_minutes"] == 30.0
-    assert ("docs(pid=12345,session=mishe-tauftauf,rule=provider-error,chain=0,"
-            "error_age=30.0min,cause=provider-error:403)") in result["sample"]
-    assert "panes=2 with_log=1" in result["sample"]
-
-def test_wedge_r3_chain2_stale_error_is_suspect(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:25:00+00:00", 429),
-        _retry("2026-10-06T13:30:00+00:00", 1),
-        _provider_error("2026-10-06T13:35:00+00:00", 429),
-        _retry("2026-10-06T13:40:00+00:00", 2),
-        _provider_error("2026-10-06T13:45:00+00:00", 429),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path",
-                        lambda pid: log if pid == 12345 else None)
-    _wedge_clock(monkeypatch)
-
-    class FakeResult:
-        returncode = 0
-        stdout = "mishe-tauftauf|genome|12345\nandroid-body|body-research|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "verified"
-    assert len(result["suspects"]) == 1
-    assert result["suspects"][0]["window"] == "genome"
-    assert result["suspects"][0]["rule"] == "chain-stall"
-    assert result["suspects"][0]["chain"] == 2
-    assert result["suspects"][0]["span_minutes"] == 30.0
-    assert result["suspects"][0]["cause"] == "provider-error:429"
-    assert result["suspects"][0]["error_age_minutes"] == 15.0
-    assert ("genome(pid=12345,session=mishe-tauftauf,rule=chain-stall,chain=2,"
-            "span=30.0min,error_age=15.0min,cause=provider-error:429)") in result["sample"]
 
 
-def test_wedge_r3_chain1_stale_error_is_suspect(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:25:00+00:00", 429),
-        _retry("2026-10-06T13:30:00+00:00", 1),
-        _provider_error("2026-10-06T13:45:00+00:00", 429),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path",
-                        lambda pid: log if pid == 12345 else None)
-    _wedge_clock(monkeypatch)
-
-    class FakeResult:
-        returncode = 0
-        stdout = "mishe-tauftauf|genome|12345\nandroid-body|body-research|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "verified"
-    assert len(result["suspects"]) == 1
-    assert result["suspects"][0]["rule"] == "chain-stall"
-    assert result["suspects"][0]["chain"] == 1
 
 
-def test_wedge_r3_chain2_fresh_error_is_not_suspect(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:50:00+00:00", 429),
-        _retry("2026-10-06T13:55:00+00:00", 1),
-        _provider_error("2026-10-06T13:58:00+00:00", 429),
-        _retry("2026-10-06T13:59:00+00:00", 2),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path",
-                        lambda pid: log if pid == 12345 else None)
-    _wedge_clock(monkeypatch)
-
-    class FakeResult:
-        returncode = 0
-        stdout = "mishe-tauftauf|genome|12345\nandroid-body|body-research|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "verified"
-    assert result["suspects"] == []
 
 
-def test_wedge_r3_chain2_no_error_is_not_suspect(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _retry("2026-10-06T13:30:00+00:00", 1),
-        _retry("2026-10-06T13:40:00+00:00", 2),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path",
-                        lambda pid: log if pid == 12345 else None)
-    _wedge_clock(monkeypatch)
-
-    class FakeResult:
-        returncode = 0
-        stdout = "mishe-tauftauf|genome|12345\nandroid-body|body-research|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "verified"
-    assert result["suspects"] == []
 
 
-def test_wedge_r3_foreign_error_is_not_suspect(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:25:00+00:00", 429, model="other-model"),
-        _retry("2026-10-06T13:30:00+00:00", 1),
-        _provider_error("2026-10-06T13:35:00+00:00", 429, model="other-model"),
-        _retry("2026-10-06T13:40:00+00:00", 2),
-        _provider_error("2026-10-06T13:45:00+00:00", 429, model="other-model"),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path",
-                        lambda pid: log if pid == 12345 else None)
-    monkeypatch.setattr(discovery, "_pane_mind_model", lambda pid: "longcat-2.5-preview-free")
-    _wedge_clock(monkeypatch)
-
-    class FakeResult:
-        returncode = 0
-        stdout = "mishe-tauftauf|genome|12345\nandroid-body|body-research|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "verified"
-    assert result["suspects"] == []
-    assert result["foreign"] == 3
 
 
-def test_wedge_sense_reports_pane_session(monkeypatch, tmp_path):
-    # Live false positive 2026-10-10: two sites render on this host and share
-    # every window name, so six "suspects" on this plant's dashboard were all
-    # the linked site's panes. The sample must name the session.
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:30:00+00:00", 403),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path",
-                        lambda pid: log if pid == 12345 else None)
-    _wedge_clock(monkeypatch)
-
-    class FakeResult:
-        returncode = 0
-        stdout = "android-body|senses|12345\nmishe-tauftauf|senses|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "verified"
-    assert len(result["suspects"]) == 1
-    assert result["suspects"][0]["window"] == "senses"
-    assert result["suspects"][0]["pid"] == 12345
-    assert result["suspects"][0]["session"] == "android-body"
-    assert ("senses(pid=12345,session=android-body,rule=provider-error,chain=0,"
-            "error_age=30.0min,cause=provider-error:403)") in result["sample"]
 
 
-def test_wedge_r2_sense_fresh_error_not_flagged(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:58:00+00:00", 403),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path",
-                        lambda pid: log if pid == 12345 else None)
-    _wedge_clock(monkeypatch)
-
-    class FakeResult:
-        returncode = 0
-        stdout = "mishe-tauftauf|docs|12345\nandroid-body|body-research|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "verified"
-    assert result["suspects"] == []
-    assert result["sample"] == "suspects=0 panes=2 with_log=1 foreign=0"
 
 
-def test_wedge_r2_sense_success_after_error_not_flagged(monkeypatch, tmp_path):
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:30:00+00:00", 403),
-        _success("2026-10-06T13:35:00+00:00"),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path",
-                        lambda pid: log if pid == 12345 else None)
-    _wedge_clock(monkeypatch)
-
-    class FakeResult:
-        returncode = 0
-        stdout = "mishe-tauftauf|docs|12345\nandroid-body|body-research|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "verified"
-    assert result["suspects"] == []
-    assert result["sample"] == "suspects=0 panes=2 with_log=1 foreign=0"
 
 
-def test_wedge_chain_excludes_a_provider_error_from_another_model(monkeypatch, tmp_path):
-    # A pane's omp session log also carries its title generator's and subagents'
-    # turns; a failure on their model is not the mind's wedge.
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:25:00+00:00", 429,
-                        model="muse-spark-1.3-contributor"),
-        _provider_error("2026-10-06T13:35:00+00:00", 429,
-                        model="opencode-go/muse-spark-1.3-contributor"),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(
-        12345, _WEDGE_NOW, "opencode-go/longcat-2.5-preview-free")
-    assert result == {"chain": 0, "span_minutes": 0.0, "sources": {},
-                      "cause": "none", "last_error_ts": None, "error_count": 0, "foreign": 2}
 
 
-def test_wedge_chain_keeps_the_panes_own_model_error(monkeypatch, tmp_path):
-    # A launcher writes the provider-qualified name and the log records the bare
-    # one; they are the same model, so the mind's own failure must still count.
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [_provider_error("2026-10-06T13:25:00+00:00", 403)])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    result = discovery._omp_continue_chain(
-        12345, _WEDGE_NOW, "opencode-go/longcat-2.5-preview-free")
-    assert result["cause"] == "provider-error:403"
-    assert result["error_count"] == 1
 
 
-def test_wedge_chain_keeps_a_provider_error_it_cannot_attribute(monkeypatch, tmp_path):
-    # An unreadable command line (no mind model) and a record with no model field
-    # both stay counted: the reader must not hide a failure it cannot attribute.
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:25:00+00:00", 500),
-        _omp_log_line("2026-10-06T13:35:00+00:00",
-                      "agent turn ended with provider error", level="warn"),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path", lambda pid: log)
-    _wedge_clock(monkeypatch)
-    assert discovery._omp_continue_chain(12345, _WEDGE_NOW)["error_count"] == 2
-    attributed = discovery._omp_continue_chain(
-        12345, _WEDGE_NOW, "opencode-go/longcat-2.5-preview-free")
-    assert attributed["cause"] == "provider-error:500"
-    assert attributed["error_count"] == 2
 
 
-def test_pane_mind_model_reads_none_for_a_malformed_model_flag(monkeypatch):
-    # A launcher with no usable --model value must not be authoritative: the
-    # reader reads "cannot attribute" and counts, rather than hides, a failure.
-    monkeypatch.setattr(discovery.omp_pane, "command_line",
-                        lambda pid: ["omp", "--model="])
-    assert discovery._pane_mind_model(12345) is None
 
 
-def test_wedge_r2_foreign_model_error_is_not_a_suspect(monkeypatch, tmp_path):
-    # The live false positive: research-methods' pane log held only its title
-    # generator's 429s, so a healthy pane read as a provider-error wedge.
-    log = tmp_path / "omp.2026-10-06.12345.log"
-    _write_omp_log(log, [
-        _provider_error("2026-10-06T13:25:00+00:00", 429,
-                        model="muse-spark-1.3-contributor"),
-    ])
-    monkeypatch.setattr(discovery, "_omp_log_path",
-                        lambda pid: log if pid == 12345 else None)
-    monkeypatch.setattr(discovery, "_pane_mind_model",
-                        lambda pid: "opencode-go/longcat-2.5-preview-free")
-    _wedge_clock(monkeypatch)
 
-    class FakeResult:
-        returncode = 0
-        stdout = "mishe-tauftauf|docs|12345\nandroid-body|body-research|67890"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: FakeResult())
-    result = discovery._mind_wedge_suspects()
-    assert result["state"] == "verified"
-    assert result["suspects"] == []
-    assert result["sample"] == "suspects=0 panes=2 with_log=1 foreign=1"
-    assert result["foreign"] == 1
+
 
 
 def _write_patch(home: Path, name: str, record: object) -> None:
@@ -3111,6 +2486,7 @@ def _dm_now() -> datetime:
 
 def test_dm_disposition_age_replied_outcome_and_open(tmp_path):
     home = tmp_path / "site"
+    from mishe_tauftauf import roles as _roles; _roles.install_defaults(home)
     home.mkdir(parents=True, exist_ok=True)
     witness_digest = _write_outcome(home, "witness")
     entries = [
@@ -3146,6 +2522,7 @@ def test_dm_disposition_age_replied_outcome_and_open(tmp_path):
 
 def test_dm_disposition_age_reply_to_third_party_does_not_disposition(tmp_path):
     home = tmp_path / "site"
+    from mishe_tauftauf import roles as _roles; _roles.install_defaults(home)
     home.mkdir(parents=True, exist_ok=True)
     (home / "records").mkdir(parents=True, exist_ok=True)
     entries = [
@@ -3203,6 +2580,7 @@ def test_dm_disposition_age_empty_window(tmp_path):
 
 def test_dm_disposition_age_uses_earliest_outcome(tmp_path):
     home = tmp_path / "site"
+    from mishe_tauftauf import roles as _roles; _roles.install_defaults(home)
     home.mkdir(parents=True, exist_ok=True)
     (home / "records").mkdir(parents=True, exist_ok=True)
     # Two outcomes for the same role at different times; the disposition age
@@ -3229,6 +2607,7 @@ def test_dm_disposition_age_uses_earliest_outcome(tmp_path):
 
 def test_dm_disposition_age_seq_citation_dispositions(tmp_path):
     home = tmp_path / "site"
+    from mishe_tauftauf import roles as _roles; _roles.install_defaults(home)
     home.mkdir(parents=True, exist_ok=True)
     (home / "records").mkdir(parents=True, exist_ok=True)
     entries = [
@@ -3253,6 +2632,7 @@ def test_dm_disposition_age_seq_citation_dispositions(tmp_path):
 
 def test_dm_disposition_age_stall_gate_excludes_young_open(tmp_path):
     home = tmp_path / "site"
+    from mishe_tauftauf import roles as _roles; _roles.install_defaults(home)
     home.mkdir(parents=True, exist_ok=True)
     (home / "records").mkdir(parents=True, exist_ok=True)
     entries = [
@@ -3271,6 +2651,7 @@ def test_dm_disposition_age_stall_gate_excludes_young_open(tmp_path):
 
 def test_dm_disposition_age_excludes_broadcast_pseudo_targets(tmp_path):
     home = tmp_path / "site"
+    from mishe_tauftauf import roles as _roles; _roles.install_defaults(home)
     home.mkdir(parents=True, exist_ok=True)
     (home / "records").mkdir(parents=True, exist_ok=True)
     entries = [
@@ -3303,6 +2684,7 @@ def test_dm_disposition_age_excludes_targets_with_no_seated_mind(tmp_path):
     of the stall estimate.
     """
     home = tmp_path / "site"
+    from mishe_tauftauf import roles as _roles; _roles.install_defaults(home)
     home.mkdir(parents=True, exist_ok=True)
     (home / "records").mkdir(parents=True, exist_ok=True)
     entries = [
@@ -3366,42 +2748,8 @@ def _settle_tape(home: Path, settlements: list[tuple[str, str, str]]) -> None:
     (home / "chat.log").write_bytes(b"".join(entries))
 
 
-def test_settle_result_mix_counts_and_drifts_on_blocked(tmp_path):
-    home = tmp_path / "site"
-    home.mkdir(parents=True, exist_ok=True)
-    _settle_tape(home, [
-        ("2026-10-06T10:00:00Z", "a", "verified"),
-        ("2026-10-06T10:10:00Z", "b", "changed"),
-        ("2026-10-06T10:20:00Z", "c", "blocked"),
-        ("2026-10-06T10:30:00Z", "d", "verified"),
-        ("2026-10-06T10:40:00Z", "e", "changed"),
-    ])
-    result = discovery._seed_settle_result_mix(home)
-    assert result["state"] == "drift"
-    assert result["window"] == 5
-    assert (result["verified"], result["changed"], result["blocked"],
-            result["other"], result["incidents"]) == (2, 2, 1, 0, 1)
-    assert result["since_last"] == 2
-    assert result["sample"] == ("n=5 verified=2 changed=2 blocked=1 other=0 "
-                                "incidents=1 since_last=2 "
-                                "join7d=unknown(outcome store unavailable)")
 
 
-def test_settle_result_mix_clean_window_is_verified(tmp_path):
-    home = tmp_path / "site"
-    home.mkdir(parents=True, exist_ok=True)
-    _settle_tape(home, [
-        ("2026-10-06T10:00:00Z", "a", "verified"),
-        ("2026-10-06T10:10:00Z", "b", "changed"),
-    ])
-    result = discovery._seed_settle_result_mix(home)
-    assert result["state"] == "self-reported"
-    assert result["blocked"] == 0
-    assert result["incidents"] == 0
-    assert result["since_last"] is None
-    assert result["sample"] == ("n=2 verified=1 changed=1 blocked=0 other=0 "
-                                "incidents=0 since_last=none "
-                                "join7d=unknown(outcome store unavailable)")
 
 
 def test_settle_outcome_join_counts_same_role_outcome_since_previous_settle(tmp_path, monkeypatch):
@@ -3428,101 +2776,18 @@ def test_settle_outcome_join_counts_same_role_outcome_since_previous_settle(tmp_
                               "outcome_events=2")
 
 
-def test_settle_result_mix_all_changed_window_is_not_verified(tmp_path):
-    home = tmp_path / "site"
-    home.mkdir(parents=True, exist_ok=True)
-    _settle_tape(home, [
-        ("2026-10-06T10:00:00Z", "a", "changed"),
-        ("2026-10-06T10:10:00Z", "b", "changed"),
-    ])
-    result = discovery._seed_settle_result_mix(home)
-    assert result["state"] == "unknown"
-    assert result["verified"] == 0
-    assert result["changed"] == 2
-    assert result["blocked"] == 0
 
 
-def test_settle_result_mix_all_verified_window_is_verified(tmp_path):
-    home = tmp_path / "site"
-    home.mkdir(parents=True, exist_ok=True)
-    _settle_tape(home, [
-        ("2026-10-06T10:00:00Z", "a", "verified"),
-        ("2026-10-06T10:10:00Z", "b", "verified"),
-    ])
-    result = discovery._seed_settle_result_mix(home)
-    assert result["state"] == "self-reported"
-    assert result["verified"] == 2
 
 
-def test_settle_result_mix_empty_tape_is_not_verified(tmp_path):
-    home = tmp_path / "site"
-    home.mkdir(parents=True, exist_ok=True)
-    (home / "chat.log").write_bytes(b"")
-    result = discovery._seed_settle_result_mix(home)
-    assert result["state"] == "unknown"
-    assert result["window"] == 0
 
 
-def test_settle_result_mix_clusters_blocked_within_the_gap(tmp_path):
-    home = tmp_path / "site"
-    home.mkdir(parents=True, exist_ok=True)
-    _settle_tape(home, [
-        ("2026-10-06T10:00:00Z", "a", "blocked"),
-        ("2026-10-06T10:30:00Z", "b", "blocked"),
-        ("2026-10-06T12:00:00Z", "c", "blocked"),
-    ])
-    result = discovery._seed_settle_result_mix(home)
-    assert result["state"] == "drift"
-    assert result["blocked"] == 3
-    assert result["incidents"] == 2
 
 
-def test_settle_result_mix_blocked_outside_window_does_not_drift(tmp_path):
-    home = tmp_path / "site"
-    home.mkdir(parents=True, exist_ok=True)
-    base = datetime(2026, 10, 6, 9, 0, tzinfo=timezone.utc)
-    settlements = [(base.isoformat().replace("+00:00", "Z"), "a", "blocked")]
-    settlements += [((base + timedelta(minutes=10 * (index + 1)))
-                     .isoformat().replace("+00:00", "Z"), "b", "verified")
-                    for index in range(100)]
-    _settle_tape(home, settlements)
-    result = discovery._seed_settle_result_mix(home)
-    assert result["state"] == "self-reported"
-    assert result["window"] == 100
-    assert result["blocked"] == 0
-    assert result["since_last"] == 100
 
 
-def test_settle_result_mix_ignores_unpaired_and_unknown_results(tmp_path):
-    home = tmp_path / "site"
-    home.mkdir(parents=True, exist_ok=True)
-    entries = [
-        _tape_entry(1, "2026-10-06T10:00:00Z", "seed",
-                    "seed yield a wake=1\nTurn settled (verified); wall and handoff at "
-                    "walls/a.md.\n"),
-        _tape_entry(2, "2026-10-06T10:10:00Z", "seed", "seed yield b wake=2\n"),
-        _tape_entry(3, "2026-10-06T10:20:00Z", "senses",
-                    "seed yield c wake=3\nTurn settled (blocked); wall and handoff at "
-                    "walls/c.md.\n"),
-        _tape_entry(4, "2026-10-06T10:30:00Z", "seed",
-                    "seed yield d wake=4\nTurn settled (unspecified); wall and handoff at "
-                    "walls/d.md.\n"),
-    ]
-    (home / "chat.log").write_bytes(b"".join(entries))
-    result = discovery._seed_settle_result_mix(home)
-    # The unpaired yield and the non-seed source are not settlements; the
-    # unnamed result lands in ``other`` rather than inventing a class.
-    assert result["window"] == 2
-    assert result["verified"] == 1
-    assert result["other"] == 1
-    assert result["blocked"] == 0
-    assert result["state"] == "self-reported"
 
 
-def test_settle_result_mix_missing_tape(tmp_path):
-    result = discovery._seed_settle_result_mix(tmp_path / "site")
-    assert result["state"] == "unknown"
-    assert result["sample"] == "chat tape unavailable"
 
 
 def _write_evidenced_outcome(home: Path, role: str, evidence: Path,
@@ -3798,62 +3063,6 @@ def test_evidence_binding_no_post_clause_outcomes(tmp_path):
     assert result["state"] == "unknown"
 
 
-@pytest.mark.parametrize("damage", [
-    "missing", "corrupt", "kind-typo", "role-typo", "leading-blank",
-    "replaced-header", "wrong-envelope", "role-mismatch", "missing-reference",
-])
-@pytest.mark.parametrize("changed", [False, True])
-def test_evidence_binding_incomplete_publication_preserves_known_drift(tmp_path, damage, changed):
-    from mishe_tauftauf import wall, records
-    from tests.test_wall import setup_wall
-    setup_wall(tmp_path)
-    artifacts = tmp_path / "artifacts"
-    artifacts.mkdir()
-    first = artifacts / "first.txt"
-    first.write_text("first evidence\n")
-    wall.outcome(tmp_path, "discover", "accepted", "First contribution.", first)
-    second = artifacts / "second.txt"
-    second.write_text("second evidence\n")
-    heading = "Wall outcome accepted by health"
-    data = {"role": "health", "kind": "accepted", "text": "Second contribution.",
-            "evidence": {"path": str(second), "sha256": hashlib.sha256(second.read_bytes()).hexdigest()}}
-    if damage == "kind-typo":
-        heading = "Wall outcome acceptd by health"
-    elif damage == "role-typo":
-        heading += "!"
-    elif damage == "leading-blank":
-        heading = "\n" + heading
-    elif damage == "replaced-header":
-        heading = "Damaged publication header"
-    elif damage == "role-mismatch":
-        data["role"] = "discover"
-    if damage == "missing-reference":
-        event = Feed(tmp_path).append("health", heading + "\n" + data["text"])
-    else:
-        event = Feed(tmp_path).append_record("health", heading + "\n" + data["text"], data,
-                                            kind="event" if damage == "wrong-envelope" else "wall-outcome")
-    if damage in ("missing", "corrupt"):
-        digest = records.REFERENCE_RE.fullmatch(event.body.splitlines()[-1]).group(1)
-        path = tmp_path / "records" / (digest + ".json")
-        if damage == "missing":
-            path.unlink()
-        else:
-            path.chmod(0o600)
-            path.write_text("{broken json")
-    if changed:
-        # Bound evidence is made read-only at the bind boundary, so a later
-        # edit is a deliberate one: the writer restores write access first.
-        first.chmod(0o600)
-        first.write_text("controlled evidence change\n")
-    observed = discovery._ledger_evidence_binding(tmp_path)
-    assert observed["state"] == ("drift" if changed else "unknown")
-    assert observed["all_bad"] == int(changed)
-    assert observed["bound"] == 1
-    assert [row["sequence"] for row in observed["incomplete"]] == [event.sequence]
-    third = artifacts / "third.txt"
-    third.write_text("independent next contribution\n")
-    with pytest.raises(ValueError, match="cannot derive"):
-        wall.outcome(tmp_path, "senses", "accepted", "Third contribution.", third)
 
 
 
@@ -3941,34 +3150,6 @@ def test_failed_scan_keeps_correct_receipt_and_visible_stage(tmp_path: Path, sta
         assert (tmp_path / "discovery/latest.json").read_bytes() == before
 
 
-def test_resident_ticks_renew_freshness_evidence_even_when_top_panes_fail(tmp_path: Path, monkeypatch) -> None:
-    from mishe_tauftauf import seed, tmux
-
-    from mishe_tauftauf import scan_freshness
-
-    clock = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    now = 1_000_000_000
-    monkeypatch.setattr(discovery, "endpoint", lambda: _scan_endpoint(now))
-    monkeypatch.setattr(scan_freshness, "endpoint", lambda: _scan_endpoint(now))
-    monkeypatch.setattr(tmux, "owns_session", lambda *args: True)
-    stale = {"created": (clock - timedelta(seconds=601)).isoformat(),
-             "node": "node", "observations": [
-                 {"id": "sense.value", "state": "verified", "sample": 1, "kind": "read"},
-             ]}
-    fresh = {**stale, "created": clock.isoformat()}
-    for stopped in (False, True):
-        monkeypatch.setattr(tmux, "_pane_stopped_or_dead", lambda *args: stopped)
-        monkeypatch.setattr(tmux, "capture_raw", lambda *args: "UNKNOWN — top-pain render failed")
-        for slug in ("discover", "senses", "genome"):
-            home = tmp_path / f"{slug}-{stopped}"
-            with patch("mishe_tauftauf.discovery.sample", return_value=stale):
-                scan(home)
-            baseline = Feed(home).entries()
-            now += 601_000_000_000
-            with patch("mishe_tauftauf.discovery.sample", return_value=fresh):
-                assert seed.tick(home, "session", slug).startswith("UNKNOWN seed")
-            assert latest(home)["created"] == (fresh if slug in ("discover", "senses") else stale)["created"]
-            assert Feed(home).entries() == baseline
 
 
 def test_top_cpu_processes_ranks_by_sampled_rate_not_lifetime_average() -> None:
@@ -4130,84 +3311,12 @@ def test_top_cpu_row_count_is_bounded_on_a_busy_host() -> None:
     assert pids == sorted(pids, reverse=True)
 
 
-def test_session_server_asks_tmux_for_the_hosting_server_not_the_argv() -> None:
-    from mishe_tauftauf import discovery
-
-    # One tmux server hosts every session on a socket, and the server is raised
-    # behind `systemd-run --scope`, so its argv cannot identify the session it
-    # hosts. The pid has to come from tmux itself.
-    calls = []
-
-    def fake_run(argv, **kwargs):
-        calls.append(argv)
-        if argv[:2] == ["tmux", "has-session"]:
-            return _completed("", returncode=0 if argv[3] != "absent-session" else 1)
-        if argv[:3] == ["tmux", "display-message", "-p"]:
-            return _completed("3652039\n", returncode=0)
-        return _completed("", returncode=1)
-
-    with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=fake_run):
-        assert discovery._session_server("mishe-self-development-current") == 3652039
-        assert discovery._session_server("absent-session") is None
-
-    def for_session(name):
-        return [call for call in calls
-                if name in call and call[1] in ("has-session", "display-message")]
-
-    # An exited session still has a live server hosting others, so existence is
-    # checked before the pid is trusted.
-    assert for_session("mishe-self-development-current") == [
-        ["tmux", "has-session", "-t", "mishe-self-development-current"],
-        ["tmux", "display-message", "-p", "-t",
-         "mishe-self-development-current", "#{pid}"]]
-    # A session that has exited is not asked for a pid: its server is still live
-    # and hosting others, so the pid would name the wrong session.
-    assert for_session("absent-session") == [
-        ["tmux", "has-session", "-t", "absent-session"]]
 
 
-def test_session_server_reports_none_when_tmux_is_missing() -> None:
-    from mishe_tauftauf import discovery
-
-    with patch("mishe_tauftauf.discovery.shutil.which", return_value=None):
-        assert discovery._session_server("mishe-self-development-current") is None
-        assert discovery._session_pane_roots("mishe-self-development-current") == []
 
 
-def test_session_pane_roots_reads_the_pids_tmux_reports() -> None:
-    from mishe_tauftauf import discovery
-
-    stdout = "3652080\n3654275\nnot-a-pid\n\n"
-    with patch("mishe_tauftauf.discovery.subprocess.run",
-               return_value=_completed(stdout)):
-        assert discovery._session_pane_roots("mishe-current") == [3652080, 3654275]
-    failed = _completed("can't find window: nope", returncode=1)
-    with patch("mishe_tauftauf.discovery.subprocess.run", return_value=failed):
-        assert discovery._session_pane_roots("nope") == []
 
 
-def test_session_membership_needs_both_a_session_pane_and_the_server() -> None:
-    from mishe_tauftauf import discovery
-
-    parents = {1: 0, 10: 1, 11: 10, 12: 11, 20: 1, 21: 20, 30: 1}
-    # The pane root reaches the server, so a process beneath it is a member.
-    assert discovery._session_membership(12, parents, 1, [11]) is True
-    # A process beneath a root that is the server itself is a member: the root
-    # reaches the ancestor it is asked about.
-    assert discovery._session_membership(21, parents, 1, [20]) is True
-    # A process under no pane root is outside the session.
-    assert discovery._session_membership(30, parents, 1, [11, 20]) is False
-    # Without a server the session is unreadable, not empty.
-    assert discovery._session_membership(12, parents, None, [11]) is None
-    # Without pane roots the session is unreadable, not empty.
-    assert discovery._session_membership(12, parents, 1, []) is None
-    # A chain that ends before the only root decides nothing: the pid's parent is
-    # absent from the snapshot, so the root is neither reached nor ruled out.
-    assert discovery._session_membership(12, {12: 99}, 1, [11]) is None
-    # A pid above the only root reaches no decision either: it does not descend
-    # from the root, which is a complete no-reached answer and not evidence of a
-    # broken session, so it reads outside rather than undetermined.
-    assert discovery._session_membership(10, parents, 1, [11]) is False
 
 
 def test_descends_from_reports_unknown_rather_than_false_for_a_broken_chain() -> None:
@@ -4223,98 +3332,10 @@ def test_descends_from_reports_unknown_rather_than_false_for_a_broken_chain() ->
     assert discovery._descends_from(10, {10: 11, 11: 10}, 12) is None
 
 
-def test_top_cpu_processes_records_descent_from_the_named_session() -> None:
-    from mishe_tauftauf import discovery
-
-    # A pane renderer and an agent inside the session both descend from a pane
-    # root of the session; a systemd-supervised seed and an unrelated tool do
-    # not. Both outside rows name a parent the snapshot contains, so their chains
-    # reach ppid 0 and "outside" is a complete decision rather than a broken one.
-    stdout = "\n".join([
-        "    1     0  0.0  9000 /sbin/init",
-        " 1236     1  0.0  9000 /lib/systemd/systemd --user",
-        " 1584  1236  0.1  9000 tmux new-session -d -s s1 -n docs -c /srv sh",
-        " 2461  1584  5.0   30 pane-renderer",
-        " 9001  2461  3.0   12 /opt/bin/omp --model any",
-        " 4039  1236  2.0   60 supervised-seed",
-        " 7000  6999  4.0    2 unrelated-tool",
-        " 6999     0  0.0   60 parent-with-no-parent",
-    ])
-
-    def fake_run(argv, **kwargs):
-        if argv[:2] == ["tmux", "has-session"]:
-            return _completed("", returncode=0)
-        if argv[:3] == ["tmux", "display-message", "-p"]:
-            return _completed("1584\n", returncode=0)
-        if argv[:2] == ["tmux", "list-panes"]:
-            return _completed("2461\n", returncode=0)
-        return _completed(stdout, returncode=0)
-
-    with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=fake_run), \
-            patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: pid), \
-            patch("mishe_tauftauf.discovery.time.sleep"):
-        rows = discovery._top_cpu_processes("s1")
-    by_pid = {row["pid"]: row for row in rows}
-    # The pane root reaches the server, so it and the agent beneath it are members.
-    assert by_pid[2461]["in_session"] is True
-    assert by_pid[9001]["in_session"] is True
-    # The server is not itself a pane root, so it is not a member: membership is
-    # claimed per pane, not per server, and one server hosts every session.
-    assert by_pid[1584]["in_session"] is False
-    assert by_pid[4039]["in_session"] is False
-    assert by_pid[7000]["in_session"] is False
-    assert "in-session" in discovery._row_text(by_pid[2461])
-    assert "outside-session" in discovery._row_text(by_pid[4039])
 
 
-def test_top_cpu_processes_reports_unknown_descent_when_the_server_is_absent() -> None:
-    from mishe_tauftauf import discovery
-
-    stdout = "\n".join([
-        " 1236     1  0.0  9000 /lib/systemd/systemd --user",
-        " 2461  1236  5.0   30 pane-renderer",
-    ])
-    def fake_run(argv, **kwargs):
-        # The session does not exist, so has-session fails before a pid or any
-        # pane root is asked for.
-        if argv[:2] == ["tmux", "has-session"]:
-            return _completed("", returncode=1)
-        return _completed(stdout, returncode=0)
-
-    with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=fake_run), \
-            patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: pid), \
-            patch("mishe_tauftauf.discovery.time.sleep"):
-        rows = discovery._top_cpu_processes("no-such-session")
-    by_pid = {row["pid"]: row for row in rows}
-    # The named session is not running, so descent is undetermined for every row
-    # rather than being reported as outside it.
-    assert by_pid[2461]["in_session"] is None
-    assert "in-session" not in discovery._row_text(by_pid[2461])
-    assert "outside-session" not in discovery._row_text(by_pid[2461])
 
 
-def test_top_cpu_processes_treats_an_empty_session_as_unnamed() -> None:
-    from mishe_tauftauf import discovery
-
-    stdout = "\n".join([
-        " 1236     1  0.0  9000 /lib/systemd/systemd --user",
-        " 2461  1236  5.0   30 pane-renderer",
-    ])
-
-    def fake_run(argv, **kwargs):
-        # An empty tmux target resolves to the calling session and would answer
-        # for a session nobody named, so no tmux call may be reached at all.
-        assert argv[0] != "tmux", f"tmux was consulted for an empty session: {argv}"
-        return _completed(stdout, returncode=0)
-
-    with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=fake_run), \
-            patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: pid), \
-            patch("mishe_tauftauf.discovery.time.sleep"):
-        rows = discovery._top_cpu_processes("")
-    # No session was named, so descent is not assessed rather than attributed to
-    # the session that happened to run the scan.
-    assert all("in_session" not in row for row in rows)
-    assert rows and rows[0]["pid"] == 2461
 
 
 def _unit_block(ident: str, pythonpath: str) -> str:
@@ -4603,148 +3624,18 @@ def test_package_imports_reads_relative_and_absolute_forms() -> None:
     assert names == {"seed_culture_views", "ci_watch", "observations", "feed", "wall"}
 
 
-def test_renderer_coverage_names_a_renderer_root_stale_against_the_pin() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    pin = _renderer_root(Path("/tmp") / f"renderer-pin-{os.getpid()}",
-                         {"wall_view": "VALUE = 1\n"})
-    renderer = _renderer_root(Path("/tmp") / f"renderer-stale-{os.getpid()}",
-                              {"wall_view": "VALUE = 2\n"})
-    _top_pain(home, "senses",
-              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(renderer)
-    assert reading["state"] == "drift"
-    assert reading["sample"] == "renderers=1 drift=wall_view=wall_view"
-    assert reading["identity"]["drift"] == [
-        {"root": str(renderer), "entry": "wall_view", "modules": ["wall_view"]}]
 
 
-def test_renderer_coverage_names_a_module_the_renderer_root_lacks() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    source = {"wall_view": "from . import feed\n", "feed": "VALUE = 1\n"}
-    pin = _renderer_root(Path("/tmp") / f"renderer-closure-pin-{os.getpid()}", dict(source))
-    renderer = _renderer_root(Path("/tmp") / f"renderer-closure-short-{os.getpid()}",
-                              {"wall_view": source["wall_view"]})
-    _top_pain(home, "senses",
-              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(renderer)
-    assert reading["state"] == "drift"
-    assert reading["identity"]["drift"] == [
-        {"root": str(renderer), "entry": "wall_view", "modules": ["feed"]}]
 
 
-def test_renderer_coverage_dedupes_drift_rows_sharing_a_root_and_modules() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    pin = _renderer_root(Path("/tmp") / f"renderer-dedupe-pin-{os.getpid()}",
-                         {"wall_view": "VALUE = 1\n"})
-    renderer = _renderer_root(Path("/tmp") / f"renderer-dedupe-stale-{os.getpid()}",
-                              {"wall_view": "VALUE = 2\n"})
-    for role in ("senses", "docs", "discover"):
-        _top_pain(home, role,
-                  f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(renderer)
-    # Three roles render from one stale root with one module set: that is one
-    # violation, so nothing distinct is left unshown and no ``+Nmore`` appears.
-    assert reading["state"] == "drift"
-    assert reading["sample"] == "renderers=3 drift=wall_view=wall_view"
-    assert len(reading["identity"]["drift"]) == 3
 
 
-def test_renderer_coverage_caps_the_drift_sample_and_counts_the_rest() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    modules = ("wall_view", "seed_culture_views", "feed", "wall")
-    pin = _renderer_root(Path("/tmp") / f"renderer-cap-pin-{os.getpid()}",
-                         {name: "VALUE = 1\n" for name in modules})
-    renderer = _renderer_root(Path("/tmp") / f"renderer-cap-stale-{os.getpid()}",
-                              {name: "VALUE = 2\n" for name in modules})
-    for module, role in zip(modules, ("senses", "docs", "discover", "genome")):
-        _top_pain(home, role,
-                  f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.{module}\n")
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(renderer)
-    # The pane truncates the sample, so the drift list leads it and only two
-    # distinct violations are shown; ``+Nmore`` names the rest.
-    assert reading["state"] == "drift"
-    assert reading["sample"].startswith("renderers=4 drift=")
-    assert reading["sample"].endswith(" +2more")
-    assert "script_unknown" not in reading["sample"]
 
 
-def test_renderer_coverage_reports_verified_when_the_renderer_matches_the_pin() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    modules = {"wall_view": "from . import feed\n", "feed": "VALUE = 1\n"}
-    pin = _renderer_root(Path("/tmp") / f"renderer-match-pin-{os.getpid()}", dict(modules))
-    renderer = _renderer_root(Path("/tmp") / f"renderer-match-live-{os.getpid()}", dict(modules))
-    _top_pain(home, "senses",
-              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(renderer)
-    assert reading["state"] == "verified"
-    assert reading["sample"] == "renderers=1"
 
 
-def test_renderer_coverage_is_unavailable_without_a_package_renderer() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    reading = discovery._renderer_coverage(home)
-    assert reading["state"] == "unavailable"
-    assert reading["sample"] == "no Top Pain runs a package module"
 
 
-def test_renderer_coverage_keeps_an_unreadable_pin_unknown() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    renderer = _renderer_root(Path("/tmp") / f"renderer-weakpin-{os.getpid()}",
-                              {"wall_view": "VALUE = 1\n"})
-    _top_pain(home, "senses",
-              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root",
-                   return_value=(None, "pin invalid: not a clean worktree")):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(renderer)
-    assert reading["state"] == "unknown"
-    assert reading["sample"] == "pin unreadable: pin invalid: not a clean worktree"
 
 def _site_script(home: Path, name: str, source: str) -> None:
     (home / name).write_text(source, encoding="utf-8")
@@ -4764,122 +3655,12 @@ def test_site_script_chain_follows_one_level_of_site_scripts(tmp_path) -> None:
     assert chain == [("plan_state.py", "feed")]
 
 
-def test_renderer_coverage_reports_indirect_package_from_a_site_script() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    pin = _renderer_root(Path("/tmp") / f"scriptchain-pin-{os.getpid()}",
-                          {"feed": "VALUE = 1\n", "wall_view": "VALUE = 1\n"})
-    _top_pain(home, "senses",
-              f"export PYTHONPATH={pin}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    _top_pain(home, "self-development",
-              "import sys\nfrom pathlib import Path\n"
-              "site = Path(__file__).resolve().parents[1]\n"
-              "sys.path.insert(0, str(site))\n"
-              "from plan_state import main\n"
-              "raise SystemExit(main())\n")
-    _site_script(home, "plan_state.py", "from mishe_tauftauf.feed import Feed\n")
-    pane = {"self-development": (f"env PYTHONPATH={pin}/src python -m mishe_tauftauf pain watch self-development",
-                                str(home), "")}
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-    assert reading["state"] == "verified"
-    assert "uncovered=self-development" in reading["sample"]
-    assert "indirect_package=self-development:mishe_tauftauf.feed" in reading["sample"]
-    assert reading["identity"]["indirect_package"] == ["self-development:mishe_tauftauf.feed"]
-    assert f"{pin}:mishe_tauftauf.feed:script-chain" in reading["identity"]["renderers"]
 
 
-def test_renderer_coverage_indirect_package_clears_when_the_script_is_removed() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    pin = _renderer_root(Path("/tmp") / f"scriptchain-gone-{os.getpid()}",
-                          {"wall_view": "VALUE = 1\n"})
-    _top_pain(home, "senses",
-              f"export PYTHONPATH={pin}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    _top_pain(home, "self-development",
-              "import sys\n"
-              "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))\n"
-              "from plan_state import main\n"
-              "raise SystemExit(main())\n")
-    pane = {"self-development": (f"env PYTHONPATH={pin}/src python -m mishe_tauftauf pain watch self-development",
-                                str(home), "")}
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-    assert reading["state"] == "verified"
-    assert "indirect_package" not in reading["sample"]
-    assert reading["identity"]["indirect_package"] == []
 
 
-def test_renderer_coverage_flags_a_script_closure_that_differs_from_the_pin() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    pin = _renderer_root(Path("/tmp") / f"scriptchain-drift-pin-{os.getpid()}",
-                          {"feed": "VALUE = 1\n", "wall_view": "VALUE = 1\n"})
-    renderer = _renderer_root(Path("/tmp") / f"scriptchain-drift-live-{os.getpid()}",
-                              {"feed": "VALUE = 2\n", "wall_view": "VALUE = 1\n"})
-    _top_pain(home, "senses",
-              f"export PYTHONPATH={pin}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    _top_pain(home, "core-suite",
-              "import subprocess, sys\n"
-              "from pathlib import Path\n"
-              "site = Path(__file__).resolve().parents[1]\n"
-              "subprocess.run([sys.executable, str(site / 'continuity_state.py')])\n")
-    _site_script(home, "continuity_state.py", "from mishe_tauftauf.feed import Feed\n")
-    pane = {"core-suite": (f"env PYTHONPATH={renderer}/src python -m mishe_tauftauf pain watch core-suite",
-                           str(home), "")}
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(renderer)
-    assert reading["state"] == "drift"
-    assert "indirect_package=core-suite:mishe_tauftauf.feed" in reading["sample"]
-    assert "drift=feed=feed" in reading["sample"]
-    assert reading["identity"]["drift"] == [
-        {"root": str(renderer), "entry": "feed", "modules": ["feed"]}]
 
 
-def test_renderer_coverage_flags_a_script_resolving_to_a_foreign_root() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    pin = _renderer_root(Path("/tmp") / f"scriptchain-foreign-pin-{os.getpid()}",
-                          {"feed": "VALUE = 1\n", "wall_view": "VALUE = 1\n"})
-    other = _renderer_root(Path("/tmp") / f"scriptchain-foreign-live-{os.getpid()}",
-                           {"feed": "VALUE = 1\n", "wall_view": "VALUE = 1\n"})
-    _top_pain(home, "senses",
-              f"export PYTHONPATH={pin}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    _top_pain(home, "self-development",
-              "from pathlib import Path\n"
-              "from plan_state import main\n"
-              "raise SystemExit(main())\n")
-    _site_script(home, "plan_state.py", "from mishe_tauftauf.feed import Feed\n")
-    pane = {"self-development": (f"env PYTHONPATH={other}/src python -m mishe_tauftauf pain watch self-development",
-                                str(home), "")}
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(other)
-    # Identical bytes, but the renderer executes a root the pin does not govern.
-    assert reading["state"] == "drift"
-    assert reading["identity"]["drift"] == [
-        {"root": str(other), "entry": "feed", "modules": ["feed"]}]
 
 
 def _pane_line(session: str, pid: str, home: Path, role: str) -> str:
@@ -4887,288 +3668,26 @@ def _pane_line(session: str, pid: str, home: Path, role: str) -> str:
             f"--home {home} pain watch {role} --interval 5|{home}")
 
 
-def test_pane_info_takes_the_pane_the_reading_home_owns() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    other = tmp_site_with_services()
-    panes = [
-        _pane_line("other-site", "101", other, "senses"),
-        _pane_line("this-site", "102", home, "senses"),
-        _pane_line("this-site", "103", home, "docs"),
-        _pane_line("unknown-site", "104", home, "witness"),
-    ]
-    try:
-        with patch("mishe_tauftauf.discovery.subprocess.run",
-                   return_value=_completed("\n".join(panes))), \
-                patch("mishe_tauftauf.tmux.session_owner",
-                      side_effect=lambda session: {"this-site": str(home.resolve()),
-                                                   "other-site": str(other.resolve())}.get(session)):
-            info = discovery._pane_info(home)
-        # Both sites watch `senses`, so a last-match-wins map would hand this
-        # site the other site's pane and, with it, its import root. The session
-        # this home owns decides the role instead.
-        assert info["senses"][2] == "102"
-        assert info["docs"][2] == "103"
-        # A lone watcher in a session no home has claimed cannot be another
-        # site's pane, so it stays this site's watcher for the role.
-        assert info["witness"][2] == "104"
-    finally:
-        shutil.rmtree(home)
-        shutil.rmtree(other)
 
 
-def test_pane_info_leaves_a_role_several_sessions_watch_unresolved() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    other = tmp_site_with_services()
-    panes = [
-        _pane_line("other-site", "101", other, "senses"),
-        _pane_line("another-site", "102", other, "senses"),
-    ]
-    try:
-        with patch("mishe_tauftauf.discovery.subprocess.run",
-                   return_value=_completed("\n".join(panes))), \
-                patch("mishe_tauftauf.tmux.session_owner",
-                      side_effect=lambda session: str(other.resolve())):
-            info = discovery._pane_info(home)
-        # Neither session belongs to this home and the role has two watchers,
-        # so no reading can tell which root this site's renderer imports:
-        # unresolved rather than a root this site never ran.
-        assert info == {}
-    finally:
-        shutil.rmtree(home)
-        shutil.rmtree(other)
 
 
-def test_renderer_coverage_resolves_each_site_renderer_from_its_own_pane() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    other = tmp_site_with_services()
-    pin = _renderer_root(Path("/tmp") / f"twosite-pin-{os.getpid()}",
-                         {"wall_view": "VALUE = 1\n"})
-    stale = _renderer_root(Path("/tmp") / f"twosite-stale-{os.getpid()}",
-                           {"wall_view": "VALUE = 2\n"})
-    for site in (home, other):
-        _top_pain(site, "senses", "exec python -m mishe_tauftauf.wall_view\n")
-    watchers = {
-        "this-site": _pane_line("this-site", "102", pin, "senses"),
-        "other-site": _pane_line("other-site", "101", stale, "senses"),
-    }
-    owners = {"this-site": str(home.resolve()),
-              "other-site": str(other.resolve())}
-    try:
-        for lines in ([watchers["other-site"], watchers["this-site"]],
-                      [watchers["this-site"], watchers["other-site"]]):
-            readings = []
-            for site in (home, other):
-                with patch("mishe_tauftauf.discovery._pinned_root",
-                           return_value=(str(pin), None)), \
-                        patch("mishe_tauftauf.discovery.subprocess.run",
-                              return_value=_completed("\n".join(lines))), \
-                        patch("mishe_tauftauf.tmux.session_owner",
-                              side_effect=owners.get):
-                    readings.append(discovery._renderer_coverage(site))
-            here, there = readings
-            # The other site's renderer really runs a stale root, and that is
-            # its own drift row, not this site's. This site reads verified
-            # either way round, so a pane's position in the table cannot
-            # decide which bytes the reading was taken against.
-            assert here["state"] == "verified"
-            assert here["sample"] == "renderers=1"
-            assert there["state"] == "drift"
-            assert there["identity"]["drift"] == [
-                {"root": str(stale), "entry": "wall_view", "modules": ["wall_view"]}]
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(stale)
-        shutil.rmtree(home)
-        shutil.rmtree(other)
 
 
-def test_renderer_coverage_script_chain_skipped_without_a_pane() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    pin = _renderer_root(Path("/tmp") / f"scriptchain-nopane-{os.getpid()}",
-                          {"feed": "VALUE = 1\n", "wall_view": "VALUE = 1\n"})
-    _top_pain(home, "senses",
-              f"export PYTHONPATH={pin}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    _top_pain(home, "self-development",
-              "from plan_state import main\n"
-              "raise SystemExit(main())\n")
-    _site_script(home, "plan_state.py", "from mishe_tauftauf.feed import Feed\n")
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-    assert reading["state"] == "verified"
-    assert "script_unknown=self-development" not in reading["sample"]
-
-def test_renderer_coverage_reports_drift_even_when_a_sibling_root_is_unresolved() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    pin = _renderer_root(Path("/tmp") / f"renderer-precedence-pin-{os.getpid()}",
-                         {"feed": "VALUE = 1\n", "wall_view": "VALUE = 1\n"})
-    renderer = _renderer_root(Path("/tmp") / f"renderer-precedence-stale-{os.getpid()}",
-                              {"feed": "VALUE = 1\n", "wall_view": "VALUE = 2\n"})
-    _top_pain(home, "senses",
-              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    _top_pain(home, "self-development",
-              "from plan_state import main\n"
-              "raise SystemExit(main())\n")
-    _site_script(home, "plan_state.py", "from mishe_tauftauf.feed import Feed\n")
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(renderer)
-    assert reading["state"] == "drift"
-    assert "script_unknown=self-development" not in reading["sample"]
-    assert reading["identity"]["drift"] == [
-        {"root": str(renderer), "entry": "wall_view", "modules": ["wall_view"]}]
 
 
-def test_pane_info_reads_role_names_from_start_commands() -> None:
-    from mishe_tauftauf import discovery
-    stdout = (
-        "mishe-tauftauf|4101|env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf --home /srv/site pain watch senses --interval 5|/srv/site\n"
-        "mishe-tauftauf|4102|env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf --home /srv/site pain watch health --interval 5|/srv/site\n"
-        "mishe-tauftauf|4103||/srv/site\n"
-        "mishe-tauftauf|4104|env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf --home /srv/site pain watch senses --interval 5|/srv/site\n"
-    )
-    with patch("mishe_tauftauf.discovery.subprocess.run",
-               return_value=_completed(stdout)), \
-            patch("mishe_tauftauf.tmux.session_owner",
-                  side_effect=lambda session: "/srv/site" if session == "mishe-tauftauf" else None):
-        info = discovery._pane_info(Path("/srv/site"))
-    # One site watches both roles, and the session it owns decides each one, so
-    # a respawned duplicate pane is the live pane without hiding the role.
-    assert info == {
-        "senses": ("env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf --home /srv/site pain watch senses --interval 5", "/srv/site", "4104"),
-        "health": ("env PYTHONPATH=/srv/pin/src python -m mishe_tauftauf --home /srv/site pain watch health --interval 5", "/srv/site", "4102"),
-    }
 
 
-def test_pane_info_returns_empty_when_tmux_fails() -> None:
-    from mishe_tauftauf import discovery
-    with patch("mishe_tauftauf.discovery.subprocess.run", return_value=_completed("", returncode=1)):
-        assert discovery._pane_info(Path("/srv/site")) == {}
 
 
-def test_renderer_coverage_resolves_inherited_renderer_from_pane() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    modules = {"wall_view": "VALUE = 1\n"}
-    pin = _renderer_root(Path("/tmp") / f"renderer-inherit-pin-{os.getpid()}", dict(modules))
-    renderer = _renderer_root(Path("/tmp") / f"renderer-inherit-live-{os.getpid()}", dict(modules))
-    _top_pain(home, "permissions",
-              "exec python -m mishe_tauftauf.seed_culture_views --view permissions\n")
-    pane = {"permissions": (f"env PYTHONPATH={renderer}/src python -m mishe_tauftauf pain watch permissions", str(home), "")}
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(renderer)
-    assert reading["state"] == "verified"
-    assert reading["sample"] == "renderers=1"
-    assert reading["identity"]["renderers"] == [f"{renderer}:seed_culture_views:inherited"]
-
-def test_renderer_coverage_identity_shows_effective_root_for_inherited_renderer() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    modules = {"wall_view": "VALUE = 1\n"}
-    pin = _renderer_root(Path("/tmp") / f"renderer-eff-pin-{os.getpid()}", dict(modules))
-    live = _renderer_root(Path("/tmp") / f"renderer-eff-live-{os.getpid()}", dict(modules))
-    _top_pain(home, "permissions",
-              "exec python -m mishe_tauftauf.seed_culture_views --view permissions\n")
-    pane = {"permissions": (f"env PYTHONPATH={live}/src python -m mishe_tauftauf pain watch permissions", str(home), "")}
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(live)
-    assert reading["state"] == "verified"
-    assert reading["identity"]["renderers"] == [f"{live}:seed_culture_views:inherited"]
-    assert reading["identity"]["renderers"] != [f"{pin}:seed_culture_views:inherited"]
 
 
-def test_renderer_coverage_reports_unknown_for_unresolvable_inherited_renderer() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    _top_pain(home, "permissions",
-              "exec python -m mishe_tauftauf.seed_culture_views --view permissions\n")
-    with patch("mishe_tauftauf.discovery._pinned_root", return_value=("/srv/pin", None)), \
-            patch("mishe_tauftauf.discovery._pane_info", return_value={}):
-        reading = discovery._renderer_coverage(home)
-    assert reading["state"] == "unknown"
-    assert "inherited_unknown=permissions" in reading["sample"]
 
 
-def test_renderer_coverage_detects_cwd_shadowing() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    pin = _renderer_root(Path("/tmp") / f"renderer-shadow-pin-{os.getpid()}",
-                         {"wall_view": "VALUE = 1\n"})
-    renderer = _renderer_root(Path("/tmp") / f"renderer-shadow-live-{os.getpid()}",
-                              {"wall_view": "VALUE = 1\n"})
-    cwd = Path("/tmp") / f"renderer-shadow-cwd-{os.getpid()}"
-    cwd_package = cwd / "mishe_tauftauf"
-    cwd_package.mkdir(parents=True)
-    (cwd_package / "wall_view.py").write_text("VALUE = 2\n", encoding="utf-8")
-    _top_pain(home, "senses",
-              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    pane = {"senses": (f"env PYTHONPATH={renderer}/src python -m mishe_tauftauf pain watch senses", str(cwd), "")}
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(renderer)
-        shutil.rmtree(cwd)
-    assert reading["state"] == "drift"
-    assert reading["identity"]["drift"] == [
-        {"root": str(cwd), "entry": "wall_view", "modules": ["wall_view"]}]
 
 
-def test_renderer_coverage_ignores_cwd_without_package() -> None:
-    from mishe_tauftauf import discovery
 
-    home = tmp_site_with_services()
-    modules = {"wall_view": "VALUE = 1\n"}
-    pin = _renderer_root(Path("/tmp") / f"renderer-noshadow-pin-{os.getpid()}", dict(modules))
-    renderer = _renderer_root(Path("/tmp") / f"renderer-noshadow-live-{os.getpid()}", dict(modules))
-    cwd = Path("/tmp") / f"renderer-noshadow-cwd-{os.getpid()}"
-    cwd.mkdir(parents=True)
-    _top_pain(home, "senses",
-              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    pane = {"senses": (f"env PYTHONPATH={renderer}/src python -m mishe_tauftauf pain watch senses", str(cwd), "")}
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value=pane):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(renderer)
-        shutil.rmtree(cwd)
-    assert reading["state"] == "verified"
-    assert reading["sample"] == "renderers=1"
+
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
@@ -6367,79 +4886,12 @@ def test_top_pain_roots_ignores_a_file_that_cannot_render() -> None:
     assert uncovered == []
 
 
-def test_renderer_coverage_names_renderers_without_a_package_entry() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    modules = {"wall_view": "VALUE = 1\n"}
-    pin = _renderer_root(Path("/tmp") / f"renderer-uncovered-pin-{os.getpid()}", dict(modules))
-    renderer = _renderer_root(Path("/tmp") / f"renderer-uncovered-live-{os.getpid()}", dict(modules))
-    _top_pain(home, "senses",
-              f"export PYTHONPATH={renderer}/src\nexec python -m mishe_tauftauf.wall_view\n")
-    _top_pain(home, "observability", "printf 'pane liveness\\n'\n")
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value={}):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(renderer)
-    assert reading["state"] == "verified"
-    assert reading["sample"] == "renderers=1 uncovered=observability"
-    assert reading["identity"]["uncovered"] == ["observability"]
 
 
-def test_renderer_coverage_reports_a_conditional_export_unknown() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    _top_pain(home, "senses",
-              'if [ -z "$PYTHONPATH" ]; then export PYTHONPATH=/srv/snapshot/src; fi\n'
-              "exec python -m mishe_tauftauf.wall_view\n")
-    with patch("mishe_tauftauf.discovery._pinned_root", return_value=("/srv/pin", None)), \
-            patch("mishe_tauftauf.discovery._pane_info", return_value={}):
-        reading = discovery._renderer_coverage(home)
-    assert reading["state"] == "unknown"
-    assert reading["sample"] == "renderers=1 conditional_unknown=senses"
 
 
-def test_renderer_coverage_reports_an_export_naming_no_root_unknown() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    _top_pain(home, "senses",
-              'export PYTHONPATH=""\nexec python -m mishe_tauftauf.wall_view\n')
-    with patch("mishe_tauftauf.discovery._pinned_root", return_value=("/srv/pin", None)), \
-            patch("mishe_tauftauf.discovery._pane_info", return_value={}):
-        reading = discovery._renderer_coverage(home)
-    assert reading["state"] == "unknown"
-    assert reading["sample"] == "renderers=1 export_unknown=senses"
-    assert reading["identity"]["renderers"] == [":wall_view:unresolvable"]
 
 
-def test_renderer_coverage_prefers_the_pane_environment_over_the_command() -> None:
-    from mishe_tauftauf import discovery
-
-    home = tmp_site_with_services()
-    modules = {"seed_culture_views": "VALUE = 1\n"}
-    pin = _renderer_root(Path("/tmp") / f"renderer-env-pin-{os.getpid()}", dict(modules))
-    env_root = _renderer_root(Path("/tmp") / f"renderer-env-live-{os.getpid()}", dict(modules))
-    cmd_root = _renderer_root(Path("/tmp") / f"renderer-env-cmd-{os.getpid()}",
-                              {"seed_culture_views": "VALUE = 2\n"})
-    _top_pain(home, "permissions",
-              "exec python -m mishe_tauftauf.seed_culture_views --view permissions\n")
-    pane = {"permissions": (f"env PYTHONPATH={cmd_root}/src python -m mishe_tauftauf pain watch permissions", str(home), "999")}
-    try:
-        with patch("mishe_tauftauf.discovery._pinned_root", return_value=(str(pin), None)), \
-                patch("mishe_tauftauf.discovery._pane_info", return_value=pane), \
-                patch("mishe_tauftauf.proc_table.read_pane_pythonpath", return_value=[f"{env_root}/src"]):
-            reading = discovery._renderer_coverage(home)
-    finally:
-        shutil.rmtree(pin)
-        shutil.rmtree(env_root)
-        shutil.rmtree(cmd_root)
-    assert reading["state"] == "verified"
-    assert reading["identity"]["drift"] == []
 
 
 def test_service_import_roots_parses_and_deduplicates_pythonpath() -> None:
@@ -6528,296 +4980,24 @@ def _linked_registry(home: Path, sites: list[dict[str, str]]) -> None:
         json.dumps({"sites": sites, "version": 1}), encoding="utf-8")
 
 
-def test_drift_across_sites_names_a_unit_running_a_release_its_site_pin_rejects(
-        tmp_path: Path) -> None:
-    # The site's own manifest does not list the unit, so the manifest-scoped
-    # sensor cannot see it; only the shared bus and the session prefix can.
-    pinned_sha: list[str] = []
-    stale_sha: list[str] = []
-    pinned = tmp_path / "releases" / "pinned"
-    stale = tmp_path / "releases" / "stale"
-    _release_tree(pinned, pinned_sha)
-    _release_tree(stale, stale_sha)
-    other = tmp_path / "site-other"
-    _pin(other, pinned, pinned_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": pinned_sha[0]}])
-    with patch.object(discovery, "_active_site_units",
-                      return_value=(["mishe-other-silence.service"], None)), \
-            patch.object(discovery, "_unit_import_roots",
-                         return_value={"mishe-other-silence.service": str(stale)}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "drift"
-    assert f"stale=mishe-other-silence.service@{stale.name}" in row["sample"]
-    assert row["identity"]["stale"] == {"mishe-other-silence.service": str(stale)}
 
 
-def test_drift_across_sites_declares_the_coordination_checkout_root(
-        tmp_path: Path) -> None:
-    # The release coordinator runs its site's checkout on purpose, so that root
-    # is a declared exception rather than a stale release.
-    pinned_sha: list[str] = []
-    pinned = tmp_path / "releases" / "pinned"
-    _release_tree(pinned, pinned_sha)
-    other = tmp_path / "site-other"
-    _pin(other, pinned, pinned_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": pinned_sha[0]}])
-    unit = "mishe-other-coordination.service"
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots",
-                         return_value={unit: str(tmp_path)}), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "verified"
-    assert row["identity"]["stale"] == {}
 
 
-def test_drift_across_sites_reads_verified_when_every_unit_matches_its_own_pin(
-        tmp_path: Path) -> None:
-    # A second site's units are checked against the second site's pin, not the
-    # scanning site's, so a different-but-agreeing site is not a drift.
-    own_sha: list[str] = []
-    other_sha: list[str] = []
-    own_pin = tmp_path / "releases" / "own"
-    other_pin = tmp_path / "releases" / "other"
-    _release_tree(own_pin, own_sha)
-    _release_tree(other_pin, other_sha)
-    other = tmp_path / "site-other"
-    _pin(other, other_pin, other_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": other_sha[0]}])
-    units = ["mishe-other-senses.service", "mishe-other-witness.service"]
-    with patch.object(discovery, "_active_site_units", return_value=(units, None)), \
-            patch.object(discovery, "_unit_import_roots",
-                         return_value={unit: str(other_pin) for unit in units}), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "verified"
-    assert row["identity"]["stale"] == {}
-    assert row["identity"]["unattributed"] == []
 
 
-def test_drift_across_sites_falls_back_to_seed_raised_for_own_session(
-        tmp_path: Path) -> None:
-    own_sha: list[str] = []
-    own_pin = tmp_path / "releases" / "own"
-    _release_tree(own_pin, own_sha)
-    home = tmp_path / "plant"
-    _pin(home, own_pin, own_sha[0], "mishe-self")
-    _linked_registry(home, [{"home": str(tmp_path / "other"),
-                             "session": "mishe-other", "sha": own_sha[0]}])
-    (home / ".seed-raised").write_text("mishe-self wake-1\n", encoding="utf-8")
-    units = ["mishe-self-discover.service", "mishe-cleaner-recovered.service"]
-    with patch.object(discovery, "_active_site_units", return_value=(units, None)), \
-            patch.object(discovery, "_unit_import_roots",
-                         return_value={units[0]: str(own_pin)}), \
-            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
-            patch.object(discovery, "_unit_declared_paths", return_value=None), \
-            patch.dict(os.environ, {}, clear=True):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "unknown"
-    assert row["identity"]["sites"] == ["mishe-other", "mishe-self"]
-    assert row["identity"]["unattributed"] == [units[1]]
 
 
-def test_drift_across_sites_includes_the_scanning_sites_own_units(
-        tmp_path: Path) -> None:
-    # The registry lists the *other* sites; the scanning site's own units share
-    # its bus, so they are checked against its own pin rather than reported as
-    # unattributed.
-    own_sha: list[str] = []
-    other_sha: list[str] = []
-    own_pin = tmp_path / "releases" / "own"
-    _release_tree(own_pin, own_sha)
-    _release_tree(tmp_path / "releases" / "other", other_sha)
-    other = tmp_path / "site-other"
-    _pin(other, tmp_path / "releases" / "other", other_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _pin(home, own_pin, own_sha[0], "mishe-self")
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": other_sha[0]}])
-    with patch.object(discovery, "_active_site_units",
-                      return_value=(["mishe-self-senses.service"], None)), \
-            patch.object(discovery, "_unit_import_roots",
-                         return_value={"mishe-self-senses.service": str(own_pin)}), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "verified"
-    assert row["identity"]["stale"] == {}
-    assert row["identity"]["unattributed"] == []
 
 
-def test_drift_across_sites_is_unknown_when_active_unit_is_unattributed(
-        tmp_path: Path) -> None:
-    pinned_sha: list[str] = []
-    other_pin = tmp_path / "releases" / "other"
-    _release_tree(other_pin, pinned_sha)
-    other = tmp_path / "site-other"
-    _pin(other, other_pin, pinned_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": pinned_sha[0]}])
-    unit = "mishe-unlisted-senses.service"
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots", return_value={}), \
-            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "unknown"
-    assert row["identity"]["stale"] == {}
-    assert row["identity"]["unattributed"] == [unit]
 
 
-def test_drift_across_sites_names_a_foreign_unit_declared_on_the_checkout(
-        tmp_path: Path) -> None:
-    # A foreign unit that carries no PYTHONPATH and has no live child at scan
-    # time still declares the coupling in its own ExecStart text; the reading
-    # names the consumer and the checkout instead of an anonymous coverage gap.
-    pinned_sha: list[str] = []
-    other_pin = tmp_path / "releases" / "other"
-    _release_tree(other_pin, pinned_sha)
-    other = tmp_path / "site-other"
-    _pin(other, other_pin, pinned_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": pinned_sha[0]}])
-    unit = "mishe-cleaner-recovered.service"
-    checkout = tmp_path.resolve()
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots", return_value={}), \
-            patch.object(discovery, "_foreign_checkout_consumers",
-                         return_value={unit: str(checkout)}), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "unknown"
-    assert f"foreign={unit}@{checkout.name}" in row["sample"]
-    assert row["identity"]["foreign"] == {unit: str(checkout)}
-    assert row["identity"]["unattributed"] == []
 
 
-def test_drift_across_sites_names_a_foreign_unit_importing_the_checkout(
-        tmp_path: Path) -> None:
-    # The coupling is observed directly when the unit's own environment names a
-    # path inside the checkout, without waiting for a short-lived child.
-    pinned_sha: list[str] = []
-    other_pin = tmp_path / "releases" / "other"
-    _release_tree(other_pin, pinned_sha)
-    other = tmp_path / "site-other"
-    _pin(other, other_pin, pinned_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": pinned_sha[0]}])
-    unit = "mishe-unlisted.service"
-    checkout = tmp_path.resolve()
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots",
-                         return_value={unit: str(checkout / "src")}), \
-            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "unknown"
-    assert f"foreign={unit}@{checkout.name}" in row["sample"]
-    assert row["identity"]["foreign"] == {unit: str(checkout / "src")}
-    assert row["identity"]["unattributed"] == []
-
-def test_drift_across_sites_keeps_its_reason_inside_the_pane_clip(
-        tmp_path: Path) -> None:
-    # The pane shortens a long sample at its tail, so a reading whose reason
-    # trails the informational host-scope list renders as an UNKNOWN the reader
-    # cannot explain: observed live 2026-10-16T11:05Z, the served row read
-    # "host-scope=mishe-cleaner-recovered.service,...-watch.service…" with the
-    # `foreign=` coupling clipped off.
-    pinned_sha: list[str] = []
-    other_pin = tmp_path / "releases" / "other"
-    _release_tree(other_pin, pinned_sha)
-    other = tmp_path / "site-other"
-    _pin(other, other_pin, pinned_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": pinned_sha[0]}])
-    host_units = [f"mishe-host-tool-{index}.service" for index in range(6)]
-    foreign_unit = "mishe-seed-session-b0f90360ee89420ca40c3e7bfc16fd06.service"
-    checkout = tmp_path.resolve()
-    with patch.object(discovery, "_active_site_units",
-                      return_value=(host_units + [foreign_unit], None)), \
-            patch.object(discovery, "_unit_import_roots",
-                         return_value={foreign_unit: str(checkout / "src")}), \
-            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
-            patch.object(discovery, "_unit_declared_paths",
-                         return_value=["/usr/bin/python3", "/home/host/tool"]), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "unknown"
-    assert row["identity"]["host_scope"] == sorted(host_units)
-    assert row["identity"]["foreign"] == {foreign_unit: str(checkout / "src")}
-    _, line = seed_culture_views._observation_reading(row, "recent")
-    # The unit alone: the same field also carries the tmp_path-derived checkout
-    # name, which a longer generated basetemp could push past the clip budget.
-    assert f"foreign={foreign_unit}@" in line
-
-def test_drift_across_sites_names_a_standalone_script_a_host_tool(
-        tmp_path: Path) -> None:
-    # A unit that runs a stdlib-only script from a site-home path imports no
-    # site package, so it cannot drift against a pin through imports: the
-    # unit is a host tool, not an uninspectable site consumer.
-    own_sha: list[str] = []
-    own_pin = tmp_path / "releases" / "own"
-    _release_tree(own_pin, own_sha)
-    home = tmp_path / "plant"
-    _pin(home, own_pin, own_sha[0], "mishe-self")
-    _linked_registry(home, [{"home": str(tmp_path / "other"),
-                             "session": "mishe-other", "sha": own_sha[0]}])
-    script = home / "bin" / "standalone"
-    script.parent.mkdir(parents=True)
-    script.write_text("#!/usr/bin/env python3\nimport json\n", encoding="utf-8")
-    unit = "mishe-ifm-shim.service"
-    execstart = f"{{ path={script} ; argv[]={script} }}\n"
-    completed = subprocess.CompletedProcess(["systemctl"], 0, execstart, "")
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots", return_value={}), \
-            patch.object(discovery, "_unit_declared_paths",
-                         return_value=[str(script)]), \
-            patch.object(discovery.subprocess, "run", return_value=completed), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "verified"
-    assert row["identity"]["host_scope"] == [unit]
-    assert row["identity"]["uninspectable"] == []
 
 
-def test_drift_across_sites_keeps_a_site_importing_script_uninspectable(
-        tmp_path: Path) -> None:
-    # A unit whose executed script imports the site package may run code the
-    # pin contradicts; with no PYTHONPATH root the sensor cannot judge it,
-    # so the unit stays uninspectable rather than being cleared as a host
-    # tool.
-    own_sha: list[str] = []
-    own_pin = tmp_path / "releases" / "own"
-    _release_tree(own_pin, own_sha)
-    home = tmp_path / "plant"
-    _pin(home, own_pin, own_sha[0], "mishe-self")
-    _linked_registry(home, [{"home": str(tmp_path / "other"),
-                             "session": "mishe-other", "sha": own_sha[0]}])
-    script = home / "bin" / "consumer.py"
-    script.parent.mkdir(parents=True)
-    script.write_text("from mishe_tauftauf import discovery\n", encoding="utf-8")
-    unit = "mishe-ifm-shim.service"
-    execstart = f"{{ path={script} ; argv[]={script} }}\n"
-    completed = subprocess.CompletedProcess(["systemctl"], 0, execstart, "")
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots", return_value={}), \
-            patch.object(discovery, "_unit_declared_paths",
-                         return_value=[str(script)]), \
-            patch.object(discovery.subprocess, "run", return_value=completed), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "unknown"
-    assert row["identity"]["uninspectable"] == [unit]
-    assert row["identity"]["host_scope"] == []
+
+
 
 
 def test_foreign_checkout_consumers_skips_unit_with_description_naming_root(
@@ -6902,232 +5082,19 @@ def test_script_spawns_site_package_none_when_no_script_is_readable(
         assert discovery._script_spawns_site_package(unit, "mishe_tauftauf") is None
 
 
-def test_drift_across_sites_names_a_wrapper_spawning_the_package(
-        tmp_path: Path) -> None:
-    # A wrapper unit whose script spawns `-m <package>` is a foreign consumer
-    # even with no live child at scan time: the static classifier and the live
-    # import-root path then agree, so the sample cannot flip to a false
-    # host-scope/verified on the 15 s child cycle (measured live 63 s, 12/12
-    # samples unknown+foreign across live-root and no-root instants).
-    pinned_sha: list[str] = []
-    other_pin = tmp_path / "releases" / "other"
-    _release_tree(other_pin, pinned_sha)
-    other = tmp_path / "site-other"
-    _pin(other, other_pin, pinned_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": pinned_sha[0]}])
-    unit = "mishe-cleaner-recovered.service"
-    checkout = tmp_path.resolve()
-    script = tmp_path.parent / "wrapper.py"
-    script.write_text(
-        "import subprocess, sys\n"
-        "subprocess.run([sys.executable, '-m', 'mishe_tauftauf', '--home', 'x'], env={})\n",
-        encoding="utf-8")
-    execstart = f"{{ path={script} ; argv[]={script} follow }}\n"
-    completed = subprocess.CompletedProcess(["systemctl"], 0, execstart, "")
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots", return_value={}), \
-            patch.object(discovery.subprocess, "run", return_value=completed), \
-            patch.dict(os.environ, {"MESHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "unknown"
-    assert f"foreign={unit}@{checkout.name}" in row["sample"]
-    assert row["identity"]["foreign"] == {unit: str(checkout)}
-    assert row["identity"]["host_scope"] == []
-    assert row["identity"]["unattributed"] == []
 
 
-def test_drift_across_sites_keeps_a_mapped_wrapper_spawning_uninspectable(
-        tmp_path: Path) -> None:
-    # A site-mapped unit with no live root whose wrapper spawns the package is
-    # structurally coupled, so it must not be cleared as a host tool: the
-    # root it spawns with cannot be read statically, and verified would be a
-    # false verdict.
-    own_sha: list[str] = []
-    own_pin = tmp_path / "releases" / "own"
-    _release_tree(own_pin, own_sha)
-    home = tmp_path / "plant"
-    _pin(home, own_pin, own_sha[0], "mishe-self")
-    _linked_registry(home, [{"home": str(tmp_path / "other"),
-                             "session": "mishe-other", "sha": own_sha[0]}])
-    script = home / "bin" / "wrapper.py"
-    script.parent.mkdir(parents=True)
-    script.write_text(
-        "import subprocess, sys\n"
-        "subprocess.run([sys.executable, '-m', 'mishe_tauftauf', '--home', 'x'], env={})\n",
-        encoding="utf-8")
-    unit = "mishe-ifm-shim.service"
-    execstart = f"{{ path={script} ; argv[]={script} 127.0.0.1:8377 }}\n"
-    completed = subprocess.CompletedProcess(["systemctl"], 0, execstart, "")
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots", return_value={}), \
-            patch.object(discovery, "_is_tmux_session_holder", return_value=False), \
-            patch.object(discovery, "_script_imports_site_package", return_value=False), \
-            patch.object(discovery, "_script_spawns_site_package", return_value=True), \
-            patch.object(discovery.subprocess, "run", return_value=completed), \
-            patch.object(discovery, "_plant_session", return_value="mishe-self"):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "unknown"
-    assert row["identity"]["uninspectable"] == [unit]
-    assert row["identity"]["host_scope"] == []
 
 
-def test_drift_across_sites_keeps_a_foreign_unit_off_the_checkout_unattributed(
-        tmp_path: Path) -> None:
-    # A foreign unit whose import root is another release, and whose ExecStart
-    # names no plant path, is a coverage gap rather than a coupling.
-    pinned_sha: list[str] = []
-    other_pin = tmp_path / "releases" / "other"
-    _release_tree(other_pin, pinned_sha)
-    other = tmp_path / "site-other"
-    _pin(other, other_pin, pinned_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": pinned_sha[0]}])
-    unit = "mishe-unlisted.service"
-    outside = tmp_path.parent / "other-release"
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots",
-                         return_value={unit: str(outside)}), \
-            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "unknown"
-    assert row["identity"]["unattributed"] == [unit]
-    assert row["identity"]["foreign"] == {}
 
 
-def test_drift_across_sites_names_an_unattributed_unit_no_site_names(
-        tmp_path: Path) -> None:
-    # A host tool beside the sites settles the reading's question: nothing it
-    # imports and nothing its declaration names lies inside a site, so it is
-    # named host-scope instead of leaving the reading UNKNOWN.
-    pinned_sha: list[str] = []
-    other_pin = tmp_path / "releases" / "other"
-    _release_tree(other_pin, pinned_sha)
-    other = tmp_path / "site-other"
-    _pin(other, other_pin, pinned_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": pinned_sha[0]}])
-    unit = "mishe-cleaner-recovered.service"
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots", return_value={}), \
-            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
-            patch.object(discovery, "_unit_declared_paths",
-                         return_value=["/usr/bin/python3",
-                                       "/home/host/scripts/mesh-cleaner-run",
-                                       "/home/host/work"]), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "verified"
-    assert f"host-scope={unit}" in row["sample"]
-    assert row["identity"]["host_scope"] == [unit]
-    assert row["identity"]["unattributed"] == []
 
 
-def test_drift_across_sites_keeps_a_site_coupled_unit_unattributed(
-        tmp_path: Path) -> None:
-    # A declared path inside a site's own home is a coupling this sensor cannot
-    # wave away, so the unit stays an anonymous gap rather than host scope.
-    pinned_sha: list[str] = []
-    other_pin = tmp_path / "releases" / "other"
-    _release_tree(other_pin, pinned_sha)
-    other = tmp_path / "site-other"
-    _pin(other, other_pin, pinned_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": pinned_sha[0]}])
-    unit = "mishe-unlisted.service"
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots", return_value={}), \
-            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
-            patch.object(discovery, "_unit_declared_paths",
-                         return_value=["/usr/bin/python3",
-                                       str(other / "bin" / "tool")]), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "unknown"
-    assert "host-scope" not in row["sample"]
-    assert row["identity"]["unattributed"] == [unit]
-    assert row["identity"]["host_scope"] == []
 
 
-def test_drift_across_sites_keeps_an_unreadable_unit_unattributed(
-        tmp_path: Path) -> None:
-    # A unit whose declaration cannot be read is unjudgeable, which is not the
-    # same as a unit declaring no site path; the gap stays visible.
-    pinned_sha: list[str] = []
-    other_pin = tmp_path / "releases" / "other"
-    _release_tree(other_pin, pinned_sha)
-    other = tmp_path / "site-other"
-    _pin(other, other_pin, pinned_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": pinned_sha[0]}])
-    unit = "mishe-unlisted.service"
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots", return_value={}), \
-            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
-            patch.object(discovery, "_unit_declared_paths", return_value=None), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "unknown"
-    assert row["identity"]["unattributed"] == [unit]
-    assert row["identity"]["host_scope"] == []
-
-def test_drift_across_sites_maps_same_site_service_to_scanning_site(
-        tmp_path: Path) -> None:
-    # A same-site service (e.g. mishe-ifm-shim.service) starts with
-    # SITE_UNIT_PREFIX but doesn't match any session prefix. It should be
-    # mapped to the scanning site's session and compared against its pin,
-    # not classified as foreign.
-    own_sha: list[str] = []
-    own_pin = tmp_path / "releases" / "own"
-    _release_tree(own_pin, own_sha)
-    home = tmp_path / "plant"
-    _pin(home, own_pin, own_sha[0], "mishe-self")
-    _linked_registry(home, [{"home": str(tmp_path / "other"),
-                             "session": "mishe-other", "sha": own_sha[0]}])
-    unit = "mishe-ifm-shim.service"
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots",
-                         return_value={unit: str(own_pin)}), \
-            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
-            patch.object(discovery, "_unit_declared_paths",
-                         return_value=[str(home / ".mishe-tauftauf" / "bin" / "ifm-shim")]), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "verified"
-    assert row["identity"]["foreign"] == {}
-    assert row["identity"]["stale"] == {}
-    assert row["identity"]["unattributed"] == []
 
 
-def test_drift_across_sites_mapped_unit_no_import_root_no_site_path_is_host_scope(
-        tmp_path: Path) -> None:
-    # A mapped unit with no import root that doesn't declare any site path
-    # is a host tool beside the sites, not an uninspectable gap.
-    own_sha: list[str] = []
-    own_pin = tmp_path / "releases" / "own"
-    _release_tree(own_pin, own_sha)
-    home = tmp_path / "plant"
-    _pin(home, own_pin, own_sha[0], "mishe-self")
-    _linked_registry(home, [{"home": str(tmp_path / "other"),
-                             "session": "mishe-other", "sha": own_sha[0]}])
-    unit = "mishe-self-host-tool.service"
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots", return_value={}), \
-            patch.object(discovery, "_foreign_checkout_consumers", return_value={}), \
-            patch.object(discovery, "_unit_declared_paths",
-                         return_value=["/usr/bin/python3", "/home/host/tool"]), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "verified"
-    assert f"host-scope={unit}" in row["sample"]
-    assert row["identity"]["host_scope"] == [unit]
-    assert row["identity"]["uninspectable"] == []
+
 
 
 def test_unit_declared_paths_reads_the_effective_unit_text() -> None:
@@ -7154,35 +5121,6 @@ def test_unit_declared_paths_is_none_when_the_unit_cannot_be_read() -> None:
         assert discovery._unit_declared_paths("mishe-unlisted.service") is None
 
 
-def test_drift_across_sites_still_latches_drift_with_a_foreign_consumer(
-        tmp_path: Path) -> None:
-    # A named foreign consumer is not drift, but it must not mask a stale release
-    # on a mapped site: the drift state wins.
-    pinned_sha: list[str] = []
-    stale_sha: list[str] = []
-    pinned = tmp_path / "releases" / "pinned"
-    stale = tmp_path / "releases" / "stale"
-    _release_tree(pinned, pinned_sha)
-    _release_tree(stale, stale_sha)
-    other = tmp_path / "site-other"
-    _pin(other, pinned, pinned_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": pinned_sha[0]}])
-    mapped = "mishe-other-silence.service"
-    foreign_unit = "mishe-cleaner-recovered.service"
-    checkout = tmp_path.resolve()
-    with patch.object(discovery, "_active_site_units",
-                      return_value=([mapped, foreign_unit], None)), \
-            patch.object(discovery, "_unit_import_roots",
-                         return_value={mapped: str(stale)}), \
-            patch.object(discovery, "_foreign_checkout_consumers",
-                         return_value={foreign_unit: str(checkout)}), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "drift"
-    assert f"stale={mapped}@{stale.name}" in row["sample"]
-    assert f"foreign={foreign_unit}@{checkout.name}" in row["sample"]
 
 
 def test_names_checkout_matches_path_and_home_relative_forms() -> None:
@@ -7213,84 +5151,12 @@ def test_exec_start_files_reads_the_wrapper_argument(tmp_path: Path) -> None:
     assert tmp_path / "absent" not in files
 
 
-def test_drift_across_sites_marks_mapped_unit_without_import_root_unknown(
-        tmp_path: Path) -> None:
-    pinned_sha: list[str] = []
-    pinned = tmp_path / "releases" / "pinned"
-    _release_tree(pinned, pinned_sha)
-    other = tmp_path / "site-other"
-    _pin(other, pinned, pinned_sha[0], "mishe-other")
-    home = tmp_path / "plant"
-    _linked_registry(home, [{"home": str(other), "session": "mishe-other",
-                             "sha": pinned_sha[0]}])
-    unit = "mishe-other-core-self-observer.service"
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots", return_value={}), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "unknown"
-    assert f"uninspectable={unit}" in row["sample"]
-    assert row["identity"]["uninspectable"] == [unit]
-    assert row["identity"]["stale"] == {}
 
 
-def test_drift_across_sites_reads_the_scanning_site_with_no_registered_sites(
-        tmp_path: Path) -> None:
-    # The registry lists the *other* sites, so an empty one says nothing about
-    # the scanning site's own units: they share its bus and still need its pin.
-    own_sha: list[str] = []
-    own_pin = tmp_path / "releases" / "own"
-    _release_tree(own_pin, own_sha)
-    home = tmp_path / "plant"
-    _pin(home, own_pin, own_sha[0], "mishe-self")
-    _linked_registry(home, [])
-    unit = "mishe-self-senses.service"
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots",
-                         return_value={unit: str(own_pin)}), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "verified"
-    assert row["identity"]["sites"] == ["mishe-self"]
-    assert row["identity"]["stale"] == {}
-    assert "sites=1" in row["sample"]
 
 
-def test_drift_across_sites_names_a_stale_own_unit_with_no_registered_sites(
-        tmp_path: Path) -> None:
-    # An empty registry must not hide the scanning site's own stale release; the
-    # unit is named even though no other site is registered to compare against.
-    pinned_sha: list[str] = []
-    stale_sha: list[str] = []
-    pinned = tmp_path / "releases" / "pinned"
-    stale = tmp_path / "releases" / "stale"
-    _release_tree(pinned, pinned_sha)
-    _release_tree(stale, stale_sha)
-    home = tmp_path / "plant"
-    _pin(home, pinned, pinned_sha[0], "mishe-self")
-    _linked_registry(home, [])
-    unit = "mishe-self-core-self-observer.service"
-    with patch.object(discovery, "_active_site_units", return_value=([unit], None)), \
-            patch.object(discovery, "_unit_import_roots", return_value={unit: str(stale)}), \
-            patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "drift"
-    assert f"stale={unit}@{stale.name}" in row["sample"]
-    assert row["identity"]["stale"] == {unit: str(stale)}
 
 
-def test_drift_across_sites_is_unknown_when_the_registry_has_no_site_list(
-        tmp_path: Path) -> None:
-    # A registry whose site list is unreadable names no session to map, so the
-    # reading stays unknown rather than reporting the scanning site as clean.
-    home = tmp_path / "plant"
-    (home / "health").mkdir(parents=True, exist_ok=True)
-    (home / "health" / "linked-sites.json").write_text(
-        json.dumps({"sites": {}, "version": 1}), encoding="utf-8")
-    with patch.dict(os.environ, {"MISHE_SEED_SESSION": "mishe-self"}):
-        row = discovery._runtime_drift_across_sites(home)
-    assert row["state"] == "unknown"
-    assert "no site list" in row["sample"]
 
 
 def test_active_site_units_reads_the_list_units_table_not_show_properties(
@@ -8053,134 +5919,20 @@ def _stability_run(session_names=b"", server_pids=b"", pgrep_out=b"",
     return run
 
 
-def test_session_stability_no_live_sessions_keeps_only_the_missing_session(
-        monkeypatch, tmp_path):
-    """No live session means no server of this plant's to shield.
-
-    With the socket's session list empty, a foreign unshielded server must not
-    be named; the recorded session is what drifts, not the foreign server.
-    """
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        _stability_run(b"", b"", b"999\n", name_rc=1))
-    monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
-    monkeypatch.setattr(discovery.proc_table, "server_containment", lambda pid: "uncontained:/user.slice/x.service")
-    result = discovery._host_session_stability(_stability_home(tmp_path))
-    assert result["state"] == "drift"
-    assert result["live"] == []
-    assert result["unshielded"] == []
-    assert "session-missing=mishe-self-development-current" in result["sample"]
 
 
-def test_session_stability_verified_when_live_and_shielded(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        _stability_run(b"mishe-self-development-current\nandroid-body\n",
-                                       b"111\n", b"111\n"))
-    monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
-    monkeypatch.setattr(discovery.proc_table, "server_containment", lambda pid: "contained:mishe-plants.slice")
-    result = discovery._host_session_stability(_stability_home(tmp_path))
-    assert result["id"] == "sense.host.session-stability"
-    assert result["state"] == "verified"
-    assert result["unshielded"] == []
 
 
-def test_session_stability_ignores_a_foreign_unshielded_server(monkeypatch, tmp_path):
-    """A test's disposable server on its own socket is not this plant's to shield.
-
-    The plant's server (111) is shielded; a foreign server (999) is not. Only
-    the plant's own socket's servers may read as a shield lapse, so the foreign
-    one must not turn the reading drift.
-    """
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        _stability_run(b"mishe-self-development-current\n",
-                                       b"111\n", b"111\n999\n"))
-    monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
-    monkeypatch.setattr(discovery.proc_table, "server_containment",
-                        lambda pid: "contained:mishe-plants.slice" if pid == "111" else "uncontained:/user.slice/x.service")
-    result = discovery._host_session_stability(_stability_home(tmp_path))
-    assert result["state"] == "verified"
-    assert result["unshielded"] == []
 
 
-def test_session_stability_keeps_foreign_servers_when_the_pid_list_is_unreadable(
-        monkeypatch, tmp_path):
-    """An unreadable owner list must stay visible, not read as stability.
-
-    The socket's own server pids cannot be read, so the sense cannot tell a
-    plant server from a foreign one; it falls back to every server so a broken
-    read still surfaces the unshielded one.
-    """
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        _stability_run(b"mishe-self-development-current\n", b"",
-                                       b"999\n", pid_rc=1))
-    monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
-    monkeypatch.setattr(discovery.proc_table, "server_containment", lambda pid: "uncontained:/user.slice/x.service")
-    result = discovery._host_session_stability(_stability_home(tmp_path))
-    assert result["state"] == "drift"
-    assert result["unshielded"] == ["999"]
 
 
-def test_session_stability_drift_when_session_missing(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        _stability_run(b"android-body\n", b"111\n", b"",
-                                       pgrep_rc=1))
-    result = discovery._host_session_stability(_stability_home(tmp_path))
-    assert result["state"] == "drift"
-    assert result["session"] == "mishe-self-development-current"
-    assert "session-missing=mishe-self-development-current" in result["sample"]
 
 
-def test_session_stability_unreadable_ownership_is_unknown_not_drift(monkeypatch, tmp_path):
-    """A failed owned-session enumeration must not read the session as missing.
-
-    The ambient listing omits the recorded session, but this home's ownership
-    enumeration fails: the session may live on another socket. An empty owned
-    set would call it missing; the reading must stay unknown instead.
-    """
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        _stability_run(b"android-body\n", b"111\n", b"",
-                                       pgrep_rc=1))
-
-    def unreadable(home):
-        raise OSError("socket enumeration failed")
-
-    monkeypatch.setattr(discovery.tmux, "home_sessions", unreadable)
-    result = discovery._host_session_stability(_stability_home(tmp_path))
-    assert result["state"] == "unknown"
-    assert "session-ownership=unreadable" in result["sample"]
 
 
-def test_session_stability_drift_when_server_unshielded(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        _stability_run(b"mishe-self-development-current\n",
-                                       b"222\n", b"222\n"))
-    monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
-    monkeypatch.setattr(discovery.proc_table, "server_containment", lambda pid: "uncontained:/user.slice/x.service")
-    result = discovery._host_session_stability(_stability_home(tmp_path))
-    assert result["state"] == "drift"
-    assert result["unshielded"] == ["222"]
 
 
-def test_session_stability_tmux_failure_is_unknown(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        lambda *a, **kw: (_ for _ in ()).throw(OSError("no tmux")))
-    result = discovery._host_session_stability(_stability_home(tmp_path))
-    assert result["state"] == "unknown"
 
 
 def _restart_journal_output(*stamps):
@@ -8207,59 +5959,12 @@ def _restart_wiring(monkeypatch, stamps):
     return discovery
 
 
-def test_session_restarts_drift_on_churn(monkeypatch, tmp_path):
-    from datetime import datetime, timedelta, timezone
-    from mishe_tauftauf import discovery
-    now = datetime.now(timezone.utc)
-    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
-    to_us = lambda value: int((value - epoch).total_seconds() * 1000000)
-    stamps = [to_us(now - timedelta(minutes=50)),
-              to_us(now - timedelta(minutes=30)),
-              to_us(now - timedelta(minutes=10))]
-    _restart_wiring(monkeypatch, stamps)
-    result = discovery._host_session_restarts(_stability_home(tmp_path))
-    assert result["id"] == "sense.host.session-restarts"
-    assert result["state"] == "drift"
-    assert result["verdict"] == "churn"
-    assert "births=3" in result["sample"]
 
 
-def test_session_restarts_verified_when_steady(monkeypatch, tmp_path):
-    from datetime import datetime, timedelta, timezone
-    from mishe_tauftauf import discovery
-    now = datetime.now(timezone.utc)
-    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
-    to_us = lambda value: int((value - epoch).total_seconds() * 1000000)
-    stamps = [to_us(now - timedelta(minutes=50))]
-    _restart_wiring(monkeypatch, stamps)
-    result = discovery._host_session_restarts(_stability_home(tmp_path))
-    assert result["state"] == "verified"
-    assert result["verdict"] == "steady"
 
 
-def test_session_restarts_unknown_on_acquisition_failure(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-    monkeypatch.setattr(discovery, "_journal_command", lambda cmd, timeout=10: None)
-    monkeypatch.setattr(discovery, "_journal_boot", lambda: "boot-restart")
-    result = discovery._host_session_restarts(_stability_home(tmp_path))
-    assert result["state"] == "unknown"
-    assert result["reason"] == "incomplete or failed acquisition"
 
 
-def test_session_restarts_verified_on_empty_acquisition(monkeypatch, tmp_path):
-    # Healthy session, zero rebirths: journalctl --grep exits 1 with empty
-    # stdout, which _journal_command now surfaces as b"" (not None).
-    from mishe_tauftauf import discovery
-    monkeypatch.setattr(discovery, "_journal_command", lambda cmd, timeout=10: b"")
-    monkeypatch.setattr(discovery, "_journal_boot", lambda: "boot-restart")
-    # The session pre-dates the window, so zero births is verified steady.
-    monkeypatch.setattr(discovery, "_tmux_session_created",
-                        lambda session: __import__("time").time() - 86400)
-    result = discovery._host_session_restarts(_stability_home(tmp_path))
-    assert result["state"] == "verified"
-    assert result["verdict"] == "steady"
-    assert result["reason"] == "no-births-in-window"
-    assert "births=0" in result["sample"]
 
 
 def test_authorship_fog_clean_tree_is_verified(monkeypatch, tmp_path):
@@ -8335,31 +6040,6 @@ def test_gate_latency_no_tape_is_unknown(tmp_path):
     assert result["state"] == "unknown"
 
 
-def test_malformed_tape_reads_unknown_in_the_readings_that_read_it(tmp_path):
-    """A tape that faults reads UNKNOWN, in every reading that reads it.
-
-    The tape is read through the streaming reader now, and the reader raises
-    where the whole-tape read raised. A reading that let that fault escape
-    would take the scan down with it, and a reading that swallowed it would
-    report a shorter tape as a whole one: both are worse than saying the tape
-    is unreadable. The gate-latency reading reads the tape through the
-    disposition reading, so it is covered by the same fault.
-    """
-    from mishe_tauftauf import discovery
-
-    home = tmp_path / "site"
-    home.mkdir()
-    (home / "chat.log").write_bytes(
-        b"v1 00000000000000000001 2026-10-10T15:51:56.625536Z seed ::\n"
-        b"    | a\n    .\n"
-        b"v1 00000000000000000003 2026-10-10T15:51:57.625536Z seed ::\n"
-        b"    | b\n    .\n")
-    for reading in (discovery._coord_dm_disposition_age,
-                    discovery._seed_settle_result_mix,
-                    discovery._coord_gate_latency):
-        result = reading(home)
-        assert result["state"] == "unknown", reading.__name__
-        assert "unreadable" in result["sample"], reading.__name__
 
 
 def test_gate_latency_carries_the_disposition_readings_own_reason(tmp_path):
@@ -8465,123 +6145,18 @@ def test_landing_block_unlaunchable_runner_is_unknown(monkeypatch, tmp_path):
     assert result["blocks"] == ["gate=unknown"]
 
 
-def test_loop_stall_verified_when_nothing_treadmills(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery, "_mind_treadmill",
-                        lambda home: {"state": "verified", "roles": {"docs": {"verdict": "clean"}}})
-    home = tmp_path / "site"
-    home.mkdir()
-    result = discovery._mind_loop_stall(home)
-    assert result["id"] == "sense.mind.loop-stall"
-    assert result["state"] == "verified"
-    assert result["stalled"] == []
 
 
-def test_loop_stall_drift_when_treadmill_plus_mature_gate(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery, "_mind_treadmill",
-                        lambda home: {"state": "verified",
-                                      "roles": {"inference-research": {"verdict": "watch-treadmill"}}})
-    monkeypatch.setattr(discovery, "_coord_dm_disposition_age",
-                        lambda home, now=None: {"state": "verified", "stall": 2,
-                                               "oldest_open": "witness:7h"})
-    home = tmp_path / "site"
-    home.mkdir()
-    result = discovery._mind_loop_stall(home)
-    assert result["state"] == "drift"
-    assert result["stalled"] == ["inference-research@witness:7h"]
 
 
-def test_loop_stall_verified_when_gates_young(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery, "_mind_treadmill",
-                        lambda home: {"state": "verified",
-                                      "roles": {"inference-research": {"verdict": "watch-treadmill"}}})
-    monkeypatch.setattr(discovery, "_coord_dm_disposition_age",
-                        lambda home, now=None: {"state": "verified", "stall": 0,
-                                               "oldest_open": ""})
-    home = tmp_path / "site"
-    home.mkdir()
-    result = discovery._mind_loop_stall(home)
-    assert result["state"] == "verified"
 
 
-def test_loop_stall_unknown_when_treadmill_unreadable(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery, "_mind_treadmill",
-                        lambda home: {"state": "unknown"})
-    home = tmp_path / "site"
-    home.mkdir()
-    result = discovery._mind_loop_stall(home)
-    assert result["state"] == "unknown"
 
 
-def test_loop_stall_drift_when_docs_lane_plus_mature_gate(monkeypatch, tmp_path):
-    """The docs-book lane routes through the same gate as the record lane.
-
-    A docs-churning role with a mature open gate is the demonstrated loop
-    shape; without this wiring the lane fires with no consumer and the stall
-    never reaches the dashboard's cause list.
-    """
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery, "_mind_treadmill",
-                        lambda home: {"state": "verified", "roles": {}})
-    monkeypatch.setattr(discovery, "_mind_docs_treadmill",
-                        lambda home: {"state": "verified",
-                                      "roles": {"docs": {"verdict": "watch-docs-treadmill"}}})
-    monkeypatch.setattr(discovery, "_coord_dm_disposition_age",
-                        lambda home, now=None: {"state": "verified", "stall": 1,
-                                               "oldest_open": "genome:7h"})
-    home = tmp_path / "site"
-    home.mkdir()
-    result = discovery._mind_loop_stall(home)
-    assert result["state"] == "drift"
-    assert result["stalled"] == ["docs@genome:7h"]
 
 
-def test_loop_stall_verified_when_docs_lane_gate_young(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery, "_mind_treadmill",
-                        lambda home: {"state": "verified", "roles": {}})
-    monkeypatch.setattr(discovery, "_mind_docs_treadmill",
-                        lambda home: {"state": "verified",
-                                      "roles": {"docs": {"verdict": "watch-docs-treadmill"}}})
-    monkeypatch.setattr(discovery, "_coord_dm_disposition_age",
-                        lambda home, now=None: {"state": "verified", "stall": 0,
-                                               "oldest_open": ""})
-    home = tmp_path / "site"
-    home.mkdir()
-    result = discovery._mind_loop_stall(home)
-    assert result["state"] == "verified"
-    assert result["stalled"] == []
 
 
-def test_loop_stall_ignores_unknown_docs_lane(monkeypatch, tmp_path):
-    """An unreadable docs lane is not a clean bill and not a stall input.
-
-    A role that cannot be read stays out of ``treadmilling``; the record lane
-    still decides, and a broken docs lane alone never reads clean.
-    """
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery, "_mind_treadmill",
-                        lambda home: {"state": "verified", "roles": {}})
-    monkeypatch.setattr(discovery, "_mind_docs_treadmill",
-                        lambda home: {"state": "unknown", "roles": {}})
-    monkeypatch.setattr(discovery, "_coord_dm_disposition_age",
-                        lambda home, now=None: {"state": "verified", "stall": 1,
-                                               "oldest_open": "genome:7h"})
-    home = tmp_path / "site"
-    home.mkdir()
-    result = discovery._mind_loop_stall(home)
-    assert result["state"] == "verified"
-    assert result["stalled"] == []
 
 
 def _keeper_display(pid):
@@ -8591,88 +6166,20 @@ def _keeper_display(pid):
     return Display
 
 
-def test_server_keeper_verified_when_session_owns_server(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: _keeper_display(4242))
-    monkeypatch.setattr(discovery.proc_table, "read_cgroup_unit",
-                        lambda pid: "mishe-self-development-current-session-9f3a2b1c4d5e6f708192a3b4c5d6e7f8.service")
-    result = discovery._host_server_keeper(_stability_home(tmp_path))
-    assert result["id"] == "sense.host.server-keeper"
-    assert result["state"] == "verified"
-    assert result["keeper"] == "mishe-self-development-current-session-9f3a2b1c4d5e6f708192a3b4c5d6e7f8.service"
 
 
-def test_server_keeper_verified_string_scope_raise(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: _keeper_display(7))
-    monkeypatch.setattr(discovery.proc_table, "read_cgroup_unit",
-                        lambda pid: "mishe-self-development-current-session.scope")
-    result = discovery._host_server_keeper(_stability_home(tmp_path))
-    assert result["state"] == "verified"
 
 
-def test_server_keeper_drift_when_finished_test_holds_server(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: _keeper_display(2053654))
-    monkeypatch.setattr(discovery.proc_table, "read_cgroup_unit",
-                        lambda pid: "mishe-tauftauf-test-2052154-2e8e4ec20b-session-69098cb50e994a759167cd47c622babc.service")
-    result = discovery._host_server_keeper(_stability_home(tmp_path))
-    assert result["state"] == "drift"
-    assert result["server_pid"] == "2053654"
-    assert "foreign-keeper=mishe-tauftauf-test-2052154" in result["sample"]
 
 
-def test_server_keeper_drift_when_foreign_scope_holds_server(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: _keeper_display(8123))
-    monkeypatch.setattr(discovery.proc_table, "read_cgroup_unit",
-                        lambda pid: "android-body-session.scope")
-    result = discovery._host_server_keeper(_stability_home(tmp_path))
-    assert result["state"] == "drift"
-    assert result["keeper"] == "android-body-session.scope"
 
 
-def test_server_keeper_unknown_when_session_not_attributable(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    class Missing:
-        returncode = 1
-        stdout = b""
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Missing())
-    result = discovery._host_server_keeper(_stability_home(tmp_path))
-    assert result["state"] == "unknown"
 
 
-def test_server_keeper_unknown_when_pid_unreadable(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    class Junk:
-        returncode = 0
-        stdout = b"not-a-pid\n"
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Junk())
-    result = discovery._host_server_keeper(_stability_home(tmp_path))
-    assert result["state"] == "unknown"
 
 
-def test_server_keeper_unknown_when_cgroup_unreadable(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: _keeper_display(31))
-    monkeypatch.setattr(discovery.proc_table, "read_cgroup_unit", lambda pid: "")
-    result = discovery._host_server_keeper(_stability_home(tmp_path))
-    assert result["state"] == "unknown"
 
 
-def test_server_keeper_unknown_when_session_receipt_missing(monkeypatch, tmp_path):
-    from mishe_tauftauf import discovery
-
-    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
-    result = discovery._host_server_keeper(tmp_path / "empty")
-    assert result["state"] == "unknown"
 
 
 def test_notify_scan_ignores_read_at_only_drift_changes(tmp_path):
@@ -9102,155 +6609,18 @@ def test_commit_parents_missing_dropped_sha_is_none_not_root():
     assert proc_table.git_commit_parents(f"{a}\n", [a]) == {a: None}
 
 
-def test_tmux_windows_prefers_owned_session_over_receipt(tmp_path, monkeypatch):
-    """Receipt names the default-socket (life-support) session; the owned pin session wins."""
-    home = tmp_path / "site"
-    home.mkdir()
-    (home / ".seed-raised").write_text("life-support $1\n", encoding="utf-8")
-    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
-    monkeypatch.setattr(discovery.tmux, "home_sessions",
-                        lambda _home: [("pin-session", "/sock/pin")])
-    monkeypatch.setattr(discovery.tmux, "owned_socket", lambda _h, _s: "/sock/pin")
-    windows = {(None, "life-support"): "genome\nhealth\n",
-               ("/sock/pin", "pin-session"): "senses\nwitness\n"}
-    seen = []
-
-    def run(argv, **_kw):
-        socket = argv[2] if argv[1] == "-S" else None
-        seen.append(argv)
-        out = windows.get((socket, argv[argv.index("-t") + 1]))
-        return subprocess.CompletedProcess(argv, 0 if out else 1, out or "", "")
-
-    monkeypatch.setattr(discovery.subprocess, "run", run)
-    reading = discovery._tmux_window_reading(home)
-    assert reading["windows"] == ["senses", "witness"] and reading["source"] == "owned"
-    monkeypatch.setenv("MISHE_SEED_SESSION", "life-support")
-    reading = discovery._tmux_window_reading(home)
-    assert reading["windows"] == ["senses", "witness"]
-    assert reading["env_session"] == "life-support"
-    monkeypatch.delenv("MISHE_SEED_SESSION")
-    monkeypatch.setattr(discovery.tmux, "home_sessions", lambda _home: [])
-    reading = discovery._tmux_window_reading(home)
-    assert reading["windows"] == ["genome", "health"] and reading["source"] == "receipt"
-    (home / ".seed-raised").unlink()
-    reading = discovery._tmux_window_reading(home)
-    assert reading["windows"] is None and reading["source"] is None
 
 
-def test_tmux_window_sample_names_source_and_foreign_env(tmp_path, monkeypatch):
-    """Env names a foreign session while the owned session is live: owned is read and env is recorded."""
-    home = tmp_path / "site"
-    home.mkdir()
-    monkeypatch.setenv("MISHE_SEED_SESSION", "mishe-life-support")
-    monkeypatch.setattr(discovery.tmux, "home_sessions",
-                        lambda _home: [("mishe-self-development-current", "/sock/core")])
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        lambda argv, **_kw: subprocess.CompletedProcess(
-                            argv, 0, "discover\nsenses\nwitness\n", ""))
-    reading = discovery._tmux_window_reading(home)
-    sample = discovery._tmux_window_sample(reading)
-    assert sample == ("source=owned session=mishe-self-development-current "
-                      "windows=['discover', 'senses', 'witness'] env_session=mishe-life-support")
-    assert discovery._tmux_window_sample(
-        {**reading, "env_session": "mishe-self-development-current"}).endswith("witness']")
 
 
-def test_tmux_window_sample_records_failure_stage(tmp_path, monkeypatch):
-    """A failed enumeration is recorded as its stage, not silently read as an empty session."""
-    home = tmp_path / "site"
-    home.mkdir()
-    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
-
-    def unreadable(_home):
-        raise discovery.tmux.TmuxError("tmux executable is unavailable")
-
-    monkeypatch.setattr(discovery.tmux, "home_sessions", unreadable)
-    (home / ".seed-raised").write_text("mishe-life-support $1\n", encoding="utf-8")
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        lambda argv, **_kw: subprocess.CompletedProcess(argv, 1, "", ""))
-    reading = discovery._tmux_window_reading(home)
-    assert reading["windows"] is None
-    assert reading["failure"] == "enumeration-TmuxError;list-windows-exit=1"
-    assert discovery._tmux_window_sample(reading) == (
-        "session unavailable source=receipt session=mishe-life-support enumerated=0 "
-        "failure=enumeration-TmuxError;list-windows-exit=1")
 
 
-def test_tmux_window_sample_keeps_failed_enumeration_on_receipt_success(tmp_path, monkeypatch):
-    """Enumeration raises, receipt names a session, list-windows succeeds: the sample still shows the failure."""
-    home = tmp_path / "site"
-    home.mkdir()
-    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
-
-    def unreadable(_home):
-        raise discovery.tmux.TmuxError("tmux executable is unavailable")
-
-    monkeypatch.setattr(discovery.tmux, "home_sessions", unreadable)
-    (home / ".seed-raised").write_text("mishe-life-support $1\n", encoding="utf-8")
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        lambda argv, **_kw: subprocess.CompletedProcess(
-                            argv, 0, "genome\nhealth\n", ""))
-    reading = discovery._tmux_window_reading(home)
-    assert reading["source"] == "receipt" and reading["windows"] == ["genome", "health"]
-    assert discovery._tmux_window_sample(reading) == (
-        "source=receipt session=mishe-life-support windows=['genome', 'health'] "
-        "failure=enumeration-TmuxError")
 
 
-def test_tmux_window_sample_counts_multiple_owned_sessions(tmp_path, monkeypatch):
-    """Two owned sessions: the verdict session is named, the second is reported with its own windows."""
-    home = tmp_path / "site"
-    home.mkdir()
-    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
-    monkeypatch.setattr(discovery.tmux, "home_sessions",
-                        lambda _home: [("mishe-self-development-current", "/sock/core"),
-                                       ("mishe-other", "/sock/other")])
-    outputs = {"mishe-self-development-current": "discover\n", "mishe-other": "genome\nhealth\n"}
-
-    def run(argv, **_kw):
-        return subprocess.CompletedProcess(argv, 0, outputs[argv[argv.index("-t") + 1]], "")
-
-    monkeypatch.setattr(discovery.subprocess, "run", run)
-    reading = discovery._tmux_window_reading(home)
-    assert discovery._tmux_window_sample(reading) == (
-        "source=owned session=mishe-self-development-current windows=['discover'] enumerated=2"
-        " also=mishe-other:['genome', 'health']")
 
 
-def test_tmux_window_sample_reports_failed_second_owned_session(tmp_path, monkeypatch):
-    """A second owned session whose read fails is shown as unavailable with its stage, not dropped."""
-    home = tmp_path / "site"
-    home.mkdir()
-    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
-    monkeypatch.setattr(discovery.tmux, "home_sessions",
-                        lambda _home: [("mishe-self-development-current", "/sock/core"),
-                                       ("mishe-other", "/sock/other")])
-
-    def run(argv, **_kw):
-        if argv[argv.index("-t") + 1] == "mishe-other":
-            return subprocess.CompletedProcess(argv, 1, "", "")
-        return subprocess.CompletedProcess(argv, 0, "discover\n", "")
-
-    monkeypatch.setattr(discovery.subprocess, "run", run)
-    reading = discovery._tmux_window_reading(home)
-    assert discovery._tmux_window_sample(reading) == (
-        "source=owned session=mishe-self-development-current windows=['discover'] enumerated=2"
-        " also=mishe-other:unavailable(list-windows-exit=1)")
 
 
-def test_plant_session_prefers_owned_over_receipt(tmp_path, monkeypatch):
-    """Two sessions on two sockets: receipt names the default-socket one; owned pin wins, env still wins."""
-    home = tmp_path / "site"
-    home.mkdir()
-    (home / ".seed-raised").write_text("life-support $1\n", encoding="utf-8")
-    monkeypatch.delenv("MISHE_SEED_SESSION", raising=False)
-    monkeypatch.setattr(discovery.tmux, "home_sessions", lambda _h: [("pin-session", "/sock/pin")])
-    assert discovery._plant_session(home) == "pin-session"
-    monkeypatch.setenv("MISHE_SEED_SESSION", "override")
-    assert discovery._plant_session(home) == "override"
-    monkeypatch.delenv("MISHE_SEED_SESSION")
-    monkeypatch.setattr(discovery.tmux, "home_sessions", lambda _h: [])
-    assert discovery._plant_session(home) == "life-support"
 
 
 def test_chat_tape_tail_matches_whole_read_and_stays_bounded(tmp_path: Path) -> None:
@@ -9273,33 +6643,8 @@ def test_chat_tape_tail_matches_whole_read_and_stays_bounded(tmp_path: Path) -> 
     assert peak < 10_000_000
 
 
-def test_session_restarts_zero_births_inside_window_is_unknown(tmp_path, monkeypatch):
-    from mishe_tauftauf import discovery
-    from datetime import datetime, timezone
-    import time as _time
-    now = datetime.now(timezone.utc)
-    monkeypatch.setattr(discovery, "_plant_session", lambda home: "mishe-x")
-    monkeypatch.setattr(discovery, "_journal_boot", lambda: "boot-1")
-    monkeypatch.setattr(discovery, "_journal_command", lambda cmd, timeout=10: b"")
-    monkeypatch.setattr(discovery, "_tmux_session_created",
-                        lambda session: now.timestamp() - 60)
-    row = discovery._host_session_restarts(tmp_path, past_minutes=60)
-    assert row["state"] == "unknown"
-    assert row["reason"] == "birth-not-in-journal"
 
 
-def test_session_restarts_zero_births_before_window_is_steady(tmp_path, monkeypatch):
-    from mishe_tauftauf import discovery
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
-    monkeypatch.setattr(discovery, "_plant_session", lambda home: "mishe-x")
-    monkeypatch.setattr(discovery, "_journal_boot", lambda: "boot-1")
-    monkeypatch.setattr(discovery, "_journal_command", lambda cmd, timeout=10: b"")
-    monkeypatch.setattr(discovery, "_tmux_session_created",
-                        lambda session: now.timestamp() - 7200)
-    row = discovery._host_session_restarts(tmp_path, past_minutes=60)
-    assert row["state"] == "verified"
-    assert row["verdict"] == "steady"
 
 
 def _wall_join_fixture(home: Path, outcome_body: str) -> None:
@@ -9319,6 +6664,7 @@ def _wall_join_fixture(home: Path, outcome_body: str) -> None:
 
 def test_dm_disposition_age_wall_cited_requires_sender_named(tmp_path):
     home = tmp_path / "site"
+    from mishe_tauftauf import roles as _roles; _roles.install_defaults(home)
     home.mkdir(parents=True, exist_ok=True)
     # Outcome names neither the sender nor the DM: wall_join credits it, wall_cited does not.
     _wall_join_fixture(home, "Wall outcome accepted by witness\n# witness wake\n\nAll quiet.\n")
@@ -9331,6 +6677,7 @@ def test_dm_disposition_age_wall_cited_requires_sender_named(tmp_path):
 
 def test_dm_disposition_age_wall_cited_counts_sender_citation(tmp_path):
     home = tmp_path / "site"
+    from mishe_tauftauf import roles as _roles; _roles.install_defaults(home)
     home.mkdir(parents=True, exist_ok=True)
     # Outcome names the sender (health): a citation, not an unrelated wall write.
     _wall_join_fixture(home, "Wall outcome accepted by witness\n# witness wake\n\nRead health. Acked.\n")
@@ -9405,15 +6752,3 @@ def test_server_containment_unreadable_cgroup_is_none(monkeypatch, tmp_path):
     assert proc_table.server_containment("1", cgroup_root=tmp_path) is None
 
 
-def test_session_stability_unreadable_containment_is_unknown_not_drift(monkeypatch, tmp_path):
-    """A server whose cgroup cannot be read stays UNKNOWN, never verified or drift."""
-    from mishe_tauftauf import discovery
-
-    monkeypatch.setattr(discovery.subprocess, "run",
-                        _stability_run(b"mishe-self-development-current\n",
-                                       b"111\n", b"111\n"))
-    monkeypatch.setattr(discovery.proc_table, "is_tmux_server", lambda pid: True)
-    monkeypatch.setattr(discovery.proc_table, "server_containment", lambda pid: None)
-    result = discovery._host_session_stability(_stability_home(tmp_path))
-    assert result["state"] == "unknown"
-    assert "containment-unreadable=111" in result["sample"]

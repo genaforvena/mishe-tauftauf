@@ -24,9 +24,7 @@ PACKAGE = Path(__file__).resolve().parents[1] / "src" / "mishe_tauftauf"
 
 # (file relative to PACKAGE, enclosing function, callee name) that reaches a git fetch
 # while the seed lock is held. Known and dated; see module docstring for the trigger.
-KNOWN_FETCH_UNDER_LOCK = {
-    ("wall.py", "tick", "renew_scan"),
-}
+KNOWN_FETCH_UNDER_LOCK: set[tuple[str, str, str]] = set()   # wall.tick, the one entry, was deleted
 
 
 @dataclass(frozen=True)
@@ -125,7 +123,8 @@ def find_fetch_under_seed_lock(modules: dict[str, ast.Module] | None = None) -> 
     reaching = _reaching_names(index)
     hits: set[tuple[str, str, str]] = set()
     for file, fn_name, with_node in _lock_sites(modules):
-        if file != "seed.py" and "seed" not in ast.unparse(with_node.items[0].context_expr):
+        if file != "site_lock.py" and not any(word in ast.unparse(with_node.items[0].context_expr)
+                                               for word in ("site_lock", "task_lock", "_lock(")):
             # only the seed lock is in scope; other modules have their own _lock
             continue
         for node in with_node.body:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from mishe_tauftauf import dispositions, model_change
+from mishe_tauftauf import dispositions
 
 T0 = 1_000_000.0
 
@@ -128,27 +128,5 @@ def watch(tmp_path, monkeypatch):
     return tmp_path, clock
 
 
-def test_watch_dedupes_escalates_and_dispositions(watch):
-    home, clock = watch
-    for _ in range(5):                       # same finding every 30s: one message
-        model_change.watch_once(home)
-        clock[0] += 30
-    assert len(FakeFeed.sent) == 1 and "to=health" in FakeFeed.sent[0] and "interval=" not in FakeFeed.sent[0]
-    clock[0] = T0 + 3600                     # unresolved an hour: escalates to genome
-    snap = model_change.watch_once(home)
-    assert len(FakeFeed.sent) == 2 and "to=genome" in FakeFeed.sent[1] and snap["state"] == "unknown"
-    dispositions.set_disposition(home, "model-change:abc", "benign", "health", "alias; probes ok", ttl=600, now=clock[0])
-    snap = model_change.watch_once(home)     # recorded answer: quiet, still listed, monitoring ok
-    assert len(FakeFeed.sent) == 2 and snap["dispositioned"] == ["abc"] and snap["state"] == "ok"
-    assert snap["reports"][0]["state"] == "unknown"
-    clock[0] += 601                          # expiry returns the finding as new
-    snap = model_change.watch_once(home)
-    assert len(FakeFeed.sent) == 3 and "to=health" in FakeFeed.sent[2] and snap["state"] == "unknown"
 
 
-def test_unreadable_alert_memory_realerts_not_mutes(watch):
-    home, _ = watch
-    (home / "checks").mkdir()
-    (home / "checks" / "model-change-alerts.json").write_text("garbage")
-    model_change.watch_once(home)
-    assert len(FakeFeed.sent) == 1

@@ -31,7 +31,7 @@ def test_wall_provenance_shows_age_for_old_entry(tmp_path, monkeypatch):
     last["ts"] = old_ts
     # Keep mtime as original wall mtime; only audit ts drives the age display.
     audit.write_text("\n".join(entries[:-1] + [json.dumps(last)]) + "\n", encoding="utf-8")
-    pane = wall.pane(tmp_path, "senses")
+    pane = wall.mind_block(tmp_path, "senses")
     # Must be inside MIND WALL block (after the header) and show age.
     assert "WALL PROVENANCE: walls/senses.md @" in pane
     assert " persistent record" in pane
@@ -51,7 +51,7 @@ def test_wall_provenance_unknown_when_no_audit_entry(tmp_path):
     (tmp_path / "walls" / "senses.md").write_text("# plate\nFresh notes.\n", encoding="utf-8")
     # Ensure no audit log.
     assert not (tmp_path / "logs" / "wall-write-audit.jsonl").exists()
-    pane = wall.pane(tmp_path, "senses")
+    pane = wall.mind_block(tmp_path, "senses")
     assert "WALL PROVENANCE: walls/senses.md @" in pane
     assert "UNKNOWN" in pane
     assert "no audit entry" in pane or "no file" not in pane.lower()
@@ -62,33 +62,22 @@ def test_wall_provenance_unknown_when_no_audit_entry(tmp_path):
 
 def test_wall_provenance_unknown_when_no_file(tmp_path):
     _setup_wall(tmp_path)
-    pane = wall.pane(tmp_path, "senses")
+    pane = wall.mind_block(tmp_path, "senses")
     assert "WALL PROVENANCE: walls/senses.md" in pane
     assert "UNKNOWN" in pane
     assert "no file" in pane.lower()
 
 
-def test_observation_digest_stable_despite_provenance(tmp_path):
-    """The OBSERVATION digest must not change when the provenance margin appears.
-
-    The margin lives inside the MIND WALL block (after the header), which
-    observations.sensor_from_frame / wall.observation_text split on, so the
-    meaningful sensor text is byte-identical.
-    """
-    _setup_wall(tmp_path)
-    from mishe_tauftauf.observations import sensor_from_frame
-
-    wall.write(tmp_path, "senses", "# plate\nStable.\n")
-    pane = wall.pane(tmp_path, "senses")
-    sensor = sensor_from_frame(pane)
-    meaningful_with = wall.observation_text("senses", sensor)
-    # The sensor must not contain the provenance line.
-    assert "WALL PROVENANCE" not in sensor
-    assert "WALL PROVENANCE" not in meaningful_with
-    # Removing the provenance line from the pane must not change the sensor.
-    pane_without = pane.replace(
-        next(line for line in pane.splitlines() if line.startswith("WALL PROVENANCE:")), ""
-    )
-    sensor_without = sensor_from_frame(pane_without)
-    meaningful_without = wall.observation_text("senses", sensor_without)
-    assert meaningful_with == meaningful_without
+def test_mind_block_shows_the_roles_last_wake_dispatch_and_no_pane_machinery(tmp_path):
+    from mishe_tauftauf import wall
+    from mishe_tauftauf.core.interfaces import UNKNOWN
+    from mishe_tauftauf.core.state import DispatchRecord, DispatchStore
+    (tmp_path / "chat.log").write_text("")
+    (tmp_path / "walls").mkdir()
+    (tmp_path / "walls" / "docs.md").write_text("# plate\n")
+    assert "WAKE: none yet" in wall.mind_block(tmp_path, "docs")
+    DispatchStore(tmp_path / "dispatch").write(
+        DispatchRecord(role="docs", key="wake-docs-1", state=UNKNOWN, detail="engine exit 0 without a yield"))
+    block = wall.mind_block(tmp_path, "docs")
+    assert "WAKE: unknown wake-docs-1" in block and "without a yield" in block
+    assert "# plate" in block and "TRANSPORT" not in block and "ACTIVITY" not in block

@@ -3,12 +3,10 @@ import fcntl
 
 import pytest
 
-from mishe_tauftauf import checks, seed_culture_views
+from mishe_tauftauf import checks
 from mishe_tauftauf.checks import HealthPublishBusy, run_check
 
 
-def test_lock_name_matches_health_producer():
-    assert checks.HEALTH_REFRESH_LOCK == seed_culture_views.HEALTH_REFRESH_LOCK
 
 
 def test_health_check_publishes_when_lock_free(tmp_path):

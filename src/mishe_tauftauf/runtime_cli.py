@@ -1,8 +1,4 @@
-"""Command line for the observation-driven runtime.
-
-``wake``, ``yield``, ``signal``, ``inbox``, ``hold``, ``arm`` and ``due`` are
-handled here; any other command falls through to the record/wall CLI.
-"""
+"""Command line for the observation-driven runtime, registered into the one ``mishe`` parser."""
 from __future__ import annotations
 
 import argparse
@@ -28,7 +24,8 @@ def default_home() -> Path:
 
 
 def declared_roles(home: Path) -> list[str]:
-    return sorted(path.stem for path in (home / "charters").glob("*.md"))
+    from .roles import declared
+    return sorted(declared(home))
 
 
 def scheduler(home: Path):
@@ -56,35 +53,40 @@ def parse_when(text: str) -> dict:
     raise argparse.ArgumentTypeError("--when needs =VALUE or @STATE")
 
 
-def parser() -> argparse.ArgumentParser:
-    from . import wake, yielding
-    root = argparse.ArgumentParser(prog="mishe")
-    root.add_argument("--home", type=Path, default=default_home())
-    sub = root.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("wake"); p.add_argument("role"); p.add_argument("--timeout", type=float, default=wake.DEFAULT_TIMEOUT)
+WAKE_TIMEOUT = 1800.0                      # equals wake.DEFAULT_TIMEOUT (pinned by a test)
+YIELD_RESULTS = ("changed", "verified", "blocked")   # equals yielding.RESULTS (pinned by a test)
+
+
+def register(sub) -> None:
+    """Add the runtime commands to the ``mishe`` parser. Heavy modules load only when a command runs."""
+    def add(*args, **kwargs):
+        p = sub.add_parser(*args, **kwargs)
+        p.set_defaults(func=cmd_runtime)
+        return p
+    p = add("wake"); p.add_argument("role"); p.add_argument("--timeout", type=float, default=WAKE_TIMEOUT)
     p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO"), help="engine working directory (default: MISHE_REPO)")
-    p = sub.add_parser("yield"); p.add_argument("--result", choices=yielding.RESULTS, required=True)
+    p = add("yield"); p.add_argument("--result", choices=YIELD_RESULTS, required=True)
     p.add_argument("--continue", dest="continue_", action="store_true")
     p.add_argument("--again", type=duration); p.add_argument("--when", type=parse_when)
     p.add_argument("--file", type=Path, help="wall text file (default: stdin)")
-    sig = sub.add_parser("signal").add_subparsers(dest="signal_command", required=True)
-    p = sig.add_parser("register"); p.add_argument("name"); p.add_argument("--max-age", type=float, required=True)
+    sig = add("signal").add_subparsers(dest="signal_command", required=True)
+    p = sig.add_parser("register"); p.set_defaults(func=cmd_runtime); p.add_argument("name"); p.add_argument("--max-age", type=float, required=True)
     p.add_argument("--subscribers", default="")
-    p = sig.add_parser("observe"); p.add_argument("name"); p.add_argument("value"); p.add_argument("--source", default="cli")
-    p = sig.add_parser("show"); p.add_argument("name")
+    p = sig.add_parser("observe"); p.set_defaults(func=cmd_runtime); p.add_argument("name"); p.add_argument("value"); p.add_argument("--source", default="cli")
+    p = sig.add_parser("show"); p.set_defaults(func=cmd_runtime); p.add_argument("name")
     p = sig.add_parser("run", help="observe NAME by running CMD: exit 0 GREEN, non-zero RED, cannot-run leaves it to expire")
     p.add_argument("name"); p.add_argument("--timeout", type=float, default=120)
     p.add_argument("--red-codes", default="2", help="exit codes that mean RED (default 2)")
     p.set_defaults(cmd=[])
-    p = sub.add_parser("produce"); p.add_argument("name")
-    inbox = sub.add_parser("inbox").add_subparsers(dest="inbox_command", required=True)
-    p = inbox.add_parser("touch"); p.add_argument("role")
-    hold = sub.add_parser("hold"); hold.add_argument("state", choices=("on", "off", "status"))
+    p = add("produce"); p.add_argument("name")
+    inbox = add("inbox").add_subparsers(dest="inbox_command", required=True)
+    p = inbox.add_parser("touch"); p.set_defaults(func=cmd_runtime); p.add_argument("role")
+    hold = add("hold"); hold.add_argument("state", choices=("on", "off", "status"))
     hold.add_argument("--reason", default="held")
-    sub.add_parser("arm"); sub.add_parser("due"); sub.add_parser("migrate")
-    p = sub.add_parser("failed"); p.add_argument("unit")
+    add("arm"); add("due"); add("migrate")
+    p = add("failed"); p.add_argument("unit")
     for name in ("sync", "doctor"):
-        p = sub.add_parser(name)
+        p = add(name)
         p.add_argument("--unit-dir", type=Path, default=Path.home() / ".config" / "systemd" / "user")
         p.add_argument("--prefix", default="mishe")
         p.add_argument("--no-slices", action="store_true", help="scratch namespaces: no host slices")
@@ -92,7 +94,7 @@ def parser() -> argparse.ArgumentParser:
         p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO") or Path.cwd())
         if name == "sync":
             p.add_argument("--no-systemctl", action="store_true")
-    return root
+            p.add_argument("--uninstall", action="store_true", help="remove the generated units (and only those)")
 
 
 def run(args) -> int:
@@ -196,7 +198,7 @@ def run_units(args, home: Path, now: float) -> int:
     write_json(home / "resolvers.generated.json", duties.resolvers(cfg.repo, args.prefix))
     if args.command == "sync":
         runner = None if args.no_systemctl else (lambda c: subprocess.run(c, check=True))
-        report = units.sync(cfg, roles, producers=declared, runner=runner)
+        report = units.sync(cfg, roles, producers=declared, runner=runner, uninstall=args.uninstall)
         print(f"written {len(report.written)}, removed {len(report.removed)}")
         return 0
     report = units.doctor(cfg, roles, producers=declared)
@@ -237,26 +239,17 @@ def armmod_arm(home: Path) -> None:
     armmod.arm(home, scheduler=scheduler(home))
 
 
-RUNTIME_COMMANDS = {"wake", "yield", "signal", "inbox", "hold", "arm", "due", "failed", "sync", "doctor", "produce", "migrate"}
-
-
-def main(argv=None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
-    words = [a for a in argv if not a.startswith("-")]
-    # the first non-option word that is a known command picks the runtime CLI
-    command = next((w for w in words if w in RUNTIME_COMMANDS), None)
-    if command is None or words.index(command) > 1:
-        from . import cli
-        return cli.main(argv)
-    from .core.supervisor import SupervisorError
-    tail = []
-    if "--" in argv:                      # everything after -- is the command, untouched by argparse
+def command_tail(argv: list) -> tuple[list, list]:
+    """Split off everything after ``--`` (a command to run), untouched by argparse."""
+    if "--" in argv:
         cut = argv.index("--")
-        argv, tail = argv[:cut], argv[cut + 1:]
+        return argv[:cut], argv[cut + 1:]
+    return argv, []
+
+
+def cmd_runtime(args) -> int:
+    from .core.supervisor import SupervisorError
     try:
-        args = parser().parse_args(argv)
-        if tail:
-            args.cmd = tail
         return run(args)
     except (OSError, ValueError, SupervisorError) as exc:
         print(f"mishe: {exc}", file=sys.stderr)

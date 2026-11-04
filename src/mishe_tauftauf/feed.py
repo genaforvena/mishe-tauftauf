@@ -438,8 +438,8 @@ def _iter_text_lines(chunks):
 
 
 def _role_fold(previous, entries, role):
-    from . import seed, wall
-    from .chat_protocol import decode_lifecycle
+    from . import wall
+    from .chat_protocol import OBS_RE, decode_lifecycle, receipt_line
     old = previous or {}
     row = {"control": list(old.get("control", [])), "inbox": deque(old.get("inbox", ()), maxlen=12),
            "recent": deque(old.get("recent", ()), maxlen=12),
@@ -447,7 +447,7 @@ def _role_fold(previous, entries, role):
     for entry in entries:
         if entry.source == "seed":
             try:
-                match = seed.OBS_RE.fullmatch(seed._receipt_line(entry.body))
+                match = OBS_RE.fullmatch(receipt_line(entry.body))
                 control = None if match else decode_lifecycle(entry)
                 keep = match.group(1) == role if match else control.role == role if control else True
             except (ValueError, IndexError):
@@ -493,7 +493,7 @@ class Feed:
     coordination (not explicit message passing):
 
     (i) observable updates — every ``append`` is observed via ``entries()`` /
-        ``role_entries()`` / ``chat.log`` tail (``wall.pane`` / ``wall.context``
+        ``role_entries()`` / ``chat.log`` tail (``wall.mind_block`` / ``wall.context``
         poll this substrate; ``wall.message()`` DMs are secondary);
     (ii) deterministic convergence — append-only, sequence-total-ordered per host,
         digest-normalized via ``_digest`` / ``is_peer_copy``

@@ -3,44 +3,6 @@
   "frozen_at": "2026-10-21T17:02:03.695772+00:00",
   "frozen_from_commit": "45aabd78314b9573a760f5625a952b6b5060fdcb",
   "paths": {
-    "coordination/launcher.py": {
-      "sites": 2,
-      "entries": 2,
-      "digest": "8c94d41b8370989d98b9e503edc5ee94e220379378635943aa413f4d62162e12",
-      "observed": {
-        "4266a7e5b11b1d36756df889d85c0a1bd25e5ba13f499d55408dcb00ab9c9970": 1,
-        "e1d88c68eaa14de3013f50537ec8b75375b2cb2c48f1d5385ab3de9a496f5e90": 1
-      },
-      "observed_sites": 2
-    },
-    "coordination/site_sync.py": {
-      "sites": 22,
-      "entries": 20,
-      "digest": "23efc1e3777fd9f44e95341b45358869a9cfaa342fa6e48a15810c703b130cd1",
-      "observed": {
-        "2a8b57d1a3a9161888c4154b5df128f5913b18402935062609927c0bd53ebe6a": 1,
-        "37a49e94eecae2be85b7358968f4cd8dd018964f2e6372bf9977a28fda9bcdb7": 1,
-        "3c427726db9ac9ac331b10f2d1145ef0c6ccef22d5548f6406b6e897c92fe218": 1,
-        "426d74d18f97989391a46df5de117b9cd93dbb0df21e34f58dc2e901bb52bbcb": 1,
-        "4ceabea0c8fbe1edf0b7119a0ebe2e3a3f070f988e9bb7519ba8715d00a9612b": 1,
-        "567ad283abf9c27a4df357a70cd1e36ae87d030b0eadac2fa302cff5b0f37a6f": 1,
-        "58b02450ddb3f6b8a37ff27d3b1ff510cf452f7b2cc358377534572a20be1179": 1,
-        "66fa89742e7f9fbe69ddd1de0ab9d1d688a3f8c0eeb7b0fa3a0ab96dbf5f68e6": 1,
-        "7381d5502172efa3d100fcd9fba5c3aba823f8349f04e4922de81348510f072e": 1,
-        "79e1291d8852ed0d49a5de21ca53e4984519b88949b71659cc159bf1a9a5cec6": 1,
-        "8f6e97beaa7ac7655ef8ede91d61e4a34153ab2af4dff836555d8462c6ba6b49": 1,
-        "93db35f0add604db9c9e4e64d74260ff4cff4ddd6fa6cdcd38116f6e2af77384": 1,
-        "a40bf3fd4fee5383541d7a1befba71d5d74f56f8939e4147fc0133477f6e26a2": 1,
-        "be7d5c224b97682aa255da81c5f40b6246f8f8470377c59968fffa0b92a8b465": 2,
-        "ce024400043a9ca0023eb18520b07e5917dcce5f0af6235f806a2e3706a89d63": 2,
-        "da6f938db5ff79b215d2636c02e7199429ac73e5eaefbc8c4d860b22cf6af88b": 1,
-        "e3c2febdd43d26de03f14bf25abcdff926085ee1b502554a0a324882f54cf2cc": 1,
-        "ed7f4001f679ade05801e1b896182ce286c345823b0beac82c8c3013e47e2089": 1,
-        "fd00cb141dfa23cd7f81aa439bd1ec5e30f9ac77eaf5b55f8e4bfb5f9ce93e4f": 1,
-        "fefbbe2946d4815608156db2773115ea963d23743b2fe6d4505bfedf94f11e54": 1
-      },
-      "observed_sites": 22
-    },
     "src/mishe_tauftauf/access.py": {
       "sites": 18,
       "entries": 14,
@@ -62,23 +24,6 @@
         "fffb6b065572ff650fd015e054976cb0dbd6ed0754ae8ed479bd57aa38658386": 1
       },
       "observed_sites": 18
-    },
-    "src/mishe_tauftauf/activity.py": {
-      "sites": 11,
-      "entries": 9,
-      "digest": "b0cc20395aa5ffb23d921ee551d960e80b3a9f7a266b71676a1a8d867709026d",
-      "observed": {
-        "2c2ed9ab71a4431ce1b7da6eeedfa21eec3ddb385b79ddd090f8ec2d26ee84c1": 1,
-        "43d20873df107b7da8af89cdc453c9a8c66060cc77ea5b0b60d1d3cec77b4281": 1,
-        "77fe8cffe07956d25117f639533abb194517ed9da315d256fc7ebdb10564f7ab": 1,
-        "8f0c8c250281702509bf5f5e3c3295ddd4cb07b5ff172a7a15ba415ed265f285": 1,
-        "99b50926e5ea15ef1b2a168988034a8ef6c03c42b6ce29589da58c3151e75b65": 1,
-        "be0d01f59674c3fc8b44a91c2cefd8f700c0e1225349e3278385a30c3482b1aa": 1,
-        "be7d5c224b97682aa255da81c5f40b6246f8f8470377c59968fffa0b92a8b465": 1,
-        "ce024400043a9ca0023eb18520b07e5917dcce5f0af6235f806a2e3706a89d63": 3,
-        "ed7f4001f679ade05801e1b896182ce286c345823b0beac82c8c3013e47e2089": 1
-      },
-      "observed_sites": 11
     },
     "src/mishe_tauftauf/checks.py": {
       "sites": 4,
@@ -191,16 +136,6 @@
         "fe2825637fdf17df6c277f07e842d2423e9c36fd356d6b509d4c726d66d4d226": 1
       },
       "observed_sites": 25
-    },
-    "src/mishe_tauftauf/dashboard.py": {
-      "sites": 2,
-      "entries": 2,
-      "digest": "dcae8addaa800f861c35a1fc6e0fee816becd836124b0e6e72d13afb8acf5a55",
-      "observed": {
-        "b365cb2761810a220bcb8309e55344cb77dc7f23586c15e4f082621e0c358a1d": 1,
-        "f336314bfa5549784f115ecb84f577ca6cfa39f089e7a0fff1cab2826ac15a20": 1
-      },
-      "observed_sites": 2
     },
     "src/mishe_tauftauf/delivery.py": {
       "sites": 11,
@@ -424,52 +359,6 @@
       },
       "observed_sites": 17
     },
-    "src/mishe_tauftauf/inference_inspect.py": {
-      "sites": 3,
-      "entries": 3,
-      "digest": "f695b4d2806ca468984471cb3c37d748ffc83a41d483a21588a31fd36d61e184",
-      "observed": {
-        "7ce7d50c4959cfd31aecf7ac8e6245d25c9fd6863877d2f3ff6bea6c4b34892a": 1,
-        "d937ad2ac85360e3a9dbf86821e335fb79b09c906a26e48e4ef3825f4d30a3c8": 1,
-        "d93d08e66a100ff6874f96f08c6ad6364f9d259ae61addbc903efd38a9c55629": 1
-      },
-      "observed_sites": 3
-    },
-    "src/mishe_tauftauf/inference_loop.py": {
-      "sites": 5,
-      "entries": 5,
-      "digest": "c427d73d24a54019394e3e3a0c855c2d9d9e08b401287fddfe67f08c461d354c",
-      "observed": {
-        "5e709cf399c48d6e2eb06a9d7e6833e1a2b17546d0428a02f41f3117858752a4": 1,
-        "896766517dc57ee4a53c68f87c753cb78764e319c4a56e7915f513823136172a": 1,
-        "a1ef325b16148ddcf4ce38862ecfc0ae2435577cc9f2e42051438c5158610e57": 1,
-        "b7565c28dd29236fbe4ed58de24adc41356747c7d813c25ac21f8da760fcb6e2": 1,
-        "dbc5732543ae399f971329e367cfa71199f1d5b510e632e138b5b8f6e8f425f5": 1
-      },
-      "observed_sites": 5
-    },
-    "src/mishe_tauftauf/inference_transport.py": {
-      "sites": 5,
-      "entries": 4,
-      "digest": "512d27c6f8d7b804ab786a4ad30320f339058ebd7b63e483af1744c3413e636e",
-      "observed": {
-        "228c4b1a8f87613ff0a35d7e67bab27c819e3513ea4da6d73ec61d4ad5c5fa1d": 1,
-        "b75ce878fc15c0dc0c45588e81a394440448a9011c34d8da03894041c78d9640": 1,
-        "f7969e89b88961fe50050e5cdb4f3bd10c3ba5ee6ab291e798db8ae7e5ec7100": 2,
-        "f804af8740f6d6a3c6b11340af30e8cda03a8359c57b06465e31740b89750537": 1
-      },
-      "observed_sites": 5
-    },
-    "src/mishe_tauftauf/inference_worker.py": {
-      "sites": 2,
-      "entries": 2,
-      "digest": "40a8005ffb72a56cd827371cc853562de57ea0e0fdb6d58b935180e720e2e69e",
-      "observed": {
-        "59653f828bc5c76e9dad1978a647360d767849ec2c97ae58b43e20c5b6c7a3a8": 1,
-        "cc9c48c64958725d6a8ef34add8e736a4ee127bbebda3f156da328e5e9208174": 1
-      },
-      "observed_sites": 2
-    },
     "src/mishe_tauftauf/jev_judge.py": {
       "sites": 29,
       "entries": 21,
@@ -563,18 +452,6 @@
       },
       "observed_sites": 2
     },
-    "src/mishe_tauftauf/permission_menu.py": {
-      "sites": 4,
-      "entries": 4,
-      "digest": "60609d4f19cb94e147a76d03f989bb7338bf1b4ad853bc4077f7a188ec63f966",
-      "observed": {
-        "19c366f607ff9d960d1b2e8f2776a5c5fe8c67f75d803de49a7ed8bd2ac8fdb4": 1,
-        "1a86515dfabeeaa5f72c207501c12b700a9c476cfa24358cb1d38b2ba5b45681": 1,
-        "6a7f530c2958434ec3c66b51ac851db54700ceb008a7b5b34b5ee3664df590ce": 1,
-        "6e418b08a3c20fd88e9feda5be67a5a27f96fb187a153a68bf9837a5e9786ca4": 1
-      },
-      "observed_sites": 4
-    },
     "src/mishe_tauftauf/pitfall_questions.py": {
       "sites": 1,
       "entries": 1,
@@ -583,43 +460,6 @@
         "4f5e10aabfa56845ead47266a9bad478a03866d0f1ead40bb2f91baebdbc946f": 1
       },
       "observed_sites": 1
-    },
-    "src/mishe_tauftauf/plant.py": {
-      "sites": 31,
-      "entries": 29,
-      "digest": "b35c8e05aab8e6c995ff47892b31e59ef0f649b72c12df7477e329e620c49c6b",
-      "observed": {
-        "114e76300ce02c8b9190ff8af8fcdcf924df0247a9c61152118fa0b637ab56bd": 1,
-        "183f049b45d2304e9615a91463b26699ef0174a8b9f7c963debbb590da777900": 1,
-        "2b02aa853302711cb0fe4609198b3838106d0facc1d9609f49c459b03aa100b3": 1,
-        "3036355e2bd2a6b0b57c6497a53a32fed8cb3135788c617df6b69d3d71c65129": 1,
-        "4083693bb188f6052b4e391b0e7dab6b42ffd290157d72da92db7651598c7b60": 1,
-        "51de95c8e6a290e5eeaab14c0896f8ad7abb80c26f71cd86c1e2bdb39937d31c": 1,
-        "53813301a2999ff81954eb7ce8355c704e755e3b2959eea84c46a7a48d7eda7b": 1,
-        "55f4f4972cdbef64595ba5421d697b83577eee6ec0d7b4d05c156338fdc32d9f": 1,
-        "5ee8823a9f00debbd1009e091f82b6ab59b86e3c2f491afaff7dbffc88f378b4": 1,
-        "6b7159e6ca44d09c010b1c9123f96e8ee7664d5abff67ef57191ab208c1bfa77": 1,
-        "71e6c3717e9eee287d1d91167d817404c2960f597408c0a4c4b041b72f653f43": 1,
-        "789855ac32432f05d09efc3092c960d9704619d64fff5cc19775dc3990f2899b": 1,
-        "7ec82c37e5cf2c04749db1e4644de6ed2c047cc7f05246e10cdf4708e98ac150": 1,
-        "8750abbedf42e7803e3dd3144e654a269a5b225a63021d1b5c1297161fe3093a": 1,
-        "8b9c6d430ba9ba4df6880cae1fe38e4e70c914c5f3fd0dcc47b6bfbd9da6ffcf": 1,
-        "936d397c0552428c02df0e9c3bbe2207a224b6b2eaa167185f5cf004740e3d68": 1,
-        "9c13af4ba8494ee0de3cbf300f11c1ff2454c61d224802c7f2be5c781cd75909": 1,
-        "b65ec1668762b03f9d073b9851fdf150feaa92cc673f20c27e52ec46b6d21714": 1,
-        "b8f4a05416f02054ccf934230b81f2ee32d96d8c26688b310cd92c3cfcb5237b": 1,
-        "c1b6e4a37c3426f43ec22e81aacae7b88ae986e77a9f4e09cc10674bd03d11bb": 1,
-        "df30dbbd0b0e248bdeff47e17cfc144addde32edc30b0ca5a17de6115a3cf956": 1,
-        "df5780920a82bcdcc0b8d03f3398cec4743a6aef2424cfa6f859b093ff9bfde4": 1,
-        "e1d88c68eaa14de3013f50537ec8b75375b2cb2c48f1d5385ab3de9a496f5e90": 1,
-        "e3a37f93fa26d7e3548b79710d5c54d61d9fd44a0dd3c632ef6b37261615ccd6": 1,
-        "e5cc77f16f66917f68628ce9d7eb2e73cca51927de255930cd80c09cc4a89b52": 1,
-        "ec7c799bd3ee3057e61e3af337907cdc2c142756747d4e7a3fa012301c03437d": 1,
-        "f43095203501a805ac774f7c92ec5c73ab6b8ebb85fa76fb496fd3e6b6832a1b": 1,
-        "fc533a4f218aa903ff09b021c07c0ebcd006607a5b3b082d42fbd2eb6f560ddd": 1,
-        "fefbbe2946d4815608156db2773115ea963d23743b2fe6d4505bfedf94f11e54": 1
-      },
-      "observed_sites": 29
     },
     "src/mishe_tauftauf/policy.py": {
       "sites": 2,
@@ -712,43 +552,6 @@
       },
       "observed_sites": 21
     },
-    "src/mishe_tauftauf/runtime.py": {
-      "sites": 31,
-      "entries": 29,
-      "digest": "b4c2020b72f9f5b1e45aa29795f215797ac30b7f4acaf94f793f502f4d7978c7",
-      "observed": {
-        "08b8935618b8428bb5940de29d4bf5bc93cbe7151907b38e281b33726b392075": 1,
-        "09bef0507de3b35c2d90c968614a12739bf5142e956b227947582d85e56d5822": 1,
-        "0ce21ef38e1c13c23043980a855350c1b951d3459dd61c554fab51d4d5360174": 1,
-        "14169234d7a2edbbe88941f25a4c8e896b74f8e1744b4fb411f6c400b340430c": 1,
-        "34345058993d70b52e27f0d11699fe5eebf85aeb89c79318906b746803ad886a": 1,
-        "362241f9b1b692fd59a471bbd524c9a502f03ea5812c0b0293ca513e6abf7b55": 1,
-        "3c427726db9ac9ac331b10f2d1145ef0c6ccef22d5548f6406b6e897c92fe218": 1,
-        "3c580e08074f9a44ba8c6eac72ac0b9b05ae1a9443b9645587db276aec0f6c85": 1,
-        "3f90ab8a7e1595d75f3535e8714561217a3a2c90aa02274571b9c31de65108d6": 1,
-        "4c12f35cde323b11ffc94520eb39655d2ea41265531ab15d5648c079280ae16e": 2,
-        "4d5a75540e48744151d65c3dee45defb9f991e7d09677818dfc2b99a03f4b97b": 1,
-        "6c3a963a58688c9d5996ca2ad31ca60c10d2311fd6ec9e53cd555ab659eed508": 1,
-        "6c92fb8060237f52d08954d4718ca518da512f102e10b9a1ff5a3c41bcb41380": 1,
-        "790064686967a1a2560256a21646ea3e73177758f067be09032a863e25f8abb8": 1,
-        "831c2fbae5cd7c3bfe99be086f025828b07a150c8341eaf03229731c46816334": 1,
-        "83d8c6aaf090a9a5d3a1d773a835a8abc96e51eeb624d3bbdec023bbe66b8f99": 1,
-        "87ffa11b7b6bdeac66de7d7e9ada4c6421557e0bfb38767e9b84636db122c025": 1,
-        "8883c4b23427eec334cdde9ac67018be55a438e54aeabde6552aa83e65b71043": 1,
-        "8e1938c688f9d7fee89adfbc7d2e04fd909cffdd3bba862b9b923e50c3ea83e1": 1,
-        "8f758d44d9389b61d369f99893653e8984c9463426072f587ea9768f6789b3e5": 1,
-        "94cf1259901f17eb6b8f8b0ba9a3534a79885b425ed3bc4d74db7dba5d43c3ef": 1,
-        "996cb07857b26b3376bb3056e1948124261b332f98c82bb82d596d864a925a43": 1,
-        "a58204bffb33969042596bded476ead407efa9f8ba982f6ee1edfbb8bac67de0": 1,
-        "a86e7f2a05244a83330234b065e8fcd66311a7e15ad0ec295225b4f64120aa68": 2,
-        "abac05c92881b3c229a1afb51b1618890faffda3b749da68c142bf82d642645c": 1,
-        "b9c4133c94e5c720974b88271f9925ea4d609e86455cb85c50d015403f4c6085": 1,
-        "d74537cc80d26267a187659d0aba322b5a70d3cf556cea4076cb39453f2d3667": 1,
-        "ef9591faf0aa28b96f5b2bbc0bdae65ea1189128fac450a97a64db05e121cc3f": 1,
-        "f4aff9adb3c9a3459d669e8372b7aa0e6846c8f1468207af4eeb1db661b2475c": 1
-      },
-      "observed_sites": 31
-    },
     "src/mishe_tauftauf/runtime_source.py": {
       "sites": 10,
       "entries": 10,
@@ -782,79 +585,6 @@
       },
       "observed_sites": 7
     },
-    "src/mishe_tauftauf/seed.py": {
-      "sites": 91,
-      "entries": 65,
-      "digest": "dcb068ff171f8afa8ab4cc8e50ea4149ab3149a86431f9cf820af5a9970f11c4",
-      "observed": {
-        "04016c35d06cc1e78edc8ffc0a218117e402c122ff1efc9c23555f503122b5ff": 1,
-        "07262721aa3adc7f2af95c4c3d1670b16412d1408024798ae8c4103a2169b247": 2,
-        "161153dffa611cafda8de9f6bc3ab160cf6a388fcaa7f8851f023c53de49bc65": 1,
-        "172a5efdbbec226b06277b37511aaa540bef0cad6a553a483ffe3c2caae34891": 1,
-        "1921844e582e32c15f2ab2e8002d0df7693a98f2ab7b358f15bbc08dced55564": 1,
-        "1b10f5174fb8cb6b8465ed1c5a34430531ede2f5aa25584b032428e62a29145b": 1,
-        "1cdd1079b9d993d7532d26f229205f6336e7a3731771e4ad83999b9051d1e1ad": 1,
-        "1e6288811ef0c6f863a648a7fb967c799189cfd024c50e2ebe115ecf7af27586": 2,
-        "20e672bae7c76fcea328836ae172a7b8a81df0c3d678cbae825df04ff142f640": 1,
-        "237f4a619f1b221a90d66e8875694758e033bfcfbe425226598adc593680478c": 1,
-        "299ffed4f2993d5884b70e237f7bd668f28c4d229a8e44cabdcbf65d21bd19d7": 2,
-        "2e51010d05709253954361a35a5c69cb1c55828910ae7ae94947a7d3fcc8c81d": 3,
-        "2e7c50e72d6d1a4bd7d0445f7b2f0151852f628400b7a9e5466db5e75c51daba": 1,
-        "3036355e2bd2a6b0b57c6497a53a32fed8cb3135788c617df6b69d3d71c65129": 1,
-        "305c7243c79586569fb203c04745979623644640f05c3108c190bf162ee461b0": 2,
-        "3169cc13b858acd9ecbf5bbf6b16f81d28e9cbb22f2859a013e301c201f86a9a": 1,
-        "337adfc37e049f0df5c14687f1b99caacdb695da88c6a7b3e94feb29b5ee27e5": 1,
-        "37eda065ef0271c41d3083acd368ab3c93ce24fd4a287d227c1f3479a23663ec": 5,
-        "4725db106f0de20dbf16e0ff412b51b0bb2a9ecf7a72fe5dd9f9995d44e21eea": 1,
-        "5202bc14a3184f5d50ef43e627b98ba479febf388a02fc20829df48ddf9db40c": 1,
-        "5da41b926b74ba47e5437f237e1acdd1244d9e30a55e602a8b7fa7050ea9b1d2": 1,
-        "6a2f0760e0f35b7c5d917106726a4c4290c7008ab5bd7a7c6a736539c9cab84c": 1,
-        "6b7159e6ca44d09c010b1c9123f96e8ee7664d5abff67ef57191ab208c1bfa77": 1,
-        "6ddc9f2cf7bef48aab2a5a8b9f834c7af0c32d0ae9d2c3470b623000bdea3766": 1,
-        "726ff8dd1b838604f0b3ad93ef9363a130ac0854fea0242d4da909821273b2a1": 1,
-        "795866ed73e17cdd51849325daf248c01c2405dddf371efd5ca8a1790942e672": 1,
-        "79c4087bdb29f7ad0d4ff2932ddf43dfac1dae070b078c261a2a215c7dfba395": 3,
-        "7bce9c1c19542beedf5c979ac5e4eae440378a02b6909bf98486906db701756f": 3,
-        "7c6e52475ff7975dfb7fe0a42982adcc93bd0455ed3f7c0c27969f958b6e1abf": 1,
-        "82982fcc938b5fca1756c5dd60a63a057d8ea01bf134093175d7ce3a19dc8774": 1,
-        "83ada9c86c134dad33cdf6b6d022daf3e6014a446a9c2c735afb33f495ee2a59": 2,
-        "85164b6d17a58ae37874ef1591b1c019c9f493aa673daf9add4c80bd849c96a8": 2,
-        "8bd9a0a331c0a40ba5da0933448572b3c4dc8ac186acc27f50c39b633c8f4e94": 1,
-        "8d50e9ac6371a94e6e94e8d2d08099dc7b66f059f84eff97bd414eb434171e92": 1,
-        "8d8e2d632243164c0ef7ec7f8551ebc3ee463a89cedf349ba95419fc9382bac9": 2,
-        "914ea2655b9a197e1d77d3396a5442533e4b42f3e47394cb7fa4622dd5ab02bb": 3,
-        "9222aaae2410cc31c74b9fba206d34278f64678e2594537e511758dd37f4586f": 2,
-        "94076477a300aa8cd1929146188d96519f7ae1e8ea47900e7272cbcceefcb0c3": 1,
-        "99b50926e5ea15ef1b2a168988034a8ef6c03c42b6ce29589da58c3151e75b65": 3,
-        "9ceadbea4ade998f52dccec956e6df5f8b7e9b4aa0269c7ce650ccd862f0df0c": 1,
-        "9d3ef0d2b8c36ce767a7f0fb9f9018d37d2808e1bef0c3c29bd426533a89670c": 1,
-        "9fec1adb0cc3d585f2f7d449bb746c533b28d07208dcdcd3d19b9e65f0779617": 1,
-        "a3bc34ae1fffafc7a762acd8aca75909c3bb1ca9e01456b5a931ef420b27ad45": 1,
-        "b6523555123003d73053a210625448ceea3c0f8cef62d772664e68e0b32a275d": 1,
-        "b6ef03d12c7db1c21afadb4b01d2a66e5310fb050ba65753e561f0b43d674b69": 1,
-        "b732b54bf7e81365647e3fa95de51037b7495a3d3cb10c1e163c5331cf81c1aa": 2,
-        "b9062018335c778b2bdfb1645543d682a67b60aa29bbdea950f7bfaa5d73dc61": 1,
-        "ba151aff8dd4ac1eade7b4ccdda4aca9d0aa8e06e94291b7cfd45bdb8247b724": 1,
-        "bc2d0f18766f94979cf09ecaf0b54dc6524332574022f4efbfd55d8c78440887": 1,
-        "bc3135867799300cb33a7de9c8f2d6044aea345de99118f7963fadfe15068269": 1,
-        "c3e9703705c33aa89257adc27ad6de4406cc1dcca0e4f14ad172c2d3c5906ea1": 1,
-        "c45659a95c4509e9640137a16933f5f75fc9c29693a5b89efe49bf23cac4643a": 1,
-        "c668e9a23f6a0312854564963a52f9dc0d168b43d7bb916369ba565ac5a70d23": 2,
-        "cbb957d46f1021d2e1e01aef91c43f20f066368d444fd8e226d9e6cbabb4db8e": 1,
-        "cc4e390f4e98850956489372239a5f00f76a4b854e64e7c8ed957b3f2a4b6a0e": 2,
-        "d00e118d30de9237bd9161b52f160e1503d6866ff138f04492563ba3e26cc674": 1,
-        "d2e90991a455c72bd11d71ba445227cb987f28447b2338b03810a4952940ee8e": 1,
-        "d448db12617c8e9c2a8ad1f8dbee16b86a1878b54d7667c9944ee58f889a0b96": 1,
-        "dc08d8966eb33191b2f2fb120d6b77cef8fd5d8d8b247900581cec604247346d": 1,
-        "dcc0e90b3dfb27ec1599a1c1805f560b3b566f20af64d03d86498d18ff445670": 1,
-        "ee21780f3df6d25be207efaa346a633ca413a26e08d48192774c7fe0aad77c87": 1,
-        "fc533a4f218aa903ff09b021c07c0ebcd006607a5b3b082d42fbd2eb6f560ddd": 1,
-        "fefbbe2946d4815608156db2773115ea963d23743b2fe6d4505bfedf94f11e54": 2,
-        "ff840cc10567abc0897662bbf1ab8ec09b929a04f86f948e4bf9ec2ee1b91333": 1,
-        "ffef3aa65fd2a3fc99db0a8ae15bafe61747445a80591e58257303f8e810121a": 1
-      },
-      "observed_sites": 91
-    },
     "src/mishe_tauftauf/seed_board.py": {
       "sites": 3,
       "entries": 3,
@@ -865,73 +595,6 @@
         "d0afd96eaaafd7d829263a06112e16a7dc59a74d8838e11a00c51595dee720de": 1
       },
       "observed_sites": 3
-    },
-    "src/mishe_tauftauf/seed_culture_views.py": {
-      "sites": 24,
-      "entries": 21,
-      "digest": "b25f580346da3ae567cad364fc9b2321e9653c0b70ebfeb007f96d2aff44ca6d",
-      "observed": {
-        "0434f35c9ab2bf3eef0cd6028dcb8d1e24268927e7546db852a56e6e65a24fd4": 1,
-        "16376db184541d3dd78b574705f31adb81d26d614d8ff7cd6288dcc79f455c27": 1,
-        "2fb2b0d06933984ebf8c5eb5944d1c26dfb216f8aedaaadbc3c79662ee23f942": 1,
-        "3458a3edf28c6123c0388d00d039fd4bf4c19f9f65503788677b38d597f354b9": 2,
-        "401c7ea6ca82b5e0083b45d217f82224cb16a91dffeb888c36c0ce585f3e921a": 1,
-        "4266a7e5b11b1d36756df889d85c0a1bd25e5ba13f499d55408dcb00ab9c9970": 1,
-        "5320e5769353ae1ee7fbb21e0c8f75bf5692aae04f129703be178200ec977a36": 1,
-        "79371d62ef455ed158665e054ff79feecf378be0c3ee94c01d0243d8ddccbe34": 1,
-        "83fefdad2868877fe0d2916fef220261dfb0501c66e3520c260a707505f22ee2": 1,
-        "a8f058a97fee72988f8928c0dae06969e1b63b4ca6b83041b20943ed8f52dab9": 1,
-        "ab0779dbf066b7e19a2f022223d784badb5ae7babe1a0de314629036c5621e92": 1,
-        "b8a4967d89f7b727f4bbe9bcf35c0433a3b6499ea715c4d365da64e7321c7a3f": 1,
-        "cc6ce276659a74834dd5eca6d034164879ba2d10534cc8a4ad5f4f98b127c7ec": 1,
-        "ce024400043a9ca0023eb18520b07e5917dcce5f0af6235f806a2e3706a89d63": 2,
-        "d09821f838a033813385cd19dbc3faa53dc6753c1672f406b7ffc32e4bc8546d": 1,
-        "e0dfe009586f4c81c09d18ba9006669b63bae000cd2b2b47f14e2f4e2c8c3b08": 1,
-        "e0f2f9fe1747bec0499b52aecb317708f0fd8e5ad913b617f89bce38e2e752db": 1,
-        "ed7f4001f679ade05801e1b896182ce286c345823b0beac82c8c3013e47e2089": 1,
-        "f955ab0cdd9f67af29cb74b88c1a6f380b2cf599aa4e539b8d2c96e6bf236ce0": 2
-      },
-      "observed_sites": 22
-    },
-    "src/mishe_tauftauf/seed_permission_panel.py": {
-      "sites": 9,
-      "entries": 9,
-      "digest": "8c603300d5f7e27ab7578e4f78b9aa9423bb092255e2084dfe38cad00866e98a",
-      "observed": {
-        "172a5efdbbec226b06277b37511aaa540bef0cad6a553a483ffe3c2caae34891": 1,
-        "3036355e2bd2a6b0b57c6497a53a32fed8cb3135788c617df6b69d3d71c65129": 1,
-        "5202bc14a3184f5d50ef43e627b98ba479febf388a02fc20829df48ddf9db40c": 1,
-        "6a2f0760e0f35b7c5d917106726a4c4290c7008ab5bd7a7c6a736539c9cab84c": 1,
-        "8d8e2d632243164c0ef7ec7f8551ebc3ee463a89cedf349ba95419fc9382bac9": 1,
-        "b732b54bf7e81365647e3fa95de51037b7495a3d3cb10c1e163c5331cf81c1aa": 1,
-        "ed7f4001f679ade05801e1b896182ce286c345823b0beac82c8c3013e47e2089": 1,
-        "fc533a4f218aa903ff09b021c07c0ebcd006607a5b3b082d42fbd2eb6f560ddd": 1,
-        "ff840cc10567abc0897662bbf1ab8ec09b929a04f86f948e4bf9ec2ee1b91333": 1
-      },
-      "observed_sites": 9
-    },
-    "src/mishe_tauftauf/seed_witness_view.py": {
-      "sites": 22,
-      "entries": 15,
-      "digest": "558b400713c07df833efc1fe1de1b7f6c65541be08f432deb7773d22cadaa49d",
-      "observed": {
-        "3e1c6d23bd6dc620040a3d830f21e1ea7889bd5742c0131a68f29d6fd9a49050": 1,
-        "3f90ab8a7e1595d75f3535e8714561217a3a2c90aa02274571b9c31de65108d6": 2,
-        "4f6d1eb061ae3a103f6b30cdc7b5025248f18daf6b5a4a3f56c0674ee97c8481": 1,
-        "560460983c77dac454df7dc60532275bc3d8193d8b3889830d9ce3e45e178947": 1,
-        "5de81da6f8a21b5722ef55692d4c0db46883a428c746e4e4e4de67240d6a41ca": 2,
-        "637162567c83f59e5aab189c9eec4c7ec3bfc00b7da190ecdd2356e22327f9cf": 2,
-        "64803c102302aaa4bd2a0a9a665fe6e11cdfead2ad887994edeff8e9862442d4": 5,
-        "7fc18b0f9f2044f3c21ddcf157c7cf5dc82356e8e2a37f192297ed6ce3d6b2a6": 1,
-        "884188bababedb6c541ae933135bd5ef55f6122a84193a0f8374cc013690e869": 1,
-        "8f8dc792d4d2be97a6ad0cead748e22f8c512daed3aad73c79df7735b3ab83f4": 1,
-        "90889b70b05a63108350d3568db7cf6e1d5f52bcb9019be0fe8a1f15b80a324f": 1,
-        "99b50926e5ea15ef1b2a168988034a8ef6c03c42b6ce29589da58c3151e75b65": 1,
-        "d80b0e628b24aca53e31137e83dac549db5a35e4d6c4c9c0e183a3179f69bb8d": 1,
-        "e3c2febdd43d26de03f14bf25abcdff926085ee1b502554a0a324882f54cf2cc": 1,
-        "ed7f4001f679ade05801e1b896182ce286c345823b0beac82c8c3013e47e2089": 1
-      },
-      "observed_sites": 22
     },
     "src/mishe_tauftauf/task_state.py": {
       "sites": 56,
@@ -969,40 +632,6 @@
       },
       "observed_sites": 56
     },
-    "src/mishe_tauftauf/tmux.py": {
-      "sites": 29,
-      "entries": 26,
-      "digest": "853f763557e54d5d349a1e3778dd7b123e749b4c62932947af42a41ae5d0ba06",
-      "observed": {
-        "061c475384593f894fc374a80dc12c35e48e5589abed65bd53f75682780e123b": 1,
-        "172a5efdbbec226b06277b37511aaa540bef0cad6a553a483ffe3c2caae34891": 1,
-        "218110b00ebb04a097ef8379c9835a2c5e1141a83c04bc0a85e8d48e7ef8897d": 1,
-        "2a8b57d1a3a9161888c4154b5df128f5913b18402935062609927c0bd53ebe6a": 1,
-        "2df0e2e3514b47cf388defe2f741f646c1d9e02d3697b8e1b59ea11ba8b6b91a": 1,
-        "3036355e2bd2a6b0b57c6497a53a32fed8cb3135788c617df6b69d3d71c65129": 1,
-        "37a49e94eecae2be85b7358968f4cd8dd018964f2e6372bf9977a28fda9bcdb7": 1,
-        "3af12383b5fbbbd81dce71d12967e68cf86518e655f0d0da7afd4b28d9557c84": 1,
-        "3c427726db9ac9ac331b10f2d1145ef0c6ccef22d5548f6406b6e897c92fe218": 1,
-        "58b02450ddb3f6b8a37ff27d3b1ff510cf452f7b2cc358377534572a20be1179": 2,
-        "61925aab82926be0375b06ed76462e7d4b0647f8fe22565b0279d34b10b8b915": 1,
-        "68c9fd6be4f6131e71f4202329e7971f44ab00e1afb367b625184ea19a94f683": 1,
-        "68ea7ddef74052d2584ffa101876f344b991d39895c081e5dcc783ff8d35643a": 1,
-        "6a2f0760e0f35b7c5d917106726a4c4290c7008ab5bd7a7c6a736539c9cab84c": 1,
-        "831544c0300376a4ae5c73002322501414ba4a0b7d37d28e0e6c68c33839766b": 1,
-        "8883c4b23427eec334cdde9ac67018be55a438e54aeabde6552aa83e65b71043": 1,
-        "bc3135867799300cb33a7de9c8f2d6044aea345de99118f7963fadfe15068269": 2,
-        "bcb7ad7aa7826cb4479a5f04b3fd6bbb62a1e0af8475860829987df05d7c544d": 1,
-        "be72652eb08ead4ee99fd05c0c11101cd56bc66fc7dc006d5794ad2fa2ac221e": 1,
-        "c8bb169bfe7722431f5e98d8b669b90d3c9fd3cd03fcc7e53eadd12d9fd540fb": 1,
-        "d784c616ee668708eedb453dac9b3114786abd6fb4c30e85d962a6b3b1dbcd12": 1,
-        "e9747e011ed1b82817c868087dae636d246643a8834d8da10abb044561d3bc3b": 1,
-        "ef2ff8edd80779f2d735b3c20c9131fa7c483a788d1cf67912c2457e1cffd51d": 1,
-        "f5d38a54158f3ad5d03a8381c1af0bc871647837bbaf7c280089cac926a86fd8": 1,
-        "f667a5458e101ef5cace966fe3bdb1d0b4cda0a665d62302efa8f57b5f51b40a": 2,
-        "fc533a4f218aa903ff09b021c07c0ebcd006607a5b3b082d42fbd2eb6f560ddd": 1
-      },
-      "observed_sites": 29
-    },
     "src/mishe_tauftauf/trial_metrics.py": {
       "sites": 18,
       "entries": 16,
@@ -1024,17 +653,6 @@
         "ed7f4001f679ade05801e1b896182ce286c345823b0beac82c8c3013e47e2089": 1
       },
       "observed_sites": 16
-    },
-    "src/mishe_tauftauf/viewport.py": {
-      "sites": 3,
-      "entries": 3,
-      "digest": "bb51a7f5dbcc5875b959fb18e5417394163ced0dfac020bbafb65dc20ec381cb",
-      "observed": {
-        "4cccf1d280f10810ab76da5df6830b25280d9adb214a9eaece4fc439481e3795": 1,
-        "b19e61921c24d6b9f9e293438d9ba6937b47a8293a7bad316ebf58ac4ae164ff": 1,
-        "f94d150e72e84f43d90d75b9491ceb9da65584fb3feb8a4781c6988f74ce08ac": 1
-      },
-      "observed_sites": 3
     },
     "src/mishe_tauftauf/wall.py": {
       "sites": 44,
@@ -1110,35 +728,6 @@
         "fbd462abad5e90fe300b13bfbebd1d51d84c2c2babc42a85dd937591d1468b38": 1
       },
       "observed_sites": 8
-    },
-    "src/mishe_tauftauf/wall_view.py": {
-      "sites": 22,
-      "entries": 21,
-      "digest": "9a7543639510057505020a984f40a62c37d5136b96705b292c8392edfe1e86c4",
-      "observed": {
-        "16c82e26ac46b7a677d40b82abd9c5df096da6b59cfc161d44a740fb7180b73d": 1,
-        "25a4736a5fee97cb1987f4e9c915d90b68a9d5397a8c2ad738e0187d2d28b94b": 1,
-        "2c2ed9ab71a4431ce1b7da6eeedfa21eec3ddb385b79ddd090f8ec2d26ee84c1": 1,
-        "401c7ea6ca82b5e0083b45d217f82224cb16a91dffeb888c36c0ce585f3e921a": 1,
-        "673e0b1763bcb027fc3b83ebf44a076a48814a74d484a0cda989aef8a5313ef7": 1,
-        "76ec68de9bf6cbac141e46e07b072e94aadd886f3b65f830d77aca606a2d8f09": 1,
-        "91e7dcb6d35566b363b7edf882c1adee2843c44fddacfe7e57bb063783b52677": 1,
-        "9266ad629d7efcdf70885ffcd9f823f3a927c987188ec594659278df5dbd446e": 1,
-        "a3b6f72492ddb0b9591c4d0533ef322b81f723f9db11b6af19e0e49b037ff320": 1,
-        "a7c9c53ae6dd77c9c2e83f3a0e0d46de5c05b4d4c53851ecb1d63648d678dd1c": 1,
-        "ab0779dbf066b7e19a2f022223d784badb5ae7babe1a0de314629036c5621e92": 1,
-        "b074419b0189a147a9de32842fda655c5cded87afac3633a94c83d35c4485e4e": 1,
-        "b64ec9bffdde71cb1b4194a11fde853fa5db95a10a6325437e8b0fb3f2da023a": 1,
-        "b8a4967d89f7b727f4bbe9bcf35c0433a3b6499ea715c4d365da64e7321c7a3f": 1,
-        "be7d5c224b97682aa255da81c5f40b6246f8f8470377c59968fffa0b92a8b465": 1,
-        "c43572ca253a337bfcd9f1c219d901826c7c06f698297eb587b2ddd15d5be522": 1,
-        "caee6f3a4dccc920e500db25be25c9ebd76b4d67a0f53ec16bc30a8fbc5a8c2d": 1,
-        "ce024400043a9ca0023eb18520b07e5917dcce5f0af6235f806a2e3706a89d63": 1,
-        "e3c2febdd43d26de03f14bf25abcdff926085ee1b502554a0a324882f54cf2cc": 1,
-        "ed7f4001f679ade05801e1b896182ce286c345823b0beac82c8c3013e47e2089": 1,
-        "ff86f89ed0ea6316e2068a303b555eb6962e151f77ed829fc6dc2cc8a141377d": 1
-      },
-      "observed_sites": 21
     },
     "src/mishe_tauftauf/witness_analysis.py": {
       "sites": 8,

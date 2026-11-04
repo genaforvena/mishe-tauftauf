@@ -14,12 +14,10 @@ from .checks import HealthPublishBusy, run_check
 from . import access, discovery
 from .feed import Feed, FeedError, parse_feed, utc_now
 from .judges import QUESTIONS, classify, controls, document, run_external
-from . import window_manifest
 
 from .observations import (FOOTER_WAKE_LABEL, compose_frame, discover, executable,
                            validate_home, validate_home_binding, validate_slug)
 from .predictions import PredictionError, append_prediction, pending_predictions, replay_predictions
-from .runtime import Coordinator, RuntimeConfig
 
 
 def default_home() -> Path:
@@ -34,18 +32,6 @@ def default_home() -> Path:
                 or os.environ.get("MISHE_TAUFTAUF_HOME", ".mishe-tauftauf"))
 
 
-def _default_session(home: Path) -> str:
-    """Resolve an omitted --session to the session this plant records for itself.
-
-    The literal fallback only fits a default-named plant. A custom-named plant
-    records its session in .seed-raised, so addressing the literal points at a
-    session it does not own and every pane reads as a dead renderer.
-    """
-    session = os.environ.get("MISHE_SEED_SESSION")
-    if session:
-        return session
-    from .seed import recorded_session
-    return recorded_session(home) or "mishe-tauftauf"
 
 def initialize(home: Path) -> None:
     from .wall import settings
@@ -64,10 +50,24 @@ def initialize(home: Path) -> None:
         (home / "chat.log").touch(mode=0o600, exist_ok=True)
 
 
+def _require_worktree(home: Path) -> None:
+    """A site is planted directly inside a Git worktree, never as a subtree of another directory."""
+    if (home.resolve() / ".git").exists():
+        raise ValueError(f"site cannot be a repository root: {home}")
+    workspace = home.parent.resolve()
+    if not workspace.is_dir():
+        raise ValueError(f"site must be directly inside a Git worktree: {workspace}")
+    repository = subprocess.run(["git", "-C", str(workspace), "rev-parse", "--show-toplevel"],
+                                capture_output=True, text=True)
+    if repository.returncode or Path(repository.stdout.strip()).resolve() != workspace:
+        raise ValueError(f"site must be directly inside a Git worktree: {workspace}")
+
+
 def cmd_init(args) -> int:
-    from .seed import _require_worktree
     _require_worktree(args.home)
     initialize(args.home)
+    from .roles import install_defaults
+    install_defaults(args.home)
     print(args.home)
     return 0
 
@@ -129,10 +129,9 @@ def _staging_notes(home: Path, role: str, raw: Path) -> Path:
     )
 def _require_site_role(home: Path, role: str) -> None:
     """Reject wall mutations attributed to a role not registered by this site."""
-    from .activity import ROLES, roles
+    from .roles import declared
 
-    if (role not in roles(home)
-            or (role not in ROLES and not os.access(home / "minds" / role, os.X_OK))):
+    if role not in declared(home):
         raise ValueError(f"role '{role}' is not registered for site home {home}")
 
 def _require_linked_site(home: Path, site_name: str) -> None:
@@ -174,7 +173,7 @@ def cmd_wall(args) -> int:
     elif args.wall_command == "dm":
         if "/" in args.source:
             _require_linked_site(args.home, args.source.split("/", 1)[0])
-        else:
+        elif args.source != "operator":          # the human owner is not a role
             _require_site_role(args.home, args.source)
         if args.file:
             anchor = _staging_anchor(args.home, args.source, args.file)
@@ -197,19 +196,11 @@ def cmd_wall(args) -> int:
                     anchor.unlink()
                 else:
                     print(f"warning: staging anchor {anchor} changed during send; not consumed")
-    elif args.wall_command == "retry":
-        _require_site_role(args.home, args.owner)
-        wall.retry(args.home, args.owner)
     elif args.wall_command == "outcome":
         _require_site_role(args.home, args.owner)
         source = _staging_notes(args.home, args.owner, args.file)
         print(wall.outcome(args.home, args.owner, args.kind, source.read_text(encoding="utf-8"),
                            args.evidence, args.supersedes).sequence)
-    elif args.wall_command == "silence":
-        from . import activity
-        if args.seconds is not None:
-            activity.configure(args.home, args.seconds)
-        print(activity.line(args.home))
     return 0
 
 
@@ -231,9 +222,8 @@ def cmd_access(args) -> int:
             print(f"{row['id']} {row['status']} owner={row['owner']} resolver={row['resolver']} "
                   f"next={row['action']} alternatives={'; '.join(row['alternatives'])} cutoff={row['cutoff']}")
         return 0
-    if args.access_command in {None, "menu"} or (args.access_command in {"grant", "revoke"} and args.id is None):
-        from .permission_menu import run
-        return run(args.home, "revoked" if args.access_command == "revoke" else "granted")
+    if args.access_command is None or (args.access_command in {"grant", "revoke"} and args.id is None):
+        raise ValueError("access needs a subcommand and, for grant/revoke, a request id")
     if args.access_command == "request":
         item = access.request(args.home, args.id, args.owner, args.task, args.capability,
                               args.unblocks, args.reason)
@@ -301,136 +291,18 @@ def cmd_pain_read(args) -> int:
     validate_slug(args.slug)
     launcher = args.launcher
     if launcher == "dashboard":
-        from .dashboard import read
-        try:
-            frame, ok = read(args.home, args.slug)
-        except ValueError as exc:
-            sys.stdout.write(f"UNKNOWN — {exc}\n")
-            return 1
-        sys.stdout.write(frame)
-        return 0 if ok else 1
-    if launcher == "tmux":
-        from .tmux import capture_raw, owns_session
-        # Resolve the session only where a pane is actually addressed: the
-        # dashboard path has no tmux target, and in-process callers build a
-        # Namespace without `session`.
-        session = getattr(args, "session", None) or _default_session(args.home)
-        # A typo'd or stale --home must not read another site's live pane as if
-        # it were this one: the pane is addressed only by session and window,
-        # so without this check every pane reads GREEN under a wrong home.
-        if not owns_session(args.home, session):
-            home = Path(args.home).resolve()
-            sys.stderr.write(f"UNKNOWN — session {session!r} is not owned by {home}\n")
-            return 1
-        text = capture_raw(session, args.slug)
-        sys.stdout.write(text)
-        return 1 if text.startswith("UNKNOWN —") else 0
+        # No resident renderer publishes frames any more: render the current report now.
+        return cmd_pain_render(args)
     return cmd_pain_render(args)
 
 
-def _renderer_heartbeat(home: Path, slug: str) -> None:
-    """Touch a per-slug heartbeat so a stale dashboard can be told apart from a
-    live-but-hung loop (heartbeat fresh, dashboard stale) or a dead loop."""
-    path = home / "logs" / f"pain-watch-{slug}.heartbeat"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"{time.time():.0f}\n", encoding="utf-8")
 
 
-def _capture_renderer_failure(home: Path, slug: str) -> None:
-    """Append the renderer traceback to a durable per-slug log. The tmux pane that
-    hosts a pain-watch loop is destroyed by the operator-view supervisor on respawn,
-    so a traceback written only to the pane is lost; this file survives respawn."""
-    import traceback
-    path = home / "logs" / f"pain-watch-{slug}.stderr"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(f"\n=== {utc_now()} ===\n")
-        traceback.print_exc(file=handle)
-
-def _bind_renderer_home(home: Path) -> None:
-    """Export the site home this renderer renders, unless its supervisor already bound one.
-
-    Pane launchers that bypass ``tmux._python_command`` (operator view, plant refresh) start
-    ``pain watch`` without ``MISHE_SEED_HOME``, and the field-review lane reads that variable from
-    the environment, so it reported UNKNOWN "site home unset". A conflicting binding is left in
-    place so ``validate_home_binding`` keeps the mismatch visible instead of overwriting it.
-    """
-    os.environ.setdefault("MISHE_SEED_HOME", str(Path(home).resolve()))
 
 
-def _held_delivery_status(home: Path, role: str, pending: int | None) -> str | None:
-    """Expose an exhausted delivery only while its wake is still pending."""
-    if pending is None:
-        return None
-    path = home / "checks" / f"wall-send-{role}-{pending}.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    attempts = data.get("attempts") if isinstance(data, dict) else None
-    if not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 2:
-        return None
-    at = data.get("at")
-    if not isinstance(at, str):
-        return f"delivery=HELD wake={pending} since=UNKNOWN"
-    from datetime import datetime
-    try:
-        datetime.fromisoformat(at)
-    except ValueError:
-        return f"delivery=HELD wake={pending} since=UNKNOWN"
-    return f"delivery=HELD wake={pending} since={at}"
 
 
-def cmd_pain_watch(args) -> int:
-    validate_slug(args.slug)
-    _bind_renderer_home(args.home)
-    feed = Feed(args.home)
-    tick = 0
-    try:
-        while True:
-            _renderer_heartbeat(args.home, args.slug)
-            try:
-                rendered = compose_frame(args.home, args.slug, args.timeout)
-                ok = rendered.ok
-                entries = feed.role_entries(args.slug)
-                from .seed import _state
-                _, pending, settled, cleared, *_ = _state(args.home, args.slug, entries=entries)
-                status = f"pending={pending or 'none'} yield={settled or 'none'} clear={cleared or 'none'}"
-                held = _held_delivery_status(args.home, args.slug, pending)
-                if held:
-                    status += f" {held}"
-                body = rendered.body
-                if not body.endswith("\n"):
-                    body += "\n"
-                footer = f"-- {FOOTER_WAKE_LABEL}: {status} --\n"
-            except FeedError as exc:
-                ok = False
-                body = (
-                    "STATE: RED — chat feed is malformed; repair the framed feed before retrying\n"
-                    f"FEED ERROR: {exc}\n"
-                )
-                footer = ""
-            footer += f"-- pane live {utc_now()} · refresh {args.interval:g}s · ticks every frame --\n"
-            frame = body + footer
-            from .dashboard import publish
-            publish(args.home, args.slug, frame, ok)
-            displayed = frame
-            if sys.stdout.isatty():
-                from .viewport import project
-                try:
-                    size = os.get_terminal_size(sys.stdout.fileno())
-                    displayed = project(body, footer, args.slug, size.columns, size.lines, tick)
-                except OSError:
-                    displayed = "UNKNOWN — terminal geometry unavailable"
-            sys.stdout.write("\x1b[H\x1b[2J" + displayed)
-            tick += 1
-            sys.stdout.flush()
-            time.sleep(args.interval)
-    except KeyboardInterrupt:
-        return 0
-    except Exception:
-        _capture_renderer_failure(args.home, args.slug)
-        raise
+
 
 
 def cmd_check(args) -> int:
@@ -453,112 +325,16 @@ def cmd_predict(args) -> int:
     return 0
 
 
-def cmd_handoff(args) -> int:
-    slug = validate_slug(args.slug)
-    invocation = os.environ.get("MISHE_TAUFTAUF_INVOCATION")
-    env_slug = os.environ.get("MISHE_TAUFTAUF_SLUG")
-    if not invocation or env_slug != slug:
-        raise ValueError("handoff requires launcher-supplied matching invocation identity")
-    text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
-    if not text:
-        raise ValueError("handoff text must be non-empty")
-    text.encode("utf-8")
-    entry = Feed(args.home).append_runtime("mishe-tauftauf", f"handoff top-pain {slug} invocation {invocation}\n{text}")
-    directory = args.home / "handoffs"
-    directory.mkdir(parents=True, exist_ok=True)
-    temporary = directory / f".{slug}.{os.getpid()}.tmp"
-    temporary.write_text(text, encoding="utf-8")
-    os.replace(temporary, directory / f"{slug}.md")
-    print(entry.sequence)
-    return 0
 
 
-def cmd_run(args) -> int:
-    config = RuntimeConfig(args.home, Path(args.judge) if args.judge else None, args.launcher, args.session, args.interval, not args.observe_only, Path(args.policy) if args.policy else None, Path(args.batch_judge) if args.batch_judge else None, args.control_cache_ttl, args.refresh_controls, tuple(args.external_view_slug), tuple(args.external_delta_view_slug), slug=args.slug, laya_structured=args.laya_structured, external_fleet_view_slugs=tuple(args.external_fleet_view_slug))
-    coordinator = Coordinator(config)
-    coordinator.acquire()
-    try:
-        if args.follow:
-            coordinator.follow()
-        else:
-            coordinator.pass_once()
-    finally:
-        coordinator.close()
-    return 0
 
 
-def cmd_tmux_start(args) -> int:
-    from .plant import _site_tmux_tmpdir
-    from .tmux import start
-
-    # Pin the whole command to the per-site socket; without the unit env a
-    # manual `tmux start` would read and raise on the default socket.
-    os.environ.setdefault("TMUX_TMPDIR", str(_site_tmux_tmpdir(args.home)))
-    start(args.home, args.session, args.interval)
-    print(f"tmux session {args.session} ready")
-    return 0
 
 
-def cmd_tmux_stop(args) -> int:
-    from .tmux import stop
-    stop(args.home, args.session)
-    print(f"tmux session {args.session} stopped")
-    return 0
 
 
-def cmd_seed_uninstall(args) -> int:
-    from .site_uninstall import uninstall
-    try:
-        result = uninstall(args.home, args.session, execute=args.execute,
-                           confirm_home=args.confirm_home, purge_site=args.purge_site)
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise RuntimeError(f"uninstall could not complete: {exc}") from exc
-    print(json.dumps(result, indent=2, sort_keys=True))
-    return 0
 
 
-def cmd_seed(args) -> int:
-    from .plant import _site_tmux_tmpdir
-    from . import seed
-
-    # Pin the whole supervisor process (start/tick/clear/status/follow) to the
-    # per-site socket. Mind units set TMUX_TMPDIR themselves; any other launcher
-    # (recovery shell, manual run) would otherwise read and raise on the default
-    # socket, forking a duplicate session on a foreign server.
-    os.environ.setdefault("TMUX_TMPDIR", str(_site_tmux_tmpdir(args.home)))
-    action = args.seed_command
-    if action == "init":
-        result = seed.init(args.home, args.slug, args.engine_command)
-    elif action == "loop":
-        result = seed.loop(
-            args.home, args.slug, kind=args.kind, model=args.model, bun=args.bun,
-            node_modules=args.node_modules, engine_command=args.engine_command,
-            max_turns=args.max_turns, max_calls=args.max_calls, timeout=args.timeout,
-            reasoning=args.reasoning, restore=args.restore)
-    elif action == "start":
-        result = seed.start(args.home, args.session, args.slug, args.interval)
-    elif action == "stop":
-        result = seed.stop(args.home, args.session)
-    elif action == "tick":
-        result = seed.tick(args.home, args.session, args.slug, args.self_pick_seconds)
-    elif action == "follow":
-        seed.follow(args.home, args.session, args.slug, args.interval, args.self_pick_seconds)
-        return 0
-    elif action == "run":
-        seed.run(args.home, args.session, args.slug, args.interval, args.self_pick_seconds, args.clear_grace_seconds)
-        return 0
-    elif action == "yield":
-        _require_site_role(args.home, args.slug)
-        result = seed.yield_wake(
-            args.home, args.slug, args.wake, _staging_notes(args.home, args.slug, args.file),
-            args.continue_task, args.result,
-            source_is_anchor=_staging_anchor(args.home, args.slug, args.file) is not None)
-    elif action == "clear":
-        result = seed.clear(args.home, args.session, args.slug)
-    else:
-        result = seed.status(args.home, args.slug)
-    print(result)
-    return 0
 
 
 def cmd_publication(args) -> int:
@@ -619,51 +395,6 @@ def cmd_delivery(args) -> int:
     return 0
 
 
-def cmd_tmux_mind_run(args) -> int:
-    from .feed import Feed
-    from .tmux import capture_raw
-    home, slug = args.home, validate_slug(args.slug)
-    validate_home(home)
-    lock_path = home / "minds" / f".{slug}.lock"
-    with lock_path.open("a+") as lock:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        context_path = Path(args.context_path)
-        context = context_path.read_text(encoding="utf-8")
-        context_path.unlink(missing_ok=True)
-        pane = capture_raw(args.session, slug)
-        context = f"ACTUAL LAUNCH-TIME TOP PAIN\n{pane}\n\n{context}"
-        executable_path = home / "minds" / slug
-        if not executable(executable_path):
-            executable_path = home / "minds" / "default"
-        env = os.environ.copy()
-        env.update({"MISHE_TAUFTAUF_HOME": str(home), "MISHE_TAUFTAUF_SLUG": slug, "MISHE_TAUFTAUF_INVOCATION": args.invocation, "MISHE_TAUFTAUF_WORKSPACE": str(home.parent)})
-        from .seed import _record_mind_model
-        try:
-            process = subprocess.Popen([str(executable_path)], stdin=subprocess.PIPE,
-                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
-            assert process.stdin is not None and process.stdout is not None
-            process.stdin.write(context.encode())
-            process.stdin.close()
-            byte_count = 0
-            while chunk := os.read(process.stdout.fileno(), 4096):
-                byte_count += len(chunk)
-                remaining = memoryview(chunk)
-                while remaining:
-                    remaining = remaining[os.write(1, remaining):]
-            code = process.wait()
-            stdout, stderr = "", ""
-        except OSError as exc:
-            code, stdout, stderr = 127, "", str(exc)
-        feed = Feed(home)
-        if stdout or stderr:
-            print(stdout + stderr, flush=True)
-        if 'byte_count' in locals():
-            feed.append_runtime("mishe-tauftauf", f"mind output top-pain {slug} invocation {args.invocation} stdout-bytes={byte_count} stderr-bytes=0")
-        feed.append_runtime("mishe-tauftauf", f"mind exited top-pain {slug} for entry {args.sequence} attempt={args.attempt} code={code}")
-        _record_mind_model(home, slug, executable_path, "run")
-        if not any(f"handoff top-pain {slug} invocation {args.invocation}" in entry.body for entry in feed.entries() if entry.source == "mishe-tauftauf"):
-            feed.append_runtime("observation/" + slug, f"UNKNOWN — mind invocation {args.invocation} exited without a tied handoff; prior handoff is stale")
-        return code
 
 
 
@@ -686,117 +417,8 @@ def _repair_handoffs(home: Path, entries) -> list[str]:
     return repaired
 
 
-def _configured_windows(home: Path, surfaces: list[str]) -> list[str]:
-    """Resident windows this site declared, intersected with its renderers.
-
-    `health/windows.json` is the plant's own manifest of windows it means to
-    raise (roles plus the permissions panel and the operator shell). Requiring a
-    pane only for those surfaces keeps renderer-only observations honest instead
-    of reporting a RED failure for a window no service is chartered to create.
-    An absent manifest declares no windows; an unreadable or malformed one falls
-    back to every discovered surface, since damaged bytes must not read as a
-    narrower contract than the renderers actually raise.
-    """
-    try:
-        configured = set(window_manifest.read(home))
-    except ValueError:
-        return list(surfaces)
-    return [slug for slug in surfaces if slug in configured]
 
 
-def cmd_doctor(args) -> int:
-    failures = 0
-    site = args.home.resolve()
-    repository = subprocess.run(["git", "-C", str(site.parent), "rev-parse", "--show-toplevel"],
-                                capture_output=True, text=True)
-    if repository.returncode == 0 and Path(repository.stdout.strip()).resolve() == site.parent:
-        tracked = subprocess.run(["git", "-C", str(site.parent), "ls-files", "--", site.name],
-                                 capture_output=True, text=True)
-        if tracked.returncode or tracked.stdout.strip():
-            print("HOLD local-plant-in-git: remove staged or tracked site files from the index")
-            failures += 1
-        else:
-            print("PASS local plant out of Git")
-    feed = Feed(args.home)
-    try:
-        entries = feed.entries()
-        print(f"PASS feed: {len(entries)} contiguous entries")
-        print(f"INFO feed bytes: {len(feed.read_bytes())}")
-    except FeedError as exc:
-        print(f"HOLD feed-corrupt: {exc}")
-        return 1
-    for kind in ("top-pains", "minds"):
-        directory = args.home / kind
-        if not directory.exists():
-            print(f"HOLD missing-directory: {directory}")
-            failures += 1
-            continue
-        bad = [path.name for path in directory.iterdir() if path.is_file() and not executable(path) and not path.name.startswith(".") and path.suffix not in (".txt", ".json", ".yaml", ".yml", ".cfg", ".conf")]
-        if bad:
-            print(f"HOLD non-executable {kind}: {', '.join(sorted(bad))}")
-            failures += 1
-        if kind == "top-pains" and not discover(args.home):
-            print("HOLD missing-top-pain: no executable Top Pain in top-pains")
-            failures += 1
-        elif not bad:
-            print(f"PASS executable {kind}")
-    repaired = _repair_handoffs(args.home, entries)
-    if repaired:
-        print("PASS repaired handoff projections: " + ", ".join(repaired))
-    pending = pending_predictions(args.home, entries)
-    for prediction in pending:
-        print(f"PENDING prediction {prediction.sequence} top-pain {prediction.slug} check {prediction.check_at.isoformat()}")
-    if args.panes:
-        from .plant import ROLES
-        from .tmux import check_mind_pane, check_pane, owns_session
-        session = getattr(args, "session", None) or _default_session(args.home)
-        surfaces = discover(args.home)
-        required = _configured_windows(args.home, surfaces)
-        if shutil.which("tmux") and not owns_session(args.home, session):
-            print(f"UNKNOWN — session {session!r} is not owned by {args.home}")
-            failures += 1
-        else:
-            for slug in required:
-                ok, line = check_pane(args.home, session, slug, args.pane_wait)
-                print(line)
-                failures += 0 if ok else 1
-            for slug in [name for name in required if name in ROLES]:
-                # A chartered mind pane that died is invisible to the renderer
-                # lease above; it is the class of failure that wedged the
-                # tiny-fleet docs mind at status 127 while its top pane stayed live.
-                ok, line = check_mind_pane(session, slug)
-                print(line)
-                failures += 0 if ok else 1
-            for slug in [name for name in surfaces if name not in set(required)]:
-                # A renderer with no configured resident window (observability,
-                # legacy one-shot surfaces) is an informational observation, not
-                # a RED failure that no service can clear.
-                print(f"INFO pane-surface: {slug} has a renderer but no configured resident window")
-    if args.sweep_orphans:
-        from .tmux import sweep_orphan_test_sessions
-        killed = sweep_orphan_test_sessions()
-        if killed:
-            print(f"PASS swept orphaned test sessions: {', '.join(killed)}")
-        else:
-            print("PASS no orphaned test sessions")
-    if shutil.which("tmux"):
-        print("PASS optional tmux available")
-    else:
-        print("UNAVAILABLE optional tmux")
-    try:
-        import laya  # noqa: F401
-        print("PASS optional laya available")
-    except ImportError:
-        print("UNAVAILABLE optional laya")
-    if args.live_laya:
-        box: list = []
-        _live_check("convaiinnovations/laya typed-decisions", _laya_call, box, args.verbose)
-        failures += len(box)
-    if args.live_jev:
-        box2: list = []
-        _live_check("typesafe/jev", _jev_call, box2, args.verbose)
-        failures += len(box2)
-    return 1 if failures else 0
 
 
 def _live_check(label: str, call, failures_box: list, verbose: bool) -> bool:
@@ -875,25 +497,6 @@ def _prog_name() -> str:
     name = Path(sys.argv[0]).name
     return name if name in ("mishe", "mishe-tauftauf") else "mishe-tauftauf"
 
-def cmd_view(args) -> int:
-    from .view import attach_view
-    res = attach_view(home=args.home, session=args.session, create_view=not args.no_create)
-    msg = res.get("message", "")
-    if res.get("action") == "exec-attach":
-        print(msg)
-        if res.get("alt") and res.get("alt") != msg:
-            print(res["alt"])
-        if not args.no_create and sys.stdout.isatty() and sys.stdin.isatty() and res.get("socket"):
-            try:
-                env = {k: v for k, v in os.environ.items() if k != "TMUX"}
-                os.execve("/usr/bin/tmux", ["tmux", "-S", res["socket"], "attach", "-t", res["session"]], env)
-            except Exception:
-                pass
-        return 0 if res.get("ok") else 1
-    print(msg)
-    if res.get("window_id"):
-        print(res["window_id"])
-    return 0 if res.get("ok") else 1
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog=_prog_name())
@@ -904,8 +507,6 @@ def parser() -> argparse.ArgumentParser:
     wall = sub.add_parser("wall").add_subparsers(dest="wall_command", required=True)
     p = wall.add_parser("show"); p.add_argument("--owner", required=True); p.set_defaults(func=cmd_wall)
     p = wall.add_parser("write"); p.add_argument("--owner", required=True); p.add_argument("--file", type=Path, required=True); p.set_defaults(func=cmd_wall)
-    p = wall.add_parser("retry"); p.add_argument("--owner", required=True); p.set_defaults(func=cmd_wall)
-    p = wall.add_parser("silence"); p.add_argument("--seconds", type=float); p.set_defaults(func=cmd_wall)
     p = wall.add_parser("outcome"); p.add_argument("--owner", required=True)
     p.add_argument("--kind", choices=("accepted", "blocker-resolved", "blocker-retired", "hypothesis-changed"), required=True)
     p.add_argument("--file", type=Path, required=True); p.add_argument("--evidence", type=Path, required=True)
@@ -975,84 +576,46 @@ def parser() -> argparse.ArgumentParser:
     for verb in ("grant", "revoke", "check"):
         p = access_cmd.add_parser(verb); p.add_argument("id", nargs="?" if verb != "check" else None); p.set_defaults(func=cmd_access)
     p = access_cmd.add_parser("list"); p.set_defaults(func=cmd_access)
-    p = access_cmd.add_parser("menu"); p.set_defaults(func=cmd_access)
     discover_cmd = sub.add_parser("discover").add_subparsers(dest="discover_command", required=True)
     p = discover_cmd.add_parser("scan"); p.set_defaults(func=cmd_discover)
     p = discover_cmd.add_parser("show"); p.set_defaults(func=cmd_discover)
     p = sub.add_parser("feed"); p.set_defaults(func=cmd_feed)
     p = sub.add_parser("dispatch-receipt"); p.add_argument("slug"); p.add_argument("entry", type=int); p.add_argument("outcome", choices=("delivered", "refused")); p.add_argument("--request-id"); p.add_argument("--generation", type=int); p.set_defaults(func=cmd_dispatch_receipt)
-    p = sub.add_parser("doctor"); p.add_argument("--panes", action="store_true"); p.add_argument("--session"); p.add_argument("--pane-wait", type=float, default=11.0); p.add_argument("--live-laya", action="store_true"); p.add_argument("--live-jev", action="store_true"); p.add_argument("--verbose", action="store_true"); p.add_argument("--sweep-orphans", action="store_true"); p.set_defaults(func=cmd_doctor)
     p = sub.add_parser("check"); p.add_argument("slug"); p.add_argument("program", nargs=argparse.REMAINDER); p.set_defaults(func=cmd_check)
     p = sub.add_parser("predict"); p.add_argument("slug"); p.add_argument("file", nargs="?"); p.add_argument("--replaces", type=int); p.set_defaults(func=cmd_predict)
-    p = sub.add_parser("handoff"); p.add_argument("slug"); p.add_argument("file", nargs="?"); p.set_defaults(func=cmd_handoff)
     pain = sub.add_parser("pain").add_subparsers(dest="pain_command", required=True)
     p = pain.add_parser("list"); p.set_defaults(func=cmd_pain_list)
     p = pain.add_parser("render"); p.add_argument("slug"); p.add_argument("--timeout", type=float, default=None); p.set_defaults(func=cmd_pain_render)
-    p = pain.add_parser("read"); p.add_argument("slug"); p.add_argument("--launcher", choices=("headless", "tmux", "dashboard"), default="headless"); p.add_argument("--session"); p.add_argument("--timeout", type=float, default=None); p.set_defaults(func=cmd_pain_read)
-    p = pain.add_parser("watch"); p.add_argument("slug"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--timeout", type=float, default=None); p.set_defaults(func=cmd_pain_watch)
-    p = sub.add_parser("run"); mode = p.add_mutually_exclusive_group(required=True); mode.add_argument("--once", action="store_true"); mode.add_argument("--follow", action="store_true"); judge = p.add_mutually_exclusive_group(); judge.add_argument("--judge"); judge.add_argument("--batch-judge"); p.add_argument("--launcher", choices=("headless", "tmux"), default="tmux"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--observe-only", action="store_true"); p.add_argument("--slug"); p.add_argument("--laya-structured", action="store_true"); p.add_argument("--policy"); p.add_argument("--control-cache-ttl", type=float); p.add_argument("--refresh-controls", action="store_true"); p.add_argument("--external-view-slug", action="append", default=[]); p.add_argument("--external-delta-view-slug", action="append", default=[]); p.add_argument("--external-fleet-view-slug", action="append", default=[]); p.set_defaults(func=cmd_run)
-    tmux = sub.add_parser("tmux").add_subparsers(dest="tmux_command", required=True)
-    p = tmux.add_parser("start"); p.add_argument("--session", default="mishe-tauftauf"); p.add_argument("--interval", type=float, default=5.0); p.set_defaults(func=cmd_tmux_start)
-    p = tmux.add_parser("stop"); p.add_argument("--session", default="mishe-tauftauf"); p.set_defaults(func=cmd_tmux_stop)
-    seed = sub.add_parser("seed").add_subparsers(dest="seed_command", required=True)
-    p = seed.add_parser("init"); p.add_argument("--slug", default="genome"); p.add_argument("--engine-command", default="codex"); p.set_defaults(func=cmd_seed)
-    p = seed.add_parser("loop", help="Inspect or select one mind's next idle launcher; never restart it")
-    p.add_argument("--slug", required=True, help="Registered mind to inspect or select independently")
-    choice = p.add_mutually_exclusive_group()
-    choice.add_argument("--kind", choices=("internal", "external"), help="Desired loop at the next canonical idle rotation")
-    choice.add_argument("--restore", metavar="RECEIPT", help="Restore the exact launcher/probe saved before this role's receipt")
-    p.add_argument("--model", help="Internal provider/model identity")
-    p.add_argument("--bun", type=Path, help="Absolute executable Bun path")
-    p.add_argument("--node-modules", type=Path, help="Absolute worker dependency directory")
-    p.add_argument("--engine-command", help="External executable and argv (shell quoting, not a shell program)")
-    p.add_argument("--max-turns", type=int, help="Internal turn budget (default: 32)")
-    p.add_argument("--max-calls", type=int, help="Internal tool-call budget (default: 64)")
-    p.add_argument("--timeout", type=float, help="Internal wake deadline in seconds (default: 900)")
-    p.add_argument("--reasoning", choices=("minimal", "low", "medium", "high", "xhigh", "max"), help="Internal reasoning effort (default: medium)")
-    p.set_defaults(func=cmd_seed)
-    p = seed.add_parser("start"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.add_argument("--interval", type=float, default=5.0); p.set_defaults(func=cmd_seed)
-    p = seed.add_parser("stop"); p.add_argument("--session", default="mishe-seed"); p.set_defaults(func=cmd_seed)
-    p = seed.add_parser("uninstall", help="Preview or explicitly remove one owned site's installation")
-    p.add_argument("--session", required=True)
-    p.add_argument("--execute", action="store_true")
-    p.add_argument("--confirm-home", help="Exact absolute site path, required with --execute")
-    p.add_argument("--purge-site", action="store_true", help="Also delete all selected site-local state")
-    p.set_defaults(func=cmd_seed_uninstall)
-    p = seed.add_parser("tick"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.add_argument("--self-pick-seconds", type=float, default=0); p.set_defaults(func=cmd_seed)
-    p = seed.add_parser("follow"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--self-pick-seconds", type=float, default=3600); p.set_defaults(func=cmd_seed)
-    p = seed.add_parser("run"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.add_argument("--interval", type=float, default=5.0); p.add_argument("--self-pick-seconds", type=float, default=3600); p.add_argument("--clear-grace-seconds", type=float, default=15); p.set_defaults(func=cmd_seed)
-    p = seed.add_parser("yield"); p.add_argument("--slug", default="genome"); p.add_argument("--wake", type=int, required=True); p.add_argument("--file", type=Path, required=True); p.add_argument("--continue", dest="continue_task", action="store_true"); p.add_argument("--result", choices=("changed", "verified", "blocked"), default="unspecified"); p.set_defaults(func=cmd_seed)
-    p = seed.add_parser("clear"); p.add_argument("--slug", default="genome"); p.add_argument("--session", default="mishe-seed"); p.set_defaults(func=cmd_seed)
-    p = seed.add_parser("status"); p.add_argument("--slug", default="genome"); p.set_defaults(func=cmd_seed)
-    p = sub.add_parser("tmux-mind-run", help=argparse.SUPPRESS); p.add_argument("slug"); p.add_argument("sequence", type=int); p.add_argument("attempt", type=int); p.add_argument("invocation"); p.add_argument("context_path"); p.add_argument("--session", default="mishe-tauftauf"); p.set_defaults(func=cmd_tmux_mind_run)
+    p = pain.add_parser("read"); p.add_argument("slug"); p.add_argument("--launcher", choices=("headless", "dashboard"), default="headless"); p.add_argument("--session"); p.add_argument("--timeout", type=float, default=None); p.set_defaults(func=cmd_pain_read)
     p = sub.add_parser("publication").add_subparsers(dest="publication_command", required=True)
     c = p.add_parser("status"); c.set_defaults(func=cmd_publication)
     c = p.add_parser("check"); c.add_argument("--source", required=True); c.add_argument("--file", type=Path, required=True); c.add_argument("--stage", choices=("post", "selection", "handoff"), default="post"); c.add_argument("--task"); c.set_defaults(func=cmd_publication)
     c = task.add_parser("coordination-report"); c.add_argument("--task"); c.add_argument("--cutoff", type=int); c.set_defaults(func=cmd_task)
-    p = sub.add_parser("view", aliases=["attach"], help="Attach to the plant's isolated tmux session")
-    p.add_argument("--session", default=None, help="tmux session name (default: recorded session or mishe-tauftauf)")
-    p.add_argument("--no-create", action="store_true", help="do not create outer view window when inside tmux")
-    p.set_defaults(func=cmd_view)
-    from .model_cli import register
     from .dispositions import register as register_dispositions
     register_dispositions(sub)
     from .guard_cli import register as register_guard
     register_guard(sub)
-    register(sub)
     from .engine_usage import register as register_engine
     register_engine(sub)
+    from .runtime_cli import register as register_runtime
+    register_runtime(sub)
     from .token_usage import register as register_stats
     register_stats(sub)
     return root
 
 
 def main(argv: list[str] | None = None) -> int:
+    from .runtime_cli import cmd_runtime, command_tail
+    argv, tail = command_tail(list(sys.argv[1:] if argv is None else argv))
     args = parser().parse_args(argv)
-    if args.func is not cmd_seed_uninstall:
-        args.home = args.home.resolve()
+    if tail:
+        args.cmd = tail
+    args.home = args.home.resolve()
     try:
+        if args.func is cmd_runtime:        # runtime commands run on any site, including a scratch one
+            return args.func(args)
         validate_home_binding(args.home)
-        if not (args.func is cmd_init or getattr(args, "seed_command", None) == "init"):
+        if args.func is not cmd_init:
             validate_home(args.home)
         return args.func(args)
     except (FeedError, PredictionError, ValueError, RuntimeError) as exc:

@@ -7,8 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mishe_tauftauf import body_perception, seed_culture_views
-from mishe_tauftauf.seed import _observation_text
+from mishe_tauftauf import body_perception
 
 
 SOURCE = "http://127.0.0.1:8765/node/redmi10"
@@ -102,80 +101,8 @@ def test_redmi_reader_exposes_fresh_samples_with_source_and_uncertainty(tmp_path
     assert "not person-movement evidence" in row["details"]
 
 
-def test_cursor_progress_stays_visible_without_changing_observation_summary(tmp_path: Path) -> None:
-    now = 1_800_000_000.0
-    core, state_path, state = _linked_state(tmp_path, now)
-    state["latest"]["acceleration"]["received"] = now - 60
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-    first = body_perception.read_redmi10(core, now)
-
-    def frame(row):
-        return (f"UNKNOWN {row['id']}: {row['sample']}\n"
-                f"REDMI10 SOURCE/LIMITS: {row['details']}\n"
-                "STATE: UNKNOWN — 1 source read unverified")
-    first_observation = _observation_text("senses", frame(first))
-    state["cursor"] = 4
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-    advanced = body_perception.read_redmi10(core, now)
-
-    assert advanced["state"] == "unknown"
-    assert advanced["cursor"] == 4
-    assert "cursor=4" in advanced["details"]
-    assert advanced["sample"] == first["sample"]
-    assert _observation_text("senses", frame(advanced)) == first_observation
-    state["cursor"] = 5
-    state["latest"]["light"]["sequence"] = 5
-    state["latest"]["light"]["fields"]["lux"] = "102"
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-    in_band = body_perception.read_redmi10(core, now)
-    assert in_band["sample"] != first["sample"]
-    # Same-band ambient-light jitter (101→102lux) is presentation churn, not
-    # a digest event: the cursor advance is normalized away with the light.
-    assert _observation_text("senses", frame(in_band)) == first_observation
-
-    state["latest"]["light"]["fields"]["lux"] = "130"
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-    changed_sensor = body_perception.read_redmi10(core, now)
-    assert changed_sensor["sample"] != first["sample"]
-    # A cross-band environmental transition must reach the digest.
-    assert _observation_text("senses", frame(changed_sensor)) != first_observation
-
-    state["session"] = "new-session"
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-    changed_session = body_perception.read_redmi10(core, now)
-    assert changed_session["sample"] != changed_sensor["sample"]
-    assert _observation_text("senses", frame(changed_session)) != \
-        _observation_text("senses", frame(changed_sensor))
 
 
-def test_senses_pane_refreshes_linked_redmi_without_waiting_for_a_scan(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    now = time.time()
-    core, _path, _state = _linked_state(tmp_path, now)
-    scan_id = "scan-fixture"
-    scan_dir = core / "discovery"
-    scan_dir.mkdir()
-    (scan_dir / "latest.json").write_text(json.dumps({
-        "created": datetime.fromtimestamp(now, timezone.utc).isoformat(),
-        "scan_id": scan_id,
-        "observations": [{"id": "sense.proc.loadavg", "kind": "read",
-                          "state": "verified", "sample": "1.23"}],
-    }), encoding="utf-8")
-    (scan_dir / "attempt.json").write_text(json.dumps({
-        "status": "succeeded", "stage": "notification", "scan_id": scan_id,
-        "created": datetime.fromtimestamp(now, timezone.utc).isoformat(),
-    }), encoding="utf-8")
-    monkeypatch.setattr(seed_culture_views, "_scan_reading",
-                        lambda _snapshot: ("recent", "consistent"))
-
-    rendered = seed_culture_views.senses(core)
-
-    assert "VERIFIED sense.body.redmi10: Redmi10 sid=7afa3a15" in rendered
-    assert "REDMI10 SOURCE/LIMITS: source=" + SOURCE in rendered
-    assert "Wi-Fi disconnected" in rendered
-    assert "not person-movement evidence" in rendered
-    assert "UNKNOWN sense.space.light" in rendered
-    assert "STATE: UNKNOWN" in rendered
 
 
 @pytest.mark.parametrize(("fault", "expected"), [

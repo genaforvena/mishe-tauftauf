@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from mishe_tauftauf import intentions, owed, runtime_cli, signal_store as store
+from mishe_tauftauf import cli as _cli, intentions, owed, runtime_cli, signal_store as store
 
 FAKE_CLAUDE = """#!/bin/sh
 cat > "$MISHE_SEED_HOME/engine-saw-prompt.txt"
@@ -41,7 +41,7 @@ def site(tmp_path, monkeypatch):
 
 
 def cli(*argv):
-    return runtime_cli.main(list(argv))
+    return _cli.main(list(argv))
 
 
 def test_signal_register_observe_and_inbox(site, capsys):
@@ -174,3 +174,25 @@ def test_migrate_command_reports_and_is_repeatable(site, capsys):
     assert "open_dispatches" in out
     assert (site / "intentions" / "genome" / "migrate-wall-next-actions.json").exists()
     assert cli("migrate") == 0
+
+
+def test_init_installs_default_charters_and_operator_can_send_a_dm(tmp_path, capsys):
+    import subprocess
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    home = tmp_path / ".mishe-tauftauf"
+    assert _cli.main(["--home", str(home), "init"]) == 0
+    assert (home / "charters" / "genome.md").exists() and (home / "charters" / "health.md").exists()
+    assert _cli.main(["--home", str(home), "wall", "dm", "--source", "operator", "--to", "genome", "--text", "hi"]) == 0
+    assert (home / "inbox" / "genome").exists()
+
+
+def test_constants_borrowed_from_heavy_modules_stay_equal():
+    from mishe_tauftauf import wake, yielding
+    assert runtime_cli.WAKE_TIMEOUT == wake.DEFAULT_TIMEOUT
+    assert runtime_cli.YIELD_RESULTS == yielding.RESULTS
+
+
+def test_every_runtime_command_is_in_the_one_parser():
+    from mishe_tauftauf import cli
+    commands = set(cli.parser()._subparsers._group_actions[0].choices)
+    assert {"wake", "yield", "signal", "inbox", "hold", "arm", "due", "failed", "sync", "doctor", "produce", "migrate"} <= commands

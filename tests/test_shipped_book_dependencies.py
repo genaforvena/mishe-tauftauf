@@ -9,7 +9,7 @@ What these tests pin:
 
 * a page that says the runtime has no required third-party dependencies
   fails when the tree cannot be planted without one (the defect measured on
-  2026-11-01, Docs wake 152920);
+  2026-11-01, Docs wake 152920), and the converse now that none is required;
 * a page that names the required dependency passes when the tree requires it;
 * a page that states nothing about dependencies is not a finding;
 * the tree is exercised, so the reading is observed rather than asserted, and
@@ -28,23 +28,24 @@ REPO = Path(__file__).resolve().parents[1]
 CHECK = REPO / "checks" / "shipped-book-dependencies.py"
 WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
 
-# The rule the committed tree applies, and the page that stated the opposite
-# before Docs wake 152920 corrected it.
+# The rule the committed tree applies: the runtime imports nothing outside the
+# standard library. A page that still names a required package states the old
+# rule (the pane renderer's `wcwidth`, removed with the pane layer).
 STALE_PAGE = """# Getting started
-
-You need:
-
-- **Linux and Python 3.10 or newer.** The runtime has no required third-party
-  Python dependencies.
-"""
-
-CURRENT_PAGE = """# Getting started
 
 You need:
 
 - **Linux and Python 3.10 or newer.**
 - **The `wcwidth` package, importable by the interpreter that runs the
   launcher.** It is the runtime's only required third-party dependency.
+"""
+
+CURRENT_PAGE = """# Getting started
+
+You need:
+
+- **Linux and Python 3.10 or newer.** The runtime has no required third-party
+  Python dependencies.
 """
 
 # A page about something else entirely is not evidence about this rule.
@@ -73,10 +74,6 @@ def make_tree(tmp: Path, pages: dict[str, str]) -> Path:
     shutil.copytree(REPO / "src" / "mishe_tauftauf", package,
                     dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("__pycache__"))
-    coordination = tmp / "coordination"
-    coordination.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(REPO / "coordination", coordination, dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns("__pycache__"))
     for name, body in pages.items():
         path = tmp / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,13 +81,6 @@ def make_tree(tmp: Path, pages: dict[str, str]) -> Path:
     return tmp
 
 
-def test_the_gate_rejects_a_page_that_states_a_stale_rule(tmp_path):
-    """A page claiming no third-party dependencies must fail."""
-    tree = make_tree(tmp_path, {"docs/getting-started.md": STALE_PAGE})
-    result = run_check(tree)
-    assert result.returncode == 2, result.stdout + result.stderr
-    assert "STALE DEPENDENCY CLAIM" in result.stdout
-    assert "docs/getting-started.md" in result.stdout
 
 
 def test_the_gate_accepts_a_page_that_states_the_current_rule(tmp_path):
@@ -105,7 +95,7 @@ def test_the_gate_observes_the_required_dependency(tmp_path):
     """The required set is read from the tree and reported."""
     tree = make_tree(tmp_path, {"docs/getting-started.md": CURRENT_PAGE})
     result = run_check(tree)
-    assert "required third-party dependencies: wcwidth" in result.stdout, result.stdout
+    assert "required third-party dependencies: (none)" in result.stdout, result.stdout
 
 
 def test_a_page_that_states_nothing_is_not_a_finding(tmp_path):

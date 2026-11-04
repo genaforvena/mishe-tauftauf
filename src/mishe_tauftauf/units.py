@@ -130,6 +130,14 @@ def signal_name(unit: str) -> str:
     return "failed-" + re.sub(r"[^a-z0-9_-]+", "-", unit.lower()).strip("-")
 
 
+PLANT_UNIT_PREFIXES = ("mishe-wake", "mishe-producer-", "mishe-failed@", "mishe-doctor", "mishe-arm", "mishe-next-due")
+
+
+def is_plant_unit(name: str) -> bool:
+    """Whether a unit is one this runtime generated, not a foreign consumer with a ``mishe-`` prefix."""
+    return name.startswith(PLANT_UNIT_PREFIXES)
+
+
 def is_health_wake(unit: str, prefix: str = "mishe") -> bool:
     return unit == f"{prefix}-wake@health.service"
 
@@ -150,13 +158,18 @@ def _installed(cfg: Config) -> dict:
     return found
 
 
-def sync(cfg: Config, roles, *, producers=(), runner=None) -> SyncReport:
-    """Write generated units, remove stale generated ones, reload systemd."""
-    if "doctor" not in signal_store.registry(cfg.home):
-        signal_store.register(cfg.home, "doctor", max_age=3 * cfg.doctor_every, subscribers=["health"])
-    for name in ("inbox", "signals"):       # watched parents must exist; the watched files must not
-        (cfg.home / name).mkdir(parents=True, exist_ok=True)
-    expected = render(cfg, roles, producers=producers)
+def sync(cfg: Config, roles, *, producers=(), runner=None, uninstall: bool = False) -> SyncReport:
+    """Write generated units, remove stale generated ones, reload systemd.
+
+    ``uninstall`` renders nothing, so every generated unit is stale and goes. A
+    trigger is disabled before its file is removed, so no enable link dangles.
+    """
+    if not uninstall:
+        if "doctor" not in signal_store.registry(cfg.home):
+            signal_store.register(cfg.home, "doctor", max_age=3 * cfg.doctor_every, subscribers=["health"])
+        for name in ("inbox", "signals"):       # watched parents must exist; the watched files must not
+            (cfg.home / name).mkdir(parents=True, exist_ok=True)
+    expected = {} if uninstall else render(cfg, roles, producers=producers)
     report = SyncReport()
     for rel, text in expected.items():
         path = cfg.unit_dir / rel
@@ -164,10 +177,14 @@ def sync(cfg: Config, roles, *, producers=(), runner=None) -> SyncReport:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
             report.written.append(rel)
-    for rel in _installed(cfg):
-        if rel not in expected:
-            (cfg.unit_dir / rel).unlink()
-            report.removed.append(rel)
+    stale = [rel for rel in _installed(cfg) if rel not in expected]
+    if runner is not None:
+        for rel in stale:
+            if rel.endswith((".path", ".timer")):
+                runner(["systemctl", "--user", "disable", "--now", rel])
+    for rel in stale:
+        (cfg.unit_dir / rel).unlink()
+        report.removed.append(rel)
     if runner is not None and (report.written or report.removed):
         runner(["systemctl", "--user", "daemon-reload"])
         for rel in report.written:

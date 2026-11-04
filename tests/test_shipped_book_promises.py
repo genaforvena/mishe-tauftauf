@@ -11,7 +11,7 @@ closed with "See ... [Getting started](getting-started.md) for the commands
 that write a wall, record an outcome and settle a wake."  The link resolved --
 ``docs/getting-started.md`` is tracked -- but the page carried one of the
 three: ``wall outcome``.  The commands that write a wall (``wall write``) and
-that settle a wake (``seed yield``) appeared nowhere in it.  The pointer came
+that settle a wake (``yield``) appeared nowhere in it.  The pointer came
 from commit ``31ee26a1``, so the class is not hypothetical: repairing a broken
 link by pointing at a tracked page produced a promise the tracked page did
 not keep.
@@ -61,7 +61,7 @@ def test_the_gate_rejects_a_promise_the_destination_does_not_keep(tmp_path):
     result = run_check(tmp_path, REPO / "src")
     assert result.returncode == 2, result.stdout + result.stderr
     assert "wall write" in result.stdout
-    assert "seed yield" in result.stdout
+    assert "yield" in result.stdout
     assert "FAIL" in result.stdout
 
 
@@ -108,7 +108,7 @@ def test_the_gate_leaves_a_kept_promise_alone(tmp_path):
             "\"$SITE/bin/mishe\" --home \"$SITE\" wall write --owner ROLE --file NOTES\n"
             "```\n"
             "```bash\n"
-            "\"$SITE/bin/mishe\" --home \"$SITE\" seed yield --slug ROLE --wake N --file NOTES\n"
+            "\"$SITE/bin/mishe\" --home \"$SITE\" yield --result changed --file NOTES\n"
             "```\n",
     })
     result = run_check(tmp_path, REPO / "src")

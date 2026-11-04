@@ -23,6 +23,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -e . pytest
       - run: python tools/check_parsing.py
+      - run: python tools/check_dangling.py
       - run: python checks/parsing-legacy-freeze.py
       # A promoted release tree is cut from committed bytes.  A committed module
       # that imports a sibling which was never committed imports cleanly in the
@@ -96,28 +97,6 @@ jobs:
       # The gate plants the tree with each dependency absent and compares
       # what the page states with what the tree requires.
       - run: python checks/shipped-book-dependencies.py --home . --repo .
-      # A pane can print a number without saying what it measures, and a
-      # reader asking "is this mind idle?" will read the number as the answer.
-      # Measured on this plant: every pane's HEADLINE carries "idle <N>s",
-      # and the figure is plant-wide -- activity.observe() takes the maximum
-      # over every monitored role, and observations.headline() takes no role
-      # argument -- so a neighbour's action resets it on every pane.  The book
-      # described the line without stating the scope.  The gate plants the
-      # committed tree, reads the figure off a rendered headline, and compares
-      # what a page states with what the tree measures.
-      - run: python checks/shipped-book-idle-scope.py --home . --repo .
-      # A page can hand the reader a command that answers nothing.  Measured on
-      # this plant: docs/getting-started.md told a reader to confirm the
-      # resident units were active with "systemctl --user list-units
-      # 'SITE-*.service'", where SITE is that page's site *directory*, while a
-      # unit is named SESSION-ROLE.service -- so the pattern matched zero of
-      # the 40 units on the host and the reader's own acceptance check said
-      # "0 loaded units listed" for a healthy plant.  The link, path, promise
-      # and runtime gates could not see it: no path was named and no link was
-      # broken.  The gate plants the committed tree, takes the unit names
-      # from that tree's own planting code, and compares what the page states
-      # with what a unit can be named.
-      - run: python checks/shipped-book-unit-pattern.py --repo .
       # A page can hand the reader a command that names a module that
       # exists and still be unrunnable: the interpreter it names may not
       # exist, and the package it imports may need an install the book
@@ -146,16 +125,6 @@ jobs:
       - run: python checks/shipped-book-program-paths.py --repo .
       - run: python -m pytest -q
 
-  tmux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: sudo apt-get update && sudo apt-get install -y tmux
-      - run: python -m pip install -e . pytest
-      - run: python -m pytest tests/test_tmux.py -q
   adapters:
     runs-on: ubuntu-latest
     steps:
@@ -168,9 +137,3 @@ jobs:
       # `doctor --live-jev --verbose` on a machine that holds the secret.
       - run: python -m pip install -e .
       - run: python -m mishe_tauftauf.jev_judge --self-test
-  native-wire:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun test src/mishe_tauftauf/native/wire-usage.test.ts src/mishe_tauftauf/native/fetch-budget.test.ts src/mishe_tauftauf/native/native-session.test.ts

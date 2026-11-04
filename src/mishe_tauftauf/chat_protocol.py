@@ -28,6 +28,7 @@ _WAKE_RE = re.compile(r"seed wake ([a-z0-9-]+) observation=([1-9][0-9]*)(?: even
 _YIELD_RE = re.compile(r"seed yield ([a-z0-9-]+) wake=([1-9][0-9]*)( continue=1)?\Z")
 _CLEAR_RE = re.compile(r"seed clear ([a-z0-9-]+) after=([1-9][0-9]*)\Z")
 _RESERVED = re.compile(r"\s*seed (?:wake|yield|clear)(?:\s|\Z)")
+OBS_RE = re.compile(r"seed observation ([a-z0-9-]+)(?: sha256=([0-9a-f]{64}))?\Z")
 _SETTLED = re.compile(r"Turn settled \(([a-z]+)\);")
 _SITE_SYNC_HEADER = "[site-sync] "
 _CORE_SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
@@ -378,3 +379,8 @@ def decode_kernel_sync_target(identity: str) -> str | None:
     """Decode the target suffix in the coordinator's kernel-sync task identity."""
     match = _KERNEL_SYNC_TASK_RE.fullmatch(identity)
     return match[1] if match else None
+
+
+def receipt_line(body: str) -> str:
+    """The receipt's own first line; later lines are explanation."""
+    return body.splitlines()[0]

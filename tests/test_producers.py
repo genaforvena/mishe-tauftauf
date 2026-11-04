@@ -96,3 +96,12 @@ def test_ci_pending_is_no_observation_and_unknown_is_a_failure(tmp_path):
     with pytest.raises(producers.ObservationFailed):
         producers.produce(tmp_path, "ci", now=NOW + 500, read=lambda h: {"state": "unknown"})
     assert store.read(tmp_path, "ci", now=NOW + 5000).state == "UNKNOWN"
+
+
+def test_tape_lock_is_green_when_free_and_red_when_held_throughout(tmp_path):
+    import fcntl
+    (tmp_path / "chat.log").write_text("")
+    assert producers.tape_lock(tmp_path, now=NOW, attempts=2, pause=0.01) == "GREEN"
+    with (tmp_path / ".seed.lock").open("a+") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+        assert producers.tape_lock(tmp_path, now=NOW, attempts=3, pause=0.01) == "RED"

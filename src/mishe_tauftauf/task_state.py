@@ -481,7 +481,7 @@ def _claim_delivery_owner(home: Path, identity: str, owner: str) -> None:
 
 def claim(home: Path, identity: str, owner: str, wake: int, reason: str, evidence: Path) -> FeedEntry:
     """Atomically reserve the mind's own choice; one record transfers and consumes it."""
-    from .seed import _lock
+    from .site_lock import lock as _lock
     from .delivery import _lock as delivery_lock
 
     _event(identity)
@@ -659,7 +659,7 @@ def _append(home: Path, source: str, state: TaskState, tag: str = "task-state", 
 
 
 def set_step(home: Path, identity: str, owner: str, next_step: str, progress: str, evidence: Path) -> FeedEntry:
-    from .seed import _lock
+    from .site_lock import lock as _lock
 
     if not next_step.strip() or not progress.strip():
         raise ValueError("next step and concrete progress are required")
@@ -680,7 +680,7 @@ def wait_for(home: Path, identity: str, owner: str, next_step: str, reason: str,
              *, retry_event: str | None = None, retry_at: str | None = None,
              retry_task: str | None = None, producer: str | None = None,
              alternative: str | None = None, commit_guard=None) -> FeedEntry:
-    from .seed import _lock
+    from .site_lock import lock as _lock
 
     if not next_step.strip() or not reason.strip() or not (retry_event or retry_at or retry_task):
         raise ValueError("waiting requires next step, reason, and retry event or deadline")
@@ -730,7 +730,7 @@ def wait_for(home: Path, identity: str, owner: str, next_step: str, reason: str,
 
 
 def offer(home: Path, identity: str, owner: str, helpers: list[str], evidence: Path) -> FeedEntry:
-    from .seed import _lock
+    from .site_lock import lock as _lock
 
     roles = tuple(dict.fromkeys(validate_slug(role) for role in helpers))
     if owner in roles:
@@ -744,7 +744,7 @@ def offer(home: Path, identity: str, owner: str, helpers: list[str], evidence: P
 
 
 def signal(home: Path, event: str, source: str, evidence: Path, reason: str, *, commit_guard=None) -> FeedEntry:
-    from .seed import _lock
+    from .site_lock import lock as _lock
 
     _event(event)
     if not reason.strip():
@@ -801,7 +801,7 @@ def lines(entries: list[FeedEntry], owner: str | None = None, home: Path | None 
 
 def add_task(home: Path, identity: str, owner: str, next_step: str, reason: str, evidence: Path,
              *, parent: str | None = None, dependency: str = "other", depends_on: str | None = None, commit_guard=None) -> FeedEntry:
-    from .seed import _lock
+    from .site_lock import lock as _lock
 
     _event(identity)
     validate_slug(owner)
@@ -833,7 +833,7 @@ def add_task(home: Path, identity: str, owner: str, next_step: str, reason: str,
 
 
 def reopen(home: Path, identity: str, owner: str, next_step: str, reason: str, evidence: Path) -> FeedEntry:
-    from .seed import _lock
+    from .site_lock import lock as _lock
 
     if not next_step.strip() or not reason.strip():
         raise ValueError("reopen requires a next step and reason")
@@ -856,7 +856,7 @@ def reopen(home: Path, identity: str, owner: str, next_step: str, reason: str, e
 
 
 def finish(home: Path, identity: str, owner: str, result: str, evidence: Path, *, commit_guard=None) -> FeedEntry:
-    from .seed import _lock
+    from .site_lock import lock as _lock
 
     if not result.strip():
         raise ValueError("finish requires a checked result")

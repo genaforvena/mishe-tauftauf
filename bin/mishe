@@ -1,0 +1,4 @@
+#!/bin/sh
+# Run mishe from this checkout: no install, no virtualenv, no third-party packages.
+here=$(cd "$(dirname "$0")/.." && pwd)
+PYTHONPATH="$here/src${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m mishe_tauftauf "$@"

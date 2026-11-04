@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from mishe_tauftauf import follow_through, wall
+from mishe_tauftauf import wall
 from mishe_tauftauf.feed import Feed
 from tests.test_wall import setup_wall
 
@@ -74,29 +74,7 @@ def test_a_successful_publication_leaves_no_refusal_record(tmp_path):
     assert _refusals(home) == []
 
 
-def test_the_projection_reports_a_refusal_with_the_blocking_entry(tmp_path):
-    home = _site(tmp_path)
-    Feed(home).append("witness", "Wall outcome accepted by witness\nProse without a reference.\n")
-    with pytest.raises(ValueError, match="cannot derive"):
-        wall.outcome(home, "research-methods", "accepted", "A later contribution.",
-                     _evidence(home))
-    line = follow_through._outcome_refusal_lines(home, now=NOW)[0]
-    assert line.startswith("OUTCOME WRITER REFUSALS: 1 in the last 24h (1 coverage denials)")
-    assert "research-methods/accepted" in line
-    assert "chat.log#1" in line
 
 
-def test_the_projection_separates_an_ordinary_refusal_from_a_coverage_denial(tmp_path):
-    home = _site(tmp_path)
-    wall.outcome(home, "research-methods", "accepted", "A contribution.", _evidence(home))
-    with pytest.raises(ValueError, match="already bound"):
-        wall.outcome(home, "senses", "accepted", "The same evidence again.", _evidence(home))
-    line = follow_through._outcome_refusal_lines(home, now=NOW)[0]
-    assert "1 in the last 24h (0 coverage denials)" in line
-    assert "already bound" in line
 
 
-def test_the_projection_reports_no_refusals_without_claiming_the_instrument_works(tmp_path):
-    home = _site(tmp_path)
-    line = follow_through._outcome_refusal_lines(home, now=NOW)[0]
-    assert "none recorded" in line

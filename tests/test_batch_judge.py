@@ -5,10 +5,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from mishe_tauftauf.cli import initialize
 from mishe_tauftauf.feed import Feed
 from mishe_tauftauf.judges import run_external_batch
-from mishe_tauftauf.runtime import Coordinator, RuntimeConfig
 
 
 def executable(path: Path, body: str) -> None:
@@ -40,24 +38,6 @@ class BatchJudgeTests(unittest.TestCase):
             results = run_external_batch(path, ("prediction-met", "desired-state-met"), "sensor", "pane", "evidence")
             self.assertEqual({result.outcome for result in results.values()}, {"unknown"})
 
-    def test_due_prediction_uses_one_batch_call(self):
-        with tempfile.TemporaryDirectory() as directory:
-            home = Path(directory); initialize(home)
-            executable(home / "top-pains" / "sensor", "print('DESIRED STATE: ok')\n")
-            count = home / "calls"
-            judge = home / "judge"
-            executable(judge, f"import json, sys\nr = json.load(sys.stdin)\nwith open({str(count)!r}, 'a') as f: f.write(','.join(r['questions']) + '\\n')\nprint(json.dumps({{'results': {{q: {{'probability': 0.95}} for q in r['questions']}}}}))\n")
-            past = (datetime.now(timezone.utc) - timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
-            feed = Feed(home)
-            entry = feed.append_runtime("prediction/sensor", f"Expected ok.\nCheck at: {past}\n")
-            feed.append_runtime("mishe-tauftauf", f"prediction {entry.sequence}: accepted")
-            coordinator = Coordinator(RuntimeConfig(home, launcher="headless", dispatch=False, batch_judge=judge))
-            coordinator.control_failures = {}
-            before = count.read_text().splitlines()
-            coordinator.due_predictions()
-            after = count.read_text().splitlines()
-            self.assertEqual(len(after) - len(before), 1)
-            self.assertEqual(after[-1], "prediction-met,desired-state-met")
 
 
 if __name__ == "__main__":

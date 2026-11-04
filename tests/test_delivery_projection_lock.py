@@ -110,29 +110,6 @@ def test_other_ready_candidate_pushes_while_projection_review_waits(candidate, m
     assert not first_errors and not other_errors, (first_errors, other_errors)
 
 
-def test_claim_admission_releases_fact_lock_and_rechecks_integration(candidate, monkeypatch):
-    from tests.test_mind_choice import wake
-    home, _, _, _, head, proof = candidate
-    submit(candidate)
-    monkeypatch.setattr(delivery, "read_ci", lambda *args: ci(head))
-    delivery.check(home, "repair")
-    integration = delivery._integration_id(delivery.load(home, "repair"))
-    attempt = wake(home, "genome")
-    worker, release, errors = run_blocked(lambda: task_state.claim(home, integration, "genome", attempt,
-        "The exact reviewed ready source can be integrated.", proof), monkeypatch, body_prefix="[task-claim]")
-    try:
-        with (home / "deliveries/.lock").open("a") as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            current = delivery.load(home, "repair")
-            current.update(phase="blocked", reason="CI evidence changed during claim admission")
-            delivery._save(home, current)
-    finally:
-        release.set()
-        worker.join(5)
-    assert not worker.is_alive()
-    assert errors
-    assert "delivery changed" in str(errors[0]), errors
-    assert not task_state.pending_tasks(Feed(home).entries())
 
 
 @pytest.mark.parametrize("integrated", [False, True])

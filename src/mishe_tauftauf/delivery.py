@@ -318,7 +318,7 @@ def _recover_owner_wait(home: Path, record: dict) -> dict:
 
 def _sync(home: Path, record: dict, previous: dict | None) -> None:
     """Crash-safe projection: readiness comes from facts, never progress prose."""
-    from .seed import _lock as task_lock
+    from .site_lock import lock as task_lock
 
     identity = _integration_id(record)
     author_retry_notified = False

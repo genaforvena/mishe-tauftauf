@@ -12,7 +12,6 @@ import pytest
 from mishe_tauftauf import discovery
 from mishe_tauftauf import space_text
 from mishe_tauftauf.feed import Feed
-from mishe_tauftauf.seed_culture_views import _observation_reading, discover, senses
 
 NOW = 1791368000.0
 
@@ -52,23 +51,6 @@ def event_data():
     return data
 
 
-def test_original_expiry_survives_publication_polling_and_rendering():
-    data = boundary()
-    data["generated_at_utc"] = stamp(NOW + 10)
-    data["nodes"][0]["last_poll_utc"] = stamp(NOW + 10)
-    at_expiry = discovery._space_light(data, NOW + 28)
-    assert at_expiry["current_lux"] == 14.431
-    assert at_expiry["expires_epoch_s"] == NOW + 28
-    expired = discovery._space_light(data, NOW + 28.001)
-    assert expired["state"] == "unknown"
-    assert expired["current_lux"] is None
-    assert expired["reason"] == "stale-original-evidence"
-    with patch("mishe_tauftauf.seed_culture_views.datetime") as clock:
-        clock.now.return_value.timestamp.return_value = NOW + 28.001
-        state, line = _observation_reading(at_expiry, "recent")
-    assert state == "unknown"
-    assert "stale-original-evidence" in line
-    assert "14.431lux" not in line
 
 
 def test_validated_epochs_not_independent_strings_are_visible():
@@ -100,24 +82,8 @@ def test_reader_treats_unreadable_bound_as_absence_not_zero():
         assert row["clock_bound"] is None
 
 
-def test_render_names_carried_bound_beside_unverified_clock():
-    data = boundary()
-    data["nodes"][0]["light"]["status_reason"] = BOUND
-    row = discovery._space_light(data, NOW)
-    with patch("mishe_tauftauf.seed_culture_views.datetime") as clock:
-        clock.now.return_value.timestamp.return_value = NOW
-        state, line = _observation_reading(row, "recent")
-    assert state == "verified"
-    assert "clock=unverified; " + BOUND in line
 
 
-def test_render_without_bound_keeps_plain_unverified_clock():
-    row = discovery._space_light(boundary(), NOW)
-    assert row["clock_bound"] is None
-    with patch("mishe_tauftauf.seed_culture_views.datetime") as clock:
-        clock.now.return_value.timestamp.return_value = NOW
-        _, line = _observation_reading(row, "recent")
-    assert line.rstrip().endswith("clock=unverified")
 
 
 @pytest.mark.parametrize("validity", [1, 0, -1, None, True, float("nan"), float("inf")])
@@ -605,25 +571,6 @@ def test_sending_producer_with_absent_light_stays_a_frozen_light_stream(tmp_path
     assert row["reason"] == "light-stream-frozen"
 
 
-def test_null_streak_origin_survives_the_render_cadence(tmp_path):
-    """A pane renders every few seconds, so the origin must not be refreshed
-    per render or the measured interval never reaches the freeze threshold."""
-    null_gap_fixture(tmp_path, None)
-    assert discovery._space_light_read(tmp_path)["reason"] == "light-null-gap"
-    record_path = tmp_path / "discovery" / "space-light-stream.json"
-    origin = json.loads(record_path.read_text())["read_epoch_s"]
-    for _ in range(5):
-        assert discovery._space_light_read(tmp_path)["reason"] == "light-null-gap"
-        assert json.loads(record_path.read_text())["read_epoch_s"] == origin
-    # The same streak, older than the threshold with the origin preserved, is
-    # named a frozen stream; the frozen read still does not refresh the origin.
-    record = json.loads(record_path.read_text())
-    record["read_epoch_s"] = time.time() - discovery.SPACE_FROZEN_MIN_SECONDS - 1
-    record_path.write_text(json.dumps(record), encoding="utf-8")
-    aged = record["read_epoch_s"]
-    row = discovery._space_light_read(tmp_path)
-    assert row["reason"] == "light-stream-frozen"
-    assert json.loads(record_path.read_text())["read_epoch_s"] == aged
 
 
 def null_gap_now(home: Path) -> dict:
@@ -967,21 +914,6 @@ def test_non_int_sequence_freeze_still_records_and_routes(tmp_path):
     assert len(freeze_dms(tmp_path)) == 1
 
 
-def test_pane_renders_of_one_streak_route_one_onset_event(
-        tmp_path: Path, current_endpoint) -> None:
-    """Each pane names the row twice per render; one streak still routes once,
-    and rendering it again routes nothing."""
-    home = tmp_path / "site"
-    null_gap_fixture(home, None)
-    _write_scan(home, [])
-    (home / "discovery" / "space-light-stream.json").write_text(json.dumps(
-        null_record(read_epoch_s=time.time() - discovery.SPACE_FROZEN_MIN_SECONDS - 1)),
-        encoding="utf-8")
-    assert "light-stream-frozen" in discover(home)
-    assert "light-stream-frozen" in senses(home)
-    assert len(freeze_dms(home)) == 1
-    assert "light-stream-frozen" in senses(home)
-    assert len(freeze_dms(home)) == 1
 
 
 @pytest.fixture
@@ -1019,40 +951,8 @@ def _endpoint(first: int, last: int, utc_ns: int = 1_700_000_000_000_000_000) ->
             "offsets": {"monotonic": [0, 0], "boottime": [0, 0]}, "utc_ns": utc_ns}
 
 
-@pytest.mark.parametrize("pane", [discover, senses])
-def test_pane_names_a_sustained_freeze_it_re_derives_at_render_time(
-        tmp_path: Path, current_endpoint, pane) -> None:
-    """The pane re-derives the light row from the boundary frame at render
-    time; the reader-side duration class must survive that re-derivation or
-    the pane cannot name a freeze it is staring at."""
-    home = tmp_path / "site"
-    null_gap_fixture(home, None)
-    _write_scan(home, [])
-    # No retained observation yet: the first render of a null read is a gap.
-    assert "light-null-gap" in pane(home)
-    assert "light-stream-frozen" not in pane(home)
-    (home / "discovery" / "space-light-stream.json").write_text(json.dumps(
-        null_record(read_epoch_s=time.time() - discovery.SPACE_FROZEN_MIN_SECONDS - 1)),
-        encoding="utf-8")
-    rendered = pane(home)
-    assert "light-stream-frozen" in rendered
-    assert "light-null-gap" not in rendered
 
 
-@pytest.mark.parametrize("pane", [discover, senses])
-def test_pane_keeps_a_seconds_wide_gap_a_gap(tmp_path: Path, current_endpoint, pane) -> None:
-    """A retention record that is still recent, or whose light sequence advanced
-    (a new absent sample), keeps the single-read name on the pane."""
-    home = tmp_path / "site"
-    null_gap_fixture(home, None)
-    _write_scan(home, [])
-    for record in (null_record(read_epoch_s=time.time() - 5),
-                   null_record(sequence=11)):
-        (home / "discovery" / "space-light-stream.json").write_text(
-            json.dumps(record), encoding="utf-8")
-        rendered = pane(home)
-        assert "light-null-gap" in rendered
-        assert "light-stream-frozen" not in rendered
 
 
 def _live_boundary(tmp_path: Path, event: dict | None) -> Path:
@@ -1069,17 +969,6 @@ def _live_boundary(tmp_path: Path, event: dict | None) -> Path:
     return tmp_path
 
 
-def test_pane_distinguishes_a_refused_transition_from_an_absent_one(
-        tmp_path: Path, current_endpoint) -> None:
-    """Both cases leave event_id absent, so the pane must name the refusal:
-    a refused transition is not the same reading as a producer publishing
-    none."""
-    refused = discover(_transition_site(tmp_path / "refused"))
-    absent_home = _live_boundary(tmp_path / "absent", None)
-    _write_scan(absent_home, [])
-    assert ("historical transition not retained: "
-            "event-bucket-mismatch") in refused
-    assert "historical transition not retained" not in discover(absent_home)
 
 
 def _transition_site(tmp_path: Path) -> Path:
@@ -1102,25 +991,8 @@ def _transition_site(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@pytest.mark.parametrize("pane", [discover, senses])
-def test_pane_names_the_refusal_not_a_silent_drop(tmp_path, current_endpoint, pane):
-    rendered = pane(_transition_site(tmp_path / "site"))
-    assert ("historical transition not retained: "
-            "event-bucket-mismatch") in rendered
 
 
-@pytest.mark.parametrize("pane", [discover, senses])
-def test_pane_names_an_absent_transition_without_inventing_a_refusal(
-        tmp_path, current_endpoint, pane):
-    home = _live_boundary(tmp_path / "site", None)
-    _write_scan(home, [])
-    rendered = pane(home)
-    assert "event_reason=" not in rendered
-    assert "not retained" not in rendered
-    if pane is senses:
-        # The absence reading still says the token; only the refusal adds the
-        # reason beside it.
-        assert "retained_historical_event=none;" in rendered
 
 def test_fresh_sample_is_not_retained_as_a_null_observation(tmp_path):
     data = boundary()

@@ -332,13 +332,13 @@ def cmd_engine(args) -> int:
 def cmd_explain(args) -> int:
     """Shadow policy decision for a role. No launcher or runtime change."""
     from pathlib import Path
-    from . import model_boundary as _mb
+    from .state_files import read_json as _load_json
     live = status(args.home)
     allowlist = {}
     policy_path = Path(args.home) / 'engine' / 'policy.json'
     if policy_path.is_file() and not policy_path.is_symlink():
         try:
-            raw = _mb.load(policy_path)
+            raw = _load_json(policy_path)
             if isinstance(raw, dict):
                 for role, routes in raw.items():
                     if isinstance(role, str) and isinstance(routes, list):

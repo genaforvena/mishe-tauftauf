@@ -62,7 +62,28 @@ def ci(home, *, now: float, read=None) -> str | None:
     return "GREEN" if state == "pass" else "RED"
 
 
-BUILTIN = {"dispatch": dispatch, "ci": ci}
+def tape_lock(home, *, now: float, attempts: int = 5, pause: float = 1.0) -> str:
+    """RED only if the plant-wide tape lock stays unobtainable across every attempt.
+
+    A holder is normal and brief; a lock that cannot be taken for the whole
+    window is a stuck writer, which blocks every wall, task and tape write.
+    """
+    import fcntl
+    import time
+    path = Path(home) / ".seed.lock"
+    for attempt in range(attempts):
+        with path.open("a+") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return "GREEN"
+            except OSError:
+                pass
+        if attempt + 1 < attempts:
+            time.sleep(pause)
+    return "RED"
+
+
+BUILTIN = {"dispatch": dispatch, "ci": ci, "tape-lock": tape_lock}
 
 
 def produce(home, name: str, *, now: float, **kw) -> str | None:

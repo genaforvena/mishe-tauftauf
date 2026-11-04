@@ -17,7 +17,7 @@ import string
 import time
 from pathlib import Path
 
-from . import model_boundary as boundary
+from .state_files import read_json as _load_json, write_json as _save_json
 
 KINDS = ("benign", "known", "parked")
 KEY_CHARS = frozenset(string.ascii_letters + string.digits + "._:-")
@@ -54,7 +54,7 @@ def set_disposition(home, key, kind, owner, evidence, *, ttl, now=None, role=Non
               "created": now, "recheck_at": now + ttl}
     if role:
         record["role"] = role
-    boundary.save(_path(home, key), record)
+    _save_json(_path(home, key), record)
     return record
 
 
@@ -63,7 +63,7 @@ def active(home, key, *, now=None):
     (the finding then stays visible), never an implicit mute."""
     now = time.time() if now is None else now
     try:
-        record = boundary.load(_path(home, key))
+        record = _load_json(_path(home, key))
         if not _well_formed(record) or record["key"] != key or not now < record["recheck_at"]:
             return None
         return record
@@ -117,7 +117,7 @@ def listing(home, *, now=None):
     root = Path(home) / "dispositions"
     for path in sorted(root.glob("*.json")) if root.exists() else []:
         try:
-            record = boundary.load(path)
+            record = _load_json(path)
             if not _well_formed(record):
                 raise ValueError("malformed disposition record")
             # The file must be the one its key maps to. A record copied or written under
@@ -164,8 +164,7 @@ def register(sub):
     cmd = parser.add_subparsers(dest="disposition_command", required=True)
 
     def run(args):
-        from .model_change import site_home
-        home = site_home(args.home)
+        home = Path(args.home).resolve()
         if args.disposition_command == "set":
             out = set_disposition(home, args.key, args.kind, args.owner, args.evidence, ttl=args.ttl_hours * 3600)
         elif args.disposition_command == "park":

@@ -23,18 +23,14 @@
       "resolver": "genome",
       "replaces": [
         "core-supervisor",
-        "settlement-integrity",
-        "recovery",
-        "recovery-guard",
-        "recovery-outbox",
-        "recovery-evaluation"
+        "settlement-integrity"
       ],
       "covers": "a wake left open (started/unknown) longer than 30 minutes"
     },
     {
       "name": "egress",
       "command": [
-        "{repo}/.venv/bin/python",
+        "{python}",
         "{repo}/checks/exit-node-egress.py",
         "--state",
         "{home}/health/egress.json"
@@ -52,7 +48,7 @@
     {
       "name": "guard-bytes",
       "command": [
-        "{repo}/.venv/bin/python",
+        "{python}",
         "{repo}/checks/guard-bytes-drift.py",
         "--repo",
         "{repo}",
@@ -74,7 +70,7 @@
     {
       "name": "restore-readiness",
       "command": [
-        "{repo}/.venv/bin/python",
+        "{python}",
         "{repo}/checks/restore-readiness.py",
         "--repo",
         "{repo}",
@@ -184,6 +180,18 @@
         "plants-anon-split-sampler"
       ],
       "covers": "memory/CPU/IO pressure and anon split, admission for optional work"
+    },
+    {
+      "name": "tape-lock",
+      "builtin": true,
+      "every": 120,
+      "timeout": 30,
+      "max_age": 600,
+      "resolver": "genome",
+      "replaces": [
+        "recovery-guard"
+      ],
+      "covers": "the plant-wide tape/task lock can be taken; a stuck holder blocks every wall, task and tape write"
     }
   ],
   "retired": [
@@ -225,6 +233,14 @@
         "inference-research"
       ],
       "why": "role residents; roles remain as registry data and are woken by trigger"
+    },
+    {
+      "units": [
+        "recovery",
+        "recovery-outbox",
+        "recovery-evaluation"
+      ],
+      "why": "the recovery runtime's incident outbox and evaluation reported to resident minds; pressure is now the host-capacity signal and failures route through mishe-failed. recovery_io remains as manual tooling (accept/evaluate), not as units"
     }
   ],
   "kept": [

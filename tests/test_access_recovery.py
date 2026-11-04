@@ -4,8 +4,6 @@ import pytest
 
 from mishe_tauftauf import access
 from mishe_tauftauf.feed import Feed
-from mishe_tauftauf.seed_culture_views import permissions
-from mishe_tauftauf.wall import restore
 
 
 def recover(home, **changes):
@@ -19,40 +17,10 @@ def recover(home, **changes):
     return access.recover(home, "sample-recovery", **args)
 
 
-def test_local_recovery_has_actions_without_permission_or_wake(tmp_path):
-    before = list(Feed(tmp_path).entries())
-    row = recover(tmp_path)
-    assert row["status"] == "repair"
-    assert access.list_requests(tmp_path) == []
-    assert list(Feed(tmp_path).entries()) == before
-    pane = permissions(tmp_path)
-    assert "sample-recovery REPAIR" in pane
-    assert "build owned fixture" in pane
-    assert "use existing count-only probe" in pane
-    assert "2026-10-04T12:00:00+00:00" in pane
 
 
-def test_permission_is_routed_but_grant_does_not_close_recovery(tmp_path):
-    recover(tmp_path, capability="input.count", unblocks=["sample/verify"],
-            reason="count probe requires missing device access")
-    assert access.state(tmp_path, "sample-recovery") == "pending"
-    assert access.recoveries(tmp_path)[0]["status"] == "permission"
-    access.decide(tmp_path, "sample-recovery", "granted")
-    assert access.recoveries(tmp_path)[0]["status"] == "retry"
-    assert "GRANTED; VERIFY RECOVERY" in permissions(tmp_path)
-    proof = tmp_path / "result.txt"
-    proof.write_text("sample now succeeds")
-    access.resolve_recovery(tmp_path, "sample-recovery", proof, checked_action="build owned fixture and rerun sample")
-    assert access.recoveries(tmp_path) == []
-    assert access.recoveries(tmp_path, include_resolved=True)[0]["status"] == "resolved"
-    assert "sample-recovery" not in permissions(tmp_path).split("RECOVERIES:")[-1]
 
 
-def test_revocation_keeps_alternatives_visible(tmp_path):
-    recover(tmp_path, capability="input.count", unblocks=["sample"], reason="device access")
-    access.decide(tmp_path, "sample-recovery", "revoked")
-    assert access.recoveries(tmp_path)[0]["status"] == "permission"
-    assert "use existing count-only probe" in permissions(tmp_path)
 
 
 @pytest.mark.parametrize("changes", [dict(alternatives=[]), dict(cutoff="tomorrow"),
@@ -81,12 +49,6 @@ def test_resolution_requires_owned_nonempty_evidence(tmp_path):
     assert access.recoveries(tmp_path)[0]["status"] == "repair"
 
 
-def test_restore_does_not_turn_recovery_into_a_blocked_mind(tmp_path):
-    prompt = restore(tmp_path, "senses", "test")
-    assert "does not make the mind blocked" in prompt
-    assert "permit recover" in prompt
-    assert "grant is not recovery" in prompt
-    assert "Do not task claim" in prompt
 
 
 def test_cli_local_repair_and_evidenced_resolution(tmp_path):
@@ -105,17 +67,6 @@ def test_cli_local_repair_and_evidenced_resolution(tmp_path):
     assert not run(tmp_path, "recoveries").stdout
 
 
-def test_menu_shows_alternatives_before_grant(tmp_path, monkeypatch):
-    import curses
-    from tests.test_permission_menu import Screen
-    from mishe_tauftauf.permission_menu import interactive
-    recover(tmp_path, capability="input.count", unblocks=["sample"], reason="device access")
-    monkeypatch.setattr(curses, "curs_set", lambda value: None)
-    screen = Screen([curses.KEY_NPAGE, ord("q")], size=(40, 100))
-    interactive(screen, tmp_path)
-    assert "use existing count-only probe" in " ".join(screen.text)
-    assert "success still needs evidence" in " ".join(screen.text)
-    assert access.state(tmp_path, "sample-recovery") == "pending"
 
 
 def test_wall_permission_decision_addresses_only_responsible_mind(tmp_path):
@@ -129,17 +80,6 @@ def test_wall_permission_decision_addresses_only_responsible_mind(tmp_path):
     assert not addressed(spoof, "senses")
 
 
-def test_unresolved_recovery_does_not_gate_independent_progress(tmp_path):
-    from tests.test_wall import setup_wall
-    from mishe_tauftauf import seed
-    setup_wall(tmp_path)
-    recover(tmp_path)
-    wake = Feed(tmp_path).append("seed", "seed wake senses observation=1\nChoose useful work.")
-    notes = tmp_path / "notes.md"
-    notes.write_text("Independent probe verified. Fixture recovery remains on my plate; next: build fixture.")
-    assert "yield" in seed.yield_wake(tmp_path, "senses", wake.sequence, notes,
-                                      continue_task=True, result="verified")
-    assert access.recoveries(tmp_path)[0]["status"] == "repair"
 
 
 @pytest.mark.parametrize("decision", ["pending", "revoked"])
@@ -153,24 +93,6 @@ def test_permission_route_cannot_resolve_without_grant(tmp_path, decision):
     assert access.recoveries(tmp_path)[0]["status"] == "permission"
 
 
-def test_permitted_fallback_resolves_without_new_permission_and_retires_selector(tmp_path, monkeypatch):
-    import curses
-    from tests.test_permission_menu import Screen
-    from mishe_tauftauf.permission_menu import interactive
-    recover(tmp_path, capability="input.count", unblocks=["sample"], reason="device access")
-    proof = tmp_path / "fallback-result"
-    proof.write_text("existing probe succeeded")
-    access.resolve_recovery(tmp_path, "sample-recovery", proof,
-                            checked_action="use existing count-only probe", via_alternative=True)
-    assert access.recoveries(tmp_path) == []
-    assert access.state(tmp_path, "sample-recovery") == "pending"  # Historical decision unchanged.
-    with pytest.raises(ValueError, match="retired"):
-        access.decide(tmp_path, "sample-recovery", "granted")
-    monkeypatch.setattr(curses, "curs_set", lambda value: None)
-    screen = Screen([10, ord("q")])
-    interactive(screen, tmp_path)
-    assert "No requests to grant" in " ".join(screen.text)
-    assert "RETIRED" in permissions(tmp_path)
 
 
 def test_resolution_must_name_recorded_checked_action(tmp_path):

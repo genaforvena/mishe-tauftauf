@@ -42,3 +42,26 @@ def write_json(path: Path, payload) -> None:
         except OSError:
             pass
         raise
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """Durable atomic text replacement; an identical rewrite changes nothing."""
+    data = text.encode("utf-8")
+    if path.is_file() and path.read_bytes() == data:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)

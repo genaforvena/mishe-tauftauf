@@ -116,3 +116,24 @@ def test_enable_symlinks_are_not_stale_units(cfg):
     assert units.doctor(cfg, ROLES).state == "GREEN"
     assert units.sync(cfg, ROLES, runner=lambda c: None).removed == []
     assert (wants / "mishe-wake-genome.path").is_symlink()
+
+
+def test_uninstall_disables_then_removes_only_generated_units(cfg):
+    calls = []
+    units.sync(cfg, ROLES, runner=lambda c: None)
+    (cfg.unit_dir / "android-body-genome.service").write_text("[Unit]\n")
+    report = units.sync(cfg, [], uninstall=True, runner=calls.append)
+    assert (cfg.unit_dir / "android-body-genome.service").exists()
+    assert not [p for p in cfg.unit_dir.rglob("*") if p.is_file() and p.name.startswith("mishe-")]
+    disabled = [c for c in calls if "disable" in c]
+    assert disabled and any("mishe-wake-genome.path" in " ".join(c) for c in disabled)
+    assert any("daemon-reload" in c for c in calls)
+    assert "mishe-wake-genome.path" in report.removed
+
+
+def test_removed_triggers_are_disabled_before_their_files_go(cfg):
+    calls = []
+    units.sync(cfg, ROLES, runner=lambda c: None)
+    units.sync(cfg, ["genome", "health"], runner=calls.append)         # docs dropped
+    order = [(" ".join(c)) for c in calls]
+    assert any("disable" in c and "mishe-wake-docs.path" in c for c in order)

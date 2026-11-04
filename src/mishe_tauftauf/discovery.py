@@ -40,7 +40,7 @@ from subprocess import TimeoutExpired as _TimeoutExpired
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
-from . import head_rewind_dispositions, host_boot, omp_pane, proc_table, recovery_io, space_text, tmux
+from . import head_rewind_dispositions, host_boot, proc_table, recovery_io, space_text
 from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
                              read_redmi10_delivery_gaps, read_redmi10_light,
                              read_redmi10_peer_delivery)
@@ -48,7 +48,7 @@ from .multibody import read_multibody_coverage
 from .slice_throttle import read_slice_throttle
 from .unit_cpu import read_unit_cpu
 from .unit_psi_reading import read_unit_psi
-from .activity import roles as seated_roles
+from .roles import declared as seated_roles
 from .feed import (Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp,
                   iter_feed_file, publication_lock, read_scan_acquisitions, read_scan_series,
                   read_text_tail)
@@ -248,7 +248,7 @@ def _cpu_jiffies(pid: int) -> int | None:
         return None
 
 
-def _ps_processes(session: str | None = None) -> dict[int, dict[str, object]]:
+def _ps_processes() -> dict[int, dict[str, object]]:
     """One bounded `ps` read: pid, parent, lifetime %CPU, elapsed seconds, command.
 
     `ppid` comes from the same snapshot as the row, so a retained row's ancestry is
@@ -256,15 +256,7 @@ def _ps_processes(session: str | None = None) -> dict[int, dict[str, object]]:
     A later reader cannot reconstruct it: on this host five of eight retained
     top-CPU rows are gone from a snapshot taken seconds later, because the busiest
     processes are short-lived `mesh-*` tools.
-
-    A session names the work to attribute processes to. An empty name names none:
-    tmux resolves an empty target to the *calling* session, so `""` would be read
-    as a real session and every process beneath this plant's panes would be
-    claimed for a session the caller never named. Normalize it here, one level
-    below both callers, so a future caller cannot pass the hazard through.
     """
-    if session == "":
-        session = None
     try:
         result = subprocess.run(["ps", "-eo", "pid,ppid,pcpu,etimes,args", "--no-headers"],
                                 capture_output=True, text=True, timeout=10)
@@ -294,51 +286,9 @@ def _ps_processes(session: str | None = None) -> dict[int, dict[str, object]]:
         commands[pid] = args
         processes[pid] = {"pid": pid, "ppid": ppid, "pcpu": pcpu,
                           "etimes": etimes, "args": args}
-    if session is not None:
-        # Mark descent from this session, recording an explicit in_session key so
-        # a reader distinguishes "not in this session" from "descent was not
-        # assessed". One tmux server hosts every session on a socket, so a server
-        # that is an ancestor is not sufficient membership evidence on its own:
-        # the peers of this session share it. Descent is therefore claimed only
-        # for a process under one of this session's pane roots, whose own
-        # ancestry still has to reach the server, so a pane whose tmux tree was
-        # severed reports undetermined instead of claiming membership.
-        server = _session_server(session)
-        roots = _session_pane_roots(session)
-        for pid in processes:
-            processes[pid]["in_session"] = _session_membership(pid, parents, server, roots)
     return processes
 
 
-def _session_server(session: str) -> int | None:
-    """The pid of the server hosting `session`, or None when it is not running.
-
-    `_new_session` raises the server with `systemd-run --user --scope`, so the
-    server's own argv sits behind that wrapper and does not name the session it
-    hosts. Worse, one server hosts every session on a socket: on this plant the
-    single server started as `tmux new-session -d -s mishe-tiny-fleet` also hosts
-    `mishe-self-development-current`, so matching argv words resolved descent for
-    one session and left every other session's rows reading undetermined. Asking
-    tmux for the server pid answers the socket actually backing the session.
-
-    `has-session` is checked first because a session that has exited still has a
-    live server hosting others: without it, the pid would be returned and every
-    row would be assessed against a server the session no longer belongs to.
-    """
-    if shutil.which("tmux") is None:
-        return None
-    if subprocess.run(["tmux", "has-session", "-t", session],
-                      capture_output=True).returncode != 0:
-        return None
-    result = subprocess.run(["tmux", "display-message", "-p", "-t", session, "#{pid}"],
-                            capture_output=True, text=True)
-    if result.returncode != 0:
-        return None
-    try:
-        pid = int(result.stdout.split()[0])
-    except (ValueError, IndexError):
-        return None
-    return pid
 
 
 def _descends_from(pid: int, parents: dict[int, int], ancestor: int | None,
@@ -374,56 +324,8 @@ def _descends_from(pid: int, parents: dict[int, int], ancestor: int | None,
     return None
 
 
-def _session_pane_roots(session: str) -> list[int]:
-    """The pids tmux reports as the foreground process of the session's panes.
-
-    A server's process subtree spans every session it hosts, so the panes are
-    what separates one session's work from another's. A pane whose command has
-    exited is still listed: tmux reports the pid it spawned, which is the root a
-    descendant is reached from.
-    """
-    if shutil.which("tmux") is None:
-        return []
-    result = subprocess.run(["tmux", "list-panes", "-s", "-t", session,
-                            "-F", "#{pane_pid}"], capture_output=True, text=True)
-    if result.returncode != 0:
-        return []
-    roots: list[int] = []
-    for token in result.stdout.split():
-        try:
-            roots.append(int(token))
-        except ValueError:
-            continue
-    return roots
 
 
-def _session_membership(pid: int, parents: dict[int, int], server: int | None,
-                        roots: list[int]) -> bool | None:
-    """Whether `pid` is a member of the session, claiming only what is known.
-
-    Reaching a pane root is not enough on its own: that pane may belong to a
-    session sharing this server, and a pane detached from a dead server would
-    claim every process beneath it. The root's own ancestry is re-walked to the
-    server, so membership needs both a live session pane and the server it
-    belongs to. None is returned when the server or the pane roots are unreadable,
-    or a chain to a root is broken: an unreadable session is reported as
-    undetermined rather than as outside it.
-    """
-    if server is None or not roots:
-        return None
-    undecided = False
-    for root in roots:
-        reached = _descends_from(pid, parents, root)
-        if reached is None:
-            # The chain to this root is broken or too deep to walk, so this root
-            # decides nothing. Another root may still decide, and only if none
-            # does is the membership undetermined.
-            undecided = True
-            continue
-        if not reached:
-            continue
-        return _descends_from(root, parents, server) is True
-    return None if undecided else False
 
 def _rate_key(row: dict[str, object]) -> tuple[float, float]:
     """Rank by the sampled rate; the lifetime average only breaks its ties."""
@@ -433,9 +335,7 @@ def _rate_key(row: dict[str, object]) -> tuple[float, float]:
 
 def _row_text(row: dict[str, object]) -> str:
     """Render one retained row, naming the keys that produced it."""
-    in_session = row.get("in_session")
-    tag = ("" if in_session is None
-           else " in-session" if in_session is True else " outside-session")
+    tag = ""
     if row.get("rate") is None:
         return (f"pid={row['pid']} ppid={row['ppid']} rate=unmeasured "
                 f"pcpu={row['pcpu']:.1f}% etimes={row['etimes']}s{tag} {row['args']}")
@@ -443,8 +343,7 @@ def _row_text(row: dict[str, object]) -> str:
             f"pcpu={row['pcpu']:.1f}% etimes={row['etimes']}s{tag} {row['args']}")
 
 
-def _top_cpu_processes(session: str | None = None,
-                       rows: int = TOP_CPU_ROWS,
+def _top_cpu_processes(rows: int = TOP_CPU_ROWS,
                        sample_seconds: float = TOP_CPU_SAMPLE_SECONDS) -> list[dict[str, object]]:
     """Retain the busiest processes so a later scan can attribute, not just detect.
 
@@ -465,7 +364,7 @@ def _top_cpu_processes(session: str | None = None,
     cannot recover them: most retained rows are short-lived tools that have already
     exited by the next snapshot.
     """
-    processes = _ps_processes(session)
+    processes = _ps_processes()
     if not processes:
         return []
     first = {pid: _cpu_jiffies(pid) for pid in processes}
@@ -695,65 +594,10 @@ def _unit_restart_context(units: list[str]) -> dict[str, dict]:
     return context
 
 
-def _plant_session(home: Path) -> str | None:
-    """The session this site raised: env override > owned session > receipt.
-
-    The receipt is whichever supervisor wrote last, so it can name a session on
-    another socket; the home's own session wins and the receipt is the expected
-    name only when the home owns no enumerable session.
-    """
-    session, _socket = _owned_session_window_source(home)
-    if session:
-        return session
-    try:
-        return (Path(home) / ".seed-raised").read_text(encoding="utf-8").split()[0]
-    except (OSError, IndexError):
-        return None
 
 
-def _owned_sessions(home: Path) -> set[str] | None:
-    """The names of every session this home owns, across every socket.
-
-    A home owns one session when it is the only site on the host, and two
-    when a life-support session runs beside the core session. A reader that
-    asks "is my session missing?" must answer for the session it was told
-    about, not for the one a shared receipt happens to name, so the home's
-    own sessions are enumerated rather than trusted from one file.
-
-    Returns None when the enumeration itself failed. An empty set would read
-    every session as missing, so a failed read must stay unknown instead.
-    """
-    try:
-        return {name for name, _socket in tmux.home_sessions(Path(home))}
-    except (OSError, ValueError, TimeoutError, _TimeoutExpired, tmux.TmuxError):
-        return None
 
 
-def _owned_session_window_source(home: Path) -> tuple[str | None, str | None]:
-    """A session this home owns and the socket that holds it.
-
-    A site home can own two sessions at once — the core session and the
-    life-support session — and both record the same owning home. The shared
-    ``.seed-raised`` receipt is written by whichever supervisor wrote last,
-    so the session it names is only one of the home's, and a reader that
-    trusts it asks the wrong socket for the wrong session. Enumerating the
-    home's own sessions answers the question the receipt cannot: which
-    session is live, and where.
-
-    The environment override wins, because a caller that was told which
-    session it serves knows better than an enumeration.
-    """
-    session = os.environ.get("MISHE_SEED_SESSION")
-    if session:
-        return session, None
-    try:
-        owned = tmux.home_sessions(Path(home))
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return None, None
-    if not owned:
-        return None, None
-    name, socket = owned[0]
-    return name, socket
 
 
 def _joined_failure(*stages: str | None) -> str | None:
@@ -762,89 +606,8 @@ def _joined_failure(*stages: str | None) -> str | None:
     return joined or None
 
 
-def _tmux_window_reading(home: Path) -> dict:
-    """Window names and provenance of the session this home owns, for sense.tmux.windows.
-
-    Precedence is owned, then receipt. The owned session is the first one whose
-    ownership option names this home, read on the socket that holds it. The
-    receipt is used only when enumeration finds no owned session, and it is read
-    on the default socket. MISHE_SEED_SESSION is not a source here: an
-    environment value that names a foreign session is recorded as ``env_session``
-    evidence, never followed. The environment override stays in force for the
-    other consumers (wall_view, seed_culture_views, observations.run_renderer).
-
-    ``windows`` is None when the read failed, and an empty list when the
-    session has no windows. ``failure`` names the stage that failed.
-    """
-    env_session = os.environ.get("MISHE_SEED_SESSION") or None
-    failure = None
-    try:
-        owned = tmux.home_sessions(Path(home))
-    except (OSError, ValueError, subprocess.TimeoutExpired, tmux.TmuxError) as exc:
-        owned = []
-        failure = f"enumeration-{type(exc).__name__}"
-    enumerated = len(owned)
-    if owned:
-        session, socket = owned[0]
-        source = "owned"
-    else:
-        from .seed import recorded_session
-        session = recorded_session(Path(home))
-        socket = None
-        source = "receipt" if session else None
-    if session is None:
-        return {"windows": None, "source": None, "session": None, "socket": None,
-                "env_session": env_session, "enumerated": enumerated,
-                "failure": failure or "no-owned-or-receipt-session", "also": []}
-    argv = ["tmux"]
-    if socket:
-        argv.extend(["-S", socket])
-    argv.extend(["list-windows", "-t", session, "-F", "#{window_name}"])
-    try:
-        result = subprocess.run(argv, capture_output=True, text=True, timeout=2)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {"windows": None, "source": source, "session": session, "socket": socket,
-                "env_session": env_session, "enumerated": enumerated,
-                "failure": _joined_failure(failure, f"list-windows-{type(exc).__name__}"),
-                "also": []}
-    if result.returncode != 0:
-        return {"windows": None, "source": source, "session": session, "socket": socket,
-                "env_session": env_session, "enumerated": enumerated,
-                "failure": _joined_failure(failure, f"list-windows-exit={result.returncode}"),
-                "also": []}
-    return {"windows": sorted(proc_table.window_names(result.stdout)), "source": source,
-            "session": session, "socket": socket, "env_session": env_session,
-            "enumerated": enumerated, "failure": failure,
-            "also": _other_owned_session_windows(owned[1:]) if source == "owned" else []}
 
 
-def _other_owned_session_windows(others: list[tuple[str, str | None]]) -> list[dict]:
-    """Window names of each further owned session, so a second session is not invisible.
-
-    The verdict stays with the first owned session (the one ``_tmux_window_reading``
-    names). Every other owned session is read on its own socket and reported with
-    its own failure stage, never dropped and never folded into the verdict.
-    """
-    rows = []
-    for name, socket in others:
-        argv = ["tmux"]
-        if socket:
-            argv.extend(["-S", socket])
-        argv.extend(["list-windows", "-t", name, "-F", "#{window_name}"])
-        try:
-            result = subprocess.run(argv, capture_output=True, text=True, timeout=2)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            rows.append({"session": name, "windows": None,
-                         "failure": f"list-windows-{type(exc).__name__}"})
-            continue
-        if result.returncode != 0:
-            rows.append({"session": name, "windows": None,
-                         "failure": f"list-windows-exit={result.returncode}"})
-            continue
-        rows.append({"session": name,
-                     "windows": sorted(proc_table.window_names(result.stdout)),
-                     "failure": None})
-    return rows
 
 
 def _also_sample(reading: dict) -> str:
@@ -858,40 +621,12 @@ def _also_sample(reading: dict) -> str:
     return f" also={';'.join(parts)}" if parts else ""
 
 
-def _tmux_window_sample(reading: dict) -> str:
-    """The sense.tmux.windows sample: provenance first, then the windows or the failure.
-
-    ``env_session`` is appended whenever the environment names a session other
-    than the one read, so a mismatch is visible instead of silent.
-    """
-    session = reading["session"] or "-"
-    env_note = ""
-    if reading["env_session"] and reading["env_session"] != reading["session"]:
-        env_note = f" env_session={reading['env_session']}"
-    if reading["windows"]:
-        # A fallback after a failed enumeration and a second owned session are both
-        # visible in the sample, so a success line cannot hide them.
-        failure_note = f" failure={reading['failure']}" if reading["failure"] else ""
-        count_note = f" enumerated={reading['enumerated']}" if reading["enumerated"] > 1 else ""
-        return (f"source={reading['source']} session={session} "
-                f"windows={reading['windows']}{env_note}{failure_note}{count_note}"
-                f"{_also_sample(reading)}")
-    return (f"session unavailable source={reading['source'] or 'none'} session={session} "
-            f"enumerated={reading['enumerated']} failure={reading['failure']}{env_note}"
-            f"{_also_sample(reading)}")
 
 
-def _is_plant_unit(name: str, session: str) -> bool:
-    """Whether a failed unit belongs to this plant rather than a foreign consumer.
-
-    A plant's units share the session prefix its ``.seed-raised`` receipt
-    records; every site on the shared user bus names its units the same way, and
-    unrelated consumers also carry a ``mishe-`` prefix, so a bare prefix counts
-    another site's or a foreign service's failure as this plant's. The plant's
-    tmux server creates ``tmux-spawn-*.scope`` cgroups for its panes; those
-    carry no session prefix.
-    """
-    return name.startswith(session + "-") or name.startswith("tmux-spawn-")
+def _is_plant_unit(name: str) -> bool:
+    """Whether a failed unit is one this runtime generated, not a foreign consumer."""
+    from .units import is_plant_unit
+    return is_plant_unit(name)
 
 
 def _journal_unit_failure_window(home: Path, past_minutes: int = 10) -> dict:
@@ -935,10 +670,6 @@ def _journal_unit_failure_window(home: Path, past_minutes: int = 10) -> dict:
                 "boot_id": boot, "acquisition_started_ns": started}
     unknown = {"state": "unknown", "sample": "journal unit-failure window unavailable",
                "coverage": coverage}
-    session = _plant_session(home)
-    if session is None:
-        unknown["reason"] = "plant session unavailable"
-        return unknown
     if boot is None:
         unknown["reason"] = "boot identity unavailable"
         return unknown
@@ -990,9 +721,9 @@ def _journal_unit_failure_window(home: Path, past_minutes: int = 10) -> dict:
         unknown["reason"] = "invalid journal entry metadata"
         return unknown
     plant_units = {unit: count for unit, count in units.items()
-                   if _is_plant_unit(unit, session)}
+                   if _is_plant_unit(unit)}
     foreign_units = {unit: count for unit, count in units.items()
-                     if not _is_plant_unit(unit, session)}
+                     if not _is_plant_unit(unit)}
     classes = {}
     for unit in plant_units:
         for name, count in per_unit_classes.get(unit, {}).items():
@@ -1058,235 +789,9 @@ def _provider_error_class(record: dict) -> str:
     return "unknown"
 
 
-def _pane_mind_model(pid: int) -> str | None:
-    """The model a pane's own process runs, or None when it cannot be read.
-
-    An omp session log carries provider errors from every agent the pane hosts,
-    including the title generator and spawned subagents, whose model differs
-    from the mind's. Only a record whose model is the pane's own can name the
-    mind's turn, so the reader must know which model that is. The live command
-    line is authoritative for the running process and is per-pane, so it also
-    resolves a pane belonging to another site. An unreadable command line reads
-    None, which the caller treats as "cannot attribute" rather than "no error".
-    """
-    argv = omp_pane.command_line(pid)
-    return omp_pane.model(argv) if argv is not None else None
 
 
-def _omp_continue_chain(pid: int, now: datetime,
-                        mind_model: str | None = None) -> dict | None:
-    """Open continue chain for one pane pid from its omp session log.
 
-    The chain is the count of ``agent.continue scheduled`` events of *any*
-    source since the last ``agent_end maintenance routing`` with
-    ``stopReason="stop"`` (a completed turn). The span is minutes from the
-    first continue in the open chain to *now*. Counting every source, rather
-    than one retry class, keeps a wedge that manifests as stream stalls or
-    unexpected stops from escaping; a class allowlist would also fail silently
-    as omp adds classes. ``sources`` carries the per-source breakdown. Returns
-    None when no log exists for the pid.
-
-    ``cause`` names the dominant class of ``agent turn ended with provider
-    error`` record in the chain (``provider-error:<status>``, the HTTP status
-    when the record or its message names one), or ``none`` when the chain holds
-    no provider error — so a retry loop against a failing upstream reads
-    differently from a hung pane. ``last_error_ts`` is the timestamp of the
-    newest such record in the open chain (None when there is none) and
-    ``error_count`` the number of them; rule R2 reads both to flag a pane whose
-    turn fails instantly with no retry scheduled.
-
-    ``mind_model`` is the model the pane's own process runs, when it is known.
-    A provider error whose record names a *different* model belongs to another
-    agent the pane hosts (its title generator, a subagent) and does not count:
-    counting it would accuse a healthy mind's pane. A record with no model, or
-    a pane whose model could not be read, is still counted — the reader must
-    not hide a failure it cannot attribute.
-
-    ``foreign`` counts the records the reader excluded for naming another model,
-    so that suppression is visible in the reading rather than silent.
-    """
-    log_path = _omp_log_path(pid)
-    if log_path is None:
-        return None
-    continues: list[datetime] = []
-    sources: dict[str, int] = {}
-    error_classes: dict[str, int] = {}
-    last_error_ts: datetime | None = None
-    error_count: int = 0
-    foreign: int = 0
-    try:
-        text = log_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    for line in text.splitlines():
-        try:
-            record = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if not isinstance(record, dict):
-            continue
-        message = record.get("message")
-        timestamp = record.get("timestamp")
-        if not isinstance(message, str) or not isinstance(timestamp, str):
-            continue
-        try:
-            ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        if message == "agent.continue scheduled":
-            continues.append(ts)
-            source = record.get("source")
-            key = source if isinstance(source, str) and source else "unknown"
-            sources[key] = sources.get(key, 0) + 1
-        elif message == "agent turn ended with provider error":
-            record_model = record.get("model")
-            if (mind_model is not None and isinstance(record_model, str) and record_model
-                    and not omp_pane.same_model(record_model, mind_model)):
-                # A subagent or the title generator failed on its own model, not
-                # the mind's: counting it would accuse a healthy pane. The
-                # exclusion is counted so the suppression is visible.
-                foreign += 1
-                continue
-            error_class = _provider_error_class(record)
-            error_classes[error_class] = error_classes.get(error_class, 0) + 1
-            last_error_ts = ts
-            error_count += 1
-        elif (message == "agent_end maintenance routing"
-                and record.get("stopReason") == "stop"):
-            continues = []
-            sources = {}
-            error_classes = {}
-            last_error_ts = None
-            error_count = 0
-            foreign = 0
-    cause = "none"
-    if error_classes:
-        dominant = sorted(error_classes.items(), key=lambda item: (-item[1], item[0]))[0][0]
-        cause = f"provider-error:{dominant}"
-    span = (now - continues[0]).total_seconds() / 60.0 if continues else 0.0
-    return {"chain": len(continues), "span_minutes": round(span, 1),
-            "sources": sources, "cause": cause,
-            "last_error_ts": last_error_ts.isoformat() if last_error_ts else None,
-            "error_count": error_count, "foreign": foreign}
-
-def _mind_wedge_suspects() -> dict:
-    """Flag minds whose omp session log indicates a wedge.
-
-    Rule R (chain wedge): SUSPECT when the open continue chain is >= 3 and
-    spans >= 15 min with no completed turn between.
-
-    Rule R2 (provider-error wedge): SUSPECT when the pane has provider errors
-    but no continue chain and the last error is >= 5 min old. This catches the
-    instant-provider-error failure mode (e.g. a 403 FreeTierError) where the
-    turn fails immediately, omp never schedules a retry, and rule R cannot fire.
-
-    A pane is identified by window, pid and the tmux session hosting it. More
-    than one site renders on this host and their window names collide, so a
-    suspect without its session cannot be attributed to this plant or the
-    linked site beside it. Live evidence 2026-10-10: eight consecutive scans
-    flagged the same six roles with a fresh pid batch each time, and every
-    flagged pid's omp session log belonged to the linked android-body site.
-
-    The signal reads omp's session log
-    (``~/.omp/logs/omp.<date>.<pid>.log``); the sample carries a coverage tier
-    (``panes=N with_log=M``), and a pane set with no log at all reads UNKNOWN
-    rather than a clean bill, so a log format or path change cannot silently
-    pass as healthy.
-
-    A provider error counts only when its record names the model the pane's own
-    process runs (read from the live command line): an omp session log also
-    carries its title generator's and subagents' turns, whose model differs, and
-    a failure there does not mean the mind is wedged. An unreadable command line
-    or a record with no model is still counted, so a failure that cannot be
-    attributed is never hidden.
-    """
-    now = datetime.now(timezone.utc)
-    try:
-        result = subprocess.run(
-            ["tmux", "list-panes", "-a", "-F",
-             "#{session_name}|#{window_name}|#{pane_pid}"],
-            capture_output=True, text=True, timeout=5
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return {"id": "sense.mind.wedge-suspect", "state": "unknown",
-                "sample": "tmux pane enumeration unavailable", "suspects": [],
-                "kind": "read"}
-    if result.returncode != 0:
-        return {"id": "sense.mind.wedge-suspect", "state": "unknown",
-                "sample": "tmux pane enumeration failed", "suspects": [],
-                "kind": "read"}
-    suspects = []
-    panes = 0
-    with_log = 0
-    foreign = 0
-    for session, window_name, pid in proc_table.pane_records(result.stdout):
-        panes += 1
-        chain = _omp_continue_chain(pid, now, _pane_mind_model(pid))
-        if chain is None:
-            continue
-        with_log += 1
-        foreign += chain["foreign"]
-        if (chain["chain"] >= WEDGE_CHAIN_THRESHOLD
-                and chain["span_minutes"] >= WEDGE_SPAN_THRESHOLD_MINUTES):
-            suspects.append({"window": window_name, "pid": pid, "session": session,
-                             **chain})
-        elif (chain["chain"] == 0
-                and chain["cause"] != "none"
-                and chain["last_error_ts"] is not None):
-            last_error = decode_iso_datetime(chain["last_error_ts"])
-            if last_error is None:
-                continue
-            error_age_min = (now - last_error).total_seconds() / 60.0
-            if error_age_min >= WEDGE_ERROR_STALE_MINUTES:
-                suspects.append({"window": window_name, "pid": pid,
-                                 "session": session, **chain,
-                                 "rule": "provider-error",
-                                 "error_age_minutes": round(error_age_min, 1)})
-        elif (1 <= chain["chain"] < WEDGE_CHAIN_THRESHOLD
-                and chain["cause"] != "none"
-                and chain["span_minutes"] >= WEDGE_SPAN_THRESHOLD_MINUTES
-                and chain["last_error_ts"] is not None):
-            last_error = decode_iso_datetime(chain["last_error_ts"])
-            if last_error is None:
-                continue
-            error_age_min = (now - last_error).total_seconds() / 60.0
-            if error_age_min >= WEDGE_ERROR_STALE_MINUTES:
-                suspects.append({"window": window_name, "pid": pid,
-                                 "session": session, **chain,
-                                 "rule": "chain-stall",
-                                 "error_age_minutes": round(error_age_min, 1)})
-    if suspects:
-        parts = []
-        for s in suspects:
-            if s.get("rule") == "provider-error":
-                parts.append(
-                    f"{s['window']}(pid={s['pid']},session={s['session']},"
-                    f"rule=provider-error,"
-                    f"chain={s['chain']},error_age={s['error_age_minutes']}min,"
-                    f"cause={s['cause']})")
-            elif s.get("rule") == "chain-stall":
-                parts.append(
-                    f"{s['window']}(pid={s['pid']},session={s['session']},"
-                    f"rule=chain-stall,"
-                    f"chain={s['chain']},span={s['span_minutes']}min,"
-                    f"error_age={s['error_age_minutes']}min,"
-                    f"cause={s['cause']})")
-            else:
-                parts.append(
-                    f"{s['window']}(pid={s['pid']},session={s['session']},"
-                    f"chain={s['chain']},"
-                    f"span={s['span_minutes']}min,src="
-                    + ",".join(f"{name}:{count}"
-                               for name, count in sorted(s["sources"].items()))
-                    + f",cause={s['cause']})")
-        sample = "suspects=" + " ".join(parts)
-    else:
-        sample = "suspects=0"
-    sample += f" panes={panes} with_log={with_log} foreign={foreign}"
-    state = "verified" if with_log else "unknown"
-    return {"id": "sense.mind.wedge-suspect", "state": state,
-            "sample": sample, "suspects": suspects,
-            "panes": panes, "with_log": with_log, "foreign": foreign, "kind": "read"}
 
 WATCH_WAIT_SAMPLE_GAP_SECONDS = 3.0
 _WATCH_VERDICTS = frozenset({"watch-treadmill", "watch-docs-treadmill"})
@@ -1303,185 +808,12 @@ WATCH_WAIT_GH_TIMEOUT_SECONDS = 10
 """Bound for one ``gh run view`` external-state read per pane."""
 
 
-def _capture_mind_frame(session: str, window: str) -> str | None:
-    """One mind-pane capture, or ``None`` when tmux cannot answer.
-
-    Reads the lower (``.1``) pane, where the mind's TUI runs; the upper pane
-    is the dashboard renderer, whose lease proves rendering, not mind state.
-    """
-    try:
-        result = subprocess.run(
-            ["tmux", "capture-pane", "-p", "-J", "-t", f"{session}:{window}.1"],
-            capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout
 
 
-def _ci_run_state(run_id: str) -> dict | None:
-    """The external CI state for one run id, or ``None`` when unreadable.
-
-    The ``gh run view --json`` payload dialect is decoded in ``omp_pane``;
-    this function only bounds the subprocess read. A transport failure, a
-    missing ``gh`` binary, an unknown run id and a malformed payload all
-    read ``None``: the caller holds UNKNOWN rather than excusing a wait on
-    a state it could not read.
-    """
-    try:
-        result = subprocess.run(
-            ["gh", "run", "view", run_id, "--json", "status,conclusion,updatedAt"],
-            capture_output=True, text=True, timeout=WATCH_WAIT_GH_TIMEOUT_SECONDS)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0:
-        return None
-    return omp_pane.ci_run_state(result.stdout)
 
 
-def _watch_wait_verdict(first: str, second: str, now: str) -> dict:
-    """One pane's verdict from two captures and an optional CI read.
-
-    All inputs are decoded values: ``omp_pane`` names the wait pattern and
-    run id, ``hashlib`` names frame change. The verdicts:
-
-    * ``watch-wait`` — an allowlisted long-poll pattern is present and the
-      external state confirms the wait (a named CI run still in progress),
-      or the pattern needs no external state (``sleep``, ``tail -f``) and
-      normalized content is still while the raw frame advances.
-    * ``active`` — normalized content grew: the mind is producing, not
-      waiting, whatever the pattern says.
-    * ``suspect`` — frame alive, no pattern, no growth: visible in the scan;
-      cross-evidence comes from ``sense.mind.wedge-suspect`` which reads the
-      session log directly.
-    * ``pane-dead`` — both captures empty: visible in the scan; no dedicated
-      consumer.
-    * ``unknown`` — pattern present but external state unreadable, or the
-      pattern names CI with no run id: stays visible, never clean.
-    """
-    if omp_pane.frame_empty(first) and omp_pane.frame_empty(second):
-        return {"verdict": "pane-dead", "detail": "both captures empty"}
-    pattern = omp_pane.wait_pattern(second) or omp_pane.wait_pattern(first)
-    stable = (hashlib.sha256(omp_pane.normalize_frame(first).encode("utf-8")).hexdigest()
-              == hashlib.sha256(omp_pane.normalize_frame(second).encode("utf-8")).hexdigest())
-    frame_live = first != second
-    if stable and not frame_live and pattern is None:
-        return {"verdict": "suspect", "detail": "frame frozen, no wait pattern",
-                "pattern": None, "stable": True, "frame_live": False}
-    if not stable:
-        return {"verdict": "active", "detail": "normalized content grew",
-                "pattern": pattern, "stable": False, "frame_live": frame_live}
-    if pattern is None:
-        return {"verdict": "suspect",
-                "detail": "frame alive, no wait pattern, no growth",
-                "pattern": None, "stable": True, "frame_live": frame_live}
-    run_id = omp_pane.ci_run_id(second) or omp_pane.ci_run_id(first)
-    needs_external = pattern in ("gh run watch", "gh run view",
-                                  "Waiting for CI poll result")
-    if needs_external:
-        if run_id is None:
-            return {"verdict": "unknown",
-                    "detail": f"wait pattern {pattern!r} names no run id",
-                    "pattern": pattern, "stable": True, "frame_live": frame_live}
-        state = _ci_run_state(run_id)
-        if state is None:
-            return {"verdict": "unknown",
-                    "detail": f"wait pattern {pattern!r} run {run_id} state unreadable",
-                    "pattern": pattern, "stable": True, "frame_live": frame_live,
-                    "run_id": run_id}
-        if state["status"] == "in_progress":
-            return {"verdict": "watch-wait",
-                    "detail": (f"wait pattern {pattern!r} run {run_id} "
-                               f"status={state['status']} updated={state.get('updated_at')}"),
-                    "pattern": pattern, "stable": True, "frame_live": frame_live,
-                    "run_id": run_id, "ci_state": state, "sampled": now}
-        return {"verdict": "suspect",
-                "detail": (f"wait pattern {pattern!r} run {run_id} "
-                           f"no longer {state['status']}"),
-                "pattern": pattern, "stable": True, "frame_live": frame_live,
-                "run_id": run_id, "ci_state": state, "sampled": now}
-    return {"verdict": "watch-wait",
-            "detail": (f"wait pattern {pattern!r} content still, frame "
-                       f"{'advancing' if frame_live else 'still'}"),
-            "pattern": pattern, "stable": True, "frame_live": frame_live,
-            "sampled": now}
 
 
-def _mind_watch_wait(home: Path) -> dict:
-    """Name each live mind pane's wait state from two bounded captures.
-
-    Rule W (watch-wait): a pane whose normalized capture is still across the
-    sample gap while its raw frame advances, whose text carries an allowlisted
-    long-poll spelling, and whose external state confirms the wait (a named
-    CI run still ``in_progress``) reads ``watch-wait`` — tool-blocked, not
-    wedged. A still frame with no pattern reads ``suspect`` (cross with the
-    wedge sensor's session-log evidence); an empty frame reads ``pane-dead``
-    (supervisor route); a pattern with unreadable external state reads
-    ``unknown``. A pane set with no capture at all reads UNKNOWN rather than
-    a clean bill, so a ``capture-pane`` format change cannot silently pass
-    as healthy.
-
-    The verdict is bound to the sampled window (``sampled`` + gap): a
-    ``watch-wait`` expires when the external state changes or the next scan
-    runs. The consumer is witness pane rendering (WATCH-WAIT instead of a
-    stuck appearance); it complements, never replaces,
-    ``sense.mind.wedge-suspect``. Session-qualified attribution follows the
-    wedge sensor: two sites share window names on this host, so each verdict
-    carries its tmux session.
-    """
-    now = datetime.now(timezone.utc).isoformat()
-    try:
-        result = subprocess.run(
-            ["tmux", "list-panes", "-a", "-F",
-             "#{session_name}|#{window_name}|#{pane_pid}|#{pane_index}"],
-            capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        return {"id": "sense.mind.watch-wait", "state": "unknown",
-                "sample": "tmux pane enumeration unavailable", "panes": [],
-                "kind": "read"}
-    if result.returncode != 0:
-        return {"id": "sense.mind.watch-wait", "state": "unknown",
-                "sample": "tmux pane enumeration failed", "panes": [],
-                "kind": "read"}
-    records = proc_table.mind_pane_records(result.stdout)
-    if not records:
-        return {"id": "sense.mind.watch-wait", "state": "unknown",
-                "sample": "no panes enumerated", "panes": [], "kind": "read"}
-    firsts: dict[tuple[str, str, int], str | None] = {}
-    for session, window, pid in records:
-        firsts[(session, window, pid)] = _capture_mind_frame(session, window)
-    time.sleep(WATCH_WAIT_SAMPLE_GAP_SECONDS)
-    panes: list[dict] = []
-    readable = 0
-    waiting = 0
-    for session, window, pid in records:
-        first = firsts[(session, window, pid)]
-        second = _capture_mind_frame(session, window)
-        if first is None or second is None:
-            panes.append({"window": window, "pid": pid, "session": session,
-                          "verdict": "unknown",
-                          "detail": "pane capture unreadable"})
-            continue
-        readable += 1
-        verdict = _watch_wait_verdict(first, second, now)
-        if verdict["verdict"] == "watch-wait":
-            waiting += 1
-        panes.append({"window": window, "pid": pid, "session": session,
-                      **verdict})
-    if waiting:
-        sample = ("watch-wait=" + " ".join(
-            f"{pane['window']}(pid={pane['pid']},session={pane['session']},"
-            f"pattern={pane.get('pattern')},run={pane.get('run_id')})"
-            for pane in panes if pane["verdict"] == "watch-wait"))
-    else:
-        sample = "watch-wait=0"
-    sample += f" panes={len(records)} readable={readable}"
-    state = "verified" if readable else "unknown"
-    return {"id": "sense.mind.watch-wait", "state": state,
-            "sample": sample, "panes": panes, "kind": "read",
-            "consumer": "witness pane rendering",
-            "validity": {"sampled": now, "gap_seconds": WATCH_WAIT_SAMPLE_GAP_SECONDS}}
 
 
 TREADMILL_WINDOW_COMMITS = 60
@@ -1630,7 +962,7 @@ def _treadmill_previous_digests(home: Path) -> dict[str, str]:
 
 def _mind_role_coverage(home: Path, role: str, now: datetime,
                         entries: list | None) -> dict[str, object]:
-    """Per-role temporal coverage: wall update, settled yield, idle, pending.
+    """Per-role temporal coverage: wall update, last completed wake, idle, open dispatch.
 
     The commit stream shows what landed; this shows whether the mind is
     still waking, settling and writing — the busy-idle vs wedged distinction
@@ -1645,19 +977,21 @@ def _mind_role_coverage(home: Path, role: str, now: datetime,
             wall_mtime, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     except OSError:
         wall_updated = None
-    last_yield: int | None = None
-    last_wake_at: datetime | None = None
-    pending: int | None = None
-    if entries is not None:
-        try:
-            from . import seed
-            (_digest, pending, last_yield, _clear, _obs, _woken, last_wake_at,
-             _cont) = seed._state(home, role, entries=entries)
-        except (OSError, ValueError):
-            pass
+    last_yield: str | None = None
+    pending: str | None = None
     idle_s = None
-    if last_wake_at is not None:
-        idle_s = max(0, int((now - last_wake_at).total_seconds()))
+    try:
+        from .core.state import DispatchStore
+        store = DispatchStore(home / "dispatch")
+        record = store.read(role)
+        if record is not None:
+            if record.state.name in ("started", "unknown"):
+                pending = record.key
+            else:
+                last_yield = record.key
+            idle_s = max(0, int(now.timestamp() - store.path_for(role).stat().st_mtime))
+    except (OSError, ValueError):
+        pass
     return {"wall_updated": wall_updated, "last_yield": last_yield,
             "idle_s": idle_s, "pending": pending}
 
@@ -2075,62 +1409,6 @@ from the oldest open DM to another role (the witness/senses legs); a role
 with no open outbound DM is pausing on its own, not stalled on a gate.
 """
 
-def _mind_loop_stall(home: Path, now: datetime | None = None) -> dict[str, object]:
-    """Flag any role stuck in a no-decision-change loop behind an aging gate.
-
-    Generalizes inference-research DM 20438 (self-flagged 73/80 record-only,
-    5,0 stagnation, 24h gate-wait on senses + witness legs): the mind sensed
-    its own loop manually and waited a day for legs. This producer fires on
-    the same shape for any role without anyone self-flagging: a treadmill
-    verdict (record-only lane, or the docs-book lane) AND an open outbound DM
-    older than the gate bound. Either half alone is not a stall (steady-state
-    record runs exist; young gates resolve). State is drift when a role
-    stalls, verified when no role pairs both halves, unknown when both lanes
-    and the tape are unreadable. The sample names stalled roles with gate age
-    so the wake routes to the gate owner, not the stalled mind.
-    """
-    if now is None:
-        now = datetime.now(timezone.utc)
-    treadmill = _mind_treadmill(home)
-    docs = _mind_docs_treadmill(home)
-    if treadmill.get("state") != "verified" and docs.get("state") != "verified":
-        return {"id": "sense.mind.loop-stall", "state": "unknown",
-                "sample": "treadmill reading unavailable", "kind": "read"}
-    # A no-decision-change lane is a stall when it is stuck behind an aging
-    # resolver gate. Both lanes share the gate read: the record lane and the
-    # docs-book lane are independent detectors of the same shape, so either
-    # verdict names the treadmilling role. The docs lane otherwise fires with
-    # no consumer — emitted but never routed — so the demonstrated churn pattern
-    # would stay invisible to the resolver.
-    treadmilling = sorted(
-        role for reading in (treadmill, docs)
-        if reading.get("state") == "verified"
-        for role, pair in reading.get("roles", {}).items()
-        if isinstance(pair, dict) and pair.get("verdict") in _WATCH_VERDICTS)
-    if not treadmilling:
-        return {"id": "sense.mind.loop-stall", "state": "verified",
-                "sample": "stall=0 treadmilling=none", "kind": "read",
-                "stalled": []}
-    # Gate ages come from the disposition reader, not a second tape parse:
-    # _coord_dm_disposition_age already pairs each open DM with its target
-    # and age-gates stalls, so no new parse sites are needed here.
-    disp = _coord_dm_disposition_age(home, now)
-    if disp.get("state") != "verified":
-        return {"id": "sense.mind.loop-stall", "state": "unknown",
-                "sample": "disposition reading unavailable", "kind": "read"}
-    oldest = str(disp.get("oldest_open", ""))
-    stall_n = int(disp.get("stall", 0))
-    # oldest_open names target:age; the sample pairs treadmilling roles with
-    # the tape-wide gate head. Per-role outbound attribution would need a
-    # second tape parse; until then a treadmilling role beside any mature
-    # gate reads drift with the gate head named, so the resolver is visible
-    # even though the pairing is tape-wide, not per-role.
-    stalled = sorted(f"{role}@{oldest}" for role in treadmilling) if stall_n else []
-    state = "drift" if stalled else "verified"
-    return {"id": "sense.mind.loop-stall", "state": state,
-            "sample": f"stall={len(stalled)} " + ",".join(stalled) if stalled else "stall=0 gates-young",
-            "kind": "read", "stalled": stalled,
-            "treadmilling": treadmilling}
 
 LEDGER_DV_PHASES = frozenset({
     "applied", "review-refused", "reverted", "revert-failed",
@@ -2619,25 +1897,6 @@ def _unit_declared_paths(unit: str) -> list[str] | None:
     return declared_paths(result.stdout)
 
 
-def _is_tmux_session_holder(unit: str) -> bool:
-    """Whether a unit's ExecStart is a tmux session holder.
-
-    Tmux session holders run ``tmux new-session ... sh && exec sleep infinity``,
-    not Python services. They have no import root and cannot drift against a
-    pin; classifying them as host-scope reduces uninspectable noise.
-    """
-    environment = os.environ.copy()
-    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
-    try:
-        result = subprocess.run(["systemctl", "--user", "show", unit,
-                                 "-p", "ExecStart"],
-                                capture_output=True, text=True, timeout=5,
-                                env=environment)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    if result.returncode:
-        return False
-    return "tmux new-session" in result.stdout
 
 def _declares_site_path(path: str, site_roots: list[Path]) -> bool:
     """Whether one declared path lies inside a site's checkout or its home."""
@@ -2756,201 +2015,6 @@ def _foreign_checkout_consumers(units: list[str], root: Path) -> dict[str, str]:
     return consumers
 
 
-def _runtime_drift_across_sites(home: Path) -> dict[str, object]:
-    """Compare every running site service with the pin of the site it serves.
-
-    A site's manifest names only its own session, yet every site's services share
-    one systemd user bus. A service of another site therefore runs here invisible
-    to that manifest, and one can carry a release the site's own pin contradicts.
-    A session's units share its prefix, so the registry's session maps any unit
-    to its site — including a unit the site's own manifest omits, which is how a
-    stale release hides from the service coverage that would otherwise name it.
-    The scanning site is mapped from its own session whether or not the registry
-    lists other sites, so its manifest-omitted units stay read even when it
-    coordinates none. A unit no session names is foreign to every site; when it
-    consumes this plant's checkout — observed in its import root or declared in
-    the script its ``ExecStart`` runs — the sample names the coupling as
-    ``foreign=<unit>@<checkout>`` and stays ``unknown`` rather than hiding it in
-    anonymous coverage gap. A unit that names no site in anything it imports or
-    declares — or whose executed script imports no site package at all — is a
-    host tool beside the sites, so the sample names it
-    ``host-scope=<unit>`` and the reading is ``verified``: the question the
-    sense answers is settled for it, and an unattributed UNKNOWN is left for
-    the units whose declaration could not be read or whose declared paths do
-    name a site. The release coordinator's declared checkout root
-    is not a stale release, so it is skipped rather than reported against the
-    pin; only a registry whose site list is unreadable is unknown.
-    """
-    registry_path = home / "health" / "linked-sites.json"
-    try:
-        registry = json.loads(registry_path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {"id": "sense.runtime.drift-across-sites", "state": "unavailable",
-                "sample": "no linked-site registry on this plant", "kind": "read"}
-    except (OSError, ValueError):
-        return {"id": "sense.runtime.drift-across-sites", "state": "unknown",
-                "sample": "linked-site registry unreadable", "kind": "read"}
-    sites = registry.get("sites") if isinstance(registry, dict) else None
-    if not isinstance(sites, list):
-        return {"id": "sense.runtime.drift-across-sites", "state": "unknown",
-                "sample": "linked-site registry has no site list", "kind": "read"}
-    site_by_prefix: dict[str, str] = {}
-    pins: dict[str, tuple[str | None, str | None]] = {}
-
-    def map_site(site_home: str, session: str) -> None:
-        pins[session] = _pinned_root(Path(site_home), str(Path(site_home).parent))
-        # A unit of this session is named by its prefix, so the mapping covers a
-        # unit the site's own manifest omits as well as one it lists.
-        site_by_prefix[session] = site_home
-
-    for site in sites:
-        if not isinstance(site, dict) or not isinstance(site.get("home"), str):
-            continue
-        session = site.get("session")
-        if not isinstance(session, str) or not session:
-            continue
-        map_site(site["home"], session)
-    # The registry lists the *other* sites this one coordinates, so the scanning
-    # site is absent from it; its own units share its bus and need its pin too.
-    own_session = _plant_session(home)
-    if own_session and own_session not in site_by_prefix:
-        map_site(str(Path(home).resolve()), own_session)
-    if not site_by_prefix:
-        return {"id": "sense.runtime.drift-across-sites", "state": "unknown",
-                "sample": "registry names no site with a home and a session", "kind": "read"}
-    active, failure = _active_site_units()
-    if failure is not None:
-        return {"id": "sense.runtime.drift-across-sites", "state": "unknown",
-                "sample": f"running units unreadable: {failure}", "kind": "read"}
-    from .runtime_source import declared_checkout_root
-    checkout_root = Path(home).resolve().parent
-    package = SITE_PACKAGE
-    session_of = {unit: next((prefix for prefix in site_by_prefix
-                              if unit.startswith(prefix + "-")), None)
-                  for unit in active}
-    # Same-site services that don't match any session prefix (e.g.
-    # mishe-ifm-shim.service) are mapped to the scanning site's session when
-    # they declare a path inside the scanning site's home: they run from the
-    # same checkout and must be compared against the same pin.
-    if own_session and own_session in site_by_prefix:
-        own_home = Path(site_by_prefix[own_session])
-        for unit, session in session_of.items():
-            if session is None and is_site_unit(unit):
-                declared = _unit_declared_paths(unit)
-                if declared and any(
-                        own_home in Path(path).resolve().parents
-                        for path in declared):
-                    session_of[unit] = own_session
-    # A unit no session names is foreign to every site. One that consumes this
-    # plant's checkout is a live coupling rather than an anonymous coverage gap:
-    # its own ExecStart declares the checkout even when no live process carries
-    # the variable at scan time, so the reading names the consumer.
-    foreign = _foreign_checkout_consumers(
-        [unit for unit, session in session_of.items() if session is None], checkout_root)
-    roots = _unit_import_roots(active)
-    stale: dict[str, str] = {}
-    uninspectable: list[str] = []
-    unpinned: list[str] = []
-    unattributed: list[str] = []
-    host_scope: list[str] = []
-    parts = [f"sites={len(site_by_prefix)} running={len(active)}"]
-    for unit in active:
-        session = session_of[unit]
-        if session is None:
-            # The import root is read even for an unattributed unit, because a
-            # live PYTHONPATH naming the checkout is the coupling observed
-            # directly; a unit that neither imports nor names the checkout is a
-            # coverage gap this sensor cannot judge.
-            root = roots.get(unit)
-            if root is not None and _imports_checkout(root, checkout_root):
-                foreign[unit] = root
-            elif unit not in foreign:
-                unattributed.append(unit)
-            continue
-        root = roots.get(unit)
-        if root is None:
-            # A mapped, running site's unit with no discoverable import root
-            # cannot be compared with its pin; do not report coverage as clean.
-            uninspectable.append(unit)
-            continue
-        pinned, pin_failure = pins[session]
-        if pin_failure is not None or pinned is None:
-            unpinned.append(unit)
-            continue
-        if Path(root).resolve() != Path(pinned).resolve():
-            declared = declared_checkout_root(Path(site_by_prefix[session]), unit)
-            if declared is not None and Path(root).resolve() == declared.resolve():
-                # The coordinator is declared on its site's checkout, not the pin
-                # (coordination/site_sync.py skips the same unit when verifying).
-                continue
-            stale[unit] = root
-    # A unit no session names can still be judged. When nothing it imports and
-    # nothing its declaration names lies inside any site's checkout or home,
-    # the unit is a host tool beside the sites: naming it `host-scope` answers
-    # the reading's question instead of leaving an UNKNOWN readers learn to
-    # skip. A unit that declares a path inside a site, or whose declaration
-    # cannot be read, stays an anonymous gap — the sensor cannot yet say the
-    # unit is irrelevant, so it does not claim it.
-    site_roots = [Path(site_home) for site_home in site_by_prefix.values()]
-    site_roots += [Path(site_home).resolve().parent
-                   for site_home in site_by_prefix.values()]
-    for unit in list(unattributed):
-        declared = _unit_declared_paths(unit)
-        if not declared:
-            continue
-        if any(_declares_site_path(path, site_roots) for path in declared):
-            continue
-        host_scope.append(unit)
-        unattributed.remove(unit)
-    # A mapped unit with no import root can still be judged by its declaration:
-    # when nothing its declaration names lies inside any site's checkout or
-    # home, the unit is a host tool beside the sites. A unit whose executed
-    # script imports no site package is a host tool by the same rule: the
-    # drift this sense catches runs through imports, not file location. A unit
-    # that declares a path inside a site stays uninspectable — the sensor
-    # cannot yet say the unit is irrelevant, so it does not claim it.
-    for unit in list(uninspectable):
-        if _is_tmux_session_holder(unit):
-            host_scope.append(unit)
-            uninspectable.remove(unit)
-            continue
-        if _script_imports_site_package(unit) is False and (
-                _script_spawns_site_package(unit, package) is not True):
-            host_scope.append(unit)
-            uninspectable.remove(unit)
-            continue
-        declared = _unit_declared_paths(unit)
-        if not declared:
-            continue
-        if any(_declares_site_path(path, site_roots) for path in declared):
-            continue
-        host_scope.append(unit)
-        uninspectable.remove(unit)
-
-    # The pane shortens a long sample at its tail (`seed_culture_views._clip_sample`),
-    # so the fields that decide this reading's state lead and the informational
-    # host-scope list trails them: a clipped `stale=` or `foreign=` would render as a
-    # reading the reader cannot explain.
-    if stale:
-        parts.append("stale=" + ",".join(f"{unit}@{Path(root).name}" for unit, root in sorted(stale.items())))
-    if foreign:
-        parts.append("foreign=" + ",".join(
-            f"{unit}@{checkout_root.name}" for unit in sorted(foreign)))
-    if unattributed:
-        parts.append("unattributed=" + ",".join(unattributed))
-    if uninspectable:
-        parts.append("uninspectable=" + ",".join(uninspectable))
-    if unpinned:
-        parts.append("unpinned=" + ",".join(unpinned))
-    if host_scope:
-        parts.append("host-scope=" + ",".join(sorted(host_scope)))
-    state = "drift" if stale else "unknown" if unpinned or unattributed or uninspectable or foreign else "verified"
-    return {"id": "sense.runtime.drift-across-sites", "state": state,
-            "sample": " ".join(parts), "kind": "read",
-            "identity": {"sites": sorted(site_by_prefix), "stale": stale,
-                         "unpinned": unpinned, "unattributed": unattributed,
-                         "foreign": foreign, "host_scope": host_scope,
-                         "uninspectable": uninspectable, "running": active}}
 
 
 def _sensor_names(root: str) -> tuple[set[str], str | None]:
@@ -3066,62 +2130,6 @@ PANE_ROLE = re.compile(r"\bpain watch ([A-Za-z0-9_-]+)")
 """The role name a pane watcher runs, extracted from its start command."""
 
 
-def _pane_info(home: Path) -> dict[str, tuple[str, str, str]]:
-    """Map each pane's role name to its (start_command, current_path, pid).
-
-    Reads ``tmux list-panes -a`` once; returns empty when tmux is unavailable
-    or no session is running. The role name is the token after ``pain watch``
-    in the pane's start command, matching the Top Pain script name. The pid is
-    the pane's watcher process, whose environment the renderer inherits.
-
-    Two sites can share a host, and then one role name owns two panes, one per
-    session. Taking whichever pane tmux lists last resolves the role from the
-    other site's watcher, so the reading would name bytes this site never ran.
-    A session the reading home owns decides the role; a role whose panes all
-    live in sessions another home owns stays unresolved, so the caller reports
-    that renderer's root unread rather than guessing it. A lone pane in a
-    session no home has claimed has no competing candidate, so it stays this
-    site's only watcher for the role.
-    """
-    try:
-        result = subprocess.run(
-            ["tmux", "list-panes", "-a", "-F",
-             "#{session_name}|#{pane_pid}|#{pane_start_command}|#{pane_current_path}"],
-            capture_output=True, text=True, timeout=5
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return {}
-    if result.returncode != 0:
-        return {}
-    from .tmux import session_owner
-    candidates: dict[str, list[tuple[str, tuple[str, str, str]]]] = {}
-    for session, pid, start_command, current_path in proc_table.pane_commands(
-            result.stdout):
-        match = PANE_ROLE.search(start_command)
-        if match:
-            candidates.setdefault(match.group(1), []).append(
-                (session, (start_command, current_path, pid)))
-    wanted = str(Path(home).resolve())
-    owners: dict[str, str | None] = {}
-
-    def owner(session: str) -> str | None:
-        """The home a session's owner option names, read once per session."""
-        if session not in owners:
-            owners[session] = session_owner(session)
-        return owners[session]
-
-    info: dict[str, tuple[str, str, str]] = {}
-    for role, panes in candidates.items():
-        owned = [pane for session, pane in panes if owner(session) == wanted]
-        if owned:
-            # Several panes of this home may watch one role, as a respawn does;
-            # the last one listed is the live pane, as it was before the filter.
-            info[role] = owned[-1]
-        elif len(panes) == 1 and owner(panes[0][0]) is None:
-            info[role] = panes[0][1]
-        # Several sites watch this role, or a recorded owner names another
-        # home: no reading here can say which pane renders this site.
-    return info
 
 
 def _command_pythonpath(command: str) -> list[str]:
@@ -3320,202 +2328,6 @@ def _site_script_chain(text: str, home: Path) -> list[tuple[str, str]]:
     return chain
 
 
-def _renderer_coverage(home: Path) -> dict[str, object]:
-    """Compare every pane renderer's import closure with the pin's.
-
-    A renderer that exports its own PYTHONPATH renders from a root the service
-
-    comparison never sees, so a stale snapshot there shows old logic in a pane
-    while the dashboard still read verified. A renderer that inherits its root
-    from the pane watcher's environment is resolved from the watcher process's
-    live environment, falling back to the pane's start command, and only from a
-    pane in a session the reading home owns: two sites can share a host, and a
-    watcher belonging to the other one would otherwise supply this site's root.
-    Each renderer's
-    package closure is hashed in its effective root and in the pin; a module
-    that differs, is missing from the renderer root, or is missing from the pin
-    is drift. A conditional export or an unresolvable inherited root is unknown
-    rather than guessed. The pane's cwd is checked for a ``mishe_tauftauf/``
-    package that would shadow the PYTHONPATH root, since ``python -m`` inserts
-    the cwd before PYTHONPATH in ``sys.path``. The identity records each
-    renderer's effective root: an inherited renderer that resolved shows the
-    root the pane environment supplied, so a reader can tell one that resolved
-    to the pin from one that resolved to a different root that happens to match.
-
-    An uncovered Top Pain can still execute package code through a site-home
-    script (``site / "X.py"`` or ``from X import``). One level of that chain is
-    followed: a script importing ``mishe_tauftauf.*`` is reported as
-    ``indirect_package``, and its closure is hashed against the pin from the
-    root the pane environment resolves. A root other than the pin is drift and
-    an unresolvable one is unknown, so the indirect path never reads verified
-    on environment inheritance alone.
-
-    The aggregate state ranks a definite violation above an incomplete check:
-    one drifted renderer makes the state ``drift`` even when another renderer's
-    root is unread, and the unread names stay in the sample. A pane executing
-    bytes the pin does not govern is a finding a reader must not take for merely
-    unknown, so ``unknown`` is reserved for a population with no drift found and
-    at least one root unread.
-
-    The pane truncates the sample, so the drift list leads it and is capped at
-    two distinct violations with ``+Nmore``; the unread names follow. A reader
-    who sees ``drift`` sees what drifted, and the identity keeps every row.
-    """
-    pairs, uncovered, failure = _top_pain_roots(home)
-    if failure is not None:
-        return {"id": "sense.runtime.renderer-coverage", "state": "unknown",
-                "sample": failure, "kind": "read"}
-    if not pairs:
-        return {"id": "sense.runtime.renderer-coverage", "state": "unavailable",
-                "sample": "no Top Pain runs a package module", "kind": "read"}
-    pin, pin_failure = _pinned_root(home, str(Path(home).resolve().parent))
-    if pin is None:
-        return {"id": "sense.runtime.renderer-coverage", "state": "unknown",
-                "sample": f"pin unreadable: {pin_failure}", "kind": "read"}
-    pinned = Path(pin) / "src" / "mishe_tauftauf"
-    references: dict[str, dict[str, str | None]] = {}
-    drift: list[dict[str, object]] = []
-    inherited_unknown: list[str] = []
-    conditional_unknown: list[str] = []
-    export_unknown: list[str] = []
-    pane_info = _pane_info(home)
-    identity_renderers: list[str] = []
-    for root, entry, source, role in pairs:
-        effective_root = root
-        package_path = Path(root) / "src" / "mishe_tauftauf"
-        pane = pane_info.get(role)
-        if source == "conditional":
-            # The text names a root the watcher's environment may override, and
-            # no reading here can decide which fired: report it unread.
-            conditional_unknown.append(role)
-            identity_renderers.append(f"{root}:{entry}:{source}")
-            continue
-        if source == "unresolvable":
-            # The export names no usable root, so the renderer's effective
-            # root is unread rather than the pin.
-            export_unknown.append(role)
-            identity_renderers.append(f"{root}:{entry}:{source}")
-            continue
-        if source == "inherited":
-            resolved = False
-            if pane is not None:
-                for component in (*proc_table.read_pane_pythonpath(pane[2]), *_command_pythonpath(pane[0])):
-                    candidate = _import_root(component)
-                    if candidate:
-                        effective_root = candidate
-                        package_path = Path(candidate) / "src" / "mishe_tauftauf"
-                        resolved = True
-                        break
-            if not resolved:
-                inherited_unknown.append(role)
-                identity_renderers.append(f"{root}:{entry}:{source}")
-                continue
-        # Check the pane's cwd for a shadowing package
-        if pane is not None:
-            current_path = pane[1]
-            cwd_package = Path(current_path) / "mishe_tauftauf"
-            if cwd_package.is_dir():
-                effective_root = current_path
-                package_path = cwd_package
-        identity_renderers.append(f"{effective_root}:{entry}:{source}")
-        if entry not in references:
-            references[entry] = _module_digests(pinned, entry)
-        local = _module_digests(package_path, entry)
-        # Compare the union: a module the pin's closure reaches but the
-        # renderer's does not is drift too, and only the local walk would miss it.
-        reference = references[entry]
-        differing = sorted(name for name in set(local) | set(reference)
-                           if local.get(name) != reference.get(name))
-        if differing:
-            drift.append({"root": effective_root, "entry": entry, "modules": differing})
-    script_unknown: list[str] = []
-    indirect: list[str] = []
-    for role in sorted(uncovered):
-        try:
-            text = (home / "top-pains" / role).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            script_unknown.append(role)
-            continue
-        chain = _site_script_chain(text, home)
-        if not chain:
-            continue
-        # The disclosure is a static fact about the script text: this Top Pain
-        # executes package code through a site-home script.
-        for _script, module in chain:
-            indirect.append(f"{role}:mishe_tauftauf.{module}")
-        # The script runs with the watcher's environment and the site home
-        # first on its path, so a package dir there shadows every root.
-        effective_root: str | None = None
-        pane = pane_info.get(role)
-        if (home / "mishe_tauftauf").is_dir():
-            effective_root = str(home)
-        elif pane is not None:
-            for component in (*proc_table.read_pane_pythonpath(pane[2]), *_command_pythonpath(pane[0])):
-                candidate = _import_root(component)
-                if candidate:
-                    effective_root = candidate
-                    break
-        if effective_root is None:
-            # No pane runs this renderer, so the bytes its script imports are
-            # unread rather than the pin's. A renderer with no pane is not
-            # executing, so there is nothing to verify.
-            if pane is None:
-                continue
-            script_unknown.append(role)
-            continue
-        package_path = Path(effective_root) / "src" / "mishe_tauftauf"
-        for _script, module in chain:
-            if module not in references:
-                references[module] = _module_digests(pinned, module)
-            local = _module_digests(package_path, module)
-            reference = references[module]
-            differing = sorted(name for name in set(local) | set(reference)
-                               if local.get(name) != reference.get(name))
-            # A root other than the pin is drift even when the closure matches:
-            # the renderer executes bytes the pin does not govern.
-            if differing or Path(effective_root).resolve() != Path(pin).resolve():
-                drift.append({"root": effective_root, "entry": module,
-                              "modules": differing if differing else [module]})
-            identity_renderers.append(f"{effective_root}:mishe_tauftauf.{module}:script-chain")
-
-    parts = [f"renderers={len(pairs)}"]
-    if drift:
-        # The pane truncates the sample, so the definite violation leads and is
-        # capped: a reader who sees ``drift`` must see what drifted, not only
-        # that some other renderer's root was unread. Renderers that share a
-        # root and a module set are one violation, not one row per role.
-        rows: list[str] = []
-        seen: set[tuple[str, str, tuple[str, ...]]] = set()
-        for item in drift:
-            key = (str(item["root"]), str(item["entry"]), tuple(item["modules"]))
-            if key in seen:
-                continue
-            seen.add(key)
-            rows.append(f"{item['entry']}=" + ",".join(item["modules"]))
-        shown = rows[:2]
-        parts.append("drift=" + " ".join(shown)
-                     + (f" +{len(rows) - len(shown)}more" if len(rows) > len(shown) else ""))
-    if inherited_unknown:
-        parts.append("inherited_unknown=" + ",".join(sorted(inherited_unknown)))
-    if conditional_unknown:
-        parts.append("conditional_unknown=" + ",".join(sorted(conditional_unknown)))
-    if export_unknown:
-        parts.append("export_unknown=" + ",".join(sorted(export_unknown)))
-    if script_unknown:
-        parts.append("script_unknown=" + ",".join(sorted(script_unknown)))
-    if uncovered:
-        parts.append("uncovered=" + ",".join(sorted(uncovered)))
-    if indirect:
-        parts.append("indirect_package=" + ",".join(sorted(indirect)))
-    unresolved = (inherited_unknown or conditional_unknown or export_unknown
-                  or script_unknown)
-    state = "drift" if drift else ("unknown" if unresolved else "verified")
-    return {"id": "sense.runtime.renderer-coverage",
-            "state": state,
-            "sample": " ".join(parts), "kind": "read",
-            "identity": {"renderers": identity_renderers,
-                         "drift": drift, "uncovered": sorted(uncovered),
-                         "indirect_package": sorted(indirect), "pin": pin}}
 
 def _format_age(delta: timedelta) -> str:
     """Human age for a commit waiting on a pin advance, e.g. ``1h20m``."""
@@ -4545,312 +3357,12 @@ def _emitter_stale_ids(tree: ast.AST, rel: str, pin: str, head_sha: str,
     return stale
 
 
-def _host_session_stability(home: Path) -> dict[str, object]:
-    """Detect tmux-server deaths and missing OOM shields so mishe self-heals.
-
-    A dead tmux server reads as every pane UNKNOWN and every supervisor
-    crash-looping; without this reading the operator window is the only
-    detector and the fix is manual. A session absent from the live list is
-    drift, not unknown: the receipt names the expected session. The live
-    sessions' own servers must sit in a managed mishe slice under a finite
-    memory.max (host containment placement; the retired -900 OOM shield is no
-    longer applied by host-guard). A server outside that placement is
-    uncontained drift; an unreadable cgroup stays unknown. A server this socket does not host — a test's disposable server on
-    its own TMUX_TMPDIR socket, say — is not a live server here and must not
-    read as a plant shield lapse; when the socket's own server pids cannot be
-    read, every server is checked so a broken read stays visible. Unreadable
-    tmux or /proc reads stay unknown rather than reading as stability. All
-    external text enters through proc_table decoders, never inline parsing.
-    """
-    session = _plant_session(home)
-    try:
-        listed = subprocess.run(["tmux", "list-sessions", "-F", "#{session_name}"],
-                                capture_output=True, timeout=2)
-        owners = subprocess.run(["tmux", "list-sessions", "-F", "#{pid}"],
-                                capture_output=True, timeout=2)
-    except (OSError, subprocess.TimeoutExpired):
-        return {"id": "sense.host.session-stability", "state": "unknown",
-                "sample": "tmux enumeration unavailable", "kind": "read"}
-    # This socket's own servers, named by tmux itself. No live session means no
-    # server of this plant's to shield; an unreadable pid list leaves the
-    # attribution open (None) so the check falls back to every server.
-    if listed.returncode != 0:
-        live: list[str] = []
-        plant_servers: set[str] | None = set()
-    else:
-        live = sorted(proc_table.window_names(listed.stdout))
-        plant_servers = ({str(pid) for pid in proc_table.pane_pids(owners.stdout)}
-                         if owners.returncode == 0 else None)
-    # The receipt names one session, but this home owns more than one and the
-    # receipt is whichever supervisor wrote last. A session this home owns on
-    # another socket is not missing: it is live, on its own server. Only a
-    # session this home owns nowhere is missing.
-    owned = _owned_sessions(home)
-    placements: dict[str, str] = {}
-    # The server's comm is "tmux: server", so pgrep -x misses it; match the
-    # full command line and keep only the new-session server processes.
-    try:
-        servers = subprocess.run(["pgrep", "-f", "tmux new-session"], capture_output=True, timeout=2)
-    except (OSError, subprocess.TimeoutExpired):
-        servers = None
-    if servers is not None and servers.returncode == 0:
-        for pid_text in proc_table.pane_pids(servers.stdout):
-            if not proc_table.is_tmux_server(str(pid_text)):
-                continue
-            placement = proc_table.server_containment(str(pid_text))
-            placements[str(pid_text)] = placement if placement is not None else "unreadable"
-    in_scope = [pid for pid in placements if plant_servers is None or pid in plant_servers]
-    unshielded = sorted(pid for pid in in_scope
-                        if proc_table.placement_unshielded(placements[pid]))
-    unreadable = sorted(pid for pid in in_scope if placements[pid] == "unreadable")
-    if session is not None and session not in live and owned is None:
-        return {"id": "sense.host.session-stability", "state": "unknown",
-                "sample": f"live=[{','.join(live)}] session-ownership=unreadable",
-                "live": live, "kind": "read"}
-    if session is not None and session not in live and session not in owned:
-        return {"id": "sense.host.session-stability", "state": "drift",
-                "sample": f"live=[{','.join(live)}] session-missing={session} unshielded=[{','.join(unshielded)}]",
-                "live": live, "session": session, "unshielded": unshielded, "kind": "read"}
-    if unshielded:
-        return {"id": "sense.host.session-stability", "state": "drift",
-                "sample": (f"live=[{','.join(live)}] uncontained-servers="
-                           + ",".join(f"{pid}:{placements[pid]}" for pid in unshielded)),
-                "live": live, "unshielded": unshielded, "containment": placements,
-                "kind": "read"}
-    if unreadable:
-        return {"id": "sense.host.session-stability", "state": "unknown",
-                "sample": f"live=[{','.join(live)}] containment-unreadable={','.join(unreadable)}",
-                "live": live, "unshielded": unshielded, "containment": placements,
-                "kind": "read"}
-    return {"id": "sense.host.session-stability", "state": "verified",
-            "sample": f"live=[{','.join(live)}] servers={len(in_scope)} contained",
-            "live": live, "unshielded": unshielded, "containment": placements,
-            "kind": "read"}
 
 
-def _host_server_keeper(home: Path) -> dict[str, object]:
-    """Name the systemd unit that actually holds the tmux server.
-
-    The plant's session keeper is separate from the process serving its
-    socket: `systemd-run` raises a keeper beside the session, while the
-    server itself is forked by whichever `tmux new-session` first created
-    the shared socket. When a finished test's raise wins, the shared server
-    lives in a transient unit no live service owns, so the plant's
-    presentation liveness depends on a unit nothing will restart or protect.
-    Naming the unit makes that ownership visible; this reading never stops
-    anything, because stopping a keeper that holds a shared server would
-    cgroup-kill every session on the socket.
-
-    Drift is a holding unit that does not belong to the declared session.
-    Verified names the plant's own keeper. An absent session or an
-    unreadable /proc read stays unknown: attribution that cannot be made is
-    not a healthy signal, and a missing session is the session-stability
-    reading's to report rather than this one's to duplicate. All external
-    text enters through proc_table decoders.
-    """
-    session = _plant_session(home)
-    if not session:
-        return {"id": "sense.host.server-keeper", "state": "unknown",
-                "sample": "declared session unreadable", "kind": "read"}
-    # The server that holds a session is on the socket that holds it. The
-    # ambient socket is this reader's own site's socket, and the session the
-    # receipt names may live on another socket entirely, so tmux answered
-    # with the *ambient* server and the reading then called this plant's own
-    # keeper a foreign one. Ask the socket that owns the session.
-    socket = tmux.owned_socket(Path(home), session)
-    argv = ["tmux"]
-    if socket:
-        argv.extend(["-S", socket])
-    argv.extend(["display-message", "-p", "-t", "=" + session, "#{pid}"])
-    try:
-        result = subprocess.run(argv, capture_output=True, timeout=2)
-    except (OSError, subprocess.TimeoutExpired):
-        return {"id": "sense.host.server-keeper", "state": "unknown",
-                "sample": "server attribution unavailable", "kind": "read"}
-    if result.returncode != 0:
-        return {"id": "sense.host.server-keeper", "state": "unknown",
-                "sample": f"session {session} not attributable to a server", "kind": "read"}
-    pids = proc_table.pane_pids(result.stdout)
-    if len(pids) != 1:
-        return {"id": "sense.host.server-keeper", "state": "unknown",
-                "sample": "server pid unreadable", "kind": "read"}
-    server = str(pids[0])
-    unit = proc_table.read_cgroup_unit(server)
-    if not unit:
-        return {"id": "sense.host.server-keeper", "state": "unknown",
-                "sample": f"server pid {server} cgroup unreadable", "kind": "read"}
-    if not proc_table.belongs_to_session(unit, session):
-        return {"id": "sense.host.server-keeper", "state": "drift",
-                "sample": f"session={session} server-pid={server} foreign-keeper={unit}",
-                "session": session, "server_pid": server, "keeper": unit, "kind": "read"}
-    return {"id": "sense.host.server-keeper", "state": "verified",
-            "sample": f"session={session} server-pid={server} keeper={unit}",
-            "session": session, "server_pid": server, "keeper": unit, "kind": "read"}
 
 
-def _host_server_slice(home: Path) -> dict[str, object]:
-    """Check that each tmux server lives in its expected Mishe slice.
 
-    A misplaced server — e.g. a plants session's server in mishe-lifeline.slice
-    because it was forked from a lifeline pane without the guarded systemd-run
-    --slice placement — burns the wrong slice's headroom and breaks the
-    governor's accounting. The session name implies the expected slice:
-    ``mishe-life-support`` expects ``mishe-lifeline.slice``, every
-    ``mishe-self-development-*`` and ``android-body*`` session expects
-    ``mishe-plants.slice``, others are unrestricted and not checked.
 
-    The server pid comes from tmux itself (``display-message #{pid}``) on the
-    socket owning the session, not from argv. The slice comes from
-    ``/proc/<pid>/cgroup`` decoded through ``proc_table.read_cgroup_slice``.
-    An absent session or unreadable cgroup stays UNKNOWN; a misplaced slice
-    is drift (observed failure, not inferred health), because the server did
-    start — just in the wrong cgroup. This reading never kills anything; it
-    only makes the placement visible so Health can route recurrence.
-    """
-    sessions: list[tuple[str, str]] = []
-    try:
-        sessions = tmux.home_sessions(Path(home))
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        sessions = []
-    if not sessions:
-        return {"id": "sense.host.server-slice", "state": "unknown",
-                "sample": "no owned session to attribute", "kind": "read"}
-    misplaced: list[dict[str, str]] = []
-    details: list[str] = []
-    for session, socket in sessions:
-        expected = proc_table.expected_workload_slice(session)
-        if expected is None:
-            continue
-        argv = ["tmux"]
-        if socket:
-            argv.extend(["-S", socket])
-        argv.extend(["display-message", "-p", "-t", "=" + session, "#{pid}"])
-        try:
-            result = subprocess.run(argv, capture_output=True, timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
-            return {"id": "sense.host.server-slice", "state": "unknown",
-                    "sample": f"server attribution unavailable for {session}", "kind": "read"}
-        if result.returncode != 0:
-            return {"id": "sense.host.server-slice", "state": "unknown",
-                    "sample": f"session {session} not attributable to a server", "kind": "read"}
-        pids = proc_table.pane_pids(result.stdout)
-        if len(pids) != 1:
-            return {"id": "sense.host.server-slice", "state": "unknown",
-                    "sample": f"server pid unreadable for {session}", "kind": "read"}
-        pid = str(pids[0])
-        slice_name = proc_table.read_cgroup_slice(pid)
-        if not slice_name:
-            return {"id": "sense.host.server-slice", "state": "unknown",
-                    "sample": f"server {pid} cgroup unreadable for {session}", "kind": "read"}
-        if slice_name != expected:
-            misplaced.append({"session": session, "pid": pid, "expected": expected, "actual": slice_name})
-            details.append(f"{session}@{pid}:{slice_name}!= {expected}")
-        else:
-            details.append(f"{session}@{pid}={slice_name}")
-    if misplaced:
-        return {"id": "sense.host.server-slice", "state": "unknown",
-                "sample": "misplaced server: " + ", ".join(details), "kind": "read",
-                "misplaced": misplaced, "details": details}
-    return {"id": "sense.host.server-slice", "state": "verified",
-            "sample": "servers placed correctly: " + ", ".join(details), "kind": "read",
-            "details": details}
-
-def _host_session_restarts(home: Path, past_minutes: int = 60) -> dict[str, object]:
-    """Count plant session-scope births over the trailing window; flag churn.
-
-    A session birth leaves ``Started <session>-session.scope`` in the journal
-    under the systemd identifier (seed.py raises the resident session with
-    ``systemd-run --unit <session>-session.scope``). One birth per boot is
-    healthy; repeated births mean the session keeps dying and being re-raised.
-    Journal bytes enter through the ``session_restarts`` boundary decoder;
-    this function owns acquisition (boot-pinned journalctl, epoch-change
-    guard) and cadence verdicts only. The priority selector is dropped:
-    ``Started`` lines are daemon info, so ``-p warning`` would blind the read.
-    """
-    from . import session_restarts
-    started = time.monotonic_ns()
-    boot = _journal_boot()
-    until = datetime.now(timezone.utc)
-    since = until - timedelta(minutes=past_minutes)
-    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
-
-    def microseconds(value: datetime) -> int:
-        delta = value - epoch
-        return (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds
-
-    lower, upper = microseconds(since), microseconds(until)
-    coverage = {"since": since.isoformat(), "until": until.isoformat(),
-                "boot_id": boot, "acquisition_started_ns": started}
-    unknown: dict[str, object] = {"id": "sense.host.session-restarts",
-                "state": "unknown",
-                "sample": "session-restart cadence unavailable", "kind": "read",
-                "coverage": coverage}
-    session = _plant_session(home)
-    if session is None:
-        unknown["reason"] = "plant session unavailable"
-        return unknown
-    if boot is None:
-        unknown["reason"] = "boot identity unavailable"
-        return unknown
-    output = _journal_command([
-        "journalctl", f"--boot={boot}", "-o", "json",
-        "--output-fields=__CURSOR,__REALTIME_TIMESTAMP,_BOOT_ID,SYSLOG_IDENTIFIER,MESSAGE",
-        "--since", since.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
-        "--until", until.strftime("%Y-%m-%d %H:%M:%S.%f UTC"),
-        "--no-pager", "--quiet", "--case-sensitive=yes",
-        "--grep", f"^Started {session}-session(\\.scope|-[0-9a-f]{{32}}\\.service)"])
-    after = _journal_boot()
-    finished = time.monotonic_ns()
-    coverage["acquisition_finished_ns"] = finished
-    if after != boot or finished < started:
-        unknown["reason"] = "acquisition epoch changed"
-        return unknown
-    if output is None:
-        unknown["reason"] = "incomplete or failed acquisition"
-        return unknown
-    entries = session_restarts.decode_journal_entries(
-        output, boot, "systemd", lower, upper)
-    if entries is None:
-        unknown["reason"] = "invalid journal entry metadata"
-        return unknown
-    verdict = session_restarts.assess_restarts(entries, session, past_minutes)
-    state = {"steady": "verified", "churn": "drift"}.get(str(verdict.get("verdict")), "unknown")
-    sample = f"last-{past_minutes}m " + session_restarts.sample_text(verdict)
-    if verdict.get("verdict") == session_restarts.STEADY and verdict.get("births") == 0:
-        # Zero births is steady only if the session pre-dates the window: a
-        # session raised inside the window must have left a birth line.
-        created = _tmux_session_created(session)
-        if created is None:
-            unknown["reason"] = "session-creation-unavailable"
-            return unknown
-        if created >= since.timestamp():
-            unknown["reason"] = "birth-not-in-journal"
-            unknown["session"] = session
-            unknown["sample"] = (f"last-{past_minutes}m births=0 but session "
-                                 f"created {datetime.fromtimestamp(created, timezone.utc).isoformat()} "
-                                 "inside the window")
-            return unknown
-    return {"id": "sense.host.session-restarts", "state": state,
-            "sample": sample, "kind": "read", "session": session,
-            "verdict": verdict.get("verdict"), "reason": verdict.get("reason"),
-            "intensity": verdict.get("intensity"), "coverage": coverage}
-
-def _tmux_session_created(session: str) -> float | None:
-    """Epoch seconds the tmux session was created, or None when unreadable."""
-    if shutil.which("tmux") is None:
-        return None
-    try:
-        result = subprocess.run(["tmux", "display-message", "-p", "-t", session,
-                                 "#{session_created}"],
-                                capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    text = result.stdout.strip()
-    if not text.isdigit():
-        return None
-    return float(int(text))
 
 def _coord_authorship_fog(home: Path, now: datetime | None = None) -> dict[str, object]:
     """Name dirty-tree bytes no wall or chat line claims, so landing stops guessing.
@@ -6172,94 +4684,6 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
             "nonmind_excluded": nonmind_excluded}
 
 
-def _seed_settle_result_mix(home: Path) -> dict[str, object]:
-    """Report the mix of settlement results over the tape's own receipts.
-
-    Each settlement appends one ``seed`` entry whose body names the yield
-    (``seed yield <role> wake=<n>``) and the result (``Turn settled
-    (<result>)``). The reading counts the trailing ``SETTLE_RESULT_WINDOW``
-    settlements by result, clusters the window's ``blocked`` receipts into
-    incidents at the disclosed ``SETTLE_INCIDENT_GAP_SECONDS`` gap, and counts
-    the settlements after the most recent ``blocked`` receipt on the whole tape
-    (``since_last=none`` when none is recorded). A result outside the known
-    three is counted as ``other``; a yield with no settled line is not a
-    settlement. The window is a count, not a duration, so the sample is current
-    as of the scan.
-
-    State is ``drift`` when the window holds a ``blocked`` receipt: a blocked
-    settlement is the signal the mix moved off the all-clean reading, and it is
-    what makes the rate visible rather than inferred from chat. State is
-    ``self-reported`` only when the window holds at least one ``verified``
-    result and no ``blocked`` one. That word is the author's own ``--result``
-    claim, not an independent acceptance (initiative.py: changed and verified
-    are not independent acceptance), so the state does not certify that the
-    work was verified. ``changed`` is not ``verified``, so a window of only
-    ``changed`` (or an empty window) is ``unknown`` for the claim that
-    settlements were verified. State is ``unknown`` as well when the tape is
-    absent or unreadable, so a source change cannot pass as a clean bill.
-    """
-    tape_path = home / "chat.log"
-    if not tape_path.exists():
-        return {"id": "sense.seed.settle-result-mix", "state": "unknown",
-                "sample": "chat tape unavailable", "kind": "read"}
-    try:
-        entries = iter_feed_file(tape_path, home=home)
-    except (OSError, ValueError) as exc:
-        return {"id": "sense.seed.settle-result-mix", "state": "unknown",
-                "sample": f"chat tape unreadable: {exc}", "kind": "read"}
-    settlements: list[tuple[datetime, str]] = []
-    settlers: list[tuple[datetime, str, str]] = []
-    try:
-        for entry in entries:
-            try:
-                control = decode_lifecycle(entry)
-            except ValueError as exc:
-                return {"id": "sense.seed.settle-result-mix", "state": "unknown",
-                        "sample": f"invalid lifecycle control: {exc}", "kind": "read"}
-            if control is None or control.kind != "yield" or control.result is None:
-                continue
-            ts = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
-            settlements.append((ts, control.result))
-            settlers.append((ts, control.role, control.result))
-    except (OSError, ValueError) as exc:
-        # A tape that faults is not a shorter tape: the reading is abandoned
-        # whole, as the whole-tape read abandoned it.
-        return {"id": "sense.seed.settle-result-mix", "state": "unknown",
-                "sample": f"chat tape unreadable: {exc}", "kind": "read"}
-    window = settlements[-SETTLE_RESULT_WINDOW:]
-    counts = {"verified": 0, "changed": 0, "blocked": 0, "other": 0}
-    for _ts, result in window:
-        counts[result if result in counts else "other"] += 1
-    blocked_times = sorted(ts for ts, result in window if result == "blocked")
-    incidents = 0
-    previous: datetime | None = None
-    for ts in blocked_times:
-        if previous is None or (ts - previous).total_seconds() > SETTLE_INCIDENT_GAP_SECONDS:
-            incidents += 1
-        previous = ts
-    last_blocked = next((index for index in range(len(settlements) - 1, -1, -1)
-                         if settlements[index][1] == "blocked"), None)
-    since_last = None if last_blocked is None else len(settlements) - 1 - last_blocked
-    join = _settle_outcome_join(home, settlers, datetime.now(timezone.utc))
-    sample = (f"n={len(window)} verified={counts['verified']} "
-              f"changed={counts['changed']} blocked={counts['blocked']} "
-              f"other={counts['other']} incidents={incidents} "
-              f"since_last={'none' if since_last is None else since_last} "
-              f"{join['clause']}")
-    if blocked_times:
-        state = "drift"
-    elif counts["verified"] > 0:
-        state = "self-reported"
-    else:
-        state = "unknown"
-    return {"id": "sense.seed.settle-result-mix",
-            "state": state,
-            "sample": sample, "kind": "read", "window": len(window),
-            "verified": counts["verified"], "changed": counts["changed"],
-            "blocked": counts["blocked"], "other": counts["other"],
-            "incidents": incidents, "since_last": since_last,
-            "incident_gap_seconds": SETTLE_INCIDENT_GAP_SECONDS,
-            "join": join}
 
 
 def _settle_outcome_join(home: Path, settlers: list[tuple[datetime, str, str]],
@@ -8367,11 +6791,8 @@ def sample(home: Path) -> dict[str, object]:
                      **_journal_error_window()})
     observed.append({"id": "sense.journal.unit-failure-count", "kind": "read",
                      **_journal_unit_failure_window(home)})
-    observed.append(_mind_wedge_suspects())
-    observed.append(_mind_watch_wait(home))
     observed.append(_mind_treadmill(home))
     observed.append(_mind_docs_treadmill(home))
-    observed.append(_mind_loop_stall(home))
     observed.append(_mind_artifact_recurrence(home))
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
@@ -8451,11 +6872,7 @@ def sample(home: Path) -> dict[str, object]:
     else:
         observed.append({"id": "sense.proc.cpu-busy", "state": "unknown",
                          "sample": "/proc/stat cpu fields unavailable", "kind": "read"})
-    # An empty name names no session, and _ps_processes normalizes it: an empty
-    # tmux target resolves to the calling session, so descent would be claimed for
-    # a session the scan never named.
-    session = os.environ.get("MISHE_SEED_SESSION") or None
-    top_cpu = _top_cpu_processes(session)
+    top_cpu = _top_cpu_processes()
     if top_cpu:
         measured = [row for row in top_cpu if row.get("rate") is not None]
         observed.append({"id": "sense.proc.top-cpu", "state": "verified",
@@ -8562,20 +6979,10 @@ def sample(home: Path) -> dict[str, object]:
                      "sample": ", ".join(sample_text for sample_text, _ in temperatures)
                      if temperatures else "no readable hwmon temperature sensor",
                      "identity": thermal_identity, "kind": "read"})
-    tmux_reading = _tmux_window_reading(home)
-    observed.append({"id": "sense.tmux.windows",
-                     "state": "verified" if tmux_reading["windows"] else "unknown",
-                     "sample": _tmux_window_sample(tmux_reading), "kind": "read"})
-    observed.append(_host_session_stability(home))
-    observed.append(_host_server_keeper(home))
-    observed.append(_host_server_slice(home))
-    observed.append(_host_session_restarts(home))
     observed.extend(read_slice_throttle(home))
     observed.append(read_unit_psi(home / "operator" / "unit-psi.jsonl", now=time.time()))
     roots, _coverage_failure = _service_import_roots(home)
     observed.append(_sensor_coverage(home, roots))
-    observed.append(_renderer_coverage(home))
-    observed.append(_runtime_drift_across_sites(home))
     observed.append(_repo_release_retention(home))
     observed.append(_repo_git_index_lock(home))
     observed.append(_repo_push_freshness(home))
@@ -8584,7 +6991,6 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_coord_authorship_fog(home))
     observed.append(_repo_landing_block(home))
     observed.append(_coord_gate_latency(home))
-    observed.append(_seed_settle_result_mix(home))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}
 

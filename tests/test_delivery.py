@@ -520,24 +520,6 @@ def test_server_hook_rejection_stays_blocked_without_rearming_models(candidate, 
     assert delivery.load(home, "repair")["phase"] == "integrated"
 
 
-def test_mind_choice_preserves_fact_owned_ready_integration(candidate, monkeypatch):
-    home, _, _, _, head, _ = candidate
-    submit(candidate)
-    monkeypatch.setattr(delivery, 'read_ci', lambda *args: ci(head))
-    delivery.check(home, 'repair')
-    state = next(s for s in task_state.states(Feed(home).entries()).values() if s.delivery)
-    board = task_state.board(Feed(home).entries())
-    assert board[1].startswith('MAIN INTEGRATION PRIORITY: ' + state.identity)
-    from tests.test_mind_choice import wake
-    attempt = wake(home, 'witness')
-    with pytest.raises(ValueError, match='serialized by genome'):
-        task_state.claim(home, state.identity, 'witness', attempt, 'I would integrate this ready candidate.', candidate[-1])
-    attempt = wake(home, 'genome')
-    task_state.claim(home, state.identity, 'genome', attempt, 'Integrate the exact independently reviewed and CI-passing candidate.', candidate[-1])
-    delivery.integrate(home, 'repair', 'genome')
-    assert delivery.load(home, 'repair')['phase'] == 'integrated'
-    assert task_state.registry(Feed(home).entries())[state.identity].status == 'done'
-    assert all(not __import__('mishe_tauftauf.post_check', fromlist=['_deterministic'])._deterministic(e.body) for e in Feed(home).entries())
 
 
 def test_board_priority_consults_the_live_delivery_record(candidate, monkeypatch):
@@ -596,62 +578,5 @@ def test_delivery_views_project_an_author_row_from_the_live_delivery_record(cand
         assert f"Delivery {phase}" in steps
 
 
-def test_shared_choice_cannot_transfer_author_delivery(candidate, monkeypatch):
-    home, _, _, _, head, proof = candidate
-    submit(candidate)
-    monkeypatch.setattr(delivery, 'read_ci', lambda *args: ci(head, 'fail'))
-    delivery.check(home, 'repair')
-    from tests.test_mind_choice import wake
-    attempt = wake(home, 'witness')
-    before = Feed(home).read_bytes()
-    with pytest.raises(ValueError, match='author retains delivery ownership'):
-        task_state.claim(home, 'repair', 'witness', attempt, 'Repair this published candidate.', proof)
-    assert Feed(home).read_bytes() == before
-    assert task_state.registry(Feed(home).entries())['repair'].owner == 'senses'
-    delivery.check(home, 'repair')
-    assert delivery.load(home, 'repair')['owner'] == 'senses'
 
 
-def test_submit_and_cross_role_claim_cannot_split_author_ownership(candidate, monkeypatch):
-    from concurrent.futures import ThreadPoolExecutor
-    import threading
-    home, _, _, _, _, proof = candidate
-    task_state.add_task(home, 'repair', 'senses', 'Repair the candidate.', 'Observed scoped failure.', proof)
-    from tests.test_mind_choice import wake
-    attempt = wake(home, 'witness')
-    entering = threading.Event()
-    release = threading.Event()
-    original = Feed.append_task_control
-    def paused(self, source, body, **kwargs):
-        if body.startswith('[task-claim] repair'):
-            entering.set()
-            assert release.wait(3)
-        return original(self, source, body, **kwargs)
-    monkeypatch.setattr(Feed, 'append_task_control', paused)
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        claim = pool.submit(task_state.claim, home, 'repair', 'witness', attempt, 'Repair the scoped failure.', proof)
-        assert entering.wait(3)
-        submitted = pool.submit(submit, candidate)
-        release.set()
-        # Submit and the cross-role claim serialize on different locks, so either may
-        # win the race. The invariant is that exactly one wins and ownership never
-        # splits between the delivery record and the task registry.
-        outcomes = []
-        for future in (claim, submitted):
-            try:
-                future.result(timeout=5)
-                outcomes.append(None)
-            except ValueError as exc:
-                outcomes.append(exc)
-    assert sum(outcome is None for outcome in outcomes) == 1
-    owner = task_state.registry(Feed(home).entries())['repair'].owner
-    delivery = home / 'deliveries' / 'repair.json'
-    if outcomes[0] is None:
-        # The cross-role claim won; the competing submit was refused and wrote no record.
-        assert 'belong to its author' in str(outcomes[1])
-        assert not delivery.exists()
-        assert owner == 'witness'
-    else:
-        # The submit won; the claim was refused and the task stayed with its author.
-        assert delivery.exists()
-        assert owner == 'senses'

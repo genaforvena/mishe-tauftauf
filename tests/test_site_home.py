@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from mishe_tauftauf import seed
 from mishe_tauftauf.access import request as access_request
 from mishe_tauftauf.feed import Feed
 
@@ -47,12 +46,9 @@ def test_bogus_cli_homes_refuse_and_create_nothing(tmp_path: Path) -> None:
     bogus = repository / ".mishe-tauftauf-example" / ".mishe-tauftauf"
     before = tree(repository)
     for argv in (
-        ("handoff", "witness", "/etc/hostname"),
-        ("seed", "yield", "--slug", "witness", "--wake", "352", "--file", "/etc/hostname"),
-        ("seed", "tick", "--slug", "witness"),
         ("access", "request", "id-1", "--owner", "senses", "--task", "t",
          "--capability", "c", "--unblocks", "u", "--reason", "r"),
-        ("pain", "read", "witness", "--launcher", "tmux", "--session", "absent"),
+        ("pain", "read", "witness", "--launcher", "dashboard"),
         ("doctor",),
     ):
         refused = cli(bogus, *argv)
@@ -61,21 +57,6 @@ def test_bogus_cli_homes_refuse_and_create_nothing(tmp_path: Path) -> None:
     assert tree(repository) == before, "a refused home must not change the filesystem"
 
 
-def test_bogus_library_writers_refuse_and_create_nothing(tmp_path: Path) -> None:
-    repository = planted_repository(tmp_path)
-    bogus = repository / ".mishe-tauftauf-example" / ".mishe-tauftauf"
-    before = tree(repository)
-    for attempt in (
-        lambda: Feed(bogus).append("witness", "test body\n"),
-        lambda: access_request(bogus, "id-1", "senses", "t", "c", ("u",), "r"),
-        lambda: seed._lock(bogus).__enter__(),
-    ):
-        try:
-            attempt()
-            raise AssertionError("writer must refuse a non-existent site home")
-        except ValueError as exc:
-            assert "site home does not exist" in str(exc)
-    assert tree(repository) == before, "a refused home must not change the filesystem"
 
 
 def test_bogus_nested_home_is_refused_even_inside_a_repo(tmp_path: Path) -> None:
@@ -107,8 +88,8 @@ def test_mind_home_binding_rejects_another_initialized_site(tmp_path: Path, monk
     repository = planted_repository(tmp_path)
     canonical = repository / ".mishe-tauftauf"
     wrong = repository / ".mishe-other"
-    assert cli(canonical, "seed", "init", "--slug", "genome").returncode == 0
-    assert cli(wrong, "seed", "init", "--slug", "witness").returncode == 0
+    assert cli(canonical, "init").returncode == 0
+    assert cli(wrong, "init").returncode == 0
     before = tree(repository)
     monkeypatch.setenv("MISHE_SEED_HOME", str(canonical))
 
@@ -119,7 +100,7 @@ def test_mind_home_binding_rejects_another_initialized_site(tmp_path: Path, monk
     fresh_wrong = repository / ".mishe-typo"
     refused_init = subprocess.run(
         [sys.executable, "-m", "mishe_tauftauf", "--home", str(fresh_wrong),
-         "seed", "init", "--slug", "witness"],
+         "init"],
         text=True, capture_output=True, timeout=30, env=os.environ.copy())
     assert refused_init.returncode != 0
     assert "does not match this mind's MISHE_SEED_HOME" in refused_init.stderr
@@ -142,8 +123,8 @@ def test_binding_refusal_writes_audit_record_to_bound_site(tmp_path: Path, monke
     repository = planted_repository(tmp_path)
     canonical = repository / ".mishe-tauftauf"
     wrong = repository / ".mishe-other"
-    assert cli(canonical, "seed", "init", "--slug", "genome").returncode == 0
-    assert cli(wrong, "seed", "init", "--slug", "witness").returncode == 0
+    assert cli(canonical, "init").returncode == 0
+    assert cli(wrong, "init").returncode == 0
     monkeypatch.setenv("MISHE_SEED_HOME", str(canonical))
 
     refused = subprocess.run(
@@ -172,33 +153,11 @@ def test_binding_refusal_writes_audit_record_to_bound_site(tmp_path: Path, monke
 
 
 
-def test_artifact_writers_reject_uninitialized_typo_home_before_creating_children(
-        tmp_path: Path, monkeypatch) -> None:
-    from mishe_tauftauf import delivery, session_watch
-
-    repository = planted_repository(tmp_path)
-    typo = repository / ".mishe-tauftauft"
-    typo.mkdir()
-
-    with pytest.raises(ValueError, match="not an initialized site"):
-        delivery._snapshot(typo, {"identity": "fixture"})
-    assert not (typo / "artifacts").exists()
-
-    class Halt(Exception):
-        pass
-
-    monkeypatch.setattr(session_watch, "observe", lambda *_: {"available": True})
-    monkeypatch.setattr(session_watch, "assess", lambda *_: {"state": "UNKNOWN", "reason": "fixture"})
-    monkeypatch.setattr(session_watch, "notify", lambda *_: None)
-    monkeypatch.setattr(session_watch.time, "sleep", lambda *_: (_ for _ in ()).throw(Halt()))
-    with pytest.raises(ValueError, match="not an initialized site"):
-        session_watch.run(typo, "session")
-    assert not (typo / "health").exists()
 
 def test_init_still_plants_a_site_directly_inside_a_worktree(tmp_path: Path) -> None:
     repository = planted_repository(tmp_path)
     site = repository / ".mishe-tauftauf"
-    planted = cli(site, "seed", "init", "--slug", "genome")
+    planted = cli(site, "init")
     assert planted.returncode == 0, planted.stderr
     assert ".mishe-tauftauf/chat.log" in tree(repository)
     healthy = cli(site, "doctor", "--unit-dir", str(tmp_path / "no-units"))
@@ -210,7 +169,7 @@ def test_init_still_plants_a_site_directly_inside_a_worktree(tmp_path: Path) -> 
 
     # A nested plant-home-shaped subtree is not a site the kernel will plant.
     nested = repository / ".mishe-tauftauf-example" / ".mishe-tauftauf"
-    refused = cli(nested, "seed", "init", "--slug", "genome")
+    refused = cli(nested, "init")
     assert refused.returncode != 0
     assert "must be directly inside a Git worktree" in refused.stderr
     assert not (repository / ".mishe-tauftauf-example").exists()
@@ -219,13 +178,12 @@ def test_init_still_plants_a_site_directly_inside_a_worktree(tmp_path: Path) -> 
 def test_existing_repository_root_and_typo_are_not_sites(tmp_path: Path) -> None:
     repository = planted_repository(tmp_path)
     site = repository / ".mishe-tauftauf"
-    assert cli(site, "seed", "init", "--slug", "genome").returncode == 0
+    assert cli(site, "init").returncode == 0
     typo = repository / ".mishe-tuftauf"
     typo.mkdir()
     before = tree(repository)
     for wrong in (repository, typo):
         for argv in (("append", "--source", "test", "misrouted"),
-                     ("seed", "tick", "--slug", "genome"),
                      ("access", "request", "bad", "--owner", "senses", "--task", "t",
                       "--capability", "c", "--unblocks", "u", "--reason", "r")):
             refused = cli(wrong, *argv)
@@ -257,7 +215,7 @@ def test_creation_entrypoints_cannot_initialize_a_nested_repository_root(tmp_pat
     nested.mkdir()
     subprocess.run(["git", "-C", str(nested), "init", "-q"], check=True)
     before = tree(outer)
-    for argv in (("init",), ("seed", "init", "--slug", "genome")):
+    for argv in (("init",),):
         refused = cli(nested, *argv)
         assert refused.returncode != 0
         assert "repository root" in refused.stderr
@@ -267,7 +225,7 @@ def test_creation_entrypoints_cannot_initialize_a_nested_repository_root(tmp_pat
 def test_wall_mutations_require_a_role_registered_with_the_site(tmp_path: Path) -> None:
     repository = planted_repository(tmp_path)
     site = repository / ".mishe-tauftauf"
-    assert cli(site, "seed", "init", "--slug", "genome").returncode == 0
+    assert cli(site, "init").returncode == 0
     before = (site / "chat.log").read_bytes()
 
     refused_dm = cli(site, "wall", "dm", "--source", "outsider", "--to", "genome",
@@ -281,24 +239,9 @@ def test_wall_mutations_require_a_role_registered_with_the_site(tmp_path: Path) 
     assert refused_wall.returncode == 2
     assert "not registered" in refused_wall.stderr
 
-    refused_yield = cli(site, "seed", "yield", "--slug", "outsider", "--wake", "1",
-                        "--file", str(tmp_path / "missing-notes"))
-    assert refused_yield.returncode == 2
-    assert "not registered" in refused_yield.stderr
     assert not (site / "walls" / "outsider.md").exists()
 
-    (site / "charters").mkdir(exist_ok=True)
-    (site / "minds").mkdir(exist_ok=True)
-    (site / "charters" / "resident.md").write_text("resident charter\n")
-    launcher = site / "minds" / "resident"
-    launcher.write_text("#!/bin/sh\n")
-    refused_nonexec = cli(site, "wall", "dm", "--source", "resident", "--to", "genome",
-                          "--text", "forged attribution")
-    assert refused_nonexec.returncode == 2
-    assert "not registered" in refused_nonexec.stderr
-    assert (site / "chat.log").read_bytes() == before
-
-    launcher.chmod(0o755)
+    (site / "charters" / "resident.md").write_text("resident charter\n")   # a role is a charter that exists
     accepted = cli(site, "wall", "dm", "--source", "resident", "--to", "genome",
                    "--text", "registered attribution")
     assert accepted.returncode == 0, accepted.stderr
@@ -314,7 +257,7 @@ def test_wall_dm_accepts_known_linked_site_source(tmp_path: Path) -> None:
     """
     repository = planted_repository(tmp_path)
     site = repository / ".mishe-tauftauf"
-    assert cli(site, "seed", "init", "--slug", "genome").returncode == 0
+    assert cli(site, "init").returncode == 0
 
     # Without a linked-sites registry, cross-plant sources are refused.
     refused = cli(site, "wall", "dm", "--source", "android-body/health",
