@@ -1,6 +1,7 @@
 {
   "boundaries": [
     "src/mishe_tauftauf/body_perception.py",
+    "src/mishe_tauftauf/boot_rearm.py",
     "src/mishe_tauftauf/chat_protocol.py",
     "src/mishe_tauftauf/cli.py",
     "src/mishe_tauftauf/coord_tape.py",
@@ -21,6 +22,7 @@
     "src/mishe_tauftauf/observations.py",
     "src/mishe_tauftauf/outcome_publication.py",
     "src/mishe_tauftauf/patch_text.py",
+    "src/mishe_tauftauf/plant_boot.py",
     "src/mishe_tauftauf/plant_tmux.py",
     "src/mishe_tauftauf/plant_view_boundary.py",
     "src/mishe_tauftauf/probe_supervisor.py",
