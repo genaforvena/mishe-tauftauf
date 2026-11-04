@@ -45,6 +45,7 @@ from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
                              read_redmi10_delivery_gaps, read_redmi10_light,
                              read_redmi10_peer_delivery)
 from .multibody import read_multibody_coverage
+from .replacement_readings import read_renderer_coverage, read_tmux_windows
 from .slice_throttle import read_slice_throttle
 from .unit_cpu import read_unit_cpu
 from .unit_psi_reading import read_unit_psi
@@ -7000,6 +7001,8 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_coord_authorship_fog(home))
     observed.append(_repo_landing_block(home))
     observed.append(_coord_gate_latency(home))
+    observed.append(read_tmux_windows(_inner_tmux_socket()))
+    observed.append(read_renderer_coverage(_pinned_runtime_root(home)))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}
 
@@ -7010,6 +7013,22 @@ def _write_attempt(home: Path, attempt: dict[str, object]) -> None:
     temporary = root / f".attempt-{os.getpid()}.tmp"
     temporary.write_text(json.dumps(attempt, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(temporary, root / "attempt.json")
+
+
+def _inner_tmux_socket() -> str:
+    """The plant's inner tmux socket, as revive.py names it for this uid."""
+    uid = os.getuid()
+    return f"/tmp/tmux-{uid}/mishe-tauftauf/tmux-{uid}/default"
+
+
+def _pinned_runtime_root(home: Path) -> Path | None:
+    """The pinned runtime root from coordination-mode.json, or None if unreadable."""
+    try:
+        config = json.loads((home / "coordination-mode.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    runtime = config.get("runtime") if isinstance(config, dict) else None
+    return Path(runtime) if isinstance(runtime, str) and runtime else None
 
 
 def scan_attempt(home: Path) -> dict[str, object] | None:

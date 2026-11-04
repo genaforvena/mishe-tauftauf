@@ -63,3 +63,19 @@ def test_renderer_missing_or_broken_module_is_drift(tmp_path: Path):
     assert got["state"] == "drift"
     assert "plant_view.py=unparseable" in got["sample"]
     assert "plant_view_boundary.py=missing" in got["sample"]
+
+
+def test_pinned_runtime_root_reads_coordination_mode(tmp_path):
+    import json
+    from mishe_tauftauf import discovery
+
+    (tmp_path / "coordination-mode.json").write_text(json.dumps({"runtime": "/pin/root"}))
+    assert str(discovery._pinned_runtime_root(tmp_path)) == "/pin/root"
+
+
+def test_pinned_runtime_root_unreadable_is_none(tmp_path):
+    from mishe_tauftauf import discovery
+
+    assert discovery._pinned_runtime_root(tmp_path) is None
+    (tmp_path / "coordination-mode.json").write_text("not json")
+    assert discovery._pinned_runtime_root(tmp_path) is None
