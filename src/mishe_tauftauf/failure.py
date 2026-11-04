@@ -18,7 +18,8 @@ REOFFER_SECONDS = 3600
 
 
 def resolver_for(home, unit: str) -> str:
-    configured = read_json(Path(home) / "resolvers.json") or {}
+    configured = {**(read_json(Path(home) / "resolvers.generated.json") or {}),
+                  **(read_json(Path(home) / "resolvers.json") or {})}     # the owner's file wins
     if unit in configured:
         return configured[unit]
     if units.is_health_wake(unit):

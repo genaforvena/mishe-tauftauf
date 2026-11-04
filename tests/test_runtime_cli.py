@@ -23,6 +23,8 @@ def site(tmp_path, monkeypatch):
     home = tmp_path / "site"
     (home / "charters").mkdir(parents=True)
     (home / "charters" / "genome.md").write_text("I am genome.")
+    for other in ("health", "pub", "senses"):          # every duty resolver must be a declared role
+        (home / "charters" / f"{other}.md").write_text(other)
     (home / "walls").mkdir()
     (home / "walls" / "genome.md").write_text("OLD WALL")
     bindir = tmp_path / "bin"
@@ -141,3 +143,26 @@ def test_releasing_the_hold_offers_the_owed_role(site, monkeypatch):
     cli("hold", "on")
     cli("hold", "off")
     assert started == ["genome"]
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_sync_installs_every_duty_and_routes_failures_to_its_resolver(site, tmp_path):
+    d = tmp_path / "u"
+    assert cli("sync", "--unit-dir", str(d), "--no-systemctl", "--repo", str(REPO_ROOT)) == 0
+    for duty in ("ci", "dispatch", "egress", "devto", "budget", "host-capacity"):
+        assert (d / f"mishe-producer-{duty}.timer").exists(), duty
+    assert "--red-codes none" in (d / "mishe-producer-devto.service").read_text()
+    from mishe_tauftauf import failure
+    assert failure.resolver_for(site, "mishe-producer-egress.service") == "health"
+    assert failure.resolver_for(site, "mishe-producer-ci.service") == "genome"
+
+
+def test_doctor_is_red_when_a_duty_resolver_has_no_charter(site, tmp_path):
+    d = tmp_path / "u"
+    cli("sync", "--unit-dir", str(d), "--no-systemctl", "--repo", str(REPO_ROOT))
+    assert cli("doctor", "--unit-dir", str(d), "--repo", str(REPO_ROOT)) == 0
+    (site / "charters" / "health.md").unlink()
+    cli("sync", "--unit-dir", str(d), "--no-systemctl", "--repo", str(REPO_ROOT))
+    assert cli("doctor", "--unit-dir", str(d), "--repo", str(REPO_ROOT)) == 1

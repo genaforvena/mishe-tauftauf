@@ -48,7 +48,9 @@ def systemd_starter(role: str) -> None:
 
 def default_mail_reader(home, role: str, after: int) -> list:
     from .feed import Feed
-    return [(e.sequence, e.body) for e in Feed(Path(home)).role_entries(role) if e.sequence > after]
+    from .wall import addressed
+    return [(e.sequence, e.body) for e in Feed(Path(home)).role_entries(role)
+            if e.sequence > after and addressed(e, role)]
 
 
 def next_role(home, roles, *, now: float, exclude: str | None = None) -> str | None:

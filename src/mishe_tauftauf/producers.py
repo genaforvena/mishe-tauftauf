@@ -46,18 +46,36 @@ def dispatch(home, *, now: float, max_open: float = 1800.0) -> str:
     return "GREEN"
 
 
-BUILTIN = {"dispatch": dispatch}
+class ObservationFailed(RuntimeError):
+    """The source could not tell; the signal is left to age to UNKNOWN."""
 
 
-def produce(home, name: str, *, now: float) -> str:
-    value = BUILTIN[name](home, now=now)
-    signal_store.observe(home, name, value, now=now, source=f"builtin:{name}")
+def ci(home, *, now: float, read=None) -> str | None:
+    """GitHub Actions for the current remote commit: pass GREEN, fail RED, pending/unknown no reading."""
+    if read is None:
+        from .ci_watch import read
+    state = read(home)["state"]
+    if state == "pending":
+        return None
+    if state not in ("pass", "fail"):
+        raise ObservationFailed(f"CI state {state!r}")
+    return "GREEN" if state == "pass" else "RED"
+
+
+BUILTIN = {"dispatch": dispatch, "ci": ci}
+
+
+def produce(home, name: str, *, now: float, **kw) -> str | None:
+    value = BUILTIN[name](home, now=now, **kw)
+    if value is not None:
+        signal_store.observe(home, name, value, now=now, source=f"builtin:{name}")
     return value
 
 
-def load(home, *, python: str) -> list:
-    """Declared producers (``producers.json``); registers their signals."""
-    declared = read_json(Path(home) / "producers.json") or []
+def load(home, *, python: str, declared=None) -> list:
+    """Declared producers (``producers.json`` unless given); registers their signals."""
+    if declared is None:
+        declared = read_json(Path(home) / "producers.json") or []
     found = []
     base = [python, "-m", "mishe_tauftauf", "--home", str(home)]
     for item in declared:
@@ -65,7 +83,7 @@ def load(home, *, python: str) -> list:
         spec = item.get("signal", {})
         signal_store.register(home, name, max_age=spec["max_age"], subscribers=spec.get("subscribers", []))
         timeout = item.get("timeout", 120)
-        red = ",".join(str(c) for c in item.get("red_codes", [2]))
+        red = ",".join(str(c) for c in item.get("red_codes", [2])) or "none"
         if item.get("builtin"):
             command = base + ["produce", name]
         else:

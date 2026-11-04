@@ -79,3 +79,20 @@ def test_red_codes_are_declared_per_producer(home):
     assert producers.run(home, "devto", [PY, "-c", "import sys; sys.exit(7)"], now=NOW, timeout=10,
                          red_codes=(7,)) == 0
     assert store.read(home, "devto", now=NOW).value == "RED"
+
+
+def test_ci_producer_maps_actions_results(tmp_path):
+    store.register(tmp_path, "ci", max_age=900, subscribers=["genome"])
+    for state, expect in (("pass", "GREEN"), ("fail", "RED")):
+        assert producers.produce(tmp_path, "ci", now=NOW, read=lambda h: {"state": state}) == expect
+        assert store.read(tmp_path, "ci", now=NOW).value == expect
+
+
+def test_ci_pending_is_no_observation_and_unknown_is_a_failure(tmp_path):
+    store.register(tmp_path, "ci", max_age=900, subscribers=["genome"])
+    producers.produce(tmp_path, "ci", now=NOW, read=lambda h: {"state": "pass"})
+    assert producers.produce(tmp_path, "ci", now=NOW + 400, read=lambda h: {"state": "pending"}) is None
+    assert store.read(tmp_path, "ci", now=NOW + 400).value == "GREEN"       # untouched, not refreshed
+    with pytest.raises(producers.ObservationFailed):
+        producers.produce(tmp_path, "ci", now=NOW + 500, read=lambda h: {"state": "unknown"})
+    assert store.read(tmp_path, "ci", now=NOW + 5000).state == "UNKNOWN"

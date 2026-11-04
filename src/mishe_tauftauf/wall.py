@@ -899,7 +899,10 @@ def message(home: Path, source: str, recipient: str, text: str):
     validate_slug(recipient)
     if not text.strip():
         raise ValueError("message is empty")
-    return Feed(home).append(source, f"[dm] to={recipient}\n{text}")
+    entry = Feed(home).append(source, f"[dm] to={recipient}\n{text}")
+    from .owed import touch_inbox
+    touch_inbox(home, recipient)         # the tape is the record; this is only the trigger
+    return entry
 
 
 def retry(home: Path, role: str) -> None:

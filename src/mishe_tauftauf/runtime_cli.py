@@ -114,7 +114,7 @@ def run(args) -> int:
             if not command:
                 raise ValueError("signal run needs a command after --")
             code = producers.run(home, args.name, command, now=now, timeout=args.timeout,
-                                red_codes=tuple(int(c) for c in args.red_codes.split(",")))
+                                red_codes=tuple(int(c) for c in args.red_codes.split(",") if c != "none"))
             armmod.arm(home, scheduler=scheduler(home))
             return code
         else:
@@ -122,7 +122,11 @@ def run(args) -> int:
         return 0
     if args.command == "produce":
         from . import producers
-        print(producers.produce(home, args.name, now=now))
+        try:
+            print(producers.produce(home, args.name, now=now))
+        except producers.ObservationFailed as exc:
+            print(f"mishe: {args.name}: observation failed: {exc}", file=sys.stderr)
+            return 2
         armmod.arm(home, scheduler=scheduler(home))
         return 0
     if args.command == "inbox":
@@ -173,20 +177,28 @@ def run(args) -> int:
 def run_units(args, home: Path, now: float) -> int:
     import subprocess
     from . import signal_store, units
+    if not home.is_dir():                   # before anything writes: a bogus home must stay uncreated
+        raise ValueError(f"site home does not exist: {home}")
     cfg = units.Config(home=home, repo=Path(args.repo).resolve(), python=sys.executable,
                        pythonpath=args.pythonpath, unit_dir=args.unit_dir, prefix=args.prefix,
                        **({"plants_slice": None, "lifeline_slice": None} if args.no_slices else {}))
     roles = declared_roles(home)
     from . import producers
-    declared = producers.load(home, python=sys.executable)
+    from . import duties
+    from .state_files import write_json
+    declared = producers.load(home, python=sys.executable, declared=duties.declared(cfg.repo, home))
+    declared += producers.load(home, python=sys.executable)
+    write_json(home / "resolvers.generated.json", duties.resolvers(cfg.repo, args.prefix))
     if args.command == "sync":
         runner = None if args.no_systemctl else (lambda c: subprocess.run(c, check=True))
         report = units.sync(cfg, roles, producers=declared, runner=runner)
         print(f"written {len(report.written)}, removed {len(report.removed)}")
         return 0
-    if not home.is_dir():
-        raise ValueError(f"site home does not exist: {home}")
     report = units.doctor(cfg, roles, producers=declared)
+    for duty in duties.load(cfg.repo):
+        if duty["resolver"] not in roles:
+            report.state = "RED"
+            report.problems.append(f"duty {duty['name']}: resolver role {duty['resolver']!r} has no charter")
     top = subprocess.run(["git", "-C", str(home.parent), "rev-parse", "--show-toplevel"],
                          capture_output=True, text=True)
     if top.returncode == 0 and Path(top.stdout.strip()).resolve() == home.parent:

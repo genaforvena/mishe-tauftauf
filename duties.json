@@ -1,0 +1,238 @@
+{
+  "version": 1,
+  "doc": "Detection duties of the observation-driven runtime. Each is a producer (the only polling), a signal with max_age, and a resolver role. `replaces` names the retired detector units. Exit codes: 0 GREEN, 2 RED, anything else a failed observation that ages to UNKNOWN.",
+  "duties": [
+    {
+      "name": "ci",
+      "builtin": true,
+      "every": 300,
+      "timeout": 120,
+      "max_age": 900,
+      "resolver": "genome",
+      "replaces": [
+        "ci"
+      ],
+      "covers": "GitHub Actions result for the remote commit"
+    },
+    {
+      "name": "dispatch",
+      "builtin": true,
+      "every": 60,
+      "timeout": 30,
+      "max_age": 300,
+      "resolver": "genome",
+      "replaces": [
+        "core-supervisor",
+        "settlement-integrity",
+        "recovery",
+        "recovery-guard",
+        "recovery-outbox",
+        "recovery-evaluation"
+      ],
+      "covers": "a wake left open (started/unknown) longer than 30 minutes"
+    },
+    {
+      "name": "egress",
+      "command": [
+        "{repo}/.venv/bin/python",
+        "{repo}/checks/exit-node-egress.py",
+        "--state",
+        "{home}/health/egress.json"
+      ],
+      "every": 300,
+      "timeout": 120,
+      "max_age": 900,
+      "resolver": "health",
+      "replaces": [
+        "exit-node-egress",
+        "exit-node-egress-alert"
+      ],
+      "covers": "tailscale exit-node egress for each client"
+    },
+    {
+      "name": "guard-bytes",
+      "command": [
+        "{repo}/.venv/bin/python",
+        "{repo}/checks/guard-bytes-drift.py",
+        "--repo",
+        "{repo}",
+        "--home",
+        "{home}",
+        "--state",
+        "{home}/health/guard-bytes-drift.json"
+      ],
+      "every": 300,
+      "timeout": 120,
+      "max_age": 900,
+      "resolver": "health",
+      "replaces": [
+        "guard-bytes-drift",
+        "guard-bytes-drift-alert"
+      ],
+      "covers": "installed host guard bytes equal the reviewed target"
+    },
+    {
+      "name": "restore-readiness",
+      "command": [
+        "{repo}/.venv/bin/python",
+        "{repo}/checks/restore-readiness.py",
+        "--repo",
+        "{repo}",
+        "--home",
+        "{home}",
+        "--state",
+        "{home}/health/restore-readiness.json"
+      ],
+      "every": 300,
+      "timeout": 120,
+      "max_age": 900,
+      "resolver": "health",
+      "replaces": [
+        "restore-readiness",
+        "restore-readiness-alert"
+      ],
+      "covers": "the host can restore the plant"
+    },
+    {
+      "name": "observer-checks",
+      "command": [
+        "/usr/bin/python3",
+        "{home}/checks-runner/observer-checks.py",
+        "--once",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 900,
+      "timeout": 900,
+      "max_age": 2700,
+      "resolver": "genome",
+      "replaces": [
+        "observer-checks",
+        "observer-checks-alert",
+        "observer-verdict-watch"
+      ],
+      "covers": "the observer check inventory"
+    },
+    {
+      "name": "omp-db",
+      "command": [
+        "/usr/bin/python3",
+        "{home}/omp-recovery/db-watch.py",
+        "--home",
+        "{home}",
+        "--db",
+        "{home}/omp-recovery/agent/agent.db",
+        "--output",
+        "{home}/health/omp-db-watch.json"
+      ],
+      "every": 60,
+      "timeout": 60,
+      "max_age": 300,
+      "resolver": "health",
+      "replaces": [
+        "omp-db-watch",
+        "omp-db-alert"
+      ],
+      "covers": "omp agent database integrity"
+    },
+    {
+      "name": "devto",
+      "command": [
+        "{home}/pub/bin/devto-watch"
+      ],
+      "red_codes": [],
+      "every": 300,
+      "timeout": 300,
+      "max_age": 900,
+      "resolver": "pub",
+      "replaces": [
+        "pub-devto-watch",
+        "pub-devto-freshness",
+        "pub-devto-alert"
+      ],
+      "covers": "DEV.to threads observed and delivered"
+    },
+    {
+      "name": "budget",
+      "command": [
+        "{home}/producers/budget.sh"
+      ],
+      "every": 600,
+      "timeout": 300,
+      "max_age": 1800,
+      "resolver": "senses",
+      "replaces": [
+        "budget-collector"
+      ],
+      "covers": "token and quota windows; RED or UNKNOWN holds spontaneous wakes"
+    },
+    {
+      "name": "host-capacity",
+      "command": [
+        "{home}/producers/host-capacity.sh"
+      ],
+      "every": 60,
+      "timeout": 60,
+      "max_age": 300,
+      "resolver": "health",
+      "replaces": [
+        "host-capacity",
+        "host-capacity-guard",
+        "unit-psi-sampler",
+        "plants-anon-split-sampler"
+      ],
+      "covers": "memory/CPU/IO pressure and anon split, admission for optional work"
+    }
+  ],
+  "retired": [
+    {
+      "units": [
+        "session-watch",
+        "permissions",
+        "operator-view",
+        "tmux-layout",
+        "tmux-views",
+        "health-orphan-sweep",
+        "boot-watch",
+        "core-self-observer"
+      ],
+      "why": "pane/tmux liveness and the core supervisor's own observer; there are no panes and no resident supervisor"
+    },
+    {
+      "units": [
+        "initiative",
+        "initiative-watch",
+        "follow-through-watch",
+        "follow-through-alert",
+        "silence"
+      ],
+      "why": "replaced by the owed check, due intentions and the next-due timer; a role that stops being woken shows as an open or aged dispatch"
+    },
+    {
+      "units": [
+        "substrate-watch"
+      ],
+      "why": "no resident runtime can lag the checkout; a wake pins its release at start and doctor compares installed units with the pin"
+    },
+    {
+      "units": [
+        "signals",
+        "steward",
+        "field-review",
+        "body-research",
+        "inference-research"
+      ],
+      "why": "role residents; roles remain as registry data and are woken by trigger"
+    }
+  ],
+  "kept": [
+    {
+      "units": [
+        "coordination"
+      ],
+      "why": "cross-site sync follower; links to other plants and is outside this runtime's scope"
+    }
+  ]
+}
