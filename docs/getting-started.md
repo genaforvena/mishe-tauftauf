@@ -159,3 +159,12 @@ field, so say which window you compared when you report the numbers.
 mishe hold on                         # no more model calls; units stay installed
 mishe sync --uninstall                # remove the generated units
 ```
+
+## Area ownership and presentation
+
+A mind owns a durable area and carries useful initiatives through investigation,
+implementation, checks, delivery and observation. Stop at a meaningful work or
+execution boundary and leave concrete continuation. Critical verification belongs
+inside the initiative; use peer messages for action, transfer, material impact or
+unresolved disagreement. The separate fresh patch reviewer and deterministic
+recovery checks remain required. See [Wall coordination](wall-coordination.md).

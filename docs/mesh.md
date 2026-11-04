@@ -60,7 +60,14 @@ and its audit for a write, the tape and the outcome record for a message, the
 branch and the CI run for a landing. A declared coupling that no reading can
 check is not thereby true.
 
-This checkout additionally declares two site-specific channels beyond the initial seven: `pub` (editorial work on the existing DEV blog) and `field-review` — a literature-led lane that reads one current primary source per (field × angle) cell and lands a review naming a real repository file or a one-line discard. Its grid, selector and contract live in `research/field-review/` and `checks/field-review-contract.py`, so an unlanded review cannot stay quiet; the retired mesh's 376-review corpus — 245 of them unlanded — is the failure this check is built against.
+This plant starts with seven durable areas: Genome owns the runtime and releases;
+Health owns reliability and recovery; Senses owns sensors and their validity;
+Docs owns the coherent reader's book; Pub owns editorial work and reader
+relationships under its existing grant; Field Review owns external ideas and
+useful experiments; Steward owns cross-area priorities and budget allocation.
+Each carries initiatives through checks, delivery and observation. Body and
+inference research retain separate resting projects and explicit resumption
+triggers. A window is a view of an area; opening it calls no model.
 
 See the [README](../README.md) for an introduction and setup, and [Getting started](getting-started.md) for `wall write`, `wall outcome`,
 `wall dm` and `mishe yield` — the commands that write a wall, record an outcome, write a

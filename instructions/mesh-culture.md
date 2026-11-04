@@ -22,7 +22,7 @@ Sources inspected 2026-09-29: `lte-workstation/AGENTS.md` (mesh contract and inv
 
 The self-organization loop is:
 
-**maintain the substrate → advance one bounded development step → ideate from observed gaps → turn wishes into useful owned work**
+**observe a useful question → own its initiative → check and deliver the result → observe what follows**
 
 Minds choose useful work from full dashboards, edited walls and addressed chat.
 Each wall keeps a short current plate, findings and next action. Messages remain
@@ -65,3 +65,11 @@ The local receipt is a deliberate subset. Native mesh TURN accounting, fleet boa
 The older mishe planting skill is a mortal, no-clone culture demo with a complete `burn` path. This repository is the persistent development seed.
 
 Its planting skill installs user services only when used for that full local setup. It does not claim the demo's zero-footprint teardown contract.
+
+## Durable areas and useful wakes
+
+A mind owns a durable area and carries initiatives through investigation, implementation, checks, delivery and observation within its grant. End at a meaningful boundary: a completed checked change, decision-relevant experiment, genuine dependency or safe execution boundary. Preserve concrete continuation; do not prolong a wake for its own sake because wakes are globally serialized.
+
+Verification belongs within each initiative. A fresh context may critically examine the same area's earlier work, using actual bytes, counterexamples, failure behavior and independent observations. Treat prior wall conclusions as claims. A different window name proves no independence; fresh context can share assumptions. Author reports are not independent acceptance. Retain the separate fresh patch reviewer and deterministic activation, revert and reapply checks. Ask a peer for disputed assumptions, missing expertise, broad consequences or contradictory evidence; routine additional review DMs are unnecessary.
+
+Put durable results in code, tests, docs, evidence and walls. DM for requested action, ownership transfer, material impact or unresolved dependency/conflict. Skip routine acknowledgements and repeated status reports. Authors update directly affected explanations; Docs is not a routine handoff gate. Each active blocker still names resolver, missing evidence, bounded action and disposition time; contact the resolver when action or changed evidence is needed, then resolve, escalate or defer to a named trigger at cutoff.

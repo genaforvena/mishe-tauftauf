@@ -923,6 +923,33 @@ class Feed:
                 _ENTRIES_CACHE.pop(str(self.path), None)
         return list(view)
 
+    def view_entries(self, *, start: int = 1, limit: int = 200) -> list[FeedEntry]:
+        """Bounded indexed presentation read; never rebuild or publish an index.
+
+        Missing/stale checkpoints are unavailable evidence. The canonical writer
+        repairs its own index; a presentation must not mutate evidence to read it.
+        """
+        if start < 1 or not 0 < limit <= 1000:
+            raise ValueError("view range must be positive and limited to 1000 entries")
+        with self.path.open("rb") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
+            self._assert_locked_path(handle)
+            checkpoint = self._read_checkpoint()
+            if checkpoint is None or tuple(checkpoint["metadata"]) != tuple(self._metadata(handle)):
+                raise FeedError("view checkpoint missing or stale; mail UNKNOWN")
+            if start > checkpoint["sequence"]:
+                return []
+            first, offset = max((seq, offset) for seq, offset in checkpoint["checkpoints"] if seq <= start)
+            target = min(checkpoint["sequence"], start + limit - 1)
+            end = next((offset for seq, offset in checkpoint["checkpoints"] if seq > target),
+                       checkpoint["metadata"][1])
+            handle.seek(offset)
+            data = handle.read(end - offset)
+        entries = [entry for entry in parse_feed(data, start_sequence=first, home=self.home)
+                   if start <= entry.sequence <= target]
+        self._verify_records(entries)
+        return entries
+
     def entries(self, *, start: int = 1, limit: int | None = None,
                 payloads: dict | None = None, verify_records: bool = True) -> list[FeedEntry]:
         """Parse the tape. verify_records=False skips record payload verification
