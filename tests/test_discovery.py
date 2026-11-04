@@ -6752,3 +6752,15 @@ def test_server_containment_unreadable_cgroup_is_none(monkeypatch, tmp_path):
     assert proc_table.server_containment("1", cgroup_root=tmp_path) is None
 
 
+
+
+def test_process_row_argv_json_does_not_reach_the_prose_sample() -> None:
+    # A spawned daemon's JSON argv once made the notification body structured state,
+    # so the post-check refused the scan and the readings producer failed.
+    from mishe_tauftauf import post_check
+
+    row = {"pid": 187635, "ppid": 187610, "rate": 1.0, "pcpu": 0.3, "etimes": 2782,
+           "args": '/usr/bin/claude daemon run --spawned-by {"label":"claude","cwd":"/x","pid":187610}'}
+    text = "Verified readings: sense.proc.top-cpu = " + discovery._row_text(row)
+    assert post_check._deterministic(text) == []
+    assert '{"label"' in row["args"]

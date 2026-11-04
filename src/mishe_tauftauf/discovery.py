@@ -333,14 +333,23 @@ def _rate_key(row: dict[str, object]) -> tuple[float, float]:
     return ((rate if rate is not None else -1.0), row["pcpu"])
 
 
+PROSE_BRACKETS = str.maketrans("{}[]", "()()")
+
+
 def _row_text(row: dict[str, object]) -> str:
-    """Render one retained row, naming the keys that produced it."""
+    """Render one retained row, naming the keys that produced it.
+
+    A process argv can carry JSON (a spawned daemon's ``--spawned-by {...}``), and the
+    shared text surface refuses structured state. The prose sample swaps brackets;
+    the retained ``processes`` entry keeps the raw args as evidence.
+    """
     tag = ""
+    args = str(row["args"]).translate(PROSE_BRACKETS)
     if row.get("rate") is None:
         return (f"pid={row['pid']} ppid={row['ppid']} rate=unmeasured "
-                f"pcpu={row['pcpu']:.1f}% etimes={row['etimes']}s{tag} {row['args']}")
+                f"pcpu={row['pcpu']:.1f}% etimes={row['etimes']}s{tag} {args}")
     return (f"pid={row['pid']} ppid={row['ppid']} rate={row['rate']:.1f}% "
-            f"pcpu={row['pcpu']:.1f}% etimes={row['etimes']}s{tag} {row['args']}")
+            f"pcpu={row['pcpu']:.1f}% etimes={row['etimes']}s{tag} {args}")
 
 
 def _top_cpu_processes(rows: int = TOP_CPU_ROWS,
