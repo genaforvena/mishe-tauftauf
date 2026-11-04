@@ -166,3 +166,11 @@ def test_doctor_is_red_when_a_duty_resolver_has_no_charter(site, tmp_path):
     (site / "charters" / "health.md").unlink()
     cli("sync", "--unit-dir", str(d), "--no-systemctl", "--repo", str(REPO_ROOT))
     assert cli("doctor", "--unit-dir", str(d), "--repo", str(REPO_ROOT)) == 1
+
+
+def test_migrate_command_reports_and_is_repeatable(site, capsys):
+    assert cli("migrate") == 0
+    out = capsys.readouterr().out
+    assert "open_dispatches" in out
+    assert (site / "intentions" / "genome" / "migrate-wall-next-actions.json").exists()
+    assert cli("migrate") == 0

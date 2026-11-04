@@ -68,5 +68,5 @@ evidence-producing action and disposition time; address the resolver and resolve
 escalate or defer to a named trigger at cutoff. Continue independently admissible
 work while waiting. Never park on an operator window or routine approval. Write
 chat through the canonical site CLI, record changed outcomes with wall outcome,
-and settle only the actual wake with seed yield. Use --continue only for a
-concrete useful follow-up, not unchanged polling. Edited walls and addressed chat guide useful work; settlement records only the wake.
+and end the wake with `mishe yield`. Use --continue or --again only for a
+concrete useful follow-up, not unchanged polling. Edited walls and addressed chat guide useful work; a yield records only the wake.

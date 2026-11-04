@@ -81,7 +81,7 @@ def parser() -> argparse.ArgumentParser:
     p = inbox.add_parser("touch"); p.add_argument("role")
     hold = sub.add_parser("hold"); hold.add_argument("state", choices=("on", "off", "status"))
     hold.add_argument("--reason", default="held")
-    sub.add_parser("arm"); sub.add_parser("due")
+    sub.add_parser("arm"); sub.add_parser("due"); sub.add_parser("migrate")
     p = sub.add_parser("failed"); p.add_argument("unit")
     for name in ("sync", "doctor"):
         p = sub.add_parser(name)
@@ -161,6 +161,11 @@ def run(args) -> int:
         armmod.arm(home, scheduler=scheduler(home))
         print(message)
         return 0
+    if args.command == "migrate":
+        import json
+        from . import migrate
+        print(json.dumps(migrate.apply(home, declared_roles(home), now=now), sort_keys=True))
+        return 0
     if args.command == "failed":
         from . import failure
         print(failure.report(home, args.unit, now=now))
@@ -232,7 +237,7 @@ def armmod_arm(home: Path) -> None:
     armmod.arm(home, scheduler=scheduler(home))
 
 
-RUNTIME_COMMANDS = {"wake", "yield", "signal", "inbox", "hold", "arm", "due", "failed", "sync", "doctor", "produce"}
+RUNTIME_COMMANDS = {"wake", "yield", "signal", "inbox", "hold", "arm", "due", "failed", "sync", "doctor", "produce", "migrate"}
 
 
 def main(argv=None) -> int:

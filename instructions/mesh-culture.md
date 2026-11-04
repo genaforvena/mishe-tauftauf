@@ -8,15 +8,15 @@ Sources inspected 2026-09-29: `lte-workstation/AGENTS.md` (mesh contract and inv
 
 | Mesh rule | Local behavior |
 | --- | --- |
-| `mesh:1`, `mesh:12` | Each wake reads this repo's `AGENTS.md`, its charter and handoff, the full live top pane, and relevant `chat.log` entries. A lease is liveness, never check correctness. |
+| `mesh:1`, `mesh:12` | Each wake reads this repo's `AGENTS.md` and its dossier (charter, wall, unread messages, signals, due intentions, repository delta). A fresh signal is evidence of what it measured, never of check correctness. |
 | `mesh:2`, `mesh:5`–`mesh:8` | Repair local missing dependencies and recoverable failures within owned scope. A real blocker records the live check, owner, artifact, class, and retry event. Node-wide GPU and fleet resource authority does not travel. |
 | `mesh:4`, `mesh:13` | Durable rules go in `AGENTS.md`, doctrine, or a charter and need a wiring check. Case history stays in artifacts; retired paths do not stay in active prompts as transition prose. |
 | `mesh:9` | Mutations name paths and ownership, preserve dirty work, carry before/after evidence and a rollback or retry edge. The local artifact root is the plant site's `artifacts/`, not LTE's evidence root. |
 | `mesh:10`, `mesh:14` | Compare plausible approaches; put counts, identity, deadlines, deployment identity, and recurring probes in deterministic code. Spend a mind turn on choices. |
 | `mesh:11`, `mesh.decides-informs.v1` | Act on authorized local work and report start, outcome, and cost in the shared tape. External or protected actions need their own authority. |
-| `mesh:15`, `mesh:16` | Reproduce RED or UNKNOWN, predict the result, repair the cause, rerun the same check, and see its verdict on the live top pane. Change an architectural boundary when evidence requires it. |
+| `mesh:15`, `mesh:16` | Reproduce RED or UNKNOWN, predict the result, repair the cause, rerun the same check, and see its verdict in the signal and the dossier. Change an architectural boundary when evidence requires it. |
 | `mesh:17` | Explore qualitative improvements within this owned plant, with a checked artifact and rollback edge. Privacy, credentials, and external systems remain outside the charter. |
-| `mind.top-pane-live.v1` | The supervisor checks a fresh lease and a live pane before waking a mind; the witness top reports window presence and open work. A passing renderer self-test does not prove the caller or visible viewport. |
+| `mind.woken-with-dossier.v1` | A deterministic owed check decides whether a mind is woken at all; the wake runner builds the dossier and bounds the turn. A passing self-test does not prove the caller or the visible dossier. |
 
 ## Self-organization and ownership
 
@@ -54,9 +54,9 @@ OMP's full mesh lifecycle uses native `session_start` and `session_stop` receipt
 
 This seed implements a smaller local boundary:
 
-1. An exact `seed yield` saves the wall and handoff and appends a settled-turn receipt.
-2. The supervisor clears only after a settled idle turn.
-3. The charter and handoff arrive with the next real wake. A durable continuation or fresh observation invites the next step; clear creates no idle model turn.
+1. An exact `mishe yield` saves the wall, advances the role's cursor to what the wake saw, writes follow-up intentions and a receipt.
+2. A wake that does not yield stays open as an unknown effect; the next wake of that role reconciles it first.
+3. The charter and dossier arrive with the next real wake. A durable continuation, an addressed message or a signal edge invites the next step; nothing runs when nothing is owed.
 
 The local receipt is a deliberate subset. Native mesh TURN accounting, fleet board gates, and GPU rules are not claimed here.
 

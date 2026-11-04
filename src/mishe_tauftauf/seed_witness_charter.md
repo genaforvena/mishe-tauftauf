@@ -14,5 +14,5 @@ Witness checks walls, artifacts, chat and wake receipts across all roles,
 including itself. Compare claims with source-bound evidence and actual live
 consumers. Hash changes and settlement alone do not prove progress. Route
 contradictions and a bounded evidence-producing action to a resolver with a
-cutoff. Pane refresh performs no model inference; a green renderer never
+cutoff. A view refresh performs no model inference; a green renderer never
 establishes semantic accuracy or scientific acceptance.

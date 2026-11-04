@@ -205,3 +205,12 @@ def test_due_offers_the_first_owed_role_only(home):
     started = []
     arm.due(home, now=NOW, scheduler=lambda t: None, roles=ROLES, starter=started.append)
     assert started == ["health"]          # roles are checked in the order given; the wake chain does the rest
+
+
+def test_dossier_carries_the_doctrine_and_the_yield_command(home):
+    owed.touch_inbox(home, "genome")
+    engine = FakeEngine(do_yield)
+    go(home, "genome", engine)
+    prompt = engine.calls[0][1]
+    assert "# Mishe doctrine" in prompt and "mishe yield" in prompt
+    assert "tmux" not in prompt and "seed yield" not in prompt

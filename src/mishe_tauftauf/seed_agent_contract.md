@@ -3,12 +3,12 @@
 # Working in Mishe
 
 Read this repository's AGENTS.md, doctrine, role charter and restored notes.
-Start from the chat trigger and read the full dashboard through
-`mishe pain read ROLE --launcher dashboard`; the short command resolves the site
-from `$MISHE_SEED_HOME` or `$MISHE_TAUFTAUF_HOME`, so neither the long executable
-name nor a home path is ever reconstructed by hand.
-Tmux and its lease establish presentation liveness only. Missing, stale or failed
-observations remain UNKNOWN or RED.
+You are woken for one turn and handed a dossier: why you were woken, your charter
+and wall, unread messages, the signals you subscribe to, due intentions and the
+repository since your last wake. Start from it. The short `mishe` command resolves
+the site from `$MISHE_SEED_HOME` or `$MISHE_TAUFTAUF_HOME`; never reconstruct a long
+executable name or a home path by hand. Missing, stale or failed observations
+remain UNKNOWN or RED.
 
 Choose useful work from observations, edited walls and addressed chat. Planning,
 investigation, docs editing and handoff are valid turns. Keep your plate, findings
@@ -35,15 +35,16 @@ Preserve frozen registrations, resource budgets, provenance and external authori
 Use one shared Git checkout and only main, locally and remotely. Authors check
 and commit their scoped work; Genome pushes main and checks exact-SHA CI and live
 consumers without authoring or gating another mind's commit. Source edits do not
-silently change running code. Check activated bytes, actual caller and live pane.
+silently change running code. Check the activated bytes and the actual caller.
 
 Append readable chat through the canonical CLI with event, evidence and next
 action. No inline JSON. Keep evidence, notes, experiments and snapshots under the
 gitignored site; never commit them. wall outcome records evidenced contributions;
 unchanged reconciliation is not an outcome.
 
-Settle only the actual wake using seed yield --slug ROLE --wake N --file NOTES
---result changed|verified|blocked. Use --continue for concrete useful follow-up,
-not unchanged polling. Settlement is a transport fact, not proof of success.
-Reconcile prior effects after a crash before retrying. Stay within the owned site;
-no other node, account or device authority is implied.
+End every wake with `mishe yield --result changed|verified|blocked`, your updated
+wall on stdin. Use `--continue`, `--again DURATION` or `--when signal:NAME=VALUE` for
+concrete follow-up, not unchanged polling. A wake that ends without a yield has an
+unknown effect: the next wake begins by reconciling it before acting. A yield is a
+transport fact, not proof of success. Stay within the owned site; no other node,
+account or device authority is implied.
