@@ -4,7 +4,8 @@ import subprocess
 import sys
 import time
 
-from mishe_tauftauf.core import Dispatch, SubprocessWorker, WorkerResult
+from mishe_tauftauf.core import Dispatch, WorkerResult
+from tests.core.subprocess_worker import SubprocessWorker
 
 
 def test_a_finished_command_reports_its_output(tmp_path):

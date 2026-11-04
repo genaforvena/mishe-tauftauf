@@ -20,7 +20,6 @@ from .interfaces import (Dispatch, DispatchState, Observation, RoleRegistry,
 from .registry import StaticRoleRegistry, check_registry
 from .state import DispatchRecord, DispatchStore, DispatchStoreError
 from .supervisor import Supervisor, SupervisorError
-from .worker import SubprocessWorker, WorkerTimeout
 
 __all__ = [
     "Dispatch",
@@ -31,11 +30,9 @@ __all__ = [
     "Observation",
     "RoleRegistry",
     "StaticRoleRegistry",
-    "SubprocessWorker",
     "Supervisor",
     "SupervisorError",
     "Worker",
     "WorkerResult",
-    "WorkerTimeout",
     "check_registry",
 ]

@@ -309,7 +309,7 @@ def test_the_lock_is_released_when_a_dispatch_raises(tmp_path):
 
 def test_a_worker_that_exits_non_zero_is_unknown_not_failed(tmp_path):
     """A non-zero exit does not prove the effect did not happen."""
-    from mishe_tauftauf.core import SubprocessWorker
+    from tests.core.subprocess_worker import SubprocessWorker
     worker = SubprocessWorker(timeout=30)
     result = worker.run(Dispatch(role="genome", key="k", payload={
         "command": [sys.executable, "-c", "raise SystemExit(3)"]}))
@@ -318,7 +318,7 @@ def test_a_worker_that_exits_non_zero_is_unknown_not_failed(tmp_path):
 
 def test_a_worker_that_never_started_is_failed(tmp_path):
     """No process means no effect, so it is a plain failure."""
-    from mishe_tauftauf.core import SubprocessWorker
+    from tests.core.subprocess_worker import SubprocessWorker
     worker = SubprocessWorker(timeout=30)
     result = worker.run(Dispatch(role="genome", key="k", payload={
         "command": ["/nonexistent/binary"]}))
@@ -327,7 +327,7 @@ def test_a_worker_that_never_started_is_failed(tmp_path):
 
 def test_a_non_zero_exit_blocks_the_next_dispatch(tmp_path):
     """The unknown effect is what blocks the replay, not the exit code."""
-    from mishe_tauftauf.core import SubprocessWorker
+    from tests.core.subprocess_worker import SubprocessWorker
     supervisor = Supervisor(store=DispatchStore(tmp_path / "dispatch"),
                             registry=StaticRoleRegistry(["genome"]),
                             worker=SubprocessWorker(timeout=30))
@@ -349,7 +349,7 @@ def test_a_stopped_worker_leaves_no_live_descendant(tmp_path):
     descendant that survives SIGTERM shows whether the whole group was
     actually dealt with.
     """
-    from mishe_tauftauf.core import SubprocessWorker
+    from tests.core.subprocess_worker import SubprocessWorker
     marker = tmp_path / "child-pid"
     child_code = (
         "import signal, time\n"
@@ -421,7 +421,7 @@ def test_the_stop_grace_is_honoured(tmp_path):
     first signal and the grace is the interval the worker actually waits
     before escalating to SIGKILL.
     """
-    from mishe_tauftauf.core import SubprocessWorker
+    from tests.core.subprocess_worker import SubprocessWorker
     child_code = (
         "import signal, time\n"
         "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
@@ -455,7 +455,7 @@ def test_an_orphaned_worker_blocks_a_second_dispatch(tmp_path):
     """
     import os
     import signal
-    from mishe_tauftauf.core import SubprocessWorker
+    from tests.core.subprocess_worker import SubprocessWorker
     marker = tmp_path / "orphan-pid"
     # The worker records its own pid and then sleeps.
     script = (

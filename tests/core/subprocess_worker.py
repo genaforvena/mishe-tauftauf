@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from .interfaces import Dispatch, WorkerResult
+from mishe_tauftauf.core.interfaces import Dispatch, WorkerResult
 
 
 class WorkerTimeout(RuntimeError):
@@ -133,5 +133,5 @@ def _group_has_live_members(pgid: int) -> bool:
     from procfs, because the leader may already have exited and its pid may
     already be gone.
     """
-    from .dispatch_record import process_group_members
+    from mishe_tauftauf.core.dispatch_record import process_group_members
     return bool(process_group_members(pgid))
