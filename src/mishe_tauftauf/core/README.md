@@ -120,8 +120,3 @@ detector, so there is no evidence, and no evidence is not a pass.
 
 `tests/core/` holds the core's own tests. They use no plant, no tmux and no
 provider; the isolation rules are tested by the tests themselves.
-
-The prototype in `src/mishe_tauftauf/minimal_supervisor.py` predates this
-package and stays importable. It is a prototype: it has no locking, no
-registered role and no canonical settlement, and it is not used by the
-supervisor here.

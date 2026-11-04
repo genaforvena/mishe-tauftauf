@@ -13,7 +13,6 @@
     "src/mishe_tauftauf/declared_roots.py",
     "src/mishe_tauftauf/docs_tools.py",
     "src/mishe_tauftauf/engine_boundary.py",
-    "src/mishe_tauftauf/engine_rotation.py",
     "src/mishe_tauftauf/feed.py",
     "src/mishe_tauftauf/follow_through.py",
     "src/mishe_tauftauf/head_rewind_dispositions.py",

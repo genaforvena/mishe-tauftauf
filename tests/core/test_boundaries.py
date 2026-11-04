@@ -69,14 +69,3 @@ def test_the_adapters_reach_the_stack_only_inside_a_function():
         for name in names:
             assert not name.startswith("mishe_tauftauf."), \
                 f"adapters.py imports {name} at module scope"
-
-
-def test_the_prototype_supervisor_is_reachable_from_the_core():
-    """The prototype stays importable; the core is where new work lives."""
-    result = subprocess.run(
-        [sys.executable, "-c",
-         "from mishe_tauftauf.minimal_supervisor import MinimalSupervisor;"
-         "print(MinimalSupervisor.__name__)"],
-        capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "MinimalSupervisor"
