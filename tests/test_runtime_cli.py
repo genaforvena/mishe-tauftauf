@@ -109,3 +109,25 @@ def test_failed_command_reports_to_resolver(site, monkeypatch):
     monkeypatch.setattr(failure, "default_notify", lambda home, role, text: sent.append(role))
     assert cli("failed", "mishe-wake@docs.service") == 0
     assert sent == ["health"]
+
+
+def test_signal_run_and_produce_commands(site):
+    cli("signal", "register", "egress", "--max-age", "900")
+    assert cli("signal", "run", "egress", "--timeout", "10", "--", sys.executable, "-c", "pass") == 0
+    now = __import__("time").time()
+    assert store.read(site, "egress", now=now).value == "GREEN"
+    assert cli("signal", "run", "egress", "--timeout", "10", "--", "/nonexistent/x") == 2
+    cli("signal", "register", "dispatch", "--max-age", "900")
+    assert cli("produce", "dispatch") == 0
+    assert store.read(site, "dispatch", now=now).value == "GREEN"
+
+
+def test_sync_installs_declared_producers_and_doctor_agrees(site, tmp_path):
+    (site / "producers.json").write_text(
+        '[{"name":"egress","command":["/bin/true"],"every":300,"signal":{"max_age":900,"subscribers":["genome"]}}]')
+    d = tmp_path / "u"
+    assert cli("sync", "--unit-dir", str(d), "--no-systemctl") == 0
+    assert (d / "mishe-producer-egress.timer").exists()
+    assert "signal run egress" in (d / "mishe-producer-egress.service").read_text()
+    assert "signals/egress.json" in (d / "mishe-wake-genome.path").read_text()
+    assert cli("doctor", "--unit-dir", str(d)) == 0

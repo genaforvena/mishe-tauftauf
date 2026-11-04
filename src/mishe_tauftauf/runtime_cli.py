@@ -72,6 +72,10 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--subscribers", default="")
     p = sig.add_parser("observe"); p.add_argument("name"); p.add_argument("value"); p.add_argument("--source", default="cli")
     p = sig.add_parser("show"); p.add_argument("name")
+    p = sig.add_parser("run", help="observe NAME by running CMD: exit 0 GREEN, non-zero RED, cannot-run leaves it to expire")
+    p.add_argument("name"); p.add_argument("--timeout", type=float, default=120)
+    p.set_defaults(cmd=[])
+    p = sub.add_parser("produce"); p.add_argument("name")
     inbox = sub.add_parser("inbox").add_subparsers(dest="inbox_command", required=True)
     p = inbox.add_parser("touch"); p.add_argument("role")
     hold = sub.add_parser("hold"); hold.add_argument("state", choices=("on", "off", "status"))
@@ -103,8 +107,21 @@ def run(args) -> int:
             edge = signal_store.observe(home, args.name, args.value, now=now, source=args.source)
             armmod.arm(home, scheduler=scheduler(home))
             print("edge" if edge else "refreshed")
+        elif args.signal_command == "run":
+            from . import producers
+            command = args.cmd
+            if not command:
+                raise ValueError("signal run needs a command after --")
+            code = producers.run(home, args.name, command, now=now, timeout=args.timeout)
+            armmod.arm(home, scheduler=scheduler(home))
+            return code
         else:
             print(signal_store.read(home, args.name, now=now))
+        return 0
+    if args.command == "produce":
+        from . import producers
+        print(producers.produce(home, args.name, now=now))
+        armmod.arm(home, scheduler=scheduler(home))
         return 0
     if args.command == "inbox":
         owed.touch_inbox(home, args.role)
@@ -155,14 +172,16 @@ def run_units(args, home: Path, now: float) -> int:
                        pythonpath=args.pythonpath, unit_dir=args.unit_dir, prefix=args.prefix,
                        **({"plants_slice": None, "lifeline_slice": None} if args.no_slices else {}))
     roles = declared_roles(home)
+    from . import producers
+    declared = producers.load(home, python=sys.executable)
     if args.command == "sync":
         runner = None if args.no_systemctl else (lambda c: subprocess.run(c, check=True))
-        report = units.sync(cfg, roles, runner=runner)
+        report = units.sync(cfg, roles, producers=declared, runner=runner)
         print(f"written {len(report.written)}, removed {len(report.removed)}")
         return 0
     if not home.is_dir():
         raise ValueError(f"site home does not exist: {home}")
-    report = units.doctor(cfg, roles)
+    report = units.doctor(cfg, roles, producers=declared)
     top = subprocess.run(["git", "-C", str(home.parent), "rev-parse", "--show-toplevel"],
                          capture_output=True, text=True)
     if top.returncode == 0 and Path(top.stdout.strip()).resolve() == home.parent:
@@ -196,7 +215,7 @@ def armmod_arm(home: Path) -> None:
     armmod.arm(home, scheduler=scheduler(home))
 
 
-RUNTIME_COMMANDS = {"wake", "yield", "signal", "inbox", "hold", "arm", "due", "failed", "sync", "doctor"}
+RUNTIME_COMMANDS = {"wake", "yield", "signal", "inbox", "hold", "arm", "due", "failed", "sync", "doctor", "produce"}
 
 
 def main(argv=None) -> int:
@@ -208,8 +227,15 @@ def main(argv=None) -> int:
         from . import cli
         return cli.main(argv)
     from .core.supervisor import SupervisorError
+    tail = []
+    if "--" in argv:                      # everything after -- is the command, untouched by argparse
+        cut = argv.index("--")
+        argv, tail = argv[:cut], argv[cut + 1:]
     try:
-        return run(parser().parse_args(argv))
+        args = parser().parse_args(argv)
+        if tail:
+            args.cmd = tail
+        return run(args)
     except (OSError, ValueError, SupervisorError) as exc:
         print(f"mishe: {exc}", file=sys.stderr)
         return 2
