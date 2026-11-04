@@ -51,6 +51,11 @@ def _finite(value) -> bool:
     return type(value) in (int, float) and math.isfinite(value)
 
 
+def _plausible(epoch) -> bool:
+    """A time worth formatting: finite and inside the range `time.gmtime` accepts (years 1654 to 5138)."""
+    return _finite(epoch) and -1e10 < epoch < 1e11
+
+
 def _span(seconds: float, *, coarse: bool = False) -> str:
     """A duration. `coarse` is for ages shown on a refreshing pane: under a minute it is constant text."""
     s = int(abs(seconds))
@@ -65,7 +70,7 @@ def _span(seconds: float, *, coarse: bool = False) -> str:
 
 def _stamp(epoch, now: float) -> str:
     """'18:52Z (4 min ago)'; the date is added when it is not today (UTC)."""
-    if not _finite(epoch):
+    if not _plausible(epoch):
         return 'time UNKNOWN'
     day = time.gmtime(epoch)[:3] != time.gmtime(now)[:3]
     clock = time.strftime('%Y-%m-%d %H:%MZ' if day else '%H:%MZ', time.gmtime(epoch))
@@ -74,7 +79,7 @@ def _stamp(epoch, now: float) -> str:
 
 
 def _clock(epoch) -> str:
-    return time.strftime('%H:%M:%SZ', time.gmtime(epoch)) if _finite(epoch) else '?'
+    return time.strftime('%H:%M:%SZ', time.gmtime(epoch)) if _plausible(epoch) else '?'
 
 
 # --- model ------------------------------------------------------------------
@@ -111,7 +116,7 @@ def _wake_span(home, key, now, *, running, out_path=None):
         return None, None, False
     receipt = read_json(yielding.receipt_path(home, key))
     settled = receipt.get('settled_at') if isinstance(receipt, dict) else None
-    if _finite(settled) and settled >= start:
+    if _plausible(settled) and settled >= start:
         return start, settled, True
     if running or out_path is None:
         return start, max(now, start), False
@@ -228,7 +233,7 @@ def _signal_lines(home, role, now) -> list[str]:
             continue
         sig = signal_store.read(home, name, now=now)
         state = str(sig.value) if sig.state == 'OK' else str(sig.state)
-        age = f' ({_span(now - sig.observed_at, coarse=True)} ago)' if _finite(sig.observed_at) and state != 'GREEN' else ''
+        age = f' ({_span(now - sig.observed_at, coarse=True)} ago)' if _plausible(sig.observed_at) and state != 'GREEN' else ''
         groups.setdefault(safe(state), []).append(safe(name) + age)
     if not groups:
         return ['Signals: none subscribed']
@@ -293,7 +298,7 @@ def _dispatch(home, role, now):
         receipt = read_json(yielding.receipt_path(home, key))
         if (isinstance(receipt, dict) and receipt.get('role') == role and receipt.get('key') == key
                 and receipt.get('result') in ('changed', 'verified', 'blocked')
-                and _finite(receipt.get('settled_at'))):
+                and _plausible(receipt.get('settled_at'))):
             again = {True: 'continues in another wake', False: 'no immediate continuation'}.get(
                 receipt.get('continue'), 'continuation UNKNOWN')
             out.append(f'YIELDED {receipt["result"]} at {_stamp(receipt["settled_at"], now)}; {again} '
@@ -524,8 +529,8 @@ def main():
     while True:
         try:
             text = render(args.home, args.role, now=time.time(), output=args.output)
-        except (OSError, ValueError, TypeError, KeyError) as exc:
-            text = f'View UNKNOWN: {safe(exc)}'
+        except Exception as exc:        # the view must outlive any input; a dead pane shows nothing at all
+            text = f'View UNKNOWN: {type(exc).__name__}: {safe(exc)}'
         if text != previous:
             # \033[3J also drops tmux scrollback: without it every redraw adds a frame to history
             # and the pane's tmux server grows until its cgroup kills it (OOM at 19:09Z 2026-11-04).

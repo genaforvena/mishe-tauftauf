@@ -552,3 +552,17 @@ def test_log_mode_renders_a_multi_event_jsonl_stream_as_readable_text(tmp_path):
     assert 'malformed' not in text and 'UNKNOWN stream' not in text and 'raw tail' not in text   # not the single-document path
     assert 'assistantMessageEvent' not in text and machine_syntax(text) == []
     assert 'model' in text.splitlines()[1]          # the header still says which model (configured, as a stream has none)
+
+
+def test_implausible_file_times_render_as_unknown_not_a_crash(tmp_path):
+    # Reviewer finding: a finite but absurd timestamp (1e300) reached time.gmtime and raised OverflowError.
+    settled_wake(tmp_path)
+    write_json(yielding.receipt_path(tmp_path, 'wake-genome-1'),
+               {'role': 'genome', 'key': 'wake-genome-1', 'result': 'changed', 'continue': False, 'settled_at': 1e300})
+    intentions.add(tmp_path, 'genome', 'far', note='absurd due', due=1e300)
+    intentions.add(tmp_path, 'genome', 'neg', note='absurd negative', due=-1e300)
+    for output in (False, True):
+        text = view.render(tmp_path, 'genome', now=T0 + 60, output=output)
+        assert 'Traceback' not in text and machine_syntax(text) == []
+    top = view.render(tmp_path, 'genome', now=T0 + 60)
+    assert 'time UNKNOWN' in top and 'Next due:' in top
