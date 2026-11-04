@@ -74,7 +74,7 @@ def map_(sig: Signal, fn: Callable[[Any], Any]) -> Signal:
         return sig
     try:
         result = fn(sig.value)
-    except (ArithmeticError, LookupError, TypeError, ValueError) as exc:
+    except Exception as exc:
         return fail(sig.source, at=sig.observed_at, reason=f"map failed: {exc}")
     return observe(result, at=sig.observed_at, source=sig.source)
 

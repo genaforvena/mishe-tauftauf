@@ -48,6 +48,17 @@ def test_map_exception_becomes_unknown():
     assert ls.map_(s, lambda v: 1 / v).state == ls.UNKNOWN
 
 
+def test_map_runtime_exception_becomes_unknown():
+    s = ls.observe(1, at=1.0, source="x")
+
+    def transform(value):
+        raise RuntimeError("unavailable")
+
+    result = ls.map_(s, transform)
+    assert result.state == ls.UNKNOWN
+    assert result.reason == "map failed: unavailable"
+
+
 def test_join_worst_state_wins_unknown_over_stale_over_ok():
     ok = ls.observe(1, at=10.0, source="a")
     stale = ls.Signal(None, 9.0, "b", ls.STALE, "old")
