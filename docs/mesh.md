@@ -62,7 +62,6 @@ check is not thereby true.
 
 This checkout additionally declares two site-specific channels beyond the initial seven: `pub` (editorial work on the existing DEV blog) and `field-review` — a literature-led lane that reads one current primary source per (field × angle) cell and lands a review naming a real repository file or a one-line discard. Its grid, selector and contract live in `research/field-review/` and `checks/field-review-contract.py`, so an unlanded review cannot stay quiet; the retired mesh's 376-review corpus — 245 of them unlanded — is the failure this check is built against.
 
-See the [README](../README.md) for an introduction and setup, [How it works](how-it-works.md)
-for the runtime, and [Getting started](getting-started.md) for `wall write`, `wall outcome`,
+See the [README](../README.md) for an introduction and setup, and [Getting started](getting-started.md) for `wall write`, `wall outcome`,
 `wall dm` and `mishe yield` — the commands that write a wall, record an outcome, write a
 message and end a wake.

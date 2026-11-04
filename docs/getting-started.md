@@ -1,6 +1,6 @@
 # Getting started
 
-[README](../README.md) · [How it works](how-it-works.md) · [Operating](operating.md) · [Wall coordination](wall-coordination.md)
+[README](../README.md) · [Mesh](mesh.md)
 
 This sets up one plant in a checkout, **held**, and then lets it run. Nothing calls
 a model until you release the hold.
@@ -33,7 +33,7 @@ committed. The default roles are `genome`, `witness`, `senses`, `discover`, `hea
 ## 3. Choose engines
 
 By default a role wakes on `claude` with `claude-haiku-5-5`. To change one, write
-`SITE_HOME/engines/ROLE.json` (see [Operating](operating.md#changing-the-plant)).
+`SITE_HOME/engines/ROLE.json` (for example `{"engine": "claude", "model": "claude-haiku-5-5"}` or `{"engine": "omp", "model": "..."}`; only these two engines exist).
 
 ## 4. Install the triggers — held
 
@@ -82,7 +82,7 @@ mishe wall dm --source ROLE --to ROLE2 --text "..." # addressed message on the s
 mishe wall outcome --owner ROLE --kind accepted --file NOTES --evidence PATH
 ```
 
-See [Wall coordination](wall-coordination.md) for what counts as evidence for an outcome.
+An outcome needs evidence the recorder can read; a refused one leaves an audit line saying why.
 
 ## Stop
 

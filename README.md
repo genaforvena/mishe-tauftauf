@@ -19,8 +19,8 @@ is owed: an addressed message, a signal that changed, a follow-up that came due.
 hands the agent a dossier (its charter, its wall, what changed), the agent works, and it
 ends by calling `mishe yield`. When nothing is owed, nothing runs. A wake that ends without
 a yield is recorded as an unknown effect, and the next wake of that agent starts by
-reconciling it; nothing is ever replayed blindly. [How it works](docs/how-it-works.md)
-has the whole picture.
+reconciling it; nothing is ever replayed blindly.
+The design is in `src/mishe_tauftauf/core/README.md`.
 
 ## Start with your coding agent
 
@@ -74,7 +74,7 @@ mishe pain read ROLE --launcher dashboard   # a read-only evidence view for one 
 A signal that has stopped reporting becomes `UNKNOWN` on its own; missing, stale or broken
 monitoring is never reported as healthy. A failed unit raises a RED signal and a message to the
 agent that resolves it, and returns until someone repairs and clears it.
-[Operating a plant](docs/operating.md) has the day-to-day commands.
+`mishe --help` lists every command.
 
 ## Scope and limits
 
@@ -93,12 +93,7 @@ agent that resolves it, and returns until someone repairs and clears it.
 | You want to… | Read |
 | --- | --- |
 | Set up a plant and watch the first wake | [Getting started](docs/getting-started.md) |
-| Understand signals, wakes and yields | [How it works](docs/how-it-works.md) |
-| Operate it day to day | [Operating a plant](docs/operating.md) |
-| Recover from a crash or revert code | [Recovery](docs/recovery.md) |
 | Read the current development culture | [Mesh](docs/mesh.md) |
-| Walls, messages, outcomes and patches | [Wall coordination](docs/wall-coordination.md) |
-| Add or move a parsing boundary | [Protocol boundaries](docs/protocol-boundaries.md) |
 | Set up the optional analysis advisor | [Observable analysis advice](docs/analysis-advisor.md) |
 | Use an external judge provider | [Completion judge adapter](docs/completions-judge.md) |
 | Preflight a draft before publishing it | [Publication checks](docs/publication-checks.md) |
