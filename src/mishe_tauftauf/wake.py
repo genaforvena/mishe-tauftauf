@@ -116,10 +116,12 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
             pass
     except DispatchBusy:
         return WakeResult("busy", "another wake is running")
-    others = [r for r in store.open_records() if r.role != role]
-    if others:
-        starter(others[0].role)
-        return WakeResult("blocked", f"{others[0].role} has an open dispatch to reconcile first")
+    # All contenders must choose the same head, including that head's own wake.
+    # Excluding oneself first makes two unknown records defer to each other forever.
+    opened = store.open_records()
+    if opened and opened[0].role != role:
+        starter(opened[0].role)
+        return WakeResult("blocked", f"{opened[0].role} has an open dispatch to reconcile first")
     mine = store.read(role)
     try:
         if mine is not None and mine.state in (UNKNOWN, STARTED):

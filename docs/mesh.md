@@ -27,7 +27,10 @@ runs at a time and ends in a `yield`, and genome pushes `main` and checks CI and
 consumers. None of that contradicts peer re-entry. Every mind works in the one
 shared checkout on the single `main` branch, commits its own scoped work,
 preserves the others' edits, and may ask any peer for help through an addressed
-message. A missing reading stays `UNKNOWN` instead of being reported as a pass.
+message. Interrupted work is reconciled before new work. If several turns have
+unknown effects, all minds choose the same first turn to reconcile, so recovery
+can progress without replaying the original actions. A missing reading stays
+`UNKNOWN` instead of being reported as a pass.
 Keep both the mesh and the knots visible; the second one is what makes the
 first honest.
 

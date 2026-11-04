@@ -214,3 +214,28 @@ def test_dossier_carries_the_doctrine_and_the_yield_command(home):
     prompt = engine.calls[0][1]
     assert "# Mishe doctrine" in prompt and "mishe yield" in prompt
     assert "tmux" not in prompt and "seed yield" not in prompt
+
+
+def test_multiple_unknown_dispatches_reconcile_in_one_shared_order(home):
+    from mishe_tauftauf.core.state import DispatchRecord
+    from mishe_tauftauf.core.interfaces import UNKNOWN
+
+    dispatches = DispatchStore(home / "dispatch")
+    for role in ("genome", "health", "docs"):
+        dispatches.write(DispatchRecord(role=role, key=f"legacy-{role}", state=UNKNOWN,
+                                       detail="original effect unknown", pid=None, attempt=1))
+    engine = FakeEngine(do_yield)
+    # Every contender must point at the same head, including the head itself.
+    while dispatches.open_records():
+        head = dispatches.open_records()[0].role
+        for role in ROLES:
+            if role == head:
+                continue
+            started = []
+            result = go(home, role, engine, started)
+            assert result.outcome == "blocked"
+            assert started == [head]
+        result = go(home, head, engine)
+        assert result.outcome == "reconciled"
+    assert len(engine.calls) == 3
+    assert all("RECONCILE FIRST" in prompt for _, prompt in engine.calls)
