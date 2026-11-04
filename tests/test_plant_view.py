@@ -408,7 +408,9 @@ def test_an_unreadable_log_and_a_missing_site_stay_visible_not_silent(tmp_path):
     view.log_step(tmp_path, 'genome', T0 + 100)
     (tmp_path / 'pane-logs/genome.log').unlink()
     assert 'log UNKNOWN' in '\n'.join(view.log_step(tmp_path, 'genome', T0 + 110, replay=True))
-    assert 'IDLE / UNKNOWN' in '\n'.join(view.log_step(tmp_path / 'nowhere', 'steward', T0))
+    missing = tmp_path / 'nowhere'
+    assert 'does not exist; nothing was written' in '\n'.join(view.log_step(missing, 'steward', T0))
+    assert not missing.exists()                                  # no stray site tree is ever created
 
 
 def test_log_rotates_and_history_limit_is_bounded(tmp_path, monkeypatch):
@@ -462,3 +464,42 @@ def test_wall_excerpt_is_never_labelled_whole_when_something_was_cut(tmp_path):
     wall.write_text('word ' * 10000)
     text = view.render(tmp_path, 'genome', now=T0)
     assert 'whole wall' not in text and 'only the first 20000 characters were read' in text
+
+
+def test_an_idle_role_says_so_once_not_on_every_poll(tmp_path):
+    # Reviewer finding: with no retained output the IDLE line was appended again every 5 seconds.
+    first = view.log_step(tmp_path, 'steward', T0)
+    assert any('IDLE / UNKNOWN' in c for c in first)
+    for n in range(1, 6):
+        assert view.log_step(tmp_path, 'steward', T0 + 5 * n) == []
+    assert (tmp_path / 'pane-logs/steward.log').read_text().count('IDLE / UNKNOWN') == 1
+    restarted = '\n'.join(view.log_step(tmp_path, 'steward', T0 + 100, replay=True))      # a new pane starts from the log
+    assert restarted.count('IDLE / UNKNOWN') >= 1
+
+
+def test_failures_in_the_log_follower_are_reported_once_not_every_poll(tmp_path, monkeypatch, capsys):
+    wake_file(tmp_path, 'wake-genome-1', start=T0, end=T0 + 30, text='x')
+    dispatch_state(tmp_path, 'wake-genome-1', 'completed')
+    out = tmp_path / 'wakes/wake-genome-1.prompt.out.json'
+    real = view.output_view
+    def broken(path, *a, **k):
+        raise OSError('disk gremlin')
+    monkeypatch.setattr(view, 'output_view', broken)
+    first = '\n'.join(view.log_step(tmp_path, 'genome', T0 + 100))
+    assert first.count('disk gremlin') == 1
+    assert view.log_step(tmp_path, 'genome', T0 + 105) == []                      # marked printed: not repeated
+    # the loop's own failures: the same fault prints once until it changes or clears
+    import sys
+    monkeypatch.setattr(sys, 'argv', ['plant_view', '--home', str(tmp_path), '--role', 'genome', '--log', '--follow'])
+    calls = []
+    def failing(*a, **k):
+        raise ValueError('same fault')
+    monkeypatch.setattr(view, 'log_step', failing)
+    def tick(_):
+        calls.append(1)
+        if len(calls) >= 4:
+            raise KeyboardInterrupt
+    monkeypatch.setattr(view.time, 'sleep', tick)
+    with pytest.raises(KeyboardInterrupt):
+        view.main()
+    assert capsys.readouterr().out.count('View UNKNOWN: same fault') == 1

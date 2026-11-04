@@ -398,6 +398,8 @@ def log_step(home, role: str, now: float, *, replay: bool = False) -> list[str]:
     home = Path(home)
     if not valid_role(role):
         raise ValueError('invalid role')
+    if not home.is_dir():     # never create a site tree (a mistyped path would become a stray one)
+        return [f'View UNKNOWN: the site home {safe(home)} does not exist; nothing was written']
     directory = home / 'pane-logs'
     log, state_path = directory / f'{role}.log', directory / f'{role}.json'
     state = read_json(state_path)
@@ -416,11 +418,14 @@ def log_step(home, role: str, now: float, *, replay: bool = False) -> list[str]:
     configured = _configured(home, role)
     _, key, running = _dispatch(home, role, now)
     new = []
+    last_error = None if fresh else state.get('error')
+    error = None
     try:
         paths = _outputs(home, role)
     except OSError as exc:
-        paths = []
-        new.append(f'Output UNKNOWN: {safe(exc)}')
+        paths, error = [], f'Output UNKNOWN: {safe(exc)}'
+        if error != last_error:      # a persistent fault is reported when it appears, not every poll
+            new.append(error)
     if fresh:
         paths_to_print = paths[-LOG_RECENT_WAKES:]
         printed |= {wake_key(p) for p in paths[:-LOG_RECENT_WAKES]}     # older ones are on disk, not replayed
@@ -432,17 +437,17 @@ def log_step(home, role: str, now: float, *, replay: bool = False) -> list[str]:
             continue                                                      # still being written
         try:
             new.append(_wake_block(home, role, path, now, configured, running=False))
-        except OSError as exc:
-            new.append(f'Output UNKNOWN: {safe(exc)}')
+        except OSError as exc:       # said once for this wake; the file itself stays on disk as evidence
+            new.append(f'Output UNKNOWN: {file_key}: {safe(exc)}')
         printed.add(file_key)
     if running and key is not None and announced != key:
         start, _, _ = _wake_span(home, key, now, running=True)
         new.append(f'▶ wake started {_clock(start) if start is not None else "(start not recorded)"}; '
                    f'{_model_text(None, configured)} — its output appears here when it settles')
         announced = key
-    if not paths and not new:
+    if not paths and not new and (fresh or replay):     # said once per pane start; an idle poll prints nothing
         new.append('IDLE / UNKNOWN output: no reactive engine output retained; see historical archives')
-    if new or fresh:
+    if new or fresh or error != last_error:
         directory.mkdir(parents=True, exist_ok=True)
         try:
             if log.exists() and log.stat().st_size > LOG_MAX_BYTES:
@@ -459,7 +464,7 @@ def log_step(home, role: str, now: float, *, replay: bool = False) -> list[str]:
             dropped, kept = ordered[:-LOG_KEEP_KEYS], ordered[-LOG_KEEP_KEYS:]
             floor = max([floor] + [stamps.get(k, 0) for k in dropped])
             printed = set(kept)
-        write_json(state_path, {'printed': sorted(printed), 'announced': announced, 'floor': floor})
+        write_json(state_path, {'printed': sorted(printed), 'announced': announced, 'floor': floor, 'error': error})
     if not (new or fresh or replay):
         return []
     return chunks + new
@@ -500,13 +505,15 @@ def render(home, role: str, *, now: float, output=False) -> str:
 def main():
     args = arguments()
     if args.log:
-        first = True
+        first, last_failure = True, None
         while True:
             try:
                 chunks = log_step(args.home, args.role, time.time(), replay=first)
-                first = False
+                first, last_failure = False, None
             except (OSError, ValueError, TypeError, KeyError) as exc:
-                chunks = [f'View UNKNOWN: {safe(exc)}']
+                failure = f'View UNKNOWN: {safe(exc)}'
+                chunks = [failure] if failure != last_failure else []     # one line per distinct fault, not per poll
+                last_failure = failure
             for chunk in chunks:
                 print(chunk, flush=True)
             if not args.follow:
