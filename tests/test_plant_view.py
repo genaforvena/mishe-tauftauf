@@ -423,3 +423,28 @@ def test_log_rotates_and_history_limit_is_bounded(tmp_path, monkeypatch):
     from mishe_tauftauf import plant_tmux
     import inspect
     assert "'history-limit', '3000'" in inspect.getsource(plant_tmux.setup)
+
+
+def test_forgetting_old_printed_wakes_never_reprints_them(tmp_path, monkeypatch):
+    # Reviewer finding: trimming the printed set made trimmed wakes look new, so they were appended again.
+    monkeypatch.setattr(view, 'LOG_KEEP_KEYS', 3)
+    for n in range(8):
+        wake_file(tmp_path, f'wake-genome-{n:03d}', start=T0 + 100 * n, end=T0 + 100 * n + 30, text=f'answer number {n}')
+    dispatch_state(tmp_path, 'wake-genome-007', 'completed')
+    view.log_step(tmp_path, 'genome', T0 + 2000)
+    for n in range(8, 14):
+        wake_file(tmp_path, f'wake-genome-{n:03d}', start=T0 + 100 * n, end=T0 + 100 * n + 30, text=f'answer number {n}')
+        dispatch_state(tmp_path, f'wake-genome-{n:03d}', 'completed')
+        step = '\n'.join(view.log_step(tmp_path, 'genome', T0 + 2000 + 100 * n))
+        assert f'answer number {n}' in step and step.count('══ model') == 1
+        assert view.log_step(tmp_path, 'genome', T0 + 2001 + 100 * n) == []
+    log = (tmp_path / 'pane-logs/genome.log').read_text()
+    assert all(log.count(f'answer number {n}\n') == 1 for n in range(5, 14))      # each exactly once
+
+
+def test_plain_text_output_is_bounded_like_every_other_shape(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import output_text
+    out = tmp_path / 'wake.prompt.out.txt'
+    out.write_text('line of plain output\n' * 200000)
+    text = output_text(out)
+    assert len(text) < 17000 and 'truncated to its last 16000 characters' in text

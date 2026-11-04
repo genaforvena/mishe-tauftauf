@@ -226,6 +226,8 @@ def output_view(path: Path, limit: int = 16000) -> tuple[dict | None, str]:
         except ValueError:
             prefix += 'UNKNOWN: partial, malformed, mixed stderr or truncated JSON; raw tail follows\n'
             text = RAW_OPEN + '\n' + text[-3000:] + '\n' + RAW_CLOSE
+    if path.suffix not in ('.json', '.jsonl') and len(text) > limit:   # JSON shapes bound themselves above
+        text = f'[output truncated to its last {limit} characters; {size} bytes in the file]\n' + text[-limit:]
     return facts, safe(prefix + text)
 
 

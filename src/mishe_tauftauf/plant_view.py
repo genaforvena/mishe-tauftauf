@@ -28,6 +28,7 @@ WALL_LINES = 5
 LOG_REPLAY_LINES = 400      # what a restarted pane shows again from its log
 LOG_RECENT_WAKES = 3        # what a pane shows the first time, before it has a log
 LOG_MAX_BYTES = 5_000_000   # a log rotates to ROLE.log.1 beyond this; the wake files stay on disk anyway
+LOG_KEEP_KEYS = 5000        # printed wakes remembered; older ones are covered by a high-water mark, never reprinted
 
 
 def _mail(home, start):
@@ -391,6 +392,7 @@ def log_step(home, role: str, now: float, *, replay: bool = False) -> list[str]:
     fresh = not isinstance(state, dict) or not isinstance(state.get('printed'), list)
     printed = set() if fresh else {x for x in state['printed'] if isinstance(x, str)}
     announced = None if fresh else state.get('announced')
+    floor = state.get('floor') if not fresh and type(state.get('floor')) is int else 0   # wakes at or below it were printed
     chunks = []
     if fresh:
         chunks.append(f'{role} — every wake\'s output is appended here; the full log is {log}')
@@ -411,7 +413,7 @@ def log_step(home, role: str, now: float, *, replay: bool = False) -> list[str]:
         paths_to_print = paths[-LOG_RECENT_WAKES:]
         printed |= {wake_key(p) for p in paths[:-LOG_RECENT_WAKES]}     # older ones are on disk, not replayed
     else:
-        paths_to_print = [p for p in paths if wake_key(p) not in printed]
+        paths_to_print = [p for p in paths if wake_key(p) not in printed and p.stat().st_mtime_ns > floor]
     for path in paths_to_print:
         file_key = wake_key(path)
         if running and file_key == key:
@@ -437,7 +439,15 @@ def log_step(home, role: str, now: float, *, replay: bool = False) -> list[str]:
             pass
         with log.open('a', encoding='utf-8') as handle:
             handle.write('\n'.join(new) + ('\n' if new else ''))
-        write_json(state_path, {'printed': sorted(printed)[-500:], 'announced': announced})
+        if len(printed) > LOG_KEEP_KEYS:
+            # Forget the oldest keys, but remember how far back they reached so their files are never
+            # mistaken for new wakes (every retained wake file is still enumerated each step).
+            stamps = {wake_key(p): p.stat().st_mtime_ns for p in paths}
+            ordered = sorted(printed, key=lambda k: (stamps.get(k, 0), k))
+            dropped, kept = ordered[:-LOG_KEEP_KEYS], ordered[-LOG_KEEP_KEYS:]
+            floor = max([floor] + [stamps.get(k, 0) for k in dropped])
+            printed = set(kept)
+        write_json(state_path, {'printed': sorted(printed), 'announced': announced, 'floor': floor})
     if not (new or fresh or replay):
         return []
     return chunks + new
