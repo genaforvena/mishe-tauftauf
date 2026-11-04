@@ -529,3 +529,26 @@ def test_hostile_envelopes_degrade_to_unknown_and_never_kill_the_follower(tmp_pa
     with pytest.raises(KeyboardInterrupt):
         view.main()
     assert capsys.readouterr().out.count('RecursionError') == 1          # reported, once; the loop kept running
+
+
+def test_log_mode_renders_a_multi_event_jsonl_stream_as_readable_text(tmp_path):
+    # Reviewer claim: .jsonl was handled as one JSON document. It goes through stream_text; this proves it end to end.
+    key = 'wake-genome-9'
+    write_json(yielding.snapshot_path(tmp_path, key), {'role': 'genome', 'snapshot': {}})
+    os.utime(yielding.snapshot_path(tmp_path, key), (T0, T0))
+    events = [{'type': 'agent_start'},
+              {'type': 'message_update', 'assistantMessageEvent': {'type': 'text_delta', 'delta': 'Reading the signals'}},
+              {'type': 'tool_execution_start', 'toolName': 'bash', 'args': {'command': 'mishe signal show ci'}},
+              {'type': 'tool_execution_end', 'result': {'content': [{'type': 'text', 'text': 'GREEN'}]}},
+              {'type': 'message_end', 'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': 'CI is green; nothing to do.'}]}}]
+    out = tmp_path / f'wakes/{key}.prompt.out.jsonl'
+    out.write_text('\n'.join(json.dumps(e) for e in events) + '\n')
+    os.utime(out, (T0 + 30, T0 + 30))
+    write_json(yielding.receipt_path(tmp_path, key), {'role': 'genome', 'key': key, 'result': 'changed', 'continue': False, 'settled_at': T0 + 30})
+    dispatch_state(tmp_path, key, 'completed')
+    text = '\n'.join(view.log_step(tmp_path, 'genome', T0 + 100))
+    for expected in ('Reading the signals', '[tool bash] mishe signal show ci', '[tool output] GREEN', 'CI is green; nothing to do.'):
+        assert expected in text
+    assert 'malformed' not in text and 'UNKNOWN stream' not in text and 'raw tail' not in text   # not the single-document path
+    assert 'assistantMessageEvent' not in text and machine_syntax(text) == []
+    assert 'model' in text.splitlines()[1]          # the header still says which model (configured, as a stream has none)
