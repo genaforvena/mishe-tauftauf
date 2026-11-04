@@ -192,6 +192,27 @@
         "recovery-guard"
       ],
       "covers": "the plant-wide tape/task lock can be taken; a stuck holder blocks every wall, task and tape write"
+    },
+    {
+      "name": "readings",
+      "command": [
+        "{python}",
+        "-m",
+        "mishe_tauftauf",
+        "--home",
+        "{home}",
+        "discover",
+        "scan"
+      ],
+      "red_codes": [],
+      "every": 600,
+      "timeout": 180,
+      "max_age": 900,
+      "resolver": "senses",
+      "replaces": [
+        "dashboard-discovery-renewal"
+      ],
+      "covers": "bounded acquisition of the retained Senses inventory; source-specific unknowns stay visible, failed/missing/stale scans remain UNKNOWN"
     }
   ],
   "retired": [

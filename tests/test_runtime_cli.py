@@ -196,3 +196,30 @@ def test_every_runtime_command_is_in_the_one_parser():
     from mishe_tauftauf import cli
     commands = set(cli.parser()._subparsers._group_actions[0].choices)
     assert {"wake", "yield", "signal", "inbox", "hold", "arm", "due", "failed", "sync", "doctor", "produce", "migrate"} <= commands
+
+
+def test_discover_show_marks_unanchored_retained_readings_unknown(site, monkeypatch, capsys):
+    from mishe_tauftauf import discovery
+    monkeypatch.setattr(discovery, "latest", lambda h: {"created":"old", "node":"host", "observations":[{"id":"sense.disk.free","state":"verified","sample":42}]})
+    assert cli("discover", "show") == 0
+    text = capsys.readouterr().out
+    assert "acquisition=unknown" in text
+    assert "UNKNOWN retained=verified" in text
+
+
+def test_discover_show_keeps_fresh_per_source_unknowns(site, monkeypatch, capsys):
+    from mishe_tauftauf import discovery, scan_freshness
+    point = scan_freshness.endpoint()
+    monkeypatch.setattr(discovery, "latest", lambda h: {"created":"now", "node":"host", "acquisition":{"start":point,"end":scan_freshness.endpoint()},"observations":[{"id":"sense.body.redmi10","state":"unknown","sample":"consumer-poll-stale"}]})
+    assert cli("discover", "show") == 0
+    text = capsys.readouterr().out
+    assert "acquisition=recent" in text and "unknown sample=consumer-poll-stale" in text
+
+
+def test_discover_show_marks_stale_readings_unknown(site, monkeypatch, capsys):
+    from mishe_tauftauf import discovery, scan_freshness
+    monkeypatch.setattr(discovery, "latest", lambda h: {"created":"old", "node":"host", "observations":[{"id":"sense.disk.free","state":"verified","sample":42}]})
+    monkeypatch.setattr(scan_freshness, "age_bounds", lambda snapshot: (901_000_000_000,902_000_000_000))
+    assert cli("discover", "show") == 0
+    text = capsys.readouterr().out
+    assert "acquisition=stale" in text and "UNKNOWN retained=verified" in text

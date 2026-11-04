@@ -68,3 +68,11 @@ def test_silence_ages_to_unknown_and_wakes_the_resolver(tmp_path, name):
     assert store.read(tmp_path, name, now=late).state == "UNKNOWN"
     assert store.expire(tmp_path, now=late) == [name]
     assert f"signal:{name}" in owed.check(tmp_path, resolver, now=late).reasons
+
+
+def test_readings_renewal_has_a_bounded_senses_owned_producer():
+    item = next(d for d in ALL if d["name"] == "readings")
+    assert item["resolver"] == "senses"
+    assert item["command"][-2:] == ["discover", "scan"]
+    assert item["every"] == 600 and item["timeout"] == 180
+    assert item["max_age"] == 900 and item["red_codes"] == []

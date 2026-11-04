@@ -252,9 +252,13 @@ def cmd_discover(args) -> int:
     if snapshot is None:
         print("UNKNOWN discovery has no scan")
         return 1
-    print(f"scan {snapshot.get('created', 'unknown')} node={snapshot.get('node', 'unknown')}")
+    from .scan_freshness import age_bounds, classify_age
+    freshness = classify_age(age_bounds(snapshot), discovery.RENEWAL_MAX_AGE_SECONDS)
+    print(f"scan {snapshot.get('created', 'unknown')} node={snapshot.get('node', 'unknown')} "
+          f"acquisition={freshness}")
     for item in snapshot["observations"]:
-        print(f"{item['id']} {item['state']} sample={item['sample']}")
+        state = item['state'] if freshness == 'recent' else f"UNKNOWN retained={item['state']}"
+        print(f"{item['id']} {state} sample={item['sample']}")
     return 0
 
 

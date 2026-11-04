@@ -73,6 +73,9 @@ inference research retain separate resting projects and explicit resumption
 triggers. A window is a view of an area; opening it calls no model. Its bottom pane
 shows retained assistant text and tool activity as the mind works, alongside
 explicit unknown or failed output; the original event files remain on disk.
+Senses' readings renew independently every ten minutes. `mishe discover show`
+shows the acquisition freshness and each source's state; a new host scan cannot
+make an old phone sample current.
 
 See the [README](../README.md) for an introduction and setup, and [Getting started](getting-started.md) for `wall write`, `wall outcome`,
 `wall dm` and `mishe yield` — the commands that write a wall, record an outcome, write a
