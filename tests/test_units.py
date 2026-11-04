@@ -137,3 +137,11 @@ def test_removed_triggers_are_disabled_before_their_files_go(cfg):
     units.sync(cfg, ["genome", "health"], runner=calls.append)         # docs dropped
     order = [(" ".join(c)) for c in calls]
     assert any("disable" in c and "mishe-wake-docs.path" in c for c in order)
+
+
+def test_sync_without_enable_installs_files_but_starts_no_trigger(cfg):
+    calls = []
+    units.sync(cfg, ROLES, runner=calls.append, enable=False)
+    assert (cfg.unit_dir / "mishe-wake-genome.path").exists()
+    assert any("daemon-reload" in c for c in calls)
+    assert not [c for c in calls if "enable" in c or "start" in c]

@@ -158,11 +158,14 @@ def _installed(cfg: Config) -> dict:
     return found
 
 
-def sync(cfg: Config, roles, *, producers=(), runner=None, uninstall: bool = False) -> SyncReport:
+def sync(cfg: Config, roles, *, producers=(), runner=None, uninstall: bool = False,
+         enable: bool = True) -> SyncReport:
     """Write generated units, remove stale generated ones, reload systemd.
 
     ``uninstall`` renders nothing, so every generated unit is stale and goes. A
-    trigger is disabled before its file is removed, so no enable link dangles.
+    trigger is disabled before its file is removed, so no enable link dangles. With
+    ``enable=False`` the files are installed and systemd reloaded, but no trigger is
+    enabled or started: installed, not running.
     """
     if not uninstall:
         if "doctor" not in signal_store.registry(cfg.home):
@@ -188,7 +191,7 @@ def sync(cfg: Config, roles, *, producers=(), runner=None, uninstall: bool = Fal
     if runner is not None and (report.written or report.removed):
         runner(["systemctl", "--user", "daemon-reload"])
         for rel in report.written:
-            if rel.endswith((".path", ".timer")):
+            if enable and rel.endswith((".path", ".timer")):
                 runner(["systemctl", "--user", "enable", "--now", rel])
     return report
 

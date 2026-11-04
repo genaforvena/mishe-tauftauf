@@ -94,6 +94,7 @@ def register(sub) -> None:
         p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO") or Path.cwd())
         if name == "sync":
             p.add_argument("--no-systemctl", action="store_true")
+            p.add_argument("--no-enable", action="store_true", help="install the units but enable and start no trigger")
             p.add_argument("--uninstall", action="store_true", help="remove the generated units (and only those)")
 
 
@@ -198,7 +199,8 @@ def run_units(args, home: Path, now: float) -> int:
     write_json(home / "resolvers.generated.json", duties.resolvers(cfg.repo, args.prefix))
     if args.command == "sync":
         runner = None if args.no_systemctl else (lambda c: subprocess.run(c, check=True))
-        report = units.sync(cfg, roles, producers=declared, runner=runner, uninstall=args.uninstall)
+        report = units.sync(cfg, roles, producers=declared, runner=runner, uninstall=args.uninstall,
+                            enable=not args.no_enable)
         print(f"written {len(report.written)}, removed {len(report.removed)}")
         return 0
     report = units.doctor(cfg, roles, producers=declared)
