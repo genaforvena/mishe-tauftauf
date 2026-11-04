@@ -86,14 +86,23 @@ def stream_text(text: str) -> str:
 
 
 def output_text(path: Path, limit: int = 16000) -> str:
+    # OMP's terminal agent_end can repeat a large conversation. Read a bounded
+    # event window so that its preceding message_end remains available, then
+    # bound the rendered text separately. Never dump a cut leading event.
+    window = max(limit, 1024 * 1024) if path.suffix == '.jsonl' else limit
     with path.open('rb') as handle:
         size = path.stat().st_size
-        handle.seek(max(0, size - limit))
-        data = handle.read(limit)
+        handle.seek(max(0, size - window))
+        data = handle.read(window)
     text = data.decode('utf-8', 'replace')
-    prefix = f'[retained tail; {size} bytes total]\n' if size > limit else ''
+    prefix = f'[retained tail; {size} bytes total]\n' if size > window else ''
     if path.suffix == '.jsonl':
+        if size > window:
+            text = text.partition('\n')[2]
+            prefix += 'UNKNOWN leading stream event truncated; original bytes retained in file\n'
         text = stream_text(text)
+        if len(text) > limit:
+            text = '[rendered tail]\n' + text[-limit:]
     elif path.suffix == '.json':
         try:
             value = json.loads(text)

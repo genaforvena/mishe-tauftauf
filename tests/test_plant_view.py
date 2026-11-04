@@ -113,4 +113,22 @@ def test_stream_tail_keeps_new_events_after_large_output(tmp_path):
     out.write_text(json.dumps({"type":"tool_execution_end", "result":{"content":[{"type":"text","text":"EARLIEST"+'x'*20000}]}})+'\n'+json.dumps({"type":"message_update", "assistantMessageEvent":{"type":"text_delta","delta":"LATEST LIVE OUTPUT"}})+'\n')
     text = output_text(out)
     assert "LATEST LIVE OUTPUT" in text and "EARLIEST" not in text
-    assert "retained tail" in text and "UNKNOWN" in text
+    assert "rendered tail" in text
+
+
+def test_large_terminal_envelope_keeps_preceding_readable_output(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import output_text
+    out = tmp_path / "out.jsonl"
+    out.write_text(json.dumps({"type":"message_end", "message":{"role":"assistant","content":[{"type":"text","text":"PUBLIC FINAL ANSWER"}]}})+'\n'+json.dumps({"type":"agent_end","messages":[{"large":"z"*70000}]})+'\n')
+    text = output_text(out)
+    assert "PUBLIC FINAL ANSWER" in text
+    assert len(text) < 17000 and '"large"' not in text
+
+
+def test_oversized_stream_window_marks_loss_without_raw_flood(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import output_text
+    out = tmp_path / "out.jsonl"
+    out.write_text(json.dumps({"type":"agent_end","messages":[{"large":"z"*(1024*1024+100)}]})+'\n'+json.dumps({"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"LATEST"}})+'\n')
+    text = output_text(out)
+    assert "UNKNOWN leading stream event truncated" in text and "LATEST" in text
+    assert len(text)<1000
