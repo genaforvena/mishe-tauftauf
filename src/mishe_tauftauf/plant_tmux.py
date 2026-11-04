@@ -28,7 +28,7 @@ def setup(socket: str, session: str, home: Path, roles, *, command=None, view_co
             tmux('new-session', '-d', '-s', session, '-n', roles[0], '/bin/cat')
             tmux('set-option', '-w', '-t', session + ':' + roles[0], '@mishe-view', 'bootstrap')
     tmux('set-option', '-t', session, 'prefix', 'C-a')
-    tmux('set-option', '-t', session, 'history-limit', '2000')   # frames are not history; 100000 x 18 panes OOMed the tmux scope
+    tmux('set-option', '-t', session, 'history-limit', '3000')   # measured 4.8 KB per full line: 9 panes x 10000 = 432 MB OOMed the 512M scope
     for role in [*roles, 'chat']:
         target = session + ':' + role
         exists = role in tmux('list-windows', '-t', '=' + session, '-F', '#{window_name}').splitlines()

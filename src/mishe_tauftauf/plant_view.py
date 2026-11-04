@@ -16,14 +16,18 @@ from . import intentions, owed, signal_store, yielding
 from .core.dispatch_record import read_record_fields, valid_role
 from .engines import DEFAULT_CLAUDE_MODEL
 from .feed import Feed
-from .plant_view_boundary import (arguments, brief, cut, output_view, safe, uncommitted, wake_commits, wake_key, wall_lines)
-from .state_files import read_json
+from .plant_view_boundary import (arguments, brief, cut, last_lines, output_view, safe, uncommitted, wake_commits,
+                                  wake_key, wall_lines)
+from .state_files import read_json, write_json
 from .wall import addressed
 
 _MAIL_CACHE = {}
 _CHANGES_CACHE = {}
 LINE = 150          # characters per displayed line; panes are ~170 columns wide
 WALL_LINES = 5
+LOG_REPLAY_LINES = 400      # what a restarted pane shows again from its log
+LOG_RECENT_WAKES = 3        # what a pane shows the first time, before it has a log
+LOG_MAX_BYTES = 5_000_000   # a log rotates to ROLE.log.1 beyond this; the wake files stay on disk anyway
 
 
 def _mail(home, start):
@@ -357,6 +361,88 @@ def render_output(home, role: str, *, now: float) -> str:
     return '\n'.join(out)
 
 
+# --- the bottom pane as a log: each wake's output is appended once, never repainted ----------
+
+def _wake_block(home, role, path, now, configured, *, running):
+    facts, text = output_view(path)
+    span = _wake_span(home, wake_key(path), now, running=running, out_path=path)
+    commits = _changes(home, span)
+    head = '══ ' + ' · '.join([_model_text(facts, configured)] + _summary_parts(span, facts, commits, now)) + ' ══'
+    return '\n'.join([cut(head, 2 * LINE), text, *_changes_detail(commits), ''])
+
+
+def _outputs(home, role):
+    return sorted((home / 'wakes').glob(f'wake-{role}-*.prompt.out.*'), key=lambda p: p.stat().st_mtime_ns)
+
+
+def log_step(home, role: str, now: float, *, replay: bool = False) -> list[str]:
+    """New text for the pane, also appended to pane-logs/ROLE.log. Nothing when nothing is new.
+
+    A wake is printed once, when it has settled; a running wake gets one "started" line. The
+    set of printed wakes is kept in pane-logs/ROLE.json, so a restarted pane (`replay=True` on its
+    first step) shows its log tail again and carries on instead of repeating or losing history.
+    """
+    home = Path(home)
+    if not valid_role(role):
+        raise ValueError('invalid role')
+    directory = home / 'pane-logs'
+    log, state_path = directory / f'{role}.log', directory / f'{role}.json'
+    state = read_json(state_path)
+    fresh = not isinstance(state, dict) or not isinstance(state.get('printed'), list)
+    printed = set() if fresh else {x for x in state['printed'] if isinstance(x, str)}
+    announced = None if fresh else state.get('announced')
+    chunks = []
+    if fresh:
+        chunks.append(f'{role} — every wake\'s output is appended here; the full log is {log}')
+    elif replay:
+        try:
+            chunks.append(last_lines(log.read_text(encoding='utf-8'), LOG_REPLAY_LINES))
+        except (OSError, UnicodeError):
+            chunks.append(f'{role} — log UNKNOWN: {log} is unreadable; wakes are printed from now on')
+    configured = _configured(home, role)
+    _, key, running = _dispatch(home, role, now)
+    new = []
+    try:
+        paths = _outputs(home, role)
+    except OSError as exc:
+        paths = []
+        new.append(f'Output UNKNOWN: {safe(exc)}')
+    if fresh:
+        paths_to_print = paths[-LOG_RECENT_WAKES:]
+        printed |= {wake_key(p) for p in paths[:-LOG_RECENT_WAKES]}     # older ones are on disk, not replayed
+    else:
+        paths_to_print = [p for p in paths if wake_key(p) not in printed]
+    for path in paths_to_print:
+        file_key = wake_key(path)
+        if running and file_key == key:
+            continue                                                      # still being written
+        try:
+            new.append(_wake_block(home, role, path, now, configured, running=False))
+        except OSError as exc:
+            new.append(f'Output UNKNOWN: {safe(exc)}')
+        printed.add(file_key)
+    if running and key is not None and announced != key:
+        start, _, _ = _wake_span(home, key, now, running=True)
+        new.append(f'▶ wake started {_clock(start) if start is not None else "(start not recorded)"}; '
+                   f'{_model_text(None, configured)} — its output appears here when it settles')
+        announced = key
+    if not paths and not new:
+        new.append('IDLE / UNKNOWN output: no reactive engine output retained; see historical archives')
+    if new or fresh:
+        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            if log.exists() and log.stat().st_size > LOG_MAX_BYTES:
+                log.replace(directory / f'{role}.log.1')
+        except OSError:
+            pass
+        with log.open('a', encoding='utf-8') as handle:
+            handle.write('\n'.join(new) + ('\n' if new else ''))
+        write_json(state_path, {'printed': sorted(printed)[-500:], 'announced': announced})
+    if not (new or fresh or replay):
+        return []
+    return chunks + new
+
+
 def render(home, role: str, *, now: float, output=False) -> str:
     home = Path(home)
     if not valid_role(role):
@@ -391,6 +477,20 @@ def render(home, role: str, *, now: float, output=False) -> str:
 
 def main():
     args = arguments()
+    if args.log:
+        first = True
+        while True:
+            try:
+                chunks = log_step(args.home, args.role, time.time(), replay=first)
+                first = False
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                chunks = [f'View UNKNOWN: {safe(exc)}']
+            for chunk in chunks:
+                print(chunk, flush=True)
+            if not args.follow:
+                break
+            time.sleep(5)
+        return
     previous = None
     while True:
         try:

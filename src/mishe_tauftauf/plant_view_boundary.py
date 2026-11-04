@@ -108,6 +108,11 @@ def wall_lines(text: str) -> list[str]:
     return [ln for ln in (safe(x).rstrip() for x in text.splitlines()) if ln.strip()]
 
 
+def last_lines(text: str, count: int) -> str:
+    """The last `count` lines of text this program wrote itself (a pane log)."""
+    return '\n'.join(text.splitlines()[-count:])
+
+
 def wake_key(path: Path) -> str:
     """The wake key of a retained file named KEY.prompt.out.EXT (keys contain no dot)."""
     return path.name.partition('.')[0]
@@ -287,4 +292,6 @@ def arguments():
     parser.add_argument('--role', required=True)
     parser.add_argument('--output', action='store_true')
     parser.add_argument('--follow', action='store_true')
+    parser.add_argument('--log', action='store_true',
+                        help='append each wake\'s output once to pane-logs/ROLE.log and the pane; never repaint')
     return parser.parse_args()

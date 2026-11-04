@@ -343,3 +343,83 @@ def test_every_redraw_clears_tmux_scrollback(capsys, tmp_path, monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         view.main()
     assert capsys.readouterr().out.startswith('\033[H\033[2J\033[3J')
+
+
+# --- bottom pane as an append-only log of every wake -----------------------------------------
+
+def wake_file(home, key, *, start, end, text, role='genome', yielded=True):
+    write_json(yielding.snapshot_path(home, key), {'role': role, 'snapshot': {}})
+    os.utime(yielding.snapshot_path(home, key), (start, start))
+    out = home / f'wakes/{key}.prompt.out.json'
+    out.write_text(json.dumps(envelope(result=text)))
+    os.utime(out, (end, end))
+    if yielded:
+        write_json(yielding.receipt_path(home, key), {'role': role, 'key': key, 'result': 'changed', 'continue': False, 'settled_at': end})
+
+
+def dispatch_state(home, key, state, role='genome'):
+    write_json(home / f'dispatch/{role}.json', dict(role=role, key=key, state=state, detail=''))
+
+
+def test_log_prints_each_wake_once_and_never_repaints(tmp_path):
+    for n in range(5):
+        wake_file(tmp_path, f'wake-genome-{n}', start=T0 + 100 * n, end=T0 + 100 * n + 30, text=f'answer number {n}')
+    dispatch_state(tmp_path, 'wake-genome-4', 'completed')
+    first = '\n'.join(view.log_step(tmp_path, 'genome', T0 + 1000))
+    assert 'answer number 4' in first and 'answer number 2' in first and 'answer number 1' not in first
+    assert 'model claude-haiku-5-5' in first and first.count('══') >= 6      # one header per wake, model in each
+    assert view.log_step(tmp_path, 'genome', T0 + 1005) == []                 # nothing new: nothing printed
+    wake_file(tmp_path, 'wake-genome-5', start=T0 + 600, end=T0 + 630, text='answer number 5')
+    dispatch_state(tmp_path, 'wake-genome-5', 'completed')
+    more = '\n'.join(view.log_step(tmp_path, 'genome', T0 + 1010))
+    assert 'answer number 5' in more and 'answer number 4' not in more
+    log = (tmp_path / 'pane-logs/genome.log').read_text()
+    assert all(f'answer number {n}' in log for n in (2, 3, 4, 5)) and machine_syntax(log) == []
+
+
+def test_running_wake_is_announced_once_then_printed_when_it_settles(tmp_path):
+    wake_file(tmp_path, 'wake-genome-1', start=T0, end=T0 + 30, text='old answer')
+    dispatch_state(tmp_path, 'wake-genome-1', 'completed')
+    view.log_step(tmp_path, 'genome', T0 + 100)
+    wake_file(tmp_path, 'wake-genome-2', start=T0 + 200, end=T0 + 210, text='half written', yielded=False)
+    dispatch_state(tmp_path, 'wake-genome-2', 'started')
+    started = view.log_step(tmp_path, 'genome', T0 + 205)
+    assert len(started) == 1 and '▶ wake started' in started[0] and 'half written' not in started[0]
+    assert view.log_step(tmp_path, 'genome', T0 + 210) == []
+    wake_file(tmp_path, 'wake-genome-2', start=T0 + 200, end=T0 + 240, text='final answer')
+    dispatch_state(tmp_path, 'wake-genome-2', 'completed')
+    done = '\n'.join(view.log_step(tmp_path, 'genome', T0 + 250))
+    assert 'final answer' in done and 'half written' not in done
+
+
+def test_a_restarted_pane_replays_its_log_tail_and_carries_on(tmp_path):
+    for n in range(3):
+        wake_file(tmp_path, f'wake-genome-{n}', start=T0 + 100 * n, end=T0 + 100 * n + 30, text=f'answer number {n}')
+    dispatch_state(tmp_path, 'wake-genome-2', 'completed')
+    view.log_step(tmp_path, 'genome', T0 + 400)
+    replay = '\n'.join(view.log_step(tmp_path, 'genome', T0 + 500, replay=True))     # new tmux, same site
+    assert 'answer number 0' in replay and 'answer number 2' in replay
+    assert view.log_step(tmp_path, 'genome', T0 + 505) == []
+
+
+def test_an_unreadable_log_and_a_missing_site_stay_visible_not_silent(tmp_path):
+    wake_file(tmp_path, 'wake-genome-1', start=T0, end=T0 + 30, text='x')
+    dispatch_state(tmp_path, 'wake-genome-1', 'completed')
+    view.log_step(tmp_path, 'genome', T0 + 100)
+    (tmp_path / 'pane-logs/genome.log').unlink()
+    assert 'log UNKNOWN' in '\n'.join(view.log_step(tmp_path, 'genome', T0 + 110, replay=True))
+    assert 'IDLE / UNKNOWN' in '\n'.join(view.log_step(tmp_path / 'nowhere', 'steward', T0))
+
+
+def test_log_rotates_and_history_limit_is_bounded(tmp_path, monkeypatch):
+    monkeypatch.setattr(view, 'LOG_MAX_BYTES', 100)
+    wake_file(tmp_path, 'wake-genome-1', start=T0, end=T0 + 30, text='a' * 300)
+    dispatch_state(tmp_path, 'wake-genome-1', 'completed')
+    view.log_step(tmp_path, 'genome', T0 + 100)
+    wake_file(tmp_path, 'wake-genome-2', start=T0 + 200, end=T0 + 230, text='b' * 300)
+    dispatch_state(tmp_path, 'wake-genome-2', 'completed')
+    view.log_step(tmp_path, 'genome', T0 + 300)
+    assert (tmp_path / 'pane-logs/genome.log.1').exists() and 'b' * 300 in (tmp_path / 'pane-logs/genome.log').read_text()
+    from mishe_tauftauf import plant_tmux
+    import inspect
+    assert "'history-limit', '3000'" in inspect.getsource(plant_tmux.setup)
