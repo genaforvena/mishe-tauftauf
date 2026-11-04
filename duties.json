@@ -230,6 +230,21 @@
       "resolver": "genome",
       "replaces": [],
       "covers": "every role's top and bottom pane renders as human-readable text: no JSON, dict reprs, escaped newlines, raw epoch numbers or private paths; unrenderable or missing views stay UNKNOWN"
+    },
+    {
+      "name": "push-lag",
+      "command": [
+        "{python}",
+        "{repo}/checks/push-lag.py",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 600,
+      "timeout": 90,
+      "max_age": 900,
+      "resolver": "genome",
+      "replaces": [],
+      "covers": "local main reaches GitHub within two hours: RED when the oldest unpushed commit is older, or main has diverged; UNKNOWN when the remote cannot be read"
     }
   ],
   "retired": [
