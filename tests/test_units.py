@@ -145,3 +145,28 @@ def test_sync_without_enable_installs_files_but_starts_no_trigger(cfg):
     assert (cfg.unit_dir / "mishe-wake-genome.path").exists()
     assert any("daemon-reload" in c for c in calls)
     assert not [c for c in calls if "enable" in c or "start" in c]
+
+
+def test_sync_enables_the_boot_arm_service_and_marks_the_site_as_installed(cfg):
+    calls = []
+    units.sync(cfg, ROLES, runner=calls.append)
+    assert any(c[-1] == "mishe-arm.service" and "enable" in c for c in calls)
+    assert (cfg.home / "units-installed").exists()          # lets `mishe arm` schedule the next-due timer
+
+
+def test_held_install_and_uninstall_leave_no_installed_marker(cfg):
+    units.sync(cfg, ROLES, runner=lambda c: None, enable=False)
+    assert not (cfg.home / "units-installed").exists()
+    units.sync(cfg, ROLES, runner=lambda c: None)
+    units.sync(cfg, [], uninstall=True, runner=lambda c: None)
+    assert not (cfg.home / "units-installed").exists()
+
+
+def test_install_held_then_sync_enables_every_trigger_even_though_files_are_unchanged(cfg):
+    units.sync(cfg, ROLES, runner=lambda c: None, enable=False)       # the held install
+    calls = []
+    report = units.sync(cfg, ROLES, runner=calls.append)              # the start: nothing to write
+    assert report.written == []
+    enabled = {c[-1] for c in calls if "enable" in c}
+    assert "mishe-wake-genome.path" in enabled and "mishe-doctor.timer" in enabled and "mishe-arm.service" in enabled
+    assert (cfg.home / "units-installed").exists()

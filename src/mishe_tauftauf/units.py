@@ -190,9 +190,17 @@ def sync(cfg: Config, roles, *, producers=(), runner=None, uninstall: bool = Fal
         report.removed.append(rel)
     if runner is not None and (report.written or report.removed):
         runner(["systemctl", "--user", "daemon-reload"])
-        for rel in report.written:
-            if enable and rel.endswith((".path", ".timer")):
+    if runner is not None and enable:
+        for rel in sorted(expected):                 # desired state, not the diff: idempotent
+            if rel.endswith((".path", ".timer")):
                 runner(["systemctl", "--user", "enable", "--now", rel])
+            elif rel.endswith("-arm.service"):
+                runner(["systemctl", "--user", "enable", rel])      # re-arms the next-due timer at boot
+    marker = cfg.home / "units-installed"
+    if uninstall or not enable:
+        marker.unlink(missing_ok=True)
+    elif runner is not None:
+        marker.write_text("units installed and enabled by mishe sync\n", encoding="utf-8")
     return report
 
 
