@@ -139,19 +139,33 @@ _MACHINE = (
 )
 
 
+# A wake's answer is the mind's own prose: it may quote a snippet (a process argument, a config line) to explain a
+# fault. Inside it only the quoted-key rule is waived; structure lines, epochs, escapes and private paths still count.
+_ANSWER_OPENS = ('══ model', '── final output')
+_ANSWER_CLOSES = ('Changes in git during this wake', 'Made no commits', 'Changes UNKNOWN', 'Uncommitted in the shared',
+                  '▶ wake started', '══ model', 'IDLE / UNKNOWN')
+_QUOTED_KEY = 'a quoted key (JSON or dict)'
+
+
 def machine_syntax(text: str) -> list[str]:
     """Describe each non-exempt line of a rendered pane that is not human text."""
-    found, raw = [], False
+    found, raw, answer = [], False, False
     for number, line in enumerate(text.splitlines(), 1):
         if line.strip() == RAW_OPEN:
             raw = True
         if raw or line.startswith('UNKNOWN'):
             raw = raw and line.strip() != RAW_CLOSE
             continue
+        if line.startswith(_ANSWER_CLOSES):
+            answer = False
         for pattern, reason in _MACHINE:
+            if answer and reason == _QUOTED_KEY:
+                continue
             if pattern.search(line):
                 found.append(f'line {number}: {reason}: {line.strip()[:80]}')
                 break
+        if line.startswith(_ANSWER_OPENS):
+            answer = True
     return found
 
 

@@ -566,3 +566,19 @@ def test_implausible_file_times_render_as_unknown_not_a_crash(tmp_path):
         assert 'Traceback' not in text and machine_syntax(text) == []
     top = view.render(tmp_path, 'genome', now=T0 + 60)
     assert 'time UNKNOWN' in top and 'Next due:' in top
+
+
+def test_a_mind_quoting_json_in_its_answer_is_prose_but_the_chrome_stays_strict(tmp_path):
+    # Found by the delivery observer: a mind explained a bug by quoting a process's JSON argument inline.
+    quote = 'The daemon argv carried a JSON object ({"label":"claude","pid":187610}) which is the cause.'
+    settled_wake(tmp_path, body=envelope(result=quote))
+    for output in (False, True):
+        text = view.render(tmp_path, 'genome', now=T0 + 60, output=output)
+        assert machine_syntax(text) == []
+    chrome = '══ model claude-haiku-5-5 ══\n' + quote + '\nChanges in git during this wake:\n{"label":"claude"}\n'
+    flagged = machine_syntax(chrome)
+    assert len(flagged) == 1 and 'line 4' in flagged[0]                      # the same snippet outside the answer
+    structure = '══ model x ══\nline one\n{\n  "a": 1\n}\n'
+    assert len(machine_syntax(structure)) >= 2                                # structure lines are never prose
+    log = '══ model x ══\nprose with epoch 1793818396 inside\nMade no commits\n'
+    assert len(machine_syntax(log)) == 1
