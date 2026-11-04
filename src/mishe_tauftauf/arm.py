@@ -11,7 +11,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from . import intentions, signal_store
+from . import intentions, signal_store, units
 
 TIMER_UNIT = "mishe-next-due"
 # Each arm gets its own transient unit name. The due handler is itself a running
@@ -26,12 +26,7 @@ def target(home) -> float | None:
 
 def _pending_timers() -> list[str]:
     """Names of earlier next-due timers (stopping a timer leaves a running service alone)."""
-    listed = subprocess.run(
-        ["systemctl", "--user", "list-units", "--type=timer", "--all", "--plain",
-         "--no-legend", TIMER_GLOB],
-        check=False, capture_output=True, text=True).stdout
-    names = [line.split()[0] for line in listed.splitlines() if line.strip()]
-    return sorted(set(names + [f"{TIMER_UNIT}.timer"]))
+    return sorted(set(units.user_timer_names(TIMER_GLOB) + [f"{TIMER_UNIT}.timer"]))
 
 
 def systemd_scheduler(epoch: float | None, *, command: list[str]) -> None:

@@ -8,6 +8,7 @@ installed files and never reports GREEN on missing or unreadable evidence.
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -140,6 +141,15 @@ def is_plant_unit(name: str) -> bool:
 
 def is_health_wake(unit: str, prefix: str = "mishe") -> bool:
     return unit == f"{prefix}-wake@health.service"
+
+
+def user_timer_names(glob: str) -> list[str]:
+    """Names of user timers matching ``glob``, loaded or not (systemctl output decoded here)."""
+    listed = subprocess.run(
+        ["systemctl", "--user", "list-units", "--type=timer", "--all", "--plain",
+         "--no-legend", glob],
+        check=False, capture_output=True, text=True).stdout
+    return [line.split()[0] for line in listed.splitlines() if line.strip()]
 
 
 def _installed(cfg: Config) -> dict:
