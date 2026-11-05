@@ -217,7 +217,7 @@ def test_pin_import_check_red_on_missing_module_inside_a_subpackage(tmp_path):
 
 
 def test_pin_import_check_resolves_parent_relative_imports_from_the_subpackage(tmp_path):
-    pin = _pin(tmp_path, {"__init__.py": "", "b.py": "", "core/__init__.py": "", "core/x.py": "from ..b import y\nfrom .. import b\n"})
+    pin = _pin(tmp_path, {"__init__.py": "", "b.py": "y = 1\n", "core/__init__.py": "", "core/x.py": "from ..b import y\nfrom .. import b\n"})
     assert units._pin_import_problems(pin) == []
 
 
@@ -278,3 +278,14 @@ def test_pin_import_check_accepts_a_name_the_package_init_exports_but_still_flag
     assert units._pin_import_problems(pin) == []
     pin2 = _pin(tmp_path / "other", {"__init__.py": "VERSION = '1'\n", "a.py": "from . import VERSION, nothing_here\n"})
     assert units._pin_import_problems(pin2) == ["pin a.py: imports missing module nothing_here"]
+
+
+def test_pin_import_check_flags_a_symbol_the_existing_module_lacks_but_not_dynamic_or_conditional_ones(tmp_path):
+    # Independent review of the moving-pin delivery: a stale pin can lack a SYMBOL of an existing module, not only the module.
+    pin = _pin(tmp_path, {"__init__.py": "", "a.py": "from .foo import present, absent\nfrom .cond import maybe\nfrom .dyn import anything\nfrom .star import thing\nfrom .pkg import sub\n",
+                          "foo.py": "def present():\n    pass\n",
+                          "cond.py": "try:\n    import x as maybe\nexcept ImportError:\n    maybe = None\n",
+                          "dyn.py": "def __getattr__(name):\n    return 1\n",
+                          "star.py": "from os.path import *\n",
+                          "pkg/__init__.py": "", "pkg/sub.py": ""})
+    assert units._pin_import_problems(pin) == ["pin a.py: foo does not define absent"]

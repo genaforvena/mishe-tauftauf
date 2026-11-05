@@ -251,30 +251,72 @@ def _pin_import_problems(pythonpath: str) -> list:
                 problems.append(f"pin {rel}: relative import escapes the package")
                 continue
             if node.module:
-                if not has_module(anchor, node.module.split(".")):
+                parts = node.module.split(".")
+                if not has_module(anchor, parts):
                     problems.append(f"pin {rel}: imports missing module {node.module}")
-            else:
+                    continue
+                target = anchor.joinpath(*parts)
+                target_file = target.with_suffix(".py") if target.with_suffix(".py").is_file() else target / "__init__.py"
+                known = _module_names(target_file)
                 for alias in node.names:
-                    if alias.name != "*" and not has_module(anchor, [alias.name]) and alias.name not in _package_exports(anchor / "__init__.py"):
+                    # A name is reported missing only when the target is fully static (no star import, no __getattr__) and the name
+                    # is neither defined/imported there nor a submodule: a stale pin can lack a symbol as well as a module.
+                    if alias.name != "*" and known is not None and alias.name not in known and not has_module(anchor.joinpath(*parts), [alias.name]):
+                        problems.append(f"pin {rel}: {node.module} does not define {alias.name}")
+            else:
+                exported = _module_names(anchor / "__init__.py")
+                for alias in node.names:
+                    if alias.name != "*" and not has_module(anchor, [alias.name]) and (exported is None or alias.name not in exported):
                         problems.append(f"pin {rel}: imports missing module {alias.name}")
     return problems
 
 
-def _package_exports(init: Path) -> set:
-    """Top-level names a package's ``__init__.py`` defines or imports: ``from . import name`` may name one of them, not only a module."""
+def _module_names(path: Path):
+    """Top-level names a module defines or imports (including inside top-level if/try/with/for blocks), or None when that cannot be
+    decided statically (unreadable, a star import or a module ``__getattr__``): unknown is never reported as missing."""
     try:
-        tree = ast.parse(init.read_text(encoding="utf-8"), filename=str(init))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     except (SyntaxError, UnicodeDecodeError, OSError):
-        return set()
-    names = set()
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            names.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
-        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            names.update(t.id for t in targets if isinstance(t, ast.Name))
+        return None
+    names, dynamic = set(), [False]
+
+    def targets(node):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, (ast.Tuple, ast.List)):
+            for item in node.elts:
+                targets(item)
+        elif isinstance(node, ast.Starred):
+            targets(node.value)
+
+    def visit(body):
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.Import):
+                names.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "*":
+                        dynamic[0] = True
+                    names.add(alias.asname or alias.name)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                for target in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+                    targets(target)
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                targets(node.target); visit(node.body); visit(node.orelse)
+            elif isinstance(node, (ast.If, ast.While)):
+                visit(node.body); visit(node.orelse)
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                visit(node.body)
+            elif isinstance(node, ast.Try):
+                visit(node.body); visit(node.orelse); visit(node.finalbody)
+                for handler in node.handlers:
+                    visit(handler.body)
+
+    visit(tree.body)
+    if dynamic[0] or "__getattr__" in names:
+        return None
     return names
 
 
