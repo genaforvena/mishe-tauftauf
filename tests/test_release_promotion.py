@@ -232,3 +232,14 @@ def test_review_binding_rejects_different_committed_release_tree(tree):
     p.bind_reviewed_source(new,reviewed)
     with pytest.raises(ValueError,match="reviewed bytes"):
         p.bind_reviewed_source(before,reviewed)
+
+
+def test_generated_resolver_configuration_is_restored(tree,monkeypatch):
+    from mishe_tauftauf.state_files import write_json
+    repo,home,old,sha=tree
+    resolver=home/"resolvers.generated.json";write_json(resolver,{"old.service":"health"})
+    before={str(path):p.wall_patch.snapshot(path) for path in p.config_paths(home)}
+    write_json(resolver,{"new.service":"genome"})
+    monkeypatch.setattr(p,"reload_units",lambda:None)
+    p.restore_configuration(home,before)
+    assert read_json(resolver)=={"old.service":"health"}

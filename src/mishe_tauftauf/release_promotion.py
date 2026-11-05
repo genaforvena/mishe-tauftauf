@@ -74,6 +74,7 @@ def config_paths(home):
     from .release_boundary import owned_runtime_units
     # A shared filename prefix does not grant ownership of host or peer units.
     return [Path(home)/"bin/mishe", Path(home)/"coordination-mode.json", Path(home)/"units-installed",
+            Path(home)/"resolvers.generated.json",
             *owned_runtime_units(home, unit_dir)]
 
 
