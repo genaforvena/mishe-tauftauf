@@ -172,3 +172,12 @@ def test_install_held_then_sync_enables_every_trigger_even_though_files_are_unch
     enabled = {c[-1] for c in calls if "enable" in c}
     assert "mishe-wake-genome.path" in enabled and "mishe-doctor.timer" in enabled and "mishe-arm.service" in enabled
     assert (cfg.home / "units-installed").exists()
+
+
+def test_outer_wake_lifetime_covers_both_queue_acquisitions_and_engine(cfg):
+    import re
+    from mishe_tauftauf import runtime_cli
+    svc=units.render(cfg,ROLES)["mishe-wake@.service"]
+    lifetime=int(re.search(r"TimeoutStartSec=(\d+)",svc).group(1))
+    worst_queue=2*runtime_cli.WAKE_TIMEOUT
+    assert lifetime>=worst_queue+runtime_cli.WAKE_TIMEOUT+units.SLACK

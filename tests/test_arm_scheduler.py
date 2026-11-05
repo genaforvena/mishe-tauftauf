@@ -97,3 +97,12 @@ def test_an_imminent_target_is_not_pushed_out_by_the_backoff(monkeypatch):
     arm.systemd_scheduler(now + 0.4, command=["python", "due"])
     moment = datetime.strptime(calendar_of(fake), "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
     assert 0 <= moment.timestamp() - now <= 3
+
+
+def test_scheduled_return_uses_callers_source_pin_and_plant_slice(monkeypatch):
+    from pathlib import Path
+    fake=FakeRun();monkeypatch.setattr(arm.subprocess,"run",fake)
+    arm.systemd_scheduler(2_000_000_000.0,command=["python","due"])
+    call=next(c for c in fake.calls if c[0]=="systemd-run")
+    assert "--setenv=PYTHONPATH="+str(Path(arm.__file__).resolve().parents[1]) in call
+    assert "--slice=mishe-plants.slice" in call

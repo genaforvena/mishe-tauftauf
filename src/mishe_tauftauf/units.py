@@ -85,7 +85,9 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         f"[Unit]\nDescription=Mishe wake %i\n{failed}",
         "[Service]\nType=oneshot\nUMask=0077\n" + f"WorkingDirectory={cfg.repo}\n" + _env(cfg)
         + f"ExecStart={_cmd(cfg, 'wake', '%i', '--repo', str(cfg.repo), '--timeout', str(WAKE_TIMEOUT))}\n"
-        f"TimeoutStartSec={WAKE_TIMEOUT + SLACK}\nTimeoutStopSec=20\nKillMode=control-group\n"
+        # Initial serialization check and dispatch/reconcile each have a
+        # bounded lock wait. The engine retains its full configured budget.
+        f"TimeoutStartSec={3 * WAKE_TIMEOUT + SLACK}\nTimeoutStopSec=20\nKillMode=control-group\n"
         "MemoryAccounting=yes\nMemoryMax=2G\nTasksMax=256\nCPUWeight=50\nIOWeight=50\n")
     registry = signal_store.registry(cfg.home)
     for role in sorted(roles):

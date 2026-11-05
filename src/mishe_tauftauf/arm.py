@@ -7,6 +7,7 @@ silent signals (an edge subscribers are woken by) and arms the next one.
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 import time
 import uuid
 from datetime import datetime, timezone
@@ -46,6 +47,8 @@ def systemd_scheduler(epoch: float | None, *, command: list[str]) -> None:
     moment = datetime.fromtimestamp(when, timezone.utc)
     unit = f"{TIMER_UNIT}-{uuid.uuid4().hex[:12]}"
     subprocess.run(["systemd-run", "--user", f"--unit={unit}",
+                    "--slice=mishe-plants.slice",
+                    "--setenv=PYTHONPATH=" + str(Path(__file__).resolve().parents[1]),
                     f"--on-calendar={moment:%Y-%m-%d %H:%M:%S} UTC",
                     "--timer-property=AccuracySec=1s", "--collect", *command],
                    check=True, capture_output=True)
