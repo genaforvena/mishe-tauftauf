@@ -79,3 +79,11 @@ def test_the_mail_reader_returns_a_natural_addressed_message_the_wake_was_owed_f
     heads = [body.splitlines()[0] for _, body in wake.default_mail_reader(site, "genome", 0)]
     assert heads == ["health to genome: natural prose DM", "health to genome: second"]     # the inbox wake finds its messages
     assert [body.splitlines()[0] for _, body in wake.default_mail_reader(site, "health", 0)] == ["[dm] to=health"]
+
+
+def test_natural_prose_from_a_mind_slash_role_source_never_wakes_that_same_role(site):
+    # Review of the moving-pin delivery: wall.addressed treats ROLE and mind/ROLE as the sender; so must the natural-prose branch.
+    _append(site, "mind/senses", "to senses: note to self")
+    _append(site, "mind/senses", "mind/senses to docs: please add a bullet")
+    assert owed.check(site, "senses", now=1.0).reasons == []
+    assert owed.check(site, "docs", now=1.0).reasons == ["inbox"]
