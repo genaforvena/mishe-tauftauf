@@ -59,6 +59,11 @@ def report(home, *, start, end):
                     faults.append(entry); inventory.append(str(path.relative_to(home)))
             fault_facts = dict(fresh=sum(x["novel"] for x in faults), repeated=sum(not x["novel"] for x in faults),
                                coverage="KNOWN", scope="observed failed CLI callbacks")
+            from . import signal_store
+            if "work-accounting" in signal_store.registry(home):
+                accounting = signal_store.read(home, "work-accounting", now=end)
+                if accounting.state != "OK" or accounting.value != "GREEN":
+                    fault_facts["coverage"] = "UNKNOWN"
         if covered and experiment.get("recovery_events_version") == 1:
             releases = []
             for path in sorted((Path(home)/"work/releases").glob("*.json")):

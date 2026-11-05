@@ -101,3 +101,14 @@ def test_repeated_failures_do_not_keep_touching_the_resolvers_inbox(tmp_path):
     owed.advance(tmp_path, "health", owed.check(tmp_path, "health", now=NOW + 1))       # health has read it
     failure.report(tmp_path, unit, now=NOW + 60, notify=lambda *a: None)
     assert "inbox" not in owed.check(tmp_path, "health", now=NOW + 61).reasons
+
+
+def test_optional_work_accounting_failure_preserves_primary_red_and_routes_gap(tmp_path,monkeypatch):
+    def denied(*a,**kw):raise PermissionError("work accounting denied")
+    monkeypatch.setattr(failure,"write_json",denied)
+    sent=[]
+    failure.report(tmp_path,"check.service",now=NOW,notify=lambda *a:sent.append(a))
+    assert store.read(tmp_path,"failed-check-service",now=NOW).value=="RED"
+    assert store.read(tmp_path,"work-accounting",now=NOW).value=="RED"
+    assert any(role=="genome" and "UNKNOWN" in text for role,text in sent)
+    assert any(role=="health" for role,text in sent)

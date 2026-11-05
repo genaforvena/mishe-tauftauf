@@ -39,22 +39,40 @@ def report(home, unit: str, *, now: float, notify=None, signature="unit-failed")
     if role not in roles.declared(home) and roles.declared(home):
         role = "steward" if "steward" in roles.declared(home) else FALLBACK_RESOLVER
     incident_path = home / "work/incidents" / f"{name}.json"
+    accounting_error = None
     try:
         previous = read_json(incident_path) or {}
-    except (OSError, ValueError):
+        if not isinstance(previous, dict) or not isinstance(previous.get("count", 0), int):
+            raise ValueError("malformed incident accounting")
+    except (OSError, ValueError) as exc:
         previous = {}
+        accounting_error = str(exc)
     fresh = previous.get("signature", "unit-failed") != signature
     current = signal_store.read(home, name, now=now) if name in signal_store.registry(home) else None
     try:
+        if accounting_error:
+            raise ValueError(accounting_error)  # retain malformed original bytes
         experiment = read_json(home/"work/experiment/manifest.json")
-    except (OSError, ValueError):
-        experiment = None
-    if isinstance(experiment, dict) and experiment.get("fault_events_version") == 1 and experiment["start"] <= now < experiment["end"]:
-        novel = fresh or current is None or current.state != signal_store.OK or current.value != "RED"
-        write_json(home/"work/fault-events"/f"{int(now*1e9)}-{name}.json",
-                   dict(version=1, at=now, unit=unit, role=role, signature=signature, novel=novel))
-    write_json(incident_path, dict(signature=signature, count=previous.get("count", 0) + 1,
-                                  first_seen=previous.get("first_seen", now), last_seen=now))
+        if isinstance(experiment, dict) and experiment.get("fault_events_version") == 1:
+            if not all(isinstance(experiment.get(f), (int, float)) for f in ("start", "end")):
+                raise ValueError("malformed experiment accounting window")
+            if experiment["start"] <= now < experiment["end"]:
+                novel = fresh or current is None or current.state != signal_store.OK or current.value != "RED"
+                write_json(home/"work/fault-events"/f"{int(now*1e9)}-{name}.json",
+                           dict(version=1, at=now, unit=unit, role=role, signature=signature, novel=novel))
+        write_json(incident_path, dict(signature=signature, count=previous.get("count", 0) + 1,
+                                      first_seen=previous.get("first_seen", now), last_seen=now))
+    except (OSError, ValueError, TypeError) as exc:
+        accounting_error = str(exc)
+    if accounting_error:
+        gap = "work-accounting"
+        if gap not in signal_store.registry(home):
+            signal_store.register(home, gap, max_age=300, subscribers=["genome"])
+        edge = signal_store.observe(home, gap, "RED", now=now, source="failure-accounting")
+        if edge:
+            (notify or (lambda r, t: default_notify(home, r, t)))("genome", "Work accounting UNKNOWN; primary failure routing continues. Repair within six hours: " + accounting_error)
+            owed.touch_inbox(home, "genome")
+            intentions.add(home, "genome", "work-accounting", due=now+21600, note="Repair lost accounting coverage; preserve original primary fault")
     # A standing fault is announced once. While its signal is already RED and a re-offer is still pending, every
     # further failed run (a producer that fails each minute) adds nothing: the re-offer returns it to the resolver at
     # the bounded interval. Without this each failure appended a DM and woke the resolver every couple of minutes.
