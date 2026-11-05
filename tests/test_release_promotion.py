@@ -142,3 +142,39 @@ def test_async_review_cannot_overwrite_completed_revert(tree,monkeypatch):
     assert final["phase"]=="reverted"
     assert final["revert_probe"]["output"]=="restored"
     assert final["review"]["clear"] is True
+
+
+def test_revert_rereads_review_completed_before_lock_acquisition(tree,monkeypatch):
+    from contextlib import contextmanager
+    from mishe_tauftauf.state_files import write_json
+    repo,home,old,sha=tree;p.materialize(home,repo,old)
+    identity="inverse-race";path=p.record_path(home,identity)
+    write_json(path,dict(id=identity,sha=sha,previous=old,phase="delivered",config_before={},config_after={},observe_argv=["probe"],review_pending=True))
+    @contextmanager
+    def lock(*args):
+        current=read_json(path);current.update(review_pending=False,review=dict(clear=True));write_json(path,current)
+        yield
+    monkeypatch.setattr(p,"delivery_lock",lock)
+    monkeypatch.setattr(p,"config_paths",lambda *a:[]);monkeypatch.setattr(p,"reload_units",lambda:None)
+    monkeypatch.setattr(p.boundary,"invoke_arm_consumer",lambda *a:dict(result="success"))
+    monkeypatch.setattr(p,"run",lambda *a,**k:dict(code=0,output="restored"))
+    r=p.revert(home,identity)
+    assert r["phase"]=="reverted" and r["review_pending"] is False and r["review"]["clear"]
+
+
+def test_explicit_retry_after_reviewer_error_preserves_failed_attempt(tree,monkeypatch):
+    from mishe_tauftauf.state_files import write_json
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha);p.materialize(home,repo,old)
+    identity="review-retry"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",source=str(source),paths=["docs/page.md"],check=dict(output="pass"),review_pending=True))
+    calls=[]
+    def reviewer(*args):
+        calls.append(1)
+        if len(calls)==1: raise ValueError("temporary outage")
+        return dict(clear=True)
+    monkeypatch.setattr(p.wall_patch,"review",reviewer)
+    assert p.review(home,identity)["phase"]=="review-pending"
+    assert p.review(home,identity)["phase"]=="reviewed"
+    assert len(calls)==2
+    assert list((home/"work/reviews").glob("*.failed-attempt.json"))

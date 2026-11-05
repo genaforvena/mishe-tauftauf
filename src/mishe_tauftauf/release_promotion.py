@@ -204,9 +204,9 @@ def record_path(home, identity):
 
 def revert(home, identity):
     path = record_path(home, identity)
-    record = read_json(path)
-    if not record or record["phase"] != "delivered": raise ValueError("revert needs a delivered release")
     with delivery_lock(home):
+        record = read_json(path)
+        if not record or record["phase"] != "delivered": raise ValueError("revert needs a delivered release")
         for name, value in record.get("config_after", {}).items():
             if wall_patch.snapshot(Path(name)) != value: raise ValueError("consumer configuration changed since promotion")
         try:
@@ -229,9 +229,15 @@ def review(home, identity):
         return dict(phase="reviewed", id=identity)
     queued = Path(home)/"work/reviews"/f"{identity}.result.json"
     if queued.exists():
-        merge_review(home, queued)
-        current = read_json(path)
-        return dict(phase="reviewed" if current.get("review_pending") is False else "review-pending", id=identity)
+        prior = read_json(queued)
+        if prior.get("merged") and "review_error" in prior.get("result", {}):
+            # An explicit retry is a new attempt; retain the unavailable result.
+            archive = queued.parent/f"{identity}-{time.time_ns()}.failed-attempt.json"
+            write_json(archive, prior)
+        else:
+            merge_review(home, queued)
+            current = read_json(path)
+            return dict(phase="reviewed" if current.get("review_pending") is False else "review-pending", id=identity)
     source=Path(record["source"]); old=Path(home)/"releases"/record["previous"]
     patch=dict(runtime=str(old),phase="ordinary-delivered-awaiting-review",test=record["check"],files={})
     log=Path(home)/"work/reviews"/f"{record['sha']}.test.txt"; log.parent.mkdir(parents=True,exist_ok=True)
