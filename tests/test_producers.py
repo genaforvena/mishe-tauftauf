@@ -98,6 +98,12 @@ def test_ci_pending_is_no_observation_and_unknown_is_a_failure(tmp_path):
     assert store.read(tmp_path, "ci", now=NOW + 5000).state == "UNKNOWN"
 
 
+def test_ci_unknown_failure_carries_the_reader_detail(tmp_path):
+    store.register(tmp_path, "ci", max_age=900, subscribers=["genome"])
+    with pytest.raises(producers.ObservationFailed, match="CI state 'unknown': gh: rate limited"):
+        producers.produce(tmp_path, "ci", now=NOW, read=lambda h: {"state": "unknown", "detail": "gh: rate limited"})
+
+
 def test_tape_lock_is_green_when_free_and_red_when_held_throughout(tmp_path):
     import fcntl
     (tmp_path / "chat.log").write_text("")
@@ -105,3 +111,18 @@ def test_tape_lock_is_green_when_free_and_red_when_held_throughout(tmp_path):
     with (tmp_path / ".seed.lock").open("a+") as held:
         fcntl.flock(held.fileno(), fcntl.LOCK_EX)
         assert producers.tape_lock(tmp_path, now=NOW, attempts=3, pause=0.01) == "RED"
+
+
+def test_a_check_that_cannot_start_or_times_out_journals_why(home, capsys):
+    producers.run(home, "devto", [PY, "-c", "pass"], now=NOW, timeout=10)
+    assert producers.run(home, "devto", ["/nonexistent/check"], now=NOW + 1, timeout=10) == 2
+    assert "devto: not run: EngineNotStarted" in capsys.readouterr().err
+    assert producers.run(home, "devto", [PY, "-c", "import time; time.sleep(30)"], now=NOW + 2, timeout=0.5) == 2
+    assert "devto: not run: EngineTimeout: exceeded 0.5s" in capsys.readouterr().err
+
+
+def test_cannot_tell_exit_journals_the_check_output(home, capsys):
+    producers.run(home, "devto", [PY, "-c", "pass"], now=NOW, timeout=10)
+    assert producers.run(home, "devto", [PY, "-c", "import sys; print('guard row X'); sys.exit(3)"],
+                         now=NOW + 1, timeout=10) == 2
+    assert "exit=3" in capsys.readouterr().err

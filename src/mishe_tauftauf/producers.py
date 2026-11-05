@@ -9,6 +9,7 @@ turns a broken check into GREEN or into a quieter RED.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from . import signal_store, units
@@ -26,11 +27,15 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
     scratch = detail.with_suffix(".detail.tmp")
     try:
         code = run_bounded(command, env=dict(os.environ), cwd=Path(home), timeout=timeout, stdout_to=scratch)
-    except (EngineNotStarted, EngineTimeout):
+    except (EngineNotStarted, EngineTimeout) as exc:
         scratch.unlink(missing_ok=True)
+        # Not-started (fork/exec failure) and timeout otherwise leave no trace in the journal.
+        print(f"mishe: {name}: not run: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     os.replace(scratch, detail)
     if code != 0 and code not in red_codes:
+        # The detail file is overwritten by the next run, so the journal carries the check's output for this failure.
+        print(f"mishe: {name}: exit={code} detail={detail.read_bytes()[:DETAIL_BYTES]!r}", file=sys.stderr)
         return 2            # a crash or "cannot tell" (1, 3, 127, a signal) is not an observation
     signal_store.observe(home, name, "GREEN" if code == 0 else "RED", now=now, source=f"run:{command[0]}")
     return 0
@@ -54,11 +59,13 @@ def ci(home, *, now: float, read=None) -> str | None:
     """GitHub Actions for the current remote commit: pass GREEN, fail RED, pending/unknown no reading."""
     if read is None:
         from .ci_watch import read
-    state = read(home)["state"]
+    reading = read(home)
+    state = reading["state"]
     if state == "pending":
         return None
     if state not in ("pass", "fail"):
-        raise ObservationFailed(f"CI state {state!r}")
+        # The reader's detail (gh/git error text, or the missing/unfinished run) is the only cause on record.
+        raise ObservationFailed(f"CI state {state!r}: {reading.get('detail', 'no detail')}")
     return "GREEN" if state == "pass" else "RED"
 
 
