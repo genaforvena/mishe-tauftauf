@@ -37,8 +37,12 @@ def materialize(home, repo, sha):
 
 
 def bind_reviewed_source(source, record):
+    # Git preserves content and executable status, not checkout read/write bits.
+    # Runtime replacement/recovery still binds complete snapshots separately.
+    def git_snapshot(value):
+        return None if value is None else (value["bytes"], bool(value["mode"] & 0o111))
     for name, values in record["files"].items():
-        if wall_patch.snapshot(Path(source)/name) != values["after"]:
+        if git_snapshot(wall_patch.snapshot(Path(source)/name)) != git_snapshot(values["after"]):
             raise ValueError(f"committed release differs from reviewed bytes: {name}")
 
 

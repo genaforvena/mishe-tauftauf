@@ -279,3 +279,15 @@ def test_failed_explicit_revert_remains_unknown_in_checkpoint_metrics(tree,monke
     write_json(home/"work/experiment/manifest.json",dict(version=1,start=0,end=86400,recovery_events_version=1))
     facts=work_metrics.report(home,start=0,end=200)["reverts_rework"]
     assert facts["explicit_reverts"]==0 and facts["failed_recoveries"]==1 and facts["coverage"]=="UNKNOWN"
+
+
+def test_review_binding_uses_git_executable_mode_with_mixed_checkout_permissions(tree):
+    repo,home,old,sha=tree
+    page=repo/"docs/page.md"; page.chmod(0o600)
+    reviewed=dict(files={"docs/page.md":dict(after=p.wall_patch.snapshot(page))})
+    source=p.materialize(home,repo,sha)
+    (source/"docs/page.md").chmod(0o664)
+    p.bind_reviewed_source(source,reviewed)
+    (source/"docs/page.md").chmod(0o775)
+    with pytest.raises(ValueError,match="reviewed bytes"):
+        p.bind_reviewed_source(source,reviewed)
