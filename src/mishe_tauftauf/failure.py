@@ -47,7 +47,6 @@ def report(home, unit: str, *, now: float, notify=None, signature="unit-failed")
     except (OSError, ValueError) as exc:
         previous = {}
         accounting_error = str(exc)
-    fresh = previous.get("signature", "unit-failed") != signature
     # Every distinct failure mode this incident has shown. A unit that alternates between two modes (exit-code, then
     # start-limit-hit, then exit-code) must not look new on each alternation: 2026-11-05 host-capacity did exactly that
     # and re-announced itself to Health every two minutes although its signal stayed RED with a re-offer pending.
@@ -63,7 +62,7 @@ def report(home, unit: str, *, now: float, notify=None, signature="unit-failed")
             if not all(isinstance(experiment.get(f), (int, float)) for f in ("start", "end")):
                 raise ValueError("malformed experiment accounting window")
             if experiment["start"] <= now < experiment["end"]:
-                novel = fresh or current is None or current.state != signal_store.OK or current.value != "RED"
+                novel = unseen or current is None or current.state != signal_store.OK or current.value != "RED"
                 write_json(home/"work/fault-events"/f"{int(now*1e9)}-{name}.json",
                            dict(version=1, at=now, unit=unit, role=role, signature=signature, novel=novel))
         write_json(incident_path, dict(signature=signature, signatures=(seen_modes + [signature] if signature not in seen_modes else seen_modes),

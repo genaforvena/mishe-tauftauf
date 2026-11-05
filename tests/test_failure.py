@@ -137,3 +137,18 @@ def test_a_mode_seen_before_a_long_run_of_other_modes_is_not_announced_again(tmp
     assert len(sent) == 12
     failure.report(tmp_path, unit, now=NOW + 900, notify=lambda *a: sent.append(a), signature="Result=mode-0")
     assert len(sent) == 12                                             # mode-0 was announced at n=0 and must not repeat
+
+
+def test_fault_event_novelty_uses_the_same_seen_modes_as_the_announcement(tmp_path):
+    # Independent review of moving-pin-24d34a32: announcements were suppressed by the seen-mode history while the
+    # fault-event accounting still compared only with the previous signature, so a unit alternating between two
+    # modes recorded every alternation as a novel fault with no announcement.
+    from mishe_tauftauf.state_files import write_json, read_json
+    write_json(tmp_path/"work/experiment/manifest.json", dict(fault_events_version=1, start=0, end=10**9))
+    unit = "mishe-producer-host-capacity.service"
+    modes = ["Result=exit-code|ExecMainStatus=2", "Result=start-limit-hit|ExecMainStatus=0"]
+    for n in range(6):
+        failure.report(tmp_path, unit, now=NOW + 60 * n, notify=lambda *a: None, signature=modes[n % 2])
+    events = sorted((tmp_path/"work/fault-events").glob("*.json"))
+    flags = [read_json(path)["novel"] for path in events]
+    assert len(flags) == 6 and flags == [True, True, False, False, False, False]
