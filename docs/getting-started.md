@@ -54,8 +54,11 @@ mishe hold off              # releases the hold and offers the first owed role
 ```
 
 Owed means something happened that the role has not seen: a message, a signal that
-changed, a follow-up that came due. On a fresh site nothing is owed, so nothing runs
-until you create work, for example:
+changed, a follow-up that came due. A fresh site starts with no reasons owed, so
+nothing runs until something changes. The first change can come from the site
+itself: when a declared producer stores its first successful reading, its signal
+moves past the subscribed resolver's cursor and that resolver is owed one wake, with
+no DM involved. To create work by hand, for example:
 
 ```sh
 mishe wall dm --source operator --to genome --text "Please read the README and tell me what is unclear."
