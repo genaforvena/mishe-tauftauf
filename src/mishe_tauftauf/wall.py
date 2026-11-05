@@ -867,7 +867,10 @@ def addressed(entry, role: str) -> bool:
         decision = re.match(r"\[permission\] id=\S+ decision=(?:granted|revoked) owner=([A-Za-z0-9._:/-]+)(?:\s|$)", first)
         if decision:
             return decision.group(1) == role
-    return entry.source not in {role, f"mind/{role}"} and first == f"[dm] to={role}"
+    # One definition of "addressed" for waking AND reading: the canonical [dm] to=ROLE line, or natural prose that names this role
+    # ("health to genome: ..."). A wake whose message the reader cannot find would be a new useless wake.
+    from .wall_text import dm_recipient
+    return entry.source not in {role, f"mind/{role}"} and dm_recipient(entry.body, entry.source, (role,)) == role
 
 
 def context(home: Path, role: str) -> str:

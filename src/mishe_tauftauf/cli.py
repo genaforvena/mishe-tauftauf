@@ -87,7 +87,8 @@ def cmd_append(args) -> int:
     entry = Feed(args.home).append(args.source, text)
     from .owed import touch_inbox
     from .wall_text import dm_recipient
-    if recipient := dm_recipient(text, args.source):
+    from .roles import declared
+    if recipient := dm_recipient(text, args.source, declared(args.home)):
         touch_inbox(args.home, recipient)     # an addressed DM owes its recipient a wake, as wall dm does
     print(entry.sequence)
     return 0

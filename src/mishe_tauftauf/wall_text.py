@@ -75,18 +75,24 @@ def ends_with_newline(text: str) -> bool:
     return text[-1:] == "\n"
 
 
-def dm_recipient(text: str, source: str) -> str | None:
-    """The recipient of an addressed ``[dm] to=ROLE`` first line, or None.
+def dm_recipient(text: str, source: str, roles=()) -> str | None:
+    """The recipient of an addressed first line, or None.
 
-    Mirrors ``wall.addressed``: the first line must be exactly ``[dm] to=ROLE``
-    with a valid slug, and the sender must not address itself. ``append`` uses
-    it so an addressed DM written through the plain CLI wakes its recipient
-    like ``wall dm``.
+    Canonical form, exactly as ``wall.addressed``: the first line is ``[dm] to=ROLE`` with a valid slug and the
+    sender does not address itself. Minds also write natural addressed prose ("health to genome: ...", "To genome: ...");
+    2026-11-05 Health's eight such messages to an idle Genome never woke it. That form addresses a recipient only when it
+    names one of ``roles`` (declared roles), so ordinary prose beginning with "to" never touches an inbox.
+    ``append`` uses it so a DM written through the plain CLI wakes its recipient like ``wall dm``.
     """
     from .observations import validate_slug
     first = text.splitlines()[0] if text else ""
     match = re.fullmatch(r"\[dm\] to=(\S+)", first)
-    if match is None or match.group(1) in {source, f"mind/{source}"}:
+    if match is None:
+        natural = re.match(rf"(?:{re.escape(source)}\s+)?to[=\s]\s*([a-z][a-z0-9-]*)(?![\w/-])", first, re.IGNORECASE)   # a malformed [dm] line stays rejected
+        if natural is not None and natural.group(1).lower() in set(roles) and natural.group(1).lower() != source:
+            return natural.group(1).lower()
+        return None
+    if match.group(1) in {source, f"mind/{source}"}:
         return None
     try:
         validate_slug(match.group(1))
