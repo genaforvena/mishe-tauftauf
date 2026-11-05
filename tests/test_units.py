@@ -193,6 +193,7 @@ def _pin(tmp_path, files):
     pkg = tmp_path / "pin" / "mishe_tauftauf"
     pkg.mkdir(parents=True)
     for name, text in files.items():
+        (pkg / name).parent.mkdir(parents=True, exist_ok=True)
         (pkg / name).write_text(text, encoding="utf-8")
     return str(tmp_path / "pin")
 
@@ -207,6 +208,22 @@ def test_pin_import_check_red_on_missing_module_even_when_lazy(tmp_path):
     pin = _pin(tmp_path, {"__init__.py": "", "a.py": "def f():\n    from .gone import g\n"})
     problems = units._pin_import_problems(pin)
     assert problems == ["pin a.py: imports missing module gone"]
+
+
+def test_pin_import_check_red_on_missing_module_inside_a_subpackage(tmp_path):
+    # Review of 29e21834+: the scan was top-level only, so a stale subpackage (core/) passed the doctor check.
+    pin = _pin(tmp_path, {"__init__.py": "", "core/__init__.py": "", "core/x.py": "from ..gone import g\n"})
+    assert units._pin_import_problems(pin) == ["pin core/x.py: imports missing module gone"]
+
+
+def test_pin_import_check_resolves_parent_relative_imports_from_the_subpackage(tmp_path):
+    pin = _pin(tmp_path, {"__init__.py": "", "b.py": "", "core/__init__.py": "", "core/x.py": "from ..b import y\nfrom .. import b\n"})
+    assert units._pin_import_problems(pin) == []
+
+
+def test_pin_import_check_red_when_a_relative_import_escapes_the_package(tmp_path):
+    pin = _pin(tmp_path, {"__init__.py": "", "a.py": "from ... import outside\n"})
+    assert units._pin_import_problems(pin) == ["pin a.py: relative import escapes the package"]
 
 
 def test_pin_import_check_red_when_package_absent(tmp_path):

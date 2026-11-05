@@ -228,27 +228,35 @@ def _pin_import_problems(pythonpath: str) -> list:
     if not (pkg / "__init__.py").is_file():
         return [f"pin {pythonpath}: mishe_tauftauf package missing"]
 
-    def has_module(parts) -> bool:
-        base = pkg.joinpath(*parts)
+    def has_module(base_dir: Path, parts) -> bool:
+        base = base_dir.joinpath(*parts)
         return base.with_suffix(".py").is_file() or (base / "__init__.py").is_file()
 
     problems = []
-    for src in sorted(pkg.glob("*.py")):
+    for src in sorted(pkg.rglob("*.py")):
+        rel = src.relative_to(pkg)
         try:
             tree = ast.parse(src.read_text(encoding="utf-8"), filename=str(src))
         except (SyntaxError, UnicodeDecodeError, OSError) as exc:
-            problems.append(f"pin {src.name}: unreadable ({type(exc).__name__})")
+            problems.append(f"pin {rel}: unreadable ({type(exc).__name__})")
             continue
         for node in ast.walk(tree):
-            if not (isinstance(node, ast.ImportFrom) and node.level == 1):
+            if not (isinstance(node, ast.ImportFrom) and node.level >= 1):
+                continue
+            # A relative import resolves from the file's own package, one directory up per extra dot.
+            anchor = src.parent
+            for _ in range(node.level - 1):
+                anchor = anchor.parent
+            if not anchor.is_relative_to(pkg):
+                problems.append(f"pin {rel}: relative import escapes the package")
                 continue
             if node.module:
-                if not has_module(node.module.split(".")):
-                    problems.append(f"pin {src.name}: imports missing module {node.module}")
+                if not has_module(anchor, node.module.split(".")):
+                    problems.append(f"pin {rel}: imports missing module {node.module}")
             else:
                 for alias in node.names:
-                    if alias.name != "*" and not has_module([alias.name]):
-                        problems.append(f"pin {src.name}: imports missing module {alias.name}")
+                    if alias.name != "*" and not has_module(anchor, [alias.name]):
+                        problems.append(f"pin {rel}: imports missing module {alias.name}")
     return problems
 
 
