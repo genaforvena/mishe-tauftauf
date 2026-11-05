@@ -189,3 +189,23 @@ def test_config_inventory_excludes_host_guards_and_other_sites(tmp_path):
     (unitdir/"mishe-owned.service").write_text(MARKER+f"\nEnvironment=MISHE_SEED_HOME={h}\n")
     (unitdir/"mishe-owned.timer").write_text(MARKER+"\nUnit=mishe-owned.service\n")
     assert {p.name for p in owned_runtime_units(h,unitdir)}=={"mishe-owned.service","mishe-owned.timer"}
+
+
+def test_reapply_same_sha_reuses_independent_review_for_new_delivery(tree,monkeypatch):
+    from mishe_tauftauf.state_files import write_json
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha);p.materialize(home,repo,old)
+    for identity,phase in (("first","reverted"),("second","delivered")):
+        write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase=phase,source=str(source),
+            paths=["docs/page.md"],check=dict(output="pass"),review_pending=True))
+    launched=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:launched.append(argv))
+    p.enqueue_review(home,read_json(p.record_path(home,"first")))
+    p.enqueue_review(home,read_json(p.record_path(home,"second")))
+    calls=[]
+    monkeypatch.setattr(p.wall_patch,"review",lambda *a:calls.append(1) or dict(clear=True))
+    p.review(home,"first")
+    p.merge_reviews(home)
+    assert len(launched)==1 and len(calls)==1
+    assert read_json(p.record_path(home,"second"))["review_pending"] is False
+    assert read_json(p.record_path(home,"first"))["phase"]=="reverted"

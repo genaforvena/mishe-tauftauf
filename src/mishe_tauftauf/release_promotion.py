@@ -110,13 +110,27 @@ def activate(home, repo, source, sha):
 
 def enqueue_review(home, record):
     root = Path(home)/"work/reviews"; root.mkdir(parents=True, exist_ok=True)
-    path = root/f"{record['sha']}.json"
+    path = review_queue_path(home, record)
     if path.exists():
+        queue = read_json(path)
+        identities = queue.get("release_ids", [queue["release_id"]])
+        if record["id"] not in identities:
+            identities.append(record["id"])
+        write_json(path, dict(queue, release_ids=identities))
+        if "review" in queue.get("result", {}):
+            write_json(root/f"{record['id']}.result.json", dict(id=record["id"], result=queue["result"], merged=False))
         return
-    write_json(path, dict(sha=record["sha"], release_id=record["id"], state="pending"))
-    subprocess.run(["systemd-run", "--user", "--collect", f"--unit=mishe-release-review-{record['sha'][:12]}",
+    write_json(path, dict(sha=record["sha"], release_id=record["id"], release_ids=[record["id"]], state="pending"))
+    unit_key = record["sha"][:12] + ("-" + record["previous"][:12] if record.get("previous") else "")
+    subprocess.run(["systemd-run", "--user", "--collect", f"--unit=mishe-release-review-{unit_key}",
                     sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "release", "review", "--id", record["id"]],
                    env=dict(os.environ, PYTHONPATH=str(Path(record["source"])/"src")), capture_output=True, timeout=15, check=True)
+
+
+def review_queue_path(home, record):
+    # The same SHA from a different base has a different scoped diff to read.
+    key = record["sha"] + ("-" + record["previous"] if record.get("previous") else "")
+    return Path(home)/"work/reviews"/f"{key}.json"
 
 
 def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=run,
@@ -224,7 +238,8 @@ def revert(home, identity):
 
 def review(home, identity):
     path = record_path(home,identity); record=read_json(path)
-    if not record or record["phase"] != "delivered": raise ValueError("review needs delivered release")
+    if not record or record["phase"] not in ("delivered", "reverted"):
+        raise ValueError("review needs a delivered or reverted committed release")
     if record.get("review_pending") is False:
         return dict(phase="reviewed", id=identity)
     queued = Path(home)/"work/reviews"/f"{identity}.result.json"
@@ -281,6 +296,15 @@ def merge_review(home, queued):
             elif "review_error" in result:
                 current["review_error"] = result["review_error"]
             write_json(path, current)
+            shared_path = review_queue_path(home, current)
+            shared = read_json(shared_path)
+            if shared is not None:
+                shared.update(result=result, state="reviewed" if "review" in result else "unavailable")
+                write_json(shared_path, shared)
+                for identity in shared.get("release_ids", [shared["release_id"]]):
+                    target = shared_path.parent/f"{identity}.result.json"
+                    if identity != outcome["id"] and not target.exists():
+                        write_json(target, dict(id=identity, result=result, merged=False))
             write_json(queued, dict(outcome, merged=True))
     except ValueError as exc:
         # Busy dispatch is an expected pending result; malformed evidence stays
