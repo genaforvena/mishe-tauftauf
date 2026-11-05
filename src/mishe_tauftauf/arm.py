@@ -24,7 +24,8 @@ OVERDUE_RETRY_SECONDS = 120.0
 
 
 def target(home) -> float | None:
-    times = [t for t in (intentions.next_due(home), signal_store.next_expiry(home)) if t is not None]
+    from . import work_state
+    times = [t for t in (intentions.next_due(home), signal_store.next_expiry(home), work_state.next_probe(home, now=time.time())) if t is not None]
     return min(times) if times else None
 
 
@@ -59,6 +60,9 @@ def arm(home, *, scheduler) -> float | None:
 
 def due(home, *, now: float, scheduler, roles=(), starter=None) -> list[str]:
     """Timer handler: expire silent signals, wake an owed role, re-arm."""
+    from . import work_state
+    from pathlib import Path
+    work_state.sweep(home, repo=Path(home).parent, now=now)
     changed = signal_store.expire(home, now=now)
     if starter is not None:
         from . import owed
