@@ -757,6 +757,8 @@ def render_brief(cell: Cell, hits: list[Hit]) -> str:
 HISTORICAL_BASE = "ebd27007c94bddf2873c76c3cb18aa4b1ab98ead"
 
 def historical_review(repo, name):
+    if Path(name).parent == Path("."):
+        name = str(Path("research/field-review/reviews") / name)
     old = subprocess.run(["git", "-C", str(repo), "show", f"{HISTORICAL_BASE}:{name}"], capture_output=True)
     return old.returncode == 0 and old.stdout == head_bytes(repo, name)
 
@@ -826,7 +828,9 @@ def main(argv=None) -> int:
     if command == "check":
         problems = validate_tree(repo)
         historical = {name: values for name, values in problems.items()
-                      if historical_review(repo, name) and (repo / name).read_bytes() == head_bytes(repo, name)}
+                      if historical_review(repo, name) and
+                      (repo / "research/field-review/reviews" / name).read_bytes() ==
+                      head_bytes(repo, str(Path("research/field-review/reviews") / name))}
         for name in historical:
             print(f"HISTORICAL FAIL {name}: {'; '.join(historical[name])}")
         problems = {name: values for name, values in problems.items() if name not in historical}

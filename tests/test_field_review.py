@@ -788,3 +788,14 @@ def test_proposed_review_can_name_confined_future_implementation(tmp_path):
     text=GOOD_REVIEW.replace("status: applied","status: proposed").replace("src/example.py","src/future.py").replace("2026-10-21","2026-11-06")
     assert field_review.validate_review_text("alpha--recent--2026-11-06.md",text,repo)==[]
     assert field_review.validate_review_text("alpha--recent--2026-11-06.md",text.replace("src/future.py","/outside.py"),repo)
+
+
+def test_check_separates_frozen_basename_failures_and_detects_later_edit(tmp_path,monkeypatch,capsys):
+    repo=_repo(tmp_path,{"alpha--recent--2000-01-01.md":_applied_review("src/missing.py","missing")})
+    baseline=subprocess.check_output(["git","-C",str(repo),"rev-parse","HEAD"],text=True).strip()
+    monkeypatch.setattr(field_review,"HISTORICAL_BASE",baseline)
+    assert field_review.main(["--repo",str(repo),"check"])==0
+    assert "historical failures remain" in capsys.readouterr().out
+    review=repo/"research/field-review/reviews/alpha--recent--2000-01-01.md"
+    review.write_text(review.read_text()+"\nchanged after migration\n")
+    assert field_review.main(["--repo",str(repo),"check"])==2
