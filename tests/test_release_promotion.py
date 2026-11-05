@@ -291,3 +291,49 @@ def test_review_binding_uses_git_executable_mode_with_mixed_checkout_permissions
     (source/"docs/page.md").chmod(0o775)
     with pytest.raises(ValueError,match="reviewed bytes"):
         p.bind_reviewed_source(source,reviewed)
+
+
+def test_point_flips_the_stable_runtime_path_atomically(tmp_path):
+    a=tmp_path/"rel-a";b=tmp_path/"rel-b";a.mkdir();b.mkdir();home=tmp_path/"home";home.mkdir()
+    p.point(home,a)
+    assert p.current_link(home).resolve()==a.resolve()
+    p.point(home,b)                                   # replaces the existing link
+    assert p.current_link(home).resolve()==b.resolve()
+    assert p.current_link(home).is_symlink()
+    assert not [x for x in (home/"runtime").iterdir() if x.name!="current"]   # no temp link left behind
+
+
+def test_default_activation_generates_units_and_wrapper_on_the_stable_path_not_a_sha(tree,monkeypatch):
+    # 2026-11-05: five consumers carried four different pinned shas, doctor logged drift 114 times, and moving the pin
+    # was a multi-hour reviewed ritual. Units and the wrapper now name runtime/current only.
+    from mishe_tauftauf import runtime_cli
+    repo,home,old,sha=tree
+    (home/"bin").mkdir()
+    seen=[]
+    monkeypatch.setattr(p,"config_paths",lambda h:[])
+    monkeypatch.setattr(runtime_cli,"run_units",lambda args,*a:seen.append(args.pythonpath))
+    p.activate(home,repo,repo,sha)
+    stable=str(p.current_link(home)/"src")
+    assert seen==[stable]
+    wrapper=(home/"bin/mishe").read_text()
+    assert str(p.current_link(home)) in wrapper and sha not in wrapper and sha not in seen[0]
+    assert p.current_link(home).resolve()==repo.resolve()
+
+
+def test_failed_default_activation_moves_the_pointer_back(tree,monkeypatch):
+    repo,home,old,sha=tree
+    oldsrc=home/"releases"/old;oldsrc.mkdir(parents=True)
+    p.point(home,oldsrc)
+    monkeypatch.setattr(p,"config_paths",lambda h:[])
+    from mishe_tauftauf import runtime_cli
+    monkeypatch.setattr(runtime_cli,"default_pythonpath",lambda:str(home/"releases"/old/"src"))
+    monkeypatch.setattr(p.boundary,"invoke_arm_consumer",lambda *a:dict(result="success"))
+    monkeypatch.setattr(p,"materialize",lambda h,r,s:(home/"releases"/s) if s==old else repo)
+    monkeypatch.setattr(p,"reload_units",lambda:None)
+    def flip_then_fail(h,r,source,s):
+        p.point(h,source); raise ValueError("activation failed after the pointer moved")
+    monkeypatch.setattr(p,"activate",flip_then_fail)
+    r=p.promote(home,repo,sha,check=[sys.executable,"-c","assert True"],observe=["probe"],previous=old,
+        probe=lambda *a,**k:dict(code=0,output="ok"),closure=lambda *a:None)
+    assert r["phase"]=="rolled-back"
+    assert p.current_link(home).resolve()==oldsrc.resolve()

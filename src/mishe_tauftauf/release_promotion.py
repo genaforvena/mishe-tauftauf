@@ -25,6 +25,26 @@ def classification(paths):
     return boundary.release_classification(paths)
 
 
+def current_link(home):
+    """The one stable runtime path: every generated unit, the wrapper and plant units name this, never a sha."""
+    return Path(home) / "runtime" / "current"
+
+
+def point(home, source):
+    """Atomically make runtime/current name ``source`` (a rename over the old link).
+
+    Advancing and rolling back a release are this one operation, so nothing generated embeds a sha and
+    nothing drifts: units are rewritten only when the unit set itself changes.
+    """
+    link = current_link(home)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    tmp = link.with_name(f".{link.name}.{os.getpid()}.tmp")
+    if tmp.is_symlink() or tmp.exists():
+        tmp.unlink()
+    os.symlink(Path(source).resolve(), tmp)
+    os.replace(tmp, link)
+
+
 def materialize(home, repo, sha):
     boundary.full_sha(repo, sha)
     source = Path(home) / "releases" / sha
@@ -107,7 +127,9 @@ def activate(home, repo, source, sha):
     # actually start. Recovery removes it and stops it if activation fails.
     previous_paths = set(config_paths(home))
     marker = wall_patch.snapshot(Path(home) / "units-installed")
-    args = argparse.Namespace(command="sync", repo=repo, source_repo=source, pythonpath=str(source/"src"),
+    point(home, source)                      # consumers resolve the stable path; the pin is the pointer
+    stable = current_link(home)
+    args = argparse.Namespace(command="sync", repo=repo, source_repo=source, pythonpath=str(stable/"src"),
         unit_dir=Path.home()/".config/systemd/user", prefix="mishe", no_slices=False,
         no_systemctl=False, no_enable=True, uninstall=False)
     run_units(args, Path(home), time.time())
@@ -120,7 +142,7 @@ def activate(home, repo, source, sha):
     wrapper = Path(home)/"bin/mishe"
     # No shell interpolation of paths: shlex is used only for the installed POSIX wrapper.
     from .release_boundary import wrapper_text
-    wrapper.write_text(wrapper_text(source, sys.executable)); wrapper.chmod(0o755)
+    wrapper.write_text(wrapper_text(stable, sys.executable)); wrapper.chmod(0o755)
     config = read_json(Path(home)/"coordination-mode.json") or {}
     config["runtime"] = str(source)
     write_json(Path(home)/"coordination-mode.json", config)
@@ -218,6 +240,7 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
                 if activate is not None: switch(old,previous)
                 else:
                     restore_configuration(home, configs)
+                    point(home, old)
                     record["restored_consumer_invocation"] = boundary.invoke_arm_consumer(old/"src")
                 record["rollback_probe"] = probe(observe,cwd=old,env=dict(env,PYTHONPATH=str(old/"src")))
                 record["phase"]="rolled-back" if record["rollback_probe"]["code"]==0 else "UNKNOWN"
@@ -253,6 +276,7 @@ def revert(home, identity):
         try:
             restore_configuration(home, record["config_before"])
             old = Path(home)/"releases"/record["previous"]
+            point(home, old)
             record["restored_consumer_invocation"] = boundary.invoke_arm_consumer(old/"src")
             record["revert_probe"] = run(record["observe_argv"], cwd=old,
                 env=dict(os.environ, PYTHONPATH=str(old/"src"), MISHE_SEED_HOME=str(home)))

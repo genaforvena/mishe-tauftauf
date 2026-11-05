@@ -6764,3 +6764,12 @@ def test_process_row_argv_json_does_not_reach_the_prose_sample() -> None:
     text = "Verified readings: sense.proc.top-cpu = " + discovery._row_text(row)
     assert post_check._deterministic(text) == []
     assert '{"label"' in row["args"]
+
+
+def test_release_the_stable_runtime_pointer_resolves_to_counts_as_referenced(tmp_path):
+    sha = "a" * 40
+    (tmp_path / "releases" / sha).mkdir(parents=True)
+    (tmp_path / "runtime").mkdir()
+    (tmp_path / "runtime" / "current").symlink_to(tmp_path / "releases" / sha)
+    assert discovery._pointer_release_names(tmp_path) == {sha}
+    assert discovery._pointer_release_names(tmp_path / "elsewhere") == set()      # no pointer reads as nothing, never as a release

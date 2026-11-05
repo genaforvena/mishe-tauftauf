@@ -3737,6 +3737,14 @@ def _referenced_release_names(unit_root: Path | None = None) -> set[str]:
     return refs
 
 
+def _pointer_release_names(home: Path) -> set[str]:
+    """The release ``runtime/current`` resolves to. Units and the wrapper name that stable path, not a sha, so it is the release in use."""
+    try:
+        return set(proc_table.release_names(str((Path(home) / "runtime" / "current").resolve())))
+    except OSError:
+        return set()
+
+
 def _release_tree_bytes(root: Path) -> int | None:
     """Total apparent size of ``root`` in bytes, or None when it cannot be measured.
 
@@ -3784,7 +3792,7 @@ def _repo_release_retention(home: Path, now: datetime | None = None) -> dict[str
         except OSError:
             return None
 
-    referenced = _referenced_release_names()
+    referenced = _referenced_release_names() | _pointer_release_names(home)
     entries = sorted(p for p in releases.iterdir() if p.is_dir())
     worktrees = [p for p in entries if (p / ".git").exists()]
     live = [p for p in worktrees if p.name in referenced]
