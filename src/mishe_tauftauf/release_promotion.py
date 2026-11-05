@@ -97,7 +97,7 @@ def config_paths(home):
     unit_dir = Path.home() / ".config/systemd/user"
     from .release_boundary import owned_runtime_units
     # A shared filename prefix does not grant ownership of host or peer units.
-    return [Path(home)/"bin/mishe", Path(home)/"coordination-mode.json", Path(home)/"units-installed",
+    return [Path(home)/"bin/mishe", Path(home)/"bin/mishe-tauftauf", Path(home)/"coordination-mode.json", Path(home)/"units-installed",
             Path(home)/"resolvers.generated.json",
             *owned_runtime_units(home, unit_dir)]
 
@@ -139,10 +139,12 @@ def activate(home, repo, source, sha):
             subprocess.run(["systemctl", "--user", "enable", "--now", path.name],
                            check=True, capture_output=True, timeout=30)
     wall_patch.restore(Path(home)/"units-installed", marker)
-    wrapper = Path(home)/"bin/mishe"
-    # No shell interpolation of paths: shlex is used only for the installed POSIX wrapper.
+    # No shell interpolation of paths: shlex is used only for the installed POSIX wrapper. Both operator wrapper names name the stable
+    # path (the doctor checks bin/mishe-tauftauf; a stale pin there kept it RED after every earlier delivery).
     from .release_boundary import wrapper_text
-    wrapper.write_text(wrapper_text(stable, sys.executable)); wrapper.chmod(0o755)
+    for name in ("mishe", "mishe-tauftauf"):
+        wrapper = Path(home)/"bin"/name
+        wrapper.write_text(wrapper_text(stable, sys.executable)); wrapper.chmod(0o755)
     config = read_json(Path(home)/"coordination-mode.json") or {}
     config["runtime"] = str(source)
     write_json(Path(home)/"coordination-mode.json", config)

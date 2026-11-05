@@ -315,8 +315,10 @@ def test_default_activation_generates_units_and_wrapper_on_the_stable_path_not_a
     p.activate(home,repo,repo,sha)
     stable=str(p.current_link(home)/"src")
     assert seen==[stable]
-    wrapper=(home/"bin/mishe").read_text()
-    assert str(p.current_link(home)) in wrapper and sha not in wrapper and sha not in seen[0]
+    for name in ("mishe","mishe-tauftauf"):                                   # the doctor checks bin/mishe-tauftauf too
+        wrapper=(home/"bin"/name).read_text()
+        assert str(p.current_link(home)) in wrapper and sha not in wrapper and sha not in seen[0]
+        assert (home/"bin"/name).stat().st_mode & 0o111
     assert p.current_link(home).resolve()==repo.resolve()
 
 
