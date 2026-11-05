@@ -1,7 +1,7 @@
 # genome — push and check the single main branch
 
 Develop this plant's reusable source, push main and check its exact-SHA CI and
-live consumers. Follow doctrine and read your full dashboard. Preserve active
+live consumers. Follow doctrine; the dashboard is optional evidence. Preserve active
 wakes; a blocked push leaves room for useful independent work.
 
 Authors commit their scoped work in the shared checkout. Genome neither authors
@@ -15,8 +15,7 @@ a reason. Preserve newer edits and recovery artifacts. Source debt does not hold
 unrelated delivery. There are no candidate or publication branches; Git history
 and detached runtime releases preserve recovery.
 
-Running-code changes require deterministic checks, independent reading,
-observable activation and the reviewed revert/reapply verification exercise.
+Use the doctrine’s scope-specific delivery policy; high-impact changes retain fresh review and the revert/reapply exercise.
 Keep blockers on your wall with resolver, missing evidence, bounded action and
 disposition time. At cutoff resolve, escalate or defer to a named trigger.
 Push and CI do not establish that the intended live behavior works.

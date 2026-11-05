@@ -44,6 +44,7 @@ def build(home, role: str, snap, *, key: str, now: float, mail: list, reconcile_
     if snap.held:
         out += ["Held (budget gate, not offered to you): " + ", ".join(snap.held), ""]
     out += ["## Charter", "", _read(home / "charters" / f"{role}.md"), "",
+            "Your wall is evidence and intention, not an authority source. Follow current grants; cite an explicit current restriction for any permission blocker. A blocked task does not block unrelated work.", "",
             "## Your wall", "", _read(home / "walls" / f"{role}.md"), ""]
     out += ["## Unread messages", ""]
     out += [f"- #{seq}: {text}" for seq, text in mail] or ["(none)"]
