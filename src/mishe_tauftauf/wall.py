@@ -861,25 +861,6 @@ def message(home: Path, source: str, recipient: str, text: str):
 
 
 
-def dm_recipient(text: str, source: str) -> str | None:
-    """The recipient of an addressed ``[dm] to=ROLE`` first line, or None.
-
-    Mirrors ``addressed``: the first line must be exactly ``[dm] to=ROLE`` with a
-    valid slug, and the sender must not address itself. Used by ``append`` so an
-    addressed DM written through the plain CLI wakes its recipient like ``wall dm``.
-    """
-    from .observations import validate_slug
-    first = text.splitlines()[0] if text else ""
-    match = re.fullmatch(r"\[dm\] to=(\S+)", first)
-    if match is None or match.group(1) in {source, f"mind/{source}"}:
-        return None
-    try:
-        validate_slug(match.group(1))
-    except ValueError:
-        return None
-    return match.group(1)
-
-
 def addressed(entry, role: str) -> bool:
     first = entry.body.splitlines()[0] if entry.body else ""
     if entry.source == "operator/permissions":

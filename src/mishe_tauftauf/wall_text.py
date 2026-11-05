@@ -75,6 +75,26 @@ def ends_with_newline(text: str) -> bool:
     return text[-1:] == "\n"
 
 
+def dm_recipient(text: str, source: str) -> str | None:
+    """The recipient of an addressed ``[dm] to=ROLE`` first line, or None.
+
+    Mirrors ``wall.addressed``: the first line must be exactly ``[dm] to=ROLE``
+    with a valid slug, and the sender must not address itself. ``append`` uses
+    it so an addressed DM written through the plain CLI wakes its recipient
+    like ``wall dm``.
+    """
+    from .observations import validate_slug
+    first = text.splitlines()[0] if text else ""
+    match = re.fullmatch(r"\[dm\] to=(\S+)", first)
+    if match is None or match.group(1) in {source, f"mind/{source}"}:
+        return None
+    try:
+        validate_slug(match.group(1))
+    except ValueError:
+        return None
+    return match.group(1)
+
+
 _RENDER_VOLATILE_AGE = re.compile(r" age=(?:[0-9]|<age>)[0-9.eE+\-]*(?=;)")
 _RENDER_VOLATILE_CACHE = re.compile(r"cached_at=[0-9][0-9.eE+-]*")
 
