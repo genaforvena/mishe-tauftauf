@@ -37,7 +37,20 @@ def head(repo):
 
 def dirty(repo):
     # -z preserves spaces and newlines in filenames. Include untracked files.
-    return [x for x in git(repo, "ls-files", "-z", "--modified", "--others", "--exclude-standard").split("\0") if x]
+    unstaged = git(repo, "ls-files", "-z", "--modified", "--others", "--exclude-standard")
+    staged = git(repo, "diff", "--cached", "--name-only", "-z", "HEAD")
+    return sorted(set(x for x in (unstaged + staged).split("\0") if x))
+
+
+def index_entries(repo):
+    entries = {}
+    for item in git(repo, "ls-files", "--stage", "-z").split("\0"):
+        if not item:
+            continue
+        metadata, name = item.split("\t", 1)
+        mode, blob, stage = metadata.split()
+        entries.setdefault(name, []).append(dict(mode=mode, blob=blob, stage=stage))
+    return entries
 
 
 def new_commits(repo, before, after, role, key):

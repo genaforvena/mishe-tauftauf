@@ -261,6 +261,26 @@
       "resolver": "genome",
       "replaces": [],
       "covers": "Bounded useful-work 6h/24h reports and retained final checkpoint validity; corrupt or interrupted evidence stays UNKNOWN."
+    },
+    {
+      "name": "work-watch",
+      "command": [
+        "{python}",
+        "-m",
+        "mishe_tauftauf",
+        "--home",
+        "{home}",
+        "work",
+        "poll",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 60,
+      "timeout": 45,
+      "max_age": 180,
+      "resolver": "genome",
+      "replaces": [],
+      "covers": "Deterministic evidence/deadline sweep independent of next-due rearming; failure or missing sweep output remains UNKNOWN within three minutes."
     }
   ],
   "retired": [

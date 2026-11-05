@@ -24,8 +24,7 @@ OVERDUE_RETRY_SECONDS = 120.0
 
 
 def target(home) -> float | None:
-    from . import work_state
-    times = [t for t in (intentions.next_due(home), signal_store.next_expiry(home), work_state.next_probe(home, now=time.time())) if t is not None]
+    times = [t for t in (intentions.next_due(home), signal_store.next_expiry(home)) if t is not None]
     return min(times) if times else None
 
 

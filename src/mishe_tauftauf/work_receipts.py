@@ -13,8 +13,14 @@ def digest(path):
 
 
 def fingerprints(repo):
-    return {name: digest(Path(repo) / name) if (Path(repo) / name).is_file() else "ABSENT"
-            for name in boundary.dirty(repo)}
+    index = boundary.index_entries(repo)
+    result = {}
+    for name in boundary.dirty(repo):
+        path = Path(repo) / name
+        working = ("SYMLINK-ESCAPE" if not path.resolve().is_relative_to(Path(repo).resolve()) else
+                   digest(path) if path.is_file() else "ABSENT")
+        result[name] = dict(working=working, index=index.get(name, []))
+    return result
 
 
 def begin(repo, *, role, key, now, home=None):

@@ -155,10 +155,6 @@ def settle_waits(home, role, *, now):
                        due=now + 86400, spontaneous=True)
 
 
-def next_probe(home, *, now):
-    records = [load(home, role) for role in roles.declared(home)]
-    return now + 60 if any(r is not None for r in records) else None
-
 
 def _sweep(home, *, repo, now, notify=None):
     """Cheap deterministic sweep; notify once per changed observation or deadline.

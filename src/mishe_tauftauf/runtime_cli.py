@@ -94,6 +94,8 @@ def register(sub) -> None:
     for action in ("revert", "review"):
         p = release.add_parser(action); p.set_defaults(func=cmd_runtime); p.add_argument("--id", required=True)
     work = add("work").add_subparsers(dest="work_command", required=True)
+    p = work.add_parser("poll"); p.set_defaults(func=cmd_runtime)
+    p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO"))
     p = work.add_parser("check"); p.set_defaults(func=cmd_runtime)
     p.add_argument("--file", type=Path, required=True); p.add_argument("--output", type=Path, required=True)
     p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO"))
@@ -151,6 +153,10 @@ def run(args) -> int:
         from . import work_state, work_metrics
         from .state_files import read_json, write_json
         import json
+        if args.work_command == "poll":
+            work_state.sweep(home, repo=args.repo, now=now)
+            print("work watches checked")
+            return 0
         if args.work_command == "check":
             from . import work_receipts, work_boundary
             if not args.output.resolve().is_relative_to(home): raise ValueError("check output must be under SITE_HOME")

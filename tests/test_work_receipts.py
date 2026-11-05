@@ -68,3 +68,12 @@ def test_unchanged_blocked_wait_is_typed_from_observed_work_state(repo):
     assert result["unchanged_wait"] is True
     record=work_state.load(repo,"docs");record["tasks"].append(dict(id="edit",state="ready"));work_state.save(repo,"docs",record)
     assert w.finish(start,repo=repo,home=repo,now=3,claimed_result="blocked")["unchanged_wait"] is False
+
+
+def test_staged_modifications_additions_and_deletions_are_dirty(repo):
+    (repo/"file").write_text("staged change");git(repo,"add","file")
+    assert "file" in w.fingerprints(repo)
+    (repo/"added").write_text("staged new");git(repo,"add","added")
+    assert "added" in w.fingerprints(repo)
+    git(repo,"rm","-f","file")
+    assert "file" in w.fingerprints(repo)
