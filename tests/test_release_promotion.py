@@ -209,3 +209,17 @@ def test_reapply_same_sha_reuses_independent_review_for_new_delivery(tree,monkey
     assert len(launched)==1 and len(calls)==1
     assert read_json(p.record_path(home,"second"))["review_pending"] is False
     assert read_json(p.record_path(home,"first"))["phase"]=="reverted"
+
+
+def test_activation_starts_new_owned_timer_without_enabling_old_triggers(tree,monkeypatch):
+    from mishe_tauftauf import runtime_cli
+    repo,home,old,sha=tree
+    (home/"bin").mkdir()
+    existing=home/"mishe-existing.timer";existing.write_text("existing")
+    new=home/"mishe-new.timer"
+    monkeypatch.setattr(p,"config_paths",lambda h:[x for x in (existing,new) if x.exists()])
+    monkeypatch.setattr(runtime_cli,"run_units",lambda *a:new.write_text("new"))
+    calls=[];monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:calls.append(argv))
+    p.activate(home,repo,repo,sha)
+    assert ["systemctl","--user","enable","--now","mishe-new.timer"] in calls
+    assert not any("mishe-existing.timer" in call for call in calls)

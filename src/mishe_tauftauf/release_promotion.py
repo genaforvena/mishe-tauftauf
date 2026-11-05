@@ -92,12 +92,19 @@ def restore_configuration(home, before):
 def activate(home, repo, source, sha):
     from .runtime_cli import run_units
     import argparse
-    # Existing sync preserves installed trigger state with --no-enable.
+    # Preserve existing trigger state; a newly declared owned trigger must
+    # actually start. Recovery removes it and stops it if activation fails.
+    previous_paths = set(config_paths(home))
     marker = wall_patch.snapshot(Path(home) / "units-installed")
     args = argparse.Namespace(command="sync", repo=repo, pythonpath=str(source/"src"),
         unit_dir=Path.home()/".config/systemd/user", prefix="mishe", no_slices=False,
         no_systemctl=False, no_enable=True, uninstall=False)
     run_units(args, Path(home), time.time())
+    from .release_boundary import trigger_unit
+    for path in config_paths(home):
+        if path not in previous_paths and trigger_unit(path):
+            subprocess.run(["systemctl", "--user", "enable", "--now", path.name],
+                           check=True, capture_output=True, timeout=30)
     wall_patch.restore(Path(home)/"units-installed", marker)
     wrapper = Path(home)/"bin/mishe"
     # No shell interpolation of paths: shlex is used only for the installed POSIX wrapper.
