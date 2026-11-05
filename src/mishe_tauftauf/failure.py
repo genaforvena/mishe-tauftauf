@@ -48,6 +48,12 @@ def report(home, unit: str, *, now: float, notify=None, signature="unit-failed")
         previous = {}
         accounting_error = str(exc)
     fresh = previous.get("signature", "unit-failed") != signature
+    # Every distinct failure mode this incident has shown. A unit that alternates between two modes (exit-code, then
+    # start-limit-hit, then exit-code) must not look new on each alternation: 2026-11-05 host-capacity did exactly that
+    # and re-announced itself to Health every two minutes although its signal stayed RED with a re-offer pending.
+    seen_modes = previous.get("signatures") if isinstance(previous.get("signatures"), list) else []
+    seen_modes = [m for m in seen_modes if isinstance(m, str)] or ([previous["signature"]] if isinstance(previous.get("signature"), str) else [])
+    unseen = signature not in seen_modes and (previous.get("signature", "unit-failed") != signature or not seen_modes)
     current = signal_store.read(home, name, now=now) if name in signal_store.registry(home) else None
     try:
         if accounting_error:
@@ -60,8 +66,8 @@ def report(home, unit: str, *, now: float, notify=None, signature="unit-failed")
                 novel = fresh or current is None or current.state != signal_store.OK or current.value != "RED"
                 write_json(home/"work/fault-events"/f"{int(now*1e9)}-{name}.json",
                            dict(version=1, at=now, unit=unit, role=role, signature=signature, novel=novel))
-        write_json(incident_path, dict(signature=signature, count=previous.get("count", 0) + 1,
-                                      first_seen=previous.get("first_seen", now), last_seen=now))
+        write_json(incident_path, dict(signature=signature, signatures=(seen_modes + [signature] if signature not in seen_modes else seen_modes)[-8:],
+                                      count=previous.get("count", 0) + 1, first_seen=previous.get("first_seen", now), last_seen=now))
     except (OSError, ValueError, TypeError) as exc:
         accounting_error = str(exc)
     if accounting_error:
@@ -81,7 +87,7 @@ def report(home, unit: str, *, now: float, notify=None, signature="unit-failed")
         pending = [i for i in intentions.list_(home, role) if i.get("id") == f"reoffer-{name}" and i.get("due", 0) > now]
         acknowledged = work_state.incident_wait(home, role, name, now=now, repo=home.parent)
         known = dispositions.active(home, name, now=now)
-        if current.state == signal_store.OK and current.value == "RED" and not fresh and (pending or acknowledged or (known and known["kind"] == "known")):
+        if current.state == signal_store.OK and current.value == "RED" and not unseen and (pending or acknowledged or (known and known["kind"] == "known")):
             return role
     if name not in signal_store.registry(home):
         signal_store.register(home, name, max_age=SIGNAL_MAX_AGE, subscribers=[role],

@@ -112,3 +112,16 @@ def test_optional_work_accounting_failure_preserves_primary_red_and_routes_gap(t
     assert store.read(tmp_path,"work-accounting",now=NOW).value=="RED"
     assert any(role=="genome" and "UNKNOWN" in text for role,text in sent)
     assert any(role=="health" for role,text in sent)
+
+
+def test_a_unit_alternating_between_failure_modes_is_announced_once_per_mode(tmp_path):
+    # 2026-11-05 20:36-20:53Z: host-capacity alternated exit-code / start-limit-hit; each alternation looked fresh and sent
+    # Health a new DM (8 in 18 minutes) although the signal stayed RED with its re-offer pending.
+    unit = "mishe-producer-host-capacity.service"
+    modes = ["Result=exit-code|ExecMainStatus=2", "Result=start-limit-hit|ExecMainStatus=0"]
+    sent = []
+    for n in range(12):
+        failure.report(tmp_path, unit, now=NOW + 60 * n, notify=lambda *a: sent.append(a), signature=modes[n % 2])
+    assert len(sent) == 2                                              # one per distinct mode, not one per alternation (old code: 12)
+    failure.report(tmp_path, unit, now=NOW + 800, notify=lambda *a: sent.append(a), signature="Result=signal|ExecMainStatus=9")
+    assert len(sent) == 3                                              # a failure mode never seen before is still announced
