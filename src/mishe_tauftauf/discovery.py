@@ -89,6 +89,7 @@ from .spawn_dialect import (script_spawns_site_package,
 from .reflog_boundary import (decode_commit_count, decode_commit_sha, decode_reflog_resets,
                               decode_stash_commits, decode_unreachable_commits)
 from .timestamp_text import decode_iso_datetime
+from .revive_boundary import pinned_path
 from .unit_properties import SITE_UNIT_PREFIX, is_site_unit
 
 COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df",
@@ -7002,7 +7003,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_repo_landing_block(home))
     observed.append(_coord_gate_latency(home))
     observed.append(read_tmux_windows(_inner_tmux_socket()))
-    observed.append(read_renderer_coverage(_pinned_runtime_root(home)))
+    observed.append(read_renderer_coverage(_pinned_runtime_root()))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}
 
@@ -7021,14 +7022,25 @@ def _inner_tmux_socket() -> str:
     return f"/tmp/tmux-{uid}/mishe-tauftauf/tmux-{uid}/default"
 
 
-def _pinned_runtime_root(home: Path) -> Path | None:
-    """The pinned runtime root from coordination-mode.json, or None if unreadable."""
+def _pinned_runtime_root(unit_root: Path | None = None) -> Path | None:
+    """The runtime root the installed wake unit actually runs, or None if unreadable.
+
+    The running code is whatever ``PYTHONPATH`` the installed ``mishe-wake@.service``
+    carries, so the pin is read from that unit (decoded by ``revive_boundary``),
+    not from coordination-mode.json, which can name an older snapshot. The root is
+    the directory holding the ``src`` path a unit imports from.
+    """
+    if unit_root is None:
+        unit_root = Path.home() / ".config" / "systemd" / "user"
     try:
-        config = json.loads((home / "coordination-mode.json").read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        text = (unit_root / "mishe-wake@.service").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
         return None
-    runtime = config.get("runtime") if isinstance(config, dict) else None
-    return Path(runtime) if isinstance(runtime, str) and runtime else None
+    pythonpath = pinned_path(text)
+    if not pythonpath:
+        return None
+    source = Path(pythonpath)
+    return source.parent if source.name == "src" else None
 
 
 def scan_attempt(home: Path) -> dict[str, object] | None:

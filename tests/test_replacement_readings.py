@@ -65,17 +65,42 @@ def test_renderer_missing_or_broken_module_is_drift(tmp_path: Path):
     assert "plant_view_boundary.py=missing" in got["sample"]
 
 
-def test_pinned_runtime_root_reads_coordination_mode(tmp_path):
+def _wake_unit(unit_root: Path, pythonpath: str) -> None:
+    unit_root.mkdir(parents=True, exist_ok=True)
+    (unit_root / "mishe-wake@.service").write_text(
+        "[Service]\n"
+        f"Environment=PYTHONPATH={pythonpath}\n"
+        "Environment=MISHE_SEED_HOME=/site\n")
+
+
+def test_pinned_runtime_root_follows_the_installed_unit(tmp_path):
+    from mishe_tauftauf import discovery
+
+    unit_root = tmp_path / "units"
+    _wake_unit(unit_root, "/rel/old/src")
+    assert discovery._pinned_runtime_root(unit_root) == Path("/rel/old")
+    # A re-pin of the unit changes the reading: the installed bytes decide, not a stale file.
+    _wake_unit(unit_root, "/rel/new/src")
+    assert discovery._pinned_runtime_root(unit_root) == Path("/rel/new")
+
+
+def test_pinned_runtime_root_ignores_coordination_mode(tmp_path):
     import json
     from mishe_tauftauf import discovery
 
-    (tmp_path / "coordination-mode.json").write_text(json.dumps({"runtime": "/pin/root"}))
-    assert str(discovery._pinned_runtime_root(tmp_path)) == "/pin/root"
+    unit_root = tmp_path / "units"
+    _wake_unit(unit_root, "/rel/new/src")
+    (tmp_path / "coordination-mode.json").write_text(json.dumps({"runtime": "/stale/snapshot"}))
+    assert discovery._pinned_runtime_root(unit_root) == Path("/rel/new")
 
 
-def test_pinned_runtime_root_unreadable_is_none(tmp_path):
+def test_pinned_runtime_root_unreadable_or_unpinned_is_none(tmp_path):
     from mishe_tauftauf import discovery
 
-    assert discovery._pinned_runtime_root(tmp_path) is None
-    (tmp_path / "coordination-mode.json").write_text("not json")
-    assert discovery._pinned_runtime_root(tmp_path) is None
+    unit_root = tmp_path / "units"
+    assert discovery._pinned_runtime_root(unit_root) is None
+    unit_root.mkdir()
+    (unit_root / "mishe-wake@.service").write_text("[Service]\nExecStart=/bin/true\n")
+    assert discovery._pinned_runtime_root(unit_root) is None
+    _wake_unit(unit_root, "/rel/x/lib")  # PYTHONPATH that is not a src root
+    assert discovery._pinned_runtime_root(unit_root) is None
