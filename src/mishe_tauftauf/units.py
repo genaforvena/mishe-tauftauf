@@ -252,13 +252,38 @@ def _pin_import_problems(pythonpath: str) -> list:
     return problems
 
 
+def _wrapper_pythonpath(wrapper: Path):
+    """The PYTHONPATH the site's operator wrapper exports, or None when it names none."""
+    for line in wrapper.read_text(encoding="utf-8").splitlines():
+        if line.startswith("export PYTHONPATH="):
+            return line[len("export PYTHONPATH="):].strip().strip("'\"")
+    return None
+
+
+def _wrapper_pin_problems(home: Path) -> list:
+    """The operator wrapper's PYTHONPATH pin must import every module it names.
+
+    The 2026-11-05 renderer failure came through this wrapper: its stale runtime pin
+    lacked revive_boundary while the units stayed GREEN. Unreadable or unpinned
+    wrappers are reported, never treated as clean.
+    """
+    wrapper = home / "bin" / "mishe-tauftauf"
+    try:
+        pin = _wrapper_pythonpath(wrapper)
+    except OSError as exc:
+        return [f"wrapper {wrapper.name}: unreadable ({type(exc).__name__})"]
+    if pin is None:
+        return [f"wrapper {wrapper.name}: exports no PYTHONPATH pin"]
+    return [f"wrapper {p}" for p in _pin_import_problems(pin)]
+
+
 def doctor(cfg: Config, roles, *, producers=()) -> DoctorReport:
     try:
         expected = render(cfg, roles, producers=producers)
         installed = _installed(cfg)
     except OSError as exc:
         return DoctorReport("UNKNOWN", [f"cannot read installed units: {exc}"])
-    problems = _pin_import_problems(cfg.pythonpath)
+    problems = _pin_import_problems(cfg.pythonpath) + _wrapper_pin_problems(cfg.home)
     for rel, text in expected.items():
         if rel not in installed:
             problems.append(f"{rel}: missing")

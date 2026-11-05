@@ -14,6 +14,9 @@ def cfg(tmp_path):
     pin = tmp_path / "rel" / "src"                      # a real (empty) pinned package, so doctor sees a valid pin
     (pin / "mishe_tauftauf").mkdir(parents=True)
     (pin / "mishe_tauftauf" / "__init__.py").write_text("", encoding="utf-8")
+    (home / "bin").mkdir(parents=True)                  # a complete operator wrapper, so doctor sees a valid pin
+    (home / "bin" / "mishe-tauftauf").write_text(
+        f"#!/bin/sh\nexport PYTHONPATH={pin}\nexec python -m mishe_tauftauf \"$@\"\n", encoding="utf-8")
     return units.Config(home=home, repo=tmp_path / "repo", python="/usr/bin/python3",
                         pythonpath=str(pin), unit_dir=tmp_path / "units")
 
@@ -213,6 +216,38 @@ def test_pin_import_check_red_when_package_absent(tmp_path):
 def test_doctor_red_when_pin_is_missing_a_module_the_units_run(cfg, tmp_path):
     pin = _pin(tmp_path, {"__init__.py": "", "a.py": "from .gone import g\n"})
     cfg = units.Config(**{**cfg.__dict__, "pythonpath": pin})
+    units.sync(cfg, ROLES, runner=lambda c: None)
+    report = units.doctor(cfg, ROLES)
+    assert report.state == "RED" and any("gone" in p for p in report.problems)
+
+
+def _wrapper(home, pin):
+    (home / "bin").mkdir(parents=True, exist_ok=True)
+    (home / "bin" / "mishe-tauftauf").write_text(
+        f"#!/bin/sh\nexport PYTHONPATH={pin}\nexec python -m mishe_tauftauf \"$@\"\n", encoding="utf-8")
+
+
+def test_wrapper_pin_red_when_wrapper_pin_misses_a_module(cfg, tmp_path):
+    pin = _pin(tmp_path, {"__init__.py": "", "a.py": "from .gone import g\n"})
+    _wrapper(cfg.home, pin)
+    assert units._wrapper_pin_problems(cfg.home) == ["wrapper pin a.py: imports missing module gone"]
+
+
+def test_wrapper_pin_green_when_wrapper_pin_is_complete(cfg, tmp_path):
+    pin = _pin(tmp_path, {"__init__.py": "", "a.py": "from . import b\n", "b.py": ""})
+    _wrapper(cfg.home, pin)
+    assert units._wrapper_pin_problems(cfg.home) == []
+
+
+def test_wrapper_pin_red_when_wrapper_missing_or_unpinned(cfg):
+    (cfg.home / "bin" / "mishe-tauftauf").unlink()
+    assert units._wrapper_pin_problems(cfg.home) != []
+    (cfg.home / "bin" / "mishe-tauftauf").write_text("#!/bin/sh\nexec python\n", encoding="utf-8")
+    assert units._wrapper_pin_problems(cfg.home) == ["wrapper mishe-tauftauf: exports no PYTHONPATH pin"]
+
+
+def test_doctor_red_when_operator_wrapper_pin_is_stale_but_units_match(cfg, tmp_path):
+    _wrapper(cfg.home, _pin(tmp_path, {"__init__.py": "", "a.py": "from .gone import g\n"}))
     units.sync(cfg, ROLES, runner=lambda c: None)
     report = units.doctor(cfg, ROLES)
     assert report.state == "RED" and any("gone" in p for p in report.problems)
