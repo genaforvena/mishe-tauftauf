@@ -95,7 +95,7 @@ def test_oneshot_observation_uses_retained_start_stamp_not_empty_invocation_id(m
     from mishe_tauftauf import work_boundary as b
     stamp=["10"]
     def output(argv,**kwargs):
-        values={"ActiveState":"inactive", "Environment":"PYTHONPATH=/release/src", "InvocationID":"", 
+        values={"ActiveState":"inactive", "Environment":"PYTHONPATH=/release/src", "InvocationID":"",
                 "ExecMainStartTimestampMonotonic":stamp[0], "ExecMainStatus":"0", "Result":"success"}
         return values[argv[-2]]+"\n"
     monkeypatch.setattr(b.subprocess,"check_output",output)
