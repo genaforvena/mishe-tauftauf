@@ -37,6 +37,15 @@ def site(tmp_path, monkeypatch):
     monkeypatch.setenv("PYTHONPATH", str(Path(runtime_cli.__file__).parents[1]))
     monkeypatch.setenv("MISHE_SEED_HOME", str(home))
     monkeypatch.delenv("MISHE_ROLE", raising=False)
+    # doctor checks the operator wrapper's pin; a healthy site has one exporting this checkout's src.
+    wrapper_bin = home / "bin"
+    wrapper_bin.mkdir()
+    wrapper = wrapper_bin / "mishe-tauftauf"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        f"export PYTHONPATH={Path(runtime_cli.__file__).parents[1]}\n"
+        'exec python3 -m mishe_tauftauf "$@"\n')
+    wrapper.chmod(0o755)
     return home
 
 
