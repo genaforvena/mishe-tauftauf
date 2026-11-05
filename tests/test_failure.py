@@ -125,3 +125,15 @@ def test_a_unit_alternating_between_failure_modes_is_announced_once_per_mode(tmp
     assert len(sent) == 2                                              # one per distinct mode, not one per alternation (old code: 12)
     failure.report(tmp_path, unit, now=NOW + 800, notify=lambda *a: sent.append(a), signature="Result=signal|ExecMainStatus=9")
     assert len(sent) == 3                                              # a failure mode never seen before is still announced
+
+
+def test_a_mode_seen_before_a_long_run_of_other_modes_is_not_announced_again(tmp_path):
+    # Review of 904dbee4: the signature history was truncated to the last 8 modes, so an evicted mode that recurred
+    # after 8 other distinct modes was announced again. The once-per-mode record must keep every distinct mode seen.
+    unit = "mishe-producer-work-watch.service"
+    sent = []
+    for n in range(12):
+        failure.report(tmp_path, unit, now=NOW + 60 * n, notify=lambda *a: sent.append(a), signature=f"Result=mode-{n}")
+    assert len(sent) == 12
+    failure.report(tmp_path, unit, now=NOW + 900, notify=lambda *a: sent.append(a), signature="Result=mode-0")
+    assert len(sent) == 12                                             # mode-0 was announced at n=0 and must not repeat

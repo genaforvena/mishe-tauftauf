@@ -66,7 +66,7 @@ def report(home, unit: str, *, now: float, notify=None, signature="unit-failed")
                 novel = fresh or current is None or current.state != signal_store.OK or current.value != "RED"
                 write_json(home/"work/fault-events"/f"{int(now*1e9)}-{name}.json",
                            dict(version=1, at=now, unit=unit, role=role, signature=signature, novel=novel))
-        write_json(incident_path, dict(signature=signature, signatures=(seen_modes + [signature] if signature not in seen_modes else seen_modes)[-8:],
+        write_json(incident_path, dict(signature=signature, signatures=(seen_modes + [signature] if signature not in seen_modes else seen_modes),
                                       count=previous.get("count", 0) + 1, first_seen=previous.get("first_seen", now), last_seen=now))
     except (OSError, ValueError, TypeError) as exc:
         accounting_error = str(exc)
