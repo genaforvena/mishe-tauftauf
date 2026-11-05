@@ -275,7 +275,7 @@
         "--repo",
         "{repo}"
       ],
-      "every": 60,
+      "every": 120,
       "timeout": 45,
       "max_age": 180,
       "resolver": "genome",
