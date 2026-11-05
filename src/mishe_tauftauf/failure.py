@@ -35,6 +35,14 @@ def default_notify(home, role: str, text: str) -> None:
 def report(home, unit: str, *, now: float, notify=None) -> str:
     home = Path(home)
     name, role = units.signal_name(unit), resolver_for(home, unit)
+    # A standing fault is announced once. While its signal is already RED and a re-offer is still pending, every
+    # further failed run (a producer that fails each minute) adds nothing: the re-offer returns it to the resolver at
+    # the bounded interval. Without this each failure appended a DM and woke the resolver every couple of minutes.
+    if name in signal_store.registry(home):
+        current = signal_store.read(home, name, now=now)
+        pending = [i for i in intentions.list_(home, role) if i.get("id") == f"reoffer-{name}" and i.get("due", 0) > now]
+        if current.state == signal_store.OK and current.value == "RED" and pending:
+            return role
     if name not in signal_store.registry(home):
         signal_store.register(home, name, max_age=SIGNAL_MAX_AGE, subscribers=[role],
                               reoffer=REOFFER_SECONDS)

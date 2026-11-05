@@ -54,3 +54,50 @@ def test_yield_reoffers_only_while_the_signal_is_still_red(tmp_path):
     store.observe(tmp_path, "failed-mishe-wake-docs-service", "GREEN", now=NOW + 4100, source="t")
     _settle(tmp_path, "k2", NOW + 9000)               # re-offer consumed; signal now GREEN
     assert "reoffer-failed-mishe-wake-docs-service" not in ids()
+
+
+# --- a failing-every-minute producer must not become a message per failure -------------------------------------
+
+def _count(tmp_path, unit, times):
+    sent = []
+    for at in times:
+        failure.report(tmp_path, unit, now=at, notify=lambda *a: sent.append(a))
+    return sent
+
+
+def test_a_standing_failure_is_announced_once_not_on_every_run(tmp_path):
+    # 2026-11-05: host-capacity and omp-db failed every minute; each failure appended a DM to Health (80 of the last
+    # 120 tape entries) and woke it every two minutes, holding the one wake slot while other minds waited.
+    sent = _count(tmp_path, "mishe-producer-host-capacity.service", [NOW + 60 * n for n in range(30)])
+    assert len(sent) == 1
+    from mishe_tauftauf import intentions
+    reoffer = [i for i in intentions.list_(tmp_path, "health") if i["id"] == "reoffer-failed-mishe-producer-host-capacity-service"]
+    assert len(reoffer) == 1 and reoffer[0]["due"] == NOW + failure.REOFFER_SECONDS       # not pushed back by each failure
+
+
+def test_the_failure_is_announced_again_when_the_reoffer_has_come_due(tmp_path):
+    unit = "mishe-producer-host-capacity.service"
+    assert len(_count(tmp_path, unit, [NOW])) == 1
+    assert len(_count(tmp_path, unit, [NOW + failure.REOFFER_SECONDS + 1])) == 1
+
+
+def test_a_cleared_failure_that_returns_is_announced_again(tmp_path):
+    unit = "mishe-producer-host-capacity.service"
+    _count(tmp_path, unit, [NOW])
+    store.observe(tmp_path, "failed-mishe-producer-host-capacity-service", "GREEN", now=NOW + 100, source="t")
+    assert len(_count(tmp_path, unit, [NOW + 200])) == 1
+
+
+def test_a_different_failing_unit_is_still_announced(tmp_path):
+    sent = _count(tmp_path, "mishe-producer-host-capacity.service", [NOW, NOW + 60])
+    sent += _count(tmp_path, "mishe-producer-omp-db.service", [NOW + 61, NOW + 120])
+    assert len(sent) == 2 and "omp-db" in sent[1][1]
+
+
+def test_repeated_failures_do_not_keep_touching_the_resolvers_inbox(tmp_path):
+    unit = "mishe-wake@docs.service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    from mishe_tauftauf import yielding
+    owed.advance(tmp_path, "health", owed.check(tmp_path, "health", now=NOW + 1))       # health has read it
+    failure.report(tmp_path, unit, now=NOW + 60, notify=lambda *a: None)
+    assert "inbox" not in owed.check(tmp_path, "health", now=NOW + 61).reasons
