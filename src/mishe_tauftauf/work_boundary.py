@@ -8,6 +8,24 @@ def work_identifier(value):
     return isinstance(value, str) and bool(value) and value not in (".", "..") and set(value) <= set("abcdefghijklmnopqrstuvwxyz0123456789-_.")
 
 
+def duty_word(word, *, home, repo, source, python):
+    # Executable repository paths come from the committed release; an exact
+    # {repo} argument is the shared repository whose state is being observed.
+    if word.startswith("{repo}/"):
+        word = str(source) + word[len("{repo}"):]
+    return word.replace("{home}", str(home)).replace("{repo}", str(repo)).replace("{python}", str(python))
+
+
+def runtime_source(repo, pythonpath):
+    import os
+    if os.pathsep in str(pythonpath):
+        raise ValueError("generated consumers require a single runtime PYTHONPATH")
+    root = Path(pythonpath).resolve().parent
+    # Full committed releases carry their own manifest. Legacy partial
+    # snapshots retain their historical caller behavior until promoted.
+    return root if (root/"duties.json").is_file() else Path(repo).resolve()
+
+
 def failure_signature(unit):
     """Only stable systemd failure classes, never timestamps or journal prose."""
     try:

@@ -20,19 +20,20 @@ def load(repo) -> list:
     return data["duties"]
 
 
-def _expand(word: str, home, repo) -> str:
-    return word.replace("{home}", str(home)).replace("{repo}", str(repo)).replace("{python}", sys.executable)
+def _expand(word: str, home, repo, source=None) -> str:
+    from .work_boundary import duty_word
+    return duty_word(word, home=home, repo=repo, source=source or repo, python=sys.executable)
 
 
-def declared(repo, home) -> list:
+def declared(repo, home, *, source=None) -> list:
     out = []
-    for duty in load(repo):
+    for duty in load(source or repo):
         item = {"name": duty["name"], "every": duty["every"], "timeout": duty["timeout"],
                 "signal": {"max_age": duty["max_age"], "subscribers": [duty["resolver"]]}}
         if duty.get("builtin"):
             item["builtin"] = True
         else:
-            item["command"] = [_expand(w, home, repo) for w in duty["command"]]
+            item["command"] = [_expand(w, home, repo, source) for w in duty["command"]]
             item["red_codes"] = duty.get("red_codes", [2])
         out.append(item)
     return out

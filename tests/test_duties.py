@@ -77,3 +77,15 @@ def test_readings_renewal_has_a_bounded_senses_owned_producer():
     assert item["command"][-2:] == ["discover", "scan"]
     assert item["every"] == 600 and item["timeout"] == 180
     assert item["max_age"] == 900 and item["red_codes"] == []
+
+
+def test_committed_duty_manifest_and_script_use_release_but_repo_argument_stays_shared(tmp_path):
+    import json
+    from mishe_tauftauf import duties
+    repo=tmp_path/"repo";repo.mkdir();source=tmp_path/"release";source.mkdir()
+    (repo/"duties.json").write_text(json.dumps(dict(duties=[])))
+    declaration=dict(name="test",every=60,timeout=10,max_age=180,resolver="genome",command=["{python}","{repo}/checks/example.py","--repo","{repo}"])
+    (source/"duties.json").write_text(json.dumps(dict(duties=[declaration])))
+    found=duties.declared(repo,tmp_path/"home",source=source)
+    assert found[0]["command"][1]==str(source/"checks/example.py")
+    assert found[0]["command"][-1]==str(repo)

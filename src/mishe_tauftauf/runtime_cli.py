@@ -284,9 +284,11 @@ def run_units(args, home: Path, now: float) -> int:
     from . import producers
     from . import duties
     from .state_files import write_json
-    declared = producers.load(home, python=sys.executable, declared=duties.declared(cfg.repo, home))
+    from .work_boundary import runtime_source
+    source_repo = Path(getattr(args, "source_repo", None) or runtime_source(cfg.repo, args.pythonpath)).resolve()
+    declared = producers.load(home, python=sys.executable, declared=duties.declared(cfg.repo, home, source=source_repo))
     declared += producers.load(home, python=sys.executable)
-    write_json(home / "resolvers.generated.json", duties.resolvers(cfg.repo, args.prefix))
+    write_json(home / "resolvers.generated.json", duties.resolvers(source_repo, args.prefix))
     if args.command == "sync":
         runner = None if args.no_systemctl else (lambda c: subprocess.run(c, check=True))
         report = units.sync(cfg, roles, producers=declared, runner=runner, uninstall=args.uninstall,
@@ -294,7 +296,7 @@ def run_units(args, home: Path, now: float) -> int:
         print(f"written {len(report.written)}, removed {len(report.removed)}")
         return 0
     report = units.doctor(cfg, roles, producers=declared)
-    for duty in duties.load(cfg.repo):
+    for duty in duties.load(source_repo):
         if duty["resolver"] not in roles:
             report.state = "RED"
             report.problems.append(f"duty {duty['name']}: resolver role {duty['resolver']!r} has no charter")

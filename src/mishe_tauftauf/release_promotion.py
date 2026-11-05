@@ -102,7 +102,7 @@ def activate(home, repo, source, sha):
     # actually start. Recovery removes it and stops it if activation fails.
     previous_paths = set(config_paths(home))
     marker = wall_patch.snapshot(Path(home) / "units-installed")
-    args = argparse.Namespace(command="sync", repo=repo, pythonpath=str(source/"src"),
+    args = argparse.Namespace(command="sync", repo=repo, source_repo=source, pythonpath=str(source/"src"),
         unit_dir=Path.home()/".config/systemd/user", prefix="mishe", no_slices=False,
         no_systemctl=False, no_enable=True, uninstall=False)
     run_units(args, Path(home), time.time())
