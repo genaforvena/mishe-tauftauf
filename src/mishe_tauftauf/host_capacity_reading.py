@@ -4,11 +4,13 @@ Kernel-documented fact (cgroup-v2 admin guide): memory.current includes reclaima
 file cache, and memory.high is a throttle that triggers reclaim pressure. The kernel
 does not document reclaim "holding the slice near high" or current/high parking near
 0.9; that is not claimed here. Replay-measured fact (artifact signals-replay-20261101):
-the anon reading cuts LIMITED/CRITICAL starts from 33 to 14 on the same rows; the
-remaining starts are PSI memory stalls with anon refaults dominant, which this module
-still reports. This module reads anon (and file,
-for the record) separately; the decision is still host_capacity.decide, fed the
-anon reading. Nothing here is wired into the running controller.
+the anon reading cuts LIMITED/CRITICAL starts from 33 to 14 on joined rows only
+(15,384 of 47,117 host rows). The remaining starts are PSI memory stalls; the
+"anon refaults dominant" attribution is narrative in REPLAY.md and is not produced by
+replay.py or result.json, so it is unverified. This module reads anon, file and
+shmem separately (file includes swap-backed shmem); the decision is still
+host_capacity.decide, fed the anon reading. Nothing here is wired into the running
+controller.
 
 Pure: no I/O, no clock. The caller supplies a joined sample and `now`.
 """
