@@ -337,3 +337,20 @@ def test_failed_default_activation_moves_the_pointer_back(tree,monkeypatch):
         probe=lambda *a,**k:dict(code=0,output="ok"),closure=lambda *a:None)
     assert r["phase"]=="rolled-back"
     assert p.current_link(home).resolve()==oldsrc.resolve()
+
+
+def test_arm_consumer_probe_accepts_a_unit_that_names_the_stable_pointer_to_the_release(tmp_path,monkeypatch):
+    from mishe_tauftauf import work_boundary as b
+    release=tmp_path/"releases"/"abc"/"src";release.mkdir(parents=True)
+    (tmp_path/"runtime").mkdir();(tmp_path/"runtime"/"current").symlink_to(tmp_path/"releases"/"abc")
+    stamp=["10"]
+    def output(argv,**kwargs):
+        values={"ActiveState":"inactive","Environment":f"PYTHONPATH={tmp_path}/runtime/current/src MISHE_X=1","InvocationID":"",
+                "ExecMainStartTimestampMonotonic":stamp[0],"ExecMainStatus":"0","Result":"success"}
+        return values[argv[-2]]+"\n"
+    monkeypatch.setattr(b.subprocess,"check_output",output)
+    monkeypatch.setattr(b.subprocess,"run",lambda *a,**k:stamp.__setitem__(0,"20"))
+    assert b.invoke_arm_consumer(release)["result"]=="success"           # unit names the pointer, caller names the release
+    stamp[0]="10"
+    with pytest.raises(ValueError):
+        b.invoke_arm_consumer(tmp_path/"releases"/"other"/"src")          # a different release is still refused

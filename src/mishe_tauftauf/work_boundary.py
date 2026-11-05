@@ -158,6 +158,11 @@ def trial_args():
     return parser.parse_args()
 
 
+def pythonpath_entries(environment_text):
+    """PYTHONPATH values in a ``systemctl show -p Environment`` line (external text, decoded at this boundary)."""
+    return [word[len("PYTHONPATH="):] for word in str(environment_text).split() if word.startswith("PYTHONPATH=")]
+
+
 def invoke_arm_consumer(expected):
     """Exercise a future oneshot invocation; never restart an active worker."""
     unit = "mishe-arm.service"
@@ -165,7 +170,9 @@ def invoke_arm_consumer(expected):
         return subprocess.check_output(["systemctl", "--user", "show", unit, "-p", name, "--value"], text=True).strip()
     if prop("ActiveState") not in ("inactive", "failed"):
         raise ValueError("arm consumer already active; cannot prove a fresh invocation")
-    if "PYTHONPATH=" + str(expected) not in prop("Environment"):
+    # The unit names runtime/current (a symlink), the caller names the release: compare the real directories.
+    wanted = Path(expected).resolve()
+    if not any(Path(v).resolve() == wanted for v in pythonpath_entries(prop("Environment"))):
         raise ValueError("arm consumer does not use intended release")
     before = prop("ExecMainStartTimestampMonotonic")
     subprocess.run(["systemctl", "--user", "start", unit], check=True, capture_output=True, timeout=60)
