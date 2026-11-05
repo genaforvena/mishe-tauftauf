@@ -101,3 +101,22 @@ def test_oneshot_observation_uses_retained_start_stamp_not_empty_invocation_id(m
     monkeypatch.setattr(b.subprocess,"check_output",output)
     monkeypatch.setattr(b.subprocess,"run",lambda *a,**k:stamp.__setitem__(0,"20"))
     assert b.invoke_arm_consumer(Path("/release/src"))["started_monotonic"]=="20"
+
+
+def test_partial_default_activation_removes_new_config_files(tree,monkeypatch):
+    repo,home,old,sha=tree
+    oldfile=home/"old.service";oldfile.write_text("old")
+    newfile=home/"new.service"
+    monkeypatch.setattr(p,"config_paths",lambda h:[x for x in (oldfile,newfile) if x.exists()])
+    from mishe_tauftauf import runtime_cli
+    monkeypatch.setattr(runtime_cli,"default_pythonpath",lambda:str(home/"releases"/old/"src"))
+    monkeypatch.setattr(p.boundary,"invoke_arm_consumer",lambda *a:dict(result="success"))
+    def broken(*args):
+        oldfile.write_text("new");newfile.write_text("created");raise ValueError("partial activation")
+    monkeypatch.setattr(p,"activate",broken)
+    monkeypatch.setattr(p,"reload_units",lambda:None)
+    r=p.promote(home,repo,sha,check=[sys.executable,"-c","assert True"],observe=["probe"],previous=old,
+        probe=lambda *a,**k:dict(code=0,output="old consumer"),closure=lambda *a:None)
+    assert r["phase"]=="rolled-back"
+    assert oldfile.read_text()=="old"
+    assert not newfile.exists()

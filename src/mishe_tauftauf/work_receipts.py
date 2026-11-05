@@ -17,17 +17,20 @@ def fingerprints(repo):
             for name in boundary.dirty(repo)}
 
 
-def begin(repo, *, role, key, now):
+def begin(repo, *, role, key, now, home=None):
     result = dict(version=1, wake_key=key, role=role, started_at=now, head_start=None,
                   dirty_start={}, evidence_state="KNOWN", repo=str(repo) if repo else None)
     try:
         result.update(head_start=boundary.head(repo), dirty_start=fingerprints(repo))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         result.update(evidence_state="UNKNOWN", error=str(exc))
+    if home is not None:
+        from . import work_state
+        result["work_start"] = work_state.load(home, role)
     return result
 
 
-def finish(start, *, repo, now, claimed_result=None, artifacts=()):
+def finish(start, *, repo, now, claimed_result=None, artifacts=(), home=None):
     result = dict(start, ended_at=now, claimed_result=claimed_result, head_end=None,
                   commits_observed=[], commits_attributed=[], artifacts=list(artifacts))
     try:
@@ -43,6 +46,21 @@ def finish(start, *, repo, now, claimed_result=None, artifacts=()):
                                 "commit-attributed" if result["commits_attributed"] else
                                 "commit-observed" if result["commits_observed"] else
                                 "artifact-recorded" if artifacts else "bookkeeping")
+    result["unchanged_wait"] = None
+    if home is not None:
+        from . import work_state
+        before = start.get("work_start")
+        after = work_state.load(home, start["role"])
+        if before and after and before.get("state") != "UNKNOWN" and after.get("state") != "UNKNOWN":
+            evaluations = [work_state.evaluate_wait(home, t["wait"], repo=repo, now=now)
+                           for t in after["tasks"] if t["state"] == "waiting"]
+            result["unchanged_wait"] = bool(claimed_result == "blocked" and
+                work_state.all_waiting(before) and work_state.all_waiting(after) and
+                before["tasks"] == after["tasks"] and evaluations and
+                all(e["state"] == "unchanged" for e in evaluations) and
+                result["classification"] == "bookkeeping")
+            if any(e["state"] == "unknown" for e in evaluations):
+                result["unchanged_wait"] = None
     return result
 
 
@@ -67,7 +85,7 @@ def complete(home, key, *, now, engine_seconds=None):
         return
     receipt = read_json(root / f"{key}.yield.json") or {}
     refs = receipt.get("artifacts", [])
-    result = finish(start, repo=start["repo"], now=now, claimed_result=receipt.get("result"), artifacts=refs)
+    result = finish(start, repo=start["repo"], home=home, now=now, claimed_result=receipt.get("result"), artifacts=refs)
     if any(not artifact_matches(home, a) for a in refs):
         result.update(evidence_state="UNKNOWN", classification="awaiting-evidence", error="artifact changed after settlement")
     result["engine_seconds"] = engine_seconds

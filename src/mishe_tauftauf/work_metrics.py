@@ -34,7 +34,7 @@ def report(home, *, start, end):
     known_usage = sum(x is not None for x in usage)
     seconds = sum(x for x in usage if x is not None)
     blocked = [r for r in rows.values() if r.get("claimed_result") == "blocked"]
-    typed = [r for r in blocked if "unchanged_wait" in r]
+    typed = [r for r in rows.values() if isinstance(r.get("unchanged_wait"), bool)]
     dirty = {}
     for r in sorted(rows.values(), key=lambda r: r["started_at"]):
         for name, value in r.get("dirty_start", {}).items():
@@ -47,7 +47,7 @@ def report(home, *, start, end):
                 missing_receipts=sum(r.get("claimed_result") is None for r in rows.values()),
                 unknown_git=sum(r.get("evidence_state") != "KNOWN" for r in rows.values()),
                 unchanged_blocked_numerator=sum(r["unchanged_wait"] is True for r in typed),
-                unchanged_blocked_denominator=len(typed), blocked_wait_missing=len(blocked)-len(typed),
+                unchanged_blocked_denominator=len(typed), blocked_wait_missing=len(rows)-len(typed),
                 unchanged_blocked_share=sum(r["unchanged_wait"] is True for r in typed)/len(typed) if typed else None,
                 check_to_commit_seconds=None, fault_trigger_novelty=None, reverts_rework=None,
                 dirty_paths=dirty, inventory=inventory, unreadable=missing,

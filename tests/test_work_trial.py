@@ -40,3 +40,11 @@ def test_lost_manifest_after_checkpoint_is_unknown(tmp_path):
     t.tick(tmp_path,now=86500,notify=lambda *a:None)
     (root/"manifest.json").unlink()
     assert t.tick(tmp_path,now=86501,notify=lambda *a:None)==3
+
+
+def test_truncated_valid_json_checkpoint_is_unknown(tmp_path):
+    root=tmp_path/"work/experiment"
+    write_json(root/"manifest.json",dict(version=1,start=100,end=86500))
+    t.tick(tmp_path,now=86500,notify=lambda *a:None)
+    write_json(root/"24h.json",dict(start=100,end=86500))
+    assert t.tick(tmp_path,now=86501,notify=lambda *a:None)==3

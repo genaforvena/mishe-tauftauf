@@ -37,17 +37,22 @@ def tick(home, *, now, notify=None):
                 report["rollout"]=manifest
                 write_json(path,report)
                 record=report
-            if record.get("start") != manifest["start"] or record.get("end") != deadline:
+            if (not isinstance(record, dict) or record.get("version") != 1 or
+                    not isinstance(record.get("rows"), list) or record.get("wakes") != len(record["rows"]) or
+                    not isinstance(record.get("input_digests"), dict) or
+                    record.get("start") != manifest["start"] or record.get("end") != deadline):
                 raise ValueError("checkpoint window mismatch")
+            report_digest = hashlib.sha256(path.read_bytes()).hexdigest()
             state=read_json(marker)
             if state is None:
-                write_json(marker,dict(state="dispatching",at=now))
+                write_json(marker,dict(state="dispatching",at=now,report_digest=report_digest))
                 if notify is None:
                     from .failure import default_notify
                     notify=lambda role,text:default_notify(home,role,text)
                 notify("steward",f"Useful-work {label} checkpoint: {path}. Choose one intervention if loops remain; at 24h record keep/revise/revert. Unknown denominators are not success.")
-                write_json(marker,dict(state="sent",at=now))
-            elif state.get("state") != "sent":
+                write_json(marker,dict(state="sent",at=now,report_digest=report_digest))
+            elif (not isinstance(state, dict) or state.get("state") != "sent" or
+                  state.get("report_digest") != report_digest):
                 raise ValueError("checkpoint notification interrupted; reconcile before replay")
         manifest["state"]="AWAITING_DISPOSITION" if now >= manifest["end"] else "RUNNING"
         write_json(root/"manifest.json",manifest)

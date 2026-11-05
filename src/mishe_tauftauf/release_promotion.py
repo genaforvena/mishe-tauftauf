@@ -71,6 +71,24 @@ def config_paths(home):
             *sorted(unit_dir.glob("mishe-*.timer"))]
 
 
+def reload_units():
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, capture_output=True, timeout=30)
+
+
+def restore_configuration(home, before):
+    """Remove newly created triggers before restoring the prior exact files."""
+    from .release_boundary import trigger_unit
+    for path in config_paths(home):
+        if str(path) not in before:
+            if trigger_unit(path):
+                subprocess.run(["systemctl", "--user", "disable", "--now", path.name],
+                               check=True, capture_output=True, timeout=30)
+            wall_patch.restore(path, None)
+    for name, value in before.items():
+        wall_patch.restore(Path(name), value)
+    reload_units()
+
+
 def activate(home, repo, source, sha):
     from .runtime_cli import run_units
     import argparse
@@ -159,8 +177,7 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
                 old = materialize(home,repo,previous)
                 if activate is not None: switch(old,previous)
                 else:
-                    for name,value in configs.items(): wall_patch.restore(Path(name),value)
-                    subprocess.run(["systemctl","--user","daemon-reload"],check=True,capture_output=True)
+                    restore_configuration(home, configs)
                     record["restored_consumer_invocation"] = boundary.invoke_arm_consumer(old/"src")
                 record["rollback_probe"] = probe(observe,cwd=old,env=dict(env,PYTHONPATH=str(old/"src")))
                 record["phase"]="rolled-back" if record["rollback_probe"]["code"]==0 else "UNKNOWN"
@@ -189,8 +206,7 @@ def revert(home, identity):
         for name, value in record.get("config_after", {}).items():
             if wall_patch.snapshot(Path(name)) != value: raise ValueError("consumer configuration changed since promotion")
         try:
-            for name,value in record["config_before"].items(): wall_patch.restore(Path(name),value)
-            subprocess.run(["systemctl","--user","daemon-reload"],check=True,capture_output=True)
+            restore_configuration(home, record["config_before"])
             old = Path(home)/"releases"/record["previous"]
             record["restored_consumer_invocation"] = boundary.invoke_arm_consumer(old/"src")
             record["revert_probe"] = run(record["observe_argv"], cwd=old,

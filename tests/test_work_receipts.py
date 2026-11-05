@@ -55,3 +55,16 @@ def test_artifacts_are_confined_and_changed_binding_is_rejected(tmp_path):
     p.write_text("changed")
     assert not w.artifact_matches(h, fact)
     with pytest.raises(ValueError): w.artifact(h, tmp_path / "outside")
+
+
+def test_unchanged_blocked_wait_is_typed_from_observed_work_state(repo):
+    from mishe_tauftauf import work_state
+    (repo/"charters").mkdir()
+    for role in ("docs","steward"): (repo/"charters"/f"{role}.md").write_text(role)
+    work_state.save(repo,"docs",dict(version=1,role="docs",initiative="cause",tasks=[dict(id="cause",state="waiting",
+        wait=dict(resolver="docs",escalate_to="steward",deadline=1000,evidence_needed="new bytes",action_at_deadline="decide",paths={},signals={}))]))
+    start=w.begin(repo,role="docs",key="k",now=1,home=repo)
+    result=w.finish(start,repo=repo,home=repo,now=2,claimed_result="blocked")
+    assert result["unchanged_wait"] is True
+    record=work_state.load(repo,"docs");record["tasks"].append(dict(id="edit",state="ready"));work_state.save(repo,"docs",record)
+    assert w.finish(start,repo=repo,home=repo,now=3,claimed_result="blocked")["unchanged_wait"] is False
