@@ -92,9 +92,9 @@ def activate(home, repo, source, sha):
 
 def enqueue_review(home, record):
     root = Path(home)/"work/reviews"; root.mkdir(parents=True, exist_ok=True)
-    path = root/f"{record[sha]}.json"
+    path = root/f"{record['sha']}.json"
     if not path.exists(): write_json(path, dict(sha=record["sha"], release_id=record["id"], state="pending"))
-    subprocess.run(["systemd-run", "--user", "--collect", f"--unit=mishe-release-review-{record[sha][:12]}",
+    subprocess.run(["systemd-run", "--user", "--collect", f"--unit=mishe-release-review-{record['sha'][:12]}",
                     sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "release", "review", "--id", record["id"]],
                    env=dict(os.environ, PYTHONPATH=str(Path(record["source"])/"src")), capture_output=True, timeout=15, check=True)
 

@@ -80,3 +80,12 @@ def test_running_wake_retains_pin(tree):
     with p.delivery_lock(home):
         with pytest.raises(ValueError,match="dispatch lock"):
             p.promote(home,repo,sha,check=["check"],observe=["probe"],previous=old)
+
+
+def test_default_review_enqueue_uses_sha_and_retains_pending(tree, monkeypatch):
+    repo,home,old,sha=tree
+    calls=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kwargs:calls.append(argv))
+    p.enqueue_review(home,dict(sha=sha,id="release",source=str(repo)))
+    assert sha[:12] in calls[0][3]
+    assert read_json(home/"work/reviews"/f"{sha}.json")["state"]=="pending"
