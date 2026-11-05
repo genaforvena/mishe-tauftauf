@@ -65,10 +65,10 @@ def delivery_lock(home):
 
 def config_paths(home):
     unit_dir = Path.home() / ".config/systemd/user"
-    # Scope is this runtime generated unit family; no android/body/host files.
+    from .release_boundary import owned_runtime_units
+    # A shared filename prefix does not grant ownership of host or peer units.
     return [Path(home)/"bin/mishe", Path(home)/"coordination-mode.json", Path(home)/"units-installed",
-            *sorted(unit_dir.glob("mishe-*.service")), *sorted(unit_dir.glob("mishe-*.path")),
-            *sorted(unit_dir.glob("mishe-*.timer"))]
+            *owned_runtime_units(home, unit_dir)]
 
 
 def reload_units():

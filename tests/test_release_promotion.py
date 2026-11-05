@@ -178,3 +178,14 @@ def test_explicit_retry_after_reviewer_error_preserves_failed_attempt(tree,monke
     assert p.review(home,identity)["phase"]=="reviewed"
     assert len(calls)==2
     assert list((home/"work/reviews").glob("*.failed-attempt.json"))
+
+
+def test_config_inventory_excludes_host_guards_and_other_sites(tmp_path):
+    from mishe_tauftauf.release_boundary import owned_runtime_units
+    from mishe_tauftauf.units import MARKER
+    h=tmp_path/"owned";unitdir=tmp_path/"units";unitdir.mkdir()
+    (unitdir/"mishe-host-guard.service").write_text("protected host service")
+    (unitdir/"mishe-other.service").write_text(MARKER+"\nEnvironment=MISHE_SEED_HOME=/other/plant\n")
+    (unitdir/"mishe-owned.service").write_text(MARKER+f"\nEnvironment=MISHE_SEED_HOME={h}\n")
+    (unitdir/"mishe-owned.timer").write_text(MARKER+"\nUnit=mishe-owned.service\n")
+    assert {p.name for p in owned_runtime_units(h,unitdir)}=={"mishe-owned.service","mishe-owned.timer"}
