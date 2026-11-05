@@ -223,3 +223,17 @@ def test_discover_show_marks_stale_readings_unknown(site, monkeypatch, capsys):
     assert cli("discover", "show") == 0
     text = capsys.readouterr().out
     assert "acquisition=stale" in text and "UNKNOWN retained=verified" in text
+
+
+def test_default_pythonpath_is_the_installed_wake_pin(tmp_path, monkeypatch):
+    units_dir = tmp_path / ".config" / "systemd" / "user"
+    units_dir.mkdir(parents=True)
+    (units_dir / "mishe-wake@.service").write_text(
+        "[Service]\nEnvironment=PYTHONPATH=/x/releases/abc/src\n", encoding="utf-8")
+    monkeypatch.setattr(runtime_cli.Path, "home", classmethod(lambda cls: tmp_path))
+    assert runtime_cli.default_pythonpath() == "/x/releases/abc/src"
+
+
+def test_default_pythonpath_falls_back_to_checkout_without_pin(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_cli.Path, "home", classmethod(lambda cls: tmp_path))
+    assert runtime_cli.default_pythonpath() == str(Path(runtime_cli.__file__).resolve().parents[1])

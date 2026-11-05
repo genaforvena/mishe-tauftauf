@@ -23,6 +23,21 @@ def default_home() -> Path:
     return Path(value) if value else Path(".mishe-tauftauf")
 
 
+def default_pythonpath() -> str:
+    """The runtime the installed wake unit runs, else this checkout's src.
+
+    Generated units pin PYTHONPATH to the release they were rendered from, so a
+    plain ``doctor`` run from the working tree must compare against that pin,
+    not against whatever checkout the command happens to import from.
+    """
+    from .revive_boundary import pinned_path
+    try:
+        text = (Path.home() / ".config" / "systemd" / "user" / "mishe-wake@.service").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        text = ""
+    return pinned_path(text) or str(Path(__file__).resolve().parents[1])
+
+
 def declared_roles(home: Path) -> list[str]:
     from .roles import declared
     return sorted(declared(home))
@@ -90,7 +105,7 @@ def register(sub) -> None:
         p.add_argument("--unit-dir", type=Path, default=Path.home() / ".config" / "systemd" / "user")
         p.add_argument("--prefix", default="mishe")
         p.add_argument("--no-slices", action="store_true", help="scratch namespaces: no host slices")
-        p.add_argument("--pythonpath", default=str(Path(__file__).resolve().parents[1]))
+        p.add_argument("--pythonpath", default=default_pythonpath())
         p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO") or Path.cwd())
         if name == "sync":
             p.add_argument("--no-systemctl", action="store_true")
