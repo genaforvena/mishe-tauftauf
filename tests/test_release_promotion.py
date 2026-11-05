@@ -356,3 +356,14 @@ def test_arm_consumer_probe_accepts_a_unit_that_names_the_stable_pointer_to_the_
     stamp[0]="10"
     with pytest.raises(ValueError):
         b.invoke_arm_consumer(tmp_path/"releases"/"other"/"src")          # a different release is still refused
+
+
+def test_revert_keeps_operator_wrapper_missing_from_older_snapshot(tree,monkeypatch):
+    # 0d210604 revert (23:45Z): the pre-activation snapshot predates bin/mishe-tauftauf being tracked,
+    # so restore_configuration treated the wrapper as new and deleted it, breaking the operator CLI.
+    repo,home,old,sha=tree
+    wrapper=home/"bin"/"mishe-tauftauf";wrapper.parent.mkdir(parents=True,exist_ok=True)
+    wrapper.write_text("#!/bin/sh\nexec stable\n")
+    monkeypatch.setattr(p,"reload_units",lambda:None)
+    p.restore_configuration(home,{})
+    assert wrapper.read_text()=="#!/bin/sh\nexec stable\n"

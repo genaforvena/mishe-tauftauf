@@ -109,12 +109,17 @@ def reload_units():
 def restore_configuration(home, before):
     """Remove newly created triggers before restoring the prior exact files."""
     from .release_boundary import trigger_unit
+    operator_wrappers = {str(Path(home)/"bin"/name) for name in ("mishe", "mishe-tauftauf")}
     for path in config_paths(home):
         if str(path) not in before:
             if trigger_unit(path):
                 subprocess.run(["systemctl", "--user", "disable", "--now", path.name],
                                check=True, capture_output=True, timeout=30)
-            wall_patch.restore(path, None)
+            # A wrapper names the stable runtime/current path, not the pin, so it stays valid
+            # after revert. A snapshot taken before the wrapper was tracked does not list it;
+            # deleting it then broke the operator CLI (0d210604 revert, 23:45Z).
+            if str(path) not in operator_wrappers:
+                wall_patch.restore(path, None)
     for name, value in before.items():
         wall_patch.restore(Path(name), value)
     reload_units()
