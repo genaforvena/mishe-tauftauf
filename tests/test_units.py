@@ -268,3 +268,13 @@ def test_doctor_red_when_operator_wrapper_pin_is_stale_but_units_match(cfg, tmp_
     units.sync(cfg, ROLES, runner=lambda c: None)
     report = units.doctor(cfg, ROLES)
     assert report.state == "RED" and any("gone" in p for p in report.problems)
+
+
+def test_pin_import_check_accepts_a_name_the_package_init_exports_but_still_flags_a_missing_one(tmp_path):
+    # Independent review of moving-pin: `from . import NAME` may name something __init__.py defines or imports, not only a module.
+    pin = _pin(tmp_path, {"__init__.py": "VERSION = '1'\nfrom .b import helper\ndef util():\n    return 1\n",
+                          "b.py": "def helper():\n    return 2\n",
+                          "a.py": "from . import VERSION, util, helper\n"})
+    assert units._pin_import_problems(pin) == []
+    pin2 = _pin(tmp_path / "other", {"__init__.py": "VERSION = '1'\n", "a.py": "from . import VERSION, nothing_here\n"})
+    assert units._pin_import_problems(pin2) == ["pin a.py: imports missing module nothing_here"]

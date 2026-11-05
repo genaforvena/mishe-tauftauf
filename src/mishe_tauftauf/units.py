@@ -255,9 +255,27 @@ def _pin_import_problems(pythonpath: str) -> list:
                     problems.append(f"pin {rel}: imports missing module {node.module}")
             else:
                 for alias in node.names:
-                    if alias.name != "*" and not has_module(anchor, [alias.name]):
+                    if alias.name != "*" and not has_module(anchor, [alias.name]) and alias.name not in _package_exports(anchor / "__init__.py"):
                         problems.append(f"pin {rel}: imports missing module {alias.name}")
     return problems
+
+
+def _package_exports(init: Path) -> set:
+    """Top-level names a package's ``__init__.py`` defines or imports: ``from . import name`` may name one of them, not only a module."""
+    try:
+        tree = ast.parse(init.read_text(encoding="utf-8"), filename=str(init))
+    except (SyntaxError, UnicodeDecodeError, OSError):
+        return set()
+    names = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names.update(t.id for t in targets if isinstance(t, ast.Name))
+    return names
 
 
 def _wrapper_pythonpath(wrapper: Path):
