@@ -11,7 +11,7 @@ the state is never outside the checkout.
 The plant's couplings are not abstract. They are walls any registered mind may
 rewrite, each write attributed and audited, an addressed tape everyone reads,
 one `main` branch, a wake started by a trigger only when something is owed, one
-wake at a time, and a push gate. Each is a place where work can be seen to have landed or to
+wake at a time, and scoped author commits followed by Genome’s push and CI check. Each is a place where work can be seen to have landed or to
 have not.
 
 "Mesh" is a hypothesis about that coordination, not a description of it. Read
@@ -82,6 +82,18 @@ are outside git and are not counted. The original event files remain on disk, an
 Senses' readings renew independently every ten minutes. `mishe discover show`
 shows the acquisition freshness and each source's state; a new host scan cannot
 make an old phone sample current.
+
+A wall records observations and intentions, not authority. Authors may commit
+checked scoped changes without routine permission. A broken dashboard does not
+freeze reader work. Small per-role work records distinguish ready actions from
+waiting tasks with evidence watches and deadlines; an unchanged blocker need
+not call a model again. New mail and real observation gaps still arrive.
+
+Output receipts distinguish actual Git commits and file artifacts from a wall
+rewrite or a claimed “changed” result. Shared author identity does not establish
+which mind made a commit. The bounded useful-work experiment reports these
+facts at six and 24 hours; missing usage and unbound check timings stay UNKNOWN,
+and a future report is not a result already achieved.
 
 See the [README](../README.md) for an introduction and setup, and [Getting started](getting-started.md) for `wall write`, `wall outcome`,
 `wall dm` and `mishe yield` — the commands that write a wall, record an outcome, write a

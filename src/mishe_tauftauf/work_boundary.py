@@ -47,3 +47,45 @@ def wake_time(key):
 
 def snapshot_key(path):
     return path.name.removesuffix(".snapshot.json")
+
+
+def full_sha(repo, value):
+    import re
+    if not re.fullmatch("[0-9a-f]{40}", value): raise ValueError("release needs a full commit SHA")
+    resolved = git(repo, "rev-parse", value + "^{commit}").strip()
+    if resolved != value: raise ValueError("release SHA mismatch")
+    return value
+
+
+def changed_paths(repo, before, after):
+    return [p for p in git(repo, "diff", "--name-only", "-z", before, after).split("\0") if p]
+
+
+def argv_file(path):
+    from .state_files import read_json
+    value = read_json(path)
+    if not isinstance(value, list) or not value or not all(isinstance(x, str) and x and "\0" not in x for x in value):
+        raise ValueError("command file needs a nonempty JSON argv array")
+    return value
+
+
+
+def clean_tree(repo):
+    return not git(repo, "status", "--porcelain").strip()
+
+
+def release_classification(paths):
+    return "ordinary" if paths and all((p.startswith("docs/") and p.endswith(".md")) or
+        p.startswith("tests/") or p == "src/mishe_tauftauf/producers.py" for p in paths) else "strong"
+
+
+def tree_files(repo):
+    return [x for x in git(repo,"ls-files","-z","--cached","--others","--exclude-standard").split("\0") if x]
+
+
+
+def trial_args():
+    import argparse
+    parser=argparse.ArgumentParser(description="Deterministic useful-work checkpoint producer")
+    parser.add_argument("--home",type=Path,required=True)
+    return parser.parse_args()

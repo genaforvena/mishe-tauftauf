@@ -245,6 +245,22 @@
       "resolver": "genome",
       "replaces": [],
       "covers": "local main reaches GitHub within two hours: RED when the oldest unpushed commit is older, or main has diverged; UNKNOWN when the remote cannot be read"
+    },
+    {
+      "name": "work-trial",
+      "command": [
+        "{python}",
+        "-m",
+        "mishe_tauftauf.work_trial",
+        "--home",
+        "{home}"
+      ],
+      "every": 300,
+      "timeout": 60,
+      "max_age": 900,
+      "resolver": "genome",
+      "replaces": [],
+      "covers": "Bounded useful-work 6h/24h reports and retained final checkpoint validity; corrupt or interrupted evidence stays UNKNOWN."
     }
   ],
   "retired": [

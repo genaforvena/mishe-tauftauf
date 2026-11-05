@@ -1,6 +1,7 @@
 """Factual wake output, distinct from the minds self-reported yield result."""
 from __future__ import annotations
 import hashlib
+import os
 import subprocess
 from pathlib import Path
 from . import work_boundary as boundary
@@ -71,3 +72,25 @@ def complete(home, key, *, now, engine_seconds=None):
         result.update(evidence_state="UNKNOWN", classification="awaiting-evidence", error="artifact changed after settlement")
     result["engine_seconds"] = engine_seconds
     write_json(root / f"{key}.work.json", result)
+
+
+def tree_digest(repo):
+    value=hashlib.sha256()
+    for name in sorted(set(boundary.tree_files(repo))):
+        path=Path(repo)/name
+        value.update(os.fsencode(name)); value.update(b"\0")
+        value.update(path.read_bytes() if path.is_file() else b"ABSENT")
+        value.update(b"\0")
+    return value.hexdigest()
+
+
+def check(repo, argv, *, now):
+    before=tree_digest(repo)
+    result=subprocess.run(argv,cwd=repo,capture_output=True,text=True,timeout=600)
+    after=tree_digest(repo)
+    return dict(argv=argv,code=result.returncode,at=now,head=boundary.head(repo),tree_digest=before,
+                bound=before==after,output=result.stdout+result.stderr)
+
+
+def check_matches(repo, record):
+    return record.get("code")==0 and record.get("bound") is True and tree_digest(repo)==record["tree_digest"]

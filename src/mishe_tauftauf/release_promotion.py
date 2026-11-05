@@ -1,0 +1,218 @@
+"""Committed ordinary delivery, with functional probes and automatic recovery.
+
+The mechanism and all scheduler/protocol changes require the strong path.
+No legacy delivery_verified flag is minted here. A promotion affects only
+future consumers, under the same lock held across a running wake.
+"""
+from __future__ import annotations
+from contextlib import contextmanager
+import fcntl
+import hashlib
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+from . import work_boundary as boundary, wall_patch
+from .state_files import read_json, write_json
+from .work_receipts import digest
+
+# Everything outside a deliberately small leaf/docs list defaults to strong.
+ORDINARY = {"src/mishe_tauftauf/producers.py"}
+
+
+def classification(paths):
+    return boundary.release_classification(paths)
+
+
+def materialize(home, repo, sha):
+    boundary.full_sha(repo, sha)
+    source = Path(home) / "releases" / sha
+    if not source.exists():
+        source.parent.mkdir(parents=True, exist_ok=True)
+        boundary.git(repo, "worktree", "add", "--detach", str(source), sha)
+    if boundary.head(source) != sha or not boundary.clean_tree(source):
+        raise ValueError("release tree is not clean exact committed bytes")
+    return source
+
+
+def run(argv, *, cwd, env):
+    try:
+        result = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=600)
+        return dict(argv=argv, code=result.returncode, output=result.stdout + result.stderr, at=time.time())
+    except (OSError, subprocess.SubprocessError) as exc:
+        return dict(argv=argv, code=None, output=str(exc), at=time.time())
+
+
+def closure(source, env):
+    check = source / "checks/promotion-import-closure.py"
+    if not check.is_file(): raise ValueError("committed import closure checker missing")
+    result = run([sys.executable, str(check), "--home", env["MISHE_SEED_HOME"], "--repo", str(source)], cwd=source, env=env)
+    if result["code"] != 0: raise ValueError("committed import closure failed: " + result["output"])
+
+
+@contextmanager
+def delivery_lock(home):
+    from .core.state import DispatchStore
+    path = DispatchStore(Path(home) / "dispatch").lock_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as handle:
+        try: fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError: raise ValueError("running wake or promotion holds dispatch lock; promote after wake settles") from None
+        try: yield
+        finally: fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def config_paths(home):
+    unit_dir = Path.home() / ".config/systemd/user"
+    # Scope is this runtime generated unit family; no android/body/host files.
+    return [Path(home)/"bin/mishe", Path(home)/"coordination-mode.json", Path(home)/"units-installed",
+            *sorted(unit_dir.glob("mishe-*.service")), *sorted(unit_dir.glob("mishe-*.path")),
+            *sorted(unit_dir.glob("mishe-*.timer"))]
+
+
+def activate(home, repo, source, sha):
+    from .runtime_cli import run_units
+    import argparse
+    # Existing sync preserves installed trigger state with --no-enable.
+    marker = wall_patch.snapshot(Path(home) / "units-installed")
+    args = argparse.Namespace(command="sync", repo=repo, pythonpath=str(source/"src"),
+        unit_dir=Path.home()/".config/systemd/user", prefix="mishe", no_slices=False,
+        no_systemctl=False, no_enable=True, uninstall=False)
+    run_units(args, Path(home), time.time())
+    wall_patch.restore(Path(home)/"units-installed", marker)
+    wrapper = Path(home)/"bin/mishe"
+    # No shell interpolation of paths: shlex is used only for the installed POSIX wrapper.
+    from .release_boundary import wrapper_text
+    wrapper.write_text(wrapper_text(source, sys.executable)); wrapper.chmod(0o755)
+    config = read_json(Path(home)/"coordination-mode.json") or {}
+    config["runtime"] = str(source)
+    write_json(Path(home)/"coordination-mode.json", config)
+
+
+def enqueue_review(home, record):
+    root = Path(home)/"work/reviews"; root.mkdir(parents=True, exist_ok=True)
+    path = root/f"{record[sha]}.json"
+    if not path.exists(): write_json(path, dict(sha=record["sha"], release_id=record["id"], state="pending"))
+    subprocess.run(["systemd-run", "--user", "--collect", f"--unit=mishe-release-review-{record[sha][:12]}",
+                    sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "release", "review", "--id", record["id"]],
+                   env=dict(os.environ, PYTHONPATH=str(Path(record["source"])/"src")), capture_output=True, timeout=15, check=True)
+
+
+def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=run,
+            reviewer=None, closure=closure, strong_patch=None):
+    home, repo = Path(home), Path(repo)
+    boundary.full_sha(repo, sha); boundary.full_sha(repo, previous)
+    paths = boundary.changed_paths(repo, previous, sha)
+    kind = classification(paths)
+    if kind == "strong":
+        if not strong_patch: raise ValueError("high-impact change requires strong reviewed recovery evidence")
+        strong = wall_patch.status(home, strong_patch)
+        if not wall_patch.verified_delivery(strong): raise ValueError("strong patch has not passed recovery exercise")
+        for path in paths:
+            if path not in strong["files"]: raise ValueError(f"strong review does not cover {path}")
+    with delivery_lock(home):
+        source = materialize(home, repo, sha)
+        if kind == "strong":
+            for path in paths:
+                if path in strong["files"] and wall_patch.snapshot(source/path) != strong["files"][path]["after"]:
+                    raise ValueError("strong evidence does not bind committed release bytes")
+        identity = sha + "-" + str(time.time_ns())
+        record = dict(version=1, id=identity, sha=sha, previous=previous, source=str(source), paths=paths,
+                      classification=kind, phase="checking", tests_passed=False, activated=False, observed=False,
+                      rollback_available=False, review_pending=kind=="ordinary", events=[])
+        path = home/"work/releases"/f"{identity}.json"
+        def save(): write_json(path, record)
+        save()
+        env = dict(os.environ, PYTHONPATH=str(source/"src"), MISHE_SEED_HOME=str(home))
+        commands = wall_patch.command_artifacts(home, [check, observe])
+        record["command_artifacts"] = commands
+        record["observe_argv"] = observe
+        record["owner"] = os.environ.get("MISHE_ROLE", "genome")
+        record["check"] = run(check, cwd=source, env=env)
+        if record["check"]["code"] != 0:
+            record["phase"]="check-failed"; save(); return record
+        closure(source, env)
+        if not boundary.clean_tree(source) or boundary.head(source) != sha:
+            record["phase"]="check-mutated-source"; save(); raise ValueError("committed source changed during checks")
+        if commands != wall_patch.command_artifacts(home,[check,observe]):
+            record["phase"]="check-mutated-command"; save(); raise ValueError("command changed during check")
+        record["tests_passed"]=True
+        configs = {str(p):wall_patch.snapshot(p) for p in config_paths(home)} if activate is None else {}
+        record["config_before"]=configs; record["rollback_available"]=True; save()
+        switch = activate or (lambda root, target: globals()["activate"](home,repo,root,target))
+        try:
+            switch(source,sha); record["activated"]=True; record["events"].append("activated"); save()
+            record["observe"] = probe(observe,cwd=source,env=env)
+            if record["observe"]["code"] != 0: raise ValueError("functional probe failed")
+            record["config_after"] = {str(p):wall_patch.snapshot(p) for p in config_paths(home)} if activate is None else {}
+            record.update(observed=True,phase="delivered"); save()
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            record["failure"] = str(exc); record["events"].append("rollback-started"); save()
+            try:
+                old = materialize(home,repo,previous)
+                if activate is not None: switch(old,previous)
+                else:
+                    for name,value in configs.items(): wall_patch.restore(Path(name),value)
+                    subprocess.run(["systemctl","--user","daemon-reload"],check=True,capture_output=True)
+                record["rollback_probe"] = probe(observe,cwd=old,env=dict(env,PYTHONPATH=str(old/"src")))
+                record["phase"]="rolled-back" if record["rollback_probe"]["code"]==0 else "UNKNOWN"
+            except (OSError,ValueError,subprocess.SubprocessError) as restore_error:
+                record.update(phase="UNKNOWN",rollback_error=str(restore_error))
+            save(); return record
+        if kind == "ordinary":
+            try: (reviewer or (lambda r:enqueue_review(home,r)))(record)
+            except (OSError,ValueError,subprocess.SubprocessError) as exc: record["review_error"]=str(exc)
+            save()
+        return record
+
+
+
+def record_path(home, identity):
+    from .observations import validate_slug
+    validate_slug(identity)
+    return Path(home)/"work/releases"/f"{identity}.json"
+
+
+def revert(home, identity):
+    path = record_path(home, identity)
+    record = read_json(path)
+    if not record or record["phase"] != "delivered": raise ValueError("revert needs a delivered release")
+    with delivery_lock(home):
+        for name, value in record.get("config_after", {}).items():
+            if wall_patch.snapshot(Path(name)) != value: raise ValueError("consumer configuration changed since promotion")
+        try:
+            for name,value in record["config_before"].items(): wall_patch.restore(Path(name),value)
+            subprocess.run(["systemctl","--user","daemon-reload"],check=True,capture_output=True)
+            old = Path(home)/"releases"/record["previous"]
+            record["revert_probe"] = run(record["observe_argv"], cwd=old,
+                env=dict(os.environ, PYTHONPATH=str(old/"src"), MISHE_SEED_HOME=str(home)))
+            record["phase"] = "reverted" if record["revert_probe"]["code"] == 0 else "UNKNOWN"
+        except (OSError,ValueError,subprocess.SubprocessError) as exc:
+            record.update(phase="UNKNOWN",revert_error=str(exc))
+        write_json(path,record)
+        return record
+
+
+def review(home, identity):
+    path = record_path(home,identity); record=read_json(path)
+    if not record or record["phase"] != "delivered": raise ValueError("review needs delivered release")
+    source=Path(record["source"]); old=Path(home)/"releases"/record["previous"]
+    patch=dict(runtime=str(old),phase="ordinary-delivered-awaiting-review",test=record["check"],files={})
+    log=Path(home)/"work/reviews"/f"{record['sha']}.test.txt"; log.parent.mkdir(parents=True,exist_ok=True)
+    log.write_text(record["check"]["output"]); patch["test"]=dict(record["check"],log=str(log))
+    for name in record["paths"]:
+        before=wall_patch.snapshot(old/name); after=wall_patch.snapshot(source/name)
+        patch["files"][name]=dict(before=before,runtime_before=before,after=after)
+    patch["rationale"]="Asynchronous ordinary scoped release review. Tests passed and actual caller probe succeeded. Review for concrete source defects; recovery configuration and probe evidence are retained."
+    try:
+        record["review"]=wall_patch.review(Path(home),patch)
+        record["review_pending"]=False
+        if not record["review"]["clear"]:
+            from .failure import default_notify
+            default_notify(home,record["owner"],f"Release {identity}: substantive or unknown review finding. Within six hours decide fix/revert; see {path}.")
+        record["review_state"]="clear" if record["review"]["clear"] else "action-needed"
+    except (OSError,ValueError,subprocess.SubprocessError) as exc:
+        record["review_error"]=str(exc)
+    write_json(path,record)
+    return dict(phase="reviewed" if not record["review_pending"] else "review-pending",id=identity)

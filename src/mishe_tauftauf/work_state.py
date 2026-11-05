@@ -152,7 +152,7 @@ def next_probe(home, *, now):
     return now + 60 if any(r is not None for r in records) else None
 
 
-def sweep(home, *, repo, now, notify=None):
+def _sweep(home, *, repo, now, notify=None):
     """Cheap deterministic sweep; notify once per changed observation or deadline.
 
     Notification state is separate from task choices. This never advances a
@@ -189,3 +189,12 @@ def sweep(home, *, repo, now, notify=None):
                 notify("genome", f"Work scheduler missed {role}/{identity} deadline by more than five minutes; inspect reporter/scheduler")
                 owed.touch_inbox(home, "genome")
     write_json(path, seen)
+
+
+def sweep(home, *, repo, now, notify=None):
+    import fcntl
+    path=Path(home)/"work/.sweep.lock"
+    path.parent.mkdir(parents=True,exist_ok=True)
+    with path.open("a+") as handle:
+        fcntl.flock(handle.fileno(),fcntl.LOCK_EX)
+        return _sweep(home,repo=repo,now=now,notify=notify)

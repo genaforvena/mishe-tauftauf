@@ -86,7 +86,17 @@ def register(sub) -> None:
     p.add_argument("--file", type=Path, help="wall text file (default: stdin)")
     p.add_argument("--work-file", type=Path)
     p.add_argument("--artifact", type=Path, action="append", default=[])
+    release = add("release").add_subparsers(dest="release_command", required=True)
+    p = release.add_parser("promote"); p.set_defaults(func=cmd_runtime)
+    p.add_argument("--sha", required=True); p.add_argument("--previous", required=True)
+    p.add_argument("--check-file", type=Path, required=True); p.add_argument("--observe-file", type=Path, required=True)
+    p.add_argument("--strong-patch"); p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO"))
+    for action in ("revert", "review"):
+        p = release.add_parser(action); p.set_defaults(func=cmd_runtime); p.add_argument("--id", required=True)
     work = add("work").add_subparsers(dest="work_command", required=True)
+    p = work.add_parser("check"); p.set_defaults(func=cmd_runtime)
+    p.add_argument("--file", type=Path, required=True); p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO"))
     p = work.add_parser("show"); p.set_defaults(func=cmd_runtime); p.add_argument("role")
     p = work.add_parser("set"); p.set_defaults(func=cmd_runtime); p.add_argument("--file", type=Path, required=True)
     p.add_argument("--role", help="explicit operator target; residents may edit only their own role")
@@ -126,10 +136,27 @@ def run(args) -> int:
     from . import engines, owed, signal_store, wake, yielding
     home = args.home.resolve()
     now = time.time()
+    if args.command == "release":
+        from . import release_promotion as promotion, work_boundary
+        import json
+        if args.release_command == "promote":
+            result = promotion.promote(home, args.repo, args.sha,
+                check=work_boundary.argv_file(args.check_file), observe=work_boundary.argv_file(args.observe_file),
+                previous=args.previous, strong_patch=args.strong_patch)
+        elif args.release_command == "revert": result = promotion.revert(home, args.id)
+        else: result = promotion.review(home, args.id)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get("phase") in ("delivered", "reverted", "reviewed") else 3
     if args.command == "work":
         from . import work_state, work_metrics
         from .state_files import read_json, write_json
         import json
+        if args.work_command == "check":
+            from . import work_receipts, work_boundary
+            if not args.output.resolve().is_relative_to(home): raise ValueError("check output must be under SITE_HOME")
+            result = work_receipts.check(args.repo, work_boundary.argv_file(args.file), now=now)
+            write_json(args.output, result)
+            return 0 if result["code"] == 0 and result["bound"] else 2
         if args.work_command == "show":
             print(json.dumps(work_state.load(home, args.role), indent=2))
         elif args.work_command == "set":

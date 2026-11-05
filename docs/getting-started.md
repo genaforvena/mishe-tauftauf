@@ -166,5 +166,4 @@ A mind owns a durable area and carries useful initiatives through investigation,
 implementation, checks, delivery and observation. Stop at a meaningful work or
 execution boundary and leave concrete continuation. Critical verification belongs
 inside the initiative; use peer messages for action, transfer, material impact or
-unresolved disagreement. The separate fresh patch reviewer and deterministic
-recovery checks remain required. See the wall coordination notes in the plant's local operating book.
+unresolved disagreement. High-impact changes retain fresh review and deterministic recovery checks. Ordinary reversible changes use asynchronous review and automatic rollback. See the wall coordination notes in the plant's local operating book.

@@ -30,6 +30,7 @@
     "src/mishe_tauftauf/records.py",
     "src/mishe_tauftauf/recovery_io.py",
     "src/mishe_tauftauf/reflog_boundary.py",
+    "src/mishe_tauftauf/release_boundary.py",
     "src/mishe_tauftauf/release_retention.py",
     "src/mishe_tauftauf/render_admission.py",
     "src/mishe_tauftauf/revive_boundary.py",
