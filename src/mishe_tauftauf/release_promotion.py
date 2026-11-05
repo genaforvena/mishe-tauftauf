@@ -198,13 +198,14 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
         record["config_before"]=configs; record["rollback_available"]=True; save()
         switch = activate or (lambda root, target: globals()["activate"](home,repo,root,target))
         try:
+            record["activation_started_at"] = time.time(); save()
             switch(source,sha); record["activated"]=True; record["events"].append("activated"); save()
             if activate is None:
                 record["consumer_invocation"] = boundary.invoke_arm_consumer(source/"src")
             record["observe"] = probe(observe,cwd=source,env=env)
             if record["observe"]["code"] != 0: raise ValueError("functional probe failed")
             record["config_after"] = {str(p):wall_patch.snapshot(p) for p in config_paths(home)} if activate is None else {}
-            record.update(observed=True,phase="delivered"); save()
+            record.update(observed=True,phase="delivered",delivered_at=time.time()); save()
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             record["failure"] = str(exc); record["events"].append("rollback-started"); save()
             record["rollback_at"] = time.time()
@@ -216,8 +217,9 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
                     record["restored_consumer_invocation"] = boundary.invoke_arm_consumer(old/"src")
                 record["rollback_probe"] = probe(observe,cwd=old,env=dict(env,PYTHONPATH=str(old/"src")))
                 record["phase"]="rolled-back" if record["rollback_probe"]["code"]==0 else "UNKNOWN"
+                record["rollback_completed_at" if record["phase"] == "rolled-back" else "rollback_failed_at"] = time.time()
             except (OSError,ValueError,subprocess.SubprocessError) as restore_error:
-                record.update(phase="UNKNOWN",rollback_error=str(restore_error))
+                record.update(phase="UNKNOWN",rollback_error=str(restore_error),rollback_failed_at=time.time())
             save(); return record
         if kind == "ordinary":
             try: (reviewer or (lambda r:enqueue_review(home,r)))(record)
@@ -242,6 +244,8 @@ def revert(home, identity):
             raise ValueError("consumer configuration inventory changed since promotion; reconcile later owned additions before revert")
         for name, value in record.get("config_after", {}).items():
             if wall_patch.snapshot(Path(name)) != value: raise ValueError("consumer configuration changed since promotion")
+        record.update(phase="reverting", revert_started_at=time.time())
+        write_json(path, record)
         try:
             restore_configuration(home, record["config_before"])
             old = Path(home)/"releases"/record["previous"]
@@ -251,14 +255,14 @@ def revert(home, identity):
             record["phase"] = "reverted" if record["revert_probe"]["code"] == 0 else "UNKNOWN"
             record["reverted_at"] = time.time()
         except (OSError,ValueError,subprocess.SubprocessError) as exc:
-            record.update(phase="UNKNOWN",revert_error=str(exc))
+            record.update(phase="UNKNOWN",revert_error=str(exc),revert_failed_at=time.time())
         write_json(path,record)
         return record
 
 
 def review(home, identity):
     path = record_path(home,identity); record=read_json(path)
-    if not record or record["phase"] not in ("delivered", "reverted"):
+    if not record or (record["phase"] not in ("delivered", "reverting", "reverted") and record.get("observed") is not True):
         raise ValueError("review needs a delivered or reverted committed release")
     if record.get("review_pending") is False:
         return dict(phase="reviewed", id=identity)
@@ -306,6 +310,7 @@ def merge_review(home, queued):
             result = outcome["result"]
             if "review" in result and current.get("review_pending") is not False:
                 current.update(result, review_pending=False)
+                current["reviewed_at"] = time.time()
                 current["review_state"] = "clear" if result["review"]["clear"] else "action-needed"
                 if not result["review"]["clear"] and current["phase"] == "delivered":
                     from . import intentions
