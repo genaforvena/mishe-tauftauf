@@ -168,6 +168,7 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
             bind_reviewed_source(source, strong)
         identity = sha + "-" + str(time.time_ns())
         record = dict(version=1, id=identity, sha=sha, previous=previous, source=str(source), paths=paths,
+                      created_at=time.time(),
                       classification=kind, phase="checking", tests_passed=False, activated=False, observed=False,
                       rollback_available=False, review_pending=kind=="ordinary", events=[])
         path = home/"work/releases"/f"{identity}.json"
@@ -202,6 +203,7 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
             record.update(observed=True,phase="delivered"); save()
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             record["failure"] = str(exc); record["events"].append("rollback-started"); save()
+            record["rollback_at"] = time.time()
             try:
                 old = materialize(home,repo,previous)
                 if activate is not None: switch(old,previous)
@@ -241,6 +243,7 @@ def revert(home, identity):
             record["revert_probe"] = run(record["observe_argv"], cwd=old,
                 env=dict(os.environ, PYTHONPATH=str(old/"src"), MISHE_SEED_HOME=str(home)))
             record["phase"] = "reverted" if record["revert_probe"]["code"] == 0 else "UNKNOWN"
+            record["reverted_at"] = time.time()
         except (OSError,ValueError,subprocess.SubprocessError) as exc:
             record.update(phase="UNKNOWN",revert_error=str(exc))
         write_json(path,record)

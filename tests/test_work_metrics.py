@@ -35,3 +35,13 @@ def test_unreadable_start_keeps_denominator_unknown(tmp_path):
     assert result["commits_per_engine_hour"] is None
     assert result["missing_usage"]==1
     assert result["unknown_window_wakes"]==1
+
+
+def test_bounded_fault_and_recovery_facts_are_reported(tmp_path):
+    write_json(tmp_path/"work/experiment/manifest.json",dict(version=1,start=0,end=86400,fault_events_version=1,recovery_events_version=1))
+    write_json(tmp_path/"work/fault-events/one.json",dict(at=10,novel=True))
+    write_json(tmp_path/"work/fault-events/two.json",dict(at=11,novel=False))
+    write_json(tmp_path/"work/releases/one.json",dict(created_at=10,sha="own",phase="rolled-back",events=["rollback-started"]))
+    r=m.report(tmp_path,start=0,end=30)
+    assert r["fault_trigger_novelty"]["fresh"]==1 and r["fault_trigger_novelty"]["repeated"]==1
+    assert r["reverts_rework"]["automatic_rollbacks"]==1

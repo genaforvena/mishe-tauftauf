@@ -163,6 +163,12 @@ def run(args) -> int:
             from . import work_receipts, work_boundary
             if not args.output.resolve().is_relative_to(home): raise ValueError("check output must be under SITE_HOME")
             result = work_receipts.check(args.repo, work_boundary.argv_file(args.file), now=now)
+            role, key = os.environ.get("MISHE_ROLE"), os.environ.get("MISHE_WAKE_KEY")
+            if role and key:
+                from .observations import validate_slug
+                validate_slug(key)
+                result.update(role=role, wake_key=key)
+                write_json(home/"wakes"/f"{key}.check-{time.time_ns()}.json", result)
             write_json(args.output, result)
             return 0 if result["code"] == 0 and result["bound"] else 2
         if args.work_command == "show":

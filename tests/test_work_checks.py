@@ -19,3 +19,16 @@ def test_check_binding_includes_executable_mode(repo):
     assert result["code"]==0 and w.check_matches(repo,result)
     tool.chmod(0o644)
     assert not w.check_matches(repo,result)
+
+
+def test_commit_latency_only_for_exact_checked_tree(repo):
+    import time
+    (repo/"file").write_text("checked")
+    check=w.check(repo,[sys.executable,"-c","from pathlib import Path; assert Path(\"file\").read_text()==\"checked\""],now=time.time()-10)
+    check["finished_at"]=time.time()-5
+    git(repo,"add","file");git(repo,"commit","-qm","checked")
+    sha=git(repo,"rev-parse","HEAD")
+    result=w.bound_check_latency(repo,sha,[check])
+    assert len(result)==1 and result[0]["commit"]==sha and result[0]["seconds_upper"]>=result[0]["seconds_lower"]>=0
+    (repo/"file").write_text("later")
+    assert w.bound_check_latency(repo,sha,[check])==[]

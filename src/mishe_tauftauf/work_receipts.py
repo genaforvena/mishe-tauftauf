@@ -2,6 +2,7 @@
 from __future__ import annotations
 import hashlib
 import os
+import time
 import subprocess
 from pathlib import Path
 from . import work_boundary as boundary
@@ -95,6 +96,17 @@ def complete(home, key, *, now, engine_seconds=None):
     if any(not artifact_matches(home, a) for a in refs):
         result.update(evidence_state="UNKNOWN", classification="awaiting-evidence", error="artifact changed after settlement")
     result["engine_seconds"] = engine_seconds
+    checks = []
+    for path in root.glob(f"{key}.check-*.json"):
+        try:
+            check = read_json(path)
+            if isinstance(check, dict) and check.get("wake_key") == key and check.get("role") == start["role"]:
+                checks.append(check)
+        except (OSError, ValueError):
+            result.setdefault("unreadable_checks", []).append(str(path))
+    result["check_latencies"] = []
+    if result.get("head_end") in result.get("commits_attributed", []):
+        result["check_latencies"] = bound_check_latency(start["repo"], result["head_end"], checks)
     write_json(root / f"{key}.work.json", result)
 
 
@@ -117,9 +129,30 @@ def check(repo, argv, *, now):
     before=tree_digest(repo)
     result=subprocess.run(argv,cwd=repo,capture_output=True,text=True,timeout=600)
     after=tree_digest(repo)
-    return dict(argv=argv,code=result.returncode,at=now,head=boundary.head(repo),tree_digest=before,
+    return dict(version=1,kind="work-check",argv=argv,code=result.returncode,at=now,finished_at=time.time(),head=boundary.head(repo),tree_digest=before,
                 bound=before==after,output=result.stdout+result.stderr)
 
 
 def check_matches(repo, record):
     return record.get("code")==0 and record.get("bound") is True and tree_digest(repo)==record["tree_digest"]
+
+
+def bound_check_latency(repo, sha, checks):
+    """Bind one committed tree; Git's one-second timestamp gives an interval."""
+    if not checks:
+        return []
+    try:
+        if boundary.head(repo) != sha or not boundary.clean_tree(repo):
+            return []
+        stamp = boundary.commit_time(repo, sha)
+        candidates = [c for c in checks if c.get("kind") == "work-check" and
+                      isinstance(c.get("finished_at"), (int, float)) and c.get("head") != sha and
+                      c["finished_at"] <= stamp + 1 and check_matches(repo, c)]
+        if not candidates:
+            return []
+        check = min(candidates, key=lambda c: c["finished_at"])
+        return [dict(commit=sha, seconds_lower=max(0, stamp-check["finished_at"]),
+                     seconds_upper=max(0, stamp+1-check["finished_at"]), check_at=check["finished_at"],
+                     argv=check["argv"], tree_digest=check["tree_digest"], precision_seconds=1)]
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return []

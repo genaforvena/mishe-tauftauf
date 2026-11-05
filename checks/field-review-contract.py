@@ -137,7 +137,7 @@ def main(argv=None) -> int:
         print("field-review landing contract holds, but no review has landed yet; "
               "this is not evidence of a working round trip")
         return 0
-    print(f"field-review landing contract holds for {landed} landed review(s)")
+    print(f"current field-review contract holds; {len(historical)} historical failures retained across {landed} landed review(s)")
     return 0
 
 

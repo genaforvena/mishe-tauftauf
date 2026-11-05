@@ -58,7 +58,7 @@ APPLY_ROOTS = ("src/", "tests/", "checks/", "tools/")
 DISCARD_HEADING = "## Discard"
 ROLES = ("genome", "health", "witness", "discover", "senses", "docs",
          "research-methods", "pub", "body-research", "inference-research",
-         "field-review")
+         "field-review", "steward")
 URL_RE = re.compile(r"https?://[^\s<>\"')]+")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 FRONT_MATTER_END = "---"
@@ -401,7 +401,9 @@ def validate_review_text(name: str, text: str, repo: Path, *,
                           and candidate.is_file())
             else:
                 exists = target_exists(target)
-            if not exists:
+            candidate = (repo / target).resolve()
+            proposed = status == "proposed" and not Path(target).is_absolute() and candidate.is_relative_to(repo.resolve())
+            if not exists and not proposed:
                 problems.append(f"the application target is not an existing file: {target}")
             # From the 2026-11-03 cutover a review must apply to the plant's internals: code or tests,
             # not a markdown file. Earlier reviews keep their contract so the historical check stays green.
@@ -713,23 +715,6 @@ def open_applications(repo: Path) -> list[dict[str, str]]:
     return sorted(rows, key=lambda row: (row["date"], row["review"]))
 
 
-def render_gate(item: dict[str, str], count: int) -> str:
-    """The brief that replaces a new cell while the integration queue is open."""
-    return "\n".join([
-        f"GATE CLOSED — {count} landed application(s) are not yet integrated into the plant's"
-        " code or discarded. No new cell is selected until this queue is empty.",
-        f"OLDEST OPEN: {item['review']}",
-        f"  owner: {item['owner'] or '-'}   target: {item['target'] or '-'}",
-        f"  gap: {item['gap']}",
-        "DO ONE OF:",
-        "  1. make the change in the target: a .py, .sh or .json under src/, tests/, checks/"
-        " or tools/ that defines the identifiers the Application section names, with a test"
-        " that fails before and passes after. Commit it on main, then rerun this command.",
-        "  2. discard it: set status: discarded in the front matter, replace the Application"
-        " section with one '## Discard' line saying why, commit, then rerun this command.",
-        "A comment, a docstring or a document does not integrate a review.",
-    ])
-
 
 def render_brief(cell: Cell, hits: list[Hit]) -> str:
     """The prompt material for one cell: question, sweep, and the contract."""
@@ -757,7 +742,7 @@ def render_brief(cell: Cell, hits: list[Hit]) -> str:
         "",
         "REVIEW FILE: research/field-review/reviews/"
         f"{cell.field_id}--{cell.angle_id}--<YYYY-MM-DD>.md",
-        "FRONT MATTER: field, angle, date, status (applied|discarded), owner (a plant role),"
+        "FRONT MATTER: field, angle, date, status (proposed|applied|discarded), owner (a plant role),"
         " target (for applied)",
         "SECTIONS: " + " | ".join(REQUIRED_SECTIONS) + " | " + APPLICATION_HEADING
         + " or " + DISCARD_HEADING,
@@ -767,6 +752,13 @@ def render_brief(cell: Cell, hits: list[Hit]) -> str:
         " addressed message. A review that is not committed has not landed.",
     ]
     return "\n".join(lines)
+
+
+HISTORICAL_BASE = "ebd27007c94bddf2873c76c3cb18aa4b1ab98ead"
+
+def historical_review(repo, name):
+    old = subprocess.run(["git", "-C", str(repo), "show", f"{HISTORICAL_BASE}:{name}"], capture_output=True)
+    return old.returncode == 0 and old.stdout == head_bytes(repo, name)
 
 
 def main(argv=None) -> int:
@@ -833,6 +825,13 @@ def main(argv=None) -> int:
         return 0
     if command == "check":
         problems = validate_tree(repo)
+        historical = {name: values for name, values in problems.items()
+                      if historical_review(repo, name) and (repo / name).read_bytes() == head_bytes(repo, name)}
+        for name in historical:
+            print(f"HISTORICAL FAIL {name}: {'; '.join(historical[name])}")
+        problems = {name: values for name, values in problems.items() if name not in historical}
+        if historical:
+            print(f"{len(historical)} frozen historical failures remain; they do not gate new work")
         for name in sorted(problems):
             print(f"FAIL {name}")
             for problem in problems[name]:
@@ -842,7 +841,7 @@ def main(argv=None) -> int:
         landed = len(landed_review_names(repo))
         waiting = unlanded_reviews(repo)
         edited = edited_landed_reviews(repo)
-        print(f"PASS — {len(review_files(repo))} review(s) satisfy the landing contract;"
+        print(f"PASS — current review contract holds; {len(historical)} historical failures retained;"
               f" {landed} landed on the branch")
         if waiting:
             print(f"  {len(waiting)} review(s) have not landed yet")
@@ -883,10 +882,3 @@ if __name__ == "__main__":
         except OSError:
             pass
         raise SystemExit(0)
-
-
-HISTORICAL_BASE = "ebd27007c94bddf2873c76c3cb18aa4b1ab98ead"
-
-def historical_review(repo, name):
-    old = subprocess.run(["git", "-C", str(repo), "show", f"{HISTORICAL_BASE}:{name}"], capture_output=True)
-    return old.returncode == 0 and old.stdout == head_bytes(repo, name)

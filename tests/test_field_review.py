@@ -781,3 +781,10 @@ def test_fresh_claimed_integration_needs_its_own_evidence(tmp_path):
     text = GOOD_REVIEW.replace("2026-10-21", "2026-11-06")
     problems = field_review.validate_review_text("alpha--recent--2026-11-06.md", text, repo)
     assert any("integration" in p for p in problems)
+
+
+def test_proposed_review_can_name_confined_future_implementation(tmp_path):
+    repo=_repo(tmp_path)
+    text=GOOD_REVIEW.replace("status: applied","status: proposed").replace("src/example.py","src/future.py").replace("2026-10-21","2026-11-06")
+    assert field_review.validate_review_text("alpha--recent--2026-11-06.md",text,repo)==[]
+    assert field_review.validate_review_text("alpha--recent--2026-11-06.md",text.replace("src/future.py","/outside.py"),repo)

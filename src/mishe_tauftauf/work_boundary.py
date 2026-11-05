@@ -35,6 +35,10 @@ def head(repo):
     return git(repo, "rev-parse", "HEAD").strip()
 
 
+def commit_time(repo, sha):
+    return int(git(repo, "show", "-s", "--format=%ct", sha).strip())
+
+
 def dirty(repo):
     # -z preserves spaces and newlines in filenames. Include untracked files.
     unstaged = git(repo, "ls-files", "-z", "--modified", "--others", "--exclude-standard")
