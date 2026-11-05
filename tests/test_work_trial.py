@@ -23,3 +23,20 @@ def test_corrupt_manifest_or_missing_due_report_is_unknown(tmp_path):
     root=tmp_path/"work/experiment";root.mkdir(parents=True)
     (root/"manifest.json").write_text("{")
     assert t.tick(tmp_path,now=100,notify=lambda *a:None)==3
+
+
+def test_lost_completed_checkpoint_is_unknown_and_not_recreated(tmp_path):
+    root=tmp_path/"work/experiment"
+    write_json(root/"manifest.json",dict(version=1,start=100,end=86500))
+    t.tick(tmp_path,now=86500,notify=lambda *a:None)
+    (root/"24h.json").unlink()
+    assert t.tick(tmp_path,now=86501,notify=lambda *a:None)==3
+    assert not (root/"24h.json").exists()
+
+
+def test_lost_manifest_after_checkpoint_is_unknown(tmp_path):
+    root=tmp_path/"work/experiment"
+    write_json(root/"manifest.json",dict(version=1,start=100,end=86500))
+    t.tick(tmp_path,now=86500,notify=lambda *a:None)
+    (root/"manifest.json").unlink()
+    assert t.tick(tmp_path,now=86501,notify=lambda *a:None)==3

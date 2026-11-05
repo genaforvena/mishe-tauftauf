@@ -16,15 +16,21 @@ def tick(home, *, now, notify=None):
     root=Path(home)/"work/experiment"
     try:
         manifest=read_json(root/"manifest.json")
-        if manifest is None: return 0
+        if manifest is None:
+            if list(root.glob("*.json")):
+                raise ValueError("trial manifest missing after retained evidence")
+            return 0
         if manifest.get("version") != 1 or manifest["end"] != manifest["start"]+86400:
             raise ValueError("malformed fixed trial window")
         for label,seconds in (("6h",21600),("24h",86400)):
             deadline=manifest["start"]+seconds
             if now < deadline: continue
             path=root/f"{label}.json"
+            marker=root/f"{label}.notification.json"
             record=read_json(path)
             if record is None:
+                if marker.exists():
+                    raise ValueError("completed or attempted checkpoint lost; preserve UNKNOWN instead of regenerating")
                 report=work_metrics.report(home,start=manifest["start"],end=deadline)
                 report["input_digests"]={name:hashlib.sha256((Path(home)/name).read_bytes()).hexdigest()
                                          for name in report["inventory"]}
@@ -33,7 +39,6 @@ def tick(home, *, now, notify=None):
                 record=report
             if record.get("start") != manifest["start"] or record.get("end") != deadline:
                 raise ValueError("checkpoint window mismatch")
-            marker=root/f"{label}.notification.json"
             state=read_json(marker)
             if state is None:
                 write_json(marker,dict(state="dispatching",at=now))
