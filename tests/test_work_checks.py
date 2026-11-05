@@ -10,3 +10,12 @@ def test_passing_check_binds_exact_bytes_and_later_edit_invalidates(repo):
     assert w.check_matches(repo,r)
     (repo/"file").write_text("later edit")
     assert not w.check_matches(repo,r)
+
+
+def test_check_binding_includes_executable_mode(repo):
+    tool=repo/"tool.py";tool.write_text("#!/usr/bin/env python3\nprint(42)\n");tool.chmod(0o755)
+    git(repo,"add","tool.py");git(repo,"commit","-qm","tool")
+    result=w.check(repo,[str(tool)],now=100)
+    assert result["code"]==0 and w.check_matches(repo,result)
+    tool.chmod(0o644)
+    assert not w.check_matches(repo,result)

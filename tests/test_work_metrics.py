@@ -24,3 +24,14 @@ def test_missing_git_does_not_become_zero_commit_productivity(tmp_path):
     write_json(root/"k.work-start.json",dict(wake_key="k",started_at=10))
     write_json(root/"k.work.json",dict(wake_key="k",started_at=10,ended_at=20,evidence_state="UNKNOWN",engine_seconds=10))
     assert m.report(tmp_path,start=0,end=30)["commits_per_engine_hour"] is None
+
+
+def test_unreadable_start_keeps_denominator_unknown(tmp_path):
+    root=tmp_path/"wakes"
+    write_json(root/"k.work-start.json",dict(wake_key="k",started_at=10))
+    write_json(root/"k.work.json",dict(wake_key="k",started_at=10,ended_at=20,evidence_state="KNOWN",engine_seconds=10))
+    (root/"lost.work-start.json").write_text("{")
+    result=m.report(tmp_path,start=0,end=30)
+    assert result["commits_per_engine_hour"] is None
+    assert result["missing_usage"]==1
+    assert result["unknown_window_wakes"]==1

@@ -103,7 +103,12 @@ def tree_digest(repo):
     for name in sorted(set(boundary.tree_files(repo))):
         path=Path(repo)/name
         value.update(os.fsencode(name)); value.update(b"\0")
-        value.update(path.read_bytes() if path.is_file() else b"ABSENT")
+        if path.is_symlink():
+            value.update(b"SYMLINK\0" + os.fsencode(os.readlink(path)))
+        elif path.is_file():
+            value.update(str(path.stat().st_mode & 0o777).encode("ascii") + b"\0" + path.read_bytes())
+        else:
+            value.update(b"ABSENT")
         value.update(b"\0")
     return value.hexdigest()
 

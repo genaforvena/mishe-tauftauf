@@ -90,6 +90,10 @@ def snapshot_key(path):
     return path.name.removesuffix(".snapshot.json")
 
 
+def work_start_key(path):
+    return path.name.removesuffix(".work-start.json")
+
+
 def full_sha(repo, value):
     import re
     if not re.fullmatch("[0-9a-f]{40}", value): raise ValueError("release needs a full commit SHA")
