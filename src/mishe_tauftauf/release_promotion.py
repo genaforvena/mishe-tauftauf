@@ -238,6 +238,8 @@ def revert(home, identity):
     with delivery_lock(home):
         record = read_json(path)
         if not record or record["phase"] != "delivered": raise ValueError("revert needs a delivered release")
+        if {str(p) for p in config_paths(home)} != set(record.get("config_after", {})):
+            raise ValueError("consumer configuration inventory changed since promotion; reconcile later owned additions before revert")
         for name, value in record.get("config_after", {}).items():
             if wall_patch.snapshot(Path(name)) != value: raise ValueError("consumer configuration changed since promotion")
         try:

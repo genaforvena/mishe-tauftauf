@@ -246,3 +246,18 @@ def test_generated_resolver_configuration_is_restored(tree,monkeypatch):
     monkeypatch.setattr(p,"reload_units",lambda:None)
     p.restore_configuration(home,before)
     assert read_json(resolver)=={"old.service":"health"}
+
+
+def test_revert_refuses_later_same_site_configuration_without_deleting_it(tree,monkeypatch):
+    from mishe_tauftauf.state_files import write_json
+    repo,home,old,sha=tree
+    original=home/"original.service";original.write_text("delivered")
+    later=home/"later.service";later.write_text("peer work")
+    timer=home/"later.timer";timer.write_text("peer timer")
+    identity="later-peer"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",
+        config_after={str(original):p.wall_patch.snapshot(original)},config_before={},observe_argv=["probe"]))
+    monkeypatch.setattr(p,"config_paths",lambda *a:[original,later,timer])
+    with pytest.raises(ValueError,match="configuration inventory changed"):
+        p.revert(home,identity)
+    assert later.read_text()=="peer work" and timer.read_text()=="peer timer" and original.read_text()=="delivered"
