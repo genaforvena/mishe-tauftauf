@@ -19,8 +19,9 @@ from . import recovery_io as recovery
 # each tick, so the previous tick's guard is read ~120s old at the start of the next one.
 # 120s keeps the unit inside the host containment start limit (3 starts per 300s); a 60s cadence
 # gets 2 of every 5 starts rejected, and each rejection leaves the guard row older than the window.
-# 240s tolerates one slightly late tick (120s cadence + 60s timeout + slack) and no more.
-GUARD_MAX_AGE = 240
+# 180s tolerates one slightly late tick (120s cadence + slack) and no more. Widened from 90s only
+# as far as the 120s cadence needs; genome's review of b7f740c8 asked for 180, not 240.
+GUARD_MAX_AGE = 180
 
 
 def decide(previous, observation, *, now, stable_seconds=120):
