@@ -89,3 +89,20 @@ def trial_args():
     parser=argparse.ArgumentParser(description="Deterministic useful-work checkpoint producer")
     parser.add_argument("--home",type=Path,required=True)
     return parser.parse_args()
+
+
+def invoke_arm_consumer(expected):
+    """Exercise a future oneshot invocation; never restart an active worker."""
+    unit = "mishe-arm.service"
+    def prop(name):
+        return subprocess.check_output(["systemctl", "--user", "show", unit, "-p", name, "--value"], text=True).strip()
+    if prop("ActiveState") not in ("inactive", "failed"):
+        raise ValueError("arm consumer already active; cannot prove a fresh invocation")
+    if "PYTHONPATH=" + str(expected) not in prop("Environment"):
+        raise ValueError("arm consumer does not use intended release")
+    before = prop("ExecMainStartTimestampMonotonic")
+    subprocess.run(["systemctl", "--user", "start", unit], check=True, capture_output=True, timeout=60)
+    after = prop("ExecMainStartTimestampMonotonic")
+    if not after.isdecimal() or int(after) <= int(before or "0") or prop("Result") != "success" or prop("ExecMainStatus") != "0":
+        raise ValueError("fresh arm consumer invocation was not observed successful")
+    return dict(unit=unit, started_monotonic=after, pythonpath=str(expected), result="success")

@@ -89,3 +89,15 @@ def test_default_review_enqueue_uses_sha_and_retains_pending(tree, monkeypatch):
     p.enqueue_review(home,dict(sha=sha,id="release",source=str(repo)))
     assert sha[:12] in calls[0][3]
     assert read_json(home/"work/reviews"/f"{sha}.json")["state"]=="pending"
+
+
+def test_oneshot_observation_uses_retained_start_stamp_not_empty_invocation_id(monkeypatch):
+    from mishe_tauftauf import work_boundary as b
+    stamp=["10"]
+    def output(argv,**kwargs):
+        values={"ActiveState":"inactive", "Environment":"PYTHONPATH=/release/src", "InvocationID":"", 
+                "ExecMainStartTimestampMonotonic":stamp[0], "ExecMainStatus":"0", "Result":"success"}
+        return values[argv[-2]]+"\n"
+    monkeypatch.setattr(b.subprocess,"check_output",output)
+    monkeypatch.setattr(b.subprocess,"run",lambda *a,**k:stamp.__setitem__(0,"20"))
+    assert b.invoke_arm_consumer(Path("/release/src"))["started_monotonic"]=="20"

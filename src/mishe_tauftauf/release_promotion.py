@@ -112,6 +112,10 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
         for path in paths:
             if path not in strong["files"]: raise ValueError(f"strong review does not cover {path}")
     with delivery_lock(home):
+        if activate is None:
+            from .runtime_cli import default_pythonpath
+            if Path(default_pythonpath()).resolve() != (home/"releases"/previous/"src").resolve():
+                raise ValueError("previous SHA does not match installed wake consumer pin")
         source = materialize(home, repo, sha)
         if kind == "strong":
             for path in paths:
@@ -143,6 +147,8 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
         switch = activate or (lambda root, target: globals()["activate"](home,repo,root,target))
         try:
             switch(source,sha); record["activated"]=True; record["events"].append("activated"); save()
+            if activate is None:
+                record["consumer_invocation"] = boundary.invoke_arm_consumer(source/"src")
             record["observe"] = probe(observe,cwd=source,env=env)
             if record["observe"]["code"] != 0: raise ValueError("functional probe failed")
             record["config_after"] = {str(p):wall_patch.snapshot(p) for p in config_paths(home)} if activate is None else {}
@@ -155,6 +161,7 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
                 else:
                     for name,value in configs.items(): wall_patch.restore(Path(name),value)
                     subprocess.run(["systemctl","--user","daemon-reload"],check=True,capture_output=True)
+                    record["restored_consumer_invocation"] = boundary.invoke_arm_consumer(old/"src")
                 record["rollback_probe"] = probe(observe,cwd=old,env=dict(env,PYTHONPATH=str(old/"src")))
                 record["phase"]="rolled-back" if record["rollback_probe"]["code"]==0 else "UNKNOWN"
             except (OSError,ValueError,subprocess.SubprocessError) as restore_error:
@@ -185,6 +192,7 @@ def revert(home, identity):
             for name,value in record["config_before"].items(): wall_patch.restore(Path(name),value)
             subprocess.run(["systemctl","--user","daemon-reload"],check=True,capture_output=True)
             old = Path(home)/"releases"/record["previous"]
+            record["restored_consumer_invocation"] = boundary.invoke_arm_consumer(old/"src")
             record["revert_probe"] = run(record["observe_argv"], cwd=old,
                 env=dict(os.environ, PYTHONPATH=str(old/"src"), MISHE_SEED_HOME=str(home)))
             record["phase"] = "reverted" if record["revert_probe"]["code"] == 0 else "UNKNOWN"
