@@ -32,9 +32,15 @@ def _digest(path: Path) -> str:
 def _make_root(base: Path, name: str, wall_source: str) -> Path:
     root = base / name
     (root / PACKAGE).mkdir(parents=True, exist_ok=True)
-    # Copy the real package init and all modules the wall import needs.
-    for item in (REPO / "src" / PACKAGE).glob("*.py"):
-        shutil.copy(item, root / PACKAGE / item.name)
+    # Copy the whole real package, subpackages included: the wall import chain
+    # reaches core/ (via discovery -> replacement_readings -> plant_tmux), and a
+    # pinned release root always carries it.
+    for item in (REPO / "src" / PACKAGE).rglob("*.py"):
+        if "__pycache__" in item.parts:
+            continue
+        target = root / PACKAGE / item.relative_to(REPO / "src" / PACKAGE)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(item, target)
     # Overwrite wall.py with the desired variant.
     (root / PACKAGE / "wall.py").write_text(wall_source, encoding="utf-8")
     return root
@@ -158,7 +164,8 @@ def test_probe_shows_clause_defeated_by_replace(tmp_path):
     assert result["clause_applied"] is True
     assert result["read_only_survived"] is False
     assert result["bytes_survived"] is False
-    assert oct(result["mode_after_publish"]) == "0o444"
+    # The clause strips the write bits from whatever mode the writer gave (umask-dependent).
+    assert result["mode_after_publish"] == result["mode_before"] & ~0o222
     # Replacement creates a fresh inode with the writer's default mode
     # (umask-dependent: 0o644 with 022, 0o664 with 002). The invariant
     # is that the read-only mode does not survive, not the exact bits.
