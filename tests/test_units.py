@@ -11,8 +11,11 @@ ROLES = ["genome", "health", "docs"]
 def cfg(tmp_path):
     home = tmp_path / "site"
     store.register(home, "ci", max_age=600, subscribers=["genome"])
+    pin = tmp_path / "rel" / "src"                      # a real (empty) pinned package, so doctor sees a valid pin
+    (pin / "mishe_tauftauf").mkdir(parents=True)
+    (pin / "mishe_tauftauf" / "__init__.py").write_text("", encoding="utf-8")
     return units.Config(home=home, repo=tmp_path / "repo", python="/usr/bin/python3",
-                        pythonpath=str(tmp_path / "rel" / "src"), unit_dir=tmp_path / "units")
+                        pythonpath=str(pin), unit_dir=tmp_path / "units")
 
 
 def test_render_is_deterministic_and_marked(cfg):
@@ -181,3 +184,35 @@ def test_outer_wake_lifetime_covers_both_queue_acquisitions_and_engine(cfg):
     lifetime=int(re.search(r"TimeoutStartSec=(\d+)",svc).group(1))
     worst_queue=2*runtime_cli.WAKE_TIMEOUT
     assert lifetime>=worst_queue+runtime_cli.WAKE_TIMEOUT+units.SLACK
+
+
+def _pin(tmp_path, files):
+    pkg = tmp_path / "pin" / "mishe_tauftauf"
+    pkg.mkdir(parents=True)
+    for name, text in files.items():
+        (pkg / name).write_text(text, encoding="utf-8")
+    return str(tmp_path / "pin")
+
+
+def test_pin_import_check_green_when_every_relative_import_resolves(tmp_path):
+    pin = _pin(tmp_path, {"__init__.py": "", "a.py": "from . import b\nfrom .c import x\n",
+                          "b.py": "", "c.py": "x = 1\n"})
+    assert units._pin_import_problems(pin) == []
+
+
+def test_pin_import_check_red_on_missing_module_even_when_lazy(tmp_path):
+    pin = _pin(tmp_path, {"__init__.py": "", "a.py": "def f():\n    from .gone import g\n"})
+    problems = units._pin_import_problems(pin)
+    assert problems == ["pin a.py: imports missing module gone"]
+
+
+def test_pin_import_check_red_when_package_absent(tmp_path):
+    assert units._pin_import_problems(str(tmp_path / "nowhere")) != []
+
+
+def test_doctor_red_when_pin_is_missing_a_module_the_units_run(cfg, tmp_path):
+    pin = _pin(tmp_path, {"__init__.py": "", "a.py": "from .gone import g\n"})
+    cfg = units.Config(**{**cfg.__dict__, "pythonpath": pin})
+    units.sync(cfg, ROLES, runner=lambda c: None)
+    report = units.doctor(cfg, ROLES)
+    assert report.state == "RED" and any("gone" in p for p in report.problems)

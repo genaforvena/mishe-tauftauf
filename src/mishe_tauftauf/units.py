@@ -7,6 +7,7 @@ installed files and never reports GREEN on missing or unreadable evidence.
 """
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -216,13 +217,48 @@ def sync(cfg: Config, roles, *, producers=(), runner=None, uninstall: bool = Fal
     return report
 
 
+def _pin_import_problems(pythonpath: str) -> list:
+    """Every relative import in the pinned package must resolve inside that pin.
+
+    A unit can be GREEN while its PYTHONPATH pin is missing a module the package
+    imports (the observer-checks failure of 2026-11-05 imported revive_boundary
+    from a stale runtime). Static and deterministic: nothing is executed.
+    """
+    pkg = Path(pythonpath) / "mishe_tauftauf"
+    if not (pkg / "__init__.py").is_file():
+        return [f"pin {pythonpath}: mishe_tauftauf package missing"]
+
+    def has_module(parts) -> bool:
+        base = pkg.joinpath(*parts)
+        return base.with_suffix(".py").is_file() or (base / "__init__.py").is_file()
+
+    problems = []
+    for src in sorted(pkg.glob("*.py")):
+        try:
+            tree = ast.parse(src.read_text(encoding="utf-8"), filename=str(src))
+        except (SyntaxError, UnicodeDecodeError, OSError) as exc:
+            problems.append(f"pin {src.name}: unreadable ({type(exc).__name__})")
+            continue
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.ImportFrom) and node.level == 1):
+                continue
+            if node.module:
+                if not has_module(node.module.split(".")):
+                    problems.append(f"pin {src.name}: imports missing module {node.module}")
+            else:
+                for alias in node.names:
+                    if alias.name != "*" and not has_module([alias.name]):
+                        problems.append(f"pin {src.name}: imports missing module {alias.name}")
+    return problems
+
+
 def doctor(cfg: Config, roles, *, producers=()) -> DoctorReport:
     try:
         expected = render(cfg, roles, producers=producers)
         installed = _installed(cfg)
     except OSError as exc:
         return DoctorReport("UNKNOWN", [f"cannot read installed units: {exc}"])
-    problems = []
+    problems = _pin_import_problems(cfg.pythonpath)
     for rel, text in expected.items():
         if rel not in installed:
             problems.append(f"{rel}: missing")
