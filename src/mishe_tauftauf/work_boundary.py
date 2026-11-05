@@ -8,6 +8,20 @@ def work_identifier(value):
     return isinstance(value, str) and bool(value) and value not in (".", "..") and set(value) <= set("abcdefghijklmnopqrstuvwxyz0123456789-_.")
 
 
+def failure_signature(unit):
+    """Only stable systemd failure classes, never timestamps or journal prose."""
+    try:
+        result = subprocess.run(["systemctl", "--user", "show", unit, "-p",
+                                 "Result,ExecMainCode,ExecMainStatus"], capture_output=True, text=True, timeout=10)
+        values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        fields = ("Result", "ExecMainCode", "ExecMainStatus")
+        if result.returncode or any(not values.get(f) for f in fields):
+            return "UNKNOWN-systemd-failure-class"
+        return "|".join(f + "=" + values[f] for f in fields)
+    except (OSError, subprocess.SubprocessError):
+        return "UNKNOWN-systemd-failure-class"
+
+
 def git(repo, *args):
     if repo is None:
         raise ValueError("no repository configured")

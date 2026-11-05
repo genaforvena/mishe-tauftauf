@@ -246,8 +246,8 @@ def run(args) -> int:
         print(json.dumps(migrate.apply(home, declared_roles(home), now=now), sort_keys=True))
         return 0
     if args.command == "failed":
-        from . import failure
-        print(failure.report(home, args.unit, now=now))
+        from . import failure, work_boundary
+        print(failure.report(home, args.unit, now=now, signature=work_boundary.failure_signature(args.unit)))
         return 0
     if args.command in ("sync", "doctor"):
         return run_units(args, home, now)

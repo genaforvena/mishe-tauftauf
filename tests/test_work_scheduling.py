@@ -66,3 +66,14 @@ def test_fake_engine_invocation_count_during_wait(tmp_path):
                            mail_reader=lambda *a: [], starter=lambda *a: None)
     assert result.outcome == "completed"
     assert engine.calls == 1
+
+
+def test_systemd_failure_signature_ignores_timestamp_and_tracks_exit_class(monkeypatch):
+    from mishe_tauftauf import work_boundary as b
+    from types import SimpleNamespace
+    state=["Result=exit-code\nExecMainCode=1\nExecMainStatus=2\n"]
+    monkeypatch.setattr(b.subprocess,"run",lambda *a,**k:SimpleNamespace(returncode=0,stdout=state[0],stderr=""))
+    first=b.failure_signature("check.service")
+    assert b.failure_signature("check.service")==first
+    state[0]="Result=timeout\nExecMainCode=2\nExecMainStatus=15\n"
+    assert b.failure_signature("check.service")!=first
