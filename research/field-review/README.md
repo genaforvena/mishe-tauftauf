@@ -143,3 +143,11 @@ Plumbing exclusions (named, not gaps): `__main__`, `access`, `cli`,
 `guard_cli`, `patch_text`, `timestamp_text`, `tmux`, `proc_table`,
 `space_text`, `unit_properties`, `unit_psi_text`, `memory_stat_text`, `window_manifest`, `minimal_supervisor`,
 `probe_supervisor`, `clear_journal`, `site_uninstall`, `declared_roots`.
+
+New selection remains available while historical applications remain unresolved.
+`applied` retains their content facts; the contract check reports unchanged blobs
+from ebd27007 separately as historical failures. Editing those blobs subjects
+them to current validation. New reviews may be `proposed`; claiming `applied`
+from 2026-11-05 requires a reachable `integration-commit` changing its target
+and a tracked `integration-evidence` file. Start from a concrete repository
+question; the grid is a suggestion, never a quota.

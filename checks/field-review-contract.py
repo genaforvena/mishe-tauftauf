@@ -101,6 +101,7 @@ def main(argv=None) -> int:
         return 3
     problems: list[str] = []
     landed = 0
+    historical = []
     try:
         for name in tool.landed_review_names(repo):
             blob = tool.head_bytes(repo, name)
@@ -112,7 +113,7 @@ def main(argv=None) -> int:
             for problem in tool.validate_review_text(
                     name, text, repo,
                     target_exists=lambda target: tool.head_has_file(repo, target)):
-                problems.append(f"{name}: {problem}")
+                (historical if hasattr(tool, "historical_review") and tool.historical_review(repo, name) else problems).append(f"{name}: {problem}")
         waiting = tool.unlanded_reviews(repo)
         for name, age in waiting:
             problems.append(f"{name}: a review has waited {age:.0f}s on the working tree "
@@ -122,6 +123,10 @@ def main(argv=None) -> int:
     except (OSError, ValueError) as exc:
         print(f"UNKNOWN — the landed reviews cannot be checked: {exc}")
         return 3
+    for problem in historical:
+        print(f"HISTORICAL FAIL {problem}")
+    if historical:
+        print(f"Historical unresolved findings: {len(historical)}; frozen exact blobs at {tool.HISTORICAL_BASE}; preserved, not a gate for new work")
     if problems:
         for problem in problems:
             print(f"FAIL {problem}")

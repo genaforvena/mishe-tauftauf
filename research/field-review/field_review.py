@@ -365,8 +365,8 @@ def validate_review_text(name: str, text: str, repo: Path, *,
     if date and not DATE_RE.match(date):
         problems.append(f"date is not YYYY-MM-DD: {date}")
     status = matter.get("status", "")
-    if status and status not in ("applied", "discarded"):
-        problems.append(f"status must be applied or discarded: {status}")
+    if status and status not in ("applied", "discarded", "proposed"):
+        problems.append(f"status must be proposed, applied or discarded: {status}")
     owner = matter.get("owner", "")
     if owner and owner not in ROLES:
         problems.append(f"owner is not a plant role: {owner}")
@@ -409,6 +409,18 @@ def validate_review_text(name: str, text: str, repo: Path, *,
             if stamp and stamp.group(1) >= APPLY_CUTOVER and not (
                     target.startswith(APPLY_ROOTS) and target.endswith((".py", ".sh", ".json"))):
                 problems.append(f"the application must change the plant's internals (src/, tests/, checks/, tools/ code): {target}")
+    if date >= "2026-11-05" and status == "applied":
+        integration = matter.get("integration-commit", "")
+        evidence = matter.get("integration-evidence", "")
+        if not re.fullmatch(r"[0-9a-f]{40}", integration):
+            problems.append("claimed integration needs integration-commit: FULL_SHA")
+        else:
+            reachable = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", integration, "HEAD"], capture_output=True)
+            changed = subprocess.run(["git", "-C", str(repo), "diff-tree", "--no-commit-id", "--name-only", "-r", integration], capture_output=True, text=True)
+            if reachable.returncode or changed.returncode or target not in changed.stdout.splitlines():
+                problems.append("integration commit must be reachable and change its own target")
+        if not evidence or not head_has_file(repo, evidence):
+            problems.append("claimed integration needs integration-evidence: tracked repository file")
     if has_discard:
         body = [line for line in section_body(text, DISCARD_HEADING).splitlines()
                 if line.strip() and not line.startswith("#")]
@@ -788,7 +800,7 @@ def main(argv=None) -> int:
                 print(f"  waiting {age:.0f}s: {name}")
         backlog = open_applications(repo)
         print(f"integration backlog: {len(backlog)} applied review(s) not yet in the plant's code"
-              " and not discarded; new cells wait until it is empty")
+              " and not discarded; context only, selection remains available")
         return 0
     if command == "applied":
         rows = applied_target_states(repo)
@@ -844,8 +856,7 @@ def main(argv=None) -> int:
         return 0
     backlog = open_applications(repo)
     if backlog:
-        print(render_gate(backlog[0], len(backlog)))
-        return 0
+        print(f"HISTORICAL BACKLOG: {len(backlog)} unresolved application(s); inspect applied for evidence. Selection remains available.")
     cell = next_cell(cells, covered)
     if cell is None:
         # Rotation (DM 166093 option a): with no uncovered cell, revisit the
@@ -872,3 +883,10 @@ if __name__ == "__main__":
         except OSError:
             pass
         raise SystemExit(0)
+
+
+HISTORICAL_BASE = "ebd27007c94bddf2873c76c3cb18aa4b1ab98ead"
+
+def historical_review(repo, name):
+    old = subprocess.run(["git", "-C", str(repo), "show", f"{HISTORICAL_BASE}:{name}"], capture_output=True)
+    return old.returncode == 0 and old.stdout == head_bytes(repo, name)

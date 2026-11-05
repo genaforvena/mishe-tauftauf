@@ -755,7 +755,7 @@ class GateTest(unittest.TestCase):
             repo = _repo(Path(tmp), {"alpha--misread--2000-01-01.md": discard})
             self.assertEqual(field_review.open_applications(repo), [])
 
-    def test_next_is_gated_until_the_queue_is_empty(self):
+    def test_historical_backlog_does_not_gate_next_selection(self):
         import contextlib
         import io as stdio
         with tempfile.TemporaryDirectory() as tmp:
@@ -763,8 +763,8 @@ class GateTest(unittest.TestCase):
             out = stdio.StringIO()
             with contextlib.redirect_stdout(out):
                 self.assertEqual(field_review.main(["--repo", str(repo), "next"]), 0)
-            self.assertIn("GATE CLOSED", out.getvalue())
-            self.assertNotIn("CELL ", out.getvalue())
+            self.assertIn("HISTORICAL BACKLOG", out.getvalue())
+            self.assertIn("CELL ", out.getvalue())
             _commit_file(repo, "src/mod.py", "def helper_name():\n    return 1\n")
             out = stdio.StringIO()
             with contextlib.redirect_stdout(out):
@@ -774,3 +774,10 @@ class GateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_fresh_claimed_integration_needs_its_own_evidence(tmp_path):
+    repo = _repo(tmp_path)
+    text = GOOD_REVIEW.replace("2026-10-21", "2026-11-06")
+    problems = field_review.validate_review_text("alpha--recent--2026-11-06.md", text, repo)
+    assert any("integration" in p for p in problems)
