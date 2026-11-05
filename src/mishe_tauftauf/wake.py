@@ -8,6 +8,7 @@ leaves its dispatch open; the next wake of that role reconciles it first.
 from __future__ import annotations
 
 import os
+import time
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,16 +75,22 @@ def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, ti
     snap.tape_seq = max([owed.tape_cursor(home, role)] + [seq for seq, _ in mail])
     yielding.wakes_dir(home).mkdir(parents=True, exist_ok=True)
     write_json(yielding.snapshot_path(home, key), {"role": role, "snapshot": snap.to_json()})
+    from . import work_receipts
+    write_json(yielding.wakes_dir(home) / f"{key}.work-start.json",
+               work_receipts.begin(repo, role=role, key=key, now=now))
     prompt = yielding.wakes_dir(home) / f"{key}.prompt.md"
     prompt.write_text(dossier.build(home, role, snap, key=key, now=now, mail=mail,
                                     reconcile_of=reconcile_of, repo=repo), encoding="utf-8")
     env = dict(os.environ, MISHE_SEED_HOME=str(home), MISHE_ROLE=role, MISHE_WAKE_KEY=key)
+    engine_started = time.monotonic()
     try:
         code = engine.run(prompt, env=env, cwd=repo or Path(home), timeout=timeout, on_start=on_start)
     except EngineNotStarted as exc:
         return "failed", f"engine did not start: {exc}"
     except EngineTimeout as exc:
         return "unknown", f"engine timed out: {exc}"
+    finally:
+        work_receipts.complete(home, key, now=time.time(), engine_seconds=time.monotonic() - engine_started)
     if yielding.receipt_path(home, key).exists():
         return "yielded", f"engine exit {code}"
     return "unknown", f"engine exit {code} without a yield"

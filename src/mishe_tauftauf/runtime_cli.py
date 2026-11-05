@@ -84,6 +84,14 @@ def register(sub) -> None:
     p.add_argument("--continue", dest="continue_", action="store_true")
     p.add_argument("--again", type=duration); p.add_argument("--when", type=parse_when)
     p.add_argument("--file", type=Path, help="wall text file (default: stdin)")
+    p.add_argument("--work-file", type=Path)
+    p.add_argument("--artifact", type=Path, action="append", default=[])
+    work = add("work").add_subparsers(dest="work_command", required=True)
+    p = work.add_parser("show"); p.set_defaults(func=cmd_runtime); p.add_argument("role")
+    p = work.add_parser("set"); p.set_defaults(func=cmd_runtime); p.add_argument("--file", type=Path, required=True)
+    p.add_argument("--role", help="explicit operator target; residents may edit only their own role")
+    p = work.add_parser("report"); p.set_defaults(func=cmd_runtime)
+    p.add_argument("--start", required=True); p.add_argument("--end", required=True); p.add_argument("--output", type=Path, required=True)
     sig = add("signal").add_subparsers(dest="signal_command", required=True)
     p = sig.add_parser("register"); p.set_defaults(func=cmd_runtime); p.add_argument("name"); p.add_argument("--max-age", type=float, required=True)
     p.add_argument("--subscribers", default="")
@@ -118,6 +126,30 @@ def run(args) -> int:
     from . import engines, owed, signal_store, wake, yielding
     home = args.home.resolve()
     now = time.time()
+    if args.command == "work":
+        from . import work_state, work_metrics
+        from .state_files import read_json, write_json
+        import json
+        if args.work_command == "show":
+            print(json.dumps(work_state.load(home, args.role), indent=2))
+        elif args.work_command == "set":
+            record = read_json(args.file)
+            resident = os.environ.get("MISHE_ROLE")
+            role = resident or args.role
+            if not role or record.get("role") != role or (resident and args.role and args.role != resident):
+                raise ValueError("work role must match current wake or explicit operator --role")
+            work_state.save(home, role, record)
+        else:
+            from datetime import datetime
+            def epoch(value):
+                dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if dt.tzinfo is None: raise ValueError("report timestamps need timezone")
+                return dt.timestamp()
+            result = work_metrics.report(home, start=epoch(args.start), end=epoch(args.end))
+            if not args.output.resolve().is_relative_to(home): raise ValueError("output must be under SITE_HOME")
+            write_json(args.output, result)
+            print(f"{result['wakes']} wakes; {len(result['attributed_commits'])} attributed commits; missing usage={result['missing_usage']}")
+        return 0
     if args.command == "signal":
         if args.signal_command == "register":
             signal_store.register(home, args.name, max_age=args.max_age,
@@ -173,9 +205,11 @@ def run(args) -> int:
         if not role or not key:
             print("mishe: yield only works inside a wake (MISHE_ROLE and MISHE_WAKE_KEY are unset)", file=sys.stderr)
             return 2
+        from .state_files import read_json
         text = args.file.read_text(encoding="utf-8") if args.file else sys.stdin.read()
         message = yielding.settle(home, role, key, text=text, result=args.result, now=now,
-                                  continue_=args.continue_, again=args.again, when=args.when)
+                                  continue_=args.continue_, again=args.again, when=args.when,
+                                  artifacts=args.artifact, work_record=read_json(args.work_file) if args.work_file else None)
         armmod.arm(home, scheduler=scheduler(home))
         print(message)
         return 0

@@ -46,6 +46,8 @@ def build(home, role: str, snap, *, key: str, now: float, mail: list, reconcile_
     out += ["## Charter", "", _read(home / "charters" / f"{role}.md"), "",
             "Your wall is evidence and intention, not an authority source. Follow current grants; cite an explicit current restriction for any permission blocker. A blocked task does not block unrelated work.", "",
             "## Your wall", "", _read(home / "walls" / f"{role}.md"), ""]
+    from . import work_state
+    out += ["## Work readiness and advisory claims", "", work_state.summary(home, role, now=now), ""]
     out += ["## Unread messages", ""]
     out += [f"- #{seq}: {text}" for seq, text in mail] or ["(none)"]
     out += ["", "## Signals you subscribe to", ""]

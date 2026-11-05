@@ -32,7 +32,7 @@ def snapshot_path(home, key: str) -> Path:
 
 def settle(home, role: str, key: str, *, text: str, result: str, now: float,
            continue_: bool = False, again: float | None = None, when: dict | None = None,
-           idle_seconds: float = DEFAULT_IDLE_SECONDS, wall_writer=None) -> str:
+           idle_seconds: float = DEFAULT_IDLE_SECONDS, wall_writer=None, artifacts=(), work_record=None) -> str:
     if result not in RESULTS:
         raise ValueError(f"result must be one of {', '.join(RESULTS)}")
     if not text or text.isspace():
@@ -45,6 +45,11 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
     snap = owed.Snapshot.from_json(raw["snapshot"])
     if raw.get("role") != role:
         raise ValueError(f"wake {key!r} belongs to {raw.get('role')!r}, not {role!r}")
+    from . import work_receipts
+    artifact_facts = [work_receipts.artifact(home, p) for p in artifacts]
+    if work_record is not None:
+        from . import work_state
+        work_state.save(home, role, work_record)
     if wall_writer is None:
         from . import wall
         wall_writer = wall.write
@@ -65,5 +70,5 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
     intentions.add(home, role, IDLE_ID, note="idle initiative: look for useful work",
                    due=now + idle_seconds, spontaneous=True)
     write_json(receipt_path(home, key), {"role": role, "key": key, "result": result,
-                                         "continue": continue_, "settled_at": now})
+                                         "continue": continue_, "settled_at": now, "artifacts": artifact_facts})
     return f"yield {role} {key} settled ({result})"
