@@ -36,6 +36,12 @@ def materialize(home, repo, sha):
     return source
 
 
+def bind_reviewed_source(source, record):
+    for name, values in record["files"].items():
+        if wall_patch.snapshot(Path(source)/name) != values["after"]:
+            raise ValueError(f"committed release differs from reviewed bytes: {name}")
+
+
 def run(argv, *, cwd, env):
     try:
         result = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=600)
@@ -159,9 +165,7 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
                 raise ValueError("previous SHA does not match installed wake consumer pin")
         source = materialize(home, repo, sha)
         if kind == "strong":
-            for path in paths:
-                if path in strong["files"] and wall_patch.snapshot(source/path) != strong["files"][path]["after"]:
-                    raise ValueError("strong evidence does not bind committed release bytes")
+            bind_reviewed_source(source, strong)
         identity = sha + "-" + str(time.time_ns())
         record = dict(version=1, id=identity, sha=sha, previous=previous, source=str(source), paths=paths,
                       classification=kind, phase="checking", tests_passed=False, activated=False, observed=False,

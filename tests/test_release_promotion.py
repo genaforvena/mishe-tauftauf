@@ -223,3 +223,12 @@ def test_activation_starts_new_owned_timer_without_enabling_old_triggers(tree,mo
     p.activate(home,repo,repo,sha)
     assert ["systemctl","--user","enable","--now","mishe-new.timer"] in calls
     assert not any("mishe-existing.timer" in call for call in calls)
+
+
+def test_review_binding_rejects_different_committed_release_tree(tree):
+    repo,home,old,sha=tree
+    new=p.materialize(home,repo,sha);before=p.materialize(home,repo,old)
+    reviewed=dict(files={"docs/page.md":dict(after=p.wall_patch.snapshot(new/"docs/page.md"))})
+    p.bind_reviewed_source(new,reviewed)
+    with pytest.raises(ValueError,match="reviewed bytes"):
+        p.bind_reviewed_source(before,reviewed)

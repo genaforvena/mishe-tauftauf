@@ -43,7 +43,8 @@ def report(home, *, start, end):
     return dict(version=1, start=start, end=end, wakes=len(rows), rows=list(rows.values()),
                 observed_commits=observed, attributed_commits=own,
                 engine_seconds=seconds if known_usage else None, missing_usage=len(rows)-known_usage,
-                commits_per_engine_hour=len(own)/(seconds/3600) if seconds and known_usage == len(rows) else None,
+                commits_per_engine_hour=len(own)/(seconds/3600) if seconds and known_usage == len(rows) and
+                    all(r.get("evidence_state") == "KNOWN" for r in rows.values()) else None,
                 missing_receipts=sum(r.get("claimed_result") is None for r in rows.values()),
                 unknown_git=sum(r.get("evidence_state") != "KNOWN" for r in rows.values()),
                 unchanged_blocked_numerator=sum(r["unchanged_wait"] is True for r in typed),
