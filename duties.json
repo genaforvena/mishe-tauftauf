@@ -169,7 +169,7 @@
       "command": [
         "{home}/producers/host-capacity.sh"
       ],
-      "every": 60,
+      "every": 120,
       "timeout": 60,
       "max_age": 300,
       "resolver": "health",

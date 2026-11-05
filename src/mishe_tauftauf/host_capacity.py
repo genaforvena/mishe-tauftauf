@@ -15,10 +15,12 @@ import time
 from . import recovery_io as recovery
 
 
-# The producer runs every 60s (OnUnitActiveSec=60) and writes the guard row at the end of
-# each tick, so the previous tick's guard is read ~60s old at the start of the next one.
-# A 20s window could never be satisfied; 90s tolerates one slightly late tick and no more.
-GUARD_MAX_AGE = 90
+# The producer runs every 120s (duties.json "every": 120) and writes the guard row at the end of
+# each tick, so the previous tick's guard is read ~120s old at the start of the next one.
+# 120s keeps the unit inside the host containment start limit (3 starts per 300s); a 60s cadence
+# gets 2 of every 5 starts rejected, and each rejection leaves the guard row older than the window.
+# 240s tolerates one slightly late tick (120s cadence + 60s timeout + slack) and no more.
+GUARD_MAX_AGE = 240
 
 
 def decide(previous, observation, *, now, stable_seconds=120):
