@@ -223,19 +223,17 @@ Witness coordination uses the live `witness_analysis` advisor. This adapter
 provides judge evaluation and provider diagnostics; it does not select witness
 analysis tasks.
 
-## Explicit external-judge selection after evaluation
+## Identity gate for a pinned wrapper
 
-To use the adapter with `run --judge`, make an executable local wrapper that
-invokes the module with fixed base URL, model, timeout and token limit. Include
-`--expected-identity HASH`, where HASH is produced with the same arguments and
-`--identity`. An absent or changed identity returns UNKNOWN without a call.
-Identity covers endpoint, model, inference settings, the judge prompt and
-adapter source bytes, but not credentials. The wrapper bytes must change when that identity
-changes, invalidating the existing control cache. Refresh controls after each
-change. This also catches changes to the imported adapter source despite an
-unchanged wrapper. A provider's mutable model alias can still change remotely;
-prefer a pinned version and refresh controls periodically.
+This checkout has no `run --judge` option, and nothing under `src/` calls
+`judges.run_external`, so this adapter is not selectable as a judge in `run`.
+Selecting it for live dispatch is a separate change that needs its own review.
 
-Selecting the executable wrapper enables this judge explicitly. Remove the
-wrapper selection to revert to the default judge. Reports are diagnostic
-artifacts; creating or deleting one does not change judge selection.
+The identity gate still works on its own. `--identity` prints a hash over the
+base URL, model, timeout and token limit, the judge prompt, the response format,
+temperature, the categorical mapping and the adapter source bytes; credentials
+are excluded. A wrapper that passes `--expected-identity HASH` returns `unknown`
+without a network call when the current hash differs. Any change to those inputs
+changes the hash, so refresh the controls after each change. A provider's
+mutable model alias can still change remotely; prefer a pinned version and
+refresh controls periodically.
