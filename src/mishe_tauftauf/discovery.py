@@ -45,7 +45,9 @@ from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
                              read_redmi10_delivery_gaps, read_redmi10_light,
                              read_redmi10_peer_delivery)
 from .multibody import read_multibody_coverage
-from .replacement_readings import read_renderer_coverage, read_tmux_windows
+from .replacement_readings import (
+    probe_session_stability, read_renderer_coverage, read_tmux_windows,
+)
 from .slice_throttle import read_slice_throttle
 from .unit_cpu import read_unit_cpu
 from .unit_psi_reading import read_unit_psi
@@ -7003,6 +7005,8 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_repo_landing_block(home))
     observed.append(_coord_gate_latency(home))
     observed.append(read_tmux_windows(_inner_tmux_socket()))
+    observed.append(probe_session_stability(os.environ.get("MISHE_SEED_SESSION") or None,
+                                            _inner_tmux_socket()))
     observed.append(read_renderer_coverage(_pinned_runtime_root()))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}

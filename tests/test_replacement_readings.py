@@ -104,3 +104,94 @@ def test_pinned_runtime_root_unreadable_or_unpinned_is_none(tmp_path):
     assert discovery._pinned_runtime_root(unit_root) is None
     _wake_unit(unit_root, "/rel/x/lib")  # PYTHONPATH that is not a src root
     assert discovery._pinned_runtime_root(unit_root) is None
+
+
+from mishe_tauftauf.replacement_readings import (  # noqa: E402
+    SESSION_SENSE_ID, judge_session_stability, probe_session_stability,
+)
+
+
+def test_session_stability_unknown_when_declared_or_probe_unreadable():
+    assert judge_session_stability(None, ["plant"], {"1": "-900"})["state"] == "unknown"
+    assert judge_session_stability("plant", None, {"1": "-900"})["state"] == "unknown"
+    assert judge_session_stability("plant", ["plant"], None)["state"] == "unknown"
+    got = judge_session_stability("plant", ["plant"], {"1": None})
+    assert got["state"] == "unknown" and "pids=1" in got["sample"]
+
+
+def test_session_stability_drift_when_declared_session_missing():
+    got = judge_session_stability("plant", ["other"], {"2": "-900"})
+    assert got["state"] == "drift" and got["id"] == SESSION_SENSE_ID
+    assert "session-missing=plant" in got["sample"]
+
+
+def test_session_stability_drift_when_server_lost_shield():
+    got = judge_session_stability("plant", ["plant"], {"3": "0", "4": "-900"})
+    assert got["state"] == "drift" and got["unshielded"] == ["3"]
+
+
+def test_session_stability_verified_when_present_and_shielded():
+    got = judge_session_stability("plant", ["plant"], {"3": "-900"})
+    assert got["state"] == "verified" and got["unshielded"] == []
+
+
+SOCK = "/tmp/tmux-1000/mishe-tauftauf/tmux-1000/default"
+
+
+def test_probe_broken_tmux_is_unknown_not_calm():
+    got = probe_session_stability("plant", SOCK, runner=lambda socket, args: None,
+                                  shield_reader=lambda pid: "-900")
+    assert got["state"] == "unknown"
+
+
+def test_probe_no_server_running_is_drift_with_declared_session():
+    def runner(socket, args):
+        return _done(1, err="no server running on /tmp/tmux-1000/default\n")
+    got = probe_session_stability("plant", SOCK, runner=runner, shield_reader=lambda pid: "-900")
+    assert got["state"] == "drift" and "session-missing=plant" in got["sample"]
+
+
+def test_probe_other_tmux_error_is_unknown():
+    def runner(socket, args):
+        return _done(1, err="error connecting to /tmp/tmux-1000/default (Permission denied)\n")
+    assert probe_session_stability("plant", SOCK, runner=runner,
+                                   shield_reader=lambda pid: "-900")["state"] == "unknown"
+
+
+def test_probe_reads_shields_only_for_listed_session_servers():
+    read = []
+
+    def runner(socket, args):
+        if args[-1] == "#{pid}":
+            return _done(0, "11\n12\n")
+        return _done(0, "plant\n")
+
+    def shield(pid):
+        read.append(pid)
+        return "-900" if pid == "11" else "0"
+
+    got = probe_session_stability("plant", SOCK, runner=runner, shield_reader=shield)
+    assert read == ["11", "12"]
+    assert got["state"] == "drift" and got["unshielded"] == ["12"]
+
+
+def test_probe_without_plant_socket_is_unknown_never_default_server():
+    def runner(socket, args):
+        raise AssertionError("must not probe any server without the plant's socket")
+    assert probe_session_stability("plant", None, runner=runner)["state"] == "unknown"
+
+
+def test_probe_passes_plant_socket_to_every_tmux_call():
+    seen = []
+
+    def runner(socket, args):
+        seen.append(socket)
+        return _done(0, "plant\n") if args[-1] != "#{pid}" else _done(0, "")
+
+    probe_session_stability("plant", SOCK, runner=runner, shield_reader=lambda pid: "-900")
+    assert seen == [SOCK, SOCK]
+
+
+def test_session_stability_unshielded_is_drift_even_without_declared_session():
+    assert judge_session_stability(None, ["plant"], {"5": "200"})["state"] == "drift"
+    assert judge_session_stability(None, ["plant"], {"5": "-900"})["state"] == "unknown"
