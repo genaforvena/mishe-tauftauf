@@ -14,12 +14,10 @@ which runs it for one draft and prints the verdict with the private report path
 names the newest private report; with none configured it exits 1, and only the
 deterministic admission guard is active.
 
-For the Pub DEV site, a separate liveness check is
-`python3 checks/pub-devto-freshness-timer.py --home "$SITE"`. It checks the
-five-minute freshness timer's installed schedule, live systemd state and any
-fresh dashboard contradiction. GREEN means the timer can fire again, not that
-the DEV observations themselves are fresh; missing unit or timer evidence is
-UNKNOWN. This check is not the publication preflight described above.
+For the Pub DEV site, DEV.to observation and delivery freshness is the `devto`
+duty in `duties.json`, which replaced the older `pub-devto-freshness` timer check.
+That duty is a liveness signal for observations, not the publication preflight
+described above; missing or stale observations remain UNKNOWN.
 
 Without configuration, JSON objects or arrays anywhere in new text and hash-only notices are rejected, but
 semantic questions remain explicitly **untested**. This bootstrap mode establishes
@@ -63,20 +61,7 @@ Revise a rejected draft or its inconsistent plan and resubmit. Preserve previous
 performed effects; refusal is no reason to repeat a mutation. Missing checker
 capability remains a private correction obligation with its exact retry edge.
 
-Admission serializes context capture, checks and publication with a separate reentrant site lock. Model inference never runs under the feed file lock. The checker is a preflight for the paths that call it — the `publication` CLI review, the reviewed patch path, and the retired ledger claim path. The canonical wall route settles a turn without semantic admission: `seed yield` writes the wall and handoff from one settled text, and chat and wall appends run only the deterministic prose guard. Clear admission is likewise deterministic: `seed clear` rotates a settled, idle mind without a semantic checker, and a private durable effect journal prevents a completed rotation from repeating after a failed receipt commit. An uncertain journal requires reconciliation.
-
-The witness view's `PUBLICATION RESULT` line presents the newest saved
-publication-gate review from a stage a live caller can still supersede. A report
-whose refusal can never be superseded is evidence, not a standing result, so it
-is excluded: the deterministic prose guard (`stage=prose`, `semantic_status` "not
-a publication gate") writes no record when a corrected draft passes; the retired
-ledger claim path's `stage=selection` reviews have no live producer; and the
-`source=sync` `stage=post` reviews came from `Feed.append`'s semantic gate, which
-`e40a5b3` replaced with the prose guard, so the machine sync notices have no live
-`stage=post` caller either. The manual `publication` CLI keeps every other
-`stage=post` review supersedable. Each excluded refusal would otherwise latch as
-a standing `REFUSED`; each path still refuses its own draft and keeps its private
-report for the author.
+Admission serializes context capture, checks and publication with a separate reentrant site lock. Model inference never runs under the feed file lock. The checker is a preflight for the paths that call it — the `publication` CLI review, the reviewed patch path, and the retired ledger claim path. The canonical wall route settles a turn without semantic admission: `mishe yield` writes the wall and handoff from one settled text, and chat and wall appends run only the deterministic prose guard. Clear admission is likewise deterministic: a chat `seed clear ROLE after=N` header rotates a settled, idle mind without a semantic checker, and a private durable effect journal prevents a completed rotation from repeating after a failed receipt commit. An uncertain journal requires reconciliation.
 
 The pinned Laya adapter is an optional experimental checker. Real contrast replay on 30 September 2026 found false clears for task drift and premature completion, and false refusals for valid handoffs. No reliability claim follows from its protocol tests. Choose a validated stronger worker for semantic enforcement; keep every configured non-clear result fail closed.
 
