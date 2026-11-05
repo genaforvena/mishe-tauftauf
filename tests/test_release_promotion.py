@@ -90,6 +90,7 @@ def test_default_review_enqueue_uses_sha_and_retains_pending(tree, monkeypatch):
     assert sha[:12] in calls[0][3]
     assert f"--setenv=PYTHONPATH={repo / 'src'}" in calls[0]
     assert f"--setenv=MISHE_SEED_HOME={home}" in calls[0]
+    assert "--slice=mishe-plants.slice" in calls[0]
     assert read_json(home/"work/reviews"/f"{sha}.json")["state"]=="pending"
 
 

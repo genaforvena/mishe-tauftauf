@@ -137,6 +137,7 @@ def enqueue_review(home, record):
     write_json(path, dict(sha=record["sha"], release_id=record["id"], release_ids=[record["id"]], state="pending"))
     unit_key = record["sha"][:12] + ("-" + record["previous"][:12] if record.get("previous") else "")
     subprocess.run(["systemd-run", "--user", "--collect", f"--unit=mishe-release-review-{unit_key}",
+                    "--slice=mishe-plants.slice",
                     "--setenv=PYTHONPATH=" + str(Path(record["source"])/"src"),
                     "--setenv=MISHE_SEED_HOME=" + str(home),
                     sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "release", "review", "--id", record["id"]],
