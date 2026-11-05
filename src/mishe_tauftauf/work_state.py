@@ -18,6 +18,8 @@ def location(home, role):
 
 
 def validate_wait(home, wait):
+    if not isinstance(wait, dict):
+        raise ValueError("wait must be a mapping")
     for key in ("resolver", "escalate_to"):
         if wait.get(key) not in roles.declared(home):
             raise ValueError(f"unknown {key}")
@@ -46,10 +48,16 @@ def validate(home, role, record):
         ids.add(task["id"])
         if task.get("state") not in ("ready", "waiting", "done"):
             raise ValueError("invalid task state")
+        from .work_boundary import work_identifier
+        retries = task.get("retry_intentions", [])
+        if not isinstance(retries, list) or any(not work_identifier(x) for x in retries):
+            raise ValueError("retry intentions need confined intention identifiers")
         if task["state"] == "waiting":
             validate_wait(home, task.get("wait", {}))
+    if not isinstance(record.get("claims", []), list):
+        raise ValueError("claims must be a list")
     for claim in record.get("claims", []):
-        if not isinstance(claim.get("path"), str) or not isinstance(claim.get("expires"), (int, float)) or not math.isfinite(claim["expires"]):
+        if not isinstance(claim, dict) or not isinstance(claim.get("path"), str) or not isinstance(claim.get("expires"), (int, float)) or not math.isfinite(claim["expires"]):
             raise ValueError("claim needs path and finite expiry")
     return record
 

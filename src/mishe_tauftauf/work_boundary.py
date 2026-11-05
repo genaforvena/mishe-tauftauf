@@ -4,6 +4,10 @@ import subprocess
 from pathlib import Path
 
 
+def work_identifier(value):
+    return isinstance(value, str) and bool(value) and value not in (".", "..") and set(value) <= set("abcdefghijklmnopqrstuvwxyz0123456789-_.")
+
+
 def git(repo, *args):
     if repo is None:
         raise ValueError("no repository configured")

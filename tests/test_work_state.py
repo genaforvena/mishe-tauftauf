@@ -58,3 +58,12 @@ def test_claim_expiry_is_advisory_and_does_not_overwrite(home):
     w.save(home, "docs", r)
     assert w.claims(home, now=100)[0]["expired"] is False
     assert w.claims(home, now=200)[0]["expired"] is True
+
+
+@pytest.mark.parametrize("change", [{"claims":[None]}, {"claims":{}}, {"tasks":[dict(id="x",state="waiting",wait=None)]},
+    {"claims":[dict(path="x",expires=float("nan"))]}, {"tasks":[dict(id="x",state="ready",retry_intentions=["../../other"])]}])
+def test_malformed_nested_records_remain_unknown(home, change):
+    from mishe_tauftauf.state_files import write_json
+    r=record();r.update(change)
+    write_json(home/"work/roles/docs.json",r)
+    assert w.load(home,"docs")["state"]=="UNKNOWN"
