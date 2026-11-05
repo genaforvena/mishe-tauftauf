@@ -154,6 +154,8 @@ def run(args) -> int:
         from .state_files import read_json, write_json
         import json
         if args.work_command == "poll":
+            from . import release_promotion
+            release_promotion.merge_reviews(home)
             work_state.sweep(home, repo=args.repo, now=now)
             print("work watches checked")
             return 0

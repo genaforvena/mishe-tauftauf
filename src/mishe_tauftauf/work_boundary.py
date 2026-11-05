@@ -68,6 +68,16 @@ def new_commits(repo, before, after, role, key):
     return commits, own
 
 
+def commit_role(repo, sha):
+    text = git(repo, "show", "-s", "--format=%B", sha)
+    result = subprocess.run(["git", "interpret-trailers", "--parse"], input=text,
+                            capture_output=True, text=True, check=True)
+    lines = result.stdout.splitlines()
+    roles = [x.removeprefix("Mishe-Role: ") for x in lines if x.startswith("Mishe-Role: ")]
+    wakes = [x.removeprefix("Mishe-Wake: ") for x in lines if x.startswith("Mishe-Wake: ")]
+    return roles[0] if len(roles) == len(wakes) == 1 else None
+
+
 def wake_time(key):
     try:
         prefix, role, number = key.rsplit("-", 2)

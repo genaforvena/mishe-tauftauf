@@ -111,7 +111,9 @@ def activate(home, repo, source, sha):
 def enqueue_review(home, record):
     root = Path(home)/"work/reviews"; root.mkdir(parents=True, exist_ok=True)
     path = root/f"{record['sha']}.json"
-    if not path.exists(): write_json(path, dict(sha=record["sha"], release_id=record["id"], state="pending"))
+    if path.exists():
+        return
+    write_json(path, dict(sha=record["sha"], release_id=record["id"], state="pending"))
     subprocess.run(["systemd-run", "--user", "--collect", f"--unit=mishe-release-review-{record['sha'][:12]}",
                     sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "release", "review", "--id", record["id"]],
                    env=dict(os.environ, PYTHONPATH=str(Path(record["source"])/"src")), capture_output=True, timeout=15, check=True)
@@ -150,7 +152,9 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
         commands = wall_patch.command_artifacts(home, [check, observe])
         record["command_artifacts"] = commands
         record["observe_argv"] = observe
-        record["owner"] = os.environ.get("MISHE_ROLE", "genome")
+        from .roles import declared
+        attributed_owner = boundary.commit_role(repo, sha)
+        record["owner"] = attributed_owner if attributed_owner in declared(home) else "genome"
         record["check"] = run(check, cwd=source, env=env)
         if record["check"]["code"] != 0:
             record["phase"]="check-failed"; save(); return record
@@ -221,6 +225,13 @@ def revert(home, identity):
 def review(home, identity):
     path = record_path(home,identity); record=read_json(path)
     if not record or record["phase"] != "delivered": raise ValueError("review needs delivered release")
+    if record.get("review_pending") is False:
+        return dict(phase="reviewed", id=identity)
+    queued = Path(home)/"work/reviews"/f"{identity}.result.json"
+    if queued.exists():
+        merge_review(home, queued)
+        current = read_json(path)
+        return dict(phase="reviewed" if current.get("review_pending") is False else "review-pending", id=identity)
     source=Path(record["source"]); old=Path(home)/"releases"/record["previous"]
     patch=dict(runtime=str(old),phase="ordinary-delivered-awaiting-review",test=record["check"],files={})
     log=Path(home)/"work/reviews"/f"{record['sha']}.test.txt"; log.parent.mkdir(parents=True,exist_ok=True)
@@ -230,13 +241,47 @@ def review(home, identity):
         patch["files"][name]=dict(before=before,runtime_before=before,after=after)
     patch["rationale"]="Asynchronous ordinary scoped release review. Tests passed and actual caller probe succeeded. Review for concrete source defects; recovery configuration and probe evidence are retained."
     try:
-        record["review"]=wall_patch.review(Path(home),patch)
-        record["review_pending"]=False
-        if not record["review"]["clear"]:
-            from .failure import default_notify
-            default_notify(home,record["owner"],f"Release {identity}: substantive or unknown review finding. Within six hours decide fix/revert; see {path}.")
-        record["review_state"]="clear" if record["review"]["clear"] else "action-needed"
+        result = dict(review=wall_patch.review(Path(home),patch))
     except (OSError,ValueError,subprocess.SubprocessError) as exc:
-        record["review_error"]=str(exc)
-    write_json(path,record)
-    return dict(phase="reviewed" if not record["review_pending"] else "review-pending",id=identity)
+        result = dict(review_error=str(exc))
+    # Persist before trying the shared lock. Never lose a completed model call
+    # because a wake is running, and never write a stale delivery transition.
+    write_json(queued, dict(id=identity, result=result, merged=False))
+    merge_review(home, queued)
+    current = read_json(path)
+    return dict(phase="reviewed" if current.get("review_pending") is False else "review-pending", id=identity)
+
+
+def merge_review(home, queued):
+    outcome = read_json(queued)
+    if not outcome or outcome.get("merged"):
+        return
+    try:
+        with delivery_lock(home):
+            path = record_path(home, outcome["id"])
+            current = read_json(path)
+            if not current:
+                raise ValueError("review target record disappeared")
+            result = outcome["result"]
+            if "review" in result and current.get("review_pending") is not False:
+                current.update(result, review_pending=False)
+                current["review_state"] = "clear" if result["review"]["clear"] else "action-needed"
+                if not result["review"]["clear"] and current["phase"] == "delivered":
+                    from . import intentions
+                    from .failure import default_notify
+                    intentions.add(home, current["owner"], "review-" + current["sha"][:12],
+                                   note="Decide a concrete fix or revert for independent release finding", due=time.time()+21600)
+                    default_notify(home, current["owner"], f"Release {outcome['id']}: review finding; decide fix/revert within six hours. Evidence: {path}")
+            elif "review_error" in result:
+                current["review_error"] = result["review_error"]
+            write_json(path, current)
+            write_json(queued, dict(outcome, merged=True))
+    except ValueError as exc:
+        # Busy dispatch is an expected pending result; malformed evidence stays
+        # visible in the retained queue and the next poll retries the merge.
+        write_json(queued, dict(outcome, merge_error=str(exc)))
+
+
+def merge_reviews(home):
+    for queued in sorted((Path(home)/"work/reviews").glob("*.result.json")):
+        merge_review(home, queued)

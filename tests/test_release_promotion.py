@@ -120,3 +120,25 @@ def test_partial_default_activation_removes_new_config_files(tree,monkeypatch):
     assert r["phase"]=="rolled-back"
     assert oldfile.read_text()=="old"
     assert not newfile.exists()
+
+
+def test_async_review_cannot_overwrite_completed_revert(tree,monkeypatch):
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha);p.materialize(home,repo,old)
+    identity="review-race"
+    from mishe_tauftauf.state_files import write_json
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",source=str(source),
+        paths=["docs/page.md"],check=dict(output="passed",code=0),config_before={},config_after={},observe_argv=["probe"],owner="docs",review_pending=True))
+    monkeypatch.setattr(p,"config_paths",lambda *a:[])
+    monkeypatch.setattr(p,"reload_units",lambda:None)
+    monkeypatch.setattr(p.boundary,"invoke_arm_consumer",lambda *a:dict(result="success"))
+    monkeypatch.setattr(p,"run",lambda *a,**k:dict(code=0,output="restored"))
+    def reviewer(*args):
+        assert p.revert(home,identity)["phase"]=="reverted"
+        return dict(clear=True,response={})
+    monkeypatch.setattr(p.wall_patch,"review",reviewer)
+    p.review(home,identity)
+    final=read_json(p.record_path(home,identity))
+    assert final["phase"]=="reverted"
+    assert final["revert_probe"]["output"]=="restored"
+    assert final["review"]["clear"] is True
