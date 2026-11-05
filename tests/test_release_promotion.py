@@ -262,3 +262,20 @@ def test_revert_refuses_later_same_site_configuration_without_deleting_it(tree,m
     with pytest.raises(ValueError,match="configuration inventory changed"):
         p.revert(home,identity)
     assert later.read_text()=="peer work" and timer.read_text()=="peer timer" and original.read_text()=="delivered"
+
+
+def test_failed_explicit_revert_remains_unknown_in_checkpoint_metrics(tree,monkeypatch):
+    from mishe_tauftauf.state_files import write_json
+    from mishe_tauftauf import work_metrics
+    repo,home,old,sha=tree;p.materialize(home,repo,old)
+    identity="failed-revert"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,created_at=1,delivered_at=10,
+        phase="delivered",observed=True,config_before={},config_after={},observe_argv=["probe"]))
+    monkeypatch.setattr(p,"config_paths",lambda *a:[]);monkeypatch.setattr(p,"reload_units",lambda:None)
+    monkeypatch.setattr(p.boundary,"invoke_arm_consumer",lambda *a:dict(result="success"))
+    monkeypatch.setattr(p,"run",lambda *a,**kw:dict(code=1,output="restored probe failed"))
+    monkeypatch.setattr(p.time,"time",lambda:100)
+    assert p.revert(home,identity)["phase"]=="UNKNOWN"
+    write_json(home/"work/experiment/manifest.json",dict(version=1,start=0,end=86400,recovery_events_version=1))
+    facts=work_metrics.report(home,start=0,end=200)["reverts_rework"]
+    assert facts["explicit_reverts"]==0 and facts["failed_recoveries"]==1 and facts["coverage"]=="UNKNOWN"

@@ -253,7 +253,7 @@ def revert(home, identity):
             record["revert_probe"] = run(record["observe_argv"], cwd=old,
                 env=dict(os.environ, PYTHONPATH=str(old/"src"), MISHE_SEED_HOME=str(home)))
             record["phase"] = "reverted" if record["revert_probe"]["code"] == 0 else "UNKNOWN"
-            record["reverted_at"] = time.time()
+            record["reverted_at" if record["phase"] == "reverted" else "revert_failed_at"] = time.time()
         except (OSError,ValueError,subprocess.SubprocessError) as exc:
             record.update(phase="UNKNOWN",revert_error=str(exc),revert_failed_at=time.time())
         write_json(path,record)
