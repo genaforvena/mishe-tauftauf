@@ -85,6 +85,10 @@ def cmd_append(args) -> int:
             if state.managed:
                 raise ValueError("managed task completion requires task finish with checked result and evidence")
     entry = Feed(args.home).append(args.source, text)
+    from .owed import touch_inbox
+    from .wall import dm_recipient
+    if recipient := dm_recipient(text, args.source):
+        touch_inbox(args.home, recipient)     # an addressed DM owes its recipient a wake, as wall dm does
     print(entry.sequence)
     return 0
 
