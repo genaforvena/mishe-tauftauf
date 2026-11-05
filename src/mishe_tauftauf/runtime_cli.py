@@ -48,10 +48,20 @@ def scheduler(home: Path):
     """Real systemd timer when this site has installed units; otherwise record only."""
     def schedule(epoch):
         from .state_files import write_json
+        installed = (home / "units-installed").exists() and shutil.which("systemd-run")
+        if installed:
+            from . import signal_store
+            signal_store.expire(home, now=time.time())
+            epoch = armmod.target(home)
         write_json(home / "next-due.json", {"at": epoch})
-        if (home / "units-installed").exists() and shutil.which("systemd-run"):
+        if installed:
             armmod.systemd_scheduler(epoch, command=[sys.executable, "-m", "mishe_tauftauf",
                                                      "--home", str(home), "due"])
+            if not (home / "hold").exists():
+                from . import wake
+                following = wake.next_role(home, declared_roles(home), now=time.time())
+                if following:
+                    wake.systemd_starter(following)
     return schedule
 
 
