@@ -1234,6 +1234,69 @@ def _mind_docs_treadmill(home: Path) -> dict:
 ARTIFACT_RECURRENCE_MIN_WAKES = 3
 ARTIFACT_RECURRENCE_WINDOW_WAKES = 5
 
+LOOP_STALL_ROLES = ("inference-research", "body-research", "docs", "health", "senses",
+                    "discover", "genome", "witness", "research-methods", "operator-view")
+
+# An open wake older than this has outlived the engine's own bound: units.py
+# passes ``--timeout WAKE_TIMEOUT`` (1800 s) to every wake. Past it the wake is
+# a stall suspect, not a busy mind.
+LOOP_STALL_WAKE_SECONDS = 1800
+
+
+def _mind_loop_stall(home: Path, now: datetime | None = None) -> dict:
+    """Replacement for the retired ``sense.mind.loop-stall`` reading.
+
+    Per role, the dispatch record is the only last-wake timestamp this
+    checkout owns. Rule LS (loop stall):
+
+    - no readable dispatch record (missing, unreadable) → ``unknown`` for
+      that role; absence is never a clean bill;
+    - an open wake (``pending``) whose record age exceeds
+      ``LOOP_STALL_WAKE_SECONDS`` → ``watch-loop-stall``;
+    - an open wake inside the bound, or a settled role (no open wake) → ``clean``.
+      A settled role's age is reported as ``idle_s`` and is not a stall.
+
+    This sees only an open wake that outlived its bound. It does not observe
+    in-process loops inside a live wake, and the treadmill reading covers
+    commit stagnation separately. Consumer: health's mishe-wide rollup.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    try:
+        entries: list | None = Feed(home).entries()
+    except (OSError, ValueError):
+        entries = None
+    pairs: dict[str, dict] = {}
+    worst = "clean"
+    for role in LOOP_STALL_ROLES:
+        coverage = _mind_role_coverage(home, role, now, entries)
+        idle = coverage.get("idle_s")
+        pending = coverage.get("pending")
+        if idle is None:
+            verdict, detail = "unknown", "dispatch record missing or unreadable"
+            if worst == "clean":
+                worst = "unknown"
+        elif pending and idle > LOOP_STALL_WAKE_SECONDS:
+            verdict = "watch-loop-stall"
+            detail = f"open wake {pending} aged {idle}s past {LOOP_STALL_WAKE_SECONDS}s bound"
+            worst = "watch-loop-stall"
+        else:
+            verdict = "clean"
+            detail = "open wake inside bound" if pending else "settled"
+        pairs[role] = {"verdict": verdict, "detail": detail, **coverage}
+    sample = "loop-stall=" + worst + " " + " ".join(
+        f"{role}({pairs[role]['verdict']},idle={pairs[role].get('idle_s')},"
+        f"pending={pairs[role].get('pending')})" for role in sorted(pairs))
+    unknown = sorted(role for role, pair in pairs.items() if pair["verdict"] == "unknown")
+    if unknown:
+        sample += " unknown=" + ",".join(unknown)
+    return {"id": "sense.mind.loop-stall", "state": "verified" if pairs else "unknown",
+            "sample": sample, "roles": pairs, "verdict": worst, "kind": "read",
+            "consumer": "health mishe-wide loop-stall rollup",
+            "validity": {"now": now.isoformat(timespec="seconds"),
+                         "bound_seconds": LOOP_STALL_WAKE_SECONDS}}
+
+
 def _entry_timestamp(entry: FeedEntry) -> datetime | None:
     """Decode a feed entry's ISO timestamp to an aware UTC datetime.
 
@@ -6816,6 +6879,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_mind_treadmill(home))
     observed.append(_mind_docs_treadmill(home))
     observed.append(_mind_artifact_recurrence(home))
+    observed.append(_mind_loop_stall(home))
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
     observed.append(_ledger_evidence_binding(home))

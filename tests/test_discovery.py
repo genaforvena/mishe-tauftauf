@@ -6775,3 +6775,48 @@ def test_release_the_stable_runtime_pointer_resolves_to_counts_as_referenced(tmp
     (tmp_path / "runtime" / "current").symlink_to(tmp_path / "releases" / sha)
     assert discovery._pointer_release_names(tmp_path) == {sha}
     assert discovery._pointer_release_names(tmp_path / "elsewhere") == set()      # no pointer reads as nothing, never as a release
+
+
+def _loop_stall_coverage(overrides):
+    """Coverage fixture: every role settled unless overridden."""
+    def fake(home, role, now, entries):
+        base = {"wall_updated": None, "last_yield": "k", "idle_s": 60, "pending": None}
+        base.update(overrides.get(role, {}))
+        return base
+    return fake
+
+
+def test_loop_stall_watches_an_open_wake_past_its_bound(monkeypatch, tmp_path):
+    """Stale open wake (age beyond the engine bound) reads watch-loop-stall."""
+    monkeypatch.setattr(discovery, "_mind_role_coverage", _loop_stall_coverage(
+        {"senses": {"pending": "wake-stale", "idle_s": discovery.LOOP_STALL_WAKE_SECONDS + 1}}))
+    result = discovery._mind_loop_stall(tmp_path)
+    assert result["id"] == "sense.mind.loop-stall"
+    assert result["verdict"] == "watch-loop-stall"
+    assert result["roles"]["senses"]["verdict"] == "watch-loop-stall"
+    assert "wake-stale" in result["roles"]["senses"]["detail"]
+    assert result["roles"]["docs"]["verdict"] == "clean"
+    assert "loop-stall=watch-loop-stall" in result["sample"]
+
+
+def test_loop_stall_fresh_open_wake_and_settled_roles_are_clean(monkeypatch, tmp_path):
+    """Fresh open wake inside the bound, and a settled role with old idle age, are not stalls."""
+    monkeypatch.setattr(discovery, "_mind_role_coverage", _loop_stall_coverage(
+        {"senses": {"pending": "wake-fresh", "idle_s": 30},
+         "docs": {"pending": None, "idle_s": 999999}}))
+    result = discovery._mind_loop_stall(tmp_path)
+    assert result["verdict"] == "clean"
+    assert result["roles"]["senses"]["verdict"] == "clean"
+    assert result["roles"]["senses"]["detail"] == "open wake inside bound"
+    assert result["roles"]["docs"]["verdict"] == "clean"
+    assert result["roles"]["docs"]["detail"] == "settled"
+
+
+def test_loop_stall_missing_record_is_unknown_not_clean(monkeypatch, tmp_path):
+    """No dispatch record (idle_s None) stays UNKNOWN for that role and the rollup."""
+    monkeypatch.setattr(discovery, "_mind_role_coverage", _loop_stall_coverage(
+        {"health": {"pending": None, "idle_s": None, "last_yield": None}}))
+    result = discovery._mind_loop_stall(tmp_path)
+    assert result["roles"]["health"]["verdict"] == "unknown"
+    assert result["verdict"] == "unknown"
+    assert "unknown=health" in result["sample"]
