@@ -7,7 +7,7 @@ model request:
 claude -p /usage --output-format json --no-session-persistence --tools '' --max-turns 1
 ```
 
-`python -m mishe_tauftauf.claude_quota_text --home "$MISHE_SEED_HOME"` acquires
+`python3 -m mishe_tauftauf.claude_quota_text --home "$MISHE_SEED_HOME"` acquires
 this report in UTC. It accepts only a successful `local_command: usage` result
 with zero API time, turns, cost and token counts, and both subscription windows.
 Other output, malformed windows, invalid resets and timeouts become UNKNOWN.
