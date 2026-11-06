@@ -36,6 +36,128 @@ def test_sixty_unchanged_samples_mail_and_one_deadline(tmp_path):
     assert not any(i["id"].startswith("reoffer-") for i in intentions.list_(tmp_path, "health"))
 
 
+def test_overdue_escalation_survives_due_deduplication(tmp_path):
+    setup(tmp_path)
+    calls = []
+    for now in (1000, 1001, 1301, 1600):
+        w.sweep(tmp_path, repo=tmp_path, now=now,
+                notify=lambda *args: calls.append(args))
+    assert [role for role, _ in calls] == ["steward", "genome"]
+
+
+def test_overdue_escalation_is_not_repeated_on_later_sweeps(tmp_path):
+    setup(tmp_path)
+    calls = []
+    for now in (1000, 1301, 1302, 1600, 5000):
+        w.sweep(tmp_path, repo=tmp_path, now=now,
+                notify=lambda *args: calls.append(args))
+    assert [role for role, _ in calls] == ["steward", "genome"]
+
+
+def test_grace_boundary_is_strict(tmp_path):
+    setup(tmp_path)
+    calls = []
+    w.sweep(tmp_path, repo=tmp_path, now=1000, notify=lambda *a: calls.append(a))
+    w.sweep(tmp_path, repo=tmp_path, now=1300, notify=lambda *a: calls.append(a))
+    assert [role for role, _ in calls] == ["steward"]
+    w.sweep(tmp_path, repo=tmp_path, now=1301, notify=lambda *a: calls.append(a))
+    assert [role for role, _ in calls] == ["steward", "genome"]
+
+
+def test_first_ever_sweep_after_grace_emits_both_notifications(tmp_path):
+    setup(tmp_path)
+    calls = []
+    w.sweep(tmp_path, repo=tmp_path, now=5000, notify=lambda *a: calls.append(a))
+    assert [role for role, _ in calls] == ["steward", "genome"]
+
+
+def test_replaced_deadline_starts_a_new_overdue_cycle(tmp_path):
+    setup(tmp_path)
+    calls = []
+    w.sweep(tmp_path, repo=tmp_path, now=1000, notify=lambda *a: calls.append(a))
+    w.sweep(tmp_path, repo=tmp_path, now=1301, notify=lambda *a: calls.append(a))
+    assert [role for role, _ in calls] == ["steward", "genome"]
+    record = w.load(tmp_path, "health")
+    record["tasks"][0]["wait"]["deadline"] = 2000
+    w.save(tmp_path, "health", record)
+    calls.clear()
+    w.sweep(tmp_path, repo=tmp_path, now=2000, notify=lambda *a: calls.append(a))
+    w.sweep(tmp_path, repo=tmp_path, now=2301, notify=lambda *a: calls.append(a))
+    assert [role for role, _ in calls] == ["steward", "genome"]
+
+
+def test_resolved_wait_stops_overdue_notifications(tmp_path):
+    setup(tmp_path)
+    calls = []
+    w.sweep(tmp_path, repo=tmp_path, now=1000, notify=lambda *a: calls.append(a))
+    w.sweep(tmp_path, repo=tmp_path, now=1301, notify=lambda *a: calls.append(a))
+    assert [role for role, _ in calls] == ["steward", "genome"]
+    record = w.load(tmp_path, "health")
+    record["tasks"][0]["state"] = "done"
+    w.save(tmp_path, "health", record)
+    calls.clear()
+    for now in (1400, 2000, 5000):
+        w.sweep(tmp_path, repo=tmp_path, now=now, notify=lambda *a: calls.append(a))
+    assert calls == []
+
+
+def test_removed_wait_stops_overdue_notifications(tmp_path):
+    setup(tmp_path)
+    calls = []
+    w.sweep(tmp_path, repo=tmp_path, now=1000, notify=lambda *a: calls.append(a))
+    w.sweep(tmp_path, repo=tmp_path, now=1301, notify=lambda *a: calls.append(a))
+    record = w.load(tmp_path, "health")
+    record["tasks"] = []
+    w.save(tmp_path, "health", record)
+    calls.clear()
+    w.sweep(tmp_path, repo=tmp_path, now=5000, notify=lambda *a: calls.append(a))
+    assert calls == []
+
+
+def test_corrupt_overdue_state_reoffers_actionable_work(tmp_path):
+    setup(tmp_path)
+    calls = []
+    w.sweep(tmp_path, repo=tmp_path, now=1000, notify=lambda *a: calls.append(a))
+    w.sweep(tmp_path, repo=tmp_path, now=1301, notify=lambda *a: calls.append(a))
+    assert [role for role, _ in calls] == ["steward", "genome"]
+    (tmp_path / "work/watch-overdue.json").write_text("{")
+    calls.clear()
+    w.sweep(tmp_path, repo=tmp_path, now=1400, notify=lambda *a: calls.append(a))
+    assert "genome" in [role for role, _ in calls]
+
+
+def test_failed_notification_retries_on_the_next_sweep(tmp_path):
+    setup(tmp_path)
+    calls = []
+    def failing(role, text):
+        if role == "genome": raise ValueError("offline")
+        calls.append((role, text))
+    w.sweep(tmp_path, repo=tmp_path, now=1000, notify=failing)
+    w.sweep(tmp_path, repo=tmp_path, now=1301, notify=failing)
+    assert [role for role, _ in calls] == ["steward"]
+    calls.clear()
+    w.sweep(tmp_path, repo=tmp_path, now=1400, notify=lambda *a: calls.append(a))
+    assert [role for role, _ in calls] == ["genome"]
+
+
+def test_overdue_recipient_is_owed_inbox_work(tmp_path):
+    setup(tmp_path)
+    owed.advance(tmp_path, "genome", owed.Snapshot())
+    w.sweep(tmp_path, repo=tmp_path, now=1000, notify=lambda *a: None)
+    w.sweep(tmp_path, repo=tmp_path, now=1301, notify=lambda *a: None)
+    assert "inbox" in owed.check(tmp_path, "genome", now=1302).reasons
+
+
+def test_overdue_message_reports_unresolved_work_without_asserting_a_scheduler_fault(tmp_path):
+    setup(tmp_path)
+    calls = []
+    w.sweep(tmp_path, repo=tmp_path, now=1301, notify=lambda *a: calls.append(a))
+    text = [t for role, t in calls if role == "genome"][0]
+    assert "still waiting" in text
+    assert "missed" not in text
+    assert "scheduler" not in text
+
+
 def test_new_signature_and_corrupt_wait_are_actionable(tmp_path):
     calls, fault = setup(tmp_path)
     failure.report(tmp_path, "check.service", now=20, signature="timeout", notify=lambda *x: calls.append(x))

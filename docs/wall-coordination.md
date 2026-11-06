@@ -30,6 +30,17 @@ tasks name the resolver, evidence needed, deadline, escalation action, and signa
 revisions or repository path digests. Keep this state consistent with your wall.
 Do not make unrelated ready tasks wait on the same incident.
 
+The sweep that checks these waits keeps two separate records. One holds the last
+observation per task, so an unchanged observation is not announced twice. The
+other holds overdue escalations, keyed by role, task and deadline. A task still
+waiting more than five minutes past its deadline is escalated once to Genome,
+who is then asked to inspect the unresolved wait and its resolver. The sweep
+does not claim that a scheduler missed a dispatch: an unresolved wait proves
+the work is unfinished, not why. Replacing the deadline starts a new cycle;
+resolving or removing the wait stops the escalation. A lost or corrupt record
+returns the escalation rather than muting it, and a failed notification is
+offered again on the next sweep.
+
 ## Messages and outcomes
 
 `mishe wall dm --source ROLE --to OTHER --text TEXT` appends addressed chat and

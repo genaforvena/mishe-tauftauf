@@ -156,13 +156,88 @@ def settle_waits(home, role, *, now):
 
 
 
+OVERDUE_GRACE = 300
+
+
+def _overdue_path(home):
+    return Path(home) / "work/watch-overdue.json"
+
+
+def _load_overdue(home):
+    """The overdue escalation record, independent of the due-token map.
+
+    A lost or corrupt file returns work, never mutes it: the escalation is
+    offered again instead of disappearing with the observation.
+    """
+    try:
+        data = read_json(_overdue_path(home))
+    except (OSError, ValueError):
+        return {}, {}
+    if not isinstance(data, dict):
+        return {}, {}
+    overdue = data.get("overdue")
+    errors = data.get("errors")
+    return (overdue if isinstance(overdue, dict) else {},
+            errors if isinstance(errors, dict) else {})
+
+
+def _save_overdue(home, overdue, errors):
+    write_json(_overdue_path(home), dict(version=1, overdue=overdue, errors=errors))
+
+
+def _overdue_key(role, identity):
+    return role + ":" + identity
+
+
+def _deliver(home, recipient, text, notify):
+    """Notify and mark the inbox. Returns None on success, else the failure.
+
+    The caller records a notification only after both steps succeed, so a
+    failed delivery is offered again on the next sweep instead of being muted.
+    """
+    from . import owed
+    try:
+        notify(recipient, text)
+        owed.touch_inbox(home, recipient)
+    except (OSError, ValueError) as exc:
+        return str(exc)
+    return None
+
+
+def _escalate_overdue(home, role, identity, wait, overdue, errors, *, now, notify, declared):
+    """Escalate one overdue unresolved wait, once per role, task and deadline.
+
+    The overdue state is its own record: a waiting task past its deadline
+    keeps the same due token on every later sweep, so a deadline check chained
+    to that comparison would never fire.
+    """
+    key = _overdue_key(role, identity)
+    deadline = wait.get("deadline")
+    entry = overdue.get(key)
+    if isinstance(entry, dict) and entry.get("deadline") == deadline and entry.get("notified_at") is not None:
+        return
+    # An escalation nobody is dispatched for is a silent escalation. Genome is
+    # the standing escalation owner; a site without it escalates to the role
+    # the wait already named.
+    recipient = "genome" if "genome" in declared else wait.get("escalate_to")
+    text = (f"Work {role}/{identity} is still waiting, more than five minutes past its deadline "
+            f"({deadline}); the deadline action was: {wait.get('action_at_deadline')}. "
+            f"Inspect this unresolved wait and its resolver.")
+    error = _deliver(home, recipient, text, notify)
+    if error is None:
+        overdue[key] = dict(deadline=deadline, notified_at=now, role=role)
+        errors.pop("overdue:" + key, None)
+    else:
+        overdue[key] = dict(deadline=deadline, notified_at=None, role=role)
+        errors["overdue:" + key] = error
+
+
 def _sweep(home, *, repo, now, notify=None):
     """Cheap deterministic sweep; notify once per changed observation or deadline.
 
     Notification state is separate from task choices. This never advances a
     cursor, consumes mail, clears a fault or overwrites a peer work record.
     """
-    from . import owed
     if notify is None:
         from .failure import default_notify
         notify = lambda role, text: default_notify(home, role, text)
@@ -171,28 +246,52 @@ def _sweep(home, *, repo, now, notify=None):
         seen = read_json(path) or {}
     except (OSError, ValueError):
         seen = {}  # observation loss returns work, never mutes it
-    for role in sorted(roles.declared(home)):
+    if not isinstance(seen, dict):
+        seen = {}
+    overdue, errors = _load_overdue(home)
+    declared = roles.declared(home)
+    live, readable = set(), set()
+    for role in sorted(declared):
         record = load(home, role)
-        if record is None: continue
-        evaluations = [("state", dict(state="unknown", reasons=[record["error"]]), None)] if record.get("state") == "UNKNOWN" else [
-            (task["id"], evaluate_wait(home, task["wait"], repo=repo, now=now), task["wait"])
-            for task in record["tasks"] if task["state"] == "waiting"]
+        if record is None:
+            readable.add(role)
+            continue
+        if record.get("state") == "UNKNOWN":
+            evaluations = [("state", dict(state="unknown", reasons=[record["error"]]), None)]
+        else:
+            readable.add(role)
+            evaluations = [(task["id"], evaluate_wait(home, task["wait"], repo=repo, now=now), task["wait"])
+                           for task in record["tasks"] if task["state"] == "waiting"]
+            live.update(_overdue_key(role, task["id"]) for task in record["tasks"] if task["state"] == "waiting")
         for identity, evaluation, wait in evaluations:
-            key = role + ":" + identity
+            key = _overdue_key(role, identity)
             token = dict(evaluation=evaluation, deadline=wait.get("deadline") if wait else None)
             if evaluation["state"] == "unchanged":
                 seen.pop(key, None)
                 continue
-            if seen.get(key) == token: continue
-            recipient = wait["escalate_to"] if wait and evaluation["state"] == "due" else role
-            notify(recipient, f"Work {role}/{identity}: {evaluation}; " +
-                   (wait["action_at_deadline"] if wait else "UNKNOWN work state; repair the sidecar"))
-            owed.touch_inbox(home, recipient)
-            seen[key] = token
-            if wait and now > wait["deadline"] + 300:
-                notify("genome", f"Work scheduler missed {role}/{identity} deadline by more than five minutes; inspect reporter/scheduler")
-                owed.touch_inbox(home, "genome")
+            if seen.get(key) != token:
+                recipient = wait["escalate_to"] if wait and evaluation["state"] == "due" else role
+                error = _deliver(home, recipient, f"Work {role}/{identity}: {evaluation}; " +
+                                 (wait["action_at_deadline"] if wait else "UNKNOWN work state; repair the sidecar"),
+                                 notify)
+                if error is None:
+                    seen[key] = token
+                    errors.pop("notify:" + key, None)
+                else:
+                    errors["notify:" + key] = error
+            deadline = wait.get("deadline") if isinstance(wait, dict) else None
+            if isinstance(deadline, (int, float)) and not isinstance(deadline, bool) \
+                    and now > deadline + OVERDUE_GRACE:
+                _escalate_overdue(home, role, identity, wait, overdue, errors,
+                                  now=now, notify=notify, declared=declared)
+    # A removed or resolved wait stops escalating and stops occupying the record.
+    for key in list(overdue):
+        entry = overdue[key]
+        owner = entry.get("role") if isinstance(entry, dict) else None
+        if owner not in declared or (owner in readable and key not in live):
+            del overdue[key]
     write_json(path, seen)
+    _save_overdue(home, overdue, errors)
 
 
 def sweep(home, *, repo, now, notify=None):
