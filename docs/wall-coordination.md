@@ -36,6 +36,28 @@ Do not make unrelated ready tasks wait on the same incident.
 touches the recipient's inbox. Send for action, changed evidence, material impact
 or handoff. Sending a message is not an accepted handoff or an observed repair.
 
+A message reaches a mind only in one of two forms:
+
+- The canonical form: the first line is exactly `[dm] to=ROLE`, and the text
+  starts on the following lines. A first line such as `[dm] to=ROLE some text`
+  is not addressed; it is chat that nobody is woken for.
+- Natural prose: the first line starts `to ROLE`, `to=ROLE` or `SENDER to ROLE`,
+  as in `health to genome: ...`. This wakes ROLE only when ROLE is a declared role
+  other than the sender. Other prose is chat.
+
+A DM informs a peer or asks for one named action or one piece of changed
+evidence. It is not a request for approval. Every mind decides and acts on its
+own: nothing routes to the operator or to a steward by default, and no work waits
+for a reply.
+
+## Walls
+
+A wall (`SITE_HOME/walls/ROLE.md`) is the top pane a person reads. Write it for a
+human with nothing else open: what you are doing and why, the exact next command
+or edit, the evidence just gathered (short, quoted, with where to look), and what
+would change your mind. Use plain prose and short lists, not raw JSON, ids or log
+dumps. Update it while you work, not only at yield.
+
 `mishe wall outcome --owner ROLE --kind accepted --file NOTES --evidence PATH`
 records an evidenced contribution. Other kinds include `blocker-resolved`,
 `blocker-retired` and `hypothesis-changed`. Unchanged reconciliation is not an
@@ -49,9 +71,17 @@ Commit tested paths without routine permission. Include `Mishe-Wake: KEY` and
 any coauthor trailer. Use the actual wake environment values. Shared author names
 and commit timestamps do not prove attribution.
 
-Running code comes from committed snapshots. A wake holds the dispatch lock
-throughout its engine execution, so direct promotion from inside that engine is
-refused. Queue the delivery while awake:
+Running code comes from committed snapshots, through one pin. `SITE_HOME/runtime/current`
+is a symlink to the committed release that running code uses. The units name only
+that path in their `PYTHONPATH`, so moving the symlink moves the consumers; a wake
+keeps the release it started from. No mind moves the pin by hand.
+
+`coordination-mode.json`'s `runtime` key is different: it names the snapshot that
+`wall_patch` checks and applies a patch against. It does not decide what the units
+run.
+
+A wake holds the dispatch lock throughout its engine execution, so direct
+promotion from inside that engine is refused. Queue the delivery while awake:
 
 ```sh
 mishe release request --sha FULL_SHA --previous FULL_SHA \
@@ -97,9 +127,16 @@ records. Only observed restored-consumer behavior establishes bounded recovery.
 The `delivery-requests` signal expires after five minutes if its consumer stops
 observing; missing, stale or malformed monitoring never establishes success.
 
-After every delivery compare actual unit and wrapper paths with the runtime
-pointer. A GREEN test or doctor does not prove that consumers use the intended
-release. Preserve protected host guards and limits.
+The operator's moving-pin script (`SITE_HOME/operator/plans/moving-pin-20261105/delivery/deliver.sh`)
+is the strong gate for moving the pin. It re-runs the check and review, and it
+stops before applying unless the review is clear. It then takes a short hold,
+waits for the dispatch lock, applies, verifies, and always releases the hold. If
+the delivery is not verified, it heals the consumers to the release the pin names.
+It aborts or heals; it does not leave a half state.
+
+After every delivery, compare the units' `PYTHONPATH` with `runtime/current`: it
+should resolve to the release just delivered. A GREEN test or doctor does not prove
+that consumers use the intended release. Preserve protected host guards and limits.
 
 ## Ending a wake
 
