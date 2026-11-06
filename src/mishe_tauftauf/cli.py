@@ -291,7 +291,17 @@ def cmd_pain_list(args) -> int:
 
 
 def cmd_pain_render(args) -> int:
-    rendered = compose_frame(args.home, validate_slug(args.slug), args.timeout)
+    slug = validate_slug(args.slug)
+    from .roles import declared
+    if slug in declared(args.home):
+        # One renderer for a mind's pane: the same plant_view the live panes run (model, wake, yield, commits, wall, signals, next due,
+        # mail). The old launcher chain (top-pains/* -> render_admission -> wall_view) was deleted with the pane runtime and printed
+        # only a renderer failure plus stale blocks in its place.
+        import time
+        from . import plant_view
+        sys.stdout.write(plant_view.render(args.home, slug, now=time.time()).rstrip("\n") + "\n")
+        return 0
+    rendered = compose_frame(args.home, slug, args.timeout)
     sys.stdout.write(rendered.body)
     return 0 if rendered.ok else 1
 

@@ -624,3 +624,17 @@ def test_wall_excerpt_and_mail_are_the_minds_prose_but_signal_lines_are_chrome()
     assert len(machine_syntax(leaked)) == 1                               # chrome between the prose blocks is still strict
     dump = top.replace('- run `.venv/bin/python -m x`', '{\n  "a": 1\n}')
     assert len(machine_syntax(dump)) >= 1                                 # a dumped record is flagged even inside the wall
+
+
+def test_pain_read_of_a_role_shows_the_plant_view_not_the_deleted_renderer_chain(tmp_path):
+    # 2026-11-06: `pain read genome --launcher dashboard` printed 'No module named mishe_tauftauf.wall_view' and stale blocks (legacy
+    # top-pains launchers); a mind's pane is plant_view, for the dashboard and for `pain read` alike.
+    import subprocess, sys
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    home = tmp_path / ".mishe-tauftauf"
+    assert subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "init"], capture_output=True, text=True).returncode == 0
+    done = subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "pain", "read", "genome", "--launcher", "dashboard"],
+                          capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.startswith("genome \u2014 model ") and "wall_view" not in done.stdout + done.stderr and "renderer exit" not in done.stdout
+    assert "Wall UNKNOWN" in done.stdout or "Wall (" in done.stdout            # a missing wall is UNKNOWN, never a renderer failure
