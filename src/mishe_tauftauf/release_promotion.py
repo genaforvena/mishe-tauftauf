@@ -14,7 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from . import work_boundary as boundary, wall_patch
+from . import release_boundary, work_boundary as boundary, wall_patch
 from .state_files import read_json, write_json
 from .work_receipts import digest
 
@@ -136,7 +136,7 @@ DUAL_PROBE = "mishe-dual-probe.service"
 def _probe_fields():
     out = subprocess.check_output(["systemctl", "--user", "show", DUAL_PROBE, "-p", "FragmentPath", "-p", "ActiveState"],
                                   text=True, timeout=30)
-    return dict(row.split("=", 1) for row in out.splitlines() if "=" in row)
+    return release_boundary.unit_fields(out)
 
 
 def ensure_dual_probe(home, unit_dir=None):
@@ -151,7 +151,7 @@ def ensure_dual_probe(home, unit_dir=None):
     if durable.is_file():
         fields = _probe_fields()
         if fields.get("FragmentPath") != str(durable):
-            if not fields.get("FragmentPath", "").startswith("/run/user/"):
+            if not release_boundary.is_transient_fragment(fields.get("FragmentPath", "")):
                 raise RuntimeError(f"root-fs probe fragment UNKNOWN: {fields}")
             subprocess.run(["systemctl", "--user", "stop", DUAL_PROBE], check=True, capture_output=True, timeout=60)
             reload_units()

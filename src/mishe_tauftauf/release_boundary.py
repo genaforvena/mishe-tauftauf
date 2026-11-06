@@ -21,6 +21,16 @@ def owned_runtime_units(home, unit_dir):
     return sorted(owned)
 
 
+def unit_fields(show_text):
+    """Parse `systemctl --user show -p ...` key=value output into a dict."""
+    return dict(row.split("=", 1) for row in show_text.splitlines() if "=" in row)
+
+
+def is_transient_fragment(fragment):
+    """systemd keeps transient units under the user runtime directory."""
+    return fragment.startswith("/run/user/")
+
+
 def trigger_unit(path):
     return path.suffix in (".timer", ".path")
 
