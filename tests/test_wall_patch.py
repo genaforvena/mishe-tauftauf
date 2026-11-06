@@ -630,3 +630,32 @@ def test_mutated_source_drops_the_stale_review_verdict(tmp_path, monkeypatch):
     failed = wall_patch.status(home, "change")
     assert failed["phase"] == "test-mutated-source"
     assert "review" not in failed, "mutated bytes must not keep a verdict over the old bytes"
+
+
+def test_review_body_carries_full_text_of_unchanged_dependency(tmp_path, monkeypatch):
+    home, source, deployed = layout(tmp_path)
+    dependency = tmp_path / "src/mishe_tauftauf/dependency.py"
+    dependency.write_text("unchanged dependency text\n")
+    (tmp_path / "runtime/src/mishe_tauftauf/dependency.py").write_text("unchanged dependency text\n")
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py", "src/mishe_tauftauf/dependency.py"])
+    source.write_text("after\n")
+    (home / "patch-review.json").write_text(json.dumps({"command": [sys.executable, "-c", "pass"]}))
+    seen = {}
+
+    def spy(command, encoded, timeout):
+        seen["request"] = json.loads(encoded.decode())
+        raise RuntimeError("stop after capture")
+
+    monkeypatch.setattr(wall_patch, "_worker", spy)
+    record = wall_patch.status(home, "change")
+    import base64
+    for name, values in record["files"].items():
+        text = (source if name.endswith("example.py") else dependency).read_text()
+        values["after"] = {"bytes": base64.b64encode(text.encode()).decode(), "mode": 0o644}
+    record["test"] = {"log": str(tmp_path / "test.log")}
+    (tmp_path / "test.log").write_text("ok\n")
+    with pytest.raises(RuntimeError, match="stop after capture"):
+        wall_patch.review(home, record)
+    files = seen["request"]["context"]["patch"]["files"]
+    assert files["src/mishe_tauftauf/dependency.py"]["after_text"] == "unchanged dependency text\n"
+    assert files["src/mishe_tauftauf/dependency.py"]["source_diff"] == ""

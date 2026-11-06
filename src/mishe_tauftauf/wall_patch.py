@@ -159,7 +159,10 @@ def review(home, record):
     for name, values in record["files"].items():
         texts = {key: base64.b64decode(values[key]["bytes"]).decode("utf-8") if values[key] else ""
                  for key in ("before", "after", "runtime_before")}
-        changes = {"modes": {key: values[key]["mode"] if values[key] else None for key in texts},
+        # Full after-text for every manifest file: an unchanged dependency has an
+        # empty diff, so without this the reviewer sees only its hash.
+        changes = {"after_text": texts["after"],
+                   "modes": {key: values[key]["mode"] if values[key] else None for key in texts},
                    "hashes": {key: hashlib.sha256(text.encode()).hexdigest() for key, text in texts.items()},
                    "source_diff": "".join(difflib.unified_diff(texts["before"].splitlines(True), texts["after"].splitlines(True), fromfile=name+" before", tofile=name+" after"))}
         changes["runtime_diff"] = "same as source_diff" if values["runtime_before"] == values["before"] else "".join(
