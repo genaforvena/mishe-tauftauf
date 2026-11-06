@@ -75,7 +75,7 @@ def test_readings_renewal_has_a_bounded_senses_owned_producer():
     item = next(d for d in ALL if d["name"] == "readings")
     assert item["resolver"] == "senses"
     assert item["command"][-2:] == ["discover", "scan"]
-    assert item["every"] == 600 and item["timeout"] == 180
+    assert item["every"] == 600 and item["timeout"] == 300
     assert item["max_age"] == 900 and item["red_codes"] == []
 
 

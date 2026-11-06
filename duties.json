@@ -206,7 +206,7 @@
       ],
       "red_codes": [],
       "every": 600,
-      "timeout": 180,
+      "timeout": 300,
       "max_age": 900,
       "resolver": "senses",
       "replaces": [
