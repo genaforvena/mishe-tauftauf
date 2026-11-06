@@ -116,6 +116,17 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         "[Unit]\nDescription=Run the Mishe doctor",
         f"[Timer]\nOnBootSec=60\nOnUnitActiveSec={cfg.doctor_every}\nAccuracySec=10s\nUnit={p}-doctor.service",
         "[Install]\nWantedBy=timers.target")
+    # The root-fs stall probe is a long-running monitor, not a timer: it must come back after a
+    # reboot or crash by itself (a transient unit does neither). Restart=always, because a clean
+    # exit from a monitor would otherwise end the stall record silently.
+    files[f"{p}-dual-probe.service"] = _file(
+        f"[Unit]\nDescription=Mishe root-fs stall probe\n{failed}",
+        "[Service]\nType=simple\nUMask=0077\n" + _env(cfg)
+        + f"WorkingDirectory={cfg.home}/operator\n"
+        + f"ExecStart=/usr/bin/python3 -I {cfg.home}/operator/dual_probe.py\n"
+        + "Restart=always\nRestartSec=60\n"
+        + f"Slice={cfg.plants_slice}\n" * bool(cfg.plants_slice),
+        "[Install]\nWantedBy=default.target")
     for prod in producers:
         files[f"{p}-producer-{prod.name}.service"] = _file(
             f"[Unit]\nDescription=Mishe producer {prod.name}\n{failed}",

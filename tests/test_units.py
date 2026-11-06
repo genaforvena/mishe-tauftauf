@@ -66,6 +66,22 @@ def test_producer_gets_timer_and_oneshot_service(cfg):
     assert "OnFailure=mishe-failed@%n.service" in files["mishe-producer-devto.service"]
 
 
+def test_dual_probe_is_a_durable_restarting_monitor_routed_to_failure(cfg):
+    svc = units.render(cfg, ROLES)["mishe-dual-probe.service"]
+    for needle in ("Type=simple", "Restart=always", "RestartSec=60", "WantedBy=default.target",
+                   f"ExecStart=/usr/bin/python3 -I {cfg.home}/operator/dual_probe.py",
+                   "OnFailure=mishe-failed@%n.service", f"WorkingDirectory={cfg.home}/operator",
+                   "Slice=mishe-plants.slice", f"MISHE_SEED_HOME={cfg.home}"):
+        assert needle in svc
+    assert "Type=oneshot" not in svc and "RuntimeMaxSec" not in svc
+
+
+def test_dual_probe_has_no_slice_when_scratch_namespaces_are_used(cfg):
+    scratch = units.Config(home=cfg.home, repo=cfg.repo, python=cfg.python, pythonpath=cfg.pythonpath,
+                           unit_dir=cfg.unit_dir, plants_slice=None, lifeline_slice=None)
+    assert "Slice=" not in units.render(scratch, ROLES)["mishe-dual-probe.service"]
+
+
 def test_sync_writes_and_is_idempotent_and_removes_stale_generated_only(cfg):
     calls = []
     cfg.unit_dir.mkdir(parents=True)
