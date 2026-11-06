@@ -106,6 +106,37 @@ def read_renderer_coverage(pin_root: Path | None, *,
             "sample": f"renderer modules present: {','.join(f'{m}.py' for m in modules)}"}
 
 
+ROLE_RENDER_SENSE_ID = "sense.runtime.role-render-coverage"
+
+
+def read_role_render_coverage(roles: list[str] | None, render) -> dict[str, object]:
+    """Whether each declared role renders through the real renderer path.
+
+    ``render(role)`` is the injected renderer; the scanner passes the plant view.
+    A role whose render raises or returns nothing is drift (the renderer ran
+    and failed). An unreadable role list is UNKNOWN, never calm.
+    """
+    base = {"id": ROLE_RENDER_SENSE_ID, "kind": "read", "source": "plant_view.render"}
+    if roles is None:
+        return {**base, "state": "unknown", "sample": "declared roles could not be read"}
+    if not roles:
+        return {**base, "state": "unknown", "sample": "no declared roles to render"}
+    failed = []
+    for role in roles:
+        try:
+            text = render(role)
+        except Exception as exc:  # the renderer ran and raised: a fact, not calm
+            failed.append(f"{role}={type(exc).__name__}")
+            continue
+        if not isinstance(text, str) or not text.strip():
+            failed.append(f"{role}=empty")
+    if failed:
+        return {**base, "state": "drift", "missing": failed,
+                "sample": f"{len(failed)} of {len(roles)} declared roles did not render: " + "; ".join(failed)}
+    return {**base, "state": "verified",
+            "sample": f"rendered {len(roles)} declared roles: {','.join(roles)}"}
+
+
 SESSION_SENSE_ID = "sense.host.session-stability"
 SHIELD_ADJ = "-900"
 

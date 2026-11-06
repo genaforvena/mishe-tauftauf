@@ -47,7 +47,7 @@ from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
 from .multibody import read_multibody_coverage
 from .redmi10_stream import read_redmi10_stream
 from .replacement_readings import (
-    probe_session_stability, read_renderer_coverage, read_tmux_windows,
+    probe_session_stability, read_renderer_coverage, read_role_render_coverage, read_tmux_windows,
 )
 from .slice_throttle import read_slice_throttle
 from .unit_cpu import read_unit_cpu
@@ -7017,6 +7017,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(probe_session_stability(os.environ.get("MISHE_SEED_SESSION") or None,
                                             _inner_tmux_socket()))
     observed.append(read_renderer_coverage(_pinned_runtime_root()))
+    observed.append(read_role_render_coverage(_declared_roles(home), _role_renderer(home)))
     observed.append(read_redmi10_stream(now=time.time()))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}
@@ -7034,6 +7035,23 @@ def _inner_tmux_socket() -> str:
     """The plant's inner tmux socket, as revive.py names it for this uid."""
     uid = os.getuid()
     return f"/tmp/tmux-{uid}/mishe-tauftauf/tmux-{uid}/default"
+
+
+def _declared_roles(home: Path) -> list[str] | None:
+    """The declared mind roles, or None when the declaration cannot be read."""
+    try:
+        from .roles import declared
+        return sorted(declared(home))
+    except Exception:
+        return None
+
+
+def _role_renderer(home: Path):
+    """Render one role through the same plant view the live panes run."""
+    def render(role: str) -> str:
+        from . import plant_view
+        return plant_view.render(home, role, now=time.time())
+    return render
 
 
 def _pinned_runtime_root(unit_root: Path | None = None) -> Path | None:

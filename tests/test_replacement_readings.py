@@ -195,3 +195,30 @@ def test_probe_passes_plant_socket_to_every_tmux_call():
 def test_session_stability_unshielded_is_drift_even_without_declared_session():
     assert judge_session_stability(None, ["plant"], {"5": "200"})["state"] == "drift"
     assert judge_session_stability(None, ["plant"], {"5": "-900"})["state"] == "unknown"
+
+
+def test_role_render_all_render_is_verified():
+    from mishe_tauftauf.replacement_readings import read_role_render_coverage
+    got = read_role_render_coverage(["genome", "senses"], lambda role: f"# {role}\nbody\n")
+    assert got["state"] == "verified"
+    assert got["sample"] == "rendered 2 declared roles: genome,senses"
+
+
+def test_role_render_raise_or_empty_is_drift_with_cause():
+    from mishe_tauftauf.replacement_readings import read_role_render_coverage
+
+    def render(role):
+        if role == "genome":
+            raise ValueError("boom")
+        return "  \n" if role == "senses" else "ok\n"
+
+    got = read_role_render_coverage(["genome", "health", "senses"], render)
+    assert got["state"] == "drift"
+    assert got["missing"] == ["genome=ValueError", "senses=empty"]
+    assert "2 of 3 declared roles did not render" in got["sample"]
+
+
+def test_role_render_unreadable_or_empty_roles_is_unknown():
+    from mishe_tauftauf.replacement_readings import read_role_render_coverage
+    assert read_role_render_coverage(None, lambda r: "x")["state"] == "unknown"
+    assert read_role_render_coverage([], lambda r: "x")["state"] == "unknown"
