@@ -193,15 +193,19 @@ def _notified(entry, deadline):
     """True only when this entry proves the escalation was delivered.
 
     A corrupt record must reoffer the work, never suppress it. So the entry
-    must name the same deadline and carry a real timestamp; a non-null value
-    that is not a number (a string, a list, a bool) proves nothing.
+    must name the same deadline and carry a real, finite timestamp: a
+    non-null value that is not a number (a string, a list, a bool) proves
+    nothing, and neither does NaN or an infinity, which JSON can carry and
+    which would otherwise read as a delivered escalation forever.
     """
     if not isinstance(entry, dict):
         return False
     if entry.get("deadline") != deadline:
         return False
     stamp = entry.get("notified_at")
-    return isinstance(stamp, (int, float)) and not isinstance(stamp, bool)
+    if not isinstance(stamp, (int, float)) or isinstance(stamp, bool):
+        return False
+    return math.isfinite(stamp)
 
 
 def _deliver(home, recipient, text, notify):

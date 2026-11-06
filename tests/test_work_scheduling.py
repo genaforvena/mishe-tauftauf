@@ -148,6 +148,27 @@ def test_corrupt_overdue_entry_does_not_suppress_the_escalation(tmp_path, entry)
     assert "genome" in [role for role, _ in calls]
 
 
+@pytest.mark.parametrize("stamp", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_overdue_timestamp_does_not_suppress_the_escalation(tmp_path, stamp):
+    # JSON carries NaN and Infinity, and json.loads decodes them, so a record
+    # holding one is reachable on disk. It proves nothing about a delivery.
+    setup(tmp_path)
+    calls = []
+    w.sweep(tmp_path, repo=tmp_path, now=1000, notify=lambda *a: calls.append(a))
+    (tmp_path / "work/watch-overdue.json").write_text(
+        '{"version": 1, "overdue": {"health:cause": {"deadline": 1000, "notified_at": '
+        + repr(stamp).replace("inf", "Infinity").replace("nan", "NaN")
+        + ', "role": "health"}}, "errors": {}}')
+    calls.clear()
+    w.sweep(tmp_path, repo=tmp_path, now=1301, notify=lambda *a: calls.append(a))
+    assert "genome" in [role for role, _ in calls]
+
+
+@pytest.mark.parametrize("stamp", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_timestamp_is_not_notification_evidence(stamp):
+    assert not w._notified({"deadline": 200, "notified_at": stamp}, 200)
+
+
 def test_overdue_entry_for_a_different_deadline_does_not_suppress(tmp_path):
     setup(tmp_path)
     calls = []
