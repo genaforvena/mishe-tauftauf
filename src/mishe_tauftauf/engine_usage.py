@@ -55,23 +55,58 @@ def _window_verdict(window, fetched, now):
     return 'FRESH', None
 
 
+def _live_credential(entry, creds):
+    """The credential id this account reads, resolved against the live store.
+
+    A registry entry may pin the id it was built with. A login that replaces the
+    credential writes a new row and disables the old one, so a pinned id that is
+    gone or disabled is followed to the store's remaining active credential for
+    the same provider. Two active credentials for one provider cannot be
+    attributed to a single account, so neither is chosen.
+    """
+    provider = entry['provider']
+    pinned = entry['credential_id']
+    if pinned is not None and pinned in creds and not creds[pinned]['disabled']:
+        return pinned
+    active = sorted(cid for cid, row in creds.items()
+                     if row['provider'] == provider and not row['disabled'])
+    if len(active) == 1:
+        return active[0]
+    return None
+
+
+def _disabled_credential(entry, creds):
+    """A disabled credential id for the account's provider, if the store holds one."""
+    pinned = entry['credential_id']
+    if pinned is not None and pinned in creds and creds[pinned]['disabled']:
+        return pinned
+    disabled = sorted(cid for cid, row in creds.items()
+                      if row['provider'] == entry['provider'] and row['disabled'])
+    return disabled[0] if disabled else None
+
+
 def _auth(entry, creds, blocks, store_error, now):
     if entry['state'] != 'configured':
         return {'state': 'not-configured', 'reason': None, 'blocked_until': None}
     if store_error:
         return {'state': 'unknown', 'reason': store_error, 'blocked_until': None}
-    row = creds.get(entry['credential_id'])
-    if row is None:
+    credential_id = _live_credential(entry, creds)
+    if credential_id is None:
+        disabled = _disabled_credential(entry, creds)
+        if disabled is not None:
+            return {'state': 'disabled', 'reason': 'credential disabled by OMP', 'blocked_until': None}
         return {'state': 'missing', 'reason': 'credential reference absent from store', 'blocked_until': None}
+    row = creds[credential_id]
     if row['provider'] != entry['provider']:
         return {'state': 'mismatch', 'reason': 'credential provider differs from registry', 'blocked_until': None}
     if row['disabled']:
         return {'state': 'disabled', 'reason': 'credential disabled by OMP', 'blocked_until': None}
-    active = [b['blocked_until_ms'] for b in blocks.get(entry['credential_id'], [])
+    active = [b['blocked_until_ms'] for b in blocks.get(credential_id, [])
               if type(b['blocked_until_ms']) in (int, float) and b['blocked_until_ms'] > now]
     if active:
-        return {'state': 'blocked', 'reason': 'OMP credential block active', 'blocked_until': _iso(max(active))}
-    return {'state': 'ok', 'reason': None, 'blocked_until': None}
+        return {'state': 'blocked', 'reason': 'OMP credential block active',
+                'blocked_until': _iso(max(active)), 'credential_id': credential_id}
+    return {'state': 'ok', 'reason': None, 'blocked_until': None, 'credential_id': credential_id}
 
 
 def _registry_view(alias, entry, auth):
@@ -81,7 +116,7 @@ def _registry_view(alias, entry, auth):
         'store': entry['store'],
         'registry_state': entry['state'],
         'entitlement': entry['entitlement'],
-        'credential_id': entry['credential_id'],
+        'credential_id': auth.get('credential_id', entry['credential_id']),
         'evidence': entry['evidence'],
         'evidence_at': entry['evidence_at'],
         'auth': auth,
@@ -103,7 +138,13 @@ def _credential_stores(home, registry):
 
 
 def _unregistered(registry, store, creds):
-    referenced = {e['credential_id'] for e in registry.values() if e['state'] == 'configured' and e['store'] == store}
+    referenced = set()
+    for entry in registry.values():
+        if entry['state'] != 'configured' or entry['store'] != store:
+            continue
+        resolved = _live_credential(entry, creds)
+        if resolved is not None:
+            referenced.add(resolved)
     counts = {}
     for cid, row in creds.items():
         if cid not in referenced:

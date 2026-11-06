@@ -43,15 +43,20 @@ def _write_store(store, credentials, blocks):
     con.execute('insert into auth_schema_version values (1, 8)')
     con.execute('create table auth_credentials (id integer primary key, provider text, credential_type text, '
                 'data text, disabled_cause text, identity_key text, created_at integer, updated_at integer)')
+    _add_store_rows(con, credentials, blocks)
+    con.commit()
+    con.close()
+
+
+def _add_store_rows(con, credentials, blocks):
+    """Add credential rows to an existing store, as a later login does."""
     for cid, provider, disabled in credentials:
         con.execute('insert into auth_credentials (id, provider, credential_type, data, disabled_cause) values (?,?,?,?,?)',
                     (cid, provider, 'api_key', 'SECRET-VALUE-NOT-READ', disabled))
-    con.execute('create table auth_credential_blocks (credential_id integer, provider_key text, block_scope text, '
-                'blocked_until_ms integer, updated_at integer)')
+    con.execute('create table if not exists auth_credential_blocks (credential_id integer, provider_key text, '
+                'block_scope text, blocked_until_ms integer, updated_at integer)')
     for cid, scope, until in blocks:
         con.execute('insert into auth_credential_blocks values (?,?,?,?,0)', (cid, 'p', scope, until))
-    con.commit()
-    con.close()
 
 
 def make_site(tmp_path, accounts, credentials=(), blocks=()):
@@ -328,3 +333,75 @@ def test_accounts_view_reads_no_provider_quota(tmp_path):
     assert view['accounts']['go-a']['auth']['state'] == 'ok'
     assert 'windows' not in view['accounts']['go-a']
     assert view['state'] == 'FRESH'
+
+
+def test_account_without_pinned_credential_follows_the_stores_live_one(tmp_path):
+    """An account that names no credential reads whichever one the store holds."""
+    accounts = {'go-a': {'provider': 'opencode-go', 'state': 'configured'}}
+    home = make_site(tmp_path, accounts, [(15, 'opencode-go', None)])
+    omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go'))))
+    row = dashboard(home, omp)['accounts']['go-a']
+    assert row['auth']['state'] == 'ok'
+    assert row['credential_id'] == 15
+
+
+def test_relogin_writes_a_new_credential_id_and_the_account_follows_it(tmp_path):
+    """A login that replaces the credential is picked up, not reported as missing."""
+    accounts = {'go-a': {'provider': 'opencode-go', 'state': 'configured'}}
+    home = make_site(tmp_path, accounts, [(15, 'opencode-go', 'deleted by user')])
+    con = sqlite3.connect(home / RESIDENT / 'agent.db')
+    _add_store_rows(con, [(16, 'opencode-go', None)], [])
+    con.commit()
+    con.close()
+    omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go'))))
+    row = dashboard(home, omp)['accounts']['go-a']
+    assert row['auth']['state'] == 'ok'
+    assert row['credential_id'] == 16
+
+
+def test_logout_then_relogin_is_followed_across_both_row_ids(tmp_path):
+    """A pinned id that dies is followed to the replacement, in either direction."""
+    accounts = {'go-a': go('a', 15)}
+    home = make_site(tmp_path, accounts, [(15, 'opencode-go', 'deleted by user')])
+    con = sqlite3.connect(home / RESIDENT / 'agent.db')
+    _add_store_rows(con, [(16, 'opencode-go', None)], [])
+    con.commit()
+    con.close()
+    omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go'))))
+    row = dashboard(home, omp)['accounts']['go-a']
+    assert row['auth']['state'] == 'ok'
+    assert row['credential_id'] == 16
+
+
+def test_two_active_credentials_for_one_provider_are_not_attributed(tmp_path):
+    """Two live credentials cannot be told apart, so neither is claimed."""
+    accounts = {'go-a': {'provider': 'opencode-go', 'state': 'configured'}}
+    home = make_site(tmp_path, accounts, [(15, 'opencode-go', None), (16, 'opencode-go', None)])
+    omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go'))))
+    row = dashboard(home, omp)['accounts']['go-a']
+    assert row['auth']['state'] == 'missing'
+
+
+def test_blocked_account_reports_the_credential_it_actually_reads(tmp_path):
+    """A block on the live credential must not be shown against the stale pinned id."""
+    accounts = {'go-a': go('a', 9)}
+    home = make_site(tmp_path, accounts, [(9, 'opencode-go', 'deleted by user')])
+    con = sqlite3.connect(home / RESIDENT / 'agent.db')
+    _add_store_rows(con, [(13, 'opencode-go', None)], [])
+    con.commit()
+    con.close()
+    omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go'))))
+    row = dashboard(home, omp)['accounts']['go-a']
+    assert row['credential_id'] == 13
+    assert row['auth']['state'] == 'ok'
+
+
+def test_shared_store_symlink_is_read_as_the_same_credential_store(tmp_path):
+    """A store whose agent.db links to the shared client store is readable."""
+    home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
+    shared = tmp_path / 'shared-agent.db'
+    shared.write_bytes((home / RESIDENT / 'agent.db').read_bytes())
+    (home / RESIDENT / 'agent.db').unlink()
+    (home / RESIDENT / 'agent.db').symlink_to(shared)
+    creds, _blocks = boundary.credential_store(home / RESIDENT)
+    assert creds[8]['provider'] == 'opencode-go'

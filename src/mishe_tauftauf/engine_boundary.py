@@ -46,6 +46,13 @@ def load_registry(home):
     A store is an OMP agent directory relative to home. Each account reads quota
     through its own store, so a second credential for one provider needs its own
     store to be attributable; accounts without one use the default store.
+
+    A configured account names the credential it owns with ``credential_id``, or
+    leaves it out to follow whichever credential the store currently holds for
+    its provider. The id is a hint, not the credential's identity: a later login
+    writes a new row, so an account whose id is gone follows the store's
+    remaining credential for that provider instead of reporting a stale
+    reference forever.
     """
     path = home / 'engine' / 'accounts.json'
     if path.is_symlink() or not path.is_file():
@@ -54,7 +61,7 @@ def load_registry(home):
     if not isinstance(value, dict) or value.get('version') != 1 or not isinstance(value.get('accounts'), dict):
         raise ValueError('invalid engine account registry')
     default = _store_path(value.get('store', STORE_DEFAULT))
-    accounts, credentials = {}, set()
+    accounts, credentials, claims = {}, set(), set()
     for alias, row in value['accounts'].items():
         if not isinstance(alias, str) or not ALIAS.fullmatch(alias) or not isinstance(row, dict):
             raise ValueError('invalid engine account entry')
@@ -63,9 +70,14 @@ def load_registry(home):
             raise ValueError('invalid engine account entry')
         store = _store_path(row['store']) if 'store' in row else default
         if state == 'configured':
-            if type(credential) is not int or credential <= 0 or (store, credential) in credentials:
+            if credential is not None:
+                if type(credential) is not int or credential <= 0 or (store, credential) in credentials:
+                    raise ValueError('configured account needs one unique credential reference per store')
+                credentials.add((store, credential))
+            elif (store, provider) in claims:
                 raise ValueError('configured account needs one unique credential reference per store')
-            credentials.add((store, credential))
+            else:
+                claims.add((store, provider))
         elif credential is not None:
             raise ValueError('unconfigured account must not reference a credential')
         for key in ('entitlement', 'evidence', 'evidence_at'):
@@ -88,9 +100,14 @@ def credential_store(directory):
 
     Reads only metadata columns in read-only mode. The OMP auth schema is pinned to
     version 8 (observed on omp/18.4.4); any other version is refused rather than guessed.
+
+    ``agent.db`` may be a symlink into the shared OMP agent store: the plant's
+    engine store is one file of the default client, so a login or logout there is
+    the same fact this store reports. SQLite resolves the link, so the write-ahead
+    log stays a single file beside the real database.
     """
     db = directory / 'agent.db'
-    if db.is_symlink() or not db.is_file():
+    if not db.is_file():
         raise ValueError('credential store unavailable')
     try:
         con = sqlite3.connect(db.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)
