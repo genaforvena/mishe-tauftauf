@@ -223,8 +223,9 @@ def guard_diagnostic(guard_row, observed_at):
         numeric = False
     raw_age = observed_at - checked if numeric else None
     checks = {
-        "state": guard_row.get("state") in {"FRESH", "UNKNOWN"},
-        "capacity": guard_row.get("capacity") in {"NORMAL", "LIMITED", "CRITICAL", "UNKNOWN"},
+        # a list or object in a field is a wrong value, not an unhashable-type error that would be misreported as a read failure
+        "state": isinstance(guard_row.get("state"), str) and guard_row.get("state") in {"FRESH", "UNKNOWN"},
+        "capacity": isinstance(guard_row.get("capacity"), str) and guard_row.get("capacity") in {"NORMAL", "LIMITED", "CRITICAL", "UNKNOWN"},
         "scope": guard_row.get("scope") == GUARD_SCOPE,
         "checked_at": numeric,
         "age": numeric and 0 <= raw_age <= GUARD_MAX_AGE,

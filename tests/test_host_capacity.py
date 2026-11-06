@@ -289,3 +289,8 @@ def test_oversized_integer_checked_at_is_rejected_without_breaking_the_diagnosti
     # Independent review of the delivery of a6c73263: math.isfinite(10**400) raises OverflowError, which escaped the diagnostic.
     verdict = host.guard_diagnostic({"checked_at": 10**400, "state": "FRESH", "capacity": "NORMAL", "scope": host.GUARD_SCOPE}, 100.0)
     assert verdict["fresh"] is False and "checked_at" in verdict["failed"] and verdict["checked_at"] is None and verdict["age"] is None
+
+
+def test_unhashable_guard_fields_are_wrong_values_not_read_failures():
+    verdict = host.guard_diagnostic({"checked_at": 100.0, "state": {}, "capacity": [], "scope": host.GUARD_SCOPE}, 101.0)
+    assert verdict["fresh"] is False and verdict["failed"] == ["state", "capacity"]
