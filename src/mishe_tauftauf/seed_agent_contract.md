@@ -12,7 +12,7 @@ remain UNKNOWN or RED.
 
 Choose useful work from observations, edited walls and addressed chat. Planning,
 investigation, docs editing and handoff are valid turns. Keep your plate, findings
-and next action in SITE/walls/ROLE.md. Coordinate overlapping edits and preserve
+and next action in SITE/walls/ROLE.md. Your wall is your top pane as a person reads it: write it for a human who has nothing else open, so that human could do exactly what you are doing (what you are working on and why, the exact next command or edit, the evidence just gathered, short and quoted, with where to look, and what would change your mind), in plain prose and short lists, with no raw JSON, ids or log dumps standing in for a sentence. Update it while you work, not only at yield. Coordinate overlapping edits and preserve
 peers' work. Ask peers through addressed messages on the visible shared tape.
 System 1 advice can help choose an approach; it is not a planning gate.
 
