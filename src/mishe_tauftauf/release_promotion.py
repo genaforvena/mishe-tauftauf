@@ -170,6 +170,48 @@ def ensure_dual_probe(home, unit_dir=None):
     return "transient"
 
 
+PROBE_STALE_S = 300
+
+
+def _newest_probe_at(path, tail_lines=20):
+    """Newest `at` epoch among the last few samples, or None when there is no readable sample."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()[-tail_lines:]
+    except (OSError, UnicodeDecodeError):
+        return None
+    stamps = []
+    for line in lines:
+        try:
+            stamps.append(float(json.loads(line)["at"]))
+        except (ValueError, KeyError, TypeError):
+            continue
+    return max(stamps) if stamps else None
+
+
+def probe_problems(home, unit_dir=None, *, now=None, fields=None):
+    """Doctor reasons the root-fs probe is not live from its installed unit with fresh samples; [] when healthy."""
+    unit_dir = Path(unit_dir) if unit_dir else Path.home() / ".config/systemd/user"
+    durable = unit_dir / DUAL_PROBE
+    problems = []
+    if not durable.is_file():
+        problems.append(f"root-fs probe: installed unit {durable} missing")
+    try:
+        fields = _probe_fields() if fields is None else fields
+    except (OSError, subprocess.SubprocessError) as exc:
+        return problems + [f"root-fs probe: systemctl unreadable ({type(exc).__name__})"]
+    if fields.get("ActiveState") != "active":
+        problems.append(f"root-fs probe: {DUAL_PROBE} ActiveState={fields.get('ActiveState', 'UNKNOWN')}")
+    if durable.is_file() and fields.get("FragmentPath") != str(durable):
+        problems.append(f"root-fs probe: loaded fragment {fields.get('FragmentPath', 'UNKNOWN')!r} is not the installed unit")
+    now = time.time() if now is None else now
+    newest = _newest_probe_at(Path(home) / "operator" / "dual-probe.jsonl")
+    if newest is None:
+        problems.append("root-fs probe: no readable sample in operator/dual-probe.jsonl")
+    elif now - newest > PROBE_STALE_S:
+        problems.append(f"root-fs probe: newest sample {now - newest:.0f}s old (limit {PROBE_STALE_S}s)")
+    return problems
+
+
 def restore_configuration(home, before):
     """Remove newly created triggers before restoring the prior exact files."""
     from .release_boundary import trigger_unit

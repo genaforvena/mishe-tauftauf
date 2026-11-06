@@ -323,6 +323,10 @@ def run_units(args, home: Path, now: float) -> int:
         print(f"written {len(report.written)}, removed {len(report.removed)}")
         return 0
     report = units.doctor(cfg, roles, producers=declared)
+    from . import release_promotion
+    for problem in release_promotion.probe_problems(home, cfg.unit_dir, now=now):
+        report.state = "RED"
+        report.problems.append(problem)
     for duty in duties.load(source_repo):
         if duty["resolver"] not in roles:
             report.state = "RED"
