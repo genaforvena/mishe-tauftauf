@@ -13,7 +13,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import delivery_requests, dossier, owed, work_receipts, yielding
+from . import delivery_requests, dossier, feed, owed, work_receipts, yielding
+from .wall import addressed
 from .core.dispatch_record import process_alive
 from .core.interfaces import RECONCILED, STARTED, UNKNOWN, WorkerResult
 from .core.registry import StaticRoleRegistry
@@ -48,9 +49,7 @@ def systemd_starter(role: str) -> None:
 
 
 def default_mail_reader(home, role: str, after: int) -> list:
-    from .feed import Feed
-    from .wall import addressed
-    return [(e.sequence, e.body) for e in Feed(Path(home)).role_entries(role)
+    return [(e.sequence, e.body) for e in feed.Feed(Path(home)).role_entries(role)
             if e.sequence > after and addressed(e, role)]
 
 
@@ -122,8 +121,7 @@ class _Worker:
 
     def run(self, dispatch):
         role, key = dispatch.role, dispatch.key
-        from .delivery_requests import admission_path
-        if (Path(self.home) / "hold").exists() or admission_path(self.home).exists():
+        if (Path(self.home) / "hold").exists() or delivery_requests.admission_path(self.home).exists():
             return WorkerResult("skipped", "delivery admission or hold arrived while waiting")
         snap = owed.check(self.home, role, now=self.now)
         if not snap.reasons:
@@ -145,7 +143,6 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
     instead of exiting 0 with the owed wake dropped.
     """
     home = Path(home)
-    from . import delivery_requests
     if (home / "hold").exists() or delivery_requests.admission_path(home).exists():
         return WakeResult("held", "hold or delivery admission present")
     store = DispatchStore(home / "dispatch")
