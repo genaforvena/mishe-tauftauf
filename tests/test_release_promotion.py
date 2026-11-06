@@ -469,3 +469,60 @@ def test_revert_keeps_operator_wrapper_missing_from_older_snapshot(tree,monkeypa
     monkeypatch.setattr(p,"reload_units",lambda:None)
     p.restore_configuration(home,{})
     assert wrapper.read_text()=="#!/bin/sh\nexec stable\n"
+
+
+_REAL_ENSURE_DUAL_PROBE = p.ensure_dual_probe
+
+
+@pytest.fixture(autouse=True)
+def no_real_probe(monkeypatch):
+    # The root-fs probe is host state: activation/restore tests never start, stop or shadow the real unit.
+    monkeypatch.setattr(p, "ensure_dual_probe", lambda home, unit_dir=None: "stubbed")
+
+
+def _systemctl_recorder(monkeypatch, states):
+    calls = []
+    monkeypatch.setattr(p, "_probe_fields", lambda: states.pop(0))
+    monkeypatch.setattr(p.subprocess, "run", lambda argv, **k: calls.append(" ".join(argv)))
+    return calls
+
+
+def test_installed_probe_replaces_a_shadowing_transient(tmp_path, monkeypatch):
+    unit_dir = tmp_path / "units"; unit_dir.mkdir(); durable = unit_dir / p.DUAL_PROBE; durable.write_text("unit")
+    transient = "/run/user/1000/systemd/transient/mishe-dual-probe.service"
+    calls = _systemctl_recorder(monkeypatch, [dict(FragmentPath=transient, ActiveState="active"),
+                                              dict(FragmentPath=str(durable), ActiveState="active")])
+    assert _REAL_ENSURE_DUAL_PROBE(tmp_path, unit_dir) == "installed"
+    assert calls == ["systemctl --user stop mishe-dual-probe.service", "systemctl --user daemon-reload",
+                     "systemctl --user enable mishe-dual-probe.service", "systemctl --user start mishe-dual-probe.service"]
+
+
+def test_installed_probe_already_loaded_is_only_started(tmp_path, monkeypatch):
+    unit_dir = tmp_path / "units"; unit_dir.mkdir(); durable = unit_dir / p.DUAL_PROBE; durable.write_text("unit")
+    calls = _systemctl_recorder(monkeypatch, [dict(FragmentPath=str(durable), ActiveState="inactive"),
+                                              dict(FragmentPath=str(durable), ActiveState="active")])
+    assert _REAL_ENSURE_DUAL_PROBE(tmp_path, unit_dir) == "installed"
+    assert not any("daemon-reload" in c or "stop " in c for c in calls)
+
+
+def test_unknown_probe_fragment_is_refused_not_guessed(tmp_path, monkeypatch):
+    unit_dir = tmp_path / "units"; unit_dir.mkdir(); (unit_dir / p.DUAL_PROBE).write_text("unit")
+    calls = _systemctl_recorder(monkeypatch, [dict(FragmentPath="/etc/systemd/user/other.service", ActiveState="active")])
+    with pytest.raises(RuntimeError, match="fragment UNKNOWN"):
+        _REAL_ENSURE_DUAL_PROBE(tmp_path, unit_dir)
+    assert calls == []
+
+
+def test_revert_without_installed_probe_restarts_the_transient(tmp_path, monkeypatch):
+    unit_dir = tmp_path / "units"; unit_dir.mkdir()
+    calls = _systemctl_recorder(monkeypatch, [dict(ActiveState="inactive")])
+    assert _REAL_ENSURE_DUAL_PROBE(tmp_path, unit_dir) == "transient"
+    assert len(calls) == 1 and calls[0].startswith("systemd-run --user --collect --unit=mishe-dual-probe.service")
+    assert calls[0].endswith(f"/usr/bin/python3 {tmp_path / 'operator' / 'dual_probe.py'}")
+
+
+def test_running_probe_without_installed_unit_is_left_alone(tmp_path, monkeypatch):
+    unit_dir = tmp_path / "units"; unit_dir.mkdir()
+    calls = _systemctl_recorder(monkeypatch, [dict(ActiveState="active")])
+    assert _REAL_ENSURE_DUAL_PROBE(tmp_path, unit_dir) == "transient"
+    assert calls == []

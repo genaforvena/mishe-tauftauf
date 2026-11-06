@@ -121,7 +121,9 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
     # exit from a monitor would otherwise end the stall record silently.
     files[f"{p}-dual-probe.service"] = _file(
         f"[Unit]\nDescription=Mishe root-fs stall probe\n{failed}",
-        "[Service]\nType=simple\nUMask=0077\n" + _env(cfg)
+        # No PYTHONPATH pin: dual_probe.py is stdlib-only and runs with -I, so a release pin
+        # would only make this a pinned non-oneshot, which the moving-pin observer rejects.
+        "[Service]\nType=simple\nUMask=0077\n" + f"Environment=MISHE_SEED_HOME={cfg.home}\n"
         + f"WorkingDirectory={cfg.home}/operator\n"
         + f"ExecStart=/usr/bin/python3 -I {cfg.home}/operator/dual_probe.py\n"
         + "Restart=always\nRestartSec=60\n"

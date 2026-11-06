@@ -130,13 +130,54 @@ def reload_units():
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, capture_output=True, timeout=30)
 
 
+DUAL_PROBE = "mishe-dual-probe.service"
+
+
+def _probe_fields():
+    out = subprocess.check_output(["systemctl", "--user", "show", DUAL_PROBE, "-p", "FragmentPath", "-p", "ActiveState"],
+                                  text=True, timeout=30)
+    return dict(row.split("=", 1) for row in out.splitlines() if "=" in row)
+
+
+def ensure_dual_probe(home, unit_dir=None):
+    """The root-fs stall probe runs as the installed unit when one exists, otherwise as the transient it was before.
+
+    systemd loads a transient unit (/run/user/...) ahead of an installed file of the same name, so while the
+    transient runs the installed unit is never the fragment. Stop the transient, reload, then enable and start
+    the installed unit. Without an installed unit (revert), start the transient again so the probe never lapses.
+    """
+    unit_dir = Path(unit_dir) if unit_dir else Path.home() / ".config/systemd/user"
+    durable = unit_dir / DUAL_PROBE
+    if durable.is_file():
+        fields = _probe_fields()
+        if fields.get("FragmentPath") != str(durable):
+            if not fields.get("FragmentPath", "").startswith("/run/user/"):
+                raise RuntimeError(f"root-fs probe fragment UNKNOWN: {fields}")
+            subprocess.run(["systemctl", "--user", "stop", DUAL_PROBE], check=True, capture_output=True, timeout=60)
+            reload_units()
+        subprocess.run(["systemctl", "--user", "enable", DUAL_PROBE], check=True, capture_output=True, timeout=30)
+        subprocess.run(["systemctl", "--user", "start", DUAL_PROBE], check=True, capture_output=True, timeout=60)
+        fields = _probe_fields()
+        if fields.get("FragmentPath") != str(durable) or fields.get("ActiveState") != "active":
+            raise RuntimeError(f"root-fs probe not running from its installed unit: {fields}")
+        return "installed"
+    if _probe_fields().get("ActiveState") != "active":
+        script = Path(home) / "operator" / "dual_probe.py"
+        subprocess.run(["systemd-run", "--user", "--collect", f"--unit={DUAL_PROBE}", "--slice=mishe-plants.slice",
+                        "--property=Restart=always", "--property=RestartSec=60",
+                        f"--working-directory={Path(home) / 'operator'}", "--setenv=MISHE_WORKLOAD_SLICE=mishe-plants.slice",
+                        "/usr/bin/python3", str(script)], check=True, capture_output=True, timeout=60)
+    return "transient"
+
+
 def restore_configuration(home, before):
     """Remove newly created triggers before restoring the prior exact files."""
     from .release_boundary import trigger_unit
     operator_wrappers = {str(Path(home)/"bin"/name) for name in ("mishe", "mishe-tauftauf")}
     for path in config_paths(home):
         if str(path) not in before:
-            if trigger_unit(path):
+            # A new installed root-fs probe is stopped and disabled before its file goes; ensure_dual_probe restarts the transient.
+            if trigger_unit(path) or path.name == DUAL_PROBE:
                 subprocess.run(["systemctl", "--user", "disable", "--now", path.name],
                                check=True, capture_output=True, timeout=30)
             # A wrapper names the stable runtime/current path, not the pin, so it stays valid
@@ -147,6 +188,7 @@ def restore_configuration(home, before):
     for name, value in before.items():
         wall_patch.restore(Path(name), value)
     reload_units()
+    ensure_dual_probe(home)
 
 
 def activate(home, repo, source, sha):
@@ -170,6 +212,7 @@ def activate(home, repo, source, sha):
         if path not in previous_paths and trigger_unit(path):
             subprocess.run(["systemctl", "--user", "enable", "--now", path.name],
                            check=True, capture_output=True, timeout=30)
+    ensure_dual_probe(home)                  # the root-fs probe must run from its installed unit before consumers are observed
     wall_patch.restore(Path(home)/"units-installed", marker)
     # No shell interpolation of paths: shlex is used only for the installed POSIX wrapper. Both operator wrapper names name the stable
     # path (the doctor checks bin/mishe-tauftauf; a stale pin there kept it RED after every earlier delivery).

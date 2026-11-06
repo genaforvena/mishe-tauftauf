@@ -74,6 +74,7 @@ def test_dual_probe_is_a_durable_restarting_monitor_routed_to_failure(cfg):
                    "Slice=mishe-plants.slice", f"MISHE_SEED_HOME={cfg.home}"):
         assert needle in svc
     assert "Type=oneshot" not in svc and "RuntimeMaxSec" not in svc
+    assert "PYTHONPATH" not in svc      # stdlib-only probe: a release pin would make it a pinned non-oneshot
 
 
 def test_dual_probe_has_no_slice_when_scratch_namespaces_are_used(cfg):
