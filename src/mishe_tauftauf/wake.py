@@ -13,7 +13,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import dossier, owed, yielding
+from . import delivery_requests, dossier, owed, yielding
 from .core.dispatch_record import process_alive
 from .core.interfaces import RECONCILED, STARTED, UNKNOWN, WorkerResult
 from .core.registry import StaticRoleRegistry
@@ -190,8 +190,7 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
 def _reconcile(home, role, record, supervisor, engine, now, mail_reader, repo, timeout) -> WakeResult:
     store = supervisor.store
     with supervisor.exclusive():
-        from .delivery_requests import admission_path
-        if (Path(home) / "hold").exists() or admission_path(home).exists():
+        if (Path(home) / "hold").exists() or delivery_requests.admission_path(home).exists():
             return WakeResult("held", "hold or delivery admission arrived while waiting")
         if record.pid is not None and process_alive(record.pid):
             return WakeResult("blocked", f"worker pid {record.pid} still alive")
