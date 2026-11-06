@@ -209,6 +209,29 @@ def reconcile(root, row, config):
     return row
 
 
+GUARD_SCOPE = "capacity producer freshness; not restoration"
+
+
+def guard_diagnostic(guard_row, observed_at):
+    """Return the guard freshness verdict and each check that failed, with the inputs seen."""
+    if not isinstance(guard_row, dict):
+        return {"fresh": False, "failed": ["present"], "seen": type(guard_row).__name__}
+    checked = guard_row.get("checked_at")
+    numeric = type(checked) in (int, float) and math.isfinite(checked)
+    raw_age = observed_at - checked if numeric else None
+    checks = {
+        "state": guard_row.get("state") in {"FRESH", "UNKNOWN"},
+        "capacity": guard_row.get("capacity") in {"NORMAL", "LIMITED", "CRITICAL", "UNKNOWN"},
+        "scope": guard_row.get("scope") == GUARD_SCOPE,
+        "checked_at": numeric,
+        "age": numeric and 0 <= raw_age <= GUARD_MAX_AGE,
+    }
+    return {"fresh": all(checks.values()), "failed": [name for name, ok in checks.items() if not ok],
+            "state": str(guard_row.get("state"))[:40], "capacity": str(guard_row.get("capacity"))[:40],
+            "checked_at": checked if numeric else None, "age": round(raw_age, 3) if numeric else None,
+            "observed_at": round(observed_at, 3)}
+
+
 def tick(root, config, *, now=None):
     root = Path(root)
     realtime = now is None
@@ -246,16 +269,15 @@ def tick(root, config, *, now=None):
                 # A guard may update after acquisition began but before this read.
                 # Compare with the read time, not the older sample-start timestamp.
                 observed_at = time.time() if realtime else now
-                guard_fresh = (isinstance(guard_row, dict)
-                               and guard_row.get("state") in {"FRESH", "UNKNOWN"}
-                               and guard_row.get("capacity") in {"NORMAL", "LIMITED", "CRITICAL", "UNKNOWN"}
-                               and guard_row.get("scope") == "capacity producer freshness; not restoration"
-                               and type(guard_row.get("checked_at")) in (int, float)
-                               and 0 <= observed_at - guard_row["checked_at"] <= GUARD_MAX_AGE)
-            except (ValueError, TypeError, KeyError):
-                guard_fresh = False
+                diagnostic = guard_diagnostic(guard_row, observed_at)
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                diagnostic = {"fresh": False, "failed": ["read"], "read_error": str(exc)[:200]}
+            guard_fresh = diagnostic["fresh"]
             row["guard_fresh"] = guard_fresh
             if not guard_fresh:
+                # Keep the rejected inputs in the sample so a stale guard, a wrong field and a
+                # read error can be told apart from the row alone.
+                row["guard_diagnostic"] = diagnostic
                 row["action_error"] = row.get("action_error", "independent host guard missing or stale")
             if row.get("action_error"):
                 row.update(resource_state=row["state"], state="UNKNOWN", limited=True,

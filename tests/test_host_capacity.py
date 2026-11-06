@@ -240,3 +240,46 @@ def test_in_band_sample_does_not_start_a_clear_timer():
     row = host.decide(None, sample(current=1150), now=100, stable_seconds=120)
     row = host.decide(row, sample(current=860), now=105, stable_seconds=120)
     assert row["clear_since"] is None
+
+
+def test_rejected_guard_records_the_checks_that_failed(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, "observe", lambda _: sample())
+    recovery.save(tmp_path / "host-capacity-guard.json", {"checked_at": 100 - host.GUARD_MAX_AGE - 1, "state": "FRESH", "capacity": "NORMAL", "scope": host.GUARD_SCOPE})
+    row = host.tick(tmp_path, {"slice_path": "unused", "optional_units": []}, now=100)
+    assert row["guard_diagnostic"]["failed"] == ["age"]
+    assert row["guard_diagnostic"]["checked_at"] == 100 - host.GUARD_MAX_AGE - 1
+    assert row["guard_diagnostic"]["age"] == host.GUARD_MAX_AGE + 1
+
+
+def test_missing_guard_is_named_as_absent_not_as_stale(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, "observe", lambda _: sample())
+    row = host.tick(tmp_path, {"slice_path": "unused", "optional_units": []}, now=100)
+    assert not row["guard_fresh"] and row["guard_diagnostic"]["failed"] == ["read"]
+    assert "missing" in row["guard_diagnostic"]["read_error"]
+
+
+def test_fresh_guard_writes_no_diagnostic(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, "observe", lambda _: sample())
+    recovery.save(tmp_path / "host-capacity-guard.json", {"checked_at": 95, "state": "FRESH", "capacity": "NORMAL", "scope": host.GUARD_SCOPE})
+    row = host.tick(tmp_path, {"slice_path": "unused", "optional_units": []}, now=100)
+    assert row["guard_fresh"] and "guard_diagnostic" not in row
+
+
+def test_wrong_field_is_named(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, "observe", lambda _: sample())
+    recovery.save(tmp_path / "host-capacity-guard.json", {"checked_at": 95, "state": "FRESH", "capacity": "BOGUS", "scope": host.GUARD_SCOPE})
+    row = host.tick(tmp_path, {"slice_path": "unused", "optional_units": []}, now=100)
+    assert row["guard_diagnostic"]["failed"] == ["capacity"]
+
+
+def test_nan_checked_at_is_rejected_without_breaking_the_sample(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, "observe", lambda _: sample())
+    (tmp_path / "host-capacity-guard.json").write_text('{"checked_at": NaN, "state": "FRESH", "capacity": "NORMAL", "scope": "capacity producer freshness; not restoration"}')
+    row = host.tick(tmp_path, {"slice_path": "unused", "optional_units": []}, now=100)
+    assert not row["guard_fresh"] and row["guard_diagnostic"]["failed"] == ["read"]
+    json.loads((tmp_path / "host-samples.jsonl").read_text(), parse_constant=lambda x: pytest.fail("non-finite constant in sample: " + x))
+
+
+def test_non_finite_checked_at_fails_the_checked_at_check_only():
+    verdict = host.guard_diagnostic({"checked_at": float("nan"), "state": "FRESH", "capacity": "NORMAL", "scope": host.GUARD_SCOPE}, 100)
+    assert verdict["failed"] == ["checked_at", "age"] and verdict["age"] is None
