@@ -70,6 +70,26 @@ def next_role(home, roles, *, now: float, exclude: str | None = None) -> str | N
     return None
 
 
+def resume_owed(home, roles, *, now: float) -> list[str]:
+    """Start a wake unit for every role that is owed work, not just the first.
+
+    A wake that fired while the plant was held exits without running, so nothing
+    else re-fires it when the hold is released; every resume path calls this so each
+    owed role gets its own start. Starts are non-blocking; the wake lock queues them.
+    """
+    store = DispatchStore(Path(home) / "dispatch")
+    started: list[str] = []
+    for record in store.open_records():
+        if record.role not in started:
+            started.append(record.role)
+    for role in roles:
+        if role not in started and owed.check(home, role, now=now).reasons:
+            started.append(role)
+    for role in started:
+        systemd_starter(role)
+    return started
+
+
 def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, timeout, on_start=None):
     """Write the wake's files, run the engine, report whether it yielded."""
     snap.tape_seq = max([owed.tape_cursor(home, role)] + [seq for seq, _ in mail])

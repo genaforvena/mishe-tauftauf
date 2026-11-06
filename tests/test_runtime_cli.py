@@ -154,6 +154,18 @@ def test_releasing_the_hold_offers_the_owed_role(site, monkeypatch):
     assert started == ["genome"]
 
 
+def test_releasing_the_hold_starts_every_owed_role_without_a_new_trigger(site, monkeypatch):
+    from mishe_tauftauf import wake
+    started = []
+    monkeypatch.setattr(wake, "systemd_starter", started.append)
+    owed.touch_inbox(site, "genome")
+    owed.touch_inbox(site, "health")
+    cli("hold", "on")
+    assert started == []                       # held: nothing fires yet
+    cli("hold", "off")
+    assert sorted(started) == ["genome", "health"]
+
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 

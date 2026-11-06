@@ -59,9 +59,7 @@ def scheduler(home: Path):
                                                      "--home", str(home), "due"])
             if not (home / "hold").exists():
                 from . import wake
-                following = wake.next_role(home, declared_roles(home), now=time.time())
-                if following:
-                    wake.systemd_starter(following)
+                wake.resume_owed(home, declared_roles(home), now=time.time())
     return schedule
 
 
@@ -168,8 +166,7 @@ def run(args) -> int:
         if args.release_command == "consume":
             from . import delivery_requests
             result = delivery_requests.consume(home)
-            following = wake.next_role(home, declared_roles(home), now=now)
-            if following: wake.systemd_starter(following)
+            wake.resume_owed(home, declared_roles(home), now=now)
             print(json.dumps(result, indent=2))
             return 0
         if args.release_command == "promote":
@@ -261,9 +258,7 @@ def run(args) -> int:
             path.write_text(args.reason + "\n")
         elif args.state == "off":
             path.unlink(missing_ok=True)
-            following = wake.next_role(home, declared_roles(home), now=now)
-            if following:                    # wakes that arrived while held would not otherwise return
-                wake.systemd_starter(following)
+            wake.resume_owed(home, declared_roles(home), now=now)  # wakes that arrived while held would not otherwise return
         print("held" if path.exists() else "running")
         return 0
     if args.command == "arm":

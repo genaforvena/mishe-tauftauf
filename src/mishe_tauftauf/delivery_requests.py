@@ -121,9 +121,7 @@ def notify(home, row, text):
 def resume(home):
     from . import wake
     from .roles import declared
-    following = wake.next_role(home, declared(home), now=time.time())
-    if following:
-        wake.systemd_starter(following)
+    wake.resume_owed(home, declared(home), now=time.time())
 
 
 @contextmanager
