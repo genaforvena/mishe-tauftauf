@@ -128,7 +128,7 @@ def read_role_render_coverage(roles: list[str] | None, render) -> dict[str, obje
         except Exception as exc:  # the renderer ran and raised: a fact, not calm
             failed.append(f"{role}={type(exc).__name__}")
             continue
-        if not isinstance(text, str) or not text.strip():
+        if proc_table.is_blank_text(text):
             failed.append(f"{role}=empty")
     if failed:
         return {**base, "state": "drift", "missing": failed,
@@ -138,33 +138,36 @@ def read_role_render_coverage(roles: list[str] | None, render) -> dict[str, obje
 
 
 SESSION_SENSE_ID = "sense.host.session-stability"
-SHIELD_ADJ = "-900"
 
 
 def judge_session_stability(declared: str | None, live: list[str] | None,
-                            shields: dict[str, str | None] | None) -> dict[str, object]:
+                            placements: dict[str, str | None] | None) -> dict[str, object]:
     """Judge the plant's tmux server from injected observations.
 
     ``live`` is the session names tmux answered with (``None`` when the list
-    probe could not give an answer). ``shields`` maps each of this socket's own
-    server pids to its oom_score_adj text, or None when that pid was unreadable
-    (``None`` for the whole mapping when the pid list itself was unreadable).
+    probe could not give an answer). ``placements`` maps each of this socket's
+    own server pids to its ``proc_table.server_containment`` text, or None when
+    that pid's cgroup was unreadable (``None`` for the whole mapping when the
+    pid list itself was unreadable). The host guard no longer applies the -900
+    OOM shield; containment by a managed slice with a finite memory bound
+    replaces it, so the shield is not the invariant read here.
 
-    A declared session absent from a real answer is drift. A server whose
-    shield is not -900 is drift: the host guard lapsed and the server is
-    OOM-killable again. Every unreadable input stays UNKNOWN, never calm.
+    A declared session absent from a real answer is drift. A server placed
+    outside a managed slice, or without a finite bound, is drift (the
+    ``unshielded`` key names these for consumers). Every unreadable input stays
+    UNKNOWN, never calm.
     """
     base = {"id": SESSION_SENSE_ID, "kind": "read", "session": declared or "unset"}
     if live is None:
         return {**base, "state": "unknown", "sample": "tmux session list could not be read"}
-    if shields is None:
+    if placements is None:
         return {**base, "state": "unknown", "sample": "tmux server pids could not be read",
                 "live": live}
-    unreadable = sorted(pid for pid, adj in shields.items() if adj is None)
+    unreadable = sorted(pid for pid, place in placements.items() if place is None)
     if unreadable:
         return {**base, "state": "unknown", "live": live,
-                "sample": f"oom_score_adj unreadable for pids={','.join(unreadable)}"}
-    unshielded = sorted(pid for pid, adj in shields.items() if adj != SHIELD_ADJ)
+                "sample": f"containment unreadable for pids={','.join(unreadable)}"}
+    unshielded = sorted(pid for pid, place in placements.items() if proc_table.placement_unshielded(place))
     listed = f"live=[{','.join(live)}]"
     # An unshielded server is a drift fact whatever the session is called.
     if unshielded and not declared:
@@ -180,7 +183,7 @@ def judge_session_stability(declared: str | None, live: list[str] | None,
         return {**base, "state": "drift", "live": live, "unshielded": unshielded,
                 "sample": f"{listed} unshielded-servers={','.join(unshielded)}"}
     return {**base, "state": "verified", "live": live, "unshielded": [],
-            "sample": f"{listed} servers={len(shields)} shielded"}
+            "sample": f"{listed} servers={len(placements)} contained"}
 
 
 def _run_socket_tmux(socket: str, args: list[str], timeout: float = 2) -> subprocess.CompletedProcess | None:
@@ -194,7 +197,7 @@ def _run_socket_tmux(socket: str, args: list[str], timeout: float = 2) -> subpro
 
 def probe_session_stability(declared: str | None, socket: str | None, *,
                             runner=_run_socket_tmux, shield_reader=None) -> dict[str, object]:
-    """Thin probe over the plant's own tmux socket, then the server shields.
+    """Thin probe over the plant's own tmux socket, then the server placements.
 
     ``runner(socket, args)`` returns a CompletedProcess or None. An unset socket
     is UNKNOWN: the default socket may hold another server, not this plant's. A "no server running"
@@ -205,7 +208,7 @@ def probe_session_stability(declared: str | None, socket: str | None, *,
     if not socket:
         return judge_session_stability(declared, None, None)
     if shield_reader is None:
-        shield_reader = proc_table.read_oom_score_adj
+        shield_reader = proc_table.server_containment
     listed = runner(socket, ["list-sessions", "-F", "#{session_name}"])
     if listed is None:
         live: list[str] | None = None
@@ -216,9 +219,9 @@ def probe_session_stability(declared: str | None, socket: str | None, *,
     else:
         live = None
     owners = runner(socket, ["list-sessions", "-F", "#{pid}"])
-    shields: dict[str, str | None] | None = None
+    placements: dict[str, str | None] | None = None
     if owners is not None and owners.returncode == 0:
-        shields = {str(pid): shield_reader(str(pid)) for pid in proc_table.pane_pids(owners.stdout or "")}
+        placements = {str(pid): shield_reader(str(pid)) for pid in proc_table.pane_pids(owners.stdout or "")}
     elif owners is not None and "no server running" in (owners.stderr or ""):
-        shields = {}
-    return judge_session_stability(declared, live, shields)
+        placements = {}
+    return judge_session_stability(declared, live, placements)

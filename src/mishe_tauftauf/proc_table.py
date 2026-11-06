@@ -526,6 +526,11 @@ def server_containment(pid: str, cgroup_root: Path = CGROUP_ROOT) -> str | None:
     return f"unbounded:{slice_name}"
 
 
+def is_blank_text(text: object) -> bool:
+    """True when a render result is not a string or holds only whitespace."""
+    return not isinstance(text, str) or not text.strip()
+
+
 def placement_unshielded(placement: str) -> bool:
     """True when a ``server_containment`` placement is drift (uncontained or unbounded)."""
     return placement.startswith(("uncontained:", "unbounded:"))

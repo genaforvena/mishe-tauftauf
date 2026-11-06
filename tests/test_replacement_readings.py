@@ -112,26 +112,26 @@ from mishe_tauftauf.replacement_readings import (  # noqa: E402
 
 
 def test_session_stability_unknown_when_declared_or_probe_unreadable():
-    assert judge_session_stability(None, ["plant"], {"1": "-900"})["state"] == "unknown"
-    assert judge_session_stability("plant", None, {"1": "-900"})["state"] == "unknown"
+    assert judge_session_stability(None, ["plant"], {"1": "contained:mishe-plants.slice"})["state"] == "unknown"
+    assert judge_session_stability("plant", None, {"1": "contained:mishe-plants.slice"})["state"] == "unknown"
     assert judge_session_stability("plant", ["plant"], None)["state"] == "unknown"
     got = judge_session_stability("plant", ["plant"], {"1": None})
     assert got["state"] == "unknown" and "pids=1" in got["sample"]
 
 
 def test_session_stability_drift_when_declared_session_missing():
-    got = judge_session_stability("plant", ["other"], {"2": "-900"})
+    got = judge_session_stability("plant", ["other"], {"2": "contained:mishe-plants.slice"})
     assert got["state"] == "drift" and got["id"] == SESSION_SENSE_ID
     assert "session-missing=plant" in got["sample"]
 
 
-def test_session_stability_drift_when_server_lost_shield():
-    got = judge_session_stability("plant", ["plant"], {"3": "0", "4": "-900"})
+def test_session_stability_drift_when_server_uncontained():
+    got = judge_session_stability("plant", ["plant"], {"3": "uncontained:/user.slice/mishe.slice/run.scope", "4": "contained:mishe-plants.slice"})
     assert got["state"] == "drift" and got["unshielded"] == ["3"]
 
 
-def test_session_stability_verified_when_present_and_shielded():
-    got = judge_session_stability("plant", ["plant"], {"3": "-900"})
+def test_session_stability_verified_when_present_and_contained():
+    got = judge_session_stability("plant", ["plant"], {"3": "contained:mishe-plants.slice"})
     assert got["state"] == "verified" and got["unshielded"] == []
 
 
@@ -140,14 +140,14 @@ SOCK = "/tmp/tmux-1000/mishe-tauftauf/tmux-1000/default"
 
 def test_probe_broken_tmux_is_unknown_not_calm():
     got = probe_session_stability("plant", SOCK, runner=lambda socket, args: None,
-                                  shield_reader=lambda pid: "-900")
+                                  shield_reader=lambda pid: "contained:mishe-plants.slice")
     assert got["state"] == "unknown"
 
 
 def test_probe_no_server_running_is_drift_with_declared_session():
     def runner(socket, args):
         return _done(1, err="no server running on /tmp/tmux-1000/default\n")
-    got = probe_session_stability("plant", SOCK, runner=runner, shield_reader=lambda pid: "-900")
+    got = probe_session_stability("plant", SOCK, runner=runner, shield_reader=lambda pid: "contained:mishe-plants.slice")
     assert got["state"] == "drift" and "session-missing=plant" in got["sample"]
 
 
@@ -155,10 +155,10 @@ def test_probe_other_tmux_error_is_unknown():
     def runner(socket, args):
         return _done(1, err="error connecting to /tmp/tmux-1000/default (Permission denied)\n")
     assert probe_session_stability("plant", SOCK, runner=runner,
-                                   shield_reader=lambda pid: "-900")["state"] == "unknown"
+                                   shield_reader=lambda pid: "contained:mishe-plants.slice")["state"] == "unknown"
 
 
-def test_probe_reads_shields_only_for_listed_session_servers():
+def test_probe_reads_placements_only_for_listed_session_servers():
     read = []
 
     def runner(socket, args):
@@ -168,7 +168,7 @@ def test_probe_reads_shields_only_for_listed_session_servers():
 
     def shield(pid):
         read.append(pid)
-        return "-900" if pid == "11" else "0"
+        return "contained:mishe-plants.slice" if pid == "11" else "uncontained:/user.slice/mishe.slice/run.scope"
 
     got = probe_session_stability("plant", SOCK, runner=runner, shield_reader=shield)
     assert read == ["11", "12"]
@@ -188,13 +188,13 @@ def test_probe_passes_plant_socket_to_every_tmux_call():
         seen.append(socket)
         return _done(0, "plant\n") if args[-1] != "#{pid}" else _done(0, "")
 
-    probe_session_stability("plant", SOCK, runner=runner, shield_reader=lambda pid: "-900")
+    probe_session_stability("plant", SOCK, runner=runner, shield_reader=lambda pid: "contained:mishe-plants.slice")
     assert seen == [SOCK, SOCK]
 
 
-def test_session_stability_unshielded_is_drift_even_without_declared_session():
-    assert judge_session_stability(None, ["plant"], {"5": "200"})["state"] == "drift"
-    assert judge_session_stability(None, ["plant"], {"5": "-900"})["state"] == "unknown"
+def test_session_stability_uncontained_is_drift_even_without_declared_session():
+    assert judge_session_stability(None, ["plant"], {"5": "uncontained:/user.slice/mishe.slice/run.scope"})["state"] == "drift"
+    assert judge_session_stability(None, ["plant"], {"5": "contained:mishe-plants.slice"})["state"] == "unknown"
 
 
 def test_role_render_all_render_is_verified():
