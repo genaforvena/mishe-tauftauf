@@ -76,6 +76,14 @@ default model/settings, and checked capability evidence without recording config
 contents or credentials. It uses installed authentication and the configured
 model; it does not select a different model or add a provider.
 
+To run it by hand, pipe one JSON request on stdin and read one JSON result from stdout.
+`--runtime-config` must be exactly `$CODEX_HOME/config.toml`, or `~/.codex/config.toml`
+when `CODEX_HOME` is unset. Any other path raises `ValueError` before reading stdin:
+the process exits 1 with a traceback and prints no result. A missing `--probe-report`
+is an argument error from argparse. Malformed stdin is an uncaught exception, also with
+no result. Errors raised inside the review (OS, subprocess, schema or value errors)
+are caught and printed as an unknown result, which is never a clear.
+
 This adapter is a bounded classification invocation in an isolated temporary
 directory, not a repository-editing session. It requests the read-only OS sandbox,
 disables shell/exec, apps, plugins, hooks, search, browser/computer/image tools,
