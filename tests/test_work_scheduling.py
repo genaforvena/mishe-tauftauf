@@ -1,3 +1,4 @@
+import pytest
 from mishe_tauftauf import work_state as w, intentions, owed, failure, signal_store, yielding
 from mishe_tauftauf.state_files import write_json
 
@@ -123,6 +124,39 @@ def test_corrupt_overdue_state_reoffers_actionable_work(tmp_path):
     (tmp_path / "work/watch-overdue.json").write_text("{")
     calls.clear()
     w.sweep(tmp_path, repo=tmp_path, now=1400, notify=lambda *a: calls.append(a))
+    assert "genome" in [role for role, _ in calls]
+
+
+@pytest.mark.parametrize("entry", [
+    {"deadline": 1000, "notified_at": "invalid", "role": "health"},
+    {"deadline": 1000, "notified_at": True, "role": "health"},
+    {"deadline": 1000, "notified_at": [], "role": "health"},
+    {"deadline": 1000, "notified_at": {}, "role": "health"},
+    {"deadline": 1000, "role": "health"},
+    "not a mapping",
+])
+def test_corrupt_overdue_entry_does_not_suppress_the_escalation(tmp_path, entry):
+    # Valid JSON with a malformed entry inside it must reoffer the work, not
+    # suppress it: a non-null notified_at that is not a number proves nothing.
+    setup(tmp_path)
+    calls = []
+    w.sweep(tmp_path, repo=tmp_path, now=1000, notify=lambda *a: calls.append(a))
+    write_json(tmp_path / "work/watch-overdue.json",
+               dict(version=1, overdue={"health:cause": entry}, errors={}))
+    calls.clear()
+    w.sweep(tmp_path, repo=tmp_path, now=1301, notify=lambda *a: calls.append(a))
+    assert "genome" in [role for role, _ in calls]
+
+
+def test_overdue_entry_for_a_different_deadline_does_not_suppress(tmp_path):
+    setup(tmp_path)
+    calls = []
+    w.sweep(tmp_path, repo=tmp_path, now=1000, notify=lambda *a: calls.append(a))
+    write_json(tmp_path / "work/watch-overdue.json",
+               dict(version=1, overdue={"health:cause": dict(deadline=999, notified_at=1301, role="health")},
+                    errors={}))
+    calls.clear()
+    w.sweep(tmp_path, repo=tmp_path, now=1301, notify=lambda *a: calls.append(a))
     assert "genome" in [role for role, _ in calls]
 
 

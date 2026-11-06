@@ -189,6 +189,21 @@ def _overdue_key(role, identity):
     return role + ":" + identity
 
 
+def _notified(entry, deadline):
+    """True only when this entry proves the escalation was delivered.
+
+    A corrupt record must reoffer the work, never suppress it. So the entry
+    must name the same deadline and carry a real timestamp; a non-null value
+    that is not a number (a string, a list, a bool) proves nothing.
+    """
+    if not isinstance(entry, dict):
+        return False
+    if entry.get("deadline") != deadline:
+        return False
+    stamp = entry.get("notified_at")
+    return isinstance(stamp, (int, float)) and not isinstance(stamp, bool)
+
+
 def _deliver(home, recipient, text, notify):
     """Notify and mark the inbox. Returns None on success, else the failure.
 
@@ -213,8 +228,7 @@ def _escalate_overdue(home, role, identity, wait, overdue, errors, *, now, notif
     """
     key = _overdue_key(role, identity)
     deadline = wait.get("deadline")
-    entry = overdue.get(key)
-    if isinstance(entry, dict) and entry.get("deadline") == deadline and entry.get("notified_at") is not None:
+    if _notified(overdue.get(key), deadline):
         return
     # An escalation nobody is dispatched for is a silent escalation. Genome is
     # the standing escalation owner; a site without it escalates to the role
