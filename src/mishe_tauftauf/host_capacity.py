@@ -218,8 +218,10 @@ def guard_diagnostic(guard_row, observed_at):
         return {"fresh": False, "failed": ["present"], "seen": type(guard_row).__name__}
     checked = guard_row.get("checked_at")
     try:
-        numeric = type(checked) in (int, float) and math.isfinite(checked)
-    except OverflowError:                      # a valid JSON integer beyond float range is not a usable timestamp
+        # A usable timestamp is a finite number of plausible epoch seconds: NaN, inf, 10**300 and 10**400 are rejected guards, never
+        # exceptions raised later by the age arithmetic or the rounding of the diagnostic.
+        numeric = type(checked) in (int, float) and math.isfinite(checked) and abs(checked) < 1e15
+    except OverflowError:
         numeric = False
     raw_age = observed_at - checked if numeric else None
     checks = {

@@ -294,3 +294,9 @@ def test_oversized_integer_checked_at_is_rejected_without_breaking_the_diagnosti
 def test_unhashable_guard_fields_are_wrong_values_not_read_failures():
     verdict = host.guard_diagnostic({"checked_at": 100.0, "state": {}, "capacity": [], "scope": host.GUARD_SCOPE}, 101.0)
     assert verdict["fresh"] is False and verdict["failed"] == ["state", "capacity"]
+
+
+def test_huge_but_finite_checked_at_is_a_rejected_guard_not_an_overflow_in_the_diagnostic():
+    for value in (10**300, 1e300, -10**300, 10**15):
+        verdict = host.guard_diagnostic({"checked_at": value, "state": "FRESH", "capacity": "NORMAL", "scope": host.GUARD_SCOPE}, 100.0)
+        assert verdict["fresh"] is False and "checked_at" in verdict["failed"] and verdict["age"] is None
