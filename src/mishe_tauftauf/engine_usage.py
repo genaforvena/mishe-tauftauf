@@ -397,8 +397,11 @@ def cmd_explain(args) -> int:
                             allowlist[role] = clean
         except Exception:
             pass
-        # fallback: every configured account in registry order
-        _, registry = boundary.load_registry(args.home)
+    if not allowlist:
+        # No valid policy file (missing, unparseable, or no usable routes):
+        # fall back to every configured account in registry order. A valid
+        # policy file always wins; the fallback is only the standing default.
+        _, registry = boundary.load_registry(Path(args.home))
         default_routes = []
         for alias, entry in registry.items():
             if entry['state'] == 'configured':

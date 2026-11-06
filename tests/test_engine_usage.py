@@ -405,3 +405,41 @@ def test_shared_store_symlink_is_read_as_the_same_credential_store(tmp_path):
     (home / RESIDENT / 'agent.db').symlink_to(shared)
     creds, _blocks = boundary.credential_store(home / RESIDENT)
     assert creds[8]['provider'] == 'opencode-go'
+
+
+# ---------------------------------------------------------------------------
+# cmd_explain: policy.json vs registry fallback (shadow, no launcher change)
+# ---------------------------------------------------------------------------
+
+def _fresh_shadow_status():
+    """Minimal FRESH inventory for shadow explain: no quota windows to gate."""
+    accounts = {alias: {'alias': alias, 'provider': 'opencode-go', 'state': 'FRESH', 'windows': []}
+                for alias in ('go-a', 'go-b')}
+    return {'state': 'FRESH', 'accounts': accounts}
+
+
+def _explain_json(home, role, monkeypatch, capsys):
+    import types
+    monkeypatch.setattr(usage, 'status', lambda *a, **k: _fresh_shadow_status())
+    code = usage.cmd_explain(types.SimpleNamespace(home=str(home), role=role, json=True))
+    return code, json.loads(capsys.readouterr().out)
+
+
+def test_valid_policy_file_wins_over_registry_fallback(tmp_path, monkeypatch, capsys):
+    """A valid engine/policy.json routes the role even when other accounts are configured."""
+    home = make_site(tmp_path, {'go-a': go('a', 8), 'go-b': go('b', 9)},
+                     [(8, 'opencode-go', None), (9, 'opencode-go', None)])
+    (home / 'engine' / 'policy.json').write_text(
+        json.dumps({'docs': [{'provider': 'opencode-go', 'alias': 'go-b'}]}))
+    _code, out = _explain_json(home, 'docs', monkeypatch, capsys)
+    assert out['role'] == 'docs'
+    # go-a is first in registry order, so the fallback would select it: finding go-b proves the policy file was used.
+    assert out['decision']['selected'] is not None and out['decision']['selected']['alias'] == 'go-b'
+
+
+def test_missing_policy_file_falls_back_to_configured_accounts(tmp_path, monkeypatch, capsys):
+    """With no policy file the shadow falls back to configured registry accounts."""
+    home = make_site(tmp_path, {'go-a': go('a', 8), 'go-b': go('b', 9)},
+                     [(8, 'opencode-go', None), (9, 'opencode-go', None)])
+    _code, out = _explain_json(home, 'docs', monkeypatch, capsys)
+    assert out['decision']['selected'] is not None and out['decision']['selected']['alias'] == 'go-a'
