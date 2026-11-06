@@ -89,6 +89,33 @@ def test_external_trigger_is_not_gated_by_budget(home):
     assert owed.check(home, "genome", now=100.0).reasons == ["inbox"]
 
 
+def test_role_uses_its_configured_budget_without_changing_aggregate(home):
+    from mishe_tauftauf.state_files import write_json
+    write_json(home / "engines/genome.json", dict(engine="claude", budget_signal="budget-claude"))
+    store.register(home, "budget-claude", max_age=60, subscribers=[])
+    store.observe(home, "budget", "RED", now=100, source="codex-forecast")
+    store.observe(home, "budget-claude", "GREEN", now=100, source="claude-forecast")
+    intentions.add(home, "genome", "idle", note="n", due=10, spontaneous=True)
+    intentions.add(home, "docs", "idle", note="n", due=10, spontaneous=True)
+    assert owed.check(home, "genome", now=100).reasons == ["intention:idle"]
+    assert owed.check(home, "docs", now=100).held == ["intention:idle"]
+    assert store.read(home, "budget", now=100).value == "RED"
+
+
+@pytest.mark.parametrize("condition", ["missing", "stale", "red", "broken-config"])
+def test_configured_budget_uncertainty_never_falls_back_to_green_aggregate(home, condition):
+    from mishe_tauftauf.state_files import write_json
+    path = home / "engines/genome.json"
+    write_json(path, dict(engine="claude", budget_signal="budget-claude"))
+    store.observe(home, "budget", "GREEN", now=100, source="aggregate")
+    if condition != "missing":
+        store.register(home, "budget-claude", max_age=60, subscribers=[])
+        store.observe(home, "budget-claude", "RED" if condition == "red" else "GREEN", now=0 if condition == "stale" else 100, source="claude")
+    if condition == "broken-config": path.write_text("{broken")
+    intentions.add(home, "genome", "idle", note="n", due=10, spontaneous=True)
+    assert owed.check(home, "genome", now=100).held == ["intention:idle"]
+
+
 def test_corrupt_cursor_is_not_treated_as_nothing_owed(home):
     (home / "cursors").mkdir()
     (home / "cursors" / "genome.json").write_text("{oops")

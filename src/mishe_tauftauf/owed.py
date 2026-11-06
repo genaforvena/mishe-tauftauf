@@ -80,10 +80,15 @@ def tape_cursor(home, role: str) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
-def _budget_green(home, now: float) -> bool:
+def _budget_green(home, now: float, role: str) -> bool:
     try:
-        sig = signal_store.read(home, BUDGET_SIGNAL, now=now)
-    except ValueError:
+        config = read_json(Path(home) / "engines" / f"{role}.json")
+        config = {} if config is None else config
+        if not isinstance(config, dict): return False
+        name = config.get("budget_signal", BUDGET_SIGNAL)
+        if not isinstance(name, str) or not name: return False
+        sig = signal_store.read(home, name, now=now)
+    except (OSError, ValueError):
         return False
     return sig.state == "OK" and sig.value == BUDGET_OK
 
@@ -111,7 +116,7 @@ def check(home, role: str, *, now: float) -> Snapshot:
             continue
         tag = f"intention:{item['id']}"
         if item.get("spontaneous"):
-            green = _budget_green(home, now) if green is None else green
+            green = _budget_green(home, now, role) if green is None else green
             if not green:
                 snap.held.append(tag)
                 continue
