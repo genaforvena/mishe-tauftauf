@@ -381,6 +381,12 @@ _RENDERER_RETRIES = 1
 _RENDERER_RETRY_BACKOFF = 2.0
 
 
+def _absent_render_reason(reason: str | None) -> bool:
+    """Whether a failed render reports absent evidence rather than a renderer fault."""
+    return reason == "missing-or-not-executable" or (reason or "").startswith(
+        "exit-1: UNKNOWN — render deferred:")
+
+
 def compose_frame(home: Path, slug: str, timeout: float | None = None) -> RenderedPain:
     shared_admission = False
     try:
@@ -399,7 +405,12 @@ def compose_frame(home: Path, slug: str, timeout: float | None = None) -> Render
                             retry_backoff=_RENDERER_RETRY_BACKOFF)
     from . import wall
     wall.settings(home)
-    failure = f"\nRENDERER: RED {rendered.reason or 'command failed'}\n" if not rendered.ok else ""
+    failure = ""
+    if not rendered.ok:
+        # No renderer, or a controller deferral, is absent evidence: UNKNOWN.
+        # Only a renderer that ran and failed is RED.
+        level = "UNKNOWN" if _absent_render_reason(rendered.reason) else "RED"
+        failure = f"\nRENDERER: {level} {rendered.reason or 'command failed'}\n"
     has_report = (home / "observations" / slug).is_file()
     reportless = slug in {"genome", "research-methods"}
     checked = "\n" + check_report(home, slug) if has_report and not reportless else ""

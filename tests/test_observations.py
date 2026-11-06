@@ -306,3 +306,39 @@ def test_headline_level_is_capped_by_the_worst_line_beneath_it(tmp_path: Path) -
     # A RED headline stays RED even when every line beneath it is clean.
     (tmp_path / "checks/silence-watch.json").write_text(json.dumps({"state": "SILENT"}))
     assert headline(tmp_path, "clean\n").startswith("HEADLINE: RED")
+
+
+def test_compose_frame_missing_renderer_is_unknown_not_red(tmp_path: Path) -> None:
+    """No renderer is absent evidence: the frame says UNKNOWN and never RENDERER: RED."""
+    frame = compose_frame(tmp_path, "readings")
+    assert not frame.ok
+    assert "RENDERER: UNKNOWN missing-or-not-executable" in frame.body
+    assert "RENDERER: RED" not in frame.body
+
+
+def test_compose_frame_controller_deferral_is_unknown_not_red(tmp_path: Path) -> None:
+    top = tmp_path / "top-pains"
+    top.mkdir()
+    renderer = top / "probe"
+    renderer.write_text(
+        "#!/bin/sh\n"
+        "echo 'UNKNOWN — render deferred: pressure cooldown' >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    renderer.chmod(0o755)
+    frame = compose_frame(tmp_path, "probe")
+    assert not frame.ok
+    assert "RENDERER: UNKNOWN exit-1: UNKNOWN — render deferred: pressure cooldown" in frame.body
+    assert "RENDERER: RED" not in frame.body
+
+
+def test_compose_frame_real_renderer_failure_stays_red(tmp_path: Path) -> None:
+    top = tmp_path / "top-pains"
+    top.mkdir()
+    renderer = top / "probe"
+    renderer.write_text("#!/bin/sh\necho 'boom' >&2\nexit 2\n", encoding="utf-8")
+    renderer.chmod(0o755)
+    frame = compose_frame(tmp_path, "probe")
+    assert not frame.ok
+    assert "RENDERER: RED exit-2: boom" in frame.body
