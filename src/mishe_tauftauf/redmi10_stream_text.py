@@ -6,6 +6,8 @@ bytes, lines and tokens happens here and nowhere else.
 """
 from __future__ import annotations
 
+import math
+
 
 def decode_tail(data: bytes, *, at_file_start: bool) -> list[str]:
     """Complete lines of a tail read.
@@ -29,6 +31,8 @@ def parse_row(line: str) -> dict | None:
     try:
         epoch = float(parts[1])
     except ValueError:
+        return None
+    if not math.isfinite(epoch):  # float() accepts "nan" and "inf"; neither is usable freshness evidence
         return None
     tokens = parts[2].split(" ")
     # Some rows lead with a key=value token (for example wifi_link_rssi_dbm=-56); that is a field, not a kind.

@@ -79,3 +79,11 @@ def test_partially_appended_final_row_is_not_read_as_current(tmp_path):
     assert out["state"] == "verified"
     assert out["values"]["lux"] == {"value": 10.0, "epoch": 1793964500.0}
     assert out["last_row_epoch"] == 1793964500.0
+
+
+def test_non_finite_row_epoch_is_not_a_row(tmp_path):
+    assert parse_row("1 nan light lux=3") is None
+    assert parse_row("1 inf light lux=3") is None
+    path = write(tmp_path, ["1 1793964599 light lux=2.0 accuracy=3", "2 nan light lux=99"])
+    out = read_redmi10_stream(path, now=NOW)
+    assert out["state"] == "verified" and out["values"]["lux"]["value"] == 2.0
