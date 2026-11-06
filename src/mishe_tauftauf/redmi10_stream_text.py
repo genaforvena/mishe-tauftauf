@@ -8,9 +8,17 @@ from __future__ import annotations
 
 
 def decode_tail(data: bytes, *, at_file_start: bool) -> list[str]:
-    """Complete lines of a tail read; a partial first line is dropped unless the read began at the file start."""
-    lines = data.decode("utf-8", errors="replace").splitlines()
-    return lines if at_file_start or not lines else lines[1:]
+    """Complete lines of a tail read.
+
+    A row is complete only once its newline is written: a trailing fragment with no newline is the
+    writer's partial append and is dropped. A partial first line is dropped unless the read began at
+    the file start.
+    """
+    pieces = data.decode("utf-8", errors="replace").split("\n")
+    complete = [piece.rstrip("\r") for piece in pieces[:-1]]
+    if not at_file_start and complete:
+        complete = complete[1:]
+    return complete
 
 
 def parse_row(line: str) -> dict | None:

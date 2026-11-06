@@ -70,3 +70,12 @@ def test_reads_live_log_without_writing(tmp_path):
     out = read_redmi10_stream(DEFAULT_LOG, now=__import__("time").time())
     assert out["state"] in ("verified", "unknown")
     assert DEFAULT_LOG.stat().st_mtime_ns == before
+
+
+def test_partially_appended_final_row_is_not_read_as_current(tmp_path):
+    path = tmp_path / "redmi10.observations.log"
+    path.write_text("1 1793964500 light lux=10.0 accuracy=3\n2 1793964595 light lux=5", encoding="utf-8")
+    out = read_redmi10_stream(path, now=NOW)
+    assert out["state"] == "verified"
+    assert out["values"]["lux"] == {"value": 10.0, "epoch": 1793964500.0}
+    assert out["last_row_epoch"] == 1793964500.0
