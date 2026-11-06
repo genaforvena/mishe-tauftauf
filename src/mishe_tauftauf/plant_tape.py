@@ -16,6 +16,9 @@ def git_step(repo, cursor):
     return git_tape(Path(repo), cursor)
 
 
+OUTPUT_GRACE_SECONDS = 300
+
+
 def wakes_step(home, cursor):
     root = Path(home) / 'wakes'
     if not root.is_dir():
@@ -27,7 +30,16 @@ def wakes_step(home, cursor):
     names = {p.name for _, p in paths}
     selected = paths[-60:] if cursor is None else [(kind, p) for kind, p in paths if p.name not in known]
     blocks = []
+    deferred = set()
     for kind, path in selected:
+        if kind == 'output':
+            # The work record can appear before the engine output is written: a block emitted now would say 'Output UNKNOWN' and the
+            # name, once retained, would never be revisited. Wait for the output, the settlement, or a fixed grace period.
+            key = wake_key(path)
+            if (not list(root.glob(key + '.prompt.out.*')) and not (root / (key + '.yield.json')).exists()
+                    and time.time() - path.stat().st_mtime < OUTPUT_GRACE_SECONDS):
+                deferred.add(path.name)
+                continue
         record = read_json(path)
         if not isinstance(record, dict) or not isinstance(record.get('role'), str):
             raise ValueError(f'malformed wake record: {path}')
@@ -53,7 +65,7 @@ def wakes_step(home, cursor):
     if cursor is None and not paths:
         blocks.append('Wake history empty; following new starts and settlements.')
     # Retain seen names across deletion, so history is never silently replayed.
-    return known | names, '\n'.join(blocks)
+    return known | (names - deferred), '\n'.join(blocks)
 
 
 class Follower:

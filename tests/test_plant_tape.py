@@ -54,6 +54,9 @@ def test_wakes_keep_settlement_speech_and_do_not_mutate(tmp_path):
     cursor, text = plant_tape.wakes_step(tmp_path, cursor)
     assert 'WAKE genome' in text and 'WAKE health' not in text
     write_json(root / 'wake-genome-200.work.json', {'role': 'genome'})
+    import os, time
+    aged = time.time() - plant_tape.OUTPUT_GRACE_SECONDS - 5                  # a work record this old with no output and no yield is UNKNOWN
+    os.utime(root / 'wake-genome-200.work.json', (aged, aged))
     _, text = plant_tape.wakes_step(tmp_path, cursor)
     assert 'Settlement UNKNOWN' in text and 'Output UNKNOWN' in text
     (root / 'wake-broken.snapshot.json').write_text('{')
@@ -90,3 +93,19 @@ def test_real_wake_failure_remains_unknown_until_repaired(tmp_path):
     text = follower.poll()
     assert 'recovered' in text and 'WAKE health' in text
     assert follower.poll() == ''
+
+
+def test_output_written_after_its_work_record_is_still_shown(tmp_path):
+    # Review of the delivery of 67ca1ad2: a work record seen before its engine output was emitted 'Output UNKNOWN' and was never revisited.
+    root = tmp_path / 'wakes'
+    root.mkdir()
+    key = 'wake-health-200'
+    write_json(root / (key + '.snapshot.json'), {'role': 'health', 'snapshot': {'reasons': ['inbox']}})
+    write_json(root / (key + '.work.json'), {'role': 'health'})
+    cursor, text = plant_tape.wakes_step(tmp_path, None)
+    assert 'WAKE health' in text and 'OUTPUT' not in text                     # output not written yet: deferred, not UNKNOWN
+    assert key + '.work.json' not in cursor
+    (root / (key + '.prompt.out.json')).write_text('{"result": "engine words"}')
+    cursor, text = plant_tape.wakes_step(tmp_path, cursor)
+    assert 'OUTPUT health' in text and 'Output UNKNOWN' not in text
+    assert key + '.work.json' in cursor
