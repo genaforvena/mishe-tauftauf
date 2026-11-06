@@ -13,7 +13,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import delivery_requests, dossier, owed, yielding
+from . import delivery_requests, dossier, owed, work_receipts, yielding
 from .core.dispatch_record import process_alive
 from .core.interfaces import RECONCILED, STARTED, UNKNOWN, WorkerResult
 from .core.registry import StaticRoleRegistry
@@ -95,7 +95,6 @@ def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, ti
     snap.tape_seq = max([owed.tape_cursor(home, role)] + [seq for seq, _ in mail])
     yielding.wakes_dir(home).mkdir(parents=True, exist_ok=True)
     write_json(yielding.snapshot_path(home, key), {"role": role, "snapshot": snap.to_json()})
-    from . import work_receipts
     write_json(yielding.wakes_dir(home) / f"{key}.work-start.json",
                work_receipts.begin(repo, role=role, key=key, now=now, home=home))
     prompt = yielding.wakes_dir(home) / f"{key}.prompt.md"

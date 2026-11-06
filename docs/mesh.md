@@ -101,6 +101,18 @@ freeze reader work. Small per-role work records distinguish ready actions from
 waiting tasks with evidence watches and deadlines; an unchanged blocker need
 not call a model again. New mail and real observation gaps still arrive.
 
+A stewardship label is not a reason to stop. Before waiting, a mind names the
+actual missing evidence, the protected restriction or the conflicting edit it
+is actually up against, and repairs what it can within its own authority. If
+it genuinely cannot, it records the resolver, one action that would produce
+the evidence, when it will decide, and the alternative it can run meanwhile.
+Ordinary reversible changes carry their own checks, a scoped commit, an
+observed activation and a rollback if the observation fails; independent
+review follows them rather than holding them up. Changes to how the plant
+schedules, dispatches, settles, locks, interprets protocols, authorizes or
+delivers keep a separate fresh review and a deterministic
+activate-revert-reapply exercise.
+
 Output receipts distinguish actual Git commits and file artifacts from a wall
 rewrite or a claimed “changed” result. Shared author identity does not establish
 which mind made a commit. The bounded useful-work experiment reports these
