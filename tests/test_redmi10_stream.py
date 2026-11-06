@@ -87,3 +87,11 @@ def test_non_finite_row_epoch_is_not_a_row(tmp_path):
     path = write(tmp_path, ["1 1793964599 light lux=2.0 accuracy=3", "2 nan light lux=99"])
     out = read_redmi10_stream(path, now=NOW)
     assert out["state"] == "verified" and out["values"]["lux"]["value"] == 2.0
+
+
+def test_row_without_numeric_sequence_is_not_a_row(tmp_path):
+    assert parse_row("bad 1793964599 light lux=99") is None
+    assert parse_row("-3 1793964599 light lux=99") is None
+    path = write(tmp_path, ["bad 1793964599 light lux=99", "1 1793964599 light lux=2.0 accuracy=3"])
+    out = read_redmi10_stream(path, now=NOW)
+    assert out["state"] == "verified" and out["values"]["lux"]["value"] == 2.0

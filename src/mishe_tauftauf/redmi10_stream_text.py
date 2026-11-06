@@ -26,7 +26,7 @@ def decode_tail(data: bytes, *, at_file_start: bool) -> list[str]:
 def parse_row(line: str) -> dict | None:
     """Decode one stream row, or None when it is not a row this reader understands."""
     parts = line.split(" ", 2)
-    if len(parts) < 3:
+    if len(parts) < 3 or not parts[0].isdigit():  # the sequence token is required; "bad" is not a row
         return None
     try:
         epoch = float(parts[1])
