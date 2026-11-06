@@ -197,6 +197,48 @@ def test_session_stability_uncontained_is_drift_even_without_declared_session():
     assert judge_session_stability(None, ["plant"], {"5": "contained:mishe-plants.slice"})["state"] == "unknown"
 
 
+def test_session_stability_empty_pid_mapping_beside_live_session_is_unknown_not_verified():
+    # Reviewer repro: empty/malformed PID output must never establish containment.
+    got = judge_session_stability("plant", ["plant"], {})
+    assert got["state"] == "unknown" and got["id"] == SESSION_SENSE_ID
+    assert judge_session_stability("plant", [], {"1": "contained:mishe-plants.slice"})["state"] == "unknown"
+
+
+def test_session_stability_both_probes_absent_is_drift_not_unknown():
+    got = judge_session_stability("plant", [], {})
+    assert got["state"] == "drift" and "session-missing=plant" in got["sample"]
+
+
+def test_probe_empty_or_junk_pid_output_is_unknown_not_verified():
+    def runner_for(pid_out):
+        def runner(socket, args):
+            if args[-1] == "#{pid}":
+                return _done(0, pid_out)
+            return _done(0, "plant\n")
+        return runner
+
+    for pid_out in ("", "   \n", "garbage\n", "12 junk\n"):
+        got = probe_session_stability("plant", SOCK, runner=runner_for(pid_out),
+                                      shield_reader=lambda pid: "contained:mishe-plants.slice")
+        assert got["state"] == "unknown", (pid_out, got)
+
+
+def test_probe_server_vanishing_between_probes_is_unknown_not_drift_or_verified():
+    def list_then_gone(socket, args):
+        if args[-1] == "#{pid}":
+            return _done(1, err="no server running on /tmp/tmux-1000/default\n")
+        return _done(0, "plant\n")
+
+    def gone_then_pids(socket, args):
+        if args[-1] == "#{pid}":
+            return _done(0, "11\n")
+        return _done(1, err="no server running on /tmp/tmux-1000/default\n")
+
+    contained = lambda pid: "contained:mishe-plants.slice"
+    assert probe_session_stability("plant", SOCK, runner=list_then_gone, shield_reader=contained)["state"] == "unknown"
+    assert probe_session_stability("plant", SOCK, runner=gone_then_pids, shield_reader=contained)["state"] == "unknown"
+
+
 def test_role_render_all_render_is_verified():
     from mishe_tauftauf.replacement_readings import read_role_render_coverage
     got = read_role_render_coverage(["genome", "senses"], lambda role: f"# {role}\nbody\n")

@@ -38,6 +38,19 @@ def pane_pids(raw: bytes | str) -> list[int]:
     return [int(value) for value in text.split() if value.isdigit()]
 
 
+def strict_pane_pids(raw: bytes | str) -> list[int] | None:
+    """Pids from ``#{pane_pid}`` output, or None unless every token is a pid.
+
+    Empty output and any non-numeric token are unreadable acquisition, not an
+    empty server set; ``pane_pids`` silently drops junk, so it cannot tell.
+    """
+    text = raw.decode("ascii", "replace") if isinstance(raw, bytes) else raw
+    tokens = text.split()
+    if not tokens or not all(token.isdigit() for token in tokens):
+        return None
+    return [int(token) for token in tokens]
+
+
 def window_names(raw: bytes | str) -> list[str]:
     """Window names from ``tmux list-windows -F '#{window_name}'`` output.
 
@@ -515,14 +528,23 @@ def server_containment(pid: str, cgroup_root: Path = CGROUP_ROOT) -> str | None:
     slice_name = managed[-1]
     cut = max(index for index, part in enumerate(parts) if part == slice_name)
     # Walk from the server's own cgroup up to the managed slice, inclusive.
+    # A finite bound anywhere on the path is positive evidence of containment.
+    # "unbounded" needs every node read and showing "max"; a failed read could
+    # hide a finite limit, so without one the bound is unknown (None).
+    unreadable = 0
     for depth in range(len(parts), cut, -1):
         node = cgroup_root.joinpath(*parts[:depth])
         try:
             limit = (node / "memory.max").read_text(encoding="utf-8").strip()
         except OSError:
+            unreadable += 1
             continue
-        if limit != "max":
+        if limit.isdigit():
             return f"contained:{slice_name}"
+        if limit != "max":  # garbled value: not a finite bound, not "max"
+            unreadable += 1
+    if unreadable:
+        return None
     return f"unbounded:{slice_name}"
 
 

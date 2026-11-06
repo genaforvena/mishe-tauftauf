@@ -260,6 +260,56 @@ class ProcessTableTests(unittest.TestCase):
         self.assertEqual(proc_table.git_path_names("src/a.py\n\ntests/test_a.py\n"),
                          ["src/a.py", "tests/test_a.py"])
         self.assertEqual(proc_table.git_path_names(""), [])
+
+
+class ServerContainmentTests(unittest.TestCase):
+    """Placement of a tmux server from its cgroup path and memory.max reads."""
+
+    PATH = "/user.slice/user-1000.slice/mishe-plants.slice/server.scope"
+
+    def _cgroup(self, root, rel, text):
+        node = root.joinpath(*rel.split("/"))
+        node.mkdir(parents=True, exist_ok=True)
+        (node / "memory.max").write_text(text)
+
+    def _containment(self, root, path=PATH):
+        with mock.patch.object(proc_table, "read_cgroup_path", return_value=path):
+            return proc_table.server_containment("42", cgroup_root=root)
+
+    def test_no_memory_max_readable_is_unknown_not_unbounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(self._containment(Path(tmp)))
+
+    def test_all_nodes_readable_and_max_is_unbounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._cgroup(root, "user.slice/user-1000.slice/mishe-plants.slice/server.scope", "max\n")
+            self._cgroup(root, "user.slice/user-1000.slice/mishe-plants.slice", "max\n")
+            self.assertEqual(self._containment(root), "unbounded:mishe-plants.slice")
+
+    def test_finite_ancestor_bound_establishes_containment_despite_unreadable_leaf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._cgroup(root, "user.slice/user-1000.slice/mishe-plants.slice", "1073741824\n")
+            self.assertEqual(self._containment(root), "contained:mishe-plants.slice")
+
+    def test_unreadable_node_beside_max_nodes_stays_unknown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._cgroup(root, "user.slice/user-1000.slice/mishe-plants.slice", "max\n")
+            self.assertIsNone(self._containment(root))
+
+    def test_garbled_memory_max_is_not_a_finite_bound(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._cgroup(root, "user.slice/user-1000.slice/mishe-plants.slice/server.scope", "")
+            self._cgroup(root, "user.slice/user-1000.slice/mishe-plants.slice", "max\n")
+            self.assertIsNone(self._containment(root))
+
+    def test_path_outside_managed_slices_is_uncontained_without_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self._containment(Path(tmp), "/user.slice/mishe.slice/run.scope"),
+                             "uncontained:/user.slice/mishe.slice/run.scope")
 class SandboxProcessScanTests(unittest.TestCase):
     """A synthetic /proc tree: the scan reads only what the fixture provides."""
 

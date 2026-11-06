@@ -167,6 +167,12 @@ def judge_session_stability(declared: str | None, live: list[str] | None,
     if unreadable:
         return {**base, "state": "unknown", "live": live,
                 "sample": f"containment unreadable for pids={','.join(unreadable)}"}
+    # The two probes must agree that a server exists. Empty PID output beside
+    # live sessions, or PIDs beside an empty session list, is contradictory
+    # acquisition (e.g. the server vanished between probes): never calm.
+    if bool(live) != bool(placements):
+        return {**base, "state": "unknown", "live": live,
+                "sample": f"live=[{','.join(live)}] server-pids={len(placements)} disagree; probes not coherent"}
     unshielded = sorted(pid for pid, place in placements.items() if proc_table.placement_unshielded(place))
     listed = f"live=[{','.join(live)}]"
     # An unshielded server is a drift fact whatever the session is called.
@@ -221,7 +227,10 @@ def probe_session_stability(declared: str | None, socket: str | None, *,
     owners = runner(socket, ["list-sessions", "-F", "#{pid}"])
     placements: dict[str, str | None] | None = None
     if owners is not None and owners.returncode == 0:
-        placements = {str(pid): shield_reader(str(pid)) for pid in proc_table.pane_pids(owners.stdout or "")}
+        # Empty or non-numeric output stays None (unreadable), never "no servers".
+        pids = proc_table.strict_pane_pids(owners.stdout or "")
+        if pids is not None:
+            placements = {str(pid): shield_reader(str(pid)) for pid in pids}
     elif owners is not None and "no server running" in (owners.stderr or ""):
         placements = {}
     return judge_session_stability(declared, live, placements)

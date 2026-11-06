@@ -6730,7 +6730,9 @@ def test_server_containment_unbounded_inside_managed_slice(monkeypatch, tmp_path
     from mishe_tauftauf import proc_table
 
     base = ("mishe.slice", "mishe-plants.slice", "open.service")
+    # Every node from the server up to the managed slice must be read and show "max".
     _fake_cgroup(tmp_path, base, "max")
+    _fake_cgroup(tmp_path, base[:2], "max")
     _proc_cgroup(monkeypatch, "/" + "/".join(base))
     assert proc_table.server_containment("1", cgroup_root=tmp_path) == "unbounded:mishe-plants.slice"
 
