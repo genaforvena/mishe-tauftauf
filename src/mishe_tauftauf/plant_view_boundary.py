@@ -317,6 +317,35 @@ def uncommitted(cwd: Path) -> dict:
     return {'files': files, 'untracked': len(untracked)}
 
 
+def git_tape(cwd: Path, previous: str | None) -> tuple[str, str]:
+    """Render Git's own chronological commit messages and file summaries."""
+    head = _git(cwd, 'rev-parse', '--verify', 'HEAD').strip()
+    if head == previous:
+        return head, ''
+    notice = ''
+    if previous is not None:
+        try:
+            ancestor = _git(cwd, 'merge-base', previous, head).strip() == previous
+        except ValueError:
+            ancestor = False
+        if not ancestor:
+            notice = 'Git history changed; replaying the latest 30 reachable commits. Earlier output remains in scrollback.\n'
+            previous = None
+    selection = [f'{previous}..{head}'] if previous else ['-30', head]
+    text = _git(cwd, '--no-pager', 'log', '--reverse', '--no-color', '--no-decorate',
+                '--stat', '--date=iso-strict', '--format=commit %h%nAuthor: %an%nDate: %cI%n%n%B',
+                *selection)
+    return head, notice + safe(text)
+
+
+def tape_arguments():
+    parser = argparse.ArgumentParser(description='Append-only canonical Git and wake tapes')
+    parser.add_argument('--home', required=True, type=Path)
+    parser.add_argument('--tape', required=True, choices=('git', 'wakes'))
+    parser.add_argument('--follow', action='store_true')
+    return parser.parse_args()
+
+
 def arguments():
     parser = argparse.ArgumentParser(description='Read-only plant presentation; never starts work')
     parser.add_argument('--home', required=True, type=Path)

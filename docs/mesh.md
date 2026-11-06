@@ -79,6 +79,14 @@ files it changed. A model that differs from the configured one is stated, and ou
 cannot be read is labelled UNKNOWN with its raw tail, never hidden. Walls and site notes
 are outside git and are not counted. The original event files remain on disk, and
 `view-readability` watches that the panes stay human-readable.
+Three single-pane windows follow history without repainting: `chat` follows the
+shared tape, `git` shows commit messages and file-change summaries, and `wakes`
+shows wake starts, settlements and retained engine output. They open with
+recent history (30 commits or 60 wake records), then append new entries every
+five seconds. Use inner `Ctrl-a w` to choose a window and `Ctrl-a [` to scroll
+its 3,000-line history. Git, `chat.log` and the retained `wakes/` files keep
+the full source history beyond that scrollback. A failed read stays visibly UNKNOWN;
+recovery resumes from the last successful read.
 Senses' readings renew independently every ten minutes. `mishe discover show`
 shows the acquisition freshness and each source's state; a new host scan cannot
 make an old phone sample current.
