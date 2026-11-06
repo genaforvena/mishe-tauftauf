@@ -95,3 +95,15 @@ def test_canonical_dm_from_a_mind_slash_role_source_to_itself_does_not_wake_it(s
     _append(site, "mind/senses", "[dm] to=docs\nreal")
     assert owed.check(site, "senses", now=1.0).reasons == []
     assert owed.check(site, "docs", now=1.0).reasons == ["inbox"]
+
+
+def test_a_one_line_dm_is_recorded_but_warns_that_it_wakes_nobody(site):
+    # 2026-11-06: operator DMs written as '[dm] to=senses <text>' on one line were never addressed DMs: no wake, no mail, no warning.
+    done = subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(site), "append", "--source", "operator",
+                           "[dm] to=senses please read the queue"], capture_output=True, text=True)
+    assert done.returncode == 0 and "not an addressed DM" in done.stderr and "[dm] to=senses" in done.stderr
+    assert owed.check(site, "senses", now=1.0).reasons == []                # recorded as evidence, delivered to nobody
+    ok = subprocess.run([sys.executable, "-m", "mishe_tauftauf", "--home", str(site), "append", "--source", "operator",
+                         "[dm] to=senses\nplease read the queue"], capture_output=True, text=True)
+    assert ok.returncode == 0 and ok.stderr == ""
+    assert owed.check(site, "senses", now=1.0).reasons == ["inbox"]

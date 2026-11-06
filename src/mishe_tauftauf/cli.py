@@ -90,6 +90,13 @@ def cmd_append(args) -> int:
     from .roles import declared
     if recipient := dm_recipient(text, args.source, declared(args.home)):
         touch_inbox(args.home, recipient)     # an addressed DM owes its recipient a wake, as wall dm does
+    else:
+        from .wall_text import near_miss_dm
+        if (missed := near_miss_dm(text)):
+            # A "[dm] to=ROLE" line with words after it is not an address: the entry is kept as evidence but it wakes nobody and reaches
+            # no mail. Say so at the moment it happens (2026-11-06: a day of operator DMs written this way were never delivered).
+            print(f"warning: first line is not an addressed DM; it must be exactly '[dm] to={missed}' with the text on the next line. "
+                  f"Recorded as plain chat: {missed} is not woken and will not see it in mail.", file=sys.stderr)
     print(entry.sequence)
     return 0
 

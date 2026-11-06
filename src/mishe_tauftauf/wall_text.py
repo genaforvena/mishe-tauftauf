@@ -102,6 +102,13 @@ def dm_recipient(text: str, source: str, roles=()) -> str | None:
     return match.group(1)
 
 
+def near_miss_dm(text: str) -> str | None:
+    """The role named by a first line that looks like a DM but is not exactly ``[dm] to=ROLE`` (words follow it), else None."""
+    first = text.splitlines()[0] if text else ""
+    near = re.match(r"\[dm\] to=(\S+)\s+\S", first)
+    return near.group(1) if near else None
+
+
 _RENDER_VOLATILE_AGE = re.compile(r" age=(?:[0-9]|<age>)[0-9.eE+\-]*(?=;)")
 _RENDER_VOLATILE_CACHE = re.compile(r"cached_at=[0-9][0-9.eE+-]*")
 
