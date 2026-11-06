@@ -3,6 +3,7 @@
     "src/mishe_tauftauf/body_perception.py",
     "src/mishe_tauftauf/boot_rearm.py",
     "src/mishe_tauftauf/chat_protocol.py",
+    "src/mishe_tauftauf/claude_quota_text.py",
     "src/mishe_tauftauf/cli.py",
     "src/mishe_tauftauf/coord_tape.py",
     "src/mishe_tauftauf/core/containment_config.py",
