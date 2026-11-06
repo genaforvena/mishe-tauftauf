@@ -23,8 +23,10 @@ Receipts can miss useful investigation and ignored edits, so they are feedback,
 not a quota. If one initiative has a real dependency, choose an independent ready
 alternative. Do not keep auditing an unchanged fault to fill a wake.
 
-`mishe work show ROLE` reads structured readiness. `mishe work set --role ROLE
---file FILE` saves a version 1 record with `role`, `initiative` and `tasks`.
+`mishe work show ROLE` reads structured readiness. Inside a wake, `mishe work set
+--file FILE` saves your own version 1 record with `role`, `initiative` and `tasks`;
+the role comes from `MISHE_ROLE`, and a `--role` that names another mind is refused.
+`--role` is only the operator's explicit target.
 Each task has `id`, `deliverable` and state `ready`, `waiting` or `done`. Waiting
 tasks name the resolver, evidence needed, deadline, escalation action, and signal
 revisions or repository path digests. Keep this state consistent with your wall.
