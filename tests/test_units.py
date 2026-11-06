@@ -289,3 +289,13 @@ def test_pin_import_check_flags_a_symbol_the_existing_module_lacks_but_not_dynam
                           "star.py": "from os.path import *\n",
                           "pkg/__init__.py": "", "pkg/sub.py": ""})
     assert units._pin_import_problems(pin) == ["pin a.py: foo does not define absent"]
+
+
+def test_pin_import_check_never_reports_a_name_it_cannot_decide(tmp_path):
+    # Review of the moving-pin delivery: a name bound inside a top-level match or a type alias must not make a usable pin RED,
+    # a module that builds its namespace at run time is undecidable, and a name that is really absent is still reported.
+    pin = _pin(tmp_path, {"__init__.py": "", "a.py": "from .m import viaMatch, Alias\nfrom .m import missing_for_real\n",
+                          "m.py": "import sys\nmatch sys.platform:\n    case 'linux':\n        viaMatch = 1\n    case _:\n        viaMatch = 2\ntype Alias = int\n"})
+    assert units._pin_import_problems(pin) == ["pin a.py: m does not define missing_for_real"]
+    dyn = _pin(tmp_path / "dyn", {"__init__.py": "", "a.py": "from .m import anything\n", "m.py": "globals()['anything'] = 1\n"})
+    assert units._pin_import_problems(dyn) == []

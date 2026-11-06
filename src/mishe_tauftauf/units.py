@@ -275,9 +275,12 @@ def _module_names(path: Path):
     """Top-level names a module defines or imports (including inside top-level if/try/with/for blocks), or None when that cannot be
     decided statically (unreadable, a star import or a module ``__getattr__``): unknown is never reported as missing."""
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        text = path.read_text(encoding="utf-8")
+        tree = ast.parse(text, filename=str(path))
     except (SyntaxError, UnicodeDecodeError, OSError):
         return None
+    if any(marker in text for marker in ("globals()", "__dict__", "sys.modules", "setattr(")):
+        return None                                   # the namespace is built at run time: undecidable, so never reported as missing
     names, dynamic = set(), [False]
 
     def targets(node):
@@ -309,10 +312,17 @@ def _module_names(path: Path):
                 visit(node.body); visit(node.orelse)
             elif isinstance(node, (ast.With, ast.AsyncWith)):
                 visit(node.body)
-            elif isinstance(node, ast.Try):
+            elif isinstance(node, ast.Try) or type(node).__name__ == "TryStar":
                 visit(node.body); visit(node.orelse); visit(node.finalbody)
                 for handler in node.handlers:
                     visit(handler.body)
+            elif isinstance(node, ast.Match):
+                for case in node.cases:
+                    visit(case.body)
+            elif type(node).__name__ == "TypeAlias":
+                targets(node.name)
+            elif hasattr(node, "body") and isinstance(getattr(node, "body"), list):
+                dynamic[0] = True                      # a statement kind this scan does not know that nests statements: undecidable
 
     visit(tree.body)
     if dynamic[0] or "__getattr__" in names:
