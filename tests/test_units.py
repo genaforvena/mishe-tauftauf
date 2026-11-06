@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pytest
@@ -294,8 +295,15 @@ def test_pin_import_check_flags_a_symbol_the_existing_module_lacks_but_not_dynam
 def test_pin_import_check_never_reports_a_name_it_cannot_decide(tmp_path):
     # Review of the moving-pin delivery: a name bound inside a top-level match or a type alias must not make a usable pin RED,
     # a module that builds its namespace at run time is undecidable, and a name that is really absent is still reported.
+    # The `type` statement is 3.12 syntax: on 3.10 the whole module is unreadable, which is reported as UNKNOWN
+    # (never as a missing name), so the expectation depends on the interpreter the pin is read by.
+    type_alias = "type Alias = int\n" if sys.version_info >= (3, 12) else "Alias = int\n"
     pin = _pin(tmp_path, {"__init__.py": "", "a.py": "from .m import viaMatch, Alias\nfrom .m import missing_for_real\n",
-                          "m.py": "import sys\nmatch sys.platform:\n    case 'linux':\n        viaMatch = 1\n    case _:\n        viaMatch = 2\ntype Alias = int\n"})
-    assert units._pin_import_problems(pin) == ["pin a.py: m does not define missing_for_real"]
+                          "m.py": "import sys\nmatch sys.platform:\n    case 'linux':\n        viaMatch = 1\n    case _:\n        viaMatch = 2\n" + type_alias})
+    if sys.version_info >= (3, 12):
+        assert units._pin_import_problems(pin) == ["pin a.py: m does not define missing_for_real"]
+    else:
+        problems = units._pin_import_problems(pin)
+        assert problems == ["pin m.py: unreadable (SyntaxError)"]  # UNKNOWN for m, and no name is reported missing from a.py
     dyn = _pin(tmp_path / "dyn", {"__init__.py": "", "a.py": "from .m import anything\n", "m.py": "globals()['anything'] = 1\n"})
     assert units._pin_import_problems(dyn) == []
