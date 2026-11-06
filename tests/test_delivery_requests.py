@@ -254,6 +254,34 @@ def test_strong_does_not_cover_unreviewed_committed_path(plant, monkeypatch):
                   role="docs", key=row["key"], patch="strong")
 
 
+def test_readme_only_request_is_eligible_without_a_reviewed_patch(plant):
+    home, repo, old, sha = plant
+    (repo / "README.md").write_text("reader front page")
+    git(repo, "add", "README.md"); git(repo, "commit", "-qm", "readme")
+    readme = git(repo, "rev-parse", "HEAD")
+    key = "wake-docs-readme"
+    write_json(yielding.snapshot_path(home, key), dict(role="docs", snapshot=owed.Snapshot().to_json()))
+    row = q.enqueue(home, repo, readme, previous=old, role="docs", key=key,
+                    check=[sys.executable, "-c", "assert True"],
+                    observe=[sys.executable, "-c", "assert True"])
+    assert row["state"] == "queued"
+    assert row["spec"]["patch"] is None
+
+
+def test_mixed_readme_and_scheduler_request_is_refused_without_reviewed_strong_evidence(plant):
+    home, repo, old, sha = plant
+    (repo / "README.md").write_text("reader front page")
+    target = repo / "src/mishe_tauftauf/wake.py"
+    target.parent.mkdir(parents=True); target.write_text("pass")
+    git(repo, "add", "."); git(repo, "commit", "-qm", "readme and scheduler")
+    key = "wake-docs-mixed"
+    write_json(yielding.snapshot_path(home, key), dict(role="docs", snapshot=owed.Snapshot().to_json()))
+    with pytest.raises(ValueError, match="high-impact request requires a reviewed strong patch"):
+        q.enqueue(home, repo, git(repo, "rev-parse", "HEAD"), previous=old, role="docs", key=key,
+                  check=[sys.executable, "-c", "assert True"],
+                  observe=[sys.executable, "-c", "assert True"])
+
+
 def test_delivery_monitor_expires_to_unknown(plant):
     from mishe_tauftauf import signal_store
     home, *_ = plant

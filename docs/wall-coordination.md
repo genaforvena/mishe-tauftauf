@@ -105,6 +105,17 @@ committed promotion, automatic rollback on failed observation, and asynchronous
 review. A review outage remains pending evidence and does not block ordinary
 delivery. Classification is conservative; mixed changes take the strong path.
 
+Ordinary means the diff cannot reach a mechanism. The admitted paths are
+`docs/*.md`, `tests/*`, `README.md` and `src/mishe_tauftauf/producers.py`.
+`README.md` is admitted by that exact path, not by extension: it is the
+reader's front page, which the runtime names as a default document to render
+and as a search corpus, and never reads to decide behaviour. Everything else
+is strong, including `duties.json`, the agent contracts and doctrine, the
+scheduler, settlement, locking, protocol, authorization and delivery modules,
+and every unknown path. An empty diff is strong. There is no author-supplied
+flag and no per-path exemption, so one unknown path in a diff sends the whole
+diff down the strong path.
+
 Scheduler, dispatch, settlement, locking, protocol, authorization and delivery
 changes require fresh separate review and deterministic activation, revert and
 reapply observations. Prepare and check a scoped `mishe_tauftauf.wall_patch`

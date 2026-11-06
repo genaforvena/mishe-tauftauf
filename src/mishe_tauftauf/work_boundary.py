@@ -3,6 +3,12 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+#: The exact paths whose changes cannot reach a mechanism. Each one is
+#: admitted by evidence, recorded in the plan's classification inventory.
+#: ``README.md`` is the reader's front page: the runtime names it as a
+#: default document to render and as a search corpus, never as behaviour.
+ORDINARY_PATHS = frozenset({"README.md", "src/mishe_tauftauf/producers.py"})
+
 
 def work_identifier(value):
     return isinstance(value, str) and bool(value) and value not in (".", "..") and set(value) <= set("abcdefghijklmnopqrstuvwxyz0123456789-_.")
@@ -142,8 +148,21 @@ def clean_tree(repo):
 
 
 def release_classification(paths):
+    """Ordinary means the diff cannot reach a mechanism.
+
+    A path is ordinary only when the evidence shows it carries no
+    scheduling, dispatch, settlement, locking, protocol, authorization,
+    delivery, bootstrap, observation-truth or budget behaviour. Everything
+    outside the admitted list is strong, and an empty diff is strong: there
+    is no author-supplied flag and no per-path exemption, so a mixed diff
+    takes the strong path.
+
+    ``README.md`` is admitted by exact path, not by extension: it is the
+    reader's front page. The runtime names it as a default document to
+    render and as a search corpus, and never reads it to decide behaviour.
+    """
     return "ordinary" if paths and all((p.startswith("docs/") and p.endswith(".md")) or
-        p.startswith("tests/") or p == "src/mishe_tauftauf/producers.py" for p in paths) else "strong"
+        p.startswith("tests/") or p in ORDINARY_PATHS for p in paths) else "strong"
 
 
 def tree_files(repo):

@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 import pytest
 from mishe_tauftauf import release_promotion as p
-from mishe_tauftauf.state_files import read_json
+from mishe_tauftauf.state_files import read_json, write_json
 
 
 def git(repo, *args):
@@ -42,6 +42,43 @@ def test_failed_restore_is_unknown(tree):
     assert r["rollback_probe"]["code"]==1
 
 
+@pytest.mark.parametrize("path", ["README.md", "docs/page.md", "src/mishe_tauftauf/producers.py",
+                                  "tests/test_release_promotion.py"])
+def test_admitted_paths_are_ordinary(path):
+    from mishe_tauftauf import work_boundary as b
+    assert b.release_classification([path]) == "ordinary"
+
+
+@pytest.mark.parametrize("path", ["AGENTS.md", "src/mishe_tauftauf/seed_agent_contract.md",
+                                  "src/mishe_tauftauf/seed_doctrine.md", "src/mishe_tauftauf/owed.py",
+                                  "src/mishe_tauftauf/wake.py", "src/mishe_tauftauf/work_state.py",
+                                  "src/mishe_tauftauf/delivery_requests.py",
+                                  "src/mishe_tauftauf/release_promotion.py", "duties.json",
+                                  "unknown/new.py", "README.markdown", "docs/page.txt",
+                                  "src/mishe_tauftauf/producers.py.bak"])
+def test_mechanism_and_unknown_paths_are_strong(path):
+    from mishe_tauftauf import work_boundary as b
+    assert b.release_classification([path]) == "strong"
+
+
+def test_empty_diff_is_strong():
+    from mishe_tauftauf import work_boundary as b
+    assert b.release_classification([]) == "strong"
+
+
+def test_mixed_readme_and_mechanism_is_strong():
+    from mishe_tauftauf import work_boundary as b
+    assert b.release_classification(["README.md", "src/mishe_tauftauf/wake.py"]) == "strong"
+
+
+def test_every_admitted_path_is_exact_not_by_extension():
+    from mishe_tauftauf import work_boundary as b
+    assert "README.md" in b.ORDINARY_PATHS
+    assert "README.txt" not in b.ORDINARY_PATHS
+    assert "docs/README.md" not in b.ORDINARY_PATHS
+    assert b.release_classification(["docs/README.md"]) == "ordinary"  # admitted by the docs/*.md rule
+
+
 def test_ordinary_reviewer_outage_does_not_block(tree):
     repo,home,old,sha=tree
     def unavailable(*a): raise ValueError("offline")
@@ -50,6 +87,45 @@ def test_ordinary_reviewer_outage_does_not_block(tree):
         reviewer=unavailable,closure=lambda *a:None)
     assert r["phase"]=="delivered" and r["review_pending"]
     assert r["tests_passed"] and r["observed"]
+
+
+def test_readme_only_release_delivers_with_review_pending(tree):
+    repo,home,old,sha=tree
+    (repo/"README.md").write_text("reader front page")
+    git(repo,"add",".");git(repo,"commit","-qm","readme")
+    readme=git(repo,"rev-parse","HEAD")
+    def unavailable(*a): raise ValueError("offline")
+    r=p.promote(home,repo,readme,check=[sys.executable,"-c","assert True"],observe=["probe"],
+        previous=old,activate=lambda *a:None,probe=lambda *a,**k:dict(code=0,output="ok"),
+        reviewer=unavailable,closure=lambda *a:None)
+    assert r["phase"]=="delivered"
+    assert r["classification"]=="ordinary"
+    assert r["review_pending"]
+    assert r["tests_passed"] and r["observed"]
+
+
+def test_readme_plus_scheduler_cannot_use_the_ordinary_path(tree):
+    repo,home,old,sha=tree
+    (repo/"README.md").write_text("reader front page")
+    target=repo/"src/mishe_tauftauf/wake.py";target.parent.mkdir(parents=True);target.write_text("pass")
+    git(repo,"add",".");git(repo,"commit","-qm","readme and scheduler")
+    with pytest.raises(ValueError, match="strong"):
+        p.promote(home,repo,git(repo,"rev-parse","HEAD"),check=["check"],observe=["probe"],previous=old)
+
+
+def test_readme_plus_scheduler_is_refused_without_reviewed_strong_evidence(tree):
+    from mishe_tauftauf import wall_patch
+    repo,home,old,sha=tree
+    (repo/"README.md").write_text("reader front page")
+    target=repo/"src/mishe_tauftauf/wake.py";target.parent.mkdir(parents=True);target.write_text("pass")
+    git(repo,"add",".");git(repo,"commit","-qm","readme and scheduler")
+    runtime=home/"runtime";(runtime/"src/mishe_tauftauf").mkdir(parents=True)
+    write_json(home/"coordination-mode.json", dict(runtime=str(runtime)))
+    wall_patch.prepare(home,"unreviewed",["README.md"])
+    with pytest.raises(ValueError, match="recovery exercise"):
+        p.promote(home,repo,git(repo,"rev-parse","HEAD"),check=["check"],observe=["probe"],
+                  previous=old,strong_patch="unreviewed")
+    assert not (home/"work/releases").exists() or not list((home/"work/releases").glob("*.json"))
 
 
 def test_high_impact_cannot_use_ordinary_path(tree):

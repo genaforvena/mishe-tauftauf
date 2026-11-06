@@ -18,10 +18,9 @@ from . import work_boundary as boundary, wall_patch
 from .state_files import read_json, write_json
 from .work_receipts import digest
 
-# Everything outside a deliberately small leaf/docs list defaults to strong.
-ORDINARY = {"src/mishe_tauftauf/producers.py"}
 
-
+# Everything outside the admitted leaf/docs list defaults to strong. The
+# live list lives in work_boundary; this module only delegates to it.
 def classification(paths):
     return boundary.release_classification(paths)
 
