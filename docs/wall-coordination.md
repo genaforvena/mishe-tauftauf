@@ -127,12 +127,20 @@ records. Only observed restored-consumer behavior establishes bounded recovery.
 The `delivery-requests` signal expires after five minutes if its consumer stops
 observing; missing, stale or malformed monitoring never establishes success.
 
-The operator's moving-pin script (`SITE_HOME/operator/plans/moving-pin-20261105/delivery/deliver.sh`)
-is the strong gate for moving the pin. It re-runs the check and review, and it
-stops before applying unless the review is clear. It then takes a short hold,
-waits for the dispatch lock, applies, verifies, and always releases the hold. If
-the delivery is not verified, it heals the consumers to the release the pin names.
-It aborts or heals; it does not leave a half state.
+The site's moving-pin script (`SITE_HOME/operator/plans/moving-pin-20261105/delivery/deliver.sh`)
+re-runs the strong check and review before applying. A manual delivery driver
+must run in a separately supervised service under the existing containment,
+with retained logs and an explicit result. `setsid` and `nohup` do not escape a
+wake service's systemd control group: when the wake exits, systemd kills those
+descendants. Prefer the queued request above for authored delivery.
+
+The driver holds new wakes, waits for dispatch exclusion, applies and exercises
+recovery. Its exit trap releases the hold; an interruption can still leave an
+UNKNOWN effect requiring reconciliation. A reverted patch or changed observer
+needs a fresh checked and reviewed record before another apply. Installed
+consumer files and transient timer consumers have different contracts: check
+loaded installed pins against disk, and retain invocation/cgroup draining and
+future-pin checks for active or pending transients.
 
 After every delivery, compare the units' `PYTHONPATH` with `runtime/current`: it
 should resolve to the release just delivered. A GREEN test or doctor does not prove

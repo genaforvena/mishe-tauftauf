@@ -90,6 +90,10 @@ recovery resumes from the last successful read.
 Senses' readings renew independently every ten minutes. `mishe discover show`
 shows the acquisition freshness and each source's state; a new host scan cannot
 make an old phone sample current.
+Claude subscription readings use the native local `/usage` command without a
+model request. They renew independently of an interactive chat window; failed
+or stale readings hold spontaneous work. Fresh readings still have to satisfy
+the existing budget forecast. See [quota acquisition](claude-quota.md).
 
 A wall records observations and intentions, not authority. Authors may commit
 checked scoped changes without routine permission. A broken dashboard does not
