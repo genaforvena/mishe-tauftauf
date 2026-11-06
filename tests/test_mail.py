@@ -87,3 +87,11 @@ def test_natural_prose_from_a_mind_slash_role_source_never_wakes_that_same_role(
     _append(site, "mind/senses", "mind/senses to docs: please add a bullet")
     assert owed.check(site, "senses", now=1.0).reasons == []
     assert owed.check(site, "docs", now=1.0).reasons == ["inbox"]
+
+
+def test_canonical_dm_from_a_mind_slash_role_source_to_itself_does_not_wake_it(site):
+    _append(site, "mind/senses", "[dm] to=senses\nnote to self")
+    _append(site, "mind/senses", "[dm] to=mind/senses\nnote to self")
+    _append(site, "mind/senses", "[dm] to=docs\nreal")
+    assert owed.check(site, "senses", now=1.0).reasons == []
+    assert owed.check(site, "docs", now=1.0).reasons == ["inbox"]

@@ -87,13 +87,13 @@ def dm_recipient(text: str, source: str, roles=()) -> str | None:
     from .observations import validate_slug
     first = text.splitlines()[0] if text else ""
     match = re.fullmatch(r"\[dm\] to=(\S+)", first)
+    me = source.removeprefix("mind/")                          # the sender's own role, whether it signs as ROLE or mind/ROLE
     if match is None:
-        me = source.removeprefix("mind/")                      # the sender's own role, whether it signs as ROLE or mind/ROLE
         natural = re.match(rf"(?:(?:{re.escape(source)}|{re.escape(me)})\s+)?to[=\s]\s*([a-z][a-z0-9-]*)(?![\w/-])", first, re.IGNORECASE)   # a malformed [dm] line stays rejected
         if natural is not None and natural.group(1).lower() in set(roles) and natural.group(1).lower() != me:
             return natural.group(1).lower()
         return None
-    if match.group(1) in {source, f"mind/{source}"}:
+    if match.group(1) in {me, f"mind/{me}"}:
         return None
     try:
         validate_slug(match.group(1))
