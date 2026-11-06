@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import fcntl
 import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -43,6 +44,23 @@ def point(home, source):
         tmp.unlink()
     os.symlink(Path(source).resolve(), tmp)
     os.replace(tmp, link)
+    _mirror_pin_record(home, Path(source).resolve())
+
+
+def _mirror_pin_record(home, source):
+    """Write ``health/runtime-release.json`` from the pointer that was just moved.
+
+    The pin sensor, pin readers and release readiness still read this record, so
+    every pointer move (advance, rollback, revert) refreshes it. Nothing else
+    writes it; a hand-edited record would drift from ``runtime/current``.
+    """
+    sha = boundary.head(source)
+    path = Path(home) / "health" / "runtime-release.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"version": 1, "source": str(source), "sha": sha,
+                                     "session": "mishe-self-development-current"}) + "\n")
+    temporary.replace(path)
 
 
 def materialize(home, repo, sha):

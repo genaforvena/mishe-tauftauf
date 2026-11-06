@@ -223,7 +223,11 @@ def test_activation_starts_new_owned_timer_without_enabling_old_triggers(tree,mo
     new=home/"mishe-new.timer"
     monkeypatch.setattr(p,"config_paths",lambda h:[x for x in (existing,new) if x.exists()])
     monkeypatch.setattr(runtime_cli,"run_units",lambda *a:new.write_text("new"))
-    calls=[];monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:calls.append(argv))
+    calls=[];real_run=p.subprocess.run
+    def record_systemctl(argv,**kw):
+        if argv[0]=="git": return real_run(argv,**kw)      # the pin mirror still reads git HEAD
+        calls.append(argv)
+    monkeypatch.setattr(p.subprocess,"run",record_systemctl)
     p.activate(home,repo,repo,sha)
     assert ["systemctl","--user","enable","--now","mishe-new.timer"] in calls
     assert not any("mishe-existing.timer" in call for call in calls)
@@ -293,14 +297,35 @@ def test_review_binding_uses_git_executable_mode_with_mixed_checkout_permissions
         p.bind_reviewed_source(source,reviewed)
 
 
+def _release(path, text):
+    path.mkdir()
+    git(path, "init", "-q"); git(path, "config", "user.name", "test"); git(path, "config", "user.email", "t@example.org")
+    (path/"f.txt").write_text(text); git(path, "add", "."); git(path, "commit", "-qm", text)
+    return git(path, "rev-parse", "HEAD")
+
+
 def test_point_flips_the_stable_runtime_path_atomically(tmp_path):
-    a=tmp_path/"rel-a";b=tmp_path/"rel-b";a.mkdir();b.mkdir();home=tmp_path/"home";home.mkdir()
+    a=tmp_path/"rel-a";b=tmp_path/"rel-b";home=tmp_path/"home";home.mkdir()
+    sha_a=_release(a,"a"); sha_b=_release(b,"b")
     p.point(home,a)
     assert p.current_link(home).resolve()==a.resolve()
     p.point(home,b)                                   # replaces the existing link
     assert p.current_link(home).resolve()==b.resolve()
     assert p.current_link(home).is_symlink()
     assert not [x for x in (home/"runtime").iterdir() if x.name!="current"]   # no temp link left behind
+
+
+def test_point_mirrors_the_pin_record_to_the_pointed_release(tmp_path):
+    a=tmp_path/"rel-a";b=tmp_path/"rel-b";home=tmp_path/"home";home.mkdir()
+    sha_a=_release(a,"a"); sha_b=_release(b,"b")
+    p.point(home,a)
+    record=read_json(home/"health"/"runtime-release.json")
+    assert record["sha"]==sha_a and record["source"]==str(a.resolve()) and record["version"]==1
+    p.point(home,b)                                   # advance and rollback are the same move
+    record=read_json(home/"health"/"runtime-release.json")
+    assert record["sha"]==sha_b and record["source"]==str(b.resolve())
+    p.point(home,a)
+    assert read_json(home/"health"/"runtime-release.json")["sha"]==sha_a
 
 
 def test_default_activation_generates_units_and_wrapper_on_the_stable_path_not_a_sha(tree,monkeypatch):
@@ -324,7 +349,8 @@ def test_default_activation_generates_units_and_wrapper_on_the_stable_path_not_a
 
 def test_failed_default_activation_moves_the_pointer_back(tree,monkeypatch):
     repo,home,old,sha=tree
-    oldsrc=home/"releases"/old;oldsrc.mkdir(parents=True)
+    oldsrc=home/"releases"/old;oldsrc.parent.mkdir(parents=True)
+    _release(oldsrc,"old")                            # a clean release the pointer can name
     p.point(home,oldsrc)
     monkeypatch.setattr(p,"config_paths",lambda h:[])
     from mishe_tauftauf import runtime_cli
