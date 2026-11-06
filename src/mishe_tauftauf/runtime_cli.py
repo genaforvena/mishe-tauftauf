@@ -101,6 +101,12 @@ def register(sub) -> None:
     p.add_argument("--sha", required=True); p.add_argument("--previous", required=True)
     p.add_argument("--check-file", type=Path, required=True); p.add_argument("--observe-file", type=Path, required=True)
     p.add_argument("--strong-patch"); p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO"))
+    p = release.add_parser("request"); p.set_defaults(func=cmd_runtime)
+    p.add_argument("--sha", required=True); p.add_argument("--previous", required=True)
+    p.add_argument("--check-file", type=Path); p.add_argument("--observe-file", type=Path)
+    p.add_argument("--patch", help="Fresh reviewed strong patch with activation/recovery plan")
+    p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO"))
+    p = release.add_parser("consume"); p.set_defaults(func=cmd_runtime)
     for action in ("revert", "review"):
         p = release.add_parser(action); p.set_defaults(func=cmd_runtime); p.add_argument("--id", required=True)
     work = add("work").add_subparsers(dest="work_command", required=True)
@@ -151,6 +157,21 @@ def run(args) -> int:
     if args.command == "release":
         from . import release_promotion as promotion, work_boundary
         import json
+        if args.release_command == "request":
+            from . import delivery_requests
+            result = delivery_requests.enqueue(home, args.repo, args.sha, previous=args.previous,
+                role=os.environ.get("MISHE_ROLE"), key=os.environ.get("MISHE_WAKE_KEY"), patch=args.patch,
+                check=work_boundary.argv_file(args.check_file) if args.check_file else None,
+                observe=work_boundary.argv_file(args.observe_file) if args.observe_file else None)
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.release_command == "consume":
+            from . import delivery_requests
+            result = delivery_requests.consume(home)
+            following = wake.next_role(home, declared_roles(home), now=now)
+            if following: wake.systemd_starter(following)
+            print(json.dumps(result, indent=2))
+            return 0
         if args.release_command == "promote":
             result = promotion.promote(home, args.repo, args.sha,
                 check=work_boundary.argv_file(args.check_file), observe=work_boundary.argv_file(args.observe_file),
@@ -164,7 +185,8 @@ def run(args) -> int:
         from .state_files import read_json, write_json
         import json
         if args.work_command == "poll":
-            from . import release_promotion
+            from . import release_promotion, delivery_requests
+            delivery_requests.consume(home)
             release_promotion.merge_reviews(home)
             work_state.sweep(home, repo=args.repo, now=now)
             print("work watches checked")

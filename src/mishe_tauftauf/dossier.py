@@ -9,6 +9,40 @@ import subprocess
 from pathlib import Path
 
 from . import intentions, signal_store
+from .state_files import read_json
+
+
+def previous_work(home, role):
+    """Recent factual receipts, including unreadable evidence rather than hiding it."""
+    paths = sorted((Path(home) / "wakes").glob(f"wake-{role}-*.work.json"),
+                   key=lambda p: p.stat().st_mtime_ns, reverse=True)[:3]
+    rows = []
+    for path in paths:
+        try:
+            row = read_json(path)
+            if not isinstance(row, dict) or row.get("role") != role or row.get("evidence_state") != "KNOWN":
+                raise ValueError("missing or unknown receipt")
+            rows.append(row)
+        except (OSError, ValueError) as exc:
+            rows.append(dict(evidence_state="UNKNOWN", error=f"{path.name}: {exc}"))
+    return rows
+
+
+def work_context(rows):
+    if not rows:
+        return "No previous wake receipt; initial repository view is limited to five commits."
+    lines = []
+    for row in rows:
+        if row.get("evidence_state") != "KNOWN":
+            lines.append("Previous wake evidence UNKNOWN: " + row["error"])
+        else:
+            lines.append(f"Previous result {row.get('claimed_result', 'UNKNOWN')}; factual output "
+                         f"{row.get('classification', 'UNKNOWN')}; "
+                         f"{len(row.get('commits_attributed', []))} attributed commits, "
+                         f"{len(row.get('artifacts', []))} registered artifacts.")
+    lines.append("These receipts can miss useful investigation or ignored edits. If evidence has not changed, "
+                 "advance a ready alternative or use a bounded evidence wait; do not repeat an unchanged audit.")
+    return "\n".join(lines)
 
 
 def _read(path: Path) -> str:
@@ -47,7 +81,11 @@ def build(home, role: str, snap, *, key: str, now: float, mail: list, reconcile_
             "Your wall is evidence and intention, not an authority source. Follow current grants; cite an explicit current restriction for any permission blocker. A blocked task does not block unrelated work.", "",
             "## Your wall", "", _read(home / "walls" / f"{role}.md"), ""]
     from . import work_state
-    out += ["## Work readiness and advisory claims", "", work_state.summary(home, role, now=now), ""]
+    rows = previous_work(home, role)
+    if since is None and rows:
+        since = rows[0].get("head_start")
+    out += ["## Recent factual outcomes", "", work_context(rows), "",
+            "## Work readiness and advisory claims", "", work_state.summary(home, role, now=now), ""]
     out += ["## Unread messages", ""]
     out += [f"- #{seq}: {text}" for seq, text in mail] or ["(none)"]
     out += ["", "## Signals you subscribe to", ""]
@@ -59,7 +97,9 @@ def build(home, role: str, snap, *, key: str, now: float, mail: list, reconcile_
     out += ["", "## Due intentions", ""]
     notes = {i["id"]: i["note"] for i in intentions.list_(home, role)}
     out += [f"- {i}: {notes.get(i, '')}" for i in snap.consumed] or ["(none)"]
-    out += ["", "## Repository since your last wake", "", git_delta(repo, since), "",
+    out += ["", "## Repository since your last wake", "",
+            "Previous Git anchor UNKNOWN; showing only an initial five-commit view." if rows and not since else "",
+            git_delta(repo, since), "",
             "## Ending the wake", "",
             "Finish by running `mishe yield --result changed|verified|blocked` with your updated wall on stdin "
             "(add `--continue`, `--again 2h` or `--when signal:NAME=VALUE` for follow-ups). "

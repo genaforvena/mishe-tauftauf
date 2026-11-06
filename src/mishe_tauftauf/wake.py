@@ -103,6 +103,9 @@ class _Worker:
 
     def run(self, dispatch):
         role, key = dispatch.role, dispatch.key
+        from .delivery_requests import admission_path
+        if (Path(self.home) / "hold").exists() or admission_path(self.home).exists():
+            return WorkerResult("skipped", "delivery admission or hold arrived while waiting")
         snap = owed.check(self.home, role, now=self.now)
         if not snap.reasons:
             return WorkerResult("skipped", "nothing owed")
@@ -123,8 +126,9 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
     instead of exiting 0 with the owed wake dropped.
     """
     home = Path(home)
-    if (home / "hold").exists():
-        return WakeResult("held", "hold file present")
+    from . import delivery_requests
+    if (home / "hold").exists() or delivery_requests.admission_path(home).exists():
+        return WakeResult("held", "hold or delivery admission present")
     store = DispatchStore(home / "dispatch")
     supervisor = Supervisor(store=store, registry=StaticRoleRegistry(roles),
                             worker=_Worker(home, engine, now, mail_reader, repo, timeout),
@@ -152,6 +156,10 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
         return WakeResult("busy", "another wake is running")
     except SupervisorError as exc:
         return WakeResult("blocked", str(exc))
+    # The engine has exited and the supervisor has persisted settlement and
+    # released its lock. A delivery requested by this wake can now acquire it.
+    if result.outcome in ("completed", "reconciled"):
+        delivery_requests.consume(home)
     if result.outcome != "skipped":
         following = next_role(home, roles, now=now, exclude=role)
         if following:
@@ -162,6 +170,9 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
 def _reconcile(home, role, record, supervisor, engine, now, mail_reader, repo, timeout) -> WakeResult:
     store = supervisor.store
     with supervisor.exclusive():
+        from .delivery_requests import admission_path
+        if (Path(home) / "hold").exists() or admission_path(home).exists():
+            return WakeResult("held", "hold or delivery admission arrived while waiting")
         if record.pid is not None and process_alive(record.pid):
             return WakeResult("blocked", f"worker pid {record.pid} still alive")
         snap = owed.check(home, role, now=now)

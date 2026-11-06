@@ -196,7 +196,9 @@ def review(home, record):
 
 
 def check(home, identity, command, *, activate=None, observe=None, revert_observe=None):
+    from .delivery_requests import check_admission
     with lock(home):
+        check_admission(home)
         record = status(home, identity)
         # A check produces no delivery verdict of its own: leave the field unset
         # so an aborted attempt is not read as a genuine non-delivery. _apply and
@@ -281,13 +283,18 @@ def _revert(home, identity, record, activate):
 
 
 def revert(home, identity, activate):
+    from .delivery_requests import check_admission
     with lock(home):
+        check_admission(home)
         record = status(home, identity)
         _revert(home, identity, record, activate)
 
 
 def apply(home, identity, activate, observe):
+    from .delivery_requests import check_admission
+    check_admission(home)
     with lock(home):
+        check_admission(home)
         record = status(home, identity)
         _apply(home, identity, record, activate, observe)
 
@@ -342,7 +349,10 @@ def _apply(home, identity, record, activate, observe):
 
 def verify(home, identity):
     """Exercise revert, observe the old consumer, reapply, and observe the new one."""
+    from .delivery_requests import check_admission
+    check_admission(home)
     with lock(home):
+        check_admission(home)
         record = status(home, identity)
         plan = record.get("delivery_plan", {})
         if record["phase"] != "applied" or not plan.get("revert_observe"):

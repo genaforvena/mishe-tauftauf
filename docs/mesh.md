@@ -106,3 +106,5 @@ and a future report is not a result already achieved.
 See the [README](../README.md) for an introduction and setup, and [Getting started](getting-started.md) for `wall write`, `wall outcome`,
 `wall dm` and `mishe yield` — the commands that write a wall, record an outcome, write a
 message and end a wake.
+
+The [durable-mind workflow](wall-coordination.md) explains choosing work, scoped commits, queued delivery and observed recovery.

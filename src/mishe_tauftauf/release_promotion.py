@@ -84,13 +84,20 @@ def closure(source, env):
 @contextmanager
 def delivery_lock(home):
     from .core.state import DispatchStore
+    from .delivery_requests import check_admission
+    check_admission(home)
     path = DispatchStore(Path(home) / "dispatch").lock_path
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+") as handle:
         try: fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError: raise ValueError("running wake or promotion holds dispatch lock; promote after wake settles") from None
+        except OSError: raise DeliveryBusy("running wake or promotion holds dispatch lock; promote after wake settles") from None
+        check_admission(home)
         try: yield
         finally: fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+class DeliveryBusy(ValueError):
+    """No effect: the existing dispatch exclusion is owned elsewhere."""
 
 
 def config_paths(home):
@@ -184,7 +191,7 @@ def review_queue_path(home, record):
 
 
 def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=run,
-            reviewer=None, closure=closure, strong_patch=None):
+            reviewer=None, closure=closure, strong_patch=None, request_id=None):
     home, repo = Path(home), Path(repo)
     boundary.full_sha(repo, sha); boundary.full_sha(repo, previous)
     paths = boundary.changed_paths(repo, previous, sha)
@@ -205,6 +212,7 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
             bind_reviewed_source(source, strong)
         identity = sha + "-" + str(time.time_ns())
         record = dict(version=1, id=identity, sha=sha, previous=previous, source=str(source), paths=paths,
+                      request_id=request_id,
                       created_at=time.time(),
                       classification=kind, phase="checking", tests_passed=False, activated=False, observed=False,
                       rollback_available=False, review_pending=kind=="ordinary", events=[])
