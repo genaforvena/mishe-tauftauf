@@ -21,6 +21,8 @@ import hashlib
 import json
 import re
 
+from .slugs import validate_slug
+
 
 def is_peer_copy(notes: str, peer_wall: bytes) -> bool:
     """Report whether ``notes`` are another role's wall document.
@@ -84,7 +86,6 @@ def dm_recipient(text: str, source: str, roles=()) -> str | None:
     names one of ``roles`` (declared roles), so ordinary prose beginning with "to" never touches an inbox.
     ``append`` uses it so a DM written through the plain CLI wakes its recipient like ``wall dm``.
     """
-    from .observations import validate_slug
     first = text.splitlines()[0] if text else ""
     match = re.fullmatch(r"\[dm\] to=(\S+)", first)
     me = source.removeprefix("mind/")                          # the sender's own role, whether it signs as ROLE or mind/ROLE
@@ -130,3 +131,15 @@ def names_sender(body: str, sender: str) -> bool:
     named by ``genome-2``.
     """
     return re.search(rf"(?<![\w-]){re.escape(sender)}(?![\w-])", body) is not None
+
+
+def addressed(entry, role: str) -> bool:
+    """Whether a feed entry is addressed to ROLE. Lives here so ``feed`` can import it at module level."""
+    first = entry.body.splitlines()[0] if entry.body else ""
+    if entry.source == "operator/permissions":
+        decision = re.match(r"\[permission\] id=\S+ decision=(?:granted|revoked) owner=([A-Za-z0-9._:/-]+)(?:\s|$)", first)
+        if decision:
+            return decision.group(1) == role
+    # One definition of "addressed" for waking AND reading: the canonical [dm] to=ROLE line, or natural prose that names this role
+    # ("health to genome: ..."). A wake whose message the reader cannot find would be a new useless wake.
+    return entry.source not in {role, f"mind/{role}"} and dm_recipient(entry.body, entry.source, (role,)) == role

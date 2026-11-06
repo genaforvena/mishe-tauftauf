@@ -41,6 +41,7 @@
     "src/mishe_tauftauf/slice_throttle.py",
     "src/mishe_tauftauf/space_text.py",
     "src/mishe_tauftauf/spawn_dialect.py",
+    "src/mishe_tauftauf/slugs.py",
     "src/mishe_tauftauf/state_files.py",
     "src/mishe_tauftauf/stats_boundary.py",
     "src/mishe_tauftauf/timestamp_text.py",

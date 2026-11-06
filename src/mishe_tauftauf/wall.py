@@ -55,6 +55,7 @@ from .chat_protocol import decode_lifecycle
 from .outcome_events import blocking_gaps, classify_outcomes, eligible_evidence_path
 from .outcome_publication import OUTCOME_KINDS, decode_supersedes
 from .observations import sensor_failed as _sensor_failed, sensor_unknown as _sensor_unknown
+from .wall_text import addressed  # defined in wall_text; re-exported for wake and wall readers
 
 WALL_MAX_BYTES = 16384
 """Hard byte bound for one edited wall; walls are bounded prose, unlike chat.log."""
@@ -859,18 +860,6 @@ def message(home: Path, source: str, recipient: str, text: str):
     return entry
 
 
-
-
-def addressed(entry, role: str) -> bool:
-    first = entry.body.splitlines()[0] if entry.body else ""
-    if entry.source == "operator/permissions":
-        decision = re.match(r"\[permission\] id=\S+ decision=(?:granted|revoked) owner=([A-Za-z0-9._:/-]+)(?:\s|$)", first)
-        if decision:
-            return decision.group(1) == role
-    # One definition of "addressed" for waking AND reading: the canonical [dm] to=ROLE line, or natural prose that names this role
-    # ("health to genome: ..."). A wake whose message the reader cannot find would be a new useless wake.
-    from .wall_text import dm_recipient
-    return entry.source not in {role, f"mind/{role}"} and dm_recipient(entry.body, entry.source, (role,)) == role
 
 
 def context(home: Path, role: str) -> str:

@@ -20,9 +20,12 @@ import json
 import re
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
-from .feed import FeedEntry, FeedError
+from .feed_errors import FeedError
+
+if TYPE_CHECKING:  # annotations only; a runtime import would cycle through feed
+    from .feed import FeedEntry
 
 _WAKE_RE = re.compile(r"seed wake ([a-z0-9-]+) observation=([1-9][0-9]*)(?: event=([1-9][0-9]*))?(?: task=(\S+))?\Z")
 _YIELD_RE = re.compile(r"seed yield ([a-z0-9-]+) wake=([1-9][0-9]*)( continue=1)?\Z")

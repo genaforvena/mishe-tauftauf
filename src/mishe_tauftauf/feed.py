@@ -15,6 +15,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .chat_protocol import OBS_RE, decode_lifecycle, receipt_line
+from .feed_errors import FeedError
+from .records import VERIFIED_FLUSH_ROWS, cached_payload, verified_store
+from .slugs import validate_slug
+from .wall_text import addressed
+
 SOURCE_RE = re.compile(r"[A-Za-z0-9._/-]+\Z")
 HEADER_RE = re.compile(r"(?:v1 )?(\d{20}) (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z) ([A-Za-z0-9._/-]+) ::\n\Z")
 FRAME_START_RE = re.compile(rb"(?m)^(?:v1 )?\d{20} \d{4}-\d{2}-\d{2}T[^\n]+ [A-Za-z0-9._/-]+ ::\n")
@@ -75,9 +81,6 @@ def publication_lock(home):
                 depths.pop(key, None)
                 os.close(fd)
 
-
-class FeedError(ValueError):
-    pass
 
 def _reject_record_tag_lines(body: str) -> None:
     """Reject a body that begins a line with the record tag.
@@ -438,8 +441,6 @@ def _iter_text_lines(chunks):
 
 
 def _role_fold(previous, entries, role):
-    from . import wall
-    from .chat_protocol import OBS_RE, decode_lifecycle, receipt_line
     old = previous or {}
     row = {"control": list(old.get("control", [])), "inbox": deque(old.get("inbox", ()), maxlen=12),
            "recent": deque(old.get("recent", ()), maxlen=12),
@@ -472,7 +473,7 @@ def _role_fold(previous, entries, role):
                 previous_source = row["sources"].get(entry.source)
                 if previous_source is None or candidate[:2] > previous_source[:2]:
                     row["sources"][entry.source] = candidate
-        if wall.addressed(entry, role):
+        if addressed(entry, role):
             row["inbox"].append(entry)
     return row
 
@@ -742,7 +743,6 @@ class Feed:
         # Verified payloads persist per site (records.VerifiedStore). A hit is served
         # only while the referenced file keeps its verified identity; a miss runs the
         # full envelope verification and is stored after the whole pass succeeds.
-        from .records import VERIFIED_FLUSH_ROWS, cached_payload, verified_store
         pending: dict = {}
         store = None
         for entry in entries:
@@ -845,7 +845,6 @@ class Feed:
         lifecycle, unknown seed evidence, twelve addressed/recent messages and
         global activity witnesses. Full history remains available via entries().
         """
-        from .observations import validate_slug
         validate_slug(role)
         key = (str(self.path), role)
         if not self.path.exists():

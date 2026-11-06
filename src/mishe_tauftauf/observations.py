@@ -13,9 +13,9 @@ from pathlib import Path
 
 from .feed import Feed
 from .predictions import expectations_text
+from .slugs import SLUG_RE, validate_slug  # re-exported; defined in slugs.py
 
 CHECK_REPORT_MAX_AGE_SECONDS = 900
-SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
 FOOTER_WAKE_LABEL = "wake"
 FOOTER_WAKE_RE = re.compile(r"^-- wake: .* --$")
 FOOTER_LEDGER_LABEL = "ledger"  # Historical frames remain readable.
@@ -53,12 +53,6 @@ class RenderedPain:
     body: str
     ok: bool
     reason: str | None = None
-
-
-def validate_slug(slug: str) -> str:
-    if not SLUG_RE.fullmatch(slug):
-        raise ValueError("slug must match [a-z0-9][a-z0-9-]{0,63}")
-    return slug
 
 
 def _audit_binding_refusal(bound_home: Path, attempted_home: Path, command: str) -> None:
