@@ -159,6 +159,9 @@ def activate(home, repo, source, sha):
     marker = wall_patch.snapshot(Path(home) / "units-installed")
     point(home, source)                      # consumers resolve the stable path; the pin is the pointer
     stable = current_link(home)
+    # no_enable=True: the sync installs unit files and reloads systemd but enables NO existing trigger, so a
+    # trigger that was disabled before activation stays disabled here and in revert. Only triggers newly
+    # declared by this release are enabled below, and restore_configuration disables exactly those.
     args = argparse.Namespace(command="sync", repo=repo, source_repo=source, pythonpath=str(stable/"src"),
         unit_dir=Path.home()/".config/systemd/user", prefix="mishe", no_slices=False,
         no_systemctl=False, no_enable=True, uninstall=False)
