@@ -31,7 +31,7 @@
       "name": "egress",
       "command": [
         "{python}",
-        "{repo}/checks/exit-node-egress.py",
+        "{home}/checks/exit-node-egress.py",
         "--state",
         "{home}/health/egress.json"
       ],
