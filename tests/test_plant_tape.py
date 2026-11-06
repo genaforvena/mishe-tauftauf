@@ -34,6 +34,7 @@ def test_git_replays_in_order_follows_multiple_commits_and_reports_rewind(tmp_pa
 
 
 def test_wakes_keep_settlement_speech_and_do_not_mutate(tmp_path):
+    import os
     root = tmp_path / 'wakes'
     root.mkdir()
     key = 'wake-health-100'
@@ -41,6 +42,10 @@ def test_wakes_keep_settlement_speech_and_do_not_mutate(tmp_path):
     write_json(root / (key + '.yield.json'), {'role': 'health', 'result': 'changed'})
     (root / (key + '.prompt.out.txt')).write_text('Restored observation. Literal $(touch NO)\x1b[31m')
     write_json(root / (key + '.work.json'), {'role': 'health'})
+    # Coarse filesystems can give all lifecycle records the same timestamp.
+    # Filename ordering alone places .work before .yield in that case.
+    for path in root.glob('*.json'):
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
     def snapshot():
         return {str(p): p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
     before = snapshot()

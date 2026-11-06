@@ -25,7 +25,8 @@ def wakes_step(home, cursor):
         raise ValueError(f'wake history missing: {root}')
     paths = sorted(((kind, p) for kind, pattern in (('wake', '*.snapshot.json'),
                     ('settled', '*.yield.json'), ('output', '*.work.json'))
-                    for p in root.glob(pattern)), key=lambda row: (row[1].stat().st_mtime_ns, row[1].name))
+                    for p in root.glob(pattern)), key=lambda row: (row[1].stat().st_mtime_ns,
+                    wake_key(row[1]), {'wake': 0, 'settled': 1, 'output': 2}[row[0]]))
     known = set() if cursor is None else set(cursor)
     names = {p.name for _, p in paths}
     selected = paths[-60:] if cursor is None else [(kind, p) for kind, p in paths if p.name not in known]

@@ -10,6 +10,7 @@ import fcntl
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 import time
 import uuid
@@ -205,7 +206,7 @@ def consume(home):
                         row.update(state="delivered" if record["phase"] == "delivered" else
                                    "UNKNOWN" if record["phase"] == "UNKNOWN" else "failed", release_id=record["id"])
                 terminal = row["state"] != "UNKNOWN"
-            except (OSError, ValueError) as exc:
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 # Validation failure before execution has no effect. After an
                 # attempt begins, only explicit recovered evidence is safe.
                 recovered = False
@@ -215,8 +216,11 @@ def consume(home):
                         # Restoring bytes/activation alone is not functional
                         # recovery. Observe the old caller with the bound plan.
                         with token_environment(marker["token"]):
-                            probe = wall_patch.run(home, row["spec"]["patch"], "request-recovery-observe",
-                                                   record["delivery_plan"]["revert_observe"])
+                            try:
+                                probe = wall_patch.run(home, row["spec"]["patch"], "request-recovery-observe",
+                                                       record["delivery_plan"]["revert_observe"])
+                            except (OSError, ValueError, subprocess.SubprocessError) as recovery_error:
+                                probe = dict(code=None, error=str(recovery_error))
                         row["recovery_observation"] = probe
                         recovered = probe["code"] == 0
                 elif row["state"] == "running":

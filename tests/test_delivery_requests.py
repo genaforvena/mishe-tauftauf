@@ -282,3 +282,34 @@ def test_known_promotion_preflight_rejection_does_not_park_all_minds(plant, monk
     monkeypatch.setattr(rp, "promote", reject)
     assert q.consume(home)[0]["state"] == "failed"
     assert not q.admission_path(home).exists()
+
+
+def test_strong_activation_timeout_observes_successful_recovery(plant, monkeypatch):
+    from mishe_tauftauf import wall_patch
+    home, *_ = plant; strong_request(plant, monkeypatch)
+    original = wall_patch.run; calls = []
+    def timeout_once(home, identity, label, command):
+        calls.append(label)
+        if label == "activate" and calls.count(label) == 1:
+            raise subprocess.TimeoutExpired(command, 300)
+        return original(home, identity, label, command)
+    monkeypatch.setattr(wall_patch, "run", timeout_once)
+    result = q.consume(home)[0]
+    assert result["state"] == "failed"
+    assert result["recovery_observation"]["code"] == 0
+    assert not q.admission_path(home).exists()
+
+
+def test_recovery_observation_timeout_stays_unknown_without_replay(plant, monkeypatch):
+    from mishe_tauftauf import wall_patch
+    home, *_ = plant; strong_request(plant, monkeypatch, bad_new=True)
+    original = wall_patch.run
+    def timeout_recovery(home, identity, label, command):
+        if label == "request-recovery-observe":
+            raise subprocess.TimeoutExpired(command, 300)
+        return original(home, identity, label, command)
+    monkeypatch.setattr(wall_patch, "run", timeout_recovery)
+    result = q.consume(home)[0]
+    assert result["state"] == "UNKNOWN"
+    assert result["recovery_observation"]["code"] is None
+    assert q.admission_path(home).exists()

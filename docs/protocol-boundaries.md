@@ -9,7 +9,7 @@ The policy lists approved adapters and frozen legacy sites. For executable
 Python changes run:
 
 ```sh
-env PYTHONPATH=src .venv/bin/python tools/check_parsing.py
+env PYTHONPATH=src python3 tools/check_parsing.py
 ```
 
 This checks the working source against the declared adapters and historical
