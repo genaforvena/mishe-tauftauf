@@ -70,19 +70,23 @@ def read_redmi10_stream(path: Path | str = DEFAULT_LOG, *, now: float) -> dict[s
         return {**base, "state": "unknown",
                 "sample": f"stream stale or future-dated: newest row {age:.0f}s old; last values are history only",
                 "history": last, "last_row_epoch": newest}
-    missing = [name for name in ("lux", "battery", "wifi_rssi_dbm") if name not in last]
+    # Freshness is per quantity: a recent row of another kind must not make an old lux or battery value current.
+    current = {name: value for name, value in last.items() if abs(now - value["epoch"]) <= MAX_ROW_AGE_S}
+    history = {name: value for name, value in last.items() if name not in current}
+    missing = [name for name in ("lux", "battery", "wifi_rssi_dbm") if name not in current]
     if len(missing) == 3:
-        return {**base, "state": "unknown", "sample": "fresh rows carry no lux, battery or Wi-Fi value",
-                "last_row_epoch": newest}
+        return {**base, "state": "unknown", "sample": "fresh rows carry no current lux, battery or Wi-Fi value",
+                "last_row_epoch": newest, **({"history": history} if history else {})}
     parts = []
-    if "lux" in last:
-        parts.append(f"lux={last['lux']['value']:g}")
-    if "battery" in last:
-        battery = last["battery"]
+    if "lux" in current:
+        parts.append(f"lux={current['lux']['value']:g}")
+    if "battery" in current:
+        battery = current["battery"]
         parts.append(f"battery={battery['level']:g} charging={'yes' if battery['charging'] else 'no'}")
-    if "wifi_rssi_dbm" in last:
-        parts.append(f"wifi_rssi={last['wifi_rssi_dbm']['value']:g}dBm")
+    if "wifi_rssi_dbm" in current:
+        parts.append(f"wifi_rssi={current['wifi_rssi_dbm']['value']:g}dBm")
     return {**base, "state": "verified",
             "sample": f"{' '.join(parts)} row_age={age:.0f}s"
                       + (f" (no current {', '.join(missing)})" if missing else ""),
-            "values": last, "last_row_epoch": newest, "row_age_s": round(age, 1)}
+            "values": current, **({"history": history} if history else {}),
+            "last_row_epoch": newest, "row_age_s": round(age, 1)}

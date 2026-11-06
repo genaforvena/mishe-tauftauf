@@ -51,7 +51,7 @@ def test_missing_log_and_empty_tail_are_unknown(tmp_path):
 def test_fresh_rows_without_any_quantity_stay_unknown(tmp_path):
     path = write(tmp_path, ["1 1793964599 ble_scan_state windows=0 phase=none"])
     out = read_redmi10_stream(path, now=NOW)
-    assert out["state"] == "unknown" and "no lux" in out["sample"]
+    assert out["state"] == "unknown" and "no current lux" in out["sample"]
 
 
 def test_partial_first_line_of_large_tail_is_dropped(tmp_path):
@@ -95,3 +95,16 @@ def test_row_without_numeric_sequence_is_not_a_row(tmp_path):
     path = write(tmp_path, ["bad 1793964599 light lux=99", "1 1793964599 light lux=2.0 accuracy=3"])
     out = read_redmi10_stream(path, now=NOW)
     assert out["state"] == "verified" and out["values"]["lux"]["value"] == 2.0
+
+
+def test_old_quantity_is_history_even_when_another_kind_is_fresh(tmp_path):
+    path = write(tmp_path, [
+        "1 1793964000 light lux=53.0 accuracy=3",
+        "2 1793964599 ble_scan_state windows=0 phase=none",
+        "3 1793964598 wifi_link_rssi_dbm=-60 source=androidbody_wifi_api",
+    ])
+    out = read_redmi10_stream(path, now=NOW)
+    assert out["state"] == "verified"
+    assert "lux" not in out["values"] and "lux" in out["history"]
+    assert "lux=" not in out["sample"] and "no current lux" in out["sample"]
+    assert out["values"]["wifi_rssi_dbm"]["value"] == -60.0
