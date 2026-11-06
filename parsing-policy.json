@@ -56,6 +56,7 @@
     "tools/check_parsing.py",
     "tools/check_session_watch_routing.py",
     "tools/guard-activation/check-activation.py",
+    "tools/audio_hint.py",
     "tools/inference_budget_aggregate.py",
     "tools/recovery-control.py",
     "tools/unit_psi_attribution.py"
