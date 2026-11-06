@@ -31,6 +31,25 @@ class AnomalyPayloads(dict):
         super().__setitem__(sequence, {key: value for key, value in data.items() if key in self.fields})
 
 
+class EpisodePayloads(AnomalyPayloads):
+    """Slim payloads for episode questions. Full text of the few events a question
+    displays is re-read with _full_payloads, so the tape is never held as dicts."""
+    fields = AnomalyPayloads.fields | {'evidence', 'offer_evidence', 'channel', 'next_step'}
+
+
+def _full_payloads(entries, sequences):
+    """Complete decoded payloads for the named sequences, one pass over the tape."""
+    wanted = set(sequences)
+    found = {}
+    for entry in entries:
+        if entry.sequence in wanted:
+            try:
+                found[entry.sequence] = _data(entry)
+            except (ValueError, TypeError, KeyError, OSError):
+                found[entry.sequence] = {}
+    return found
+
+
 def _data(entry):
     lines = entry.body.splitlines()
     if any(line.startswith('[record]') for line in lines) or (len(lines) > 1 and lines[1].lstrip().startswith('{')):
@@ -229,7 +248,7 @@ def episode(home, source, body, context=None, identity=None):
     context = dict(context or {})
     feed = Feed(Path(home))
     entries = feed.entries()
-    view = project(entries)
+    view = project(entries, EpisodePayloads())
     identity = identity or context.get('task') or context.get('identity')
     if not identity:
         match = re.match(r'\[(?:task|taking|done|dropped|task-state|task-claim|task-close|task-add|task-reopen)\]\s+(\S+)', body)
@@ -309,7 +328,8 @@ def episode(home, source, body, context=None, identity=None):
     recent_events = view['events'][-8:]
     if last_source and last_source not in recent_events:
         recent_events = [last_source] + recent_events
-    question_episodes['R06']['recent_canonical_events'] = [dict(sequence=e['sequence'], source=e['source'], body=e['body'], payload=_meaningful(e['payload'])) for e in recent_events]
+    shown = _full_payloads(entries, [e['sequence'] for e in recent_events])
+    question_episodes['R06']['recent_canonical_events'] = [dict(sequence=e['sequence'], source=e['source'], body=e['body'], payload=_meaningful(shown.get(e['sequence'], {}))) for e in recent_events]
     question_episodes['R06']['history_scope'] = dict(included_sequences=[e['sequence'] for e in recent_events], total_events=len(entries),
         meaning='Latest eight canonical events plus latest same-source event, with complete selected text/payload. Historical claims do not independently prove current facts or a different source version.')
     question_episodes['R06']['evidence_references'] = sorted(set(compact_references + [f"chat.log sequence {e['sequence']}" for e in recent_events]))
@@ -327,6 +347,8 @@ def episode(home, source, body, context=None, identity=None):
         current_task = _semantic(state or {})
         proposed_task = _semantic(proposed_state)
         registration = next((event for event in view['events'] if state and event['sequence'] == state['sequence']), None)
+        if registration:
+            registration = dict(registration, payload=_full_payloads(entries, [registration['sequence']]).get(registration['sequence'], {}))
         transition = dict(current=current_task, proposed=proposed_task,
                           changed_fields=sorted(key for key in set(current_task) | set(proposed_task)
                                                 if current_task.get(key) != proposed_task.get(key)),
@@ -339,13 +361,13 @@ def episode(home, source, body, context=None, identity=None):
         from .task_state import eligible
         by_sequence = {event['sequence']: event for event in view['events']}
         retry_targets = []
-        for target in registry(entries).values():
-            if target.status != 'waiting' or target.retry_event != signal[1]:
-                continue
+        waiting = [target for target in registry(entries).values() if target.status == 'waiting' and target.retry_event == signal[1]]
+        full = _full_payloads(entries, [target.sequence for target in waiting])
+        for target in waiting:
             registration = by_sequence[target.sequence]
             retry_targets.append(dict(task=_semantic(asdict(target)),
                 registration=dict(sequence=registration['sequence'], source=registration['source'],
-                                  body=registration['body'], payload=_meaningful(registration['payload'])),
+                                  body=registration['body'], payload=_meaningful(full.get(target.sequence, {}))),
                 eligible_before_post=eligible(target, entries)))
         for key in ('R06', 'R08'):
             question_episodes[key]['retry_targets'] = retry_targets
@@ -411,7 +433,9 @@ def episode(home, source, body, context=None, identity=None):
                       source_log=str(feed.path), cutoff=entries[-1].sequence if entries else 0,
                       canonical_entries_sha256=canonical_digest.hexdigest(),
                       digest_format='SHA256 of UTF-8 JSON [sequence,timestamp,source,body] with compact separators, ensure_ascii=false, followed by LF for every entry through cutoff')
+    history_scope = dict(capped=False, total=len(entries), kept=[event['sequence'] for event in relevant],
+                         selection='identity-relevant events plus latest same-source event; payload fields slimmed to decision-relevant keys')
     return dict(source=source, identity=identity, draft=body, proposed=context, task=state,
-                producer=dependency, history=relevant, projection=projection, anomalies=findings,
+                producer=dependency, history=relevant, history_scope=history_scope, projection=projection, anomalies=findings,
                 context_complete=complete, evidence_references=references, semantic_episode=semantic,
                 question_episodes=question_episodes)

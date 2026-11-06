@@ -131,6 +131,17 @@ def test_scoped_report_binds_unrelated_feed_without_copying_it(tmp_path, monkeyp
     assert episode(tmp_path, 'witness', '[task] new owner=witness acceptance=checked', context={'identity':'new'})['context_complete'] is True
 
 
+def test_history_scope_is_uncapped_and_names_kept_sequences(tmp_path, monkeypatch):
+    from mishe_tauftauf.feed import Feed
+    entries = [task(1, 'a'), FeedEntry(2, 'now', 'other', 'Unrelated evidence'), FeedEntry(3, 'now', 'witness', 'Previous notice'), FeedEntry(4, 'now', 'witness', 'Latest notice')]
+    monkeypatch.setattr(Feed, 'entries', lambda self: entries)
+    result = episode(tmp_path, 'witness', 'Check task acceptance.', context={'task': 'a'})
+    scope = result['history_scope']
+    assert scope['capped'] is False
+    assert scope['total'] == 4
+    assert scope['kept'] == [entry['sequence'] for entry in result['history']] == [1, 4]
+
+
 def test_checked_done_retires_suspicious_repetition_but_preserves_history():
     entries = [task(1, 'a'), work(2, 'a'), work(3, 'a', observation=2)]
     entries.append(FeedEntry(4, 'now', 'seed', '[work] channel=witness wake=1 observation=3 result=verified continue=0\n' + json.dumps(dict(task='a', channel='witness', result='verified', progress='Different inspected candidate'))))
