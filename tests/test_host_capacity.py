@@ -283,3 +283,9 @@ def test_nan_checked_at_is_rejected_without_breaking_the_sample(tmp_path, monkey
 def test_non_finite_checked_at_fails_the_checked_at_check_only():
     verdict = host.guard_diagnostic({"checked_at": float("nan"), "state": "FRESH", "capacity": "NORMAL", "scope": host.GUARD_SCOPE}, 100)
     assert verdict["failed"] == ["checked_at", "age"] and verdict["age"] is None
+
+
+def test_oversized_integer_checked_at_is_rejected_without_breaking_the_diagnostic():
+    # Independent review of the delivery of a6c73263: math.isfinite(10**400) raises OverflowError, which escaped the diagnostic.
+    verdict = host.guard_diagnostic({"checked_at": 10**400, "state": "FRESH", "capacity": "NORMAL", "scope": host.GUARD_SCOPE}, 100.0)
+    assert verdict["fresh"] is False and "checked_at" in verdict["failed"] and verdict["checked_at"] is None and verdict["age"] is None

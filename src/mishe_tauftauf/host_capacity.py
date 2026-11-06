@@ -217,7 +217,10 @@ def guard_diagnostic(guard_row, observed_at):
     if not isinstance(guard_row, dict):
         return {"fresh": False, "failed": ["present"], "seen": type(guard_row).__name__}
     checked = guard_row.get("checked_at")
-    numeric = type(checked) in (int, float) and math.isfinite(checked)
+    try:
+        numeric = type(checked) in (int, float) and math.isfinite(checked)
+    except OverflowError:                      # a valid JSON integer beyond float range is not a usable timestamp
+        numeric = False
     raw_age = observed_at - checked if numeric else None
     checks = {
         "state": guard_row.get("state") in {"FRESH", "UNKNOWN"},
