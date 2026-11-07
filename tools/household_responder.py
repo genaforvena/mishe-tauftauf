@@ -52,6 +52,7 @@ FOLLOWUP_S = 20
 KEEP_S = 24 * 3600
 LABEL_MAX_AGE_S = 2 * 3600
 ACTIVITY_MAX_AGE_S = 15 * 60
+NOTE3_SAY = Path.home() / ".local/bin/mesh-note3-say"
 VOICE_SAY = Path.home() / ".local/bin/mesh-voice-say"
 NOTE3_PUSH = Path.home() / ".local/bin/mesh-note3-say"  # speaks piper only; see speak()
 
@@ -73,8 +74,14 @@ def now_utc() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
 
 
+HUMAN_QUIET_FLAGS = ("speech-quiet.json",)  # written when a household member asks for quiet
+
+
 def quiet(site: Path) -> bool:
-    return (site / WORK / QUIET_FLAG).exists()
+    """Quiet when any quiet flag exists. The humans' own flag (speech-quiet.json) counts, and
+    only removing it lifts quiet: a lapsed time never makes Mishe speak on its own."""
+    flags = (QUIET_FLAG,) + HUMAN_QUIET_FLAGS
+    return any((site / WORK / name).exists() for name in flags)
 
 
 def latest_locations(site: Path, now: float) -> dict:
@@ -180,13 +187,13 @@ def speak(text: str, lang: str, site: Path) -> int:
     # suspend the listener for the speaking window plus the follow-up window
     lock.write_text(str(now + 60 + FOLLOWUP_S))
     try:
-        wav = subprocess.run([str(VOICE_SAY), text], capture_output=True, text=True, timeout=200)
-        if wav.returncode != 0:
-            print(f"clone synth rc={wav.returncode}: {ht.tidy(wav.stderr)[:200]}", file=sys.stderr)
+        # mesh-note3-say synthesizes in the cloned voice and plays it on the Note3 itself
+        play = subprocess.run([str(NOTE3_SAY), text], capture_output=True, text=True, timeout=240,
+                              stdin=subprocess.DEVNULL)
+        if play.returncode != 0:
+            print(f"note3 speak rc={play.returncode}: {ht.tidy(play.stderr)[:200]}", file=sys.stderr)
             return 5
-        # Playback path is not yet wired for the clone wav; mesh-note3-say is piper-only.
-        print(f"synth ok: {ht.tidy(wav.stdout)} (playback not wired in v1)", file=sys.stderr)
-        return 6
+        return 0
     finally:
         # the follow-up window stays open for FOLLOWUP_S after the line
         lock.write_text(str(time.time() + FOLLOWUP_S))
