@@ -99,3 +99,29 @@ def test_household_activity_duty_is_declared_with_bounded_timing():
     assert item["command"][-2:] == ["--site", "{home}"]
     assert item["every"] == 600 and item["max_age"] >= item["every"] + item["timeout"]
     assert item["max_age"] <= 6 * item["every"]
+
+
+def test_unobserved_gap_is_unknown_and_never_part_of_a_quiet_block():
+    # Still frames, then a 2 h hole (camera unreachable), then still frames again.
+    part1 = _frames("living room", T0, T0 + 3000, lambda t: 40, moving_at=lambda t: False)
+    part2 = _frames("living room", T0 + 3000 + 7200, T0 + 3000 + 7200 + 3000, lambda t: 40,
+                    moving_at=lambda t: False)
+    recs, times = ha.frame_records(part1 + part2)
+    gaps = ha.unobserved_gaps(times)
+    assert len(gaps) == 1 and 7200 <= gaps[0][1] - gaps[0][0] <= 7200 + 45
+    summary = ha.summarize((recs, times), ([], []))
+    assert summary["unknown_intervals"]["living room"][0]["minutes"] == 120
+    quiet = summary["longest_quiet_block_living_room"]
+    # Neither part alone is a 10-minute run across the hole: the quiet block must not span the gap.
+    assert quiet is None or (ha.hhmm(gaps[0][0]) >= quiet["to_utc"] or quiet["from_utc"] >= ha.hhmm(gaps[0][1]))
+    assert "UNKNOWN" in ha.gap_text(summary)
+
+
+def test_operator_blind_interval_is_tagged_unknown_with_null_start(tmp_path):
+    lr = _frames("living room", T0, T0 + 3000, lambda t: 40, moving_at=lambda t: False)
+    blind = [{"room": "living room", "from_utc": None, "to_utc": "09:34Z", "minutes": None,
+              "reason": "camera blind"}]
+    report = ha.build(lr, [], float(T0 + 3000), blind)
+    spans = report["summary"]["unknown_intervals"]["living room"]
+    assert spans == blind and report["summary"]["unknown_intervals"]["bedroom"] == []
+    assert ha.operator_blind(tmp_path) == []

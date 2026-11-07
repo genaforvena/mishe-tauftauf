@@ -97,11 +97,24 @@ def _span(times: list[float], lo_excl: float, hi_incl: float) -> tuple[int, int]
     return bisect.bisect_right(times, lo_excl), bisect.bisect_right(times, hi_incl)
 
 
+def unobserved_gaps(times: list[float]) -> list[tuple[float, float]]:
+    """Spans between consecutive usable frames longer than PAIR_MAX_GAP: UNKNOWN, not dark or quiet."""
+    return [(a, b) for a, b in zip(times, times[1:]) if b - a > PAIR_MAX_GAP]
+
+
+def has_gap(times: list[float], lo: float, hi: float) -> bool:
+    a, b = _span(times, lo, hi)
+    seg = times[max(a - 1, 0):b + 1]
+    return any(y - x > PAIR_MAX_GAP for x, y in zip(seg, seg[1:]))
+
+
 def luma_events(recs: list[dict], times: list[float]) -> list[dict]:
     """Lamp events: a step of >= LUMA_STEP that holds for the next 600 s, one per EVENT_GAP."""
     events, last = [], None
     for rec in recs:
         t = rec["t"]
+        if has_gap(times, t - 780, t + 600):
+            continue
         a, b = _span(times, t - 180, t)
         now = [r["luma"] for r in recs[a:b]]
         a, b = _span(times, t - 780, t - 300)
@@ -121,9 +134,14 @@ def luma_events(recs: list[dict], times: list[float]) -> list[dict]:
 
 def runs(recs: list[dict], pred, min_s: float) -> list[tuple[float, float]]:
     """Sustained runs where pred(rec) holds for at least min_s seconds."""
-    out, start, prev = [], None, None
+    out, start, prev = [], None, 0.0
     for rec in recs:
         ok = pred(rec)
+        if start is not None and rec["t"] - prev > PAIR_MAX_GAP:
+            # An unobserved gap ends the run: silence is UNKNOWN, never a sustained quiet block.
+            if prev - start >= min_s:
+                out.append((start, prev))
+            start = None
         if ok and start is None:
             start = rec["t"]
         if not ok and start is not None:
@@ -136,9 +154,29 @@ def runs(recs: list[dict], pred, min_s: float) -> list[tuple[float, float]]:
     return out
 
 
-def summarize(living: tuple[list[dict], list[float]], bedroom: tuple[list[dict], list[float]]) -> dict:
+def operator_blind(base: Path) -> list[dict]:
+    """Blind spans stated by the household (not inferred): {room, from_utc|null, to_utc, reason}."""
+    try:
+        rows = json.loads((base / "operator_blind_intervals.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for row in rows if isinstance(rows, list) else []:
+        if isinstance(row, dict) and row.get("room") in ROOMS and isinstance(row.get("to_utc"), str):
+            out.append({"room": row["room"], "from_utc": row.get("from_utc") or "UNKNOWN",
+                        "to_utc": row["to_utc"], "minutes": None, "reason": str(row.get("reason", ""))})
+    return out
+
+
+def _interval(a: float, b: float) -> dict:
+    return {"from_utc": hhmm(a), "to_utc": hhmm(b), "minutes": round((b - a) / 60),
+            "reason": "no usable frame for over 300 s: camera unreachable or blind, not dark"}
+
+
+def summarize(living: tuple[list[dict], list[float]], bedroom: tuple[list[dict], list[float]],
+              blind: list[dict] = ()) -> dict:
     lrecs, ltimes = living
-    brecs, _ = bedroom
+    brecs, btimes = bedroom
     lights = luma_events(lrecs, ltimes) if lrecs else []
     settled = runs(brecs, lambda r: r["activity"] is not None and r["activity"] < QUIET
                    and r["luma"] <= SETTLED_LUMA, SETTLED_MIN_S)
@@ -155,6 +193,11 @@ def summarize(living: tuple[list[dict], list[float]], bedroom: tuple[list[dict],
     longest = max(quiet, key=lambda b: b[1] - b[0]) if quiet else None
     return {
         "status": "provisional",
+        "unknown_intervals": {
+            "living room": [_interval(a, b) for a, b in unobserved_gaps(ltimes)]
+            + [b for b in blind if b["room"] == "living room"],
+            "bedroom": [_interval(a, b) for a, b in unobserved_gaps(btimes)]
+            + [b for b in blind if b["room"] == "bedroom"]},
         "lights_events": [{"utc": hhmm(e["t"]), "kind": e["kind"], "step": e["step"]} for e in lights],
         "lights_out_utc": hhmm(lights_out),
         "first_activity_after_lights_out_utc": hhmm(first_active),
@@ -177,7 +220,14 @@ def rhythm_line(summary: dict) -> str:
     return ("RHYTHM (provisional): lights out " + (summary.get("lights_out_utc") or "UNKNOWN")
             + "; first living-room activity after that "
             + (summary.get("first_activity_after_lights_out_utc") or "UNKNOWN")
-            + "; longest quiet block " + quiet_text + ". Not checked against the household yet.")
+            + "; longest quiet block " + quiet_text + ". " + gap_text(summary)
+            + "Not checked against the household yet.")
+
+
+def gap_text(summary: dict) -> str:
+    unknown = summary.get("unknown_intervals") or {}
+    parts = [f"{room} {len(spans)} UNKNOWN gap(s)" for room, spans in unknown.items() if spans]
+    return ("UNKNOWN (camera unreachable or blind, not dark): " + "; ".join(parts) + ". ") if parts else ""
 
 
 def buckets(frames: list[dict]) -> list[dict]:
@@ -230,7 +280,8 @@ def sound_by_hour(audio_rows: list[dict]) -> dict:
             for room, hours in sorted(bins.items())}
 
 
-def build(signature_rows: list[dict], audio_rows: list[dict], now: float) -> dict | None:
+def build(signature_rows: list[dict], audio_rows: list[dict], now: float,
+          blind: list[dict] | None = None) -> dict | None:
     frames = load_frames(signature_rows)
     if not any(frames.values()):
         return None
@@ -247,7 +298,7 @@ def build(signature_rows: list[dict], audio_rows: list[dict], now: float) -> dic
             .isoformat(timespec="seconds"),
             "method": "rooms: median consecutive-frame change /255 over gaps <= 300 s, 15-min buckets; "
                       "summary: 600 s trailing change, lamp steps, settled and quiet runs",
-            "rooms": rooms, "summary": summarize(living, bedroom),
+            "rooms": rooms, "summary": summarize(living, bedroom, blind or []),
             "sound_by_hour": sound_by_hour(audio_rows)}
 
 
@@ -265,7 +316,8 @@ def main(argv=None) -> int:
     if not args.site.is_dir():
         raise SystemExit(f"site does not exist: {args.site}")
     base = args.site / HOUSEHOLD
-    report = build(read_jsonl(base / "signatures.jsonl"), read_jsonl(base / "audio.jsonl"), time.time())
+    report = build(read_jsonl(base / "signatures.jsonl"), read_jsonl(base / "audio.jsonl"), time.time(),
+                   operator_blind(base))
     if report is None:
         print("activity: no ok signature rows for any room: UNKNOWN", file=sys.stderr)
         return 1
