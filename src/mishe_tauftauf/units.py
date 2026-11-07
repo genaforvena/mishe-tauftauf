@@ -120,7 +120,9 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         "[Install]\nWantedBy=default.target")
     files[f"{p}-doctor.service"] = _file(
         f"[Unit]\nDescription=Mishe doctor\n{failed}",
-        "[Service]\nType=oneshot\n" + _env(cfg) + f"ExecStart={_cmd(cfg, 'doctor', *_self_args(cfg))}\nTimeoutStartSec=120\n")
+        # Unbuffered so a run killed by TimeoutStartSec keeps the lines it already printed in the journal.
+        "[Service]\nType=oneshot\n" + _env(cfg) + "Environment=PYTHONUNBUFFERED=1\n"
+        + f"ExecStart={_cmd(cfg, 'doctor', *_self_args(cfg))}\nTimeoutStartSec=120\n")
     files[f"{p}-doctor.timer"] = _file(
         "[Unit]\nDescription=Run the Mishe doctor",
         f"[Timer]\nOnBootSec=60\nOnUnitActiveSec={cfg.doctor_every}\nAccuracySec=10s\nUnit={p}-doctor.service",
