@@ -173,21 +173,6 @@ def ensure_dual_probe(home, unit_dir=None):
 PROBE_STALE_S = 300
 
 
-def _newest_probe_at(path, tail_lines=20):
-    """Newest `at` epoch among the last few samples, or None when there is no readable sample."""
-    try:
-        lines = Path(path).read_text(encoding="utf-8").splitlines()[-tail_lines:]
-    except (OSError, UnicodeDecodeError):
-        return None
-    stamps = []
-    for line in lines:
-        try:
-            stamps.append(float(json.loads(line)["at"]))
-        except (ValueError, KeyError, TypeError):
-            continue
-    return max(stamps) if stamps else None
-
-
 def probe_problems(home, unit_dir=None, *, now=None, fields=None):
     """Doctor reasons the root-fs probe is not live from its installed unit with fresh samples; [] when healthy."""
     unit_dir = Path(unit_dir) if unit_dir else Path.home() / ".config/systemd/user"
@@ -204,7 +189,7 @@ def probe_problems(home, unit_dir=None, *, now=None, fields=None):
     if durable.is_file() and fields.get("FragmentPath") != str(durable):
         problems.append(f"root-fs probe: loaded fragment {fields.get('FragmentPath', 'UNKNOWN')!r} is not the installed unit")
     now = time.time() if now is None else now
-    newest = _newest_probe_at(Path(home) / "operator" / "dual-probe.jsonl")
+    newest = release_boundary.newest_sample_at(Path(home) / "operator" / "dual-probe.jsonl")
     if newest is None:
         problems.append("root-fs probe: no readable sample in operator/dual-probe.jsonl")
     elif now - newest > PROBE_STALE_S:

@@ -1,4 +1,5 @@
 """Only shell text emitted by committed-release promotion."""
+import json
 import shlex
 from pathlib import Path
 
@@ -19,6 +20,21 @@ def owned_runtime_units(home, unit_dir):
                  Path(line.split("=", 1)[1]).is_relative_to(Path(home).resolve()) for line in text.splitlines())}
     owned.update(p for p in texts if p.suffix == ".timer" and p.with_suffix(".service") in owned)
     return sorted(owned)
+
+
+def newest_sample_at(path, tail_lines=20):
+    """Newest `at` epoch among the last few JSONL samples, or None when there is no readable sample."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()[-tail_lines:]
+    except (OSError, UnicodeDecodeError):
+        return None
+    stamps = []
+    for line in lines:
+        try:
+            stamps.append(float(json.loads(line)["at"]))
+        except (ValueError, KeyError, TypeError):
+            continue
+    return max(stamps) if stamps else None
 
 
 def unit_fields(show_text):
