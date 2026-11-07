@@ -18,6 +18,11 @@ SITE = Path(os.environ.get("MISHE_TAUFTAUF_HOME")
             or os.environ.get("MISHE_SEED_HOME") or ".mishe-tauftauf")
 LOG = SITE / "spatial/work/household/signatures.jsonl"
 LATEST = SITE / "discovery/latest.json"
+AUDIO = SITE / "spatial/work/household/audio.jsonl"
+NOTE3_GLOB = "spatial/work/household/note3_samples_run*.jsonl"
+XTTS_DIR = Path.home() / ".local/share/tts/tts_models--multilingual--multi-dataset--xtts_v2"
+XTTS_SIZE = 1867929118
+TRANSCRIPT_WINDOW_S = 600
 ROOMS_FILE = SITE / "spatial/work/household/rooms.json"
 DRAW_EVERY = 10
 SHADES = " .:-=+*#%@"
@@ -89,6 +94,92 @@ def phones():
     return out
 
 
+def read_rows(path, limit=400):
+    try:
+        lines = path.read_text().splitlines()[-limit:]
+    except OSError:
+        return None
+    rows = []
+    for line in lines:
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            continue
+    return rows
+
+
+def rms_spark(values):
+    if not values:
+        return ""
+    top = max(max(values), 1.0)
+    return "".join(SPARK[min(7, int(v / top * 7.999))] for v in values)
+
+
+def sound_lines(now):
+    rows = read_rows(AUDIO)
+    if rows is None:
+        return ["  SOUND: UNKNOWN (no audio log at all)"]
+    if not rows:
+        return ["  SOUND: UNKNOWN (audio log empty)"]
+    out = []
+    mics = {}
+    for r in rows:
+        mics.setdefault(r.get("room", "?") + " / " + str(r.get("source", "?")), []).append(r)
+    for mic, mrows in mics.items():
+        last = mrows[-1]
+        age = int(now - last.get("t", 0))
+        state = last.get("status", "?")
+        fresh = "" if age < 300 else "  STALE: no sampling for %d min (UNKNOWN now)" % (age // 60)
+        out.append("  %s  rms %.0f  %s  %ds ago%s" % (mic, last.get("rms", 0), state, age, fresh))
+        out.append("    level " + rms_spark([r.get("rms", 0) for r in mrows[-40:]]))
+    heard = [r for r in rows if r.get("text") and now - r.get("t", 0) < TRANSCRIPT_WINDOW_S]
+    out.append("  heard in the last %d min (hint lines and calibration text only):" % (TRANSCRIPT_WINDOW_S // 60))
+    if not heard:
+        out.append("    (nothing kept: windows without the hint word are not transcribed or are discarded)")
+    for r in heard[-5:]:
+        out.append("    %s %s: %s" % (time.strftime("%H:%M:%S", time.gmtime(r["t"])), r.get("room", "?"),
+                                      str(r["text"])[:90]))
+    return out
+
+
+def voice_lines():
+    size = None
+    try:
+        size = (XTTS_DIR / "model.pth").stat().st_size
+    except OSError:
+        pass
+    model = "model ok" if size == XTTS_SIZE else ("model MISSING" if size is None else "model WRONG SIZE")
+    sock = XTTS_DIR.parent.parent.parent.parent / ".mesh/voice-clone/xtts.sock"
+    try:
+        live = sock.is_socket()
+    except OSError:
+        live = False
+    unit = "?"
+    try:
+        import subprocess
+        unit = subprocess.run(["systemctl", "--user", "is-active", "mesh-voice-clone.service"],
+                              capture_output=True, text=True, timeout=5).stdout.strip() or "?"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    state = "OK" if (size == XTTS_SIZE and unit == "active" and live) else "RED"
+    return ["  VOICE clone: %s  (%s, unit %s, socket %s)  synth probe not wired yet" %
+            (state, model, unit, "present" if live else "absent")]
+
+
+def note3_lines(now):
+    newest = None
+    for f in sorted(SITE.glob(NOTE3_GLOB))[-3:]:
+        rows = read_rows(f, 5) or []
+        if rows:
+            newest = rows[-1]
+    if newest is None:
+        return ["  NOTE3 sensor feed: UNKNOWN (no samples)"]
+    t = newest.get("t") or newest.get("epoch") or newest.get("time")
+    age = int(now - t) if isinstance(t, (int, float)) else None
+    return ["  NOTE3 sensor feed: last sample %s ago%s" % (
+        "?" if age is None else "%ds" % age, "  STALE (UNKNOWN)" if age is None or age > 300 else "")]
+
+
 def box(title, lines, width):
     top = "┌─ " + title + " " + "─" * max(0, width - len(title) - 5) + "┐"
     body = ["│ " + l.ljust(width - 4)[:width - 4] + " │" for l in lines]
@@ -149,6 +240,13 @@ def draw():
                    f"light={lux}lux  battery={bat.get('level')} charging={bat.get('charging')}  "
                    f"(from discover scan {int(age)}s old)")
     out.append("  position of phones: only as the household states it")
+    out.append("")
+    out.append("")
+    out.append("SOUND, VOICE, SENSOR FEEDS")
+    now = time.time()
+    out += sound_lines(now)
+    out += voice_lines()
+    out += note3_lines(now)
     out.append("")
     out.append("WHERE IS ILYA: UNKNOWN. Not validated against labels yet.")
     best = None

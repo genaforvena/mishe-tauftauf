@@ -46,6 +46,20 @@ def word_match(said: str, heard: str) -> float:
     return round(hit / len(want), 2)
 
 
+def wer(said: str, heard: str) -> float:
+    """Word error rate: word-level edit distance over the number of reference words."""
+    ref, hyp = words(said), words(heard)
+    if not ref:
+        return 0.0
+    prev = list(range(len(hyp) + 1))
+    for i, r in enumerate(ref, 1):
+        cur = [i]
+        for j, h in enumerate(hyp, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (r != h)))
+        prev = cur
+    return round(prev[-1] / len(ref), 3)
+
+
 def hint_ok(heard: str, variants: list[str]) -> bool:
     """The hint word must match a listed variant exactly: one letter of fuzz would accept
     common names (a Russian "Маша" is one letter from "миша")."""

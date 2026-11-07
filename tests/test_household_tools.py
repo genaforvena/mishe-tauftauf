@@ -31,6 +31,7 @@ def test_word_match_and_hint_variants():
 def test_edit_distance():
     cal = load("hint_calibration")
     assert cal.edit_distance("стоп", "стоб") == 1
+    assert cal.wer("a b c d", "a x c d") == 0.25
     assert cal.edit_distance("", "abc") == 3
 
 
@@ -50,3 +51,18 @@ def test_household_view_reads_rooms_from_site_config(tmp_path, monkeypatch):
     assert list(view.CAMERAS) == ["kitchen"] and view.CAMERAS["kitchen"]["every"] == 30
     assert view.spark([]) == "(no samples yet)"
     assert len(view.ascii_grid([0] * 48, 8, 6)) == 6
+
+
+def test_sound_panel_is_honest_about_missing_and_stale_audio(tmp_path, monkeypatch):
+    site = tmp_path / "site"
+    (site / "spatial/work/household").mkdir(parents=True)
+    monkeypatch.setenv("MISHE_TAUFTAUF_HOME", str(site))
+    view = load("household_view")
+    assert "UNKNOWN" in view.sound_lines(1000.0)[0]
+    log = site / "spatial/work/household/audio.jsonl"
+    log.write_text(json.dumps({"room": "r", "source": "m", "rms": 500, "status": "NO_SPEECH", "t": 100.0}) + "\n"
+                   + json.dumps({"room": "r", "source": "m", "rms": 900, "status": "HINT", "t": 990.0,
+                                 "text": "hello"}) + "\n")
+    lines = "\n".join(view.sound_lines(1000.0))
+    assert "HINT" in lines and "hello" in lines and "STALE" not in lines
+    assert "STALE" in "\n".join(view.sound_lines(5000.0))
