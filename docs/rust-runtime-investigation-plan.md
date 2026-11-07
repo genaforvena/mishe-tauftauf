@@ -150,3 +150,20 @@ this as a general Mishe design preference, including Python commands; it is not
 a reason to split every function into a process. Choose meaningful responsibilities
 and measure process/serialization cost. Preserve signal handling, containment,
 durable effects and clear error/UNKNOWN contracts across command boundaries.
+
+## Owner clarification: real replacement and a one-day target
+
+The intended direction is a small, composable POSIX-style Mishe with worthwhile
+responsibilities actually migrated to Rust, not a Rust sidecar or permanent
+parallel implementation. Each proposed cutover must name the authoritative
+consumer, the predecessor it retires, and removal of obsolete paths. Preserve
+Python where justified and reject unsafe or unhelpful migration candidates.
+
+The owner would like a running first Rust core slice within one day. Treat this
+as a planning target, not a guaranteed deadline or permission to skip baseline,
+fresh review, containment or activation/revert/reapply checks. Define precisely
+what that first slice owns; do not imply a full runtime rewrite. Include a
+24-hour critical path with effort estimates, prerequisites, actual-consumer
+acceptance and rollback, plus an explicit go/no-go if the evidence does not
+support safe delivery in that time. This investigation remains planning only;
+implementation requires a separate assignment after the proposal.
