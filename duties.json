@@ -281,6 +281,41 @@
       "resolver": "genome",
       "replaces": [],
       "covers": "Deterministic evidence/deadline sweep independent of next-due rearming; failure or missing sweep output remains UNKNOWN within three minutes."
+    },
+    {
+      "name": "audio-hint-livingroom",
+      "command": [
+        "{python}",
+        "{repo}/tools/audio_hint.py",
+        "window",
+        "--seconds",
+        "8",
+        "--room",
+        "livingroom",
+        "--site",
+        "{home}"
+      ],
+      "every": 20,
+      "timeout": 90,
+      "max_age": 120,
+      "resolver": "senses",
+      "covers": "living-room microphone hint window: one row per cadence; UNKNOWN when the mic or transcriber fails",
+      "replaces": []
+    },
+    {
+      "name": "voice-clone-ready",
+      "command": [
+        "{python}",
+        "{repo}/checks/voice-clone-ready.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 600,
+      "timeout": 300,
+      "max_age": 1500,
+      "resolver": "senses",
+      "covers": "voice.clone.ready: clone model file, mesh-voice-clone unit, daemon socket and a no-sound synthesis probe, with bounded self-healing",
+      "replaces": []
     }
   ],
   "retired": [

@@ -8,9 +8,9 @@ written anywhere.
 
 Pipeline (the gates are not bypassed):
   arecord -> RMS -> mesh-whisper-filter --wav (silence gate)
-          -> mesh-whisper-run -l auto --prompt VOCAB (niced, serialized)
+          -> mesh-whisper-run -l ru, then -l en, --prompt VOCAB (niced, serialized; never auto)
           -> mesh-whisper-filter --text (hallucination gate)
-          -> keep the segment from the first EXACT hint word onward
+          -> keep the segment from the first EXACT hint word onward (ru pass first)
   The WAV file is removed in a finally block whatever happens.
 
 The vocabulary (prompt, hint words, stop words, stop phrases) is a site file,
@@ -173,9 +173,14 @@ def gate_wav(path: Path) -> str:
     return p.stdout.strip() or f"rc={p.returncode}"
 
 
-def transcribe(path: Path, prompt: str) -> str:
+LANGS = ("ru", "en")  # pinned, never "auto": base on real English collapsed to Chinese (98.9% error)
+
+
+def transcribe(path: Path, prompt: str, lang: str) -> str:
+    if lang not in LANGS:
+        raise ValueError(f"language must be one of {LANGS}, got {lang!r}")
     p = subprocess.run(
-        ["nice", "-n", "10", WHISPER, "-m", str(MODEL), "-f", str(path), "-l", "auto",
+        ["nice", "-n", "10", WHISPER, "-m", str(MODEL), "-f", str(path), "-l", lang,
          "--prompt", prompt, "-np", "-nt"],
         capture_output=True, text=True, timeout=120)
     if p.returncode != 0:
@@ -218,19 +223,28 @@ def window(args: argparse.Namespace) -> dict:
         if not gate.startswith("PASS"):
             row["status"] = "SILENT_OR_DROPPED"
             return row
-        text = transcribe(wav, vocab["prompt"])
-        if not text or not text_gate(text).startswith("PASS"):
-            row["status"] = "NO_SPEECH"
+        # Each language is pinned and run on the same window; the first pass that carries the
+        # hint word (ru before en) is kept. Transcripts without the hint are dropped unseen.
+        hit = None
+        heard = False
+        for lang in LANGS:
+            text = transcribe(wav, vocab["prompt"], lang)
+            if not text or not text_gate(text).startswith("PASS"):
+                continue
+            heard = True
+            found = find_hint(text, vocab)
+            if found is not None:
+                hit = (lang, text, found)
+                break
+        if hit is None:
+            row["status"] = "NO_HINT" if heard else "NO_SPEECH"
             return row
-        found = find_hint(text, vocab)
-        if found is None:
-            # Ordinary conversation: transcript discarded, only the level is kept.
-            row["status"] = "NO_HINT"
-            return row
-        idx, offset, toks = found
+        lang, text, (idx, offset, toks) = hit
         hint = text[offset:].strip()
         row["status"] = "HINT"
+        row["lang"] = lang
         row["hint"] = hint
+        row["text"] = hint
         if is_stop(toks[idx + 1:], vocab):
             row["suspended_until"] = round(write_suspend(site, 1.0, "mishe stop"), 1)
             row["action"] = "suspended audio 1 h"
@@ -269,7 +283,10 @@ def main(argv: list[str] | None = None) -> int:
         if not 6 <= args.seconds <= 10:
             print("seconds must be 6-10", file=sys.stderr)
             return 2
-        emit(site, window(args))
+        row = window(args)
+        emit(site, row)
+        # Duty contract: 0 = observed (any non-failed status), 3 = cannot tell (UNKNOWN ages the signal).
+        return 3 if row.get("status") == "UNKNOWN" else 0
     elif args.cmd == "suspend":
         until = write_suspend(site, args.hours, "manual")
         print(json.dumps({"suspended_until": round(until, 1)}))

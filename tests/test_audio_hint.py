@@ -81,3 +81,10 @@ def test_vocabulary_loader_fails_closed(tmp_path):
         raise AssertionError("partial vocabulary must fail")
     except ValueError:
         pass
+
+
+def test_transcribe_refuses_auto_language():
+    # base on real English collapsed to Chinese under -l auto (98.9% error): language must be pinned.
+    import pytest
+    with pytest.raises(ValueError):
+        load().transcribe(Path("unused.wav"), "prompt", "auto")
