@@ -86,3 +86,34 @@ def test_fresh_note3_reports_raw_light(tmp_path):
     out = hc.note3_summary(str(tmp_path), now)
     assert out["status"] == "ok" and out["light_raw"] == [0.0, 2300.0, 0.0]
     assert "not verified" in out["light_note"]
+
+
+def _redmi_site(tmp_path, row):
+    f = tmp_path / "discovery/latest.json"
+    f.parent.mkdir(parents=True)
+    f.write_text(json.dumps({"observations": [dict(id="sense.body.redmi10.stream", **row)]}))
+    return str(tmp_path)
+
+
+def test_stale_redmi_stream_row_is_not_ok(tmp_path):
+    # the snapshot file is fresh (scan just ran) but the phone's newest row is 1032 s old,
+    # with no values: this must not read as a GREEN Redmi10
+    now = time.time()
+    site = _redmi_site(tmp_path, {"last_row_epoch": now - 1032, "values": None})
+    out = hc.redmi_summary(site, now)
+    assert out["status"] == "stale"
+
+
+def test_fresh_redmi_stream_row_with_values_is_ok(tmp_path):
+    now = time.time()
+    site = _redmi_site(tmp_path, {"last_row_epoch": now - 3,
+                                  "values": {"lux": {"value": 4.0}, "battery": {"level": 0.84}}})
+    out = hc.redmi_summary(site, now)
+    assert out["status"] == "ok" and out["lux"] == 4.0 and out["battery_raw"] == 0.84
+
+
+def test_fresh_redmi_heartbeat_without_values_is_unknown(tmp_path):
+    now = time.time()
+    site = _redmi_site(tmp_path, {"last_row_epoch": now - 2, "values": None})
+    out = hc.redmi_summary(site, now)
+    assert out["status"] == "unknown" and "no sensor values" in out["reason"]

@@ -147,13 +147,26 @@ def redmi_summary(site: str, now: float) -> dict:
     for row in data.get("observations", []):
         rid = str(row.get("id", ""))
         if rid.endswith(".stream") and "redmi10" in rid:
-            v = row.get("values", {})
-            age = file_age + float(row.get("row_age_s") or 0)
-            out = {"status": "ok" if age <= REDMI_MAX_AGE_S else "stale", "age_s": round(age, 1),
-                   "lux": v.get("lux", {}).get("value"),
-                   "battery_raw": v.get("battery", {}).get("level")}
-            if out["status"] == "stale":
-                out["reason"] = f"Redmi10 receipt {age:.0f}s old (limit {REDMI_MAX_AGE_S:.0f}s)"
+            v = row.get("values") or {}
+            # age the row by its own newest sample time; the snapshot file's mtime says
+            # only when the scan ran, not when the phone last delivered anything
+            last = row.get("last_row_epoch")
+            if isinstance(last, (int, float)):
+                age = now - float(last)
+            else:
+                age = file_age + float(row.get("row_age_s") or 0)
+            out = {"age_s": round(age, 1),
+                   "lux": (v.get("lux") or {}).get("value"),
+                   "battery_raw": (v.get("battery") or {}).get("level")}
+            if age > REDMI_MAX_AGE_S or age < -REDMI_MAX_AGE_S:
+                out["status"] = "stale"
+                out["reason"] = f"Redmi10 stream row {age:.0f}s old (limit {REDMI_MAX_AGE_S:.0f}s)"
+            elif not v:
+                # a snapshot row with no values is a heartbeat, not a sensor reading
+                out["status"] = "unknown"
+                out["reason"] = "Redmi10 stream row carries no sensor values"
+            else:
+                out["status"] = "ok"
             return out
     return {"status": "unavailable", "reason": "no Redmi10 stream row"}
 
