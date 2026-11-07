@@ -413,8 +413,8 @@ So a framing pass costs about 1.8 s of Python CPU today and about 0.95 s with th
 | State | Status |
 |---|---|
 | Implemented in the working tree | Yes: `rust/mishe-tape/`, `tests/test_mishe_tape_frames.py` |
-| Committed | Requested in this turn (see the commit referenced in the wall). Scoped to the new crate, the test, and this document. Not committed: other agents' edits (`duties.json`, `checks/rust-plan-progress.py`, `tests/test_rust_plan_progress.py`, `checks/work_balance.py`, `tests/test_work_balance.py`). |
-| Reviewed | **No.** Feed reading is a protocol boundary (`parsing-policy.json`), so the cutover is a strong change. The author cannot review it. A fresh reviewer has not been assigned. |
+| Committed | `9f94ede6` (crate, test, plan) and `a8590afb` (absolute offsets, resume at byte offset, `--offsets`). Scoped to the new crate, its test, and this document. Not committed: other agents' edits (`duties.json`, `checks/rust-plan-progress.py`, `tests/test_rust_plan_progress.py`, `checks/work_balance.py`, `tests/test_work_balance.py`). |
+| Reviewed | **No.** Review requested from genome by DM (tape seq 298167), covering the boundary and the release-binary seam (build in a throwaway directory under the guard vs prebuilt). Feed reading is a protocol boundary (`parsing-policy.json`), so the cutover is a strong change. The author cannot review it. A fresh reviewer has not been assigned. |
 | Activated | **No.** No release request, no pin move, no `feed.py` cutover. The running consumers still use the pinned Python framer. |
 | Observed | **No.** Nothing observed on live consumers for the Rust path. |
 | Recovered | Not applicable: nothing activated. |
@@ -424,7 +424,7 @@ Trailers: this session is not inside a wake, so no `Mishe-Wake` or `Mishe-Role` 
 ### 8.4 Cutover steps not yet done (in order)
 
 1. `feed.py` cutover: `_iter_text_lines` and `iter_feed_entries` are replaced by a subprocess reader of `mishe-tape frames`. This is the single framing authority; no Python fallback for the same responsibility after cutover.
-2. Retire the second framing implementation: `_frame_offsets` (`feed.py:187`, the checkpoint frame index, regex `FRAME_START_RE`) must come from the Rust binary too. Needs `--offset N` and an offsets output mode, with a differential test against `_frame_offsets` on the live tape.
+2. Retire the second framing implementation: `_frame_offsets` (`feed.py:187`) is replaced by `mishe-tape frames --offset N --offsets`. Done in `a8590afb` and checked on the live tape (whole and mid-tape resume equal the Python index). Still to do in the cutover: `feed.py` must pass the captured handle's inode via `/proc/self/fd/N`, so the bytes come from the inode the caller locked.
 3. Close the Unicode-digit divergence: the Rust header parser accepts ASCII digits only; Python's `\d` also accepts Unicode decimal digits in headers. The live tape has none (the live comparison is identical), but a tape with one would make Rust stop early. Either implement the Unicode digit class or add a tape check before cutover.
 4. Build provenance: the binary is built once in a throwaway directory under the 6.2 guard, placed as `releases/<sha>/bin/mishe-tape`, with a sha256 manifest. The pin must name that release. Consumers must resolve `mishe-tape` from the release, not from PATH.
 5. Fresh strong-change review by a non-author, then the activation, revert and reapply checks (5.1), then a release request from inside a wake (`mishe release request`, `wall_patch` record), then observation of real consumers (section 3.3's observation list).
