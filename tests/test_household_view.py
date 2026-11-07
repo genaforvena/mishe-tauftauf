@@ -29,3 +29,46 @@ def test_single_row_has_no_change(tmp_path, monkeypatch):
     cam = {"reading": None, "hist": [], "dist": []}
     hv.refresh("bedroom", cam)
     assert cam["dist"] == []
+
+
+def test_daylight_and_rhythm_are_unknown_without_their_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(hv, "DAYLIGHT_FILE", tmp_path / "daylight.json")
+    monkeypatch.setattr(hv, "ACTIVITY_FILE", tmp_path / "activity.json")
+    assert hv.daylight_lines(1e9) == ["  DAYLIGHT: UNKNOWN (no daylight curve yet)"]
+    assert hv.rhythm_lines(1e9) == ["  RHYTHM: UNKNOWN (no activity reading yet)"]
+
+
+def test_daylight_row_shows_each_room_with_missing_hours_as_dots(tmp_path, monkeypatch):
+    import json
+    daylight = tmp_path / "daylight.json"
+    hours = {f"{h:02d}": {"samples": 0, "median_luma": None, "lamp_steps": 0} for h in range(24)}
+    hours["05"] = {"samples": 9, "median_luma": 60.4, "lamp_steps": 0}
+    hours["07"] = {"samples": 9, "median_luma": 68.6, "lamp_steps": 0}
+    daylight.write_text(json.dumps({"rooms": {"living room": {"hours": hours}}}))
+    monkeypatch.setattr(hv, "DAYLIGHT_FILE", daylight)
+    lines = hv.daylight_lines(daylight.stat().st_mtime + 60)
+    row = next(line for line in lines if "DAYLIGHT living room" in line)
+    assert row.count("·") == 22 and "latest 07:00Z luma 68.6" in row
+    assert not any("STALE" in line for line in lines)
+
+
+def test_old_daylight_file_says_stale_not_current(tmp_path, monkeypatch):
+    import json
+    daylight = tmp_path / "daylight.json"
+    daylight.write_text(json.dumps({"rooms": {"living room": {"hours": {}}}}))
+    monkeypatch.setattr(hv, "DAYLIGHT_FILE", daylight)
+    lines = hv.daylight_lines(daylight.stat().st_mtime + hv.FEED_MAX_AGE_S + 120)
+    assert any("STALE" in line for line in lines)
+
+
+def test_rhythm_line_comes_from_the_activity_summary(tmp_path, monkeypatch):
+    import json
+    activity = tmp_path / "activity.json"
+    activity.write_text(json.dumps({"summary": {"lights_out_utc": "23:58Z",
+                                               "first_activity_after_lights_out_utc": None,
+                                               "longest_quiet_block_living_room": None},
+                                    "sound_by_hour": {"livingroom": {"07": {"samples": 3, "median_rms": 410.0}}}}))
+    monkeypatch.setattr(hv, "ACTIVITY_FILE", activity)
+    lines = hv.rhythm_lines(activity.stat().st_mtime + 10)
+    assert "RHYTHM (provisional): lights out 23:58Z; first living-room activity after that UNKNOWN" in lines[0]
+    assert lines[1].startswith("  SOUND by UTC hour, living room")

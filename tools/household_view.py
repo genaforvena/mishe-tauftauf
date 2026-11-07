@@ -33,6 +33,14 @@ camsig = importlib.util.module_from_spec(spec)
 sys.modules["camsig"] = camsig
 spec.loader.exec_module(camsig)
 
+hact_spec = importlib.util.spec_from_file_location("household_activity", Path(__file__).with_name("household_activity.py"))
+hact = importlib.util.module_from_spec(hact_spec)
+sys.modules["household_activity"] = hact
+hact_spec.loader.exec_module(hact)
+DAYLIGHT_FILE = SITE / "spatial/work/household/daylight.json"
+ACTIVITY_FILE = SITE / "spatial/work/household/activity.json"
+FEED_MAX_AGE_S = 1500  # the daylight and activity duties' max_age
+
 def load_cameras():
     """Rooms come from the site's rooms.json (house data, not in the repo):
     [{"name": "living room", "source": "webcam", "every": 45},
@@ -134,6 +142,52 @@ def sound_lines(now):
     for r in heard[-5:]:
         out.append("    %s %s: %s" % (time.strftime("%H:%M:%S", time.gmtime(r["t"])), r.get("room", "?"),
                                       str(r["text"])[:90]))
+    return out
+
+
+def read_json_file(path):
+    try:
+        return json.loads(path.read_text()), path.stat().st_mtime
+    except (OSError, ValueError):
+        return None, None
+
+
+def stale_note(mtime, now):
+    if mtime is None:
+        return ""
+    age = now - mtime
+    return "" if age <= FEED_MAX_AGE_S else "  STALE: written %d min ago (UNKNOWN now)" % (age // 60)
+
+
+def hour_spark(values, top):
+    """24 UTC hours; a missing hour is a dot, never a guessed level."""
+    return "".join("·" if v is None else SPARK[min(7, int(v / top * 7.999))] for v in values)
+
+
+def daylight_lines(now):
+    data, mtime = read_json_file(DAYLIGHT_FILE)
+    if not isinstance(data, dict) or not data.get("rooms"):
+        return ["  DAYLIGHT: UNKNOWN (no daylight curve yet)"]
+    out = []
+    for room, info in data["rooms"].items():
+        hours = info.get("hours", {})
+        vals = [hours.get("%02d" % h, {}).get("median_luma") for h in range(24)]
+        known = [h for h, v in enumerate(vals) if v is not None]
+        latest = ("latest %02d:00Z luma %.1f" % (known[-1], vals[known[-1]])) if known else "no usable hour yet"
+        out.append("  DAYLIGHT %-12s %s  %s" % (room, hour_spark(vals, 255.0), latest))
+    out.append("           hours 00Z..23Z, lamp steps removed, scale 0-255 luma" + stale_note(mtime, now))
+    return out
+
+
+def rhythm_lines(now):
+    data, mtime = read_json_file(ACTIVITY_FILE)
+    if not isinstance(data, dict):
+        return ["  RHYTHM: UNKNOWN (no activity reading yet)"]
+    out = ["  " + hact.rhythm_line(data.get("summary", {})) + stale_note(mtime, now)]
+    sound = data.get("sound_by_hour", {}).get("livingroom", {})
+    vals = [sound.get("%02d" % h, {}).get("median_rms") for h in range(24)]
+    top = max([v for v in vals if v is not None] or [1.0])
+    out.append("  SOUND by UTC hour, living room (median rms): " + hour_spark(vals, max(top, 1.0)))
     return out
 
 
@@ -242,6 +296,10 @@ def draw():
     out += sound_lines(now)
     out += voice_lines()
     out += note3_lines(now)
+    out.append("")
+    out.append("DAYLIGHT, RHYTHM (camera source; one night of data; not validated)")
+    out += daylight_lines(now)
+    out += rhythm_lines(now)
     out.append("")
     out.append("WHERE IS ILYA: UNKNOWN. Not validated against labels yet.")
     best = None
