@@ -357,7 +357,8 @@ def run_units(args, home: Path, now: float) -> int:
         # stamp keeps the last full pass visible so a missed cadence cannot hide.
         stamp_path = home / "doctor-feed-verified.json"
         try:
-            last_full = float((read_json(stamp_path) or {}).get("verified_at", 0))
+            stamp = read_json(stamp_path)
+            last_full = float(stamp.get("verified_at", 0)) if isinstance(stamp, dict) else 0.0
         except (TypeError, ValueError):
             last_full = 0.0
         full = now - last_full >= FEED_RECORD_VERIFY_INTERVAL

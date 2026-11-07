@@ -308,6 +308,27 @@ def test_doctor_verifies_records_on_first_run_then_hourly(site, tmp_path, monkey
     assert seen == [True]                                   # stale stamp: full pass again
 
 
+def test_doctor_reads_malformed_stamp_json_as_stale(site, tmp_path, monkeypatch):
+    """A stamp that is valid JSON but not an object is stale (full pass), not a doctor crash."""
+    from mishe_tauftauf import runtime_cli as rc
+    units_dir, seen = _doctor_feed_calls(site, tmp_path, monkeypatch)
+    stamp = site / "doctor-feed-verified.json"
+    stamp.write_text('["just", "a", "list"]')
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+    assert seen == [True]                                   # full pass on stale garbage
+    seen.clear()
+    stamp.write_text('"unix epoch string"')
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+    assert seen == [True]
+    seen.clear()
+    stamp.write_text('42')
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+    assert seen == [True]
+    # a stuffed-canonical rewrite after a full pass is a valid object again
+    written = (site / "doctor-feed-verified.json").read_text()
+    assert '"verified_at"' in written
+
+
 def test_doctor_stays_red_on_corrupt_tape_without_full_pass(site, tmp_path, monkeypatch):
     from mishe_tauftauf import feed as feed_mod
     units_dir, seen = _doctor_feed_calls(site, tmp_path, monkeypatch)
