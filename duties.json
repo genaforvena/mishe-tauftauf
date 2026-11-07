@@ -366,7 +366,7 @@
         "--site",
         "{home}"
       ],
-      "every": 60,
+      "every": 120,
       "timeout": 30,
       "max_age": 300,
       "resolver": "senses",
