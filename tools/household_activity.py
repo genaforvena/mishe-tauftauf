@@ -169,6 +169,29 @@ def operator_blind(base: Path) -> list[dict]:
     return out
 
 
+def cleaning_windows(base: Path) -> tuple[list[dict], str]:
+    """Labelled cleaning stretches from SITE/spatial/work/household/cleaning.json: a list of
+    {"start_utc", "end_utc", "note"} with ISO offsets. Frames and sound inside a stretch are
+    real but not the household's rhythm (for example a robot vacuum), so they stay in the rooms
+    buckets, leave the rhythm line and are reported as labelled. Returns (windows, status);
+    status is "none" (no file), "ok" or "unreadable" (rows kept as evidence, not applied)."""
+    path = base / "cleaning.json"
+    if not path.exists():
+        return [], "none"
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        out = [{"start": datetime.datetime.fromisoformat(r["start_utc"]).timestamp(),
+                "end": datetime.datetime.fromisoformat(r["end_utc"]).timestamp(),
+                "note": str(r.get("note", ""))[:200]} for r in rows]
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return [], "unreadable"
+    return out, "ok"
+
+
+def _in_cleaning(t: float, windows: list[dict]) -> bool:
+    return any(w["start"] <= t <= w["end"] for w in windows)
+
+
 def _interval(a: float, b: float) -> dict:
     return {"from_utc": hhmm(a), "to_utc": hhmm(b), "minutes": round((b - a) / 60),
             "reason": "no usable frame for over 300 s: camera unreachable or blind, not dark"}
@@ -195,10 +218,14 @@ def night_lights_out(lights: list[dict], data_end: float | None = None) -> float
 
 
 def summarize(living: tuple[list[dict], list[float]], bedroom: tuple[list[dict], list[float]],
-              blind: list[dict] = ()) -> dict:
-    lrecs, ltimes = living
-    brecs, btimes = bedroom
-    lights = luma_events(lrecs, ltimes) if lrecs else []
+              blind: list[dict] = (), cleaning: list[dict] = ()) -> dict:
+    lall, ltimes = living
+    ball, btimes = bedroom
+    # Labelled cleaning frames never feed the rhythm; the unobserved-gap check still uses all times.
+    lrecs = [r for r in lall if not _in_cleaning(r["t"], cleaning)]
+    brecs = [r for r in ball if not _in_cleaning(r["t"], cleaning)]
+    # luma_events indexes the full series by time, so it runs on all frames and cleaning events are dropped.
+    lights = [e for e in luma_events(lall, ltimes) if not _in_cleaning(e["t"], cleaning)] if lall else []
     settled = runs(brecs, lambda r: r["activity"] is not None and r["activity"] < QUIET
                    and r["luma"] <= SETTLED_LUMA, SETTLED_MIN_S)
     lights_out = night_lights_out(lights, lrecs[-1]["t"] if lrecs else None)
@@ -218,6 +245,9 @@ def summarize(living: tuple[list[dict], list[float]], bedroom: tuple[list[dict],
             + [b for b in blind if b["room"] == "living room"],
             "bedroom": [_interval(a, b) for a, b in unobserved_gaps(btimes)]
             + [b for b in blind if b["room"] == "bedroom"]},
+        "labelled_cleaning": [{"from_utc": hhmm(w["start"]), "to_utc": hhmm(w["end"]),
+                               "minutes": round((w["end"] - w["start"]) / 60), "note": w["note"]}
+                              for w in cleaning],
         "lights_events": [{"utc": hhmm(e["t"]), "kind": e["kind"], "step": e["step"]} for e in lights],
         "lights_out_utc": hhmm(lights_out),
         "first_activity_after_lights_out_utc": hhmm(first_active),
@@ -318,7 +348,11 @@ def visit_window(base: Path, now: float) -> dict:
 
 
 def build(signature_rows: list[dict], audio_rows: list[dict], now: float,
-          blind: list[dict] | None = None, visit: dict | None = None) -> dict | None:
+          blind: list[dict] | None = None, visit: dict | None = None,
+          cleaning: list[dict] | None = None, cleaning_status: str = "none") -> dict | None:
+    cleaning = cleaning or []
+    audio_rows = [r for r in audio_rows if not isinstance(r.get("t"), (int, float))
+                  or not _in_cleaning(float(r["t"]), cleaning)]
     frames = load_frames(signature_rows)
     if not any(frames.values()):
         return None
@@ -335,9 +369,10 @@ def build(signature_rows: list[dict], audio_rows: list[dict], now: float,
             .isoformat(timespec="seconds"),
             "method": "rooms: median consecutive-frame change /255 over gaps <= 300 s, 15-min buckets; "
                       "summary: 600 s trailing change, lamp steps, settled and quiet runs",
-            "rooms": rooms, "summary": summarize(living, bedroom, blind or []),
+            "rooms": rooms, "summary": summarize(living, bedroom, blind or [], cleaning),
             "sound_by_hour": sound_by_hour(audio_rows),
-            "visit": visit if visit is not None else {"guests_present": False, "source": "none"}}
+            "visit": visit if visit is not None else {"guests_present": False, "source": "none"},
+            "cleaning_status": cleaning_status}
 
 
 def write_atomic(path: Path, report: dict) -> None:
@@ -354,8 +389,9 @@ def main(argv=None) -> int:
     if not args.site.is_dir():
         raise SystemExit(f"site does not exist: {args.site}")
     base = args.site / HOUSEHOLD
+    cleaning, cleaning_status = cleaning_windows(base)
     report = build(read_jsonl(base / "signatures.jsonl"), read_jsonl(base / "audio.jsonl"), time.time(),
-                   operator_blind(base), visit_window(base, time.time()))
+                   operator_blind(base), visit_window(base, time.time()), cleaning, cleaning_status)
     if report is None:
         print("activity: no ok signature rows for any room: UNKNOWN", file=sys.stderr)
         return 1

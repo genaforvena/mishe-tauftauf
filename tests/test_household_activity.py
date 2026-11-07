@@ -161,3 +161,31 @@ def test_visit_window_tags_guests_and_is_unknown_when_unreadable(tmp_path):
     assert tagged["guests_present"] is True and tagged["source"] == "visit.json"
     (tmp_path / "visit.json").write_text("{not json")
     assert ha.visit_window(tmp_path, now)["guests_present"] is None
+
+
+def test_labelled_cleaning_leaves_the_rhythm_but_stays_visible(tmp_path):
+    # A vacuum stretch (lamp-free, busy frames) must not read as the household's evening.
+    cleaning = [{"start": float(T0 + 1500), "end": float(T0 + 2400), "note": "robot vacuum"}]
+    lr = _frames("living room", T0, T0 + 3000, lambda t: 40, moving_at=lambda t: T0 + 1500 <= t <= T0 + 2400)
+    audio = [{"t": float(T0 + 1800), "room": "livingroom", "rms": 900.0},
+             {"t": float(T0 + 100), "room": "livingroom", "rms": 50.0}]
+    report = ha.build(lr, audio, float(T0 + 3000), cleaning=cleaning, cleaning_status="ok")
+    summary = report["summary"]
+    assert summary["labelled_cleaning"] == [{"from_utc": ha.hhmm(T0 + 1500), "to_utc": ha.hhmm(T0 + 2400),
+                                             "minutes": 15, "note": "robot vacuum"}]
+    assert report["cleaning_status"] == "ok"
+    assert summary["unknown_intervals"]["living room"] == []  # labelled, not UNKNOWN
+    sound = report["sound_by_hour"]["livingroom"]
+    assert sum(h["samples"] for h in sound.values()) == 1  # the 50.0 row only
+    assert all(h["median_rms"] == 50.0 for h in sound.values())
+
+
+def test_cleaning_file_absent_or_unreadable_is_reported_not_applied(tmp_path):
+    base = tmp_path
+    assert ha.cleaning_windows(base) == ([], "none")
+    (base / "cleaning.json").write_text("{not json")
+    assert ha.cleaning_windows(base) == ([], "unreadable")
+    (base / "cleaning.json").write_text(json.dumps([{"start_utc": "2026-11-07T17:00:00+00:00",
+                                                     "end_utc": "2026-11-07T17:30:00+00:00", "note": "x"}]))
+    windows, status = ha.cleaning_windows(base)
+    assert status == "ok" and len(windows) == 1
