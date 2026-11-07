@@ -69,10 +69,27 @@ def strip_hint(text: str) -> tuple[str, bool]:
     return rest.strip(), had
 
 
+# Stop words end the visit for the whole room (brief: "stop means stop, for the whole room").
+STOP_WORDS = ("стоп", "stop", "хватит")
+_CLAUSE_END = re.compile(r"[,.!?;:]+")
+
+
+def is_stop(rest: str) -> bool:
+    first = _CLAUSE_END.split(rest.strip(), maxsplit=1)[0].strip().lower()
+    return first in STOP_WORDS or first.split(" ", 1)[0] in STOP_WORDS
+
+
+def single_clause(rest: str) -> bool:
+    """Collision guard: a call is one short clause. 'Миша, добрый день, мы смотрим футбол'
+    is a greeting followed by talk about the room, not a call; it is left alone."""
+    clauses = [c for c in _CLAUSE_END.split(rest.strip()) if c.strip()]
+    return len(clauses) <= 1
+
+
 def intent(rest: str) -> str | None:
     """Only these are answered. Anything else is not addressed to Mishe in a way it can answer."""
     t = ht.tidy(rest)
-    if not t:
+    if not t or not single_clause(rest):
         return None
     if ht.asks_time(t):
         return "time"
@@ -132,6 +149,15 @@ def once(site: Path, dry_run: bool = False, now: float | None = None) -> list[di
         raw = row.get("hint") or row.get("text") or ""
         rest, had = strip_hint(raw)
         lang = row.get("lang") if row.get("lang") in ("ru", "en") else "ru"
+        if had and is_stop(rest):
+            # the room asked for quiet: the humans' own flag stops every speaking path
+            if not dry_run:
+                (site / WORK / "speech-quiet.json").write_text(
+                    json.dumps({"t": now, "by": "call-watcher stop word", "text": rest[:60]}) + "\n",
+                    encoding="utf-8")
+                handled.add(t)
+            decisions.append({"t": t, "action": "quiet", "reason": "stop word"})
+            continue
         kind = intent(rest) if had else None
         if kind is None:
             handled.add(t)

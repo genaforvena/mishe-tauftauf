@@ -93,3 +93,29 @@ def test_dry_run_speaks_nothing_and_keeps_state(tmp_path, monkeypatch):
     out = cw.once(site, dry_run=True, now=NOW)
     assert out[0]["action"] == "dry-run" and "UTC" in out[0]["reply"]
     assert not (site / resp.WORK / cw.STATE).exists()
+
+
+def test_greeting_plus_room_talk_is_not_a_call():
+    # collision guard: a greeting followed by talk about the room is not addressed to Mishe
+    rest, had = cw.strip_hint("Миша, Добрый день, мы смотрим футбол.")
+    assert had and cw.intent(rest) is None
+    assert cw.intent(cw.strip_hint("Миша, добрый день.")[0]) == "greet"
+
+
+def test_stop_word_sets_room_quiet_and_answers_nothing(tmp_path, monkeypatch):
+    site = _site(tmp_path)
+    _write_rows(site, [_hint(NOW - 3, "Миша, стоп.")])
+    spoke = []
+    monkeypatch.setattr(resp, "speak", lambda *a, **k: spoke.append(a) or 0)
+    out = cw.once(site, now=NOW)
+    flag = site / resp.WORK / "speech-quiet.json"
+    assert spoke == [] and flag.exists() and out[0]["action"] == "quiet"
+    assert resp.quiet(site) is True
+    flag.unlink()
+
+
+def test_dry_run_writes_no_quiet_flag(tmp_path):
+    site = _site(tmp_path)
+    _write_rows(site, [_hint(NOW - 3, "Миша, стоп.")])
+    cw.once(site, dry_run=True, now=NOW)
+    assert not (site / resp.WORK / "speech-quiet.json").exists()

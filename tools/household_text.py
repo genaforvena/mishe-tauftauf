@@ -23,7 +23,7 @@ ASK_WHERE_RE = re.compile(
     r"где (ты|ilya|илья|розалия|rozalia|бруно|bruno)|where (are|is)|кто (дома|здесь)|who('s| is) (home|here)",
     re.I,
 )
-GREET_RE = re.compile(r"^\W*(привет|здравствуй|hi|hello|hey)\b", re.I)
+GREET_RE = re.compile(r"^\W*(привет|здравствуй|добрый (?:день|вечер|утро)|доброе утро|hi|hello|hey|good (?:morning|evening|afternoon))\b", re.I)
 SMALL_TALK_RE = re.compile(r"как дела|how are you", re.I)
 OCCUPIED_RE = re.compile(r"\b(?:ilya|rozalia)=living[_ ]room")
 EMPTY_RE = re.compile(r"living_room=empty")
