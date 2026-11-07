@@ -65,6 +65,15 @@ def _cmd(cfg: Config, *words: str) -> str:
     return " ".join([cfg.python, "-m", "mishe_tauftauf", "--home", str(cfg.home), *words])
 
 
+def _exec_word(word: str) -> str:
+    """One argv word as systemd reads an ExecStart token: whitespace splits it, so a word with a space
+    (``living room``) is double-quoted; ``$`` and ``%`` are specifiers and are escaped as ``$$`` and ``%%``."""
+    text = word.replace("%", "%%").replace("$", "$$")
+    if text and not re.search(r'[\s"\\]', text):
+        return text
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _self_args(cfg: Config) -> list:
     """The settings a doctor run needs to rebuild exactly what sync generated."""
     args = ["--unit-dir", str(cfg.unit_dir), "--prefix", cfg.prefix, "--repo", str(cfg.repo),
@@ -133,7 +142,7 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         files[f"{p}-producer-{prod.name}.service"] = _file(
             f"[Unit]\nDescription=Mishe producer {prod.name}\n{failed}",
             "[Service]\nType=oneshot\nUMask=0077\n" + _env(cfg)
-            + f"ExecStart={' '.join(prod.command)}\nTimeoutStartSec={prod.timeout}\n"
+            + f"ExecStart={' '.join(_exec_word(w) for w in prod.command)}\nTimeoutStartSec={prod.timeout}\n"
             + f"Slice={cfg.plants_slice}\n" * bool(cfg.plants_slice))
         files[f"{p}-producer-{prod.name}.timer"] = _file(
             f"[Unit]\nDescription=Run producer {prod.name}",

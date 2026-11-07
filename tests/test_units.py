@@ -66,6 +66,18 @@ def test_producer_gets_timer_and_oneshot_service(cfg):
     assert "OnFailure=mishe-failed@%n.service" in files["mishe-producer-devto.service"]
 
 
+def test_producer_execstart_keeps_a_spaced_argument_as_one_word(cfg):
+    # systemd splits ExecStart on whitespace: an unquoted "living room" reached the collector as two arguments,
+    # argparse rejected "room" (exit 2) and the household camera signal went RED on 2026-11-07.
+    cmd = ["/usr/bin/python3", "tool.py", "camera", "--room", "living room", "--path", "a$b%c\\d\"e"]
+    producers = [units.Producer(name="cam", command=cmd, every_seconds=60, timeout=120)]
+    line = next(l for l in units.render(cfg, ROLES, producers=producers)["mishe-producer-cam.service"].splitlines()
+                if l.startswith("ExecStart="))
+    assert '"living room"' in line
+    assert "a$$b%%c" in line
+    assert "ExecStart=/usr/bin/python3 tool.py camera --room " in line
+
+
 def test_dual_probe_is_a_durable_restarting_monitor_routed_to_failure(cfg):
     svc = units.render(cfg, ROLES)["mishe-dual-probe.service"]
     for needle in ("Type=simple", "Restart=always", "RestartSec=60", "WantedBy=default.target",
