@@ -88,3 +88,26 @@ def test_transcribe_refuses_auto_language():
     import pytest
     with pytest.raises(ValueError):
         load().transcribe(Path("unused.wav"), "prompt", "auto")
+
+
+def test_prompt_file_overrides_json_prompt(tmp_path):
+    ah = load()
+    d = tmp_path / "spatial" / "work" / "household"
+    d.mkdir(parents=True)
+    full = {
+        "prompt": "old json prompt",
+        "hint_words": ["mishe"],
+        "stop_words": ["stop"],
+        "stop_phrases": ["stop listening"],
+    }
+    import json as _json
+    (d / "hint_vocabulary.json").write_text(_json.dumps(full))
+    assert ah.load_vocabulary(tmp_path)["prompt"] == "old json prompt"
+    (d / "whisper-vocab.txt").write_text("Розалия, Rozalia, Роза\n")
+    assert ah.load_vocabulary(tmp_path)["prompt"] == "Розалия, Rozalia, Роза"
+    (d / "whisper-vocab.txt").write_text("\n")
+    try:
+        ah.load_vocabulary(tmp_path)
+        raise AssertionError("empty prompt file must fail closed")
+    except ValueError:
+        pass

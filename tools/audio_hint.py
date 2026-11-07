@@ -53,6 +53,7 @@ WHISPER = "mesh-whisper-run"
 FILTER = "mesh-whisper-filter"
 TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 VOCAB_NAME = "hint_vocabulary.json"
+PROMPT_NAME = "whisper-vocab.txt"
 VOCAB_KEYS = ("prompt", "hint_words", "stop_words", "stop_phrases")
 
 
@@ -65,8 +66,16 @@ def load_vocabulary(site: Path) -> dict:
         raise ValueError(f"{VOCAB_NAME} missing keys: {missing}")
     if not isinstance(data["prompt"], str) or not data["prompt"].strip():
         raise ValueError(f"{VOCAB_NAME} prompt is empty")
+    # Operator-maintained recognizer prompt (one line) overrides the JSON prompt when present.
+    prompt = data["prompt"]
+    prompt_file = out_dir(site) / PROMPT_NAME
+    if prompt_file.exists():
+        line = prompt_file.read_text(encoding="utf-8").strip().splitlines()
+        if not line or not line[0].strip():
+            raise ValueError(f"{PROMPT_NAME} is empty")
+        prompt = line[0].strip()
     return {
-        "prompt": data["prompt"],
+        "prompt": prompt,
         "hint_words": {tok(w) for w in data["hint_words"]},
         "stop_words": [tok(w) for w in data["stop_words"]],
         "stop_phrases": [tuple(tokens(p)) for p in data["stop_phrases"]],
