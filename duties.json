@@ -334,7 +334,7 @@
       "timeout": 120,
       "max_age": 300,
       "resolver": "senses",
-      "covers": "living-room webcam brightness grid, one row every 150 s (kept under the unit start budget); a blind lens (covered, dark or flat) is status blind and exits UNKNOWN",
+      "covers": "living-room webcam brightness grid, one row every 150 s (kept under the unit start budget); a blind lens (covered, dark or flat) is status blind, recorded and exits 2 (RED, observed); a failed capture exits 1 (crash)",
       "replaces": []
     },
     {
@@ -354,7 +354,7 @@
       "timeout": 240,
       "max_age": 900,
       "resolver": "senses",
-      "covers": "bedroom Mac camera brightness grid every four minutes; a blind lens exits UNKNOWN",
+      "covers": "bedroom Mac camera brightness grid every four minutes; a blind lens is status blind, recorded and exits 2 (RED, observed); a failed capture exits 1 (crash)",
       "replaces": []
     },
     {
