@@ -119,3 +119,32 @@ def test_dry_run_writes_no_quiet_flag(tmp_path):
     _write_rows(site, [_hint(NOW - 3, "Миша, стоп.")])
     cw.once(site, dry_run=True, now=NOW)
     assert not (site / resp.WORK / "speech-quiet.json").exists()
+
+
+def test_quiet_flag_is_respected_by_a_chained_pass(tmp_path, monkeypatch):
+    # a HINT row appended after a window, one pass, and the humans' quiet flag: nothing is spoken
+    site = _site(tmp_path)
+    (site / resp.WORK / "speech-quiet.json").write_text('{"by": "test"}\n')
+    _write_rows(site, [_hint(NOW - 2, "Миша, который час?")])
+    spoke = []
+    monkeypatch.setattr(resp.subprocess, "run", lambda *a, **k: spoke.append(a) or 0)
+    out = cw.once(site, now=NOW)
+    assert spoke == [] and out[0]["action"] == "refused"
+
+
+def test_overlapping_pass_is_skipped_while_lock_is_held(tmp_path, monkeypatch):
+    import fcntl
+    site = _site(tmp_path)
+    _write_rows(site, [_hint(NOW - 5, "Миша, который час?")])
+    spoke = []
+    monkeypatch.setattr(resp, "speak", lambda *a, **k: spoke.append(a) or 0)
+    held = (site / resp.WORK / cw.LOCK).open("a")
+    fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert cw.once(site, now=NOW) == []
+    finally:
+        fcntl.flock(held, fcntl.LOCK_UN)
+        held.close()
+    assert spoke == []
+    # the lock is released afterwards: the same call is answered by the next pass
+    assert cw.once(site, now=NOW)[0]["action"] == "spoke"

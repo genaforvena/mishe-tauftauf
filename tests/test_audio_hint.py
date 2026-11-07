@@ -132,3 +132,34 @@ def test_wake_word_inside_talk_is_not_a_hint_at_utterance_start():
     assert found is not None and found[0] != 0
     found = ah.find_hint("Миша включи свет", v)
     assert found is not None and found[0] == 0
+
+
+def test_window_chains_one_detached_call_watcher_pass(tmp_path, monkeypatch):
+    ah = load()
+    site = tmp_path
+    (site / "spatial" / "work" / "household").mkdir(parents=True)
+    launched = []
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            launched.append((argv, kw))
+
+    monkeypatch.setattr(ah.subprocess, "Popen", FakePopen)
+    ah.chain_call_watcher(site)
+    assert len(launched) == 1
+    argv, kw = launched[0]
+    assert argv[1].endswith("household_call_watcher.py") and argv[2:] == ["once", "--site", str(site)]
+    assert kw["start_new_session"] is True and kw["stdin"] is not None
+
+
+def test_chain_failure_never_raises_into_the_listener(tmp_path, monkeypatch, capsys):
+    ah = load()
+    site = tmp_path
+    (site / "spatial" / "work" / "household").mkdir(parents=True)
+
+    def boom(*a, **k):
+        raise OSError("no such interpreter")
+
+    monkeypatch.setattr(ah.subprocess, "Popen", boom)
+    ah.chain_call_watcher(site)  # must not raise
+    assert "call-watcher not started" in capsys.readouterr().err

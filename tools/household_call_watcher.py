@@ -24,6 +24,7 @@ Every decision is printed as one JSON line on stdout.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import importlib.util
 import json
 import re
@@ -44,6 +45,7 @@ ht = hr.ht
 WORK = hr.WORK
 AUDIO = "audio.jsonl"
 STATE = "call-watcher.json"
+LOCK = "call-watcher.lock"
 CALL_MAX_AGE_S = 120
 HANDLED_KEEP = 300
 
@@ -133,6 +135,22 @@ def rows(site: Path) -> list[dict]:
 
 
 def once(site: Path, dry_run: bool = False, now: float | None = None) -> list[dict]:
+    # One pass at a time: a window may chain a pass while a previous pass is still speaking.
+    lock_fh = (site / WORK / LOCK).open("a")
+    try:
+        fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_fh.close()
+        print(json.dumps({"action": "skip", "reason": "another pass holds the call-watcher lock"}))
+        return []
+    try:
+        return _once(site, dry_run, now)
+    finally:
+        fcntl.flock(lock_fh, fcntl.LOCK_UN)
+        lock_fh.close()
+
+
+def _once(site: Path, dry_run: bool, now: float | None) -> list[dict]:
     now = time.time() if now is None else now
     state = load_state(site)
     handled = set(state["handled"])

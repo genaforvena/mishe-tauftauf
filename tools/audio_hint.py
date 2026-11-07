@@ -317,6 +317,22 @@ def emit(site: Path, row: dict) -> None:
     print(line)
 
 
+def chain_call_watcher(site: Path) -> None:
+    """After each window, start one call-watcher pass (household_call_watcher.py once) so a
+    call is answered within one window. The pass is detached: the window never waits on a
+    spoken line (speak can take minutes), and nothing it does can raise into the listener.
+    Its output goes to call-watcher.log; the watcher's own lock stops overlapping passes."""
+    try:
+        log = out_dir(site) / "call-watcher.log"
+        with log.open("ab") as fh:
+            subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve().parent / "household_call_watcher.py"),
+                 "once", "--site", str(site)],
+                stdin=subprocess.DEVNULL, stdout=fh, stderr=fh, start_new_session=True, close_fds=True)
+    except (OSError, ValueError) as exc:
+        print(f"call-watcher not started: {type(exc).__name__}: {str(exc)[:200]}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -338,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         row = window(args)
         emit(site, row)
+        chain_call_watcher(site)
         # Duty contract: 0 = observed (any non-failed status), 3 = cannot tell (UNKNOWN ages the signal).
         return 3 if row.get("status") == "UNKNOWN" else 0
     elif args.cmd == "suspend":
