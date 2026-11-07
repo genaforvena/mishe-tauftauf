@@ -1,0 +1,447 @@
+# Rust runtime migration plan
+
+Status: planning proposal, not an implementation. Written from `docs/rust-runtime-investigation-plan.md` (949feffe, with the owner clarification at 3555dec8). It authorizes no Rust, no Cargo files, no `src/` edits, no unit changes, no pin move and no activation. Raw samples live under `.mishe-tauftauf/artifacts/rust-plan-20261107/` (gitignored).
+
+## Summary
+
+- The owner's direction is a small POSIX-style Mishe with worthwhile responsibilities really migrated to Rust, each cutover naming its authoritative consumer and the predecessor it retires. This plan takes that direction seriously and tests it against the measurements.
+- The measured cost is the tape read/verify path, and about two thirds of it is per-record Python overhead inside verification, not the fold (section 2.3). That makes the tape read/verify path the right first responsibility for a Rust core slice. Rust is justified there because the overhead is interpreter cost per record.
+- Single-authority rule: the verifier is shared by `Feed.entries()` (44 call sites) and `Feed.role_entries()` (4 call sites). A slice that moves only the role path would leave two verifiers live, which the brief forbids. So the first slice must own tape verification for every reader, and that is larger than a 24-hour task.
+- **Go/no-go: NO-GO for delivering the Rust slice in 24 hours.** Section 6 gives the flip conditions and the measurements that would change this. The 24-hour path is still written out, so it can be run as soon as those conditions hold.
+- Python-only fixes remain worth doing first on their own. They are language-independent, cheap, and reduce the baseline the Rust slice must beat (section 3.4).
+
+## 0. Provenance of this snapshot
+
+| Item | Value | Source |
+|---|---|---|
+| Checkout HEAD | `949feffe` on main; upstream `3555dec8` adds the owner clarification (read with `git show`, not merged) | `git log`, `git show 3555dec8:docs/rust-runtime-investigation-plan.md` |
+| Untracked, not ours | `checks/work_balance.py`, `tests/test_work_balance.py` (left alone) | `git status --short` |
+| Live pin | `runtime/current` -> `releases/4a4b94ce09b5cedc76b2a33bf0009f043c2edba7` | symlink |
+| Pin vs HEAD | Pin is an ancestor of HEAD, 5 commits behind. `producers.py`, `duties.py`, `runtime_cli.py` differ. The pinned producer lacks `unknown_codes` (added at `7eec5ed0`). | `diff` against the pin; `systemctl --user show mishe-producer-observer-checks.service` shows no `--unknown-codes` |
+| Rust toolchain | cargo 1.97.0, rustc 1.97.0 under `/home/mesh-home/.cargo/bin`. Not pinned: no `rust-toolchain.toml` or `.rust-toolchain` in the repo. rustup 1.29.0 also present. | `cargo --version`, `rustc --version`, `ls rust-toolchain*` |
+| Crate cache | `~/.cargo/registry` (2.2 GB) holds cached tarballs including `sha2-0.10.9`, `sha2-0.11.0`, `rusqlite-0.31.0`, `libsqlite3-sys-0.28.0`, `serde_json-1.0.150/151`, `hex-0.4.3`. Cache presence is not proof of a complete offline graph; no `Cargo.lock` exists. | `ls ~/.cargo/registry/cache/*/` |
+
+Coordination note: `bin/mishe wall write --owner rust-plan` refuses the role because no charter declares it. The wall is written directly to `.mishe-tauftauf/walls/rust-plan.md`, as the supervising session directed. No charter was created.
+
+## 1. Source-and-consumer map
+
+### 1.1 Consumers and deployment (pinned snapshot)
+
+Common to all producer units: `Type=oneshot`, `KillMode=control-group`, `MemoryHigh=1 GiB`, `MemoryMax=2 GiB`, `TasksMax=256`, `CPUQuota=infinity`, `MISHE_WORKLOAD_SLICE=mishe-plants.slice`, `PYTHONPATH=…/runtime/current/src`. Source: `systemctl --user show <unit>`.
+
+| Unit | ExecStart (abridged) | Timer | TimeoutStart / Stop | Duty (`duties.json`) |
+|---|---|---|---|---|
+| `mishe-producer-dispatch` | `python -m mishe_tauftauf produce dispatch` | 60 s | 1 min / 1 min 30 s | `duties.json:18-23` (every 60, timeout 30, max_age 300) |
+| `mishe-producer-readings` | `signal run readings --timeout 300 -- … discover scan` | 600 s | 5 min 30 s / 1 min 30 s | `duties.json:197-212` (every 600, timeout 300, max_age 900) |
+| `mishe-producer-observer-checks` | `signal run observer-checks --timeout 900 -- /usr/bin/python3 …/checks-runner/observer-checks.py --once` | 900 s | 15 min 30 s / 1 min 30 s | `duties.json:93-108` (every 900, timeout 900, max_age 2700) |
+| `mishe-producer-host-capacity` | `signal run host-capacity -- producers/host-capacity.sh` | 120 s | 1 min 30 s / 1 min 30 s | `duties.json:168-173` (every 120, timeout 60) |
+| `mishe-producer-budget` | `signal run budget` → `producers/budget.sh` | 600 s | — | `duties.json:154-159` (every 600, timeout 300) |
+| `mishe-doctor` | `doctor --unit-dir … --prefix mishe --repo … --pythonpath …` | 300 s | 2 min / 1 min 30 s | not a duty |
+| `mishe-wake@<role>` (genome, senses, steward, pub, operator, docs, health, field-review) | `wake <role> --repo … --timeout 1800` | path-triggered (`mishe-wake-<role>.path`) | 1 h 35 min / 20 s | `mishe-wake@.service` |
+
+Exit codes for producers: 0 GREEN, 2 RED, anything else an unobserved run that ages to UNKNOWN (`producers.py:26-43`).
+
+### 1.2 Source call sites (pinned snapshot, `runtime/current/src/mishe_tauftauf/`)
+
+| Responsibility | Location | Notes |
+|---|---|---|
+| Producer runner | `producers.py:26-43` (`run`) | Bounded subprocess, detail file, observe. |
+| Dispatch producer | `producers.py:46-57` (`dispatch`) | Reads dispatch records only. |
+| Producer table | `producers.py:98` (`produce`), `:105` (`load`) | |
+| Signal observation | `runtime_cli.py:129` (parser), `:153` (`run`), `signal_store.py` (`observe`) | |
+| Tape framing (header/body validation) | `feed.py:259` (`iter_feed_entries`), `:283`, `:303`, `:310` (malformed raises `FeedError`) | Raises at the first fault. |
+| Streamed tape reader | `feed.py:149` (`_iter_streamed_feed`), `:352` (`iter_feed_file`) | Bounded memory. |
+| Whole-tape reader | `feed.py:610-614` (`read_bytes`), `:973` (`Feed.entries`) | Reads and parses the whole tape. |
+| Record envelope verification | `feed.py:742` (`_verify_records`), `:908` (verified generator in `role_entries`) | Calls `records.py`. |
+| Verified-payload store | `records.py:229` (`VerifiedStore`), `:268` (`lookup`), `:314` (`verified_store`), `:323` (`cached_payload`); envelope sha256 at `records.py:208` | sqlite file `records.verified.sqlite3` (544 MB). |
+| Role projection | `feed.py:444` (`_role_fold`), `feed.py:53` (`_ROLE_ENTRIES_CACHE`, process-local), `feed.py:862-930` (`role_entries`) | Cache is in process; cold CLI processes always rescan. |
+| Checkpoint index | `feed.py:29` (`INDEX_STRIDE = 128`), `:653` (`_read_checkpoint`), `:717` (`_publish_checkpoint`) | Used to validate cache, not to skip the scan. |
+| Identity index | `feed.py:527-576` (`_malformed_receipt`, `meta.malformed` count), `:1128` | sqlite `feed.identities.sqlite3` (23.5 MB). |
+| Wall context | `wall.py:865-886` (`context`), `:880`, `:965` | Calls `role_entries`. |
+| Wake dossier | `wake.py:52` (`role_entries`) | One process per wake. |
+| Migration | `migrate.py:29` (`role_entries`) | |
+| Discovery scan | `discovery.py:7217` (`scan`), `discovery.py:4602` (`iter_feed_file`, DM-disposition sense) | Module is 7,632 lines. |
+| CLI | `cli.py:173-176` (`cmd_wall show`), `:277-281` (`cmd_feed`, whole tape), `:143-147` (`_require_site_role`) | |
+
+### 1.3 Tape scale and fan-out
+
+- Tape: `chat.log`, 209,420,968 bytes at 23:34Z (`feed.py:517` selects it). 298,161 entries (profile count of `_verify_records` calls).
+- `Feed.entries()` callers: 44 across 13 modules. `role_entries()` callers: 4 (`wall.py:880`, `:965`, `wake.py:52`, `migrate.py:29`).
+- `observer-checks` does not read the tape directly (no `chat`, `Feed`, `entries` reference in `.mishe-tauftauf/checks-runner/observer-checks.py`). It does run `cli append` (line 314), which writes to the tape, and runs configured check programs (line 256). Whether those child programs read the tape is UNKNOWN; the list of them was not traced.
+
+### 1.4 Constraints, history and incidents
+
+- Containment: producer units carry `ConditionPathExists=!/var/lib/mishe-containment/tripped`. In 24 h, `readings` was skipped 2×, `observer-checks` 2×, `doctor` 5×, `household-activity` 3×, `host-capacity` 12×, `dispatch` 24×. At 23:46Z the tripped file is absent.
+- 22:48Z: `mishe-producer-readings.service` was SIGKILLed (`code=killed, status=9/KILL`), 150.3 MiB peak, 28.8 s CPU (`journalctl --user -u mishe-producer-readings.service`).
+- **OOM 2026-11-03, verified in the journal (user journal, `journalctl --user --since "2026-11-03 13:00" --until "2026-11-03 15:00"`):** `tmux-spawn-…` scopes were OOM-killed at 13:09:53Z, 13:53:03Z and 14:08:01Z; `mishe-host-guard.service` was stopped at 13:09:54Z and 13:53:05Z; then `-.slice`, `mishe.slice` and `mishe-lifeline.slice` each report "killed by the OOM killer" at 13:57:02Z.
+- The comment at `feed.py:901-905` says "2026-11-03 13:53Z" and cites "oom_kill 47->48" for supervisors on the 3 GiB lifeline slice. The journal's lifeline kill is at 13:57:02Z, and the 13:53:03Z kill is a tmux scope. The comment's time is approximately right and does not match the lifeline kill exactly.
+- Causal link from the tape read path to that OOM: UNKNOWN. The journal does not name the killed process, and no kernel log for that window survives (`journalctl -k` shows nothing for 11-03; boot history starts 11-05).
+
+## 2. Baseline
+
+### 2.1 Method and guard
+
+- Snapshot: `runtime/current/src` (4a4b94ce), interpreter `.venv/bin/python` (Python 3.12.3), environment as the units set it.
+- Guard for every measurement: skip and log if 1-min loadavg ≥ 4 or MemAvailable < 4 GiB. Nothing was skipped. Load was 0.78–1.0 and MemAvailable about 28 GB throughout.
+- Timing: `/usr/bin/time`, three repetitions per command; samples kept in `artifacts/rust-plan-20261107/baseline/`.
+- Side effects checked: `--help`, `pain list` (reads `top-pains/`), `delivery show` (reads `deliveries/*.json`, `delivery.py:603`), `publication status` (reads), `wall show` (reads). Excluded: `discover scan` (writes), `doctor` (writes), `feed` (whole-tape parse, see 2.4), `task coordination-report` (whole-tape parse), `wall write` (writes).
+- Warm vs first run: the tape and modules are in page cache (buff/cache ≈ 28 GB). Every repetition is effectively warm. There is no cold-cache sample, and cache dropping is forbidden.
+
+### 2.2 Numbers
+
+| Command (pinned snapshot) | Reps | Elapsed (s) | User (s) | Sys (s) | Max RSS (MB) |
+|---|---|---|---|---|---|
+| `python -I -c pass` (interpreter floor) | 3 | 0.00 | 0.00 | 0.00 | 9.3 |
+| `-m mishe_tauftauf --help` | 3 | 0.08–0.09 | 0.06–0.08 | 0.01 | 25.7 |
+| `… pain list` | 3 | 0.08–0.09 | 0.06–0.07 | 0.01 | 25.5–25.7 |
+| `… delivery show` | 3 | 0.09 | 0.07–0.08 | 0.01–0.02 | 26.2–26.4 |
+| `… publication status` | 3 | 0.09 | 0.07 | 0.02 | 27.0–27.1 |
+| `… wall show --owner genome` | 3 | 17.68–18.04 | 15.21–15.50 | 2.33–2.53 | 69.5–69.8 |
+
+Import: `python -X importtime -c "import mishe_tauftauf.cli"` gives 53.9 ms cumulative (`baseline/import_cli.importtime.txt`).
+
+### 2.3 Where the 18 s goes (one cProfile run of `wall show --owner genome`)
+
+One run, same guard, pinned snapshot, no writes (`baseline/profile_wall_show.prof`, `profile_wall_show.top.txt`). Under cProfile the run took 35.3 s wall and 32.6 s user, so per-function times are inflated (about 2×). Use the proportions, not the absolute seconds, and do not add the fractions below; they overlap.
+
+| Component (cumulative in profile) | Share of profiled 35.1 s | Frames |
+|---|---|---|
+| `_role_fold` (role projection itself) | ~2% (self 0.6 s) | `feed.py:444` |
+| Streamed tape parse (`_iter_streamed_feed` → `iter_feed_entries`, `_iter_text_lines`) | ~21% (7.45 s) | `feed.py:149`, `:259`, `:398` |
+| `_verify_records` (per-record verification) | ~66% (23.2 s) | `feed.py:742` |
+| — of which `cached_payload` → `records.lookup` → sqlite `execute` | ~17% (5.9 s; sqlite execute 2.1 s, lookup 4.6 s) | `records.py:323`, `:268` |
+| — of which `check_pass_directory` / `_directory` (reopen directory fd per record) | ~13% (4.7 s; `_directory` 3.7 s) | `records.py:96`, `:91` |
+| — of which `pathlib.__eq__` (`Path(entry.home) == home` per record) | ~9% (3.0 s; 196k calls) | `pathlib.py:519` |
+| `verified_store` per record | ~7% (2.3 s) | `records.py:314` |
+
+Interpretation:
+- Most of the cost is per-record Python work in verification: directory and path bookkeeping (about 13% + 9%, with some overlap), sqlite lookups (about 13–17%), and the per-record loop. The fold is negligible.
+- Parse is about a fifth. A verifier that is faster but still does per-record path and sqlite work would recover only part of the 66%.
+- Measured floor: parse + fold + verification at per-record cost. Only the verification share is a candidate for a Rust boundary. Parse is also a candidate, but it is the subject of the 24-hour go/no-go, not of a separate claim.
+- This is a demonstrated attribution from one profile run. It is not a speedup claim for any Rust code.
+
+### 2.4 Service journals (24 h, read before any measurement)
+
+Source: `journalctl --user -u <unit> --since "-24h" -o cat`. "Consumed" lines are systemd CPU accounting; "memory peak" appears on some of them.
+
+| Unit | Finished | CPU per run | Memory peak (sampled) | Failures |
+|---|---|---|---|---|
+| `mishe-producer-readings` | 141 | n=140, mean 42.1 s, sum 5,891 s | max 770 MiB (4 samples) | 2 failed starts; 2 containment skips |
+| `mishe-producer-observer-checks` | 93 | n=94, mean 27.0 s, sum 2,542 s | 82 MiB (1 sample) | 1 failed start; 2 skips |
+| `mishe-doctor` | 256 | n=283, mean 10.1 s, sum 2,861 s | max 591 MiB (4 samples) | **27 failed starts; 25 exit status 1**; 5 skips |
+| `mishe-producer-budget` | 140 | n=140, mean 7.5 s, sum 1,049 s | max 529 MiB (2 samples) | 0 |
+| `mishe-producer-host-capacity` | 700 | not logged | — | 1 failed; 12 skips |
+| `mishe-producer-dispatch` | 1,390 | not logged | — | 0; 24 skips |
+| `mishe-producer-household-activity` | 87 | not logged | — | 4 failed; 3 skips |
+
+Wake units (finished in 24 h; CPU sums from Consumed lines, including model-driver CLI work): genome 76 (1,202 s), senses 125 (2,342 s), steward 43 (1,155 s), operator 26 (551 s), health 61 (1,139 s), docs 5 (104 s), field-review 2 (60 s), pub 1 (0 s).
+
+Reading:
+- Largest producer aggregate is `readings` (about 5.9k CPU-s/day), then `doctor` (about 2.9k, including failures), then `observer-checks` (about 2.5k).
+- `readings` peaks at up to 770 MiB against a 1 GiB `MemoryHigh`, so it is the producer closest to containment.
+- Doctor's 25 exit-1 runs are a current failure. The journal shows 25 RED lines alongside 281 "PASS local plant out of Git" lines. The cause of the RED lines is UNKNOWN.
+- Per-run CPU for dispatch and host-capacity is not logged (systemd logs only above its floor).
+
+### 2.5 Existing tests for the read path
+
+`tests/test_feed.py` covers the role-view cache directly (9 tests in the role-view and cache group, lines 90–225: streaming instead of whole reads, cache extension from the canonical tail, verification of discarded records, refusal of corruption, rejection of a bad appended record, rewrite and corrupt index). It also covers corruption refusal (line 314), corrupt index failing closed (355), checkpoint rebuild (403), identity index crash rebuild (436) and a reader failing closed mid-parse (679). `tests/test_records_verified_store.py` covers the verified store. Coverage of the role-view cache across processes is absent: no test covers a cold process reusing state, because the cache is process-local.
+
+### 2.6 Not measured (UNKNOWN, with safe trigger)
+
+- `mishe feed` (`cli.py:277-281`, whole-tape parse and print): not run. Trigger: loadavg < 2, MemAvailable > 8 GB, no containment trip for 24 h, and a preserved tape copy rather than live `chat.log`.
+- Scaling of parse and verify against tape size: UNKNOWN. Needs a preserved-copy series (25/50/100/200 MB prefixes, one repetition each) under the same trigger.
+- Cold-page-cache `wall show`: UNKNOWN. Cache dropping is forbidden.
+- Number of cold tape scans per wake: UNKNOWN. Hypothesis: each wake process pays one cold scan through `wake.py:52`. Settle it by reading one wake's journal or tracing `openat` on a copy.
+- `discover scan` profile (tape iteration at `discovery.py:4602` versus scanner logic): UNKNOWN. Writes a snapshot, so it is not a read-only baseline.
+- Serialization cost of handing ~300k parsed entries from a Rust process to Python (for `entries()` callers): UNKNOWN. This decides whether the single-authority slice is viable (section 6).
+
+## 3. Candidates, ranking and the first Rust core slice
+
+### 3.1 What the measurements say
+
+- The cost is in verification (66% of profiled time), mostly per-record Python overhead. A Rust implementation of the same per-record logic removes interpreter cost. It does not, by itself, remove sqlite access costs unless the verified store is also owned by Rust.
+- Verification is shared by 44 `entries()` callers and 4 `role_entries()` callers. Moving only the role path would duplicate the verifier, which the single-authority rule forbids.
+- The verified store (`records.verified.sqlite3`, 544 MB) is already a durable derived cache of verified payloads. A new derived cache (S1) therefore overlaps it. S1 can still remove the whole cost for cold readers, but only the role readers.
+
+### 3.2 Ranking (measured aggregate cost first; then reliability, boundary clarity, migration risk, build cost)
+
+| Rank | Candidate | Language | Evidence | Verdict |
+|---|---|---|---|---|
+| 1 | **T1: tape read/verify core** (framing, envelope verification, verified-store lookup, role fold; malformed-line evidence) | Rust | 66% of profiled `wall show` in verification, plus parse 21% (2.3). Shared by all readers. | **The owner's chosen responsibility and the first Rust core slice** (3.3). Not deliverable in 24 h (section 6). |
+| 2 | S0: hoist per-record path and directory work out of `_verify_records` (one directory fd per pass, one `Path` comparison, batched verified-store lookups) | Python | 13% directory + 9% path equality + some sqlite (2.3). Language-independent and not a boundary change. | Candidate for the first Python step, before T1 is decided. Needs semantic check against `records.py` verification rules. |
+| 3 | S1: derived role projection for cold readers | Python | 18 s per cold `wall show` (2.2); cache is process-local (`feed.py:53`). | Candidate. Overlaps the verified store (3.1). Benefit threshold in 3.4. |
+| 4 | S2: `readings` cadence or window-limited tape work | Python | 5.9k CPU-s/day (2.4). Cause unprofiled. | Deferred until the `discover scan` profile exists. Scheduler change, strong. |
+| 5 | S3: diagnose `doctor` exit-1 runs | Python | Current failure, cause UNKNOWN (2.4). | Diagnosis first; no migration. |
+| — | R2: Rust rewrite of `discovery.py` | Rust | No measured scanner cost; 7,632 lines. | **Rejected** for now. |
+| — | R3: Rust CLI front end | Rust | Startup 0.09 s, import 54 ms; cost is data-dependent. | **Rejected**: no startup problem. |
+| — | R4: Rust dispatch or host-capacity | Rust | Dispatch is cheap by design; host-capacity has no CPU sample; containment-adjacent. | **Rejected**: no measured benefit; protected limits. |
+| — | R5: resident feed service over IPC | either | Adds a resident process; the 2026-11-03 OOM concerns resident readers. | **Rejected**: speculative, and reintroduces the resident-memory failure. |
+| — | Budget producer as a Rust candidate | Rust | `budget.sh` calls operator-side scripts and a provider text module outside `src/`. | **Rejected**: not Mishe core. |
+
+### 3.3 The first Rust core slice (T1), precisely
+
+**What it owns.** One responsibility: turning the chat tape into verified entries and role projections. It owns framing, header and body validation, record envelope verification (sha256 check against `records.py:208`), the verified-payload lookup and store (`records.py:229-323`), and the role fold (`feed.py:444`). It does not own locking or writes to the tape, and it does not own sending or appending. It is a core slice, not a runtime rewrite.
+
+**Bounded program contract** (a new program, e.g. `mishe-tape`; name is a proposal):
+
+- `mishe-tape entries --tape PATH --home SITE [--start N] [--limit N]`: writes entries as length-prefixed records to stdout (binary, fixed header with sequence, timestamp, source, body length, body bytes, plus home reference); diagnostics on stderr.
+- `mishe-tape role --tape PATH --home SITE --role ROLE`: writes the role projection as one JSON object to stdout.
+- `mishe-tape verify --tape PATH --home SITE`: exit 0 when the whole tape verifies; exit 2 when a fault is found and writes the first fault as a single line on stderr, preserving the original text; any other exit code (crash, spawn failure) is unobserved.
+- Reads a preserved shared lock: the caller (Python) holds the shared lock during the capture (`feed.py:875-890`), passes the captured size with `--size N`, and the program reads only that prefix.
+- Writes: none to the tape. The verified-store updates are the only writes, performed with the same batching semantics as `records.py:299` and the same directory-identity check (`records.py:96`).
+
+**Authoritative consumers that call it:**
+- `Feed.entries()` (`feed.py:973`), via `entries` subcommand, for all 44 callers.
+- `Feed.role_entries()` (`feed.py:862`), via `role` subcommand, for `wall.py:880`, `wall.py:965`, `wake.py:52`, `migrate.py:29`.
+
+**Predecessor retired in the same release:**
+- `feed.py:149` `_iter_streamed_feed`, `:259` `iter_feed_entries`, `:398` `_iter_text_lines`, `:742` `_verify_records`, `:444` `_role_fold`, `:53` `_ROLE_ENTRIES_CACHE`, `:862-930` `role_entries` body (replaced by a subprocess wrapper), `records.py:229-323` verified-store logic (`VerifiedStore`, `lookup`, `store`, `cached_payload`, `verified_store`), `feed.py:610-614` whole-tape `read_bytes` path used by `entries()`.
+- Kept (not part of the slice): the Python `Feed` class's locking, checkpoint index, identity index (`feed.py:527-576`), and writers (`Feed.append*`). Retiring any of these needs a later slice.
+
+**Obsolete paths that must be deleted, so one authoritative implementation survives:** the Python framing and verification functions above, and the tests that exercise them only through the deleted functions (rewritten against the Rust contract). No Python verifier may remain callable from production code after the cutover. Temporary isolated validation (a fixture harness calling both implementations) is allowed under the brief, but not in the live path.
+
+**Build provenance (prerequisites, section 6):** Rust toolchain pinned by a committed `rust-toolchain.toml` (currently absent); `Cargo.lock` committed and the dependency graph vendored or verified offline from `~/.cargo/registry` (`sha2`, `rusqlite` with bundled `libsqlite3-sys`, `hex`, plus one JSON crate only if needed); target triple and glibc assumptions recorded; release binary stored in `releases/<sha>/bin/mishe-tape` with a sha256 manifest; the previous release directory retained for rollback.
+
+**Interface tests (must exist before cutover):**
+- Byte-identical outputs: `entries` and `role` against the Python implementation on the full 209 MB tape copy, all 298,161 entries, plus the existing fixture suite.
+- Malformed evidence: each malformed case in `feed.py:283-310` produces the same `FeedError` text on stderr and exit 2; the `meta.malformed` count written to the identity index (`feed.py:548`) is unchanged.
+- Partial and truncated input: a tape cut inside an entry, a missing trailing newline, a bad envelope digest, an unknown verified-store row, a directory swap during the pass (`records.py:96` check).
+- Concurrency: a writer appending while the reader holds the captured size.
+- Exit-code and stream contract: stdout is only the payload; diagnostics only on stderr; killing the process mid-write leaves the verified store consistent (sqlite transactions).
+
+**Numerical benefit threshold (derived from 2.2 and 2.3):**
+- Cold `wall show --owner genome`: user time ≤ 1.5 s (≥10× below 15.2–15.5 s), elapsed ≤ 2 s, peak RSS ≤ 70 MB, output byte-identical.
+- `entries` full tape: user time at least 5× below the Python parse plus verify on the same tape. This number is a target. The measured Python baseline for the full `entries` path is not yet taken (2.6).
+- No claim of speedup is made here. These are thresholds the first prototype must meet, measured on a preserved copy.
+
+**Invariants:** the tape is never modified by the slice; every record is verified before it is trusted; malformed and unknown input evidence is preserved (`parsing-policy.json`; `docs/protocol-boundaries.md`); a missing or unknown result stays UNKNOWN; unknown exit codes are unobserved, never GREEN.
+
+**Actual-running-consumer observation:** after promotion, journal `Consumed` lines for `mishe-wake@genome` and `mishe-wake@senses` and for `mishe-producer-readings`, compared with the pre-cutover window of equal length, plus one timed cold `wall show` on the live tape, plus a counter of `mishe-tape` exits by code (from the caller's log line).
+
+### 3.4 Python-first steps (language-independent, do before or instead of T1)
+
+- S0: hoist per-record work out of `_verify_records` (one directory fd per pass; compare home paths once; batch verified-store lookups). Benefit threshold: wall show user time ≤ 10 s (≥ 35% below 15.2 s), verified before any Rust decision. This is a hypothesis from 2.3, not a measured result.
+- S1: derived role projection for cold readers. Benefit threshold: ≥10× as in T1, output byte-identical to `_force_full`. Its rollback is deleting the derived file. Overlaps the verified store, so the measured benefit of S0 comes first.
+- The two can be combined. If S0 and S1 meet their thresholds, T1 must beat the combined baseline by the threshold in 3.3 or be abandoned (section 5.2).
+
+## 4. Failure, release and recovery acceptance
+
+### 4.1 Boundary: T1 (`mishe-tape`)
+
+| Case | Expected behaviour | Exists today | Unproven |
+|---|---|---|---|
+| Termination before a verified-store commit | Store unchanged; retry reads tape again | sqlite transactions and batching (`records.py:299`) | Kill during batch |
+| Termination after commit | Stored verifications stay valid; no tape change | Verified-store identity check | Across processes |
+| Exec or spawn failure | Python treats exit other than 0/2 as unobserved | Producer convention (`producers.py:26-43`) | For `mishe-tape` |
+| Child exit propagation | 0 ok, 2 refused, other unobserved | Producer convention | Fault injection |
+| stdout / stderr | Payload only on stdout; diagnostics on stderr | Producer detail file | For the new contract |
+| systemd SIGTERM / SIGKILL, descendants | Contained by `KillMode=control-group` | Yes, for producers and wakes | Under `mishe-tape` |
+| Lock lifetime | Caller holds shared lock during capture only (`feed.py:875-890`) | Yes | Across the subprocess call |
+| Partial, truncated, malformed input | Same `FeedError` text; exit 2; tape untouched | `feed.py:283-310` | Rust parity |
+| Rename / fsync durability | Verified store committed by sqlite; no rename needed | sqlite durability | — |
+| Interrupted update of the binary | Old release stays pinned until promotion succeeds | Pin mechanism | Needs a test |
+
+### 4.2 Boundary: S1 derived projection file
+
+| Case | Expected behaviour | Exists today | Unproven |
+|---|---|---|---|
+| Termination before rename | Temporary file ignored | — | Needs test |
+| Termination after rename | Valid file or fallback | Process-local checkpoint validation (`feed.py:653`) | Cross-process |
+| Partial or foreign file | Fall back to full scan; tape untouched | `FeedError` fallback (`feed.py:917-919`) | Cache-specific cases |
+| Fsync and rename | Fsync temp file, then rename | Not present | Needs test |
+
+### 4.3 Release and recovery (any boundary)
+
+- Release: committed-snapshot pin only; no build on the live host; artifact integrity by sha256 manifest.
+- Rollback: a single pin revert to the retained prior release (e.g. `releases/4a4b94ce…`). The derived file (S1) is deleted, not migrated. T1's rollback is the pin revert, because the Python predecessor lives in the prior release directory. Nothing else changes.
+- Acceptance: observation of the real consumers (section 3.3) after promotion, automatic rollback on failed observation (`AGENTS.md`).
+
+## 5. Policy, abandonment and review
+
+### 5.1 Ordinary versus strong change
+
+| Change | Class | Reason |
+|---|---|---|
+| S0 hoisting | Ordinary if verification rules are unchanged (proved by the byte-identical test); otherwise strong | Touches `feed.py` and `records.py`, which are in `parsing-policy.json`. |
+| S1 derived file | Ordinary if verification and lock are unchanged | Touches the feed reader; a fresh reviewer is still recommended. |
+| S2 `readings` cadence | Strong | Scheduler change (`duties.json` `every`/`max_age`). Needs fresh review and activation, revert and reapply checks. |
+| S3 doctor diagnosis | Ordinary (diagnosis only) | No behaviour change until cause is known. |
+| T1 `mishe-tape` | **Strong** | Protocol boundary, verification, durable verified store, delivery of a binary. |
+
+For any strong change, the required checks cannot be compressed or skipped:
+1. A fresh reviewer who did not author the change reviews it. The author cannot review it.
+2. Deterministic activation check: the new path is the one the real consumer calls, shown by observation, not by a unit test.
+3. Deterministic revert check: the pin revert returns the consumer to the predecessor, and the consumer's output is unchanged.
+4. Deterministic reapply check: reapplying the same pin reproduces the same observed behaviour.
+5. Only then promotion, and automatic rollback on failed observation.
+
+These checks are defined here, not executed. The owner's one-day target does not waive them.
+
+### 5.2 Abandonment conditions
+
+- T1 is abandoned if the byte-identical acceptance test cannot pass on the full tape, if the serialization cost in section 6 exceeds the Python parse cost, or if S0 plus S1 meet their thresholds and T1 cannot beat the combined baseline by the threshold in 3.3.
+- S1 is abandoned if output differs from `_force_full` or if the derived file can be trusted only by bypassing verification.
+- Any Rust step is abandoned if it needs a resident process or IPC to be useful.
+
+### 5.3 What would change the recommendation
+
+- A profile of `discover scan` showing the cost is scanner logic, not tape iteration: this raises S2 or R2.
+- Evidence that wakes do not call `wall show` cold: S1's benefit falls to producers only.
+- Superlinear parse or verify cost in tape size: strengthens T1.
+- A cold-cache measurement much larger than the warm one: strengthens S1.
+- S0 meeting its threshold: lowers the case for T1.
+
+## 6. 24-hour critical path, go/no-go and build headroom
+
+### 6.1 Go/no-go (decision made before any build)
+
+**Decision: NO-GO for delivering T1 as a running Rust core slice in 24 hours.** The reasons are measured or verified, not estimated:
+
+1. Single-authority: T1 must own verification for both `entries()` (44 callers) and `role_entries()` (4 callers). Moving only one path leaves two live verifiers. Owning both means a whole-tape handoff from Rust to Python for `entries()`, and the serialization cost of that is UNKNOWN (2.6).
+2. Verified-store coupling: verification uses `records.py` sqlite (`records.py:229-323`) and sha256 envelopes (`records.py:208`). T1 must own that store or leave Python doing per-record sqlite calls, which the profile identifies as a large share.
+3. Strong change: T1 is a protocol and verification boundary. The required fresh review and activation, revert and reapply checks (5.1) cannot be compressed.
+4. Toolchain not pinned: no `rust-toolchain.toml`, no `Cargo.lock`. Pinning them and resolving the offline graph is a build step, which is not authorized now.
+5. Byte-identical acceptance on 298,161 entries has not been exercised by anything.
+
+**The go condition for a later assignment (all must hold):**
+- G1 — Serialization: a measured prototype handoff (not authorized now) shows the Rust→Python `entries` handoff costs no more than the Python parse it replaces, on a preserved copy.
+- G2 — Speed: a measured prototype shows user time ≤ 1/5 of the Python parse plus verify path on the same tape, with byte-identical output (3.3 thresholds).
+- G3 — Headroom: all build triggers in 6.2 pass at build time.
+- G4 — Pin: a `rust-toolchain.toml` and `Cargo.lock` committed, with the dependency graph verified offline against `~/.cargo/registry`.
+- G5 — Review: a fresh reviewer assigned, and the strong-change checks in 5.1 scheduled.
+- G6 — Rollback: the prior release retained and the pin revert rehearsed on a copy.
+
+**What would say no (any one):** G1 or G2 failing on the preserved copy; the byte-identical test failing on the full tape; the malformed-evidence test changing any `FeedError` text or `meta.malformed` count; a reviewer rejecting the single-authority plan.
+
+**Safe trigger for collecting G1 and G2:** these need a prototype, which is an implementation assignment. Investigation can collect the cheap parts now: the full-tape `entries` Python baseline (the same guard as 2.1, one repetition, on a preserved copy when the trigger in 2.6 passes).
+
+**What still slips if no-go:** the Python-first steps S0 and S1 are not blocked by T1. They can proceed on their own assignments, and their results decide whether T1 is still needed.
+
+### 6.2 Build headroom prerequisites (from 0:op, applied to any build)
+
+Measured values at 23:46Z are shown; each trigger is checked again immediately before a build.
+
+| Prerequisite | Trigger | Value at 23:46Z | Result |
+|---|---|---|---|
+| Memory available | MemAvailable ≥ 8 GiB (MemFree is not a useful signal: page cache holds 28 GB) | 28.2 GB | pass |
+| Memory pressure | `/proc/pressure/memory` some avg10 ≈ 0 | avg10 0.00 | pass |
+| CPU load | 1-min loadavg < 4 | 0.96 | pass |
+| Revival timer | `plant-mishe-revive.timer` active; last service `Result=success`; not recovering from a trip | timer active, last trigger 23:42:16Z, `Result=success` | pass |
+| Containment | `/var/lib/mishe-containment/tripped` absent | absent | pass |
+| Mind windows | no `mishe-wake@*` running and no wake starting within the build window | not checked in this pass | UNKNOWN; must be checked immediately before build |
+| Niceness and caps | build under `nice -n 19`, `CARGO_BUILD_JOBS=2` (-j2), and a transient cgroup with `MemoryMax` set below the host limit | not applicable (no build) | to be defined by the build assignment |
+| Location | build once in a throwaway directory, outside the repo checkout and outside `src/` | not applicable | to be enforced |
+
+If any trigger fails: no build. The slice slips. The Python path stays authoritative, and the Python-first steps continue on their own assignments.
+
+### 6.3 Critical path (24 h planning target, conditional on the go conditions)
+
+Effort estimates are rough planning figures for a skilled author, not guaranteed. They are shown so the owner can see where the 24 hours goes. Items marked **blocked** cannot run inside this investigation.
+
+| # | Step | Effort | Status |
+|---|---|---|---|
+| 0 | Decision: go/no-go (6.1) | 0.5 h | done here: NO-GO |
+| 1 | Pin toolchain (`rust-toolchain.toml`, 1.97.0) and generate `Cargo.lock` offline | 1 h | **blocked** (build/implementation) |
+| 2 | Write the byte-identical harness against the Python path on a preserved tape copy (fixture + full tape) | 3 h | **blocked** (implementation) |
+| 3 | Prototype `mishe-tape entries` and `role` in a throwaway directory, measure G1 and G2 | 6 h | **blocked** (build) |
+| 4 | Malformed-evidence and concurrency tests | 3 h | **blocked** |
+| 5 | Cutover patch: delete predecessor paths, wrap `entries()` and `role_entries()` | 4 h | **blocked** |
+| 6 | Fresh strong-change review (not the author) | ≥ 2 h, asynchronous | **blocked** (needs a reviewer) |
+| 7 | Activation, revert and reapply checks, then promotion, then observation of real consumers | 2 h plus observation window | **blocked** |
+| — | Total planning estimate | ≈ 21.5 h of work (steps 0–7), plus review and observation waits | exceeds 24 h once review and observation are counted |
+
+Even if steps 1–7 went smoothly, the observation window and review waits take the path past 24 hours. The owner's one-day target therefore slips. Nothing in this path can be compressed without skipping a required check (5.1).
+
+## 7. Remaining UNKNOWNs
+
+1. `mishe feed` whole-tape cost and peak RSS (2.6).
+2. Parse and verify scaling against tape size (2.6).
+3. Cold-cache `wall show` timing (2.6).
+4. Cold tape scans per wake and their share of 339 wake runs/day (2.6).
+5. `discover scan` profile split: tape iteration versus scanner logic (2.6).
+6. Per-run CPU for `dispatch` and `host-capacity` (2.4).
+7. Cause of `doctor`'s 25 exit-1 runs and 25 RED lines (2.4).
+8. Whether `observer-checks`' child check programs (`checks-runner`, line 256) read the tape. Its own runner does not (1.3).
+9. Live behaviour of the 5 commits between the pin and HEAD (0).
+10. The OOM: the killed process and whether `role_entries` or the tape path was involved. The journal confirms the events at 13:09:53Z, 13:53:03Z and 13:57:02Z but not the cause (1.4).
+11. Whether the Rust crate graph resolves fully offline from `~/.cargo/registry`; no `Cargo.lock` exists (0).
+12. Serialization cost of the Rust→Python handoff for `entries()` (6.1 G1).
+13. Full-tape `entries` Python baseline (not yet measured, 6.1).
+14. Whether the `mishe-wake` processes are in a mind window during any build (6.2).
+15. Malformed-evidence form: `FeedError` text and the `meta.malformed` count are identified (`feed.py:283-310`, `:527-576`), but the full list of malformed-evidence artifacts the repo keeps is not inventoried.
+16. The 2026-11-03 OOM time mismatch with the `feed.py:901-905` comment (1.4).
+17. Test coverage of the verified store under concurrency (2.5 covers role views, not `records.py` concurrency).
+
+## 8. Implementation status (owner update: the inner rust-plan mind owns delivery)
+
+This section records what is implemented and what each state means. Terms follow the owner's ladder: **committed**, **reviewed**, **activated**, **observed**, **recovered**. Each is a separate fact; none implies the next.
+
+### 8.1 First Rust core slice: narrowed to framing
+
+The verifier cannot be the first slice alone. `Feed.entries()` (44 callers) and `Feed.role_entries()` (4 callers) share record verification and the verified store, so a verification-only slice would either duplicate it or pull in the whole protocol boundary. Framing is a separate responsibility with one authority. `iter_feed_entries` is the only framing function: both `_iter_streamed_feed` (`feed.py:149`) and `_iter_parsed_feed` (`feed.py:231`) pass through it (`feed.py:259`). The first slice is therefore framing only: header, body and terminator rules, line splitting, and sequence/timestamp checks. Verification, the verified store and the role fold stay in Python.
+
+Implemented in `rust/mishe-tape/`, a dependency-free crate pinned to Rust 1.97.0 (`rust-toolchain.toml`, `Cargo.lock` committed):
+- `src/frames.rs`: `split_lines` (the `str.splitlines` break set, CRLF as one terminator), `Framer` (state machine with the same line indexes and error texts as `iter_feed_entries`), and `read` (streaming, one segment and one entry in memory at a time).
+- `src/main.rs`: `mishe-tape frames PATH [--size N] [--start N]`. Output per entry: `E <seq> <timestamp> <source> <body-bytes>\n` followed by the body bytes and `\n`. Exit 0 when the range frames, 2 on a framing fault (the Python `FeedError` text on stderr, after every entry before it), 1 on usage or I/O.
+- 8 Rust unit tests (`cargo test --offline`), and `tests/test_mishe_tape_frames.py`, a differential test against the checkout's Python reader. It runs when `MISHE_TAPE_BIN` names a built binary and skips otherwise. With the binary it passes 4 tests and 18 subtests.
+
+### 8.2 Verified results
+
+Differential against the pinned Python `_iter_streamed_feed` (site-local harness under `artifacts/rust-plan-20261107/diff/`, not committed):
+
+| Input | Result |
+|---|---|
+| Live `chat.log` prefix, 209,446,794 bytes, all framed entries | **298,163 entries identical**, no first difference, both streams end together |
+| 22 malformed or edge fixtures (bad dates, leap years, bad hour and second, 7-digit fraction, sequence gap, unterminated, empty body, bad body prefix, no trailing newline, `v1 ` prefix, bad source, CR/VT/NEL/LS inside bodies, CRLF, header without newline) | 21 identical, including every `FeedError` text |
+| Invalid UTF-8 byte in a body | Both stop with a fault and no entries before it; **only the decoder's own text differs** (documented exception) |
+
+Before the streaming fix the Rust side was correct but held the whole range in memory (485 MB peak). The fix is measured below. The comparison caught two real divergences during development, both fixed: the timestamp range check ran before the sequence check, and the first UTF-8 fixture was not really invalid.
+
+Measurements (live tape prefix, same guard as 2.1, three repetitions each; samples under `artifacts/rust-plan-20261107/timing/`):
+
+| Measurement | User (s) | Sys (s) | Max RSS |
+|---|---|---|---|
+| Python framing only (`_iter_streamed_feed`, no verification) | 1.80–1.84 | 0.17–0.19 | 34 MB |
+| Rust `mishe-tape frames`, streaming | 0.46–0.47 | 0.04–0.05 | 2.4 MB |
+| Python consuming the Rust stream into `FeedEntry` objects (handoff) | 0.47–0.51 | 0.06–0.08 | 21 MB |
+| Rust child during that handoff | 0.48 | 0.08–0.09 | — |
+
+So a framing pass costs about 1.8 s of Python CPU today and about 0.95 s with the Rust framer plus the Python handoff, with less memory. That is about 0.85 s saved per full-tape framing pass. Against the cold `wall show` baseline of 15.2–15.5 s user, the framing slice alone saves about 5%. **The large cost is verification (about 66% of profiled `wall show`, section 2.3), and this slice does not remove it.** No claim of a larger speedup is made.
+
+### 8.3 States
+
+| State | Status |
+|---|---|
+| Implemented in the working tree | Yes: `rust/mishe-tape/`, `tests/test_mishe_tape_frames.py` |
+| Committed | Requested in this turn (see the commit referenced in the wall). Scoped to the new crate, the test, and this document. Not committed: other agents' edits (`duties.json`, `checks/rust-plan-progress.py`, `tests/test_rust_plan_progress.py`, `checks/work_balance.py`, `tests/test_work_balance.py`). |
+| Reviewed | **No.** Feed reading is a protocol boundary (`parsing-policy.json`), so the cutover is a strong change. The author cannot review it. A fresh reviewer has not been assigned. |
+| Activated | **No.** No release request, no pin move, no `feed.py` cutover. The running consumers still use the pinned Python framer. |
+| Observed | **No.** Nothing observed on live consumers for the Rust path. |
+| Recovered | Not applicable: nothing activated. |
+
+Trailers: this session is not inside a wake, so no `Mishe-Wake` or `Mishe-Role` trailer was added. The commit carries only the Claude coauthor line, as the session directs.
+
+### 8.4 Cutover steps not yet done (in order)
+
+1. `feed.py` cutover: `_iter_text_lines` and `iter_feed_entries` are replaced by a subprocess reader of `mishe-tape frames`. This is the single framing authority; no Python fallback for the same responsibility after cutover.
+2. Retire the second framing implementation: `_frame_offsets` (`feed.py:187`, the checkpoint frame index, regex `FRAME_START_RE`) must come from the Rust binary too. Needs `--offset N` and an offsets output mode, with a differential test against `_frame_offsets` on the live tape.
+3. Close the Unicode-digit divergence: the Rust header parser accepts ASCII digits only; Python's `\d` also accepts Unicode decimal digits in headers. The live tape has none (the live comparison is identical), but a tape with one would make Rust stop early. Either implement the Unicode digit class or add a tape check before cutover.
+4. Build provenance: the binary is built once in a throwaway directory under the 6.2 guard, placed as `releases/<sha>/bin/mishe-tape`, with a sha256 manifest. The pin must name that release. Consumers must resolve `mishe-tape` from the release, not from PATH.
+5. Fresh strong-change review by a non-author, then the activation, revert and reapply checks (5.1), then a release request from inside a wake (`mishe release request`, `wall_patch` record), then observation of real consumers (section 3.3's observation list).
+6. Rollback: a single pin revert to `releases/4a4b94ce…`, which is retained. The Python framer lives in that release, so the revert needs no rebuild.
+
+### 8.5 Go/no-go, updated
+
+- **GO, done:** build the framing core, test it in a throwaway directory, prove byte equality on the live tape, and commit the scoped crate and test.
+- **NO-GO for live delivery in the 24-hour target:** steps 1–6 need a fresh review and a release request from a wake. Neither is available from this session: the role `rust-plan` is not registered for wakes, and I cannot assign a reviewer. The 24-hour target is not met by this session. Nothing here is activated, and nothing waits on a disputed assumption.
+- **Flip to GO for cutover:** a reviewer accepts the framing boundary and its differential evidence (above), step 2 gives the same frame index on the live tape, and step 3 is closed.
+
+### 8.6 Remaining UNKNOWNs (updated)
+
+1. Verification's cost split after framing: the per-record share (sqlite lookups, path bookkeeping) is still measured only by the single profile (section 2.3), not by a benchmark.
+2. Serialization cost on the **verified** path: framing handoff is measured (0.5 s); the verified-entry path is not.
+3. Cold-cache timing (not measured; cache dropping is forbidden).
+4. Unicode-digit headers (step 3).
+5. Whether a reviewer will be available, and the review turnaround.
+6. The 2026-11-03 OOM cause (1.4).
+7. Live behaviour of the 5 commits between the pin and HEAD.
