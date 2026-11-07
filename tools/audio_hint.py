@@ -151,6 +151,18 @@ def is_suspended(site: Path, now: float) -> float | None:
     return until if until > now else None
 
 
+def speaking_until(site: Path, now: float) -> float | None:
+    """The household responder's speaking.lock holds the until-time of its line and follow-up."""
+    p = out_dir(site) / "speaking.lock"
+    if not p.exists():
+        return None
+    try:
+        until = float(p.read_text().strip())
+    except ValueError:
+        return float("inf")  # unreadable lock: fail closed, do not record
+    return until if until > now else None
+
+
 def write_suspend(site: Path, hours: float, reason: str) -> float:
     until = time.time() + hours * 3600
     suspend_path(site).write_text(json.dumps({"until": until, "reason": reason}) + "\n")
@@ -210,6 +222,12 @@ def window(args: argparse.Namespace) -> dict:
     if until is not None:
         row["status"] = "SUSPENDED"
         row["suspended_until"] = None if until == float("inf") else round(until, 1)
+        return row
+    # Do not record while Mishe's own line is in flight or its follow-up window is open.
+    speaking = speaking_until(site, now)
+    if speaking is not None:
+        row["status"] = "SPEAKING"
+        row["speaking_until"] = round(speaking, 1)
         return row
 
     try:
