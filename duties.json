@@ -369,6 +369,7 @@
       "every": 120,
       "timeout": 30,
       "max_age": 300,
+      "unknown_codes": [4],
       "resolver": "senses",
       "covers": "Note3 sensor sample and Redmi10 stream freshness with raw light and accelerometer; a stale or missing phone exits UNKNOWN",
       "replaces": []

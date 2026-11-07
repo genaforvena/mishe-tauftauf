@@ -129,6 +129,7 @@ def register(sub) -> None:
     p = sig.add_parser("run", help="observe NAME by running CMD: exit 0 GREEN, non-zero RED, cannot-run leaves it to expire")
     p.add_argument("name"); p.add_argument("--timeout", type=float, default=120)
     p.add_argument("--red-codes", default="2", help="exit codes that mean RED (default 2)")
+    p.add_argument("--unknown-codes", default="none", help="exit codes that mean stale or missing input: UNKNOWN, unit succeeds")
     p.set_defaults(cmd=[])
     p = add("produce"); p.add_argument("name")
     inbox = add("inbox").add_subparsers(dest="inbox_command", required=True)
@@ -237,7 +238,8 @@ def run(args) -> int:
             if not command:
                 raise ValueError("signal run needs a command after --")
             code = producers.run(home, args.name, command, now=now, timeout=args.timeout,
-                                red_codes=tuple(int(c) for c in args.red_codes.split(",") if c != "none"))
+                                red_codes=tuple(int(c) for c in args.red_codes.split(",") if c != "none"),
+                                unknown_codes=tuple(int(c) for c in args.unknown_codes.split(",") if c != "none"))
             armmod.arm(home, scheduler=scheduler(home))
             return code
         else:

@@ -82,6 +82,28 @@ def test_red_codes_are_declared_per_producer(home):
     assert store.read(home, "devto", now=NOW).value == "RED"
 
 
+def test_declared_unknown_code_succeeds_and_leaves_signal_to_age(home):
+    producers.run(home, "devto", [PY, "-c", "pass"], now=NOW, timeout=10)
+    before = (home / "signals" / "devto.json").read_bytes()
+    assert producers.run(home, "devto", [PY, "-c", "import sys; sys.exit(4)"], now=NOW + 5, timeout=10,
+                         unknown_codes=(4,)) == 0
+    assert (home / "signals" / "devto.json").read_bytes() == before
+    assert store.read(home, "devto", now=NOW + 5000).state == "UNKNOWN"
+
+
+def test_undeclared_code_stays_a_failure_even_with_unknown_codes_set(home):
+    assert producers.run(home, "devto", [PY, "-c", "import sys; sys.exit(1)"], now=NOW, timeout=10,
+                         unknown_codes=(4,)) == 2
+
+
+def test_load_passes_unknown_codes_to_the_adapter(home):
+    (home / "producers.json").write_text(
+        '[{"name":"phones","command":["/bin/true"],"every":120,"timeout":30,'
+        '"unknown_codes":[4],"signal":{"max_age":300,"subscribers":[]}}]')
+    cmd = producers.load(home, python=PY)[0].command
+    assert cmd[cmd.index("--unknown-codes") + 1] == "4"
+
+
 def test_ci_producer_maps_actions_results(tmp_path):
     store.register(tmp_path, "ci", max_age=900, subscribers=["genome"])
     for state, expect in (("pass", "GREEN"), ("fail", "RED")):

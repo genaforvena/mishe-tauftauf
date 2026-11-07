@@ -10,9 +10,11 @@
       Reads the newest Note3 sensor sample and the Redmi10 stream from the
       discovery snapshot, appends one row to spatial/work/household/phones.jsonl.
 
-Exit codes follow the duty runner: 0 = fresh and valid (GREEN), 1 = missing,
-stale, blind or failed (UNKNOWN; the signal ages to UNKNOWN). Nothing here reports
-RED. Every run prints one JSON line on stdout, which becomes the duty detail.
+Exit codes follow the duty runner: 0 = fresh and valid (GREEN), 1 = cannot tell
+(a crash or failed capture; the runner fails the unit). phones exits 4 when a phone
+is stale, missing or without values: the duty declares 4 as an unknown code, so the
+signal ages to UNKNOWN without failing the unit. Nothing here reports RED. Every run
+prints one JSON line on stdout, which becomes the duty detail.
 """
 from __future__ import annotations
 
@@ -221,13 +223,18 @@ def redmi_summary(site: str, now: float) -> dict:
     return {"status": "unavailable", "reason": "no Redmi10 stream row"}
 
 
+PHONES_UNKNOWN_EXIT = 4   # a stale, missing or valueless phone: declared unknown_codes in duties.json, not a crash
+
+
 def cmd_phones(args) -> int:
     now = time.time()
     phones = {"note3": note3_summary(args.site, now), "redmi10": redmi_summary(args.site, now)}
     row = {"t": round(now, 1), **phones}
     append(site_path(args.site, "spatial/work/household/phones.jsonl"), row)
     print(json.dumps(row, sort_keys=True))
-    return 0 if all(p["status"] == "ok" for p in phones.values()) else 1
+    if all(p["status"] == "ok" for p in phones.values()):
+        return 0
+    return PHONES_UNKNOWN_EXIT
 
 
 def main(argv=None) -> int:

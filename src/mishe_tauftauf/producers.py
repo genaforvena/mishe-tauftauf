@@ -5,6 +5,10 @@
 checks' own "cannot tell" 3, a missing binary, a timeout — leaves the signal
 untouched so it ages to UNKNOWN. The runner fails then, which is what routes it to a resolver; it never
 turns a broken check into GREEN or into a quieter RED.
+
+A duty may declare ``unknown_codes``: exit codes the check uses to say "the input is stale or missing,
+UNKNOWN" rather than "I broke". Those leave the signal untouched like any other unobserved run, but the
+unit succeeds, so a routine stale sample does not mark the producer failed.
 """
 from __future__ import annotations
 
@@ -23,7 +27,7 @@ DECLARED_REOFFER_SECONDS = 3600
 DETAIL_BYTES = 4000
 
 
-def run(home, name: str, command: list, *, now: float, timeout: float, red_codes=(2,)) -> int:
+def run(home, name: str, command: list, *, now: float, timeout: float, red_codes=(2,), unknown_codes=()) -> int:
     detail = Path(home) / "signals" / f"{name}.detail"
     detail.parent.mkdir(parents=True, exist_ok=True)
     scratch = detail.with_suffix(".detail.tmp")
@@ -35,6 +39,8 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
         print(f"mishe: {name}: not run: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     os.replace(scratch, detail)
+    if code in unknown_codes:
+        return 0            # a declared "stale or missing input": not observed, so the signal ages to UNKNOWN
     if code != 0 and code not in red_codes:
         # The detail file is overwritten by the next run, so the journal carries the check's output for this failure.
         print(f"mishe: {name}: exit={code} detail={detail.read_bytes()[:DETAIL_BYTES]!r}", file=sys.stderr)
@@ -118,9 +124,11 @@ def load(home, *, python: str, declared=None) -> list:
                               reoffer=spec.get("reoffer", DECLARED_REOFFER_SECONDS))
         timeout = item.get("timeout", 120)
         red = ",".join(str(c) for c in item.get("red_codes", [2])) or "none"
+        unknown = ",".join(str(c) for c in item.get("unknown_codes", [])) or "none"
         if item.get("builtin"):
             command = base + ["produce", name]
         else:
-            command = base + ["signal", "run", name, "--timeout", str(timeout), "--red-codes", red, "--"] + list(item["command"])
+            command = base + ["signal", "run", name, "--timeout", str(timeout), "--red-codes", red,
+                              "--unknown-codes", unknown, "--"] + list(item["command"])
         found.append(units.Producer(name=name, command=command, every_seconds=item["every"], timeout=timeout + 30))
     return found

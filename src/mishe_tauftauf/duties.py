@@ -35,6 +35,7 @@ def declared(repo, home, *, source=None) -> list:
         else:
             item["command"] = [_expand(w, home, repo, source) for w in duty["command"]]
             item["red_codes"] = duty.get("red_codes", [2])
+            item["unknown_codes"] = duty.get("unknown_codes", [])
         out.append(item)
     return out
 
