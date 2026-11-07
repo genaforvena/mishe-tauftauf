@@ -90,10 +90,22 @@ def test_yield_outside_a_wake_is_refused(site):
     assert cli("yield", "--result", "changed") == 2
 
 
-def test_sync_then_doctor_green_and_meta_signal_fresh(site, tmp_path):
+def _healthy_root_fs_probe(site, units_dir, monkeypatch):
+    """Doctor's root-fs probe check must see this fixture, not the host's systemd unit or operator sample."""
+    import json
+    import time
+    from mishe_tauftauf import release_promotion
+    (site / "operator").mkdir(exist_ok=True)
+    (site / "operator" / "dual-probe.jsonl").write_text(json.dumps({"at": time.time(), "event": "minute"}) + "\n")
+    monkeypatch.setattr(release_promotion, "_probe_fields", lambda: {
+        "FragmentPath": str(units_dir / release_promotion.DUAL_PROBE), "ActiveState": "active"})
+
+
+def test_sync_then_doctor_green_and_meta_signal_fresh(site, tmp_path, monkeypatch):
     units_dir = tmp_path / "units"
     assert cli("sync", "--unit-dir", str(units_dir), "--no-systemctl") == 0
     assert (units_dir / "mishe-wake-genome.path").exists()
+    _healthy_root_fs_probe(site, units_dir, monkeypatch)
     assert cli("doctor", "--unit-dir", str(units_dir)) == 0
     sig = store.read(site, "doctor", now=__import__("time").time())
     assert (sig.state, sig.value) == ("OK", "GREEN")
@@ -133,7 +145,7 @@ def test_signal_run_and_produce_commands(site):
     assert store.read(site, "dispatch", now=now).value == "GREEN"
 
 
-def test_sync_installs_declared_producers_and_doctor_agrees(site, tmp_path):
+def test_sync_installs_declared_producers_and_doctor_agrees(site, tmp_path, monkeypatch):
     (site / "producers.json").write_text(
         '[{"name":"egress","command":["/bin/true"],"every":300,"signal":{"max_age":900,"subscribers":["genome"]}}]')
     d = tmp_path / "u"
@@ -141,6 +153,7 @@ def test_sync_installs_declared_producers_and_doctor_agrees(site, tmp_path):
     assert (d / "mishe-producer-egress.timer").exists()
     assert "signal run egress" in (d / "mishe-producer-egress.service").read_text()
     assert "signals/egress.json" in (d / "mishe-wake-genome.path").read_text()
+    _healthy_root_fs_probe(site, d, monkeypatch)
     assert cli("doctor", "--unit-dir", str(d)) == 0
 
 
@@ -180,9 +193,10 @@ def test_sync_installs_every_duty_and_routes_failures_to_its_resolver(site, tmp_
     assert failure.resolver_for(site, "mishe-producer-ci.service") == "genome"
 
 
-def test_doctor_is_red_when_a_duty_resolver_has_no_charter(site, tmp_path):
+def test_doctor_is_red_when_a_duty_resolver_has_no_charter(site, tmp_path, monkeypatch):
     d = tmp_path / "u"
     cli("sync", "--unit-dir", str(d), "--no-systemctl", "--repo", str(REPO_ROOT))
+    _healthy_root_fs_probe(site, d, monkeypatch)
     assert cli("doctor", "--unit-dir", str(d), "--repo", str(REPO_ROOT)) == 0
     (site / "charters" / "health.md").unlink()
     cli("sync", "--unit-dir", str(d), "--no-systemctl", "--repo", str(REPO_ROOT))
