@@ -57,15 +57,21 @@ def grid_distance(a: list[int], b: list[int]) -> float:
     return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
 
 
-WEBCAM_ATTEMPTS = 2
+WEBCAM_ATTEMPTS = 3
+# Observed 2026-11-07: fswebcam exits 0 with "VIDIOC_S_INPUT: Device or resource busy"
+# when the V4L2 device is still held just after a previous capture. A short pause lets it
+# release; retries are bounded so a stuck device still reports unavailable.
+WEBCAM_RETRY_PAUSE_S = 3.0
 
 
 def _capture_webcam(out: Path, device: str) -> None:
     """One frame from fswebcam. fswebcam can exit 0 without writing a file
-    (observed 1 in 30 on /dev/video0), so the file is checked, not the exit code,
-    and a missing frame is retried once before being reported as unavailable."""
+    (observed 1 in 30 on /dev/video0), so the file is checked, not the exit code.
+    A missing frame is retried after a short pause before being reported as unavailable."""
     last = ""
-    for _ in range(WEBCAM_ATTEMPTS):
+    for attempt in range(WEBCAM_ATTEMPTS):
+        if attempt:
+            time.sleep(WEBCAM_RETRY_PAUSE_S)
         run = subprocess.run(["fswebcam", "-d", device, "-q", "-r", "640x480",
                               "--no-banner", "-S", "15", str(out)],
                              check=True, capture_output=True, text=True, timeout=60)

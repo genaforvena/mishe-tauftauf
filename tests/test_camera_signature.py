@@ -53,6 +53,11 @@ def test_capture_temp_frame_is_deleted(tmp_path, monkeypatch):
     assert not seen[0].exists() and not seen[0].parent.exists()
 
 
+@pytest.fixture(autouse=True)
+def _no_retry_pause(monkeypatch):
+    monkeypatch.setattr(cam, "WEBCAM_RETRY_PAUSE_S", 0)
+
+
 def test_fswebcam_exit_zero_without_frame_is_retried_then_unavailable(tmp_path, monkeypatch):
     calls = []
 
@@ -86,3 +91,25 @@ def test_fswebcam_second_attempt_frame_is_used(tmp_path, monkeypatch):
     assert len(attempts) == 2
     # the bytes are not a decodable image, so the signature step reports unavailable, not a fake grid
     assert out["status"] == "unavailable" and "grid" not in out
+
+
+def test_fswebcam_busy_device_then_frame_is_used(tmp_path, monkeypatch):
+    """Observed 2026-11-07: a busy V4L2 input exits 0 with no frame; a later attempt after the pause succeeds."""
+    attempts, pauses = [], []
+
+    def busy_then_ok(args, **kwargs):
+        if args[0] != "fswebcam":
+            return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=b"")  # signature step: fails like a bad frame
+        attempts.append(args)
+        if len(attempts) < 3:
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="VIDIOC_S_INPUT: Device or resource busy")
+        Path(args[-1]).write_bytes(b"\xff\xd8 not a real jpeg")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(cam, "WEBCAM_RETRY_PAUSE_S", 2.5)
+    monkeypatch.setattr(cam.time, "sleep", lambda s: pauses.append(s))
+    monkeypatch.setattr(cam.subprocess, "run", busy_then_ok)
+    monkeypatch.setattr(cam.shutil, "which", lambda name: f"/usr/bin/{name}")
+    out = cam.run("webcam", None, "/dev/video0", None)
+    assert len(attempts) == 3 and pauses == [2.5, 2.5]
+    assert out["status"] == "unavailable" and "grid" not in out  # frame bytes not decodable; no invented grid
