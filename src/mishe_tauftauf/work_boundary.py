@@ -32,6 +32,17 @@ def runtime_source(repo, pythonpath):
     return root if (root/"duties.json").is_file() else Path(repo).resolve()
 
 
+def unit_load_state(unit):
+    """systemd's LoadState for ``unit``: loaded, not-found, ... or UNKNOWN when systemctl cannot say."""
+    try:
+        result = subprocess.run(["systemctl", "--user", "show", unit, "-p", "LoadState", "--value"],
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return "UNKNOWN"
+    value = result.stdout.strip()
+    return value if result.returncode == 0 and value else "UNKNOWN"
+
+
 def failure_signature(unit):
     """Only stable systemd failure classes, never timestamps or journal prose."""
     try:

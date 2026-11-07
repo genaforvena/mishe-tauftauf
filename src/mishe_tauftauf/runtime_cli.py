@@ -288,6 +288,10 @@ def run(args) -> int:
         return 0
     if args.command == "failed":
         from . import failure, work_boundary
+        refused = failure.refusal(args.unit)
+        if refused:
+            print(refused, file=sys.stderr)
+            return 2
         print(failure.report(home, args.unit, now=now, signature=work_boundary.failure_signature(args.unit)))
         return 0
     if args.command in ("sync", "doctor"):

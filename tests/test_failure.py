@@ -152,3 +152,22 @@ def test_fault_event_novelty_uses_the_same_seen_modes_as_the_announcement(tmp_pa
     events = sorted((tmp_path/"work/fault-events").glob("*.json"))
     flags = [read_json(path)["novel"] for path in events]
     assert len(flags) == 6 and flags == [True, True, False, False, False, False]
+
+
+def test_a_signal_name_passed_as_a_unit_is_refused(monkeypatch):
+    from mishe_tauftauf import work_boundary
+    monkeypatch.setattr(work_boundary, "unit_load_state", lambda unit: "not-found")
+    message = failure.refusal("failed-mishe-doctor-service")
+    assert message and "not-found" in message
+
+
+def test_a_loaded_unit_is_not_refused(monkeypatch):
+    from mishe_tauftauf import work_boundary
+    monkeypatch.setattr(work_boundary, "unit_load_state", lambda unit: "loaded")
+    assert failure.refusal("mishe-doctor.service") is None
+
+
+def test_unknown_load_state_is_not_refused(monkeypatch):
+    from mishe_tauftauf import work_boundary
+    monkeypatch.setattr(work_boundary, "unit_load_state", lambda unit: "UNKNOWN")
+    assert failure.refusal("mishe-doctor.service") is None

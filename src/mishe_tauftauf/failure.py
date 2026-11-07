@@ -27,6 +27,15 @@ def resolver_for(home, unit: str) -> str:
     return DEFAULT_RESOLVER
 
 
+def refusal(unit: str) -> str | None:
+    """Why ``unit`` may not be recorded as a failure, or None. A signal name is not a unit: recording
+    ``failed-mishe-doctor-service`` as a unit minted ``failed-failed-...`` signals and re-offers (2026-11-07)."""
+    from . import work_boundary
+    if work_boundary.unit_load_state(unit) == "not-found":
+        return f"refused: {unit} is not a systemd unit (LoadState=not-found); nothing recorded"
+    return None
+
+
 def default_notify(home, role: str, text: str) -> None:
     from . import wall
     wall.message(Path(home), "mishe", role, text)
