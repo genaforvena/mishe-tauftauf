@@ -185,11 +185,11 @@ def gate_wav(path: Path) -> str:
 LANGS = ("ru", "en")  # pinned, never "auto": base on real English collapsed to Chinese (98.9% error)
 
 
-def transcribe(path: Path, prompt: str, lang: str) -> str:
+def transcribe(path: Path, prompt: str, lang: str, model: Path = MODEL) -> str:
     if lang not in LANGS:
         raise ValueError(f"language must be one of {LANGS}, got {lang!r}")
     p = subprocess.run(
-        ["nice", "-n", "10", WHISPER, "-m", str(MODEL), "-f", str(path), "-l", lang,
+        ["nice", "-n", "10", WHISPER, "-m", str(model), "-f", str(path), "-l", lang,
          "--prompt", prompt, "-np", "-nt"],
         capture_output=True, text=True, timeout=120)
     if p.returncode != 0:
