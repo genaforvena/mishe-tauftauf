@@ -18,6 +18,8 @@ from .engine_process import run_bounded
 from .state_files import read_json
 from .wake import EngineNotStarted, EngineTimeout
 
+DECLARED_REOFFER_SECONDS = 3600
+
 DETAIL_BYTES = 4000
 
 
@@ -109,7 +111,11 @@ def load(home, *, python: str, declared=None) -> list:
     for item in declared:
         name = item["name"]
         spec = item.get("signal", {})
-        signal_store.register(home, name, max_age=spec["max_age"], subscribers=spec.get("subscribers", []))
+        # A declared signal that stays RED or UNKNOWN is re-offered to its subscriber at this interval; without
+        # reoffer a standing fault woke its resolver once and then nothing returned it (yielding.py re-offers only
+        # signals registered with reoffer).
+        signal_store.register(home, name, max_age=spec["max_age"], subscribers=spec.get("subscribers", []),
+                              reoffer=spec.get("reoffer", DECLARED_REOFFER_SECONDS))
         timeout = item.get("timeout", 120)
         red = ",".join(str(c) for c in item.get("red_codes", [2])) or "none"
         if item.get("builtin"):

@@ -56,6 +56,7 @@ def test_load_registers_declared_signals_and_returns_units_producers(home):
     loaded = producers.load(home, python=PY)
     assert [p.name for p in loaded] == ["egress"]
     assert store.registry(home)["egress"]["max_age"] == 900
+    assert store.registry(home)["egress"]["reoffer"] == producers.DECLARED_REOFFER_SECONDS
     assert loaded[0].command[:5] == [PY, "-m", "mishe_tauftauf", "--home", str(home)]
 
 
