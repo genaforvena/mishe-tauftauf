@@ -19,7 +19,7 @@ duty in `duties.json`, which replaced the older `pub-devto-freshness` timer chec
 That duty is a liveness signal for observations, not the publication preflight
 described above; missing or stale observations remain UNKNOWN.
 
-Without configuration, JSON objects or arrays anywhere in new text and hash-only notices are rejected, but
+Without configuration, substantial JSON objects or arrays in new text (by breadth, depth or nesting; trivial literals pass as prose) and text with no readable words are rejected, but
 semantic questions remain explicitly **untested**. This bootstrap mode establishes
 no semantic clearance. A configured checker has no fail-open override: suspicious,
 unknown, unavailable, skipped questions, malformed output and timeouts refuse.
