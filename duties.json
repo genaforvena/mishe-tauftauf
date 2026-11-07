@@ -403,6 +403,23 @@
       "resolver": "senses",
       "covers": "household activity.json every ten minutes: 15-min per-room change buckets, lights events, the quiet block and the rhythm line (provisional, not validated), plus hourly audio level; no ok signature rows exits UNKNOWN",
       "replaces": []
+    },
+    {
+      "name": "rust-plan-progress",
+      "command": [
+        "{python}",
+        "{repo}/checks/rust-plan-progress.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 300,
+      "timeout": 60,
+      "max_age": 900,
+      "resolver": "rust-plan",
+      "covers": "the rust-plan investigation is making progress: its canonical wall exists and is inside its bound, and the plan document is present and non-empty; a missing or stale wall is RED, an unreadable observation is UNKNOWN, and a producer that stops running ages the signal to UNKNOWN",
+      "replaces": []
     }
   ],
   "retired": [
