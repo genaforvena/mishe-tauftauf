@@ -19,6 +19,8 @@ use std::fmt;
 /// One entry as framed. `body` has the same text the Python reader yields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
+    /// Absolute byte offset of the entry's header line in the input.
+    pub offset: u64,
     pub sequence: u128,
     pub timestamp: String,
     pub source: String,
@@ -164,6 +166,7 @@ pub struct Framer {
 }
 
 struct Open {
+    offset: u64,
     sequence: u128,
     timestamp: String,
     source: String,
@@ -181,7 +184,7 @@ impl Framer {
     }
 
     /// Feed one line. Returns an entry when a body closes, or a fault.
-    pub fn push(&mut self, line: &str) -> Result<Option<Entry>, FrameError> {
+    pub fn push(&mut self, line: &str, line_offset: u64) -> Result<Option<Entry>, FrameError> {
         match self.current.take() {
             None => {
                 self.index += 1;
@@ -202,6 +205,7 @@ impl Framer {
                     });
                 }
                 self.current = Some(Open {
+                    offset: line_offset,
                     sequence,
                     timestamp,
                     source,
@@ -260,6 +264,7 @@ impl Framer {
         }
         self.expected += 1;
         Ok(Some(Entry {
+            offset: open.offset,
             sequence,
             timestamp: open.timestamp,
             source: open.source,
@@ -289,11 +294,13 @@ pub enum Stop {
 pub fn read<R: std::io::BufRead>(
     mut reader: R,
     start_sequence: u128,
+    base_offset: u64,
     mut sink: impl FnMut(&Entry) -> std::io::Result<()>,
 ) -> Result<(), Stop> {
     let mut framer = Framer::new(start_sequence);
     let mut segment = Vec::new();
     let mut lines = Vec::new();
+    let mut position = base_offset;
     loop {
         segment.clear();
         let read = reader
@@ -312,13 +319,16 @@ pub fn read<R: std::io::BufRead>(
         };
         lines.clear();
         split_lines(text, &mut lines);
+        let mut line_offset = position;
         for line in &lines {
-            match framer.push(line) {
+            match framer.push(line, line_offset) {
                 Ok(Some(entry)) => sink(&entry).map_err(|err| Stop::Io(err.to_string()))?,
                 Ok(None) => {}
                 Err(err) => return Err(Stop::Fault(err)),
             }
+            line_offset += line.len() as u64;
         }
+        position += segment.len() as u64;
     }
     framer.finish().map_err(Stop::Fault)
 }
@@ -326,7 +336,7 @@ pub fn read<R: std::io::BufRead>(
 /// Frame a whole byte slice into a vector. Used by tests and small inputs.
 pub fn frame_bytes(data: &[u8], start_sequence: u128) -> (Vec<Entry>, Option<FrameError>) {
     let mut entries = Vec::new();
-    let result = read(data, start_sequence, |entry| {
+    let result = read(data, start_sequence, 0, |entry| {
         entries.push(entry.clone());
         Ok(())
     });
@@ -351,12 +361,27 @@ mod tests {
     }
 
     #[test]
+    fn offsets_are_absolute_header_starts() {
+        let first = format!("{}    | a\n    .\n", header(1, "2026-01-01T00:00:00Z", "a"));
+        let second = format!("{}    | b\n    .\n", header(2, "2026-01-01T00:00:00Z", "a"));
+        let data = format!("{first}{second}");
+        let mut seen = Vec::new();
+        let result = read(data.as_bytes(), 1, 1000, |e| {
+            seen.push((e.sequence, e.offset));
+            Ok(())
+        });
+        assert!(result.is_ok());
+        assert_eq!(seen, vec![(1, 1000), (2, 1000 + first.len() as u64)]);
+    }
+
+    #[test]
     fn frames_a_simple_entry() {
         let data = format!("{}    | hello\n    .\n", header(1, "2026-11-07T23:00:00.123456Z", "genome"));
         let (entries, err) = frame_bytes(data.as_bytes(), 1);
         assert!(err.is_none());
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].body, "hello\n");
+        assert_eq!(entries[0].offset, 0);
         assert_eq!(entries[0].source, "genome");
     }
 

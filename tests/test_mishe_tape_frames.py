@@ -86,6 +86,20 @@ class FramingEquality(unittest.TestCase):
             with self.subTest(text=text[:40]):
                 self.assertSameStream(text.encode("utf-8"))
 
+    def test_offsets_match_the_checkpoint_frame_index(self):
+        import tempfile
+        data = (header(1) + "    | a\n    .\n" + header(2) + "    | b\r\n    | c\n    .\n"
+                + header(3) + "    | d\n    .-\n").encode("utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "chat.log"
+            path.write_bytes(data)
+            proc = subprocess.run([BIN, "frames", str(path), "--size", str(len(data)), "--offsets"],
+                                  capture_output=True, text=True)
+            rust = [int(line.split()[2]) for line in proc.stdout.splitlines() if line.startswith("O ")]
+        import io
+        with io.BytesIO(data) as handle:
+            self.assertEqual(rust, F._frame_offsets(handle, 0, len(data)))
+
     def test_utf8_error_fails_closed_with_documented_text_difference(self):
         # Documented exception: both sides stop with a fault and no entries
         # before it; only the decoder's own message text differs.
