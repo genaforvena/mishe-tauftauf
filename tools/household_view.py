@@ -57,8 +57,9 @@ def refresh(room, cam):
     cam["reading"] = mine[-1]
     ok = [r for r in mine if r.get("status") == "ok"]
     cam["hist"] = ok[-60:]
-    cam["dist"] = ([round(camsig.grid_distance(a["grid"], b["grid"]), 2)
-                    for a, b in zip(ok[-41:], ok[-40:])][-40:] if len(ok) >= 2 else [])
+    recent = ok[-41:]  # consecutive pairs: each frame against the one before it
+    cam["dist"] = [round(camsig.grid_distance(a["grid"], b["grid"]), 2)
+                   for a, b in zip(recent, recent[1:])]
 
 
 def spark(values, scale=20.0):
