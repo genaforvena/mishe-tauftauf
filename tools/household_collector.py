@@ -125,6 +125,15 @@ def note3_summary(site: str, now: float) -> dict:
            "battery_pct": (row.get("battery") or {}).get("level_pct")}
     if out["status"] == "stale":
         out["reason"] = f"Note3 sample {age:.0f}s old (limit {NOTE3_MAX_AGE_S:.0f}s): sampler stopped"
+    elif row.get("status") == "unknown":
+        # an explicit adb-failure row is fresh by age but carries no sensor values
+        out["status"] = "unknown"
+        out["reason"] = f"Note3 sampler row unknown: {row.get('reason', 'no reason given')}"
+    elif light.get("status") != "ok" or accel.get("status") != "ok":
+        # a fresh row whose light or accelerometer is not active/ok is not a valid reading
+        out["status"] = "unknown"
+        out["reason"] = (f"Note3 light {light.get('reason', light.get('status', 'missing'))}; "
+                         f"accel {accel.get('reason', accel.get('status', 'missing'))}")
     return out
 
 

@@ -52,6 +52,29 @@ def test_missing_note3_is_unavailable(tmp_path):
     assert hc.note3_summary(str(tmp_path), time.time())["status"] == "unavailable"
 
 
+def test_fresh_adb_failure_row_is_not_ok(tmp_path):
+    # the sampler writes an explicit unknown row when adb fails; its wall_ts is fresh,
+    # so age alone must not report the phone as GREEN
+    f = tmp_path / "spatial/work/household/note3_samples_run1.jsonl"
+    f.parent.mkdir(parents=True)
+    now = time.time()
+    f.write_text(json.dumps({"wall_ts": now - 2, "status": "unknown", "reason": "adb: rc=1"}) + "\n")
+    out = hc.note3_summary(str(tmp_path), now)
+    assert out["status"] == "unknown" and "adb: rc=1" in out["reason"]
+
+
+def test_fresh_note3_with_inactive_light_is_not_ok(tmp_path):
+    f = tmp_path / "spatial/work/household/note3_samples_run1.jsonl"
+    f.parent.mkdir(parents=True)
+    now = time.time()
+    row = {"wall_ts": now - 5, "battery": {"level_pct": 48},
+           "sensors": {"light": {"status": "unknown", "reason": "not active (no listener)"},
+                       "accelerometer": {"status": "ok", "values": [-0.1, 0.1, 10.2]}}}
+    f.write_text(json.dumps(row) + "\n")
+    out = hc.note3_summary(str(tmp_path), now)
+    assert out["status"] == "unknown" and "light" in out["reason"]
+
+
 def test_fresh_note3_reports_raw_light(tmp_path):
     f = tmp_path / "spatial/work/household/note3_samples_run1.jsonl"
     f.parent.mkdir(parents=True)
