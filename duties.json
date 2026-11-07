@@ -316,6 +316,62 @@
       "resolver": "senses",
       "covers": "voice.clone.ready: clone model file, mesh-voice-clone unit, daemon socket and a no-sound synthesis probe, with bounded self-healing",
       "replaces": []
+    },
+    {
+      "name": "household-camera-livingroom",
+      "command": [
+        "{python}",
+        "{repo}/tools/household_collector.py",
+        "camera",
+        "--room",
+        "living room",
+        "--source",
+        "webcam",
+        "--site",
+        "{home}"
+      ],
+      "every": 60,
+      "timeout": 120,
+      "max_age": 300,
+      "resolver": "senses",
+      "covers": "living-room webcam brightness grid, one row per minute; a blind lens (covered, dark or flat) is status blind and exits UNKNOWN",
+      "replaces": []
+    },
+    {
+      "name": "household-camera-bedroom",
+      "command": [
+        "{python}",
+        "{repo}/tools/household_collector.py",
+        "camera",
+        "--room",
+        "bedroom",
+        "--source",
+        "mac",
+        "--site",
+        "{home}"
+      ],
+      "every": 240,
+      "timeout": 240,
+      "max_age": 900,
+      "resolver": "senses",
+      "covers": "bedroom Mac camera brightness grid every four minutes; a blind lens exits UNKNOWN",
+      "replaces": []
+    },
+    {
+      "name": "household-phones",
+      "command": [
+        "{python}",
+        "{repo}/tools/household_collector.py",
+        "phones",
+        "--site",
+        "{home}"
+      ],
+      "every": 60,
+      "timeout": 30,
+      "max_age": 300,
+      "resolver": "senses",
+      "covers": "Note3 sensor sample and Redmi10 stream freshness with raw light and accelerometer; a stale or missing phone exits UNKNOWN",
+      "replaces": []
     }
   ],
   "retired": [

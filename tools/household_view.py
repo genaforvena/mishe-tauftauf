@@ -48,23 +48,17 @@ def load_cameras():
 CAMERAS = load_cameras()
 
 
-def sample(room, cam):
-    if time.time() - cam["last"] < cam["every"]:
+def refresh(room, cam):
+    """Read only: the household_camera duties append the signatures; this window never captures."""
+    mine = [r for r in (read_rows(LOG, limit=600) or []) if r.get("room") == room]
+    if not mine:
+        cam["reading"] = {"status": "unavailable", "reason": "no duty row yet"}
         return
-    cam["last"] = time.time()
-    res = camsig.run(cam["source"], cam["target"] if cam["source"] == "mac" else None,
-                     "/dev/video0", None)
-    cam["reading"] = res
-    if res.get("status") != "ok":
-        return
-    if cam["hist"]:
-        cam["dist"].append(round(camsig.grid_distance(cam["hist"][-1]["grid"], res["grid"]), 2))
-    cam["hist"].append(res)
-    cam["hist"] = cam["hist"][-60:]
-    cam["dist"] = cam["dist"][-40:]
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("a") as fh:
-        fh.write(json.dumps({"room": room, **res}, sort_keys=True) + "\n")
+    cam["reading"] = mine[-1]
+    ok = [r for r in mine if r.get("status") == "ok"]
+    cam["hist"] = ok[-60:]
+    cam["dist"] = ([round(camsig.grid_distance(a["grid"], b["grid"]), 2)
+                    for a, b in zip(ok[-41:], ok[-40:])][-40:] if len(ok) >= 2 else [])
 
 
 def spark(values, scale=20.0):
@@ -266,8 +260,8 @@ def main():
     while True:
         for room, cam in CAMERAS.items():
             try:
-                sample(room, cam)
-            except Exception as exc:  # a failing sensor must show as UNKNOWN, not stop the view
+                refresh(room, cam)
+            except Exception as exc:  # a failing read must show as UNKNOWN, not stop the view
                 cam["reading"] = {"status": "unavailable", "reason": f"{type(exc).__name__}: {exc}"[:120]}
         draw()
         time.sleep(DRAW_EVERY)
