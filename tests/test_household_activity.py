@@ -189,3 +189,16 @@ def test_cleaning_file_absent_or_unreadable_is_reported_not_applied(tmp_path):
                                                      "end_utc": "2026-11-07T17:30:00+00:00", "note": "x"}]))
     windows, status = ha.cleaning_windows(base)
     assert status == "ok" and len(windows) == 1
+
+
+def test_night_candidate_needs_both_rooms_settled_for_the_run(tmp_path):
+    # Bedroom quiet all night, living room quiet only until T0+1800: the candidate must not start
+    # before the living room is quiet too, and must end where either room stops being settled.
+    br = _frames("bedroom", T0, T0 + 5400, lambda t: 30, moving_at=lambda t: False)
+    lr = _frames("living room", T0, T0 + 5400, lambda t: 40,
+                 moving_at=lambda t: t < T0 + 1800)
+    lall, ltimes = ha.frame_records(lr)
+    brecs, _ = ha.frame_records(br)
+    runs_ = ha.both_rooms_settled_runs(lall, ltimes, brecs)
+    assert runs_, "a 30 min settled run with both rooms quiet must be reported"
+    assert runs_[0][0] >= T0 + 1800 + ha.ACT_WINDOW

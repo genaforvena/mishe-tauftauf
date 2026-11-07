@@ -217,6 +217,21 @@ def night_lights_out(lights: list[dict], data_end: float | None = None) -> float
     return night
 
 
+def both_rooms_settled_runs(lall: list[dict], ltimes: list[float], brecs: list[dict]) -> list[tuple[float, float]]:
+    """Candidate night: bedroom settled (quiet, luma <= SETTLED_LUMA) AND the living room quiet at the
+    same instant (its latest frame at most PAIR_MAX_GAP old), sustained for SETTLED_MIN_S. Both rooms
+    must be observed; a gap in either ends the run. Not validated: see the rhythm labels."""
+    def living_quiet(t: float) -> bool:
+        i = bisect.bisect_right(ltimes, t) - 1
+        if i < 0 or t - ltimes[i] > PAIR_MAX_GAP:
+            return False
+        act = lall[i]["activity"]
+        return act is not None and act < QUIET
+
+    return runs(brecs, lambda r: r["activity"] is not None and r["activity"] < QUIET
+                and r["luma"] <= SETTLED_LUMA and living_quiet(r["t"]), SETTLED_MIN_S)
+
+
 def summarize(living: tuple[list[dict], list[float]], bedroom: tuple[list[dict], list[float]],
               blind: list[dict] = (), cleaning: list[dict] = ()) -> dict:
     lall, ltimes = living
@@ -253,6 +268,9 @@ def summarize(living: tuple[list[dict], list[float]], bedroom: tuple[list[dict],
         "first_activity_after_lights_out_utc": hhmm(first_active),
         "settled_for_night": [{"from_utc": hhmm(a), "to_utc": hhmm(b), "minutes": round((b - a) / 60)}
                               for a, b in settled],
+        "night_candidate_both_rooms_settled": [
+            {"from_utc": hhmm(a), "to_utc": hhmm(b), "minutes": round((b - a) / 60)}
+            for a, b in both_rooms_settled_runs(lall, ltimes, brecs)],
         "longest_quiet_block_living_room": (
             {"from_utc": hhmm(longest[0]), "to_utc": hhmm(longest[1]),
              "minutes": round((longest[1] - longest[0]) / 60)} if longest else None),
