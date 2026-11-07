@@ -295,8 +295,8 @@
         "--site",
         "{home}"
       ],
-      "every": 20,
-      "timeout": 90,
+      "every": 105,
+      "timeout": 15,
       "max_age": 120,
       "resolver": "senses",
       "covers": "living-room microphone hint window: one row per cadence; UNKNOWN when the mic or transcriber fails",
@@ -330,11 +330,11 @@
         "--site",
         "{home}"
       ],
-      "every": 60,
+      "every": 150,
       "timeout": 120,
       "max_age": 300,
       "resolver": "senses",
-      "covers": "living-room webcam brightness grid, one row per minute; a blind lens (covered, dark or flat) is status blind and exits UNKNOWN",
+      "covers": "living-room webcam brightness grid, one row every 150 s (kept under the unit start budget); a blind lens (covered, dark or flat) is status blind and exits UNKNOWN",
       "replaces": []
     },
     {
