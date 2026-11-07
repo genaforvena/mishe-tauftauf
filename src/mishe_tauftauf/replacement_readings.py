@@ -26,7 +26,7 @@ RENDERER_SENSE_ID = "sense.runtime.renderer-coverage"
 RENDERER_MODULES = ("plant_view", "plant_view_boundary")
 
 from . import proc_table
-from .plant_tmux import WINDOW_FORMAT as _WINDOW_FORMAT, parse_list_windows
+from .plant_tmux import WINDOW_FORMAT as _WINDOW_FORMAT, parse_list_windows, parse_session_births
 
 
 def _run_tmux(socket: str, args: list[str], timeout: float = 5) -> subprocess.CompletedProcess | None:
@@ -239,19 +239,6 @@ def probe_session_stability(declared: str | None, socket: str | None, *,
 SESSION_RESTARTS_ID = "sense.host.session-restarts"
 RESTART_WINDOW_MINUTES = 60
 RESTART_MAX_BIRTHS = 2
-
-
-def parse_session_births(output: str) -> list[tuple[str, float]] | None:
-    """Parse ``#{session_name}\\t#{session_created}`` lines; None when malformed."""
-    births: list[tuple[str, float]] = []
-    for line in output.splitlines():
-        if not line.strip():
-            continue
-        parts = line.split("\t")
-        if len(parts) != 2 or not parts[0] or not parts[1].strip().isdigit():
-            return None
-        births.append((parts[0], float(parts[1])))
-    return births
 
 
 def judge_session_restarts(created: list[tuple[str, float]] | None, now: float, *,

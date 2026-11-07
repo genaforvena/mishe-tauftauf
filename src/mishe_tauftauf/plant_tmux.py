@@ -35,6 +35,19 @@ def parse_list_windows(text: str) -> list[dict[str, object]] | None:
     return windows
 
 
+def parse_session_births(output: str) -> list[tuple[str, float]] | None:
+    """Parse ``#{session_name}\\t#{session_created}`` lines; None when malformed."""
+    births: list[tuple[str, float]] = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) != 2 or not parts[0] or not parts[1].strip().isdigit():
+            return None
+        births.append((parts[0], float(parts[1])))
+    return births
+
+
 def setup(socket: str, session: str, home: Path, roles, *, command=None, view_command=None):
     if not roles or any(not valid_role(r) or r in ('chat', 'git', 'wakes') for r in roles) or len(set(roles)) != len(roles):
         raise ValueError('distinct valid view roles required')

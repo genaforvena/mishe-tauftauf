@@ -62,6 +62,7 @@
     "tools/daylight_curve.py",
     "tools/hint_calibration.py",
     "tools/household_activity.py",
+    "tools/household_call_watcher.py",
     "tools/household_collector.py",
     "tools/household_text.py",
     "tools/household_view.py",
