@@ -13,10 +13,8 @@ because the lamp itself changes pixels.
 from __future__ import annotations
 
 import argparse
-import calendar
 import importlib.util
 import json
-import re
 import statistics
 import sys
 import time
@@ -27,39 +25,17 @@ _spec = importlib.util.spec_from_file_location("household_activity", HERE / "hou
 ha = importlib.util.module_from_spec(_spec)
 sys.modules["household_activity"] = ha
 _spec.loader.exec_module(ha)
+_text_spec = importlib.util.spec_from_file_location("household_text", HERE / "household_text.py")
+ht = importlib.util.module_from_spec(_text_spec)
+_text_spec.loader.exec_module(ht)
 
 WINDOW_S = 300.0
 SWEEP = (1.0, 1.5, ha.QUIET, 3.0, 4.0)
-OCCUPIED_RE = re.compile(r"\b(?:ilya|rozalia)=living[_ ]room")
-EMPTY_RE = re.compile(r"living_room=empty")
-AWAY_RE = re.compile(r"\bilya=(?:outdoors|bedroom|balcony)")
-ROZ_BED_RE = re.compile(r"\brozalia=bedroom")
 
-
-def parse_label(line: str) -> tuple[str, str] | None:
-    parts = line.rstrip("\n").split("\t")
-    if len(parts) < 2 or not parts[0].endswith("Z"):
-        return None
-    return parts[0], " ".join(parts[1:])
-
-
-def truth(text: str) -> bool | None:
-    """True occupied, False empty of humans, None when the rules do not decide."""
-    occupied = bool(OCCUPIED_RE.search(text))
-    empty = bool(EMPTY_RE.search(text)) or (bool(AWAY_RE.search(text)) and bool(ROZ_BED_RE.search(text)))
-    if occupied and not empty:
-        return True
-    if empty and not occupied:
-        return False
-    return None
-
-
-def epoch_of(stamp: str) -> float | None:
-    """'2026-11-07T09:05:04Z' -> epoch seconds (UTC)."""
-    try:
-        return float(calendar.timegm(time.strptime(stamp[:19], "%Y-%m-%dT%H:%M:%S")))
-    except ValueError:
-        return None
+# Parsing lives in household_text (approved adapter); these names keep the validator's interface.
+parse_label = ht.parse_label
+truth = ht.label_truth
+epoch_of = ht.label_epoch
 
 
 def blind_end(blind: list[dict], label_epoch: float) -> str | None:
@@ -67,8 +43,7 @@ def blind_end(blind: list[dict], label_epoch: float) -> str | None:
     for row in blind:
         if row.get("room") != "living room" or not row.get("to_utc"):
             continue
-        day = time.strftime("%Y-%m-%d", time.gmtime(label_epoch))
-        end_epoch = epoch_of(f"{day}T{row['to_utc'].rstrip('Z')}:00Z")
+        end_epoch = ht.blind_span_end(row["to_utc"], label_epoch)
         if end_epoch is not None and label_epoch <= end_epoch:
             return row["to_utc"]
     return None
@@ -111,13 +86,12 @@ def score(labels: list[tuple[str, str]], recs: list[dict], blind: list[dict], th
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
+    parser = argparse.ArgumentParser(description=ht.doc_summary(__doc__))
     parser.add_argument("--site", type=Path, required=True)
-    args = parser.parse_args(argv)
+    args = ht.parse_argv(parser, argv)
     base = args.site / ha.HOUSEHOLD
     try:
-        labels = [p for p in (parse_label(x) for x in (base / "labels.tsv").read_text(encoding="utf-8")
-                              .splitlines()) if p]
+        labels = ht.parse_labels((base / "labels.tsv").read_text(encoding="utf-8"))
     except OSError:
         print("validate: labels.tsv missing: UNKNOWN", file=sys.stderr)
         return 1

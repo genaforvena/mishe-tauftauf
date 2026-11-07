@@ -31,13 +31,18 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
 import json
 import os
-import re
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+_HERE = Path(__file__).resolve().parent
+_spec = importlib.util.spec_from_file_location("household_text", _HERE / "household_text.py")
+ht = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(ht)
 
 WORK = Path("spatial/work/household")
 QUIET_FLAG = "quiet.flag"
@@ -55,10 +60,6 @@ PEOPLE = {
     "rozalia": ["rozalia", "розалия"],
     "bruno": ["bruno", "бруно"],
 }
-ASK_TIME = re.compile(r"который час|сколько (времени|часов)|what time|time is it", re.I)
-ASK_WHERE = re.compile(r"где (ты|ilya|илья|розалия|rozalia|бруно|bruno)|where (are|is)|кто (дома|здесь)|who('s| is) (home|here)", re.I)
-GREET = re.compile(r"^\W*(привет|здравствуй|hi|hello|hey)\b", re.I)
-SMALL_TALK = re.compile(r"как дела|how are you", re.I)
 
 
 def site_root(arg: str | None) -> Path:
@@ -81,34 +82,30 @@ def latest_locations(site: Path, now: float) -> dict:
     path = site / WORK / "labels.tsv"
     if not path.exists():
         return {}
-    rows = [ln for ln in path.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
+    rows = ht.nonblank_lines(path.read_text(encoding="utf-8", errors="replace"))
     if not rows:
         return {}
-    stamp, _, rest = rows[-1].partition("\t")
-    try:
-        t = dt.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc).timestamp()
-    except ValueError:
+    stamp, rest = ht.split_label_row(rows[-1])
+    t = ht.utc_epoch(stamp)
+    if t is None:
         return {}
     if now - t > LABEL_MAX_AGE_S:
         return {"_stale": True, "_at": stamp}
     out = {"_at": stamp}
-    for field in rest.split("\t"):
-        key, _, value = field.partition("=")
-        if key.strip().lower().replace(" ", "_") in PEOPLE:
-            out[key.strip().lower().replace(" ", "_")] = value
+    for key, value in ht.label_fields(rest):
+        if key in PEOPLE:
+            out[key] = value
     return out
 
 
 def latest_activity(site: Path, now: float) -> dict | None:
     path = site / WORK / "activity.json"
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc = ht.parse_json(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    t = doc.get("generated_utc")
-    try:
-        gen = dt.datetime.fromisoformat(t).timestamp()
-    except (TypeError, ValueError):
+    gen = ht.iso_epoch(doc.get("generated_utc"))
+    if gen is None:
         return None
     if now - gen > ACTIVITY_MAX_AGE_S:
         return None
@@ -135,15 +132,15 @@ def _where_line(lang: str, locs: dict) -> str:
 def reply(text: str, lang: str, site: Path, now: float | None = None) -> str:
     """Compose a short reply from house facts. Deterministic; no model call."""
     now = time.time() if now is None else now
-    t = text.strip()
-    if ASK_TIME.search(t):
-        u = dt.datetime.fromtimestamp(now, dt.timezone.utc).strftime("%H:%M")
+    t = ht.tidy(text)
+    if ht.asks_time(t):
+        u = ht.stamp_utc(now)
         return f"Сейчас {u} по UTC." if lang == "ru" else f"It is {u} UTC."
-    if ASK_WHERE.search(t):
+    if ht.asks_where(t):
         return _where_line(lang, latest_locations(site, now))
-    if GREET.search(t):
+    if ht.greets(t):
         return "Привет. Я здесь." if lang == "ru" else "Hi. I'm here."
-    if SMALL_TALK.search(t):
+    if ht.small_talk(t):
         return "Всё тихо и в порядке." if lang == "ru" else "All quiet and fine."
     return "Повтори, пожалуйста, я не поняла." if lang == "ru" else "Sorry, please say that again."
 
@@ -152,9 +149,9 @@ def _prune(path: Path, now: float) -> None:
     if not path.exists():
         return
     keep = []
-    for ln in path.read_text(encoding="utf-8").splitlines():
+    for ln in ht.nonblank_lines(path.read_text(encoding="utf-8")):
         try:
-            if now - float(json.loads(ln)["t"]) <= KEEP_S:
+            if now - ht.record_time(ln) <= KEEP_S:
                 keep.append(ln)
         except (ValueError, KeyError):
             continue
@@ -176,21 +173,19 @@ def speak(text: str, lang: str, site: Path) -> int:
     lock = site / WORK / SPEAK_LOCK
     now = time.time()
     if lock.exists():
-        try:
-            if float(lock.read_text().strip()) > now:
-                print("refused: a line is already in flight", file=sys.stderr)
-                return 4
-        except ValueError:
-            pass
+        until = ht.epoch_text(lock.read_text())
+        if until is not None and until > now:
+            print("refused: a line is already in flight", file=sys.stderr)
+            return 4
     # suspend the listener for the speaking window plus the follow-up window
     lock.write_text(str(now + 60 + FOLLOWUP_S))
     try:
         wav = subprocess.run([str(VOICE_SAY), text], capture_output=True, text=True, timeout=200)
         if wav.returncode != 0:
-            print(f"clone synth rc={wav.returncode}: {wav.stderr.strip()[:200]}", file=sys.stderr)
+            print(f"clone synth rc={wav.returncode}: {ht.tidy(wav.stderr)[:200]}", file=sys.stderr)
             return 5
         # Playback path is not yet wired for the clone wav; mesh-note3-say is piper-only.
-        print(f"synth ok: {wav.stdout.strip()} (playback not wired in v1)", file=sys.stderr)
+        print(f"synth ok: {ht.tidy(wav.stdout)} (playback not wired in v1)", file=sys.stderr)
         return 6
     finally:
         # the follow-up window stays open for FOLLOWUP_S after the line
@@ -225,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
         if name != "test":
             sp.add_argument("--text", required=True)
             sp.add_argument("--lang", choices=["ru", "en"], default="ru")
-    a = p.parse_args(argv)
+    a = ht.parse_argv(p, argv)
     site = site_root(a.site)
     if a.cmd == "test":
         return test(site)
