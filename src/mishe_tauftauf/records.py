@@ -93,6 +93,22 @@ def _directory(home: Path) -> int:
     return os.open(home / "records", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 
 
+def check_pass_directory(passfd: int, home: Path | str) -> None:
+    """Fail closed when the live records path no longer names the pass's directory.
+
+    A pass-long fd keeps reading the inode it opened. If ``home/records`` was swapped
+    (symlink or replacement) during the pass, results from the old inode must not
+    be reported or stored as current.
+    """
+    try:
+        live = os.lstat(Path(home) / "records")
+    except OSError as exc:
+        raise ValueError("records directory unavailable during verification pass") from exc
+    held = os.fstat(passfd)
+    if not stat.S_ISDIR(live.st_mode) or (live.st_dev, live.st_ino) != (held.st_dev, held.st_ino):
+        raise ValueError("records directory replaced during verification pass")
+
+
 def _read(directory: int, name: str) -> bytes:
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
     with os.fdopen(fd, "rb") as handle:
@@ -167,8 +183,11 @@ def payload(entry) -> dict:
     return envelope(entry)["payload"]
 
 
-def envelope(entry) -> dict:
-    """Verify and return an immutable envelope, including its publication kind."""
+def envelope(entry, directory: int | None = None) -> dict:
+    """Verify and return an immutable envelope, including its publication kind.
+
+    A caller-supplied ``directory`` fd is used and left open; it stays owned by the caller.
+    """
     refs = [line for line in entry.body.splitlines()
             if line.lstrip().startswith("[record]")]
     if len(refs) != 1 or not (match := REFERENCE_RE.fullmatch(refs[0])):
@@ -176,14 +195,15 @@ def envelope(entry) -> dict:
     digest, expected = match.groups()
     if digest != expected or entry.home is None:
         raise ValueError("record digest mismatch or missing site context")
-    directory = None
+    owned = directory is None
     try:
-        directory = _directory(Path(entry.home))
+        if owned:
+            directory = _directory(Path(entry.home))
         raw = _read(directory, digest + ".json")
     except OSError as exc:
         raise ValueError(f"record unavailable: {exc}") from exc
     finally:
-        if directory is not None:
+        if owned and directory is not None:
             os.close(directory)
     if hashlib.sha256(raw).hexdigest() != expected:
         raise ValueError("immutable record checksum mismatch")
@@ -301,7 +321,7 @@ def verified_store(home: Path | str) -> VerifiedStore:
 
 
 def cached_payload(entry, pending: dict, store: VerifiedStore | None = None, *,
-                   verify_only: bool = False) -> dict | None:
+                   verify_only: bool = False, directory: int | None = None) -> dict | None:
     """Return the payload of a single-reference entry, serving verified hits.
 
     Anything other than one well-formed reference, a legacy JSON control line, or
@@ -310,6 +330,8 @@ def cached_payload(entry, pending: dict, store: VerifiedStore | None = None, *,
     record rewritten mid-read cannot be recorded with a newer identity.
     With verify_only, a fresh matching identity is sufficient: no caller uses the
     cached payload. Payload readers still decode it and reverify on cache damage.
+    A caller-supplied ``directory`` fd (a pass-long handle on the record directory)
+    is used and left open; the caller must check it still matches the live path.
     """
     lines = entry.body.splitlines()
     refs = [line for line in lines if line.lstrip().startswith("[record]")]
@@ -326,10 +348,12 @@ def cached_payload(entry, pending: dict, store: VerifiedStore | None = None, *,
         return json.loads(zlib.decompress(pending[digest][-1]))
     store = store or verified_store(entry.home)
     now = time.time()
-    try:
-        directory = _directory(Path(entry.home))
-    except OSError:
-        return payload(entry)
+    owned = directory is None
+    if owned:
+        try:
+            directory = _directory(Path(entry.home))
+        except OSError:
+            return payload(entry)
     try:
         hit = store.lookup(digest, directory, now, verify_only=verify_only)
         if hit is not None:
@@ -339,8 +363,9 @@ def cached_payload(entry, pending: dict, store: VerifiedStore | None = None, *,
         except (OSError, ValueError):
             before = None
     finally:
-        os.close(directory)
-    record = envelope(entry)
+        if owned:
+            os.close(directory)
+    record = envelope(entry, None if owned else directory)
     if before is not None:
         blob = zlib.compress(json.dumps(record["payload"], sort_keys=True, separators=(",", ":")).encode(), 6)
         pending[digest] = (digest, *before, now, blob)

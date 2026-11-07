@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .chat_protocol import OBS_RE, decode_lifecycle, receipt_line
 from .feed_errors import FeedError
+from . import records
 from .records import VERIFIED_FLUSH_ROWS, cached_payload, verified_store
 from .slugs import validate_slug
 from .wall_text import addressed
@@ -743,22 +744,42 @@ class Feed:
         # Verified payloads persist per site (records.VerifiedStore). A hit is served
         # only while the referenced file keeps its verified identity; a miss runs the
         # full envelope verification and is stored after the whole pass succeeds.
+        # One record-directory fd serves the whole pass for the first entry's home, so the
+        # directory is not reopened per entry. Entries under any other home open their own.
+        # Every flush and the pass end check that the live path still names that directory;
+        # a swapped records directory fails the pass instead of storing the old inode.
         pending: dict = {}
         store = None
-        for entry in entries:
-            if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
-                if store is None and entry.home is not None:
-                    store = verified_store(entry.home)
-                data = cached_payload(entry, pending, store, verify_only=sink is None)
-                if sink is not None:
-                    sink[entry.sequence] = data
-                if store is not None and len(pending) >= VERIFIED_FLUSH_ROWS:
-                    # Flush as the pass goes: a render killed by its supervisor keeps
-                    # the verifications it finished, so the next render starts ahead.
-                    store.store(list(pending.values()))
-                    pending.clear()
-        if store is not None:
-            store.store(list(pending.values()))
+        home = None
+        passfd = None
+        try:
+            for entry in entries:
+                if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
+                    if store is None and entry.home is not None:
+                        store = verified_store(entry.home)
+                        home = Path(entry.home)
+                        try:
+                            passfd = records._directory(home)
+                        except OSError:
+                            passfd = None
+                    shared = passfd if passfd is not None and entry.home is not None and Path(entry.home) == home else None
+                    data = cached_payload(entry, pending, store, verify_only=sink is None, directory=shared)
+                    if sink is not None:
+                        sink[entry.sequence] = data
+                    if store is not None and len(pending) >= VERIFIED_FLUSH_ROWS:
+                        # Flush as the pass goes: a render killed by its supervisor keeps
+                        # the verifications it finished, so the next render starts ahead.
+                        if passfd is not None:
+                            records.check_pass_directory(passfd, home)
+                        store.store(list(pending.values()))
+                        pending.clear()
+            if store is not None:
+                if passfd is not None:
+                    records.check_pass_directory(passfd, home)
+                store.store(list(pending.values()))
+        finally:
+            if passfd is not None:
+                os.close(passfd)
 
     @staticmethod
     def _store_entries(path: Path | str, metadata, entries: list, verified: bool) -> None:

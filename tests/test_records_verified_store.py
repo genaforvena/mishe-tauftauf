@@ -51,7 +51,7 @@ def test_hit_is_served_from_store_without_envelope(tmp_path, monkeypatch):
     store_entry = entries[0]
     seen = []
     real = records.envelope
-    monkeypatch.setattr(records, "envelope", lambda e: seen.append(1) or real(e))
+    monkeypatch.setattr(records, "envelope", lambda e, *a, **k: seen.append(1) or real(e, *a, **k))
     for e in entries:
         records.cached_payload(e, {}, records.verified_store(tmp_path))
     assert seen == []  # every identity still matches the stored verification
@@ -144,7 +144,7 @@ def test_non_integer_sqlite_identity_is_reverified(tmp_path, monkeypatch):
     verified = []
     original = records.envelope
     monkeypatch.setattr(records, "envelope",
-                        lambda entry: verified.append(entry) or original(entry))
+                        lambda entry, *a, **k: verified.append(entry) or original(entry, *a, **k))
     Feed._verify_records(entries)
 
     assert verified == entries
@@ -155,7 +155,7 @@ def test_stale_entry_past_max_age_is_reverified(tmp_path, monkeypatch):
     monkeypatch.setattr(records, "VERIFIED_MAX_AGE", 0)
     seen = []
     real = records.envelope
-    monkeypatch.setattr(records, "envelope", lambda e: seen.append(1) or real(e))
+    monkeypatch.setattr(records, "envelope", lambda e, *a, **k: seen.append(1) or real(e, *a, **k))
     Feed(tmp_path).entries(payloads={})
     assert len(seen) == 3
 
@@ -164,3 +164,51 @@ def test_legacy_inline_payload_bypasses_store(tmp_path):
     from mishe_tauftauf.feed import FeedEntry
     legacy = FeedEntry(1, "time", "seed", '[task-event] ready\n{"reason":"checked"}\nChecked.', tmp_path)
     assert records.cached_payload(legacy, {}) == {"reason": "checked"}
+
+
+def test_symlinked_records_directory_fails_the_pass(tmp_path):
+    entries = _seed(tmp_path, 2).entries()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    import shutil
+    shutil.move(str(tmp_path / "records"), str(outside / "records"))
+    (tmp_path / "records").symlink_to(outside / "records", target_is_directory=True)
+    with pytest.raises((ValueError, OSError)):
+        Feed._verify_records(entries)
+
+
+def test_records_swapped_for_symlink_mid_pass_is_not_green_and_not_stored(tmp_path, monkeypatch):
+    entries = _seed(tmp_path, 3).entries()
+    store = records.verified_store(tmp_path)
+    real_store = store.store
+    stored = []
+    monkeypatch.setattr(store, "store", lambda rows: stored.append(rows) or real_store(rows))
+    monkeypatch.setattr(feed_module, "VERIFIED_FLUSH_ROWS", 1)
+    swapped = []
+    real_cached = feed_module.cached_payload
+
+    def swap_after_first(entry, pending, store=None, **kwargs):
+        result = real_cached(entry, pending, store, **kwargs)
+        if not swapped:
+            swapped.append(True)
+            live = tmp_path / "records"
+            moved = tmp_path / "records-old"
+            os.rename(live, moved)
+            live.symlink_to(moved, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(feed_module, "cached_payload", swap_after_first)
+    with pytest.raises(ValueError, match="replaced|unavailable"):
+        Feed._verify_records(entries)
+    assert stored == []  # nothing from the old inode is persisted
+
+
+def test_pass_directory_fd_is_closed_after_success(tmp_path, monkeypatch):
+    entries = _seed(tmp_path, 2).entries()
+    opened = []
+    real_open = records._directory
+    monkeypatch.setattr(records, "_directory", lambda home: opened.append(1) or real_open(home))
+    before = len(os.listdir("/proc/self/fd"))
+    Feed._verify_records(entries)
+    assert len(os.listdir("/proc/self/fd")) == before
+    assert len(opened) <= 2
