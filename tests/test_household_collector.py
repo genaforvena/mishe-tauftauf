@@ -12,30 +12,79 @@ sys.modules["household_collector"] = hc
 spec.loader.exec_module(hc)
 
 
-def test_covered_lens_is_blind():
-    # a lens covered by a door: every cell near zero, no structure
+def _grid(mean, sd):
+    # a 48-cell grid with exactly this mean and population stdev
+    return [round(mean - sd, 4), round(mean + sd, 4)] * 24
+
+
+def _run(t0, n, mean, sd, step=50.0):
+    """n consecutive rows of one room, as the collector would store them (oldest first)."""
+    rows = []
+    for i in range(n):
+        g = _grid(mean, sd)
+        rows.append({"room": "living room", "status": "ok", "captured_at_epoch_s": t0 + i * step,
+                     "mean_luma": mean, "grid": g, "dark_flat": hc.dark_flat(g, mean)})
+    return rows
+
+
+def test_covered_lens_single_frame_is_not_yet_blind():
+    # one near-black flat frame is only a candidate; blindness needs the run
     grid = [1] * 48
-    blind, reason = hc.classify_frame(grid, 1.0)
-    assert blind and "flat" in reason
+    assert hc.decide_blind([], 1000.0, grid, 1.0) == (False, "")
+    assert hc.dark_flat(grid, 1.0)
 
 
-def test_dark_room_without_structure_is_blind():
-    grid = [1, 5, 1, 5, 2, 4, 1, 5] * 6
-    blind, reason = hc.classify_frame(grid, 2.9)
-    assert blind and "near-black" in reason
+def test_covered_lens_persisting_is_blind():
+    # a lens covered by a door: near-black, no structure, for well over five minutes
+    hist = _run(1000.0, 6, 1.0, 0.0)  # 6 prior samples, 50 s apart: 250 s of history
+    blind, reason = hc.decide_blind(hist, 1000.0 + 6 * 50.0, [1] * 48, 1.0)
+    assert blind and "near-black and flat" in reason
+
+
+def test_dusk_living_room_is_never_blind():
+    # the 14:24-14:33Z rows of the defect report: luma 15-16, stdev 0.4-1.5 flapping frame to frame
+    sds = [0.47, 0.99, 0.82, 0.63, 0.52, 1.44, 0.62, 0.76, 0.56, 1.08, 0.87, 0.76, 0.56]
+    hist, t = [], 2000.0
+    for i in range(60):
+        sd = sds[i % len(sds)]
+        g = _grid(15.4 + 0.1 * (i % 5), sd)
+        blind, _ = hc.decide_blind(hist, t, g, 15.4 + 0.1 * (i % 5))
+        assert not blind, f"dusk frame {i} went blind"
+        hist.append({"room": "living room", "captured_at_epoch_s": t, "mean_luma": 15.4,
+                     "dark_flat": hc.dark_flat(g, 15.4 + 0.1 * (i % 5))})
+        t += 50.0
+
+
+def test_dim_room_with_structure_is_not_dark_flat():
+    grid = [5, 12, 2, 9, 14, 3, 7, 11] * 6
+    assert hc.dark_flat(grid, 8.0) is False
+    assert hc.decide_blind(_run(1000.0, 8, 8.0, 4.5), 1400.0, grid, 8.0) == (False, "")
+
+
+def test_gap_in_observation_restarts_the_run():
+    # six dark-flat frames, then a two-hour gap: the new frame is not yet persistent
+    hist = _run(1000.0, 6, 1.0, 0.0)
+    blind, _ = hc.decide_blind(hist, 1000.0 + 6 * 50.0 + 7200.0, [1] * 48, 1.0)
+    assert blind is False
+
+
+def test_rows_without_dark_flat_break_the_run():
+    # rows written before this rule carry no dark_flat field: they cannot prove persistence
+    hist = [dict(r, dark_flat=None) for r in _run(1000.0, 6, 1.0, 0.0)]
+    assert hc.decide_blind(hist, 1300.0, [1] * 48, 1.0)[0] is False
 
 
 def test_lit_room_with_structure_is_not_blind():
     grid = [20, 79, 94, 123, 143, 132, 184, 167, 20, 78, 90, 46, 35, 31, 157, 154, 15, 83,
             80, 35, 25, 27, 117, 84, 15, 49, 61, 38, 39, 38, 40, 49, 17, 39, 47, 29, 39, 30,
             30, 39, 16, 26, 47, 48, 30, 29, 23, 20]
-    assert hc.classify_frame(grid, 59.5) == (False, "")
+    assert hc.decide_blind([], 0.0, grid, 59.5) == (False, "")
 
 
 def test_dim_room_with_structure_is_not_blind():
     # night, lamps off: low luma but real structure must stay a valid reading
     grid = [5, 12, 2, 9, 14, 3, 7, 11] * 6
-    assert hc.classify_frame(grid, 8.0)[0] is False
+    assert hc.decide_blind([], 0.0, grid, 8.0)[0] is False
 
 
 def test_stale_note3_is_unknown(tmp_path):
@@ -120,27 +169,34 @@ def test_fresh_redmi_heartbeat_without_values_is_unknown(tmp_path):
 
 
 class _FakeCamsig:
-    def __init__(self, grid, mean_luma):
-        self.row = {"status": "ok", "grid": grid, "mean_luma": mean_luma, "captured_at_epoch_s": 1.0}
+    def __init__(self, grid, mean_luma, t=1.0):
+        self.row = {"status": "ok", "grid": grid, "mean_luma": mean_luma, "captured_at_epoch_s": t}
 
     def run(self, source, target, device, extra):
         return dict(self.row)
 
 
-def _camera_exit(monkeypatch, tmp_path, grid, mean_luma):
-    (tmp_path / "spatial/work/household").mkdir(parents=True)
+def _camera_exit(monkeypatch, tmp_path, grid, mean_luma, t=1.0):
+    (tmp_path / "spatial/work/household").mkdir(parents=True, exist_ok=True)
     (tmp_path / "spatial/work/household/rooms.json").write_text(
         json.dumps([{"name": "living room", "source": "webcam"}]))
-    monkeypatch.setattr(hc, "load_camsig", lambda: _FakeCamsig(grid, mean_luma))
+    monkeypatch.setattr(hc, "load_camsig", lambda: _FakeCamsig(grid, mean_luma, t))
     return hc.main(["camera", "--room", "living room", "--source", "webcam", "--site", str(tmp_path)])
 
 
-def test_blind_camera_is_recorded_red_not_a_crash(tmp_path, monkeypatch, capsys):
-    # A covered or dark lens is an observed state: the row is written as blind and the
-    # producer must see code 2 (RED observation), not 1 (cannot tell, a failed unit).
-    assert _camera_exit(monkeypatch, tmp_path, [10] * 48, 1.0) == 2
-    row = json.loads((tmp_path / "spatial/work/household/signatures.jsonl").read_text().splitlines()[-1])
-    assert row["status"] == "blind"
+def test_blind_camera_is_recorded_red_not_a_crash(tmp_path, monkeypatch):
+    # A covered lens is an observed state: once persistent, the row is written as blind
+    # and the producer must see code 2 (RED observation), not 1 (cannot tell).
+    sig = tmp_path / "spatial/work/household/signatures.jsonl"
+    sig.parent.mkdir(parents=True)
+    sig.write_text("".join(json.dumps(r) + "\n" for r in _run(1000.0, 6, 1.0, 0.0)))
+    assert _camera_exit(monkeypatch, tmp_path, [1] * 48, 1.0, t=1300.0) == 2
+    row = json.loads(sig.read_text().splitlines()[-1])
+    assert row["status"] == "blind" and row["dark_flat"] is True
+
+
+def test_first_dark_frame_exits_green_not_red(tmp_path, monkeypatch):
+    assert _camera_exit(monkeypatch, tmp_path, [1] * 48, 1.0, t=1000.0) == 0
 
 
 def test_lit_camera_is_green(tmp_path, monkeypatch):

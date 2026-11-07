@@ -28,9 +28,11 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 NOTE3_MAX_AGE_S = 300.0
 REDMI_MAX_AGE_S = 900.0
-BLIND_FLAT_STDEV = 1.5          # a lens covered by cloth or a door: nearly no structure
-BLIND_DARK_LUMA = 4.0           # near-black ...
+BLIND_DARK_LUMA = 4.0           # a covered lens reads near-black; a dusk living room sits near 15
 BLIND_DARK_STDEV = 3.0          # ... with almost no structure
+BLIND_RUN_SAMPLES = 5           # the dark-and-flat condition must hold for this many consecutive samples
+BLIND_RUN_MIN_S = 300.0         # ... spanning at least this long
+BLIND_MAX_GAP_S = 180.0         # a gap longer than this means the run was not observed continuously
 
 
 def load_camsig():
@@ -41,15 +43,55 @@ def load_camsig():
     return mod
 
 
-def classify_frame(grid: list[int], mean_luma: float) -> tuple[bool, str]:
-    """Return (blind, reason). Pure: a blind frame must never reach the lights-out
-    detector or the daylight curve, so the caller stores it as status 'blind'."""
-    sd = statistics.pstdev(grid) if len(grid) > 1 else 0.0
-    if sd < BLIND_FLAT_STDEV:
-        return True, f"camera blind: flat grid (stdev {sd:.2f} < {BLIND_FLAT_STDEV})"
-    if mean_luma < BLIND_DARK_LUMA and sd < BLIND_DARK_STDEV:
-        return True, f"camera blind: near-black (mean luma {mean_luma:.1f}, stdev {sd:.2f})"
+def frame_stdev(grid: list[int]) -> float:
+    return statistics.pstdev(grid) if len(grid) > 1 else 0.0
+
+
+def dark_flat(grid: list[int], mean_luma: float) -> bool:
+    """One frame is near-black with almost no structure. Per frame this is only a
+    candidate: a dim room at dusk is also low-stdev, so blindness is decided over
+    consecutive samples (decide_blind), never by one frame."""
+    return mean_luma < BLIND_DARK_LUMA and frame_stdev(grid) < BLIND_DARK_STDEV
+
+
+def decide_blind(history: list[dict], t: float, grid: list[int], mean_luma: float) -> tuple[bool, str]:
+    """Return (blind, reason). history is this room's earlier rows, oldest first; a row
+    carries dark_flat True only if its own frame was a dark-flat candidate. The frame is
+    blind only when the candidate run is continuous (no gap over BLIND_MAX_GAP_S) and
+    reaches BLIND_RUN_SAMPLES samples spanning BLIND_RUN_MIN_S. Pure."""
+    if not dark_flat(grid, mean_luma):
+        return False, ""
+    start, count = t, 1
+    prev_t = t
+    for row in reversed(history):
+        rt = row.get("captured_at_epoch_s")
+        if row.get("dark_flat") is not True or not isinstance(rt, (int, float)):
+            break
+        if prev_t - rt > BLIND_MAX_GAP_S:
+            break
+        start, count, prev_t = rt, count + 1, rt
+    span = t - start
+    if count >= BLIND_RUN_SAMPLES and span >= BLIND_RUN_MIN_S:
+        return True, (f"camera blind: near-black and flat for {count} samples over {span:.0f}s "
+                      f"(mean luma {mean_luma:.1f}, stdev {frame_stdev(grid):.2f})")
     return False, ""
+
+
+def load_room_history(site: str, room: str, limit: int = 60) -> list[dict]:
+    path = site_path(site, "spatial/work/household/signatures.jsonl")
+    try:
+        lines = path.read_text().splitlines()[-limit * 4:]
+    except OSError:
+        return []
+    rows = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("room") == room:
+            rows.append(row)
+    return rows[-limit:]
 
 
 def site_path(site: str, rel: str) -> Path:
@@ -83,7 +125,9 @@ def cmd_camera(args) -> int:
         target = room.get("target") if args.source == "mac" else None
         row = {"room": args.room, **camsig.run(args.source, target, "/dev/video0", None)}
         if row.get("status") == "ok":
-            blind, reason = classify_frame(row["grid"], row["mean_luma"])
+            history = load_room_history(args.site, args.room)
+            row["dark_flat"] = dark_flat(row["grid"], row["mean_luma"])
+            blind, reason = decide_blind(history, row["captured_at_epoch_s"], row["grid"], row["mean_luma"])
             if blind:
                 row = {k: v for k, v in row.items() if k not in ("grid",)}
                 row.update(status="blind", reason=reason)
