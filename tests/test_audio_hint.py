@@ -111,3 +111,24 @@ def test_prompt_file_overrides_json_prompt(tmp_path):
         raise AssertionError("empty prompt file must fail closed")
     except ValueError:
         pass
+
+
+def test_short_call_is_one_clause_after_the_wake_word():
+    ah = load()
+    # a call: the wake word, then one short clause
+    assert ah.is_short_call("Миша, включи свет")
+    assert ah.is_short_call("Миша, добрый день")
+    assert ah.is_short_call("Миша")
+    # talk about the room is not a call, and its text is not kept
+    assert not ah.is_short_call("Миша, добрый день, мы смотрим футбол")
+    assert not ah.is_short_call("Миша расскажи мне про все что было в прошлую субботу вечером у нас дома")
+
+
+def test_wake_word_inside_talk_is_not_a_hint_at_utterance_start():
+    ah = load()
+    v = vocab(ah)
+    # the call decision in classify requires the hint word to open the utterance
+    found = ah.find_hint("ага ну и Миша сказал что придёт", v)
+    assert found is not None and found[0] != 0
+    found = ah.find_hint("Миша включи свет", v)
+    assert found is not None and found[0] == 0

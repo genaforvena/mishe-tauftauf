@@ -300,8 +300,25 @@ def sound_by_hour(audio_rows: list[dict]) -> dict:
             for room, hours in sorted(bins.items())}
 
 
+def visit_window(base: Path, now: float) -> dict:
+    """Guests tag from SITE/spatial/work/household/visit.json: {"start_utc", "end_utc", "note"}
+    as ISO timestamps with offsets. The party is tagged so the daily rhythm does not read it as
+    the household's normal evening. Missing file -> no visit; unreadable file -> UNKNOWN."""
+    path = base / "visit.json"
+    if not path.exists():
+        return {"guests_present": False, "source": "none"}
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        start = datetime.datetime.fromisoformat(doc["start_utc"]).timestamp()
+        end = datetime.datetime.fromisoformat(doc["end_utc"]).timestamp()
+    except (OSError, ValueError, TypeError, KeyError):
+        return {"guests_present": None, "source": "visit.json", "reason": "unreadable: UNKNOWN"}
+    return {"guests_present": start <= now <= end, "source": "visit.json", "start_utc": doc["start_utc"],
+            "end_utc": doc["end_utc"], "note": str(doc.get("note", ""))[:200]}
+
+
 def build(signature_rows: list[dict], audio_rows: list[dict], now: float,
-          blind: list[dict] | None = None) -> dict | None:
+          blind: list[dict] | None = None, visit: dict | None = None) -> dict | None:
     frames = load_frames(signature_rows)
     if not any(frames.values()):
         return None
@@ -319,7 +336,8 @@ def build(signature_rows: list[dict], audio_rows: list[dict], now: float,
             "method": "rooms: median consecutive-frame change /255 over gaps <= 300 s, 15-min buckets; "
                       "summary: 600 s trailing change, lamp steps, settled and quiet runs",
             "rooms": rooms, "summary": summarize(living, bedroom, blind or []),
-            "sound_by_hour": sound_by_hour(audio_rows)}
+            "sound_by_hour": sound_by_hour(audio_rows),
+            "visit": visit if visit is not None else {"guests_present": False, "source": "none"}}
 
 
 def write_atomic(path: Path, report: dict) -> None:
@@ -337,7 +355,7 @@ def main(argv=None) -> int:
         raise SystemExit(f"site does not exist: {args.site}")
     base = args.site / HOUSEHOLD
     report = build(read_jsonl(base / "signatures.jsonl"), read_jsonl(base / "audio.jsonl"), time.time(),
-                   operator_blind(base))
+                   operator_blind(base), visit_window(base, time.time()))
     if report is None:
         print("activity: no ok signature rows for any room: UNKNOWN", file=sys.stderr)
         return 1

@@ -122,6 +122,20 @@ def is_stop(after: list[str], vocab: dict) -> bool:
     return False
 
 
+_CLAUSE_SPLIT = re.compile(r"[,.!?;:]+")
+CALL_MAX_WORDS = 8
+
+
+def is_short_call(hint: str) -> bool:
+    """`hint` starts with the wake word. The call is what follows it: one clause, few words.
+    'Миша, добрый день' and 'Миша, включи свет' qualify; 'Миша, добрый день, мы смотрим
+    футбол' is talk about the room and does not. When unsure, no call."""
+    parts = hint.strip().split(None, 1)
+    rest = parts[1] if len(parts) > 1 else ""
+    clauses = [c for c in _CLAUSE_SPLIT.split(rest) if c.strip()]
+    return len(clauses) <= 1 and len(rest.split()) <= CALL_MAX_WORDS
+
+
 def site_home(explicit: str | None) -> Path:
     raw = explicit or os.environ.get("MISHE_SEED_HOME") or os.environ.get("MISHE_TAUFTAUF_HOME")
     if not raw:
@@ -260,7 +274,9 @@ def window(args: argparse.Namespace) -> dict:
                 continue
             heard = True
             found = find_hint(text, vocab)
-            if found is not None:
+            # Collision guard: a call opens the utterance. A wake word inside ordinary talk
+            # ("... и Миша сказал") is not a call, and its text is not kept.
+            if found is not None and found[0] == 0:
                 hit = (lang, text, found)
                 break
         if hit is None:
@@ -268,13 +284,23 @@ def window(args: argparse.Namespace) -> dict:
             return row
         lang, text, (idx, offset, toks) = hit
         hint = text[offset:].strip()
+        if is_stop(toks[idx + 1:], vocab):
+            row["status"] = "HINT"
+            row["lang"] = lang
+            row["hint"] = hint
+            row["text"] = hint
+            row["suspended_until"] = round(write_suspend(site, 1.0, "mishe stop"), 1)
+            row["action"] = "suspended audio 1 h"
+            return row
+        if not is_short_call(hint):
+            # Retention: a greeting followed by talk is not a call. Its text is not kept.
+            row["status"] = "NO_HINT"
+            row["reason"] = "wake word not followed by one short clause: text not kept"
+            return row
         row["status"] = "HINT"
         row["lang"] = lang
         row["hint"] = hint
         row["text"] = hint
-        if is_stop(toks[idx + 1:], vocab):
-            row["suspended_until"] = round(write_suspend(site, 1.0, "mishe stop"), 1)
-            row["action"] = "suspended audio 1 h"
         return row
     except (subprocess.SubprocessError, OSError, RuntimeError, ValueError, wave.Error) as exc:
         row["status"] = "UNKNOWN"

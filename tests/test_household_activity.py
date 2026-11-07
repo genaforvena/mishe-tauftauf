@@ -147,3 +147,17 @@ def test_night_lights_out_is_unknown_without_a_closed_dark_run():
     # Only a short daytime dark run closes; nothing reaches four hours: UNKNOWN, not the last off.
     events = [{"t": T0, "kind": "off"}, {"t": T0 + 1200, "kind": "on"}, {"t": T0 + 2400, "kind": "off"}]
     assert ha.night_lights_out(events) is None
+
+
+def test_visit_window_tags_guests_and_is_unknown_when_unreadable(tmp_path):
+    from datetime import datetime, timezone
+    now = datetime(2026, 11, 7, 18, 0, tzinfo=timezone.utc).timestamp()
+    (tmp_path).mkdir(exist_ok=True)
+    assert ha.visit_window(tmp_path, now) == {"guests_present": False, "source": "none"}
+    (tmp_path / "visit.json").write_text(json.dumps({
+        "start_utc": "2026-11-07T17:00:00+00:00", "end_utc": "2026-11-08T01:00:00+00:00",
+        "note": "guests"}))
+    tagged = ha.visit_window(tmp_path, now)
+    assert tagged["guests_present"] is True and tagged["source"] == "visit.json"
+    (tmp_path / "visit.json").write_text("{not json")
+    assert ha.visit_window(tmp_path, now)["guests_present"] is None
