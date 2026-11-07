@@ -57,10 +57,23 @@ def grid_distance(a: list[int], b: list[int]) -> float:
     return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
 
 
+WEBCAM_ATTEMPTS = 2
+
+
 def _capture_webcam(out: Path, device: str) -> None:
-    subprocess.run(["fswebcam", "-d", device, "-q", "-r", "640x480",
-                    "--no-banner", "-S", "15", str(out)],
-                   check=True, capture_output=True, timeout=60)
+    """One frame from fswebcam. fswebcam can exit 0 without writing a file
+    (observed 1 in 30 on /dev/video0), so the file is checked, not the exit code,
+    and a missing frame is retried once before being reported as unavailable."""
+    last = ""
+    for _ in range(WEBCAM_ATTEMPTS):
+        run = subprocess.run(["fswebcam", "-d", device, "-q", "-r", "640x480",
+                              "--no-banner", "-S", "15", str(out)],
+                             check=True, capture_output=True, text=True, timeout=60)
+        if out.is_file() and out.stat().st_size > 0:
+            return
+        last = (run.stderr or "").strip()[-160:]
+    raise RuntimeError(f"fswebcam exited 0 but wrote no frame to {out.name}"
+                       + (f": {last}" if last else ""))
 
 
 def _capture_mac(out: Path, host: str) -> None:

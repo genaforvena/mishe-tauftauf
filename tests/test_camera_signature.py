@@ -51,3 +51,36 @@ def test_capture_temp_frame_is_deleted(tmp_path, monkeypatch):
     result = cam.run("webcam", None, "/dev/video0", None)
     assert result["status"] == "ok" and "frame" not in result
     assert not seen[0].exists() and not seen[0].parent.exists()
+
+
+def test_fswebcam_exit_zero_without_frame_is_retried_then_unavailable(tmp_path, monkeypatch):
+    calls = []
+
+    def silent(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(cam.subprocess, "run", silent)
+    out = cam.run("webcam", None, "/dev/video0", None)
+    assert out["status"] == "unavailable" and "grid" not in out
+    assert "wrote no frame" in out["reason"]
+    assert len(calls) == cam.WEBCAM_ATTEMPTS
+
+
+def test_fswebcam_second_attempt_frame_is_used(tmp_path, monkeypatch):
+    attempts = []
+
+    def flaky(args, **kwargs):
+        if args[0] != "fswebcam":
+            return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=b"")  # signature step: fails like a bad frame
+        attempts.append(args)
+        if len(attempts) == 1:
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        Path(args[-1]).write_bytes(b"\xff\xd8 not a real jpeg")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(cam.subprocess, "run", flaky)
+    out = cam.run("webcam", None, "/dev/video0", None)
+    assert len(attempts) == 2
+    # the bytes are not a decodable image, so the signature step reports unavailable, not a fake grid
+    assert out["status"] == "unavailable" and "grid" not in out
