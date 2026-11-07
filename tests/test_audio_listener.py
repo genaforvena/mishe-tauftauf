@@ -133,3 +133,57 @@ def test_read_chunk_reads_exact_bytes():
         assert al.read_chunk(proc, n=16, timeout=5) is None  # closed before 16 bytes
     finally:
         al.stop_proc(proc)
+
+
+def real_vocab():
+    """The operator's vocabulary as written in the household site file (copied, not read from the site)."""
+    prompt = ("Миша, Мише, Мишка, Mishe, Mishi, Meshie, Misha, Бруно, Розалия, Rozalia, Роза, Илья, "
+              "стоп, хватит слушать, stop listening.")
+    return {
+        "prompt": prompt,
+        "hint_words": {ah.tok(w) for w in ["mishe", "миша", "мише", "мишка", "misha", "meshie", "mishi"]},
+        "stop_words": [ah.tok(w) for w in ["стоп", "stop"]],
+        "stop_phrases": [tuple(ah.tokens(p)) for p in ["хватит слушать", "stop listening"]],
+    }
+
+
+def test_prompt_echo_from_quiet_segment_is_not_a_call():
+    # DM 297993: the 09:58Z hint row was the prompt echoed back on a quiet segment
+    echo = "Миша, Мише, Мише, Мише, Мишка, Mishe, Бруно,"
+    assert al.hint_match(echo, real_vocab())[0] is None
+    idx, _, toks = ah.find_hint(echo, real_vocab())
+    assert al.call_rejection(echo, idx, toks, real_vocab()).startswith("prompt echo: a word repeats")
+
+
+def test_bare_name_with_no_command_is_not_a_call():
+    # DM 297993: the 10:26Z row "Миша," alone
+    assert al.hint_match("Миша,", real_vocab())[0] is None
+
+
+def test_full_prompt_echo_is_rejected():
+    full = real_vocab()["prompt"]
+    assert al.hint_match(full, real_vocab())[0] is None
+
+
+def test_real_call_with_command_is_accepted():
+    assert al.hint_match("Миша включи свет", real_vocab())[0] is not None
+    assert al.hint_match("Mishe turn on the light", real_vocab())[0] is not None
+
+
+def test_short_stop_command_is_still_a_stop():
+    v = real_vocab()
+    found, reason = al.hint_match("Миша стоп", v)
+    assert found is not None and reason is None
+    assert ah.is_stop(found[2][found[0] + 1:], v)
+
+
+def test_echo_at_spot_stage_is_spot_unconfirmed(monkeypatch, tmp_path):
+    wav = tmp_path / "w.wav"
+    wav.write_bytes(b"")
+    monkeypatch.setattr(ah, "gate_wav", lambda p: "PASS")
+    monkeypatch.setattr(ah, "text_gate", lambda t: "PASS")
+    monkeypatch.setattr(ah, "transcribe", lambda *a, **k: "Миша, Мише, Мише, Мише, Мишка, Mishe, Бруно,")
+    row = al.classify(wav, {}, real_vocab(), tmp_path, al.TINY, al.BASE)
+    assert row["status"] == "SPOT_UNCONFIRMED"
+    assert row["reject"].startswith("prompt echo")
+    assert "hint" not in row and "text" not in row

@@ -176,6 +176,52 @@ def offer(q: queue.Queue, item, ledger: Ledger) -> None:
                 pass
 
 
+ECHO_SHARE_MAX = 0.6  # a transcript more than this share vocabulary words is a prompt echo
+ECHO_REPEAT_MAX = 2  # any word repeated more than this is a prompt echo
+STOP_MAX_TOKENS = 4  # a short "Миша стоп" is a deliberate stop, not an echo
+
+
+def echo_words(vocab: dict) -> set[str]:
+    """Every word the recognizer prompt, hint words, stop words and stop phrases can supply."""
+    words = set(vocab["hint_words"]) | set(vocab["stop_words"])
+    words |= set(ah.tokens(vocab["prompt"]))
+    for phrase in vocab["stop_phrases"]:
+        words |= set(phrase)
+    return words
+
+
+def call_rejection(text: str, idx: int, toks: list[str], vocab: dict) -> str | None:
+    """Why a hint-word match is not a call, or None. A whisper prompt echo is a model artefact, not speech."""
+    after = toks[idx + 1:]
+    if len(toks) <= STOP_MAX_TOKENS and ah.is_stop(after, vocab):
+        return None
+    counts = {}
+    for t in toks:
+        counts[t] = counts.get(t, 0) + 1
+    worst = max(counts.values())
+    if worst > ECHO_REPEAT_MAX:
+        return f"prompt echo: a word repeats {worst} times"
+    words = echo_words(vocab)
+    share = sum(1 for t in toks if t in words) / len(toks)
+    if share > ECHO_SHARE_MAX:
+        return f"prompt echo: vocabulary share {share:.2f}"
+    if not any(t not in words for t in after):
+        return "no command word after the hint word"
+    return None
+
+
+def hint_match(text: str, vocab: dict):
+    """(idx, offset, toks) for a call, else (None, reason) when a hint word was heard but rejected."""
+    found = ah.find_hint(text, vocab)
+    if found is None:
+        return None, None
+    idx, offset, toks = found
+    reason = call_rejection(text, idx, toks, vocab)
+    if reason is not None:
+        return None, reason
+    return found, None
+
+
 def classify(wav: Path, row: dict, vocab: dict, site: Path, spot: Path, confirm: Path | None) -> dict:
     """Gate, spot with `spot` (ru, then en), confirm the hint with `confirm` on the same language."""
     gate = ah.gate_wav(wav)
@@ -186,25 +232,36 @@ def classify(wav: Path, row: dict, vocab: dict, site: Path, spot: Path, confirm:
         return row
     heard_lang = None
     hit = None
+    rejected = None
     for lang in ah.LANGS:
         text = ah.transcribe(wav, vocab["prompt"], lang, spot)
         if not text or not ah.text_gate(text).startswith("PASS"):
             continue
         heard_lang = heard_lang or lang
-        if ah.find_hint(text, vocab) is not None:
+        found, reason = hint_match(text, vocab)
+        if found is not None:
             hit = (lang, text)
             break
+        rejected = rejected or reason
     row["spot_model"] = spot.stem
     if hit is None:
         row["lang"] = heard_lang
-        row["status"] = "NO_HINT" if heard_lang else "NO_SPEECH"
+        if rejected is not None:
+            row["status"] = "SPOT_UNCONFIRMED"
+            row["reject"] = rejected
+        else:
+            row["status"] = "NO_HINT" if heard_lang else "NO_SPEECH"
         return row
     lang, text = hit
     row["lang"] = lang
     if confirm is not None:
         row["confirm_model"] = confirm.stem
         text2 = ah.transcribe(wav, vocab["prompt"], lang, confirm)
-        found = ah.find_hint(text2, vocab) if text2 and ah.text_gate(text2).startswith("PASS") else None
+        found = None
+        if text2 and ah.text_gate(text2).startswith("PASS"):
+            found, reason = hint_match(text2, vocab)
+            if reason is not None:
+                row["reject"] = reason
         if found is None:
             row["status"] = "SPOT_UNCONFIRMED"
             return row
