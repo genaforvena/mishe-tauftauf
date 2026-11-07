@@ -38,3 +38,17 @@ def test_no_boot_receipt_keeps_hold_and_never_enables_models(tmp_path, monkeypat
         boot_start(tmp_path, tmp_path, 'requested', timeout=0)
     assert len(calls) == 1 and calls[0][-4:] == ['hold', 'on', '--reason',
         'authorized reboot: waiting for current-boot guard admission']
+
+
+def test_inner_tmux_server_launches_under_managed_plants_slice(tmp_path):
+    # Regression: the inner server was started in mishe.slice, which the session-stability
+    # sense reads as uncontained (drift). It must launch under the managed plants slice,
+    # keeping its own finite MemoryMax bound.
+    from mishe_tauftauf import plant_boot
+    from mishe_tauftauf.proc_table import MANAGED_PLANT_SLICES
+
+    argv = plant_boot.inner_launch_argv(tmp_path / 'home', tmp_path / 'artifact')
+    assert f'--slice={plant_boot.INNER_TMUX_SLICE}' in argv
+    assert plant_boot.INNER_TMUX_SLICE in MANAGED_PLANT_SLICES
+    assert '--property=MemoryMax=512M' in argv
+    assert not any(a == '--slice=mishe.slice' for a in argv)

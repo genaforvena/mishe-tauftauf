@@ -14,6 +14,21 @@ from . import duties, producers, roles, units
 from .plant_tmux import setup
 from .state_files import read_json, write_json
 
+INNER_TMUX_SLICE = 'mishe-plants.slice'
+"""The plant tmux server must sit under the managed plants slice (proc_table.MANAGED_PLANT_SLICES).
+
+Placed under a bare mishe.slice it reads uncontained to the session-stability sense.
+"""
+
+
+def inner_launch_argv(home, artifact):
+    """argv that starts the inner plant tmux server in a bounded scope under the plants slice."""
+    return ['systemd-run', '--user', '--scope', '--quiet', f'--slice={INNER_TMUX_SLICE}',
+            '--property=MemoryMax=512M', '--property=TasksMax=128', '--property=CPUQuota=50%',
+            sys.executable, '-m', 'mishe_tauftauf.plant_boot', 'inner',
+            '--home', str(home), '--artifact', str(artifact)]
+
+
 def presentation(home):
     config = read_json(Path(home) / 'presentation.json')
     if not config or set(config['active']) != roles.declared(home):
@@ -118,10 +133,7 @@ def main():
         print(setup(inner, config['session'], args.home, config['active'] + config['resting'],
                     view_command=[sys.executable, str(args.artifact / 'view-host.py')]))
     else:
-        subprocess.run(['systemd-run', '--user', '--scope', '--quiet', '--slice=mishe.slice',
-                        '--property=MemoryMax=512M', '--property=TasksMax=128', '--property=CPUQuota=50%',
-                        sys.executable, '-m', 'mishe_tauftauf.plant_boot', 'inner',
-                        '--home', str(args.home), '--artifact', str(args.artifact)], check=True, timeout=30)
+        subprocess.run(inner_launch_argv(args.home, args.artifact), check=True, timeout=30)
         print(layout(args.home, args.artifact, outer=outer, inner=inner, inner_setup=False))
 
 
