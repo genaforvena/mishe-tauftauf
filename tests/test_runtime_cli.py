@@ -273,3 +273,46 @@ def test_default_pythonpath_is_the_installed_wake_pin(tmp_path, monkeypatch):
 def test_default_pythonpath_falls_back_to_checkout_without_pin(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_cli.Path, "home", classmethod(lambda cls: tmp_path))
     assert runtime_cli.default_pythonpath() == str(Path(runtime_cli.__file__).resolve().parents[1])
+
+
+def _doctor_feed_calls(site, tmp_path, monkeypatch):
+    """Run doctor on a site with a tape and record each Feed.entries(verify_records=...) call."""
+    from mishe_tauftauf import feed as feed_mod
+    units_dir = tmp_path / "units"
+    assert cli("sync", "--unit-dir", str(units_dir), "--no-systemctl") == 0
+    _healthy_root_fs_probe(site, units_dir, monkeypatch)
+    (site / "chat.log").write_bytes(b"")
+    seen = []
+    real = feed_mod.Feed.entries
+
+    def spy(self, *a, **kw):
+        seen.append(kw.get("verify_records", True))
+        return real(self, *a, **kw)
+    monkeypatch.setattr(feed_mod.Feed, "entries", spy)
+    return units_dir, seen
+
+
+def test_doctor_verifies_records_on_first_run_then_hourly(site, tmp_path, monkeypatch):
+    from mishe_tauftauf import runtime_cli as rc
+    units_dir, seen = _doctor_feed_calls(site, tmp_path, monkeypatch)
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+    assert seen == [True]                                   # no stamp yet: full pass
+    assert (site / "doctor-feed-verified.json").exists()
+    seen.clear()
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+    assert seen == [False]                                  # fresh stamp: tape parse only
+    seen.clear()
+    stamp = site / "doctor-feed-verified.json"
+    stamp.write_text('{"verified_at": %f}' % (__import__("time").time() - rc.FEED_RECORD_VERIFY_INTERVAL - 1))
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+    assert seen == [True]                                   # stale stamp: full pass again
+
+
+def test_doctor_stays_red_on_corrupt_tape_without_full_pass(site, tmp_path, monkeypatch):
+    from mishe_tauftauf import feed as feed_mod
+    units_dir, seen = _doctor_feed_calls(site, tmp_path, monkeypatch)
+    def boom(self, *a, **kw):
+        raise feed_mod.FeedError("bad line")
+    monkeypatch.setattr(feed_mod.Feed, "entries", boom)
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 1
+    assert store.read(site, "doctor", now=__import__("time").time()).value == "RED"

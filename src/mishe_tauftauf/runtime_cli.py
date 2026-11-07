@@ -18,6 +18,9 @@ def duration(text: str) -> float:
     return float(text[:-1]) * UNITS[text[-1]]
 
 
+FEED_RECORD_VERIFY_INTERVAL = 3600.0   # seconds between full per-record tape verifications by doctor
+
+
 def default_home() -> Path:
     value = os.environ.get("MISHE_SEED_HOME") or os.environ.get("MISHE_TAUFTAUF_HOME")
     return Path(value) if value else Path(".mishe-tauftauf")
@@ -347,8 +350,21 @@ def run_units(args, home: Path, now: float) -> int:
             print("PASS local plant out of Git")
     if (home / "chat.log").exists():                   # the tape is the record; unreadable means not GREEN
         from .feed import Feed, FeedError
+        from .state_files import read_json, write_json
+        # Every run parses the whole tape (tape-level checks, measured ~2.6 s).
+        # Per-record payload verification (~7-9 s and the memory peak that stalls
+        # under MemoryHigh) runs at most once per FEED_RECORD_VERIFY_INTERVAL; the
+        # stamp keeps the last full pass visible so a missed cadence cannot hide.
+        stamp_path = home / "doctor-feed-verified.json"
         try:
-            Feed(home).entries()
+            last_full = float((read_json(stamp_path) or {}).get("verified_at", 0))
+        except (TypeError, ValueError):
+            last_full = 0.0
+        full = now - last_full >= FEED_RECORD_VERIFY_INTERVAL
+        try:
+            Feed(home).entries(verify_records=full)
+            if full:
+                write_json(stamp_path, {"verified_at": now})
         except FeedError as exc:
             report.state = "RED"
             report.problems.append(f"chat.log: feed-corrupt: {exc}")
