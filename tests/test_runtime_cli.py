@@ -128,8 +128,9 @@ def test_a_silent_doctor_reads_unknown(site, tmp_path):
 
 def test_failed_command_reports_to_resolver(site, monkeypatch):
     sent = []
-    from mishe_tauftauf import failure
+    from mishe_tauftauf import failure, work_boundary
     monkeypatch.setattr(failure, "default_notify", lambda home, role, text: sent.append(role))
+    monkeypatch.setattr(work_boundary, "unit_load_state", lambda unit: "loaded")  # host-independent: no real unit needed
     assert cli("failed", "mishe-wake@docs.service") == 0
     assert sent == ["health"]
 

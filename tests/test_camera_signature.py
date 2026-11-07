@@ -61,6 +61,7 @@ def test_fswebcam_exit_zero_without_frame_is_retried_then_unavailable(tmp_path, 
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
     monkeypatch.setattr(cam.subprocess, "run", silent)
+    monkeypatch.setattr(cam.shutil, "which", lambda name: f"/usr/bin/{name}")  # host-independent: no ffmpeg needed
     out = cam.run("webcam", None, "/dev/video0", None)
     assert out["status"] == "unavailable" and "grid" not in out
     assert "wrote no frame" in out["reason"]
@@ -80,6 +81,7 @@ def test_fswebcam_second_attempt_frame_is_used(tmp_path, monkeypatch):
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
     monkeypatch.setattr(cam.subprocess, "run", flaky)
+    monkeypatch.setattr(cam.shutil, "which", lambda name: f"/usr/bin/{name}")  # host-independent: no ffmpeg needed
     out = cam.run("webcam", None, "/dev/video0", None)
     assert len(attempts) == 2
     # the bytes are not a decodable image, so the signature step reports unavailable, not a fake grid
