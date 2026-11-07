@@ -1,4 +1,7 @@
 #!/bin/sh
-# Run mishe from this checkout: no install, no virtualenv, no third-party packages.
+# Run mishe from this checkout: no install. Prefer the checkout's .venv: the timers render
+# their units with that interpreter, and doctor compares installed units to what it would render.
 here=$(cd "$(dirname "$0")/.." && pwd)
-PYTHONPATH="$here/src${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m mishe_tauftauf "$@"
+py=python3
+[ -x "$here/.venv/bin/python" ] && py="$here/.venv/bin/python"
+PYTHONPATH="$here/src${PYTHONPATH:+:$PYTHONPATH}" exec "$py" -m mishe_tauftauf "$@"
