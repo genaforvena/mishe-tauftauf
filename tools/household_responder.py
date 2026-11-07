@@ -39,6 +39,9 @@ import sys
 import time
 from pathlib import Path
 
+# The household keeps UTC+3 (phone clock, Rozalia's local time): answer local time, never a UTC stamp.
+HOUSE_TZ = dt.timezone(dt.timedelta(hours=3))
+
 _HERE = Path(__file__).resolve().parent
 _spec = importlib.util.spec_from_file_location("household_text", _HERE / "household_text.py")
 ht = importlib.util.module_from_spec(_spec)
@@ -141,8 +144,8 @@ def reply(text: str, lang: str, site: Path, now: float | None = None) -> str:
     now = time.time() if now is None else now
     t = ht.tidy(text)
     if ht.asks_time(t):
-        u = ht.stamp_utc(now)
-        return f"Сейчас {u} по UTC." if lang == "ru" else f"It is {u} UTC."
+        u = dt.datetime.fromtimestamp(now, HOUSE_TZ).strftime("%H:%M")
+        return f"Сейчас {u}." if lang == "ru" else f"It is {u} here."
     if ht.asks_where(t):
         return _where_line(lang, latest_locations(site, now))
     if ht.greets(t):
@@ -202,8 +205,8 @@ def speak(text: str, lang: str, site: Path) -> int:
 
 def test(site: Path) -> int:
     cases = [
-        ("Миша, который час?", "ru", "UTC"),
-        ("Mishe, what time is it?", "en", "UTC"),
+        ("Миша, который час?", "ru", "Сейчас"),
+        ("Mishe, what time is it?", "en", "It is"),
         ("Миша, где Илья?", "ru", None),
         ("Привет, Миша", "ru", "Привет"),
         ("бла бла непонятно", "ru", "Повтори"),

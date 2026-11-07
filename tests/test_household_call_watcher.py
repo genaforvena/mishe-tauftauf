@@ -53,7 +53,7 @@ def test_answerable_call_speaks_once(tmp_path, monkeypatch):
     monkeypatch.setattr(resp, "speak", lambda text, lang, s: spoke.append((text, lang)) or 0)
     cw.once(site, now=NOW)
     cw.once(site, now=NOW + 1)  # same row again: must not repeat
-    assert len(spoke) == 1 and spoke[0][1] == "ru" and "UTC" in spoke[0][0]
+    assert len(spoke) == 1 and spoke[0][1] == "ru" and "Сейчас" in spoke[0][0]
 
 
 def test_stale_call_is_dropped(tmp_path, monkeypatch):
@@ -91,7 +91,7 @@ def test_dry_run_speaks_nothing_and_keeps_state(tmp_path, monkeypatch):
     _write_rows(site, [_hint(NOW - 5, "Миша, который час?")])
     monkeypatch.setattr(resp, "speak", lambda *a, **k: (_ for _ in ()).throw(AssertionError("spoke")))
     out = cw.once(site, dry_run=True, now=NOW)
-    assert out[0]["action"] == "dry-run" and "UTC" in out[0]["reply"]
+    assert out[0]["action"] == "dry-run" and "Сейчас" in out[0]["reply"]
     assert not (site / resp.WORK / cw.STATE).exists()
 
 
