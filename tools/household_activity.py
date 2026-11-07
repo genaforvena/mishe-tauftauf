@@ -35,6 +35,7 @@ EVENT_GAP = 900.0
 SETTLED_LUMA = 70.0
 SETTLED_MIN_S = 1800.0
 QUIET_BLOCK_MIN_S = 600.0
+NIGHT_MIN_S = 4 * 3600.0   # a dark run must be at least this long to count as the night
 PROVISIONAL = "PROVISIONAL, NOT VALIDATED: compare with the household's own bed and wake times before use"
 
 
@@ -173,6 +174,26 @@ def _interval(a: float, b: float) -> dict:
             "reason": "no usable frame for over 300 s: camera unreachable or blind, not dark"}
 
 
+def night_lights_out(lights: list[dict], data_end: float | None = None) -> float | None:
+    """Start of the latest night: the first lamp-off of a dark run lasting at least NIGHT_MIN_S.
+    A dark run starts at the first lamp-off after the previous lamp-on (or at the first lamp-off of
+    the data) and ends at the next lamp-on; a run still open at data_end counts up to data_end. The
+    last lamp-off of the day is not the night: it is a daytime switch. None (UNKNOWN) when no run
+    qualifies."""
+    night = None
+    run_start = None
+    for e in sorted(lights, key=lambda ev: ev["t"]):
+        if e["kind"] == "off" and run_start is None:
+            run_start = e["t"]
+        elif e["kind"] == "on" and run_start is not None:
+            if e["t"] - run_start >= NIGHT_MIN_S:
+                night = run_start
+            run_start = None
+    if run_start is not None and data_end is not None and data_end - run_start >= NIGHT_MIN_S:
+        night = run_start
+    return night
+
+
 def summarize(living: tuple[list[dict], list[float]], bedroom: tuple[list[dict], list[float]],
               blind: list[dict] = ()) -> dict:
     lrecs, ltimes = living
@@ -180,8 +201,7 @@ def summarize(living: tuple[list[dict], list[float]], bedroom: tuple[list[dict],
     lights = luma_events(lrecs, ltimes) if lrecs else []
     settled = runs(brecs, lambda r: r["activity"] is not None and r["activity"] < QUIET
                    and r["luma"] <= SETTLED_LUMA, SETTLED_MIN_S)
-    offs = [e["t"] for e in lights if e["kind"] == "off"]
-    lights_out = offs[-1] if offs else None
+    lights_out = night_lights_out(lights, lrecs[-1]["t"] if lrecs else None)
     first_active = None
     if lights_out is not None:
         # The 600 s trailing window still holds the lamp's own change for 600 s; skip it.

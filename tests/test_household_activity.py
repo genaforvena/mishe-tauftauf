@@ -33,7 +33,7 @@ def _site(tmp_path, sig_rows, audio_rows=()):
 
 def test_lamp_off_is_lights_out_and_moving_frames_are_not_quiet():
     lamp_off = T0 + 3000
-    lr = _frames("living room", T0, T0 + 9000, lambda t: 80 if t < lamp_off else 40,
+    lr = _frames("living room", T0, lamp_off + 6 * 3600, lambda t: 80 if t < lamp_off else 40,
                  moving_at=lambda t: t < T0 + 2000)
     recs, times = ha.frame_records(lr)
     events = ha.luma_events(recs, times)
@@ -50,7 +50,7 @@ def test_first_activity_after_lights_out_ignores_the_lamp_transient():
     lamp_off = T0 + 3000
     # The grid churns for 1000 s right after the lamp goes off (the transient). The first
     # activity reported must come after the 600 s window has passed, not at the first churn.
-    lr = _frames("living room", T0, T0 + 9000, lambda t: 80 if t < lamp_off else 40,
+    lr = _frames("living room", T0, lamp_off + 6 * 3600, lambda t: 80 if t < lamp_off else 40,
                  moving_at=lambda t: lamp_off <= t < lamp_off + 1000)
     recs, times = ha.frame_records(lr)
     summary = ha.summarize((recs, times), ([], []))
@@ -125,3 +125,25 @@ def test_operator_blind_interval_is_tagged_unknown_with_null_start(tmp_path):
     spans = report["summary"]["unknown_intervals"]["living room"]
     assert spans == blind and report["summary"]["unknown_intervals"]["bedroom"] == []
     assert ha.operator_blind(tmp_path) == []
+
+
+def test_night_lights_out_is_not_the_last_daytime_lamp_off():
+    # Night: off at 23:58, the lamp comes back on at 10:13 (10 h dark run). Day: a short
+    # on/off pair and a later daytime off. The last off of the day must not be the night.
+    night_off = T0
+    events = [
+        {"t": night_off, "kind": "off"},
+        {"t": night_off + 4 * 3600, "kind": "off"},
+        {"t": night_off + 10 * 3600 + 15 * 60, "kind": "on"},
+        {"t": night_off + 11 * 3600 + 24 * 60, "kind": "off"},
+        {"t": night_off + 11 * 3600 + 40 * 60, "kind": "on"},
+        {"t": night_off + 11 * 3600 + 56 * 60, "kind": "off"},
+        {"t": night_off + 12 * 3600 + 12 * 60, "kind": "off"},
+    ]
+    assert ha.night_lights_out(events) == night_off
+
+
+def test_night_lights_out_is_unknown_without_a_closed_dark_run():
+    # Only a short daytime dark run closes; nothing reaches four hours: UNKNOWN, not the last off.
+    events = [{"t": T0, "kind": "off"}, {"t": T0 + 1200, "kind": "on"}, {"t": T0 + 2400, "kind": "off"}]
+    assert ha.night_lights_out(events) is None
