@@ -174,7 +174,7 @@ def note3_lines(now):
             newest = rows[-1]
     if newest is None:
         return ["  NOTE3 sensor feed: UNKNOWN (no samples)"]
-    t = newest.get("t") or newest.get("epoch") or newest.get("time")
+    t = newest.get("wall_ts") or newest.get("t")
     age = int(now - t) if isinstance(t, (int, float)) else None
     return ["  NOTE3 sensor feed: last sample %s ago%s" % (
         "?" if age is None else "%ds" % age, "  STALE (UNKNOWN)" if age is None or age > 300 else "")]
