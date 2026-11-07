@@ -1,4 +1,51 @@
-# Rust runtime evolution investigation plan
+# Rust runtime migration initiative
+
+## Current owner instruction: implementation and observed live delivery
+
+The owner has superseded the original planning-only assignment. The dedicated
+**inner `mishe-self-development-current:rust-plan` mind, using Claude Haiku**,
+owns investigation, implementation, scoped commits, delivery coordination,
+actual-consumer observation and continuing migration. `7:omp` is only completing
+the autonomy setup/handoff; it is not the migration owner. The remaining
+investigation sections below describe the initial stage, not a restriction on
+the newly authorized implementation. No further routine implementation approval
+is required. Apply the existing ordinary/strong-change delivery rules.
+
+Drive meaningful responsibilities toward small composable POSIX commands,
+actually replacing selected Python implementations with Rust and retiring their
+obsolete paths. Keep exactly one authoritative live implementation per
+responsibility. Use measured benefits and preserve existing contracts, evidence,
+UNKNOWN states, containment, reconciliation and file/systemd coordination.
+A first running Rust core slice within one day is the owner's target; report
+feasibility and evidence rather than promising the entire core in that time.
+
+Carry each completed scoped change through the existing committed-snapshot
+release mechanism to an observed live consumer; code or tests alone are not
+completion. Do not activate untested or unfinished edits. Distinguish committed,
+reviewed, activated, observed and recovered states. Continue autonomous bounded
+work and follow-up without waiting for another implementation assignment.
+
+The owner accepts bounded operational risk. This does not remove protected host
+limits, separate fresh strong-change review, or deterministic activation,
+revert and reapply checks. Coordinate the current release writer and overlapping
+unit edits rather than moving pins or regenerating units from a second path.
+
+`0:op` is asked to maintain recovery coverage if a migration failure prevents
+Mishe restoring itself. Recovery is not complete with a one-time revival:
+preserve the failure, diagnose the failed recovery boundary, repair the reusable
+self-restoration path through the proper delivery gate, and exercise controlled
+recurrence plus missing/stale detector behavior. Name the monitor, resolver,
+bounded detection interval and next recovery observation. No weakening host
+guards, blindly replaying unknown effects or claiming unobserved recovery.
+
+Autonomy setup must hand off the existing interactive session without concurrent
+interactive/autonomous migration engines. Preserve evidence and the inner window.
+Verify the Haiku pin, real wake, canonical wall/yield, scheduled continuation,
+expiring signals and bounded failure routing on the running consumer. `7:omp`
+finishes this setup with the existing delivery owner, then hands ownership to
+this inner mind and reports the verified result to `0:op` and the requester.
+
+## Initial investigation brief (historical scope, superseded above)
 
 This authorizes investigation and a written migration proposal only. It does not
 authorize implementing Rust, changing production consumers, or activating releases.
