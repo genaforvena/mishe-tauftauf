@@ -117,3 +117,38 @@ def test_fresh_redmi_heartbeat_without_values_is_unknown(tmp_path):
     site = _redmi_site(tmp_path, {"last_row_epoch": now - 2, "values": None})
     out = hc.redmi_summary(site, now)
     assert out["status"] == "unknown" and "no sensor values" in out["reason"]
+
+
+class _FakeCamsig:
+    def __init__(self, grid, mean_luma):
+        self.row = {"status": "ok", "grid": grid, "mean_luma": mean_luma, "captured_at_epoch_s": 1.0}
+
+    def run(self, source, target, device, extra):
+        return dict(self.row)
+
+
+def _camera_exit(monkeypatch, tmp_path, grid, mean_luma):
+    (tmp_path / "spatial/work/household").mkdir(parents=True)
+    (tmp_path / "spatial/work/household/rooms.json").write_text(
+        json.dumps([{"name": "living room", "source": "webcam"}]))
+    monkeypatch.setattr(hc, "load_camsig", lambda: _FakeCamsig(grid, mean_luma))
+    return hc.main(["camera", "--room", "living room", "--source", "webcam", "--site", str(tmp_path)])
+
+
+def test_blind_camera_is_recorded_red_not_a_crash(tmp_path, monkeypatch, capsys):
+    # A covered or dark lens is an observed state: the row is written as blind and the
+    # producer must see code 2 (RED observation), not 1 (cannot tell, a failed unit).
+    assert _camera_exit(monkeypatch, tmp_path, [10] * 48, 1.0) == 2
+    row = json.loads((tmp_path / "spatial/work/household/signatures.jsonl").read_text().splitlines()[-1])
+    assert row["status"] == "blind"
+
+
+def test_lit_camera_is_green(tmp_path, monkeypatch):
+    grid = [10, 200] * 24
+    assert _camera_exit(monkeypatch, tmp_path, grid, 120.0) == 0
+
+
+def test_unavailable_room_is_cannot_tell(tmp_path, monkeypatch):
+    (tmp_path / "spatial/work/household").mkdir(parents=True)
+    (tmp_path / "spatial/work/household/rooms.json").write_text("[]")
+    assert hc.main(["camera", "--room", "living room", "--source", "webcam", "--site", str(tmp_path)]) == 1

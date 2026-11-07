@@ -89,7 +89,13 @@ def cmd_camera(args) -> int:
                 row.update(status="blind", reason=reason)
     append(site_path(args.site, "spatial/work/household/signatures.jsonl"), row)
     print(json.dumps({k: v for k, v in row.items() if k != "grid"}, sort_keys=True))
-    return 0 if row.get("status") == "ok" else 1
+    # 0 = ok observation (GREEN); 2 = observed blind camera (RED, recorded, not a crash);
+    # 1 = cannot tell (unavailable config or a failed capture), which the producer treats as a crash.
+    if row.get("status") == "ok":
+        return 0
+    if row.get("status") == "blind":
+        return 2
+    return 1
 
 
 def newest_note3(site: str):
