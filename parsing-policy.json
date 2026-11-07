@@ -57,6 +57,8 @@
     "tools/check_session_watch_routing.py",
     "tools/guard-activation/check-activation.py",
     "tools/audio_hint.py",
+    "tools/hint_calibration.py",
+    "tools/household_view.py",
     "tools/inference_budget_aggregate.py",
     "tools/recovery-control.py",
     "tools/unit_psi_attribution.py"
