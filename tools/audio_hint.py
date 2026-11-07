@@ -8,12 +8,18 @@ written anywhere.
 
 Pipeline (the gates are not bypassed):
   arecord -> RMS -> mesh-whisper-filter --wav (silence gate)
-          -> mesh-whisper-run (niced, serialized whisper.cpp entry point)
+          -> mesh-whisper-run -l auto --prompt VOCAB (niced, serialized)
           -> mesh-whisper-filter --text (hallucination gate)
-          -> keep "mishe ..." segment only
+          -> keep the segment from the first EXACT hint word onward
   The WAV file is removed in a finally block whatever happens.
 
-"mishe stop listening" or "mishe stop" writes a one-hour suspension file; while
+The vocabulary (prompt, hint words, stop words, stop phrases) is a site file,
+SITE_HOME/spatial/work/household/hint_vocabulary.json, not code. A missing or
+partial file gives UNKNOWN rows. Hint words match exactly. Stop phrases match
+exactly; a bare stop word may be one letter off, only as the first word after
+the hint word.
+
+A stop (e.g. "mishe stop listening") writes a one-hour suspension file; while
 it is present, `window` records nothing and writes a SUSPENDED row.
 
 Usage:
@@ -41,11 +47,70 @@ import wave
 from pathlib import Path
 
 RATE = 16000
-MODEL = Path.home() / ".mesh" / "whispercpp" / "models" / "ggml-tiny.bin"
+# base multilingual: the model the Russian calibration round trip was measured with.
+MODEL = Path.home() / ".mesh" / "whispercpp" / "models" / "ggml-base.bin"
 WHISPER = "mesh-whisper-run"
 FILTER = "mesh-whisper-filter"
-HINT_RE = re.compile(r"\bmishe\b[\s,:.!?-]*(.*)", re.IGNORECASE | re.DOTALL)
-STOP_RE = re.compile(r"\bmishe\b[\s,:.!?-]*stop\b", re.IGNORECASE)
+TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+VOCAB_NAME = "hint_vocabulary.json"
+VOCAB_KEYS = ("prompt", "hint_words", "stop_words", "stop_phrases")
+
+
+def load_vocabulary(site: Path) -> dict:
+    """Vocabulary lives in the site home, not in code. Missing or malformed -> ValueError (UNKNOWN)."""
+    p = out_dir(site) / VOCAB_NAME
+    data = json.loads(p.read_text())
+    missing = [k for k in VOCAB_KEYS if k not in data]
+    if missing:
+        raise ValueError(f"{VOCAB_NAME} missing keys: {missing}")
+    if not isinstance(data["prompt"], str) or not data["prompt"].strip():
+        raise ValueError(f"{VOCAB_NAME} prompt is empty")
+    return {
+        "prompt": data["prompt"],
+        "hint_words": {tok(w) for w in data["hint_words"]},
+        "stop_words": [tok(w) for w in data["stop_words"]],
+        "stop_phrases": [tuple(tokens(p)) for p in data["stop_phrases"]],
+    }
+
+
+def tokens(text: str) -> list[str]:
+    return [m.group(0).casefold() for m in TOKEN_RE.finditer(text)]
+
+
+def tok(text: str) -> str:
+    t = tokens(text)
+    if len(t) != 1:
+        raise ValueError(f"vocabulary entry must be one word: {text!r}")
+    return t[0]
+
+
+def edit_distance(a: str, b: str) -> int:
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def find_hint(text: str, vocab: dict):
+    """Exact hint-word match (no fuzz). Returns (token index, char offset) or None."""
+    matches = list(TOKEN_RE.finditer(text))
+    for i, m in enumerate(matches):
+        if m.group(0).casefold() in vocab["hint_words"]:
+            return i, m.start(), [x.group(0).casefold() for x in matches]
+    return None
+
+
+def is_stop(after: list[str], vocab: dict) -> bool:
+    """Stop phrases match exactly; a bare stop word may be one letter off, only as the first word after the hint."""
+    for phrase in vocab["stop_phrases"]:
+        if tuple(after[: len(phrase)]) == phrase:
+            return True
+    if after:
+        return any(edit_distance(after[0], w) <= 1 for w in vocab["stop_words"])
+    return False
 
 
 def site_home(explicit: str | None) -> Path:
@@ -108,9 +173,10 @@ def gate_wav(path: Path) -> str:
     return p.stdout.strip() or f"rc={p.returncode}"
 
 
-def transcribe(path: Path) -> str:
+def transcribe(path: Path, prompt: str) -> str:
     p = subprocess.run(
-        ["nice", "-n", "10", WHISPER, "-m", str(MODEL), "-f", str(path), "-np", "-nt"],
+        ["nice", "-n", "10", WHISPER, "-m", str(MODEL), "-f", str(path), "-l", "auto",
+         "--prompt", prompt, "-np", "-nt"],
         capture_output=True, text=True, timeout=120)
     if p.returncode != 0:
         raise RuntimeError(f"whisper rc={p.returncode}: {p.stderr.strip()[:200]}")
@@ -132,6 +198,13 @@ def window(args: argparse.Namespace) -> dict:
         row["suspended_until"] = None if until == float("inf") else round(until, 1)
         return row
 
+    try:
+        vocab = load_vocabulary(site)
+    except (OSError, ValueError) as exc:
+        row["status"] = "UNKNOWN"
+        row["reason"] = f"vocabulary: {type(exc).__name__}: {str(exc)[:200]}"
+        return row
+
     tmp = Path(tempfile.mkdtemp(prefix="audio-hint-"))
     wav = tmp / "window.wav"
     try:
@@ -145,19 +218,20 @@ def window(args: argparse.Namespace) -> dict:
         if not gate.startswith("PASS"):
             row["status"] = "SILENT_OR_DROPPED"
             return row
-        text = transcribe(wav)
+        text = transcribe(wav, vocab["prompt"])
         if not text or not text_gate(text).startswith("PASS"):
             row["status"] = "NO_SPEECH"
             return row
-        m = HINT_RE.search(text)
-        if not m:
+        found = find_hint(text, vocab)
+        if found is None:
             # Ordinary conversation: transcript discarded, only the level is kept.
             row["status"] = "NO_HINT"
             return row
-        hint = text[m.start():].strip()
+        idx, offset, toks = found
+        hint = text[offset:].strip()
         row["status"] = "HINT"
         row["hint"] = hint
-        if STOP_RE.search(hint):
+        if is_stop(toks[idx + 1:], vocab):
             row["suspended_until"] = round(write_suspend(site, 1.0, "mishe stop"), 1)
             row["action"] = "suspended audio 1 h"
         return row
