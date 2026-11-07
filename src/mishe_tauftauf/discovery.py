@@ -48,7 +48,8 @@ from .multibody import read_multibody_coverage
 from .redmi10_stream import read_redmi10_stream
 from .redmi10_accel import read_redmi10_accel_coverage
 from .replacement_readings import (
-    probe_session_stability, read_renderer_coverage, read_role_render_coverage, read_tmux_windows,
+    probe_session_restarts, probe_session_stability, read_renderer_coverage,
+    read_role_render_coverage, read_tmux_windows,
 )
 from .slice_throttle import read_slice_throttle
 from .unit_cpu import read_unit_cpu
@@ -7081,6 +7082,8 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(read_tmux_windows(_inner_tmux_socket()))
     observed.append(probe_session_stability(os.environ.get("MISHE_SEED_SESSION") or None,
                                             _inner_tmux_socket()))
+    observed.append(probe_session_restarts(_inner_tmux_socket(), time.time(),
+                                           declared=os.environ.get("MISHE_SEED_SESSION") or None))
     observed.append(read_renderer_coverage(_pinned_runtime_root()))
     observed.append(read_role_render_coverage(_declared_roles(home), _role_renderer(home)))
     observed.append(read_redmi10_stream(now=time.time()))

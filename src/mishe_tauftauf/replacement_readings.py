@@ -234,3 +234,68 @@ def probe_session_stability(declared: str | None, socket: str | None, *,
     elif owners is not None and "no server running" in (owners.stderr or ""):
         placements = {}
     return judge_session_stability(declared, live, placements)
+
+
+SESSION_RESTARTS_ID = "sense.host.session-restarts"
+RESTART_WINDOW_MINUTES = 60
+RESTART_MAX_BIRTHS = 2
+
+
+def parse_session_births(output: str) -> list[tuple[str, float]] | None:
+    """Parse ``#{session_name}\\t#{session_created}`` lines; None when malformed."""
+    births: list[tuple[str, float]] = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) != 2 or not parts[0] or not parts[1].strip().isdigit():
+            return None
+        births.append((parts[0], float(parts[1])))
+    return births
+
+
+def judge_session_restarts(created: list[tuple[str, float]] | None, now: float, *,
+                           declared: str | None = None,
+                           window_minutes: int = RESTART_WINDOW_MINUTES,
+                           max_births: int = RESTART_MAX_BIRTHS) -> dict[str, object]:
+    """Count session births in the window from injected creation times.
+
+    tmux keeps only the creation time of sessions still alive, so this reading
+    sees births whose session is still running; a restart whose replacement has
+    already ended is invisible and is stated in ``coverage``. ``created`` is None
+    when the probe could not answer (including no server, whose births cannot be
+    observed). More births than ``max_births`` in the window is drift.
+    """
+    base = {"id": SESSION_RESTARTS_ID, "kind": "read", "session": declared or "unset",
+            "coverage": "live sessions only; births of already-ended sessions are not observable"}
+    if created is None:
+        return {**base, "state": "unknown", "sample": "tmux session birth times could not be read"}
+    if not created:
+        return {**base, "state": "unknown", "sample": "tmux answered without sessions"}
+    if any(born > now + 60 for _, born in created):
+        return {**base, "state": "unknown", "sample": "session birth time is in the future; clock disagrees"}
+    since = now - window_minutes * 60
+    births = sorted(name for name, born in created if born >= since)
+    listed = f"births={len(births)} window={window_minutes}m"
+    if len(births) > max_births:
+        return {**base, "state": "drift", "births": len(births), "verdict": "churning",
+                "sample": f"{listed} sessions={','.join(births)} exceeds max={max_births}"}
+    return {**base, "state": "verified", "births": len(births), "verdict": "steady",
+            "sample": f"{listed} max={max_births} steady"}
+
+
+def probe_session_restarts(socket: str | None, now: float, *, declared: str | None = None,
+                           runner=_run_socket_tmux) -> dict[str, object]:
+    """Thin probe: session creation times on the plant's own socket."""
+    base = {"id": SESSION_RESTARTS_ID, "kind": "read", "session": declared or "unset"}
+    if not socket:
+        return {**base, "state": "unknown", "sample": "no tmux socket configured; default server not read"}
+    listed = runner(socket, ["list-sessions", "-F", "#{session_name}\t#{session_created}"])
+    if listed is None:
+        return judge_session_restarts(None, now, declared=declared)
+    if listed.returncode != 0:
+        if "no server running" in (listed.stderr or ""):
+            return {**judge_session_restarts(None, now, declared=declared),
+                    "sample": "no tmux server; births not observable"}
+        return judge_session_restarts(None, now, declared=declared)
+    return judge_session_restarts(parse_session_births(listed.stdout or ""), now, declared=declared)

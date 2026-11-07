@@ -264,3 +264,68 @@ def test_role_render_unreadable_or_empty_roles_is_unknown():
     from mishe_tauftauf.replacement_readings import read_role_render_coverage
     assert read_role_render_coverage(None, lambda r: "x")["state"] == "unknown"
     assert read_role_render_coverage([], lambda r: "x")["state"] == "unknown"
+
+
+from mishe_tauftauf.replacement_readings import (  # noqa: E402
+    SESSION_RESTARTS_ID, judge_session_restarts, parse_session_births, probe_session_restarts,
+)
+
+NOW = 1_000_000.0
+
+
+def test_session_restarts_no_socket_or_probe_failure_is_unknown():
+    assert probe_session_restarts(None, NOW)["state"] == "unknown"
+    assert probe_session_restarts(SOCK, NOW, runner=lambda s, a: None)["state"] == "unknown"
+
+
+def test_session_restarts_no_server_is_unknown_births_not_observable():
+    got = probe_session_restarts(SOCK, NOW, runner=lambda s, a: _done(1, err="no server running on /x\n"))
+    assert got["state"] == "unknown" and "not observable" in got["sample"]
+
+
+def test_session_restarts_other_tmux_error_is_unknown():
+    got = probe_session_restarts(SOCK, NOW, runner=lambda s, a: _done(1, err="Permission denied\n"))
+    assert got["state"] == "unknown"
+
+
+def test_session_restarts_malformed_or_empty_output_is_unknown():
+    assert parse_session_births("plant\tnotanumber\n") is None
+    assert parse_session_births("plant\n") is None
+    assert judge_session_restarts(None, NOW)["state"] == "unknown"
+    assert judge_session_restarts([], NOW)["state"] == "unknown"
+
+
+def test_session_restarts_quiet_window_is_verified_steady():
+    old = [("plant", NOW - 3 * 3600)]
+    got = judge_session_restarts(old, NOW, declared="plant")
+    assert got["state"] == "verified" and got["births"] == 0 and got["verdict"] == "steady"
+    assert got["id"] == SESSION_RESTARTS_ID
+
+
+def test_session_restarts_births_at_or_under_max_stay_verified():
+    births = [("a", NOW - 600), ("b", NOW - 1200)]
+    got = judge_session_restarts(births, NOW)
+    assert got["state"] == "verified" and got["births"] == 2
+
+
+def test_session_restarts_over_max_is_drift_with_names():
+    births = [("a", NOW - 60), ("b", NOW - 120), ("c", NOW - 180)]
+    got = judge_session_restarts(births, NOW)
+    assert got["state"] == "drift" and got["verdict"] == "churning"
+    assert "sessions=a,b,c" in got["sample"]
+
+
+def test_session_restarts_window_boundary_excludes_older_births():
+    edge = [("a", NOW - 3600), ("b", NOW - 3601), ("c", NOW - 3602)]
+    assert judge_session_restarts(edge, NOW)["births"] == 1
+
+
+def test_session_restarts_future_birth_is_unknown_not_calm():
+    assert judge_session_restarts([("a", NOW + 3600)], NOW)["state"] == "unknown"
+
+
+def test_session_restarts_probe_parses_live_listing():
+    out = f"plant\t{int(NOW - 60)}\nsenses\t{int(NOW - 90)}\n"
+    got = probe_session_restarts(SOCK, NOW, declared="plant", runner=lambda s, a: _done(0, out))
+    assert got["state"] == "verified" and got["births"] == 2
+    assert got["coverage"].startswith("live sessions only")
