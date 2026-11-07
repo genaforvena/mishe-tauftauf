@@ -372,6 +372,21 @@
       "resolver": "senses",
       "covers": "Note3 sensor sample and Redmi10 stream freshness with raw light and accelerometer; a stale or missing phone exits UNKNOWN",
       "replaces": []
+    },
+    {
+      "name": "household-daylight",
+      "command": [
+        "{python}",
+        "{repo}/tools/daylight_curve.py",
+        "--site",
+        "{home}"
+      ],
+      "every": 600,
+      "timeout": 60,
+      "max_age": 1500,
+      "resolver": "senses",
+      "covers": "per-room daylight curve (UTC hour median luma, lamp steps removed) rebuilt from signatures.jsonl every ten minutes; no usable signature rows or a crash exits UNKNOWN (never an empty GREEN curve), an hour without ok samples stays null",
+      "replaces": []
     }
   ],
   "retired": [

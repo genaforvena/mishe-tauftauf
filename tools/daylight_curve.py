@@ -122,6 +122,10 @@ def main(argv=None) -> int:
     if not args.site.is_dir():
         raise SystemExit(f"site does not exist: {args.site}")
     report = build(load_rows(args.site / "spatial/work/household/signatures.jsonl"))
+    if not report["rooms"]:
+        # No usable rows is UNKNOWN for the duty, never a GREEN empty curve.
+        print(panel(report), file=sys.stderr)
+        return 1
     out = args.out or args.site / "spatial/work/household/daylight.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")

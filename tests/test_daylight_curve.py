@@ -61,3 +61,32 @@ def test_main_writes_daylight_json(tmp_path):
     assert dc.main(["--site", str(site)]) == 0
     data = json.loads((site / "spatial/work/household/daylight.json").read_text(encoding="utf-8"))
     assert data["rooms"]["living room"]["total_samples"] == len(lines) - 1
+
+
+def test_no_usable_rows_exits_unknown_not_an_empty_green(tmp_path):
+    site = tmp_path / "site"
+    (site / "spatial/work/household").mkdir(parents=True)
+    (site / "spatial/work/household/signatures.jsonl").write_text('{"room": "living room", "status": "blind"}\n')
+    assert dc.main(["--site", str(site)]) == 1
+    assert not (site / "spatial/work/household/daylight.json").exists()
+
+
+def test_usable_rows_write_the_curve_and_exit_zero(tmp_path):
+    site = tmp_path / "site"
+    (site / "spatial/work/household").mkdir(parents=True)
+    rows = _rows("living room", lambda t: 60.0, T0, T0 + 3000)
+    (site / "spatial/work/household/signatures.jsonl").write_text(
+        "".join(__import__("json").dumps(r) + "\n" for r in rows))
+    assert dc.main(["--site", str(site)]) == 0
+    assert (site / "spatial/work/household/daylight.json").exists()
+
+
+def test_household_daylight_duty_is_declared_with_bounded_timing():
+    import json
+    manifest = json.loads((ROOT / "duties.json").read_text())
+    item = next(d for d in manifest["duties"] if d["name"] == "household-daylight")
+    assert item["resolver"] == "senses"
+    assert item["command"][-2:] == ["--site", "{home}"]
+    assert item["command"][1] == "{repo}/tools/daylight_curve.py"
+    assert item["every"] == 600 and item["max_age"] >= item["every"] + item["timeout"]
+    assert item["max_age"] <= 6 * item["every"]
