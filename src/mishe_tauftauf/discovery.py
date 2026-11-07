@@ -46,6 +46,7 @@ from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
                              read_redmi10_peer_delivery)
 from .multibody import read_multibody_coverage
 from .redmi10_stream import read_redmi10_stream
+from .redmi10_accel import read_redmi10_accel_coverage
 from .replacement_readings import (
     probe_session_stability, read_renderer_coverage, read_role_render_coverage, read_tmux_windows,
 )
@@ -7083,6 +7084,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(read_renderer_coverage(_pinned_runtime_root()))
     observed.append(read_role_render_coverage(_declared_roles(home), _role_renderer(home)))
     observed.append(read_redmi10_stream(now=time.time()))
+    observed.append(read_redmi10_accel_coverage(now=time.time()))
     return {"created": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
             "node": os.uname().nodename, "observations": observed}
 
