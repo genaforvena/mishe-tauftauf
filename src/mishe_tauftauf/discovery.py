@@ -4678,6 +4678,12 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
                 "nonmind_excluded": nonmind_excluded}
     outcomes: list[tuple[datetime, str]] = []
     for sha, ots in ref_time.items():
+        # A record first cited before the window cannot disposition any DM in it:
+        # every DM is at or after window_start, and a credit must be later than
+        # the DM. Skipping its read keeps the reading identical and avoids opening
+        # every record the whole tape ever cited (171k reads on the live tape).
+        if ots < window_start:
+            continue
         path = records_dir / f"{sha}.json"
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
