@@ -21,10 +21,60 @@ from .observations import validate_slug
 from .state_files import read_json, write_json
 
 SIGNAL = "delivery-requests"
+ADMISSION_MAX_AGE_SECONDS = 15 * 60
+"""Admission held longer than this by a dead owner is a RED detector, not a wait."""
+REVERT_PHASES = {"reverted", "reverted-activation-failed", "revert-failed"}
 
 
 def admission_path(home):
     return Path(home) / "work/delivery-admission.json"
+
+
+def _alive(pid):
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def admission_problem(home, now=None):
+    """RED text when admission outlives its owner; None when healthy or absent.
+
+    A live owner may legitimately hold admission for a long apply, so only a
+    dead owner past the bound is a problem: nothing else will ever release it.
+    """
+    path = admission_path(home)
+    if not path.exists():
+        return None
+    marker = read_json(path)
+    if not isinstance(marker, dict):
+        return "Malformed delivery admission; resolver required"
+    age = (time.time() if now is None else now) - float(marker.get("at", 0) or 0)
+    if _alive(marker.get("pid")) or age < ADMISSION_MAX_AGE_SECONDS:
+        return None
+    return (f"Delivery admission for {marker.get('id')} held {int(age // 60)} min by dead owner "
+            f"pid {marker.get('pid')}; resolver required")
+
+
+def preflight(home, spec):
+    """Resolve the delivery argv before admission; a missing program fails with no effect."""
+    if spec.get("patch"):
+        record = wall_patch.status(Path(home), spec["patch"])
+        wall_patch.preflight(Path(home), record.get("delivery_plan") or {})
+
+
+def _runtime_restored(record):
+    runtime = Path(record["runtime"])
+    try:
+        return all(wall_patch.snapshot(wall_patch.target(runtime, name)) == values["runtime_before"]
+                   for name, values in record["files"].items())
+    except (OSError, ValueError):
+        return False
 
 
 def location(home, identity):
@@ -95,6 +145,7 @@ def enqueue(home, repo, sha, *, previous, role, key, check=None, observe=None, p
         if not check or not observe:
             raise ValueError("ordinary request needs check and observe commands")
     validate_source(home, spec)
+    preflight(home, spec)
     identity = digest(dict(spec=spec, role=role, key=key))
     path = location(home, identity)
     if path.exists():
@@ -109,6 +160,7 @@ def heartbeat(home, problem=None):
     from . import signal_store
     if SIGNAL not in signal_store.registry(home):
         signal_store.register(home, SIGNAL, max_age=300, subscribers=["genome"])
+    problem = problem or admission_problem(home)
     signal_store.observe(home, SIGNAL, "RED" if problem else "GREEN", now=time.time(),
                          source="delivery-consumer")
 
@@ -167,6 +219,16 @@ def consume(home):
             if row["state"] != "queued": continue
             receipt = read_json(yielding.receipt_path(home, row["key"]))
             if not receipt or receipt.get("role") != row["role"] or receipt.get("key") != row["key"]: continue
+            try:
+                preflight(home, row["spec"])
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                # Before admission and before any effect: an unresolvable
+                # argv fails the request and never takes the admission.
+                row.update(state="failed", error=f"preflight: {exc}", ended_at=time.time())
+                write_json(location(home, row["id"]), row)
+                notify(home, row, row["state"] + ": " + row["error"])
+                resume(home)
+                return [row]
             # Use the existing exclusion only to claim admission. Activation
             # children may independently acquire that same dispatch lock.
             try:
@@ -179,7 +241,7 @@ def consume(home):
                     with (home / ".wall-patch.lock").open("a+") as patch_lock:
                         try: fcntl.flock(patch_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                         except BlockingIOError: return []
-                        marker = dict(id=row["id"], token=uuid.uuid4().hex, pid=os.getpid())
+                        marker = dict(id=row["id"], token=uuid.uuid4().hex, pid=os.getpid(), at=time.time())
                         write_json(admission_path(home), marker)
             except promotion.DeliveryBusy:
                 return []
@@ -210,9 +272,11 @@ def consume(home):
                 recovered = False
                 if row["state"] == "running" and row["spec"].get("patch"):
                     record = wall_patch.status(home, row["spec"]["patch"])
-                    if record.get("phase") == "reverted":
-                        # Restoring bytes/activation alone is not functional
-                        # recovery. Observe the old caller with the bound plan.
+                    if record.get("phase") in REVERT_PHASES and _runtime_restored(record):
+                        # A failed revert activation is still recoverable when
+                        # every scoped byte is back. Restoring bytes alone is not
+                        # functional recovery: observe the old caller with the
+                        # bound plan, and finalize only if that probe is green.
                         with token_environment(marker["token"]):
                             try:
                                 probe = wall_patch.run(home, row["spec"]["patch"], "request-recovery-observe",

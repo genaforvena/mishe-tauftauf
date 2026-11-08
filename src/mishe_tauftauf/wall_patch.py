@@ -9,7 +9,9 @@ import fcntl
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
+import shutil
 import subprocess
 
 from .observations import validate_slug
@@ -112,15 +114,67 @@ def command_artifacts(home, commands):
     return artifacts
 
 
-def delivery_plan(home, activate, observe, revert_observe=None):
-    return {"activate": activate, "observe": observe, "revert_observe": revert_observe,
-            "artifacts": command_artifacts(home, [activate, observe, revert_observe])}
+def delivery_plan(home, activate, observe, revert_observe=None, revert=None):
+    """``revert`` is the argv that restores the old consumer pin. Absent, the
+    revert re-runs ``activate`` (legacy plans, which were recorded that way)."""
+    plan = {"activate": activate, "observe": observe, "revert_observe": revert_observe}
+    if revert is not None:
+        plan["revert"] = revert
+    plan["artifacts"] = command_artifacts(home, [activate, observe, revert_observe, revert])
+    return plan
 
 
 def validate_plan(home, record, activate, observe):
     plan = record["delivery_plan"]
-    if plan != delivery_plan(home, activate, observe, plan.get("revert_observe")):
+    if plan != delivery_plan(home, activate, observe, plan.get("revert_observe"), revert=plan.get("revert")):
         raise ValueError("delivery command or script changed since review; recheck")
+
+
+def _in_checkout(home, arg):
+    path = Path(arg)
+    return path if path.is_absolute() else home.parent / path
+
+
+def _executable(home, command):
+    """Resolve the program and a script argument as ``run`` will, without running it.
+
+    ``run`` executes with cwd = the checkout, so a relative path is resolved
+    there. A missing program or script must fail before admission, not after
+    the runtime bytes have moved.
+    """
+    if not command or not all(isinstance(x, str) for x in command):
+        raise ValueError("command must be a nonempty argument list")
+    words = list(command)
+    if words[0] == "env":
+        words = words[1:]
+        while words and "=" in words[0]:
+            words = words[1:]
+    if not words:
+        raise ValueError(f"command has no program: {command}")
+    program = words[0]
+    if "/" in program:
+        found = _in_checkout(home, program)
+        if not (found.is_file() and os.access(found, os.X_OK)):
+            raise ValueError(f"program is not an executable file: {program}")
+    elif shutil.which(program) is None:
+        raise ValueError(f"program is not on PATH: {program}")
+    if Path(program).name in {"bash", "sh"} or Path(program).name.startswith("python"):
+        for arg in words[1:]:
+            if arg in {"-c", "-m"}:
+                break
+            if arg.startswith("-"):
+                continue
+            if "/" in arg or arg.endswith((".sh", ".py")):
+                if not _in_checkout(home, arg).is_file():
+                    raise ValueError(f"script not found: {arg}")
+            break
+
+
+def preflight(home, plan):
+    """Every delivery command in a plan must resolve before any admission or effect."""
+    for key in ("activate", "observe", "revert_observe", "revert"):
+        if plan.get(key) is not None:
+            _executable(Path(home), plan[key])
 
 
 def patch_hash(record):
@@ -195,7 +249,7 @@ def review(home, record):
     return {"clear": result["results"][0].get("verdict") == "clear", "request_hash": request["input_hash"], "response": result}
 
 
-def check(home, identity, command, *, activate=None, observe=None, revert_observe=None):
+def check(home, identity, command, *, activate=None, observe=None, revert_observe=None, revert=None):
     from .delivery_requests import check_admission
     with lock(home):
         check_admission(home)
@@ -212,7 +266,9 @@ def check(home, identity, command, *, activate=None, observe=None, revert_observ
         if activate is not None or observe is not None or revert_observe is not None:
             if not activate or not observe or not revert_observe:
                 raise ValueError("check requires activate, observe and revert-observe together")
-            record["delivery_plan"] = delivery_plan(home, activate, observe, revert_observe)
+            record["delivery_plan"] = delivery_plan(home, activate, observe, revert_observe, revert=revert)
+            # An unresolvable command is refused before tests or review are spent on it.
+            preflight(home, record["delivery_plan"])
         else:
             record.pop("delivery_plan", None)
         for name, values in record["files"].items():
@@ -267,7 +323,10 @@ def _revert(home, identity, record, activate):
         for name, values in record["files"].items():
             path = target(runtime, name)
             restore(path, values["runtime_before"], expected=snapshot(path))
-        record["revert_activation"] = run(home, identity, "revert", activate)
+        # The plan's revert argv restores the old pin; re-running the new
+        # activation would re-pin the new code and call that a revert.
+        revert_argv = (record.get("delivery_plan") or {}).get("revert") or activate
+        record["revert_activation"] = run(home, identity, "revert", revert_argv)
         record["phase"] = "reverted" if record["revert_activation"]["code"] == 0 else "reverted-activation-failed"
         if record["revert_activation"]["code"]:
             raise ValueError("revert activation failed; scoped bytes restored but consumer state UNKNOWN")
@@ -399,6 +458,7 @@ def main():
     parser.add_argument("--activate", help="JSON argument list restarting affected consumers")
     parser.add_argument("--observe", help="JSON argument list checking real live consumers")
     parser.add_argument("--revert-observe", help="JSON argument list checking the restored live consumer")
+    parser.add_argument("--revert", help="JSON argument list restoring the old consumer pin")
     args = parser.parse_args()
     if args.action == "prepare":
         prepare(args.home, args.id, args.files or [])
@@ -406,7 +466,8 @@ def main():
         check(args.home, args.id, json.loads(args.command),
               activate=json.loads(args.activate) if args.activate else None,
               observe=json.loads(args.observe) if args.observe else None,
-              revert_observe=json.loads(args.revert_observe) if args.revert_observe else None)
+              revert_observe=json.loads(args.revert_observe) if args.revert_observe else None,
+              revert=json.loads(args.revert) if args.revert else None)
     elif args.action == "apply":
         apply(args.home, args.id, json.loads(args.activate), json.loads(args.observe))
     elif args.action == "revert":
