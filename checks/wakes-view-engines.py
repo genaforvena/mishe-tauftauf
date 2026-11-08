@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
+import inspect
 import json
 import re
 import subprocess
@@ -151,12 +153,18 @@ def lint(text: str) -> list[str]:
     return problems
 
 
+def render_modes(output_view) -> tuple[bool, ...]:
+    """The pane modes this renderer supports: a settled-wake final mode exists only where output_view takes `final`."""
+    return (False, True) if 'final' in inspect.signature(output_view).parameters else (False,)
+
+
 def render_problems(path: Path, machine_syntax, output_view) -> tuple[list[str], str]:
-    """Render one output in both pane modes through the live code and lint each."""
+    """Render one output in every pane mode the target supports, through its live code, and lint each."""
     problems = []
-    for final in (False, True):
+    for final in render_modes(output_view):
         try:
-            _, text = output_view(path, limit=SAMPLE_LIMIT, final=final)
+            _, text = (output_view(path, limit=SAMPLE_LIMIT, final=final) if 'final' in
+                       inspect.signature(output_view).parameters else output_view(path, limit=SAMPLE_LIMIT))
         except Exception as exc:  # any renderer exception is a violation, not a crash of the check
             problems.append(f'render exception (final={final}): {type(exc).__name__}: {str(exc)[:120]}')
             continue
@@ -201,36 +209,62 @@ def route(home: Path, problems: list[tuple[str, str, str]]) -> str:
     return 'routed to genome (renderer) with the sample wake key'
 
 
-def evaluate(home: Path, repo: Path, limit: int, do_route: bool) -> tuple[int, list[str]]:
-    sys.path.insert(0, str(repo / 'src'))
+def targets(home: Path, repo: Path) -> list[tuple[str, Path]]:
+    """What the wakes window can show: the checkout being delivered (HEAD) and the live pin the panes run."""
+    out = [('HEAD', repo)]
     try:
-        from mishe_tauftauf.plant_view_boundary import machine_syntax, output_view
-    except Exception as exc:
-        return 3, [f'renderer cannot be imported from {repo}/src: {type(exc).__name__}: {exc}']
+        pin = (home / 'runtime' / 'current').resolve(strict=True)
+    except OSError:
+        pin = None
+    if pin is not None and pin.resolve() != repo.resolve():
+        out.append(('live pin ' + pin.name[:10], pin))
+    return out
+
+
+def load_renderer(root: Path):
+    """Import the renderer from one target's src, dropping any copy imported for an earlier target."""
+    for name in [m for m in sys.modules if m == 'mishe_tauftauf' or m.startswith('mishe_tauftauf.')]:
+        del sys.modules[name]
+    sys.path.insert(0, str(root / 'src'))
+    try:
+        module = importlib.import_module('mishe_tauftauf.plant_view_boundary')
+    finally:
+        sys.path.remove(str(root / 'src'))
+    return module.machine_syntax, module.output_view
+
+
+def evaluate(home: Path, repo: Path, limit: int, do_route: bool) -> tuple[int, list[str]]:
     newest = newest_per_model(home / 'wakes', limit)
     if not newest:
         return 3, [f'no retained engine outputs under {home}/wakes']
     roles = configured_models(home)
     if not roles:
         return 3, [f'no engine configuration under {home}/engines']
-    lines, failures, pending = [], [], []
-    for model, path in sorted(newest.items()):
-        problems, sample = render_problems(path, machine_syntax, output_view)
-        state = 'FAIL' if problems else 'PASS'
-        lines.append(f'model {model}: {state} (sample {sample})')
-        failures += [(model, sample, p) for p in problems]
+    lines, failures = [], []
+    for label, root in targets(home, repo):
+        try:
+            machine_syntax, output_view = load_renderer(root)
+        except Exception as exc:
+            failures.append(('-', '-', f'{label}: renderer cannot be imported from {root}/src: {type(exc).__name__}: {str(exc)[:120]}'))
+            continue
+        for model, path in sorted(newest.items()):
+            problems, sample = render_problems(path, machine_syntax, output_view)
+            state = 'FAIL' if problems else 'PASS'
+            lines.append(f'{label} model {model}: {state} (sample {sample})')
+            failures += [(model, sample, f'{label}: {p}') for p in problems]
+    pending = []
     for role, (engine, model) in sorted(roles.items()):
         if model not in newest:
             pending.append(f'role {role}: model {model} ({engine}) has no retained wake output yet; UNKNOWN until its first wake renders')
     if failures:
-        out = [f'{len(failures)} rendering violation(s) across {len(newest)} model(s)']
+        out = [f'{len(failures)} rendering violation(s) across {len(newest)} model(s) and {len(targets(home, repo))} renderer(s)']
         if do_route:
             out.append(route(home, failures))
         out += [f'{m} sample={k}: {p}' for m, k, p in failures[:12]]
         return 2, out + lines + pending
     if pending:
         return 3, lines + pending
-    return 0, [f'{len(newest)} model(s) in use render readably in both pane modes'] + lines
+    return 0, [f'{len(newest)} model(s) render readably in both pane modes on {len(targets(home, repo))} renderer(s)'] + lines
 
 
 def main(argv: list[str] | None = None) -> int:

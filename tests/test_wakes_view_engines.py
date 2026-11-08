@@ -154,3 +154,24 @@ def test_failed_send_is_reported_and_not_remembered(tmp_path):
     outcome = check.route(home, [("gpt-6.1-terra", "wake-genome-7", "UNKNOWN stream record for known type message_end")])
     assert outcome.startswith("route UNKNOWN: genome not told") and "site home mismatch" in outcome
     assert not (home / "checks" / "wakes-view-engines-route.json").exists()
+
+
+def test_render_modes_follow_the_targets_own_signature():
+    def old(path, limit=0):
+        return None, ""
+
+    def new(path, limit=0, final=False):
+        return None, ""
+
+    assert check.render_modes(old) == (False,)
+    assert check.render_modes(new) == (False, True)
+
+
+def test_live_pin_is_judged_as_well_as_head(tmp_path):
+    home = site(tmp_path, {"genome": "gpt-6.1-terra"})
+    pin = tmp_path / "pin"
+    (pin / "src").mkdir(parents=True)
+    (home / "runtime").mkdir()
+    (home / "runtime" / "current").symlink_to(pin)
+    labels = [label for label, _ in check.targets(home, REPO)]
+    assert labels[0] == "HEAD" and labels[1].startswith("live pin")
