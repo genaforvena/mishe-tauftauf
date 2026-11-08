@@ -300,6 +300,9 @@
       "every": 105,
       "timeout": 40,
       "max_age": 150,
+      "unknown_codes": [
+        3
+      ],
       "resolver": "senses",
       "covers": "living-room microphone hint window: one row per cadence; UNKNOWN when the mic or transcriber fails",
       "replaces": []
