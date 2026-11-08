@@ -54,6 +54,42 @@ HINT_WORDS = ("mishe", "миша", "мише", "мишка", "misha", "meshie", 
 _LEAD = re.compile(r"^\s*([^\s,.!?;:]+)[\s,.!?;:]*", re.UNICODE)
 
 
+_LATIN_HINTS = tuple(w for w in HINT_WORDS if w.isascii())
+
+
+def _within_one_edit(a: str, b: str) -> bool:
+    """True when a and b differ by at most one substitution, insertion or deletion."""
+    if abs(len(a) - len(b)) > 1:
+        return False
+    i = j = edits = 0
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            i += 1
+            j += 1
+            continue
+        edits += 1
+        if edits > 1:
+            return False
+        if len(a) == len(b):
+            i += 1
+            j += 1
+        elif len(a) > len(b):
+            i += 1
+        else:
+            j += 1
+    return edits + (len(a) - i) + (len(b) - j) <= 1
+
+
+def is_hint_word(word: str) -> bool:
+    """Exact hint word, or a Latin transcriber variant one edit away ('meshe', 'mishy').
+    Latin only and five letters or more, so Cyrillic Маша never matches Миша."""
+    if word in HINT_WORDS:
+        return True
+    if not re.fullmatch(r"[a-z]{5,}", word):
+        return False
+    return any(_within_one_edit(word, h) for h in _LATIN_HINTS)
+
+
 def strip_hint(text: str) -> tuple[str, bool]:
     """Remove the leading hint word (and any repeats). Returns (rest, had_hint)."""
     rest = text.strip()
@@ -63,7 +99,7 @@ def strip_hint(text: str) -> tuple[str, bool]:
         if not m:
             break
         word = m.group(1).lower()
-        if word in HINT_WORDS:
+        if is_hint_word(word):
             had = True
             rest = rest[m.end():]
             continue

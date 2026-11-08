@@ -148,3 +148,16 @@ def test_overlapping_pass_is_skipped_while_lock_is_held(tmp_path, monkeypatch):
     assert spoke == []
     # the lock is released afterwards: the same call is answered by the next pass
     assert cw.once(site, now=NOW)[0]["action"] == "spoke"
+
+
+def test_latin_transcriber_variants_are_hint_words():
+    assert cw.strip_hint("Meshe, what time is it?") == ("what time is it?", True)
+    assert cw.strip_hint("Mishy, where is Ilya") == ("where is Ilya", True)
+    assert cw.strip_hint("Mishi, what time is it?") == ("what time is it?", True)
+    # one edit only, Latin only, five letters or more: no false hints
+    assert cw.is_hint_word("mise") is False
+    assert cw.is_hint_word("mishes") is True  # one insertion from mishe: a transcriber variant
+    assert cw.is_hint_word("mishaps") is False  # two edits from misha
+    assert cw.is_hint_word("маша") is False
+    assert cw.strip_hint("Маша, который час?") == ("Маша, который час?", False)
+    assert cw.strip_hint("Миша, который час?") == ("который час?", True)
