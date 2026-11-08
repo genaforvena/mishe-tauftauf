@@ -667,3 +667,17 @@ def test_running_wake_shows_a_progress_block_per_bucket(tmp_path):
     assert "RUNNING x" in text and "still working" in text
     cursor2, text2 = plant_tape.wakes_step(tmp_path, cursor)
     assert "RUNNING" not in text2
+
+
+def test_finished_omp_wake_reads_like_a_claude_wake(tmp_path):
+    from mishe_tauftauf import plant_tape
+    root = tmp_path / "wakes"; root.mkdir()
+    (root / "wake-x-1.work.json").write_text(json.dumps({"role": "x"}))
+    (root / "wake-x-1.yield.json").write_text(json.dumps({"role": "x", "result": "changed"}))
+    ev = [{"type": "tool_execution_start", "toolName": "bash", "args": {"command": "ls"}},
+          {"type": "tool_execution_end", "result": {"content": [{"type": "text", "text": "NOISE"}]}},
+          {"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "Final summary here"}]}},
+          {"type": "agent_end"}]
+    (root / "wake-x-1.prompt.out.jsonl").write_text('\n'.join(json.dumps(e) for e in ev) + '\n')
+    _, text = plant_tape.wakes_step(tmp_path, None)
+    assert "Final summary here" in text and "(1 tool calls)" in text and "NOISE" not in text

@@ -109,6 +109,24 @@ def stream_text(text: str) -> str:
     return '\n'.join(out) or '[waiting for stream events]'
 
 
+def final_answer(text: str) -> str:
+    """A finished OMP wake as a Claude wake reads: the last assistant message, with a count of the tool calls behind it.
+
+    `text` is the decoded stream from `stream_text`; a stream that never produced an assistant message is returned whole."""
+    lines = text.splitlines()
+    starts = [i for i, ln in enumerate(lines) if ln.startswith('[assistant] ')]
+    if not starts:
+        return text
+    tail = []
+    for ln in lines[starts[-1]:]:
+        if ln.startswith('[agent_end]'):
+            break
+        tail.append(ln)
+    calls = sum(1 for ln in lines if ln.startswith('[tool ') and not ln.startswith(('[tool output]', '[tool error]')))
+    answer = '\n'.join(tail).replace('[assistant] ', '', 1)
+    return (f'({calls} tool calls)\n' if calls else '') + answer
+
+
 def cut(text: object, limit: int = 150) -> str:
     """One display line: control bytes neutralised, trimmed, ended with an ellipsis if shortened."""
     value = safe(text).strip()

@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from .state_files import read_json
-from .plant_view_boundary import git_tape, safe, tape_arguments, output_text, wake_key, last_lines
+from .plant_view_boundary import git_tape, safe, tape_arguments, output_text, wake_key, last_lines, final_answer
 
 
 def git_step(repo, cursor):
@@ -60,7 +60,8 @@ def wakes_step(home, cursor):
         else:
             label = 'OUTPUT'
             outputs = sorted(root.glob(key + '.prompt.out.*'))
-            text = ('\n'.join(output_text(p) for p in outputs) if outputs
+            settled = (root / (key + '.yield.json')).exists()
+            text = ('\n'.join(final_answer(output_text(p)) if settled and p.suffix == '.jsonl' else output_text(p) for p in outputs) if outputs
                     else 'Output UNKNOWN: no retained engine output.')
             if not (root / (key + '.yield.json')).exists():
                 text = 'Settlement UNKNOWN: the engine ended without a yield receipt.\n' + text
