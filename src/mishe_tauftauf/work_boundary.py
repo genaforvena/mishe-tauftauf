@@ -68,6 +68,11 @@ def unit_last_exit(unit):
     return exited_at, values.get("Result") == "success" and values.get("ExecMainStatus") == "0"
 
 
+def failure_signal(name):
+    """True for a failure incident's signal name (``failed-...``); other signals are not failure incidents."""
+    return name.startswith("failed-")
+
+
 def failure_signature(unit):
     """Only stable systemd failure classes, never timestamps or journal prose."""
     try:

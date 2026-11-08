@@ -11,6 +11,7 @@ import signal
 import subprocess
 from pathlib import Path
 
+from . import proc_table
 from .wake import EngineNotStarted, EngineTimeout
 
 
@@ -36,17 +37,7 @@ def _descendants(root: int) -> set[int]:
     kill alone does not reach it; its parent link still does. Collect these
     while the root is alive: once the root dies, orphans reparent away.
     """
-    children: dict[int, list[int]] = {}
-    for entry in os.scandir("/proc"):
-        if not entry.name.isdigit():
-            continue
-        try:
-            with open(f"/proc/{entry.name}/stat", "rb") as handle:
-                stat = handle.read().decode("ascii", "replace")
-        except OSError:
-            continue
-        ppid = int(stat.rsplit(")", 1)[1].split()[1])
-        children.setdefault(ppid, []).append(int(entry.name))
+    children = proc_table.children_by_parent()
     found: set[int] = set()
     frontier = [root]
     while frontier:

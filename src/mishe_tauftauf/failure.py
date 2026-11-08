@@ -48,7 +48,7 @@ def clear_recovered(home, *, now, last_exit=None) -> list[str]:
     last_exit = last_exit or work_boundary.unit_last_exit
     cleared = []
     for name in sorted(signal_store.registry(home)):
-        if not name.startswith("failed-"):
+        if not work_boundary.failure_signal(name):
             continue
         incident = read_json(home / "work/incidents" / f"{name}.json")
         unit = incident.get("unit") if isinstance(incident, dict) else None

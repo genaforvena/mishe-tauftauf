@@ -67,7 +67,7 @@ Exit codes for producers: 0 GREEN, 2 RED, anything else an unobserved run that a
 
 - Tape: `chat.log`, 209,420,968 bytes at 23:34Z (`feed.py:517` selects it). 298,161 entries (profile count of `_verify_records` calls).
 - `Feed.entries()` callers: 44 across 13 modules. `role_entries()` callers: 4 (`wall.py:880`, `:965`, `wake.py:52`, `migrate.py:29`).
-- `observer-checks` does not read the tape directly (no `chat`, `Feed`, `entries` reference in `.mishe-tauftauf/checks-runner/observer-checks.py`). It does run `cli append` (line 314), which writes to the tape, and runs configured check programs (line 256). Whether those child programs read the tape is UNKNOWN; the list of them was not traced.
+- `observer-checks` does not read the tape directly (no `chat`, `Feed`, `entries` reference in its site-local program, which the public tree excludes). It does run `cli append` (line 314), which writes to the tape, and runs configured check programs (line 256). Whether those child programs read the tape is UNKNOWN; the list of them was not traced.
 
 ### 1.4 Constraints, history and incidents
 
