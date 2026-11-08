@@ -88,6 +88,16 @@ def make_home(tmp: Path, source: Path | None, sha: str | None) -> Path:
               "session": "test"}
     (home / "health" / "runtime-release.json").write_text(
         json.dumps(record), encoding="utf-8")
+    # The committed framer refuses to read a tape unless the site carries its
+    # sha-recorded install, so a home that cannot be given one cannot answer
+    # the question: that is a skip with the reason, never a silent pass.
+    live_bin = REPO / ".mishe-tauftauf" / "bin"
+    binary, record_file = live_bin / "mishe-tape", live_bin / "mishe-tape.install.json"
+    if not (binary.is_file() and record_file.is_file()):
+        pytest.skip("no installed mishe-tape beside this checkout; the committed framer cannot read a tape")
+    (home / "bin").mkdir()
+    shutil.copy2(binary, home / "bin" / binary.name)
+    shutil.copy2(record_file, home / "bin" / record_file.name)
     return home
 
 

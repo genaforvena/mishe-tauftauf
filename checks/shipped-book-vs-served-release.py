@@ -236,7 +236,25 @@ def _package_dir(tree: Path) -> Path | None:
     return None
 
 
-def _plant_site(tree: Path, work: Path) -> Path:
+def _tape_install(live_home: Path | None) -> tuple[Path, Path] | None:
+    """The live site's installed mishe-tape binary and its install record.
+
+    The feed reader frames every tape read through ``$SITE/bin/mishe-tape`` and
+    refuses to run unless the sha256 in ``mishe-tape.install.json`` matches the
+    binary.  A freshly planted site has neither, so the committed tree cannot
+    read a tape or publish an outcome there.  The check copies the live,
+    sha-recorded install in, so the framer's own integrity gate still applies.
+    """
+    if live_home is None:
+        return None
+    binary = live_home / "bin" / "mishe-tape"
+    record = live_home / "bin" / "mishe-tape.install.json"
+    if not (binary.is_file() and record.is_file()):
+        return None
+    return binary, record
+
+
+def _plant_site(tree: Path, work: Path, live_home: Path | None = None) -> Path:
     """Plant a site against the committed tree and return its home.
 
     The site is planted with the committed bytes on ``PYTHONPATH``, so the
@@ -253,6 +271,11 @@ def _plant_site(tree: Path, work: Path) -> Path:
                     "init"], env=env, capture_output=True, cwd=str(work))
     for name in ("walls", "artifacts", "records"):
         (home / name).mkdir(exist_ok=True)
+    install = _tape_install(live_home)
+    if install is not None:
+        (home / "bin").mkdir(exist_ok=True)
+        for source in install:
+            shutil.copy2(source, home / "bin" / source.name)
     # A tape entry and a records directory are what let an outcome publish;
     # without them the command fails closed for an unrelated reason and the
     # reading would be UNKNOWN rather than a comparison.
@@ -309,7 +332,7 @@ def served_release_src(home: Path) -> tuple[Path, str]:
     return root, sha
 
 
-def _observe_against_root(tree: Path, root: Path) -> dict:
+def _observe_against_root(tree: Path, root: Path, live_home: Path | None = None) -> dict:
     """Run the real command under one import root and report the outcomes.
 
     The site is planted against the *committed* tree, so the pages under test
@@ -318,7 +341,7 @@ def _observe_against_root(tree: Path, root: Path) -> dict:
     """
     work = Path(tempfile.mkdtemp(prefix="shipped-book-vs-pin-run-"))
     try:
-        home = _plant_site(tree, work)
+        home = _plant_site(tree, work, live_home)
         outside = work / "checkout"
         outside.mkdir(exist_ok=True)
         readings = {}
@@ -365,12 +388,12 @@ def _run_outcome(root: Path, home: Path, cwd: Path, artifact: str) -> str:
     return "unknown"
 
 
-def audit(tree: Path, served_root: Path) -> dict:
+def audit(tree: Path, served_root: Path, live_home: Path | None = None) -> dict:
     """Find pages that state an outcome the served release does not produce."""
     if _package_dir(tree) is None:
         raise ValueError("no plant package in tree")
-    served = _observe_against_root(tree, served_root)
-    committed = _observe_against_root(tree, tree / "src")
+    served = _observe_against_root(tree, served_root, live_home)
+    committed = _observe_against_root(tree, tree / "src", live_home)
     pages = _book_pages(tree)
     findings: list[dict] = []
     checked = 0
@@ -426,7 +449,7 @@ def main(argv: list[str]) -> int:
         return 3
 
     try:
-        result = audit(tree, served_root)
+        result = audit(tree, served_root, args.home.resolve())
     except (OSError, ValueError, SyntaxError, UnicodeError) as exc:
         print("UNKNOWN — shipped-book-vs-served-release unavailable: " + str(exc))
         return 3

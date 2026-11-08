@@ -61,7 +61,7 @@ MIXED_PAGE = """# Evidence
 
 
 def run_check(tree: Path) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(CHECK), "--home", str(REPO),
+    return subprocess.run([sys.executable, str(CHECK), "--home", str(REPO / ".mishe-tauftauf"),
                            "--tree", str(tree)],
                           capture_output=True, text=True)
 
@@ -151,7 +151,7 @@ def test_the_single_use_refusal_is_not_the_rules_outcome(tmp_path):
 
 def test_the_committed_tree_of_this_repository_runs_what_it_documents():
     """This repository's own shipped book must satisfy the check it ships."""
-    result = subprocess.run([sys.executable, str(CHECK), "--home", str(REPO),
+    result = subprocess.run([sys.executable, str(CHECK), "--home", str(REPO / ".mishe-tauftauf"),
                               "--repo", str(REPO)],
                              capture_output=True, text=True)
     assert result.returncode == 0, result.stdout + result.stderr

@@ -271,7 +271,25 @@ def _outcome_of_relative_form(unit: str) -> str | None:
     return None
 
 
-def _plant_site(tree: Path, work: Path) -> Path:
+def _tape_install(live_home: Path | None) -> tuple[Path, Path] | None:
+    """The live site's sha-recorded mishe-tape install, or None when absent.
+
+    The feed reader frames every tape read through ``$SITE/bin/mishe-tape`` and
+    refuses to run unless the binary matches its recorded sha256.  A freshly
+    planted site has neither, so the committed tree cannot read a tape or
+    publish an outcome there and every reading is UNKNOWN.  The live install is
+    copied in, so the framer's own integrity gate still applies.
+    """
+    if live_home is None:
+        return None
+    binary = live_home / "bin" / "mishe-tape"
+    record = live_home / "bin" / "mishe-tape.install.json"
+    if not (binary.is_file() and record.is_file()):
+        return None
+    return binary, record
+
+
+def _plant_site(tree: Path, work: Path, live_home: Path | None = None) -> Path:
     """Plant a site against the committed tree and return its home.
 
     The site is planted with the committed bytes on ``PYTHONPATH``, so the
@@ -288,6 +306,11 @@ def _plant_site(tree: Path, work: Path) -> Path:
                     "init"], env=env, capture_output=True, cwd=str(work))
     for name in ("walls", "artifacts", "records"):
         (home / name).mkdir(exist_ok=True)
+    install = _tape_install(live_home)
+    if install is not None:
+        (home / "bin").mkdir(exist_ok=True)
+        for source in install:
+            shutil.copy2(source, home / "bin" / source.name)
     # A tape entry and a records directory are what let an outcome publish;
     # without them the command fails closed for an unrelated reason and the
     # reading would be UNKNOWN rather than a comparison.
@@ -330,7 +353,7 @@ def _run_outcome(home: Path, tree: Path, work: Path, cwd: Path, artifact: str) -
     return "unknown"
 
 
-def observe(tree: Path) -> dict:
+def observe(tree: Path, live_home: Path | None = None) -> dict:
     """Observe what the committed tree does with a relative evidence path.
 
     Two readings, from the two working directories a reader can be in:
@@ -338,7 +361,7 @@ def observe(tree: Path) -> dict:
     """
     work = Path(tempfile.mkdtemp(prefix="shipped-book-evidence-run-"))
     try:
-        home = _plant_site(tree, work)
+        home = _plant_site(tree, work, live_home)
         outside = work / "checkout"
         outside.mkdir(exist_ok=True)
         readings = {
@@ -350,11 +373,11 @@ def observe(tree: Path) -> dict:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def audit(tree: Path) -> dict:
+def audit(tree: Path, live_home: Path | None = None) -> dict:
     """Find pages that state an outcome the committed tree does not produce."""
     if _package_dir(tree) is None:
         raise ValueError("no plant package in tree")
-    readings = observe(tree)
+    readings = observe(tree, live_home)
     pages = _book_pages(tree)
     findings: list[dict] = []
     checked = 0
@@ -403,7 +426,7 @@ def main(argv: list[str]) -> int:
         return 3
 
     try:
-        result = audit(tree)
+        result = audit(tree, args.home.resolve())
         print(f"tree={tree}")
         print(f"book pages={result['book_pages']} "
               f"statements={result['statements']} "
