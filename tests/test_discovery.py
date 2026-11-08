@@ -6059,6 +6059,31 @@ def test_gate_latency_carries_the_disposition_readings_own_reason(tmp_path):
     assert "chat tape unreadable" in result["sample"]
 
 
+def test_gate_latency_reuses_a_supplied_disposition_without_a_second_tape_read(tmp_path, monkeypatch):
+    """A scan parses the tape once: the gate reads the disposition it is handed.
+
+    ``sample`` takes the disposition reading and passes it to the gate-latency
+    reading. Passing it must not parse the tape again, so the call below fails
+    if the gate falls back to ``_coord_dm_disposition_age``.
+    """
+    from mishe_tauftauf import discovery
+
+    home = tmp_path / "site"
+    home.mkdir()
+    (home / "chat.log").write_bytes(b"")
+
+    def no_second_read(*args, **kwargs):
+        raise AssertionError("gate-latency re-read the tape it was given a reading of")
+
+    monkeypatch.setattr(discovery, "_coord_dm_disposition_age", no_second_read)
+    disposition = {"id": "sense.coord.dm-disposition-age", "state": "verified",
+                   "stall": 2, "oldest_open": "ops=2h"}
+    result = discovery._coord_gate_latency(home, disposition=disposition)
+    assert result["state"] == "drift"
+    assert result["stall"] == 2
+    assert result["oldest_open"] == "ops=2h"
+
+
 def _landing_home(tmp_path, suite: bool):
     """A site home whose checkout is ``tmp_path``, suite file optional.
 

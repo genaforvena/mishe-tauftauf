@@ -3554,7 +3554,8 @@ def _repo_landing_block(home: Path) -> dict[str, object]:
             "sample": sample, "kind": "read", "blocks": blocks, "fog": fog,
             "gate": gate_ok, "gate_applicable": applicable}
 
-def _coord_gate_latency(home: Path, now: datetime | None = None) -> dict[str, object]:
+def _coord_gate_latency(home: Path, now: datetime | None = None, *,
+                        disposition: dict[str, object] | None = None) -> dict[str, object]:
     """Age the oldest unanswered resolver routing, so stalls wake their owner.
 
     Reads the dm-disposition open set and reports the oldest open DM per
@@ -3562,6 +3563,10 @@ def _coord_gate_latency(home: Path, now: datetime | None = None) -> dict[str, ob
     maturity bound is the bottleneck, named explicitly. State is drift when
     any open DM is mature, verified when the queue is empty or all young,
     unknown when the tape is unreadable.
+
+    ``disposition`` is an already-taken ``_coord_dm_disposition_age`` reading
+    on the same tape. A scan passes it so the tape is parsed once for both
+    readings; without it this reading takes its own.
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -3569,12 +3574,12 @@ def _coord_gate_latency(home: Path, now: datetime | None = None) -> dict[str, ob
     if not tape_path.exists():
         return {"id": "sense.coord.gate-latency", "state": "unknown",
                 "sample": "chat tape unavailable", "kind": "read"}
-    # The disposition reading below reads the whole tape itself, so this
-    # reading does not read it a second time only to say the same thing: the
-    # tape's readability is established by that read, on the same bytes, and
-    # its reason is carried into this reading's own UNKNOWN instead of a
-    # second copy of the parse.
-    disp = _coord_dm_disposition_age(home, now)
+    # The disposition reading reads the whole tape itself, so this reading
+    # does not read it a second time only to say the same thing: the tape's
+    # readability is established by that read, on the same bytes, and its
+    # reason is carried into this reading's own UNKNOWN instead of a second
+    # copy of the parse.
+    disp = disposition if disposition is not None else _coord_dm_disposition_age(home, now)
     if disp.get("state") != "verified":
         return {"id": "sense.coord.gate-latency", "state": "unknown",
                 "sample": f"disposition reading unavailable: {disp.get('sample', '')}",
@@ -7084,10 +7089,13 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_repo_git_index_lock(home))
     observed.append(_repo_push_freshness(home))
     observed.append(_ghost_site_homes(home))
-    observed.append(_coord_dm_disposition_age(home))
+    # One tape parse serves both the disposition reading and the gate-latency
+    # reading that ages its open set; reading the tape twice gave the same bytes.
+    disposition = _coord_dm_disposition_age(home)
+    observed.append(disposition)
     observed.append(_coord_authorship_fog(home))
     observed.append(_repo_landing_block(home))
-    observed.append(_coord_gate_latency(home))
+    observed.append(_coord_gate_latency(home, disposition=disposition))
     observed.append(read_tmux_windows(_inner_tmux_socket()))
     observed.append(probe_session_stability(os.environ.get("MISHE_SEED_SESSION") or None,
                                             _inner_tmux_socket()))
