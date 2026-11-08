@@ -23,12 +23,12 @@ def test_exit_zero_is_green_and_nonzero_is_red_with_detail(home):
     assert "stale feed" in (home / "signals" / "devto.detail").read_text()
 
 
-def test_command_that_cannot_run_leaves_signal_untouched_and_fails(home):
+def test_command_that_cannot_run_turns_the_last_green_unknown_and_fails(home):
     producers.run(home, "devto", [PY, "-c", "pass"], now=NOW, timeout=10)
-    before = (home / "signals" / "devto.json").read_bytes()
     assert producers.run(home, "devto", ["/nonexistent/check"], now=NOW + 5, timeout=10) == 2
-    assert (home / "signals" / "devto.json").read_bytes() == before
-    assert store.read(home, "devto", now=NOW + 5000).state == "UNKNOWN"      # ages out; never fakes GREEN
+    signal = store.read(home, "devto", now=NOW + 5)
+    assert signal.state == "UNKNOWN" and signal.value is None      # a failed look never leaves GREEN standing
+    assert "not run" in signal.reason
 
 
 def test_timeout_is_a_failed_observation_not_red_and_not_green(home):
@@ -72,8 +72,17 @@ def test_a_crash_or_unknown_exit_is_a_failed_observation_not_red(home):
     for code in (1, 3, 127):
         assert producers.run(home, "devto", [PY, "-c", f"import sys; sys.exit({code})"],
                              now=NOW + 5, timeout=10) == 2
-        assert store.read(home, "devto", now=NOW + 5).value == "GREEN"      # untouched, will age
+        signal = store.read(home, "devto", now=NOW + 5)
+        assert signal.state == "UNKNOWN" and f"check exit {code}" in signal.reason   # not GREEN, not RED
     assert store.read(home, "devto", now=NOW + 5000).state == "UNKNOWN"
+
+
+def test_a_failed_look_is_unknown_and_a_later_real_green_recovers(home):
+    producers.run(home, "devto", [PY, "-c", "pass"], now=NOW, timeout=10)
+    assert producers.run(home, "devto", [PY, "-c", "import sys; sys.exit(1)"], now=NOW + 800, timeout=10) == 2
+    assert store.read(home, "devto", now=NOW + 800).state == "UNKNOWN"
+    assert producers.run(home, "devto", [PY, "-c", "pass"], now=NOW + 810, timeout=10) == 0
+    assert store.read(home, "devto", now=NOW + 810).value == "GREEN"       # a real observation recovers it
 
 
 def test_red_codes_are_declared_per_producer(home):

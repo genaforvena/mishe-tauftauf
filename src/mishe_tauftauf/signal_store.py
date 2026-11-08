@@ -108,6 +108,20 @@ def observe(home, name: str, value, *, now: float, source: str) -> bool:
     return edge
 
 
+def observe_unknown(home, name: str, *, now: float, reason: str, source: str) -> bool:
+    """Record a failed observation as UNKNOWN now, so a stale GREEN is never left standing.
+
+    Unlike ``observe`` this does not touch the ``.seen`` freshness stamp: a failure is not evidence
+    that the input was fresh. True when it is an edge (json replaced).
+    """
+    _entry(home, name)
+    current = _load(home, name)
+    edge = not (current and current.get("state") == UNKNOWN and current.get("reason") == reason)
+    if edge:
+        _store(home, name, value=None, state=UNKNOWN, at=now, source=source, reason=reason)
+    return edge
+
+
 def read(home, name: str, *, now: float) -> Signal:
     """The current reading. Missing, corrupt or expired input is UNKNOWN."""
     max_age = _entry(home, name)["max_age"]

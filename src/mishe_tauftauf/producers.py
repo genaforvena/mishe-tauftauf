@@ -37,6 +37,8 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
         scratch.unlink(missing_ok=True)
         # Not-started (fork/exec failure) and timeout otherwise leave no trace in the journal.
         print(f"mishe: {name}: not run: {type(exc).__name__}: {exc}", file=sys.stderr)
+        signal_store.observe_unknown(home, name, now=now, source=f"run:{command[0]}",
+                                     reason=f"not run: {type(exc).__name__}")
         return 2
     os.replace(scratch, detail)
     if code in unknown_codes:
@@ -47,7 +49,10 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
         # An empty capture is itself the evidence: the check exited without writing to stdout or stderr.
         shown = repr(output) if output else "(no output on stdout or stderr)"
         print(f"mishe: {name}: exit={code} detail={shown}", file=sys.stderr)
-        return 2            # a crash or "cannot tell" (1, 3, 127, a signal) is not an observation
+        # A crash or "cannot tell" (1, 3, 127, a signal) is not an observation, and the last GREEN must not stand for it.
+        signal_store.observe_unknown(home, name, now=now, source=f"run:{command[0]}",
+                                     reason=f"check exit {code}")
+        return 2
     signal_store.observe(home, name, "GREEN" if code == 0 else "RED", now=now, source=f"run:{command[0]}")
     return 0
 
