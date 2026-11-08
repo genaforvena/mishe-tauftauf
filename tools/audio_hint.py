@@ -204,7 +204,7 @@ def record(path: Path, seconds: int, device: str) -> None:
 
 
 def gate_wav(path: Path) -> str:
-    p = subprocess.run([FILTER, "--wav", str(path)], capture_output=True, text=True, timeout=30)
+    p = subprocess.run([FILTER, "--wav", str(path)], capture_output=True, text=True, errors="replace", timeout=30)
     return p.stdout.strip() or f"rc={p.returncode}"
 
 
@@ -217,14 +217,14 @@ def transcribe(path: Path, prompt: str, lang: str, model: Path = MODEL) -> str:
     p = subprocess.run(
         ["nice", "-n", "10", WHISPER, "-m", str(model), "-f", str(path), "-l", lang,
          "--prompt", prompt, "-np", "-nt"],
-        capture_output=True, text=True, timeout=120)
+        capture_output=True, text=True, errors="replace", timeout=120)
     if p.returncode != 0:
         raise RuntimeError(f"whisper rc={p.returncode}: {p.stderr.strip()[:200]}")
     return " ".join(p.stdout.split())
 
 
 def text_gate(text: str) -> str:
-    p = subprocess.run([FILTER, "--text", text], capture_output=True, text=True, timeout=30)
+    p = subprocess.run([FILTER, "--text", text], capture_output=True, text=True, errors="replace", timeout=30)
     return p.stdout.strip() or f"rc={p.returncode}"
 
 
