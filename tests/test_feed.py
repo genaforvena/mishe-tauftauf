@@ -13,6 +13,7 @@ from pathlib import Path
 
 from mishe_tauftauf import feed as feed_module
 from mishe_tauftauf.feed import Feed, FeedError, parse_feed
+from tests.tape_binary import requires_tape_binary
 
 
 def append_worker(home: str, number: int) -> None:
@@ -87,6 +88,7 @@ class FeedTests(unittest.TestCase):
             parse_feed(data)
         self.assertIn("position " + str(len(data) - 1), str(error.exception))
 
+    @requires_tape_binary
     def test_role_view_streams_the_tape_instead_of_reading_it_whole(self):
         # A resident supervisor re-read the role view every tick. The reader
         # held the whole tape and every decoded copy at once, so its peak grew
@@ -168,6 +170,7 @@ class FeedTests(unittest.TestCase):
             self.assertEqual(whole, streamed)
             self.assertEqual(len(streamed), len(entries))
 
+    @requires_tape_binary
     def test_role_cache_extends_from_canonical_tail_not_last_selected_entry(self):
         with tempfile.TemporaryDirectory() as directory:
             feed = Feed(directory)
@@ -194,6 +197,7 @@ class FeedTests(unittest.TestCase):
             self.assertLess(max(read), 1000)
             self.assertNotIn(str(feed.path), feed_module._ENTRIES_CACHE)
 
+    @requires_tape_binary
     def test_role_view_verifies_discarded_records_and_refuses_corruption(self):
         with tempfile.TemporaryDirectory() as directory:
             feed = Feed(directory)
@@ -203,6 +207,7 @@ class FeedTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 feed.role_entries("health")
 
+    @requires_tape_binary
     def test_role_view_rejects_a_bad_appended_unrelated_record(self):
         with tempfile.TemporaryDirectory() as directory:
             feed = Feed(directory)
@@ -213,6 +218,7 @@ class FeedTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 feed.role_entries("health")
 
+    @requires_tape_binary
     def test_role_view_rewrite_and_corrupt_index_cannot_reuse_old_state(self):
         with tempfile.TemporaryDirectory() as directory:
             feed = Feed(directory)

@@ -1,17 +1,19 @@
 """Byte-equality of the Rust tape framing core with the Python reader.
 
-Runs only when MISHE_TAPE_BIN names a built mishe-tape binary (see
-rust/mishe-tape). Otherwise it skips, so the default test run needs no toolchain.
+Runs when a mishe-tape binary resolves (MISHE_TAPE_BIN, then the site install;
+see tests/tape_binary.py). Otherwise it skips with the reason.
 """
 import os
 import shutil
 import subprocess
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from mishe_tauftauf import feed as F
+from tests.tape_binary import TAPE_BIN, TAPE_SKIP_REASON
 
-BIN = os.environ.get("MISHE_TAPE_BIN")
+BIN = TAPE_BIN
 
 
 def header(seq, ts="2026-11-07T23:00:00.123456Z", src="genome", v1=False):
@@ -54,8 +56,18 @@ def rust_items(path: Path, size: int):
         assert rc == 0, (rc, err)
 
 
-@unittest.skipUnless(BIN and Path(BIN).is_file(), "MISHE_TAPE_BIN not set to a built mishe-tape")
+@unittest.skipUnless(BIN, TAPE_SKIP_REASON)
 class FramingEquality(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # The Python reader resolves the framer from the environment at call time.
+        cls._env = patch.dict(os.environ, {"MISHE_TAPE_BIN": BIN})
+        cls._env.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._env.stop()
+
     def assertSameStream(self, data: bytes):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
