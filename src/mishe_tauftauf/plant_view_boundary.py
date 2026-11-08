@@ -115,6 +115,13 @@ def stream_text(text: str) -> str:
     return '\n'.join(out) or '[waiting for stream events]'
 
 
+def progress_text(path: Path) -> str:
+    """The live tail of a running stream for a progress block, without the retention preamble lines of a huge file."""
+    kept = [ln for ln in output_text(path).splitlines()
+            if not ln.startswith(('[retained tail', 'UNKNOWN leading stream event truncated'))]
+    return '\n'.join(kept) or '[waiting for stream events]'
+
+
 def final_answer(text: str) -> str:
     """A finished OMP wake as a Claude wake reads: the last assistant message, with a count of the tool calls behind it.
 

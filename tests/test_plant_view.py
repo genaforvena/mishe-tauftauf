@@ -717,3 +717,16 @@ def test_stale_unsettled_wake_record_is_not_shown_as_running(tmp_path):
     os.utime(root / "wake-x-3.work-start.json", (old, old))
     _, text = plant_tape.wakes_step(tmp_path, None)
     assert "RUNNING" not in text
+
+
+def test_progress_block_hides_the_retention_preamble(tmp_path):
+    import os, time
+    from mishe_tauftauf import plant_tape
+    root = tmp_path / "wakes"; root.mkdir()
+    (root / "wake-x-4.work-start.json").write_text(json.dumps({"role": "x"}))
+    big = json.dumps({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": "x" * 2000}}) + '\n'
+    (root / "wake-x-4.prompt.out.jsonl").write_text(big * 1200 + json.dumps({"type": "tool_execution_start", "toolName": "bash", "args": {"command": "ls"}}) + '\n')
+    old = time.time() - 3 * plant_tape.PROGRESS_SECONDS
+    os.utime(root / "wake-x-4.work-start.json", (old, old))
+    _, text = plant_tape.wakes_step(tmp_path, None)
+    assert "RUNNING x" in text and "[tool bash] ls" in text and "retained tail" not in text and "UNKNOWN leading" not in text

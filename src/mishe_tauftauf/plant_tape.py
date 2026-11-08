@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from .state_files import read_json
-from .plant_view_boundary import git_tape, safe, tape_arguments, output_text, wake_key, last_lines, final_answer
+from .plant_view_boundary import git_tape, safe, tape_arguments, output_text, wake_key, last_lines, final_answer, progress_text
 
 
 def git_step(repo, cursor):
@@ -87,7 +87,7 @@ def wakes_step(home, cursor):
             continue
         progress.add(mark)
         # A Claude wake writes one JSON document at its end: nothing to tail while it runs, and that is not a failure.
-        tail = (last_lines(output_text(outputs[-1]), PROGRESS_LINES) if outputs[-1].suffix == '.jsonl'
+        tail = (last_lines(progress_text(outputs[-1]), PROGRESS_LINES) if outputs[-1].suffix == '.jsonl'
                 else 'still running; this engine reports its output when the wake ends')
         record = read_json(start)
         role = safe(record.get('role', '?')) if isinstance(record, dict) else '?'
