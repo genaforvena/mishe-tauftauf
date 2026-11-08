@@ -1,104 +1,77 @@
 # Mishe
 
-**A local development culture for agents that observe their work, act on it, and check the result.**
+Mishe runs several AI coding agents on one Git checkout on your own machine. They do not run continuously: each one wakes only when a signal changes or a message is addressed to it, does checked work on the code, and ends by recording what it changed.
 
-Mishe runs coding agents alongside an owned Git checkout. They share live checks, a
-conversation, and durable notes: what matters, what they tried, what the evidence says,
-and what needs to happen next. A fresh agent context picks that work up rather than
-starting over.
+## A day in Mishe
 
-Use it to develop software, carry an experimental study forward, or improve Mishe itself.
-The point is not to keep agents busy or dashboards green. It is to make useful progress,
-and to notice when the work or the checks are wrong.
+Suppose the CI signal (the automatic reading of the latest CI run on `main`) turns RED. Genome, the role that owns the runtime and checks CI, is owed one wake. It starts with its charter (its standing mandate), its wall (its own edited notes) and what changed since its last wake. It reads the failing run, makes a scoped fix, runs the checks, and ends with `mishe yield --result changed`. If it cannot fix the failure, it ends with `--result blocked` and a message to whoever can. Between those moments, nothing runs.
 
-## How it runs
+## Quick start
 
-Agents here are **woken, not kept running**. Small scripts observe the world and write
-files; systemd watches those files and starts a short-lived **wake** only when something
-is owed: an addressed message, a signal that changed, a follow-up that came due. A wake
-hands the agent a dossier (its charter, its wall, what changed), the agent works, and it
-ends by calling `mishe yield`. When nothing is owed, nothing runs. A wake that ends without
-a yield is recorded as an unknown effect, and the next wake of that agent starts by
-reconciling it; nothing is ever replayed blindly.
-The design is in `src/mishe_tauftauf/core/README.md`.
-
-## Start with your coding agent
-
-You need Linux with a user systemd manager, Python 3.10+, Git, and an installed,
-authenticated coding agent: **Claude Code (`claude`)** and/or **`omp`**. Mishe supplies
-neither the model nor credentials, and agent usage counts against your provider's limits.
-GitHub CLI (`gh`) with repository access enables the CI reading; without it CI stays `UNKNOWN`.
+You need Linux with a user systemd manager, Python 3.10+, Git, and an installed, signed-in coding agent: Claude Code (`claude`) or `omp`. Mishe supplies neither the model nor the credentials, and agent use counts against your provider's limits. The GitHub CLI (`gh`), with access to the repository, is optional; without it the CI signal stays UNKNOWN.
 
 ```bash
 git clone https://github.com/genaforvena/mishe-tauftauf.git
 cd mishe-tauftauf
-export PATH="$PWD/bin:$PATH" MISHE_SEED_HOME="$PWD/.mishe-tauftauf"   # no install, no third-party packages
-./bin/mishe init
-mishe hold on --reason "first install"
-mishe sync --repo "$PWD" --pythonpath "$PWD/src"
-mishe doctor
+export PATH="$PWD/bin:$PATH" MISHE_SEED_HOME="$PWD/.mishe-tauftauf"
+mishe init                                          # creates the site: the ignored directory of local state
+mishe hold on --reason "first install"              # no model is called while the hold is on
+mishe sync --repo "$PWD" --pythonpath "$PWD/src"    # installs the systemd units
+mishe doctor                                        # checks they match what was generated
 ```
 
-Nothing calls a model while the hold is on. **Waking agents run with your account's access
-and can change the checkout; this is not an OS sandbox.** Use a repository and account you
-intend them to work in. [Getting started](docs/getting-started.md) walks through releasing
-the hold and watching the first wake.
+Waking agents run with your account's access and can change the checkout. This is not an OS sandbox, so use a repository and account you intend them to work in. [Getting started](docs/getting-started.md) covers releasing the hold with `mishe hold off` and watching the first wake. To stop model calls again, run `mishe hold on`.
 
-## The agents
+## The roles
 
-Each agent is a charter in the ignored site directory and a wall it keeps edited:
+A role is a charter in the site's `charters/` directory plus a wall the role keeps edited. In the site this repository is developed in, the roles are:
 
-| Agent | Focus |
+| Role | Owns |
 | --- | --- |
-| `discover` | Investigate capabilities, literature, and useful experiments. |
-| `senses` | Build trustworthy readings and expose uncertainty. |
-| `health` | Keep local units, signals, and observations working. |
-| `genome` | Develop reusable source, push `main`, and check CI. |
-| `witness` | Compare claims with evidence and follow unresolved work. |
-| `docs` | Keep the reader's book clear and current. |
-| `research-methods` | Improve research questions, experiments, and conclusions. |
+| `genome` | The runtime and reusable core, release snapshots, pushes to `main`, and CI checks. |
+| `health` | Incidents, local reliability, and recovery when a unit or signal fails. |
+| `senses` | Sensors and their readings: what is measured, how valid it is, and when it is UNKNOWN. |
+| `docs` | The reader's book: introductions, reference pages, and removing stale explanations. |
+| `pub` | Public editorial work and reader relations, under its existing account grant. |
+| `field-review` | External ideas and small experiments, taken through to a checked application. |
+| `rust-plan` | Moving selected runtime pieces from Python to Rust (a compiled systems language), one path at a time. |
+| `steward` | Cross-area priorities, work nobody owns, and how the model budget is split. |
 
-They divide attention, not file ownership. Sites can declare more. Messages to an agent are
-visible to everyone, not private. **The operator is you**, the human owner; the `operator`
-shell is a convenience for you, never a place an agent waits.
+Sites can differ. A role exists when its charter file is in the site's `charters/` directory, so a site can keep, edit or drop the starter charters and add its own. `mishe init` installs starters for `genome`, `witness`, `senses`, `discover`, `health`, `docs` and `research-methods`; the site this repository is developed in has no `witness`, `discover` or `research-methods` charter. `mishe --help` lists every command.
 
-## How to tell it is working
+## How to tell it works
 
 ```bash
 mishe doctor                                # installed units match what was generated
-systemctl --user list-units 'mishe*'        # wake paths, producer timers, any failure
-mishe signal show NAME                      # one signal: value, state, age
-mishe pain read ROLE --launcher dashboard   # a read-only evidence view for one agent
+systemctl --user list-units 'mishe*'        # wake paths, timers and any failed unit
+mishe signal show NAME                      # one signal: its value, state and age
+mishe pain read ROLE --launcher dashboard   # a read-only evidence view for one role
 ```
 
-A signal that has stopped reporting becomes `UNKNOWN` on its own; missing, stale or broken
-monitoring is never reported as healthy. A failed unit raises a RED signal and a message to the
-agent that resolves it, and returns until someone repairs and clears it.
-`mishe --help` lists every command.
+A signal is a named live reading. A signal that stops reporting becomes UNKNOWN on its own, and UNKNOWN is never shown as a pass. A failed unit turns its signal RED and sends a message to the role that resolves it. A healthy wake ends with its wall updated and its message read; [Getting started](docs/getting-started.md) shows how to watch one.
 
-## Scope and limits
+## Limits
 
-- Agents work inside the owned checkout and site only; no other node, account or device
-  authority is implied. A sibling plant on the same host is a different site.
-- Local state (walls, signals, chat, wake files) lives in the ignored site directory and is never committed.
-- There is one Git checkout and one branch, `main`. Authors commit their scoped work;
-  `genome` pushes and checks CI.
-- A green test or an active unit is not proof of live delivery or of useful work.
-
-`src/` is the runtime, `checks/` the independent checks, `tools/` guard and activation tooling,
-`tests/` the tests, `research/` recorded reviews, `docs/` the book.
+- Agents act with your account's access inside the checkout you give them. Nothing here isolates them.
+- Model usage counts against your provider's limits. Mishe supplies neither models nor credentials.
+- There is one checkout and one branch, `main`. Each author commits its own scoped work; `genome` pushes and checks CI.
+- Local state (walls, signals, messages, wake records) stays in the ignored site and is never committed.
+- A green test, an active unit or a busy message log is not proof that work landed or was useful. Check the result itself.
 
 ## Where to go next
 
 | You want to… | Read |
 | --- | --- |
-| Set up a plant and watch the first wake | [Getting started](docs/getting-started.md) |
+| Set up a site and watch the first wake | [Getting started](docs/getting-started.md) |
 | Read the current development culture | [Mesh](docs/mesh.md) |
 | Set up the optional analysis advisor | [Observable analysis advice](docs/analysis-advisor.md) |
 | Use an external judge provider | [Completion judge adapter](docs/completions-judge.md) |
 | Preflight a draft before publishing it | [Publication checks](docs/publication-checks.md) |
-| Know what the research-methods agent is for | [Research methods](docs/research-methods.md) |
+| Know what the research-methods role is for | [Research methods](docs/research-methods.md) |
 | Read what Mishe thinks a sense is | [New senses](docs/new-senses.md) |
 | Read the agents' rules | [Seed doctrine](src/mishe_tauftauf/seed_doctrine.md) |
+| Read the runtime design | [Core runtime](src/mishe_tauftauf/core/README.md) |
+
+Layout: `src/` is the runtime, `checks/` the independent checks, `tools/` the guard and activation tooling, `tests/` the tests, `research/` recorded reviews and `docs/` this book.
 
 [`LICENSE`](LICENSE) is CC0-1.0.

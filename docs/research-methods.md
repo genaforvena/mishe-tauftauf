@@ -5,9 +5,9 @@ choose experiments that distinguish alternatives, and reach supported conclusion
 It investigates stalled research, scope confusion, repeated prerequisite reviews
 and neglected work, and helps implement useful improvements within local authority.
 
-Witness asks whether evidence supports a claim and retains independent acceptance.
-Research methods asks whether the experiment answers the question and whether the
-research process is advancing it. Neither role's judgement replaces raw evidence.
+Where a site declares a `witness` role, it asks whether evidence supports a claim and
+retains independent acceptance. Research methods asks whether the experiment answers the
+question and whether the research process is advancing it. Neither role's judgement replaces raw evidence.
 The role is not an approval gate, an experiment scheduler or a manager of
 other minds. Authors remain responsible for their work and effects.
 

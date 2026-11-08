@@ -67,7 +67,9 @@ This plant starts with seven durable areas: Genome owns the runtime and releases
 Health owns reliability and recovery; Senses owns sensors and their validity;
 Docs owns the coherent reader's book; Pub owns editorial work and reader
 relationships under its existing grant; Field Review owns external ideas and
-useful experiments; Steward owns cross-area priorities and budget allocation.
+useful experiments; Steward owns cross-area priorities and budget allocation. A dedicated
+migration mind, `rust-plan`, carries the Rust runtime move alongside them rather than owning
+an area.
 Each carries initiatives through checks, delivery and observation. Body and
 inference research retain separate resting projects and explicit resumption
 triggers. A window is a view of an area; opening it calls no model, and both panes are plain

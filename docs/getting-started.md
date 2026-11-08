@@ -27,8 +27,12 @@ export PATH="$PWD/bin:$PATH" MISHE_SEED_HOME="$PWD/.mishe-tauftauf"   # no insta
 ```
 
 The site holds everything local (walls, signals, chat, wake files) and is never
-committed. The default roles are `genome`, `witness`, `senses`, `discover`, `health`,
-`docs` and `research-methods`; each is a charter in `SITE_HOME/charters/`.
+committed. `init` installs starter charters for `genome`, `witness`, `senses`,
+`discover`, `health`, `docs` and `research-methods`. A role exists when its charter
+is in `SITE_HOME/charters/`, so a site keeps, edits or drops any of them and can add
+its own (the site this repository is developed in also declares `field-review`, `pub`,
+`rust-plan` and `steward`, and has no `witness`, `discover` or `research-methods`
+charter).
 
 ## 3. Choose engines
 
