@@ -12,9 +12,18 @@ root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 log="$root/.mishe-tauftauf/push-hook.log"
 mkdir -p "$(dirname "$log")" 2>/dev/null || true
 
+committed=$(git -C "$root" rev-parse HEAD 2>/dev/null) || exit 0
 (
 	stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	out=$(nice -n 10 timeout 120 git -C "$root" push --quiet origin main 2>&1)
+	# Settle first: an amend within the window (a trailer fix, say) must not publish the superseded
+	# commit, which then leaves local main diverged from origin. Push only the commit still at HEAD.
+	sleep "${MISHE_PUSH_SETTLE_S:-30}"
+	now=$(git -C "$root" rev-parse HEAD 2>/dev/null)
+	if [ "$now" != "$committed" ]; then
+		echo "$stamp skipped superseded $(printf '%s' "$committed" | cut -c1-8) head=$(printf '%s' "$now" | cut -c1-8)" >> "$log"
+		exit 0
+	fi
+	out=$(nice -n 10 timeout 120 git -C "$root" push --quiet origin "$committed:refs/heads/main" 2>&1)
 	rc=$?
 	if [ "$rc" -eq 0 ]; then
 		echo "$stamp ok $(git -C "$root" rev-parse --short HEAD)" >> "$log"

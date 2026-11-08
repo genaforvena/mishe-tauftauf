@@ -79,3 +79,18 @@ def test_missing_checkout_gitdir_is_unknown(tmp_path):
     home = tmp_path / ".mishe-tauftauf"
     home.mkdir()
     assert discovery._repo_push_freshness(home, now=NOW)["state"] == "unknown"
+
+
+def test_a_young_divergence_reads_drift_not_verified(tmp_path):
+    # Origin got a commit that local main lacks, and local main carries its own young commit:
+    # neither is an ancestor of the other, so the checkout is not publishing and must not read verified.
+    checkout, home = _checkout(tmp_path, NOW - 3600)
+    other = tmp_path / "other"
+    _git(tmp_path, "clone", "-q", str(tmp_path / "origin.git"), str(other))
+    _commit(other, "on-origin", NOW - 900)
+    _git(other, "push", "-q", "origin", "main")
+    _commit(checkout, "local-only", NOW - 600)
+    reading = discovery._repo_push_freshness(home, now=NOW)
+    assert reading["state"] == "drift"
+    assert reading["origin_only"] == 1
+    assert "diverged" in reading["sample"]

@@ -4134,17 +4134,26 @@ def _repo_push_freshness(home: Path, now: float | None = None) -> dict[str, obje
     else:
         unpushed = git("rev-list", "--count", "origin/main..HEAD")
         lagging = git("rev-list", "--count", f"--before={int(now - PUSH_LAG_S)}", "origin/main..HEAD")
-        if unpushed is None or lagging is None:
+        only_origin = git("rev-list", "--count", "HEAD..origin/main")
+        if unpushed is None or lagging is None or only_origin is None:
             reason = "local-history-unreadable"
     if reason is not None:
         return {"id": "sense.repo.push-freshness", "state": "unknown", "kind": "read",
                 "sample": f"push-freshness=unknown reason={reason}", "unpushed": None, "lagging": None}
-    ahead, behind_bound = int(unpushed), int(lagging)
+    ahead, behind_bound, behind = int(unpushed), int(lagging), int(only_origin)
+    if behind > 0:
+        # Local main is not a fast-forward of origin/main: commits on origin are missing here, and the
+        # local ones will be rejected on push. A young divergence is still drift, never verified.
+        return {"id": "sense.repo.push-freshness", "state": "drift", "kind": "read",
+                "sample": f"push-freshness=diverged unpushed={ahead} origin-only={behind}",
+                "unpushed": ahead, "lagging": behind_bound, "origin_only": behind,
+                "validity_s": PUSH_FRESHNESS_VALIDITY_S}
     state = "drift" if behind_bound > 0 else "verified"
     word = "lagging" if state == "drift" else "current"
     return {"id": "sense.repo.push-freshness", "state": state, "kind": "read",
             "sample": f"push-freshness={word} unpushed={ahead} lagging={behind_bound}",
-            "unpushed": ahead, "lagging": behind_bound, "validity_s": PUSH_FRESHNESS_VALIDITY_S}
+            "unpushed": ahead, "lagging": behind_bound, "origin_only": 0,
+            "validity_s": PUSH_FRESHNESS_VALIDITY_S}
 
 
 GHOST_FILE_LIMIT = 10_000
