@@ -436,6 +436,8 @@ def _apply(home, identity, record, activate, observe):
 def verify(home, identity):
     """Exercise revert, observe the old consumer, reapply, and observe the new one."""
     from .delivery_requests import check_admission
+    # Before any runtime write: refusing after _revert would leave the old bytes in place.
+    refuse_inside_own_wake(home)
     check_admission(home)
     with lock(home):
         check_admission(home)

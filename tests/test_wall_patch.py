@@ -689,3 +689,18 @@ def test_review_body_carries_full_text_of_unchanged_dependency(tmp_path, monkeyp
     files = seen["request"]["context"]["patch"]["files"]
     assert files["src/mishe_tauftauf/dependency.py"]["after_text"] == "unchanged dependency text\n"
     assert files["src/mishe_tauftauf/dependency.py"]["source_diff"] == ""
+
+
+def test_verify_refused_inside_the_wake_holding_the_dispatch_lock(tmp_path, monkeypatch):
+    import fcntl
+    from mishe_tauftauf.core.state import DispatchStore
+    home, source, deployed = layout(tmp_path)
+    lock_file = DispatchStore(home / "dispatch").lock_path.open("a+")
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+    try:
+        monkeypatch.setenv("MISHE_WAKE_KEY", "wake-own")
+        with pytest.raises(ValueError, match="holds the dispatch lock"):
+            wall_patch.verify(home, "change")
+    finally:
+        monkeypatch.delenv("MISHE_WAKE_KEY")
+        lock_file.close()
