@@ -82,7 +82,9 @@ def wakes_step(home, cursor):
         if not outputs or bucket < 1 or mark in known:
             continue
         progress.add(mark)
-        tail = last_lines(output_text(outputs[-1]), PROGRESS_LINES)
+        # A Claude wake writes one JSON document at its end: nothing to tail while it runs, and that is not a failure.
+        tail = (last_lines(output_text(outputs[-1]), PROGRESS_LINES) if outputs[-1].suffix == '.jsonl'
+                else 'still running; this engine reports its output when the wake ends')
         record = read_json(start)
         role = safe(record.get('role', '?')) if isinstance(record, dict) else '?'
         stamp = time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(now))

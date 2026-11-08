@@ -693,3 +693,15 @@ def test_provider_retry_events_are_read_not_unknown(tmp_path):
     out.write_text('\n'.join(json.dumps(e) for e in ev) + '\n')
     text = output_text(out)
     assert "UNKNOWN" not in text and "[provider error] 429 Go usage limit exceeded" in text
+
+
+def test_running_claude_wake_progress_says_running_not_unknown(tmp_path):
+    import os, time
+    from mishe_tauftauf import plant_tape
+    root = tmp_path / "wakes"; root.mkdir()
+    (root / "wake-x-2.work-start.json").write_text(json.dumps({"role": "x"}))
+    (root / "wake-x-2.prompt.out.json").write_text('')
+    old = time.time() - 3 * plant_tape.PROGRESS_SECONDS
+    os.utime(root / "wake-x-2.work-start.json", (old, old))
+    _, text = plant_tape.wakes_step(tmp_path, None)
+    assert "RUNNING x" in text and "UNKNOWN" not in text
