@@ -144,6 +144,14 @@ def test_a_check_that_cannot_start_or_times_out_journals_why(home, capsys):
     assert "devto: not run: EngineTimeout: exceeded 0.5s" in capsys.readouterr().err
 
 
+def test_silent_cannot_tell_exit_says_it_had_no_output(home, capsys):
+    producers.run(home, "devto", [PY, "-c", "pass"], now=NOW, timeout=10)
+    assert producers.run(home, "devto", [PY, "-c", "import sys; sys.exit(3)"], now=NOW + 1, timeout=10) == 2
+    err = capsys.readouterr().err
+    assert "devto: exit=3 detail=(no output on stdout or stderr)" in err
+    assert "detail=b''" not in err
+
+
 def test_cannot_tell_exit_journals_the_check_output(home, capsys):
     producers.run(home, "devto", [PY, "-c", "pass"], now=NOW, timeout=10)
     assert producers.run(home, "devto", [PY, "-c", "import sys; print('guard row X'); sys.exit(3)"],

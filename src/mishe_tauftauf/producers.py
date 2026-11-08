@@ -43,7 +43,10 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
         return 0            # a declared "stale or missing input": not observed, so the signal ages to UNKNOWN
     if code != 0 and code not in red_codes:
         # The detail file is overwritten by the next run, so the journal carries the check's output for this failure.
-        print(f"mishe: {name}: exit={code} detail={detail.read_bytes()[:DETAIL_BYTES]!r}", file=sys.stderr)
+        output = detail.read_bytes()[:DETAIL_BYTES]
+        # An empty capture is itself the evidence: the check exited without writing to stdout or stderr.
+        shown = repr(output) if output.strip() else "(no output on stdout or stderr)"
+        print(f"mishe: {name}: exit={code} detail={shown}", file=sys.stderr)
         return 2            # a crash or "cannot tell" (1, 3, 127, a signal) is not an observation
     signal_store.observe(home, name, "GREEN" if code == 0 else "RED", now=now, source=f"run:{command[0]}")
     return 0
