@@ -113,3 +113,26 @@ def test_facts_match_python_regexes(binary):
         for probe in range(1, 6):
             cited_rust = str(probe) in (runs.split(",") if runs != "-" else [])
             assert cited_rust == _python_cited(body, probe), (seq, body, probe, runs)
+
+
+def test_truncated_tape_exits_2_after_partial_facts(binary):
+    """Failure contract: a short body exits 2 even after facts were already written.
+
+    The binary streams, so an early REF can precede the failure. The caller must
+    discard every fact from a run whose exit status is not 0 (CONTRACT.md, exit 2).
+    This test pins that the partial output exists, so no consumer can rely on it.
+    """
+    good = _tape([f"[record] records/{HEX}.json sha256={HEX2}"])
+    truncated = _tape(["[dm] to=alice hello there"])[:-12]
+    proc = subprocess.run([binary], input=good + truncated, capture_output=True, timeout=30)
+    assert proc.returncode == 2, proc.returncode
+    assert proc.stdout.startswith(b"REF 1 "), proc.stdout
+    assert proc.stderr.startswith(b"mishe-tape-facts: short body"), proc.stderr
+
+
+def test_missing_body_terminator_exits_2(binary):
+    data = b"[dm] to=alice hi"
+    tape = f"E 1 2026-11-08T12:00:00Z senses {len(data)}\n".encode() + data + b"X"
+    proc = subprocess.run([binary], input=tape, capture_output=True, timeout=30)
+    assert proc.returncode == 2, proc.returncode
+    assert proc.stdout == b"", proc.stdout
