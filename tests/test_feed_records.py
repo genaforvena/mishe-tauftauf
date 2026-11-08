@@ -2,6 +2,9 @@ import json
 from dataclasses import replace
 import pytest
 from mishe_tauftauf.feed import Feed, FeedEntry, parse_feed
+from tests.tape_binary import pin_tape_binary
+
+pytestmark = pytest.mark.usefixtures("pin_tape_binary")
 
 
 def test_record_is_readable_and_replays(tmp_path):

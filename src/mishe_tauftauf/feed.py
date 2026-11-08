@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import codecs
 import fcntl
 import hashlib
 import json
@@ -24,7 +23,6 @@ from .slugs import validate_slug
 from .wall_text import addressed
 
 SOURCE_RE = re.compile(r"[A-Za-z0-9._/-]+\Z")
-HEADER_RE = re.compile(r"(?:v1 )?([0-9]{20}) ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z) ([A-Za-z0-9._/-]+) ::\n\Z")
 FRAME_START_RE = re.compile(rb"(?m)^(?:v1 )?\d{20} \d{4}-\d{2}-\d{2}T[^\n]+ [A-Za-z0-9._/-]+ ::\n")
 RECEIPT_RE = re.compile(r"wake (?:delivered|refused) top-pain [a-z0-9-]+ for entry [1-9][0-9]*(?: generation=[1-9][0-9]*)?(?: request-id=[A-Za-z0-9._:-]{1,128})?\Z")
 INDEX_STRIDE = 128
@@ -144,7 +142,25 @@ def entry_timestamp(entry: object) -> datetime | None:
 
 
 def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None = None) -> list[FeedEntry]:
-    return list(_iter_parsed_feed(data, start_sequence=start_sequence, home=home))
+    """Frame whole-tape bytes with mishe-tape.
+
+    The bytes ride an anonymous memfd, so the framer reads them through the same
+    ``/proc/self/fd`` path as a tape file and no temporary file is written.
+    """
+    with _tape_memfd(data) as handle:
+        return list(_iter_streamed_feed(handle, start_sequence=start_sequence, home=home, size=len(data)))
+
+
+@contextmanager
+def _tape_memfd(data: bytes):
+    fd = os.memfd_create("mishe-tape-feed")
+    handle = os.fdopen(fd, "w+b", closefd=True)
+    try:
+        handle.write(data)
+        handle.flush()
+        yield handle
+    finally:
+        handle.close()
 
 
 class TapeUnknown(RuntimeError):
@@ -287,94 +303,6 @@ def _frame_offsets(handle, offset: int, size: int, *, start_sequence: int = 1) -
     return offsets
 
 
-def _iter_parsed_feed(data: bytes, *, start_sequence: int = 1, home=None):
-    # A single astral character widens an entire decoded tape to four bytes
-    # per character. Decoding and splitlines over the whole tape kept both
-    # copies alive alongside every parsed entry in each resident supervisor.
-    # Reuse the streaming reader's literal line boundary and UTF-8 decoder.
-    def chunks():
-        decoder = codecs.getincrementaldecoder("utf-8")()
-        for offset in range(0, len(data), 64 * 1024):
-            base = offset - len(decoder.getstate()[0])
-            try:
-                yield decoder.decode(data[offset:offset + 64 * 1024])
-            except UnicodeDecodeError as exc:
-                raise UnicodeDecodeError(exc.encoding, data, base + exc.start,
-                                         base + exc.end, exc.reason) from exc
-        base = len(data) - len(decoder.getstate()[0])
-        try:
-            yield decoder.decode(b"", final=True)
-        except UnicodeDecodeError as exc:
-            raise UnicodeDecodeError(exc.encoding, data, base + exc.start,
-                                     base + exc.end, exc.reason) from exc
-
-    try:
-        yield from iter_feed_entries(_iter_text_lines(chunks()),
-                                    start_sequence=start_sequence, home=home)
-    except UnicodeDecodeError as exc:
-        raise FeedError(f"feed is not UTF-8: {exc}") from exc
-
-
-def iter_feed_entries(lines, *, start_sequence: int = 1,
-                      home: Path | str | None = None):
-    """Yield the tape's entries from an iterable of framed lines.
-
-    The framing rules live here so that every reader of the tape applies one
-    vocabulary: a header line, body lines that carry their ``    | `` prefix,
-    and a terminator that says whether the body ended with a newline. The
-    whole-tape reader and the streaming reader both come through here, so
-    they cannot drift apart on what a well-framed tape is.
-
-    A malformed tape raises ``FeedError`` at the first fault, and the entries
-    before it are still yielded: a reader that stops early must be able to say
-    that the tape broke here rather than that the tape was short.
-    """
-    index = 0
-    expected = start_sequence
-    lines = iter(lines)
-    while True:
-        header = next(lines, None)
-        if header is None:
-            return
-        index += 1
-        match = HEADER_RE.fullmatch(header)
-        if not match:
-            raise FeedError(f"malformed header at line {index}")
-        sequence = int(match.group(1))
-        if sequence != expected:
-            raise FeedError(f"non-contiguous sequence {sequence}, expected {expected}")
-        timestamp, source = match.group(2), match.group(3)
-        try:
-            datetime.fromisoformat(timestamp.removesuffix("Z") + "+00:00")
-        except ValueError as exc:
-            raise FeedError(f"invalid timestamp at sequence {sequence}") from exc
-        body_parts: list[str] = []
-        final_newline: bool | None = None
-        for line in lines:
-            index += 1
-            if line == "    .\n":
-                final_newline = True
-                break
-            if line == "    .-\n":
-                final_newline = False
-                break
-            if not line.startswith("    | ") or not line.endswith("\n"):
-                raise FeedError(f"malformed body framing at line {index}")
-            body_parts.append(line[6:])
-        if final_newline is None:
-            raise FeedError(f"unterminated entry {sequence}")
-        body = "".join(body_parts)
-        if not final_newline:
-            if not body.endswith("\n"):
-                raise FeedError(f"malformed no-newline entry {sequence}")
-            body = body[:-1]
-        if not body:
-            raise FeedError(f"empty body at sequence {sequence}")
-        yield FeedEntry(sequence, timestamp, source, body,
-                        Path(home) if home is not None else None)
-        expected += 1
-
-
 def read_text_tail(path: Path | str, chars: int) -> str:
     """The last ``chars`` characters of a UTF-8 text file, read in bounded bytes.
 
@@ -408,18 +336,14 @@ def read_text_tail(path: Path | str, chars: int) -> str:
         return ""
 
 
-def iter_feed_file(path: Path | str, *, home: Path | str | None = None,
-                   chunk_bytes: int = 1024 * 1024):
+def iter_feed_file(path: Path | str, *, home: Path | str | None = None):
     """Yield the tape's entries without holding the tape in memory.
-
-    Whole-feed reads retain the raw tape and every returned entry even though
-    their decoding is chunked. This reader holds chunks and one entry at a
-    time, so its peak depends on chunk and entry size rather than tape length.
 
     The prefix it reads is captured under the tape's shared lock, so it ends
     at an entry boundary even while a writer appends, and the bytes it reads
-    are the ones that were on the tape when it looked. A writer's exclusive
-    lock excludes this reader for the capture only, never for the parse.
+    are the ones that were on the tape when it looked. The lock is released
+    before framing, so a writer's exclusive lock excludes this reader only for
+    the capture. Framing is done by mishe-tape (``rust/mishe-tape``).
     """
     path = Path(path)
     with path.open("rb") as handle:
@@ -428,76 +352,7 @@ def iter_feed_file(path: Path | str, *, home: Path | str | None = None,
             size = os.fstat(handle.fileno()).st_size
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-
-        def chunks():
-            decoder = codecs.getincrementaldecoder("utf-8")()
-            remaining = size
-            while remaining > 0:
-                chunk = handle.read(min(chunk_bytes, remaining))
-                if not chunk:
-                    break
-                remaining -= len(chunk)
-                yield decoder.decode(chunk)
-            yield decoder.decode(b"", final=True)
-
-        try:
-            for entry in iter_feed_entries(_iter_text_lines(chunks()), home=home):
-                yield entry
-        except UnicodeDecodeError as exc:
-            raise FeedError(f"feed is not UTF-8: {exc}") from exc
-
-
-#: The line boundaries ``str.splitlines`` recognises. A tape is framed with
-#: LF, but a body may carry any of these, and the whole-tape reader splits
-#: on all of them, so the streaming reader must split on the same set or the
-#: two readers would disagree about where an entry ends.
-_LINE_BREAK = re.compile(r"\r\n|[\n\r\v\f\x1c\x1d\x1e\x85  ]")
-
-
-def _iter_text_lines(chunks):
-    """Yield the lines of decoded text chunks the way ``splitlines`` does.
-
-    ``str.splitlines`` ends a line at more than LF: a carriage return, the
-    vertical tab, the form feed, the ASCII separators, NEL and the Unicode
-    line and paragraph separators, and it keeps the terminator with the line
-    it ends. The streaming reader splits on the same set, and it defers a
-    trailing carriage return until the next chunk arrives, because that
-    carriage return may be the first half of a CRLF pair.
-    """
-    parts = []
-    trailing_cr = False
-    for text in chunks:
-        if not text:
-            continue
-        if trailing_cr:
-            # A CR at the end of the previous chunk might belong to CRLF.
-            parts.append("\r\n" if text.startswith("\n") else "\r")
-            yield "".join(parts)
-            parts = []
-            if text.startswith("\n"):
-                text = text[1:]
-            trailing_cr = False
-        lines = text.splitlines(keepends=True)
-        for index, line in enumerate(lines):
-            # Let the C splitter scan each bounded chunk; only inspect the
-            # final character to distinguish a complete line from a fragment.
-            if _LINE_BREAK.search(line, len(line) - 1) is None:
-                parts.append(line)
-                continue
-            if line.endswith("\r") and index == len(lines) - 1:
-                parts.append(line[:-1])
-                trailing_cr = True
-                break
-            if parts:
-                parts.append(line)
-                yield "".join(parts)
-                parts = []
-            else:
-                yield line
-    if trailing_cr:
-        parts.append("\r")
-    if parts:
-        yield "".join(parts)
+        yield from _iter_streamed_feed(handle, home=home, size=size)
 
 
 def _role_fold(previous, entries, role):

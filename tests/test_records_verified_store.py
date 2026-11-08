@@ -4,6 +4,9 @@ import pytest
 from mishe_tauftauf import records
 from mishe_tauftauf import feed as feed_module
 from mishe_tauftauf.feed import Feed, parse_feed
+from tests.tape_binary import pin_tape_binary
+
+pytestmark = pytest.mark.usefixtures("pin_tape_binary")
 
 
 @pytest.fixture(autouse=True)

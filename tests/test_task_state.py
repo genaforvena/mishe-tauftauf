@@ -4,6 +4,9 @@ import pytest
 
 from mishe_tauftauf.feed import Feed
 from mishe_tauftauf import task_state
+from tests.tape_binary import pin_tape_binary
+
+pytestmark = pytest.mark.usefixtures("pin_tape_binary")
 
 
 def task(home, identity="repair", owner="genome"):

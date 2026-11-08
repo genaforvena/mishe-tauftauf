@@ -92,12 +92,19 @@ Every entry before a fault is written before the fault is reported.
   is an atomic rename of one binary (proposed install path: `runtime/current/bin/mishe-tape`, not yet wired) with its own observation
   and rollback (the previous binary is kept until observed).
 
-## Standalone differential test
+## Golden differential test
 
-Today the differential check is Python (`tests/test_mishe_tape_frames.py`) and
-runs only when `MISHE_TAPE_BIN` names a built binary. Gap, tracked in section 9
-of the migration plan: a shell-runnable check that needs no Python runtime,
-over the committed fixtures, is not written yet.
+`tests/test_mishe_tape_frames.py` checks the binary against
+`tests/fixtures/tape_framing_golden.json`: the answers the retired Python
+whole-tape reader gave for each framing case, recorded before its deletion.
+Fault cases compare the exit status and the exact fault text; a UTF-8 case
+compares the exit status and the `feed is not UTF-8` prefix only. It runs when a
+binary resolves (`MISHE_TAPE_BIN`, then the site install) and skips with the reason
+otherwise. The Python reader no longer exists in `src/`; `feed.parse_feed` and
+`feed.iter_feed_file` frame through this binary (memfd or shared-lock fd).
+
+Known gap: the UTF-8 fault detail is relative to the body, not the absolute tape
+offset the Python reader reported.
 
 ## Build
 

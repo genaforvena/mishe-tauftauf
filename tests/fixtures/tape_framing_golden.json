@@ -1,0 +1,160 @@
+{
+ "_comment": "Golden framing answers recorded from the retired Python whole-tape reader (feed.py before mishe-tape routing, HEAD b0d05120). Contract data for tests/test_mishe_tape_frames.py; not a live oracle. utf8_fault_after_entry: Python gave no entries; the binary yields the entries before the bad bytes (CONTRACT.md), so only the ERR prefix is compared.",
+ "cases": {
+  "valid_and_framing_variants": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6OgogICAgfCBoZWxsbwogICAgLgp2MSAwMDAwMDAwMDAwMDAwMDAwMDAwMiAyMDI2LTExLTA3VDIzOjAwOjAwLjEyMzQ1NlogZ2Vub21lIDo6CiAgICB8IGENCiAgICB8IGIKICAgIC4tCg==",
+   "entries": [
+    [
+     "E",
+     1,
+     "2026-11-07T23:00:00.123456Z",
+     "genome",
+     "hello\n"
+    ],
+    [
+     "E",
+     2,
+     "2026-11-07T23:00:00.123456Z",
+     "genome",
+     "a\r\nb"
+    ]
+   ],
+   "error": null
+  },
+  "line_break_CR": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6OgogICAgfCBhDWIKICAgIC4K",
+   "entries": [],
+   "error": "malformed body framing at line 2"
+  },
+  "line_break_VT": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6OgogICAgfCBhC2IKICAgIC4K",
+   "entries": [],
+   "error": "malformed body framing at line 2"
+  },
+  "line_break_FF": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6OgogICAgfCBhDGIKICAgIC4K",
+   "entries": [],
+   "error": "malformed body framing at line 2"
+  },
+  "line_break_FS": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6OgogICAgfCBhHGIKICAgIC4K",
+   "entries": [],
+   "error": "malformed body framing at line 2"
+  },
+  "line_break_NEL": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6OgogICAgfCBhwoViCiAgICAuCg==",
+   "entries": [],
+   "error": "malformed body framing at line 2"
+  },
+  "line_break_space": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6OgogICAgfCBhIGIKICAgIC4K",
+   "entries": [
+    [
+     "E",
+     1,
+     "2026-11-07T23:00:00.123456Z",
+     "genome",
+     "a b\n"
+    ]
+   ],
+   "error": null
+  },
+  "fault_bad_date_feb30": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0wMi0zMFQwMDowMDowMFogZ2Vub21lIDo6CiAgICB8IHgKICAgIC4K",
+   "entries": [],
+   "error": "invalid timestamp at sequence 1"
+  },
+  "fault_hour24": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0wMS0wMVQyNDowMDowMFogZ2Vub21lIDo6CiAgICB8IHgKICAgIC4K",
+   "entries": [],
+   "error": "invalid timestamp at sequence 1"
+  },
+  "fault_sec60": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0wMS0wMVQwMDowMDo2MFogZ2Vub21lIDo6CiAgICB8IHgKICAgIC4K",
+   "entries": [],
+   "error": "invalid timestamp at sequence 1"
+  },
+  "fault_nonleap": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNy0wMi0yOVQwMDowMDowMFogZ2Vub21lIDo6CiAgICB8IHgKICAgIC4K",
+   "entries": [],
+   "error": "invalid timestamp at sequence 1"
+  },
+  "fault_frac7": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0wMS0wMVQwMDowMDowMC4xMjM0NTY3WiBnZW5vbWUgOjoKICAgIHwgeAogICAgLgo=",
+   "entries": [],
+   "error": "malformed header at line 1"
+  },
+  "fault_noncontig": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6OgogICAgfCBhCiAgICAuCjAwMDAwMDAwMDAwMDAwMDAwMDAzIDIwMjYtMTEtMDdUMjM6MDA6MDAuMTIzNDU2WiBnZW5vbWUgOjoKICAgIHwgYgogICAgLgo=",
+   "entries": [],
+   "error": "non-contiguous sequence 3, expected 2"
+  },
+  "fault_unterminated": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6OgogICAgfCBhCg==",
+   "entries": [],
+   "error": "unterminated entry 1"
+  },
+  "fault_empty_body": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6OgogICAgLgo=",
+   "entries": [],
+   "error": "empty body at sequence 1"
+  },
+  "fault_bad_body_prefix": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6OgogIHwgYQogICAgLgo=",
+   "entries": [],
+   "error": "malformed body framing at line 2"
+  },
+  "fault_not_header": {
+   "data_b64": "bm90IGEgaGVhZGVyCg==",
+   "entries": [],
+   "error": "malformed header at line 1"
+  },
+  "fault_truncated_header": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6Og==",
+   "entries": [],
+   "error": "malformed header at line 1"
+  },
+  "fault_no_v1_no_timestamp_seq_ok_but_bad_src": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0wMS0wMVQwMDowMDowMFogZ2VuK21lIDo6CiAgICB8IGEKICAgIC4K",
+   "entries": [],
+   "error": "malformed header at line 1"
+  },
+  "utf8_fault_after_entry": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6OgogICAgfCBh/wogICAgLgo=",
+   "entries": [],
+   "error": "feed is not UTF-8: 'utf-8' codec can't decode byte 0xff in position 66: invalid start byte"
+  },
+  "frames_mixed_three": {
+   "data_b64": "MDAwMDAwMDAwMDAwMDAwMDAwMDEgMjAyNi0xMS0wN1QyMzowMDowMC4xMjM0NTZaIGdlbm9tZSA6OgogICAgfCBhCiAgICAuCjAwMDAwMDAwMDAwMDAwMDAwMDAyIDIwMjYtMTEtMDdUMjM6MDA6MDAuMTIzNDU2WiBnZW5vbWUgOjoKICAgIHwgYg0KICAgIHwgYwogICAgLgowMDAwMDAwMDAwMDAwMDAwMDAwMyAyMDI2LTExLTA3VDIzOjAwOjAwLjEyMzQ1NlogZ2Vub21lIDo6CiAgICB8IGQKICAgIC4tCg==",
+   "entries": [
+    [
+     "E",
+     1,
+     "2026-11-07T23:00:00.123456Z",
+     "genome",
+     "a\n"
+    ],
+    [
+     "E",
+     2,
+     "2026-11-07T23:00:00.123456Z",
+     "genome",
+     "b\r\nc\n"
+    ],
+    [
+     "E",
+     3,
+     "2026-11-07T23:00:00.123456Z",
+     "genome",
+     "d"
+    ]
+   ],
+   "error": null
+  },
+  "unicode_digits_seq": {
+   "data_b64": "2aHZodmh2aHZodmh2aHZodmh2aHZodmh2aHZodmh2aHZodmh2aHZoSAyMDI2LTAxLTAxVDAwOjAwOjAwWiBzZWVkIDo6CiAgICB8IGEKICAgIC4K",
+   "entries": [],
+   "error": "malformed header at line 1"
+  }
+ }
+}
