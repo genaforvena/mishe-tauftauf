@@ -76,6 +76,27 @@ def test_failed_check_leaves_pointer_and_no_release(site):
     assert not any(p.name.startswith(".staging") for p in (home / "components" / NAME / "releases").iterdir())
 
 
+def test_first_promotion_red_reports_actual_pointer_and_unknown(site):
+    repo, home, first, _ = site
+    (home / "runtime" / "current" / "bin" / NAME).write_text("old")
+    result = c.promote(home, repo, NAME, first, check=CHECK, builder=make_builder("A"))
+    assert result["phase"] == "unknown"
+    assert result["current"] == c.pointed_sha(home, NAME) == first
+    assert result["verify"]["state"] == "RED"
+    assert any("runtime/current" in p for p in result["verify"]["problems"])
+    assert c._ledger_events(home, NAME)[-1]["event"] == "promotion-red"
+
+
+def test_failed_promotion_does_not_claim_unverified_rollback(site):
+    repo, home, first, second = site
+    c.promote(home, repo, NAME, first, check=CHECK, builder=make_builder("A"))
+    (home / "runtime" / "current" / "bin" / NAME).write_text("old")
+    result = c.promote(home, repo, NAME, second, check=CHECK, builder=make_builder("B"))
+    assert result["phase"] == "unknown"
+    assert result["current"] == c.pointed_sha(home, NAME) == first
+    assert result["rollback_verify"]["state"] == "RED"
+
+
 def test_tampered_binary_turns_detector_red(site):
     repo, home, first, _ = site
     c.promote(home, repo, NAME, first, check=CHECK, builder=make_builder("A"))

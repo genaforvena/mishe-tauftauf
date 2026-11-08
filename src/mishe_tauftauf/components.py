@@ -177,9 +177,16 @@ def promote(home, repo, name: str, sha: str, *, check: list[str], builder=None) 
     if verdict["state"] != "GREEN":
         if previous:
             _swap(home, name, previous)
+            restored = verify(home, name)
             _record(home, name, {"event": "auto-rollback", "name": name, "from": sha, "to": previous,
-                                 "problems": verdict["problems"]})
-        return {"phase": "rolled-back", "name": name, "sha": sha, "current": previous, "verify": verdict}
+                                 "problems": verdict["problems"], "verify": restored})
+            return {"phase": "rolled-back" if restored["state"] == "GREEN" else "unknown",
+                    "name": name, "sha": sha, "current": pointed_sha(home, name), "verify": verdict,
+                    "rollback_verify": restored}
+        _record(home, name, {"event": "promotion-red", "name": name, "sha": sha,
+                             "problems": verdict["problems"]})
+        return {"phase": "unknown", "name": name, "sha": sha,
+                "current": pointed_sha(home, name), "verify": verdict}
     return {"phase": "promoted", "name": name, "sha": sha, "previous": previous, "verify": verdict}
 
 

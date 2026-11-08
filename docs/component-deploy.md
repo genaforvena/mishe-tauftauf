@@ -24,6 +24,7 @@ SITE_HOME/components/NAME/
 1. **One way only.** Once `components/NAME/current` exists, `runtime/current` stops serving NAME's files. No shadow copy, no fallback to the pin for that NAME.
 2. **Promotion** is atomic: build the release dir, run its check against those bytes, create `current.tmp` beside `current`, then `rename(2)` over `current`. No global hold; wakes keep running.
 3. **Rollback** is re-pointing `current` at the previous release SHA with the same rename. The previous SHA is recorded in the promotion record before the swap.
+   If post-swap verification is RED and no previous SHA is known, the new pointer remains in place and the result is `unknown`, not a rollback. With a previous SHA, automatic rollback is reported as `rolled-back` only if the restored pointer verifies GREEN; otherwise it is `unknown`. Inspect the recorded problems and live pointer before recovery.
 4. **Contract.** Each component's `CONTRACT.md` names its inputs, outputs and exit codes. Its check runs against the release dir, not the working tree.
 5. **Docs-only commits** need no promotion.
 
