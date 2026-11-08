@@ -110,6 +110,12 @@ def register(sub) -> None:
     p = release.add_parser("consume"); p.set_defaults(func=cmd_runtime)
     for action in ("revert", "review"):
         p = release.add_parser(action); p.set_defaults(func=cmd_runtime); p.add_argument("--id", required=True)
+    comp = add("component").add_subparsers(dest="component_command", required=True)
+    p = comp.add_parser("promote"); p.set_defaults(func=cmd_runtime)
+    p.add_argument("name"); p.add_argument("sha"); p.add_argument("--check-file", type=Path, required=True)
+    p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO"))
+    p = comp.add_parser("rollback"); p.set_defaults(func=cmd_runtime); p.add_argument("name")
+    p = comp.add_parser("verify"); p.set_defaults(func=cmd_runtime); p.add_argument("name", nargs="?")
     work = add("work").add_subparsers(dest="work_command", required=True)
     p = work.add_parser("poll"); p.set_defaults(func=cmd_runtime)
     p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO"))
@@ -156,6 +162,9 @@ def run(args) -> int:
     from . import engines, owed, signal_store, wake, yielding
     home = args.home.resolve()
     now = time.time()
+    if args.command == "component":
+        from . import components
+        return components.main_component(args)
     if args.command == "release":
         from . import release_promotion as promotion, work_boundary
         import json
