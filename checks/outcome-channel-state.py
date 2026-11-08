@@ -113,6 +113,13 @@ try:
     os.environ["MISHE_SEED_HOME"] = str(probe)
     (probe / "records").mkdir()
     (probe / "artifacts").mkdir()
+    # The framer reads the tape only through the site's sha-recorded mishe-tape install
+    # (since a995031a). A bare probe home has none, so every probe read is TapeUnknown and
+    # the denial reads "error" (UNKNOWN). Plant the live install; the framer's sha gate still applies.
+    (probe / "bin").mkdir()
+    for name in ("mishe-tape", "mishe-tape.install.json"):
+        if (home / "bin" / name).is_file():
+            shutil.copy2(home / "bin" / name, probe / "bin" / name)
     digest = "0" * 64
     body = "\n".join([
         "Wall outcome hypothesis-changed by probe",
@@ -195,8 +202,11 @@ def export_head(repo: Path, workdir: Path) -> Path:
 
 def run_child(root: Path, home: Path, cwd: Path) -> dict:
     """Ask the code under one import root about the channel it offers."""
+    # The tape is framed through the home named here, never an ambient site or override.
+    env = {key: value for key, value in os.environ.items() if key != "MISHE_TAPE_BIN"}
+    env["MISHE_SEED_HOME"] = str(home)
     result = subprocess.run([sys.executable, "-I", "-c", CHILD, str(root), str(home)],
-                            capture_output=True, text=True, cwd=str(cwd))
+                            capture_output=True, text=True, cwd=str(cwd), env=env)
     if result.returncode:
         raise Undecidable("the measurement under " + str(root) + " failed: "
                           + result.stderr.strip()[-300:])

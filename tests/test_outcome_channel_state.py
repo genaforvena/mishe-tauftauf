@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -53,7 +54,19 @@ def load_check():
 
 
 def write_home(home: Path, body: str) -> Path:
-    """A site home whose tape carries one damaged outcome row."""
+    """A site home whose tape carries one damaged outcome row.
+
+    The framer reads the tape only through the site's sha-recorded mishe-tape
+    install, so the home takes the live site's install, as the check's probe does.
+    With no install the tests skip with the reason rather than read a fault.
+    """
+    live_bin = REPO / ".mishe-tauftauf" / "bin"
+    install = [live_bin / "mishe-tape", live_bin / "mishe-tape.install.json"]
+    if not all(path.is_file() for path in install):
+        pytest.skip("no sha-recorded mishe-tape install at " + str(live_bin))
+    (home / "bin").mkdir(parents=True)
+    for path in install:
+        shutil.copy2(path, home / "bin" / path.name)
     (home / "records").mkdir(parents=True)
     frame = "v1 00000000000000000001 2026-10-20T00:00:00.000000Z probe ::\n"
     frame += "".join("    | %s\n" % line for line in body.splitlines())
