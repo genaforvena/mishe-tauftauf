@@ -67,7 +67,13 @@ Every entry before a fault is written before the fault is reported.
 - `feed is not UTF-8: <detail>`: the Python text may differ in the detail
   after the colon. This is a known, documented difference (`tests/test_mishe_tape_frames.py`,
   `test_utf8_error_fails_closed_with_documented_text_difference`). The exit
-  status (2) and the entries before the fault match.
+  status (2) matches. The entries before the fault do NOT always match: the Python
+  reader decodes in 64 KiB or stream chunks, so a UTF-8 fault in the same chunk as
+  earlier entries yields none of them, while the binary yields every entry before
+  the bad bytes. Callers must treat a UTF-8 fault as "no entries from this read"
+  and never fold the entries that preceded it. Observed in a scratch differential
+  on 2026-11-08 (not committed): a tape with one valid entry followed by a
+  non-UTF-8 entry gave Python zero entries and the binary one entry, both exit 2.
 
 ## Framing rules (mirror `feed.py`)
 
