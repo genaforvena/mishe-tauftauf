@@ -123,6 +123,13 @@ jobs:
       # "run" about a command.  The gate reads the program word each
       # command runs and asks the clone whether it carries that program.
       - run: python checks/shipped-book-program-paths.py --repo .
+      # The feed reader takes its framing from the mishe-tape binary, which is built
+      # from the committed crate with the toolchain pinned in rust/mishe-tape/rust-toolchain.toml.
+      # The tests find it through MISHE_TAPE_BIN, so CI builds it rather than assuming one on PATH.
+      - name: Build mishe-tape framer
+        run: |
+          cargo build --release --locked --manifest-path rust/mishe-tape/Cargo.toml
+          echo "MISHE_TAPE_BIN=$GITHUB_WORKSPACE/rust/mishe-tape/target/release/mishe-tape" >> "$GITHUB_ENV"
       - run: python -m pytest -q
 
   adapters:

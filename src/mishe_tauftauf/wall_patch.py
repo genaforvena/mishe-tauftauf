@@ -14,6 +14,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from .argv_text import decode_argv
 from .observations import validate_slug
 from .post_check import _save, _worker
 from .wall import settings
@@ -158,13 +159,13 @@ def _executable(home, command):
             raise ValueError(f"program is not an executable file: {program}")
     elif shutil.which(program) is None:
         raise ValueError(f"program is not on PATH: {program}")
-    if Path(program).name in {"bash", "sh"} or Path(program).name.startswith("python"):
+    if Path(program).name in {"bash", "sh"} or Path(program).name[:6] == "python":
         for arg in words[1:]:
             if arg in {"-c", "-m"}:
                 break
-            if arg.startswith("-"):
+            if arg[:1] == "-":
                 continue
-            if "/" in arg or arg.endswith((".sh", ".py")):
+            if "/" in arg or Path(arg).suffix in (".sh", ".py"):
                 if not _in_checkout(home, arg).is_file():
                     raise ValueError(f"script not found: {arg}")
             break
@@ -463,15 +464,15 @@ def main():
     if args.action == "prepare":
         prepare(args.home, args.id, args.files or [])
     elif args.action == "check":
-        check(args.home, args.id, json.loads(args.command),
-              activate=json.loads(args.activate) if args.activate else None,
-              observe=json.loads(args.observe) if args.observe else None,
-              revert_observe=json.loads(args.revert_observe) if args.revert_observe else None,
-              revert=json.loads(args.revert) if args.revert else None)
+        check(args.home, args.id, decode_argv(args.command),
+              activate=decode_argv(args.activate),
+              observe=decode_argv(args.observe),
+              revert_observe=decode_argv(args.revert_observe),
+              revert=decode_argv(args.revert))
     elif args.action == "apply":
-        apply(args.home, args.id, json.loads(args.activate), json.loads(args.observe))
+        apply(args.home, args.id, decode_argv(args.activate), decode_argv(args.observe))
     elif args.action == "revert":
-        revert(args.home, args.id, json.loads(args.activate))
+        revert(args.home, args.id, decode_argv(args.activate))
     elif args.action == "verify":
         verify(args.home, args.id)
     print(json.dumps(status(args.home, args.id), indent=2))

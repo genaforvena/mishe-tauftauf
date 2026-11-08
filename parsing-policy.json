@@ -1,5 +1,6 @@
 {
   "boundaries": [
+    "src/mishe_tauftauf/argv_text.py",
     "src/mishe_tauftauf/body_perception.py",
     "src/mishe_tauftauf/boot_rearm.py",
     "src/mishe_tauftauf/chat_protocol.py",
