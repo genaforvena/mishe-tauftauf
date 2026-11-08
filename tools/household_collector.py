@@ -149,10 +149,9 @@ def cmd_camera(args) -> int:
 
 
 def _device_unreachable(row) -> bool:
-    # A mac capture runs ssh/scp; a failed or timed-out transfer means the device is not reachable.
-    # Config errors ("mac needs USER@HOST") and a missing ffmpeg stay crashes (exit 1).
-    return (row.get("source") == "mac" and row.get("status") == "unavailable"
-            and str(row.get("reason", "")).startswith(("CalledProcessError", "TimeoutExpired")))
+    # camera_signature sets reason_code mac_unreachable when ssh/scp could not reach the Mac.
+    # Config errors ("mac needs USER@HOST") and a missing ffmpeg carry no code and stay crashes (exit 1).
+    return row.get("source") == "mac" and row.get("reason_code") == "mac_unreachable"
 
 
 def newest_note3(site: str):

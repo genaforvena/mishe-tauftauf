@@ -17,7 +17,7 @@ Usage:
 
 One JSON object per run goes to stdout. A failed capture prints a JSON object
 with "status": "unavailable" and a reason; it never reports a fabricated
-signature.
+signature. An unreachable Mac also carries "reason_code": "mac_unreachable".
 """
 from __future__ import annotations
 
@@ -91,24 +91,36 @@ def _capture_webcam(out: Path, device: str, telemetry: dict) -> None:
                        + (f": {last}" if last else ""))
 
 
+class DeviceUnreachable(RuntimeError):
+    """The Mac did not answer: a failed or timed-out ssh/scp step, or ssh's own exit 255."""
+
+
 def _capture_mac(out: Path, host: str) -> None:
     if not SWIFT_SOURCE.is_file():
         raise RuntimeError(f"missing {SWIFT_SOURCE}")
     ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", host]
     remote = f"/tmp/mishe-cam-{int(time.time())}"
     try:
-        subprocess.run(["scp", "-q", "-o", "BatchMode=yes", str(SWIFT_SOURCE),
-                        f"{host}:{remote}.swift"], check=True, timeout=30)
-        run = subprocess.run(
-            [*ssh, f"cd /tmp && swiftc {remote}.swift -o {remote} && {remote} {remote}.jpg"],
-            capture_output=True, text=True, timeout=180)
-        if run.returncode != 0:
-            raise RuntimeError(f"remote capture failed rc={run.returncode}")
-        subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{host}:{remote}.jpg", str(out)],
-                       check=True, timeout=60)
+        try:
+            subprocess.run(["scp", "-q", "-o", "BatchMode=yes", str(SWIFT_SOURCE),
+                            f"{host}:{remote}.swift"], check=True, timeout=30)
+            run = subprocess.run(
+                [*ssh, f"cd /tmp && swiftc {remote}.swift -o {remote} && {remote} {remote}.jpg"],
+                capture_output=True, text=True, timeout=180)
+            if run.returncode == 255:  # ssh's own failure code: no connection to the Mac
+                raise DeviceUnreachable("ssh exited 255")
+            if run.returncode != 0:
+                raise RuntimeError(f"remote capture failed rc={run.returncode}")
+            subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{host}:{remote}.jpg", str(out)],
+                           check=True, timeout=60)
+        except subprocess.SubprocessError as exc:
+            raise DeviceUnreachable(f"{type(exc).__name__}: {exc}") from exc
     finally:
-        subprocess.run([*ssh, f"rm -f {remote} {remote}.swift {remote}.jpg"],
-                       capture_output=True, timeout=30)
+        try:  # best-effort cleanup; a timed-out rm must not mask the capture's own failure code
+            subprocess.run([*ssh, f"rm -f {remote} {remote}.swift {remote}.jpg"],
+                           capture_output=True, timeout=30)
+        except subprocess.SubprocessError:
+            pass
 
 
 def run(source: str, host: str | None, device: str, frame: Path | None) -> dict:
@@ -131,6 +143,9 @@ def run(source: str, host: str | None, device: str, frame: Path | None) -> dict:
                     return {**record, "status": "unavailable", "reason": "mac needs USER@HOST"}
                 _capture_mac(image, host)
         return {**record, "status": "ok", **capture, **signature(image)}
+    except DeviceUnreachable as exc:
+        return {**record, **capture, "status": "unavailable", "reason_code": "mac_unreachable",
+                "reason": f"{type(exc).__name__}: {exc}"[:300]}
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         return {**record, **capture, "status": "unavailable",
                 "reason": f"{type(exc).__name__}: {exc}"[:300]}

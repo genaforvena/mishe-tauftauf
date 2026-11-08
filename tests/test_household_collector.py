@@ -210,35 +210,68 @@ def test_unavailable_room_is_cannot_tell(tmp_path, monkeypatch):
     assert hc.main(["camera", "--room", "living room", "--source", "webcam", "--site", str(tmp_path)]) == 1
 
 
-class _UnreachableMacCamsig:
-    def __init__(self, reason):
-        self.reason = reason
+class _FakeMacCamsig:
+    def __init__(self, row):
+        self.row = row
 
     def run(self, source, target, device, extra):
-        return {"captured_at_epoch_s": 1.0, "source": source, "status": "unavailable", "reason": self.reason}
+        return {"captured_at_epoch_s": 1.0, "source": source, **self.row}
 
 
-def _mac_exit(monkeypatch, tmp_path, reason):
+def _mac_exit(monkeypatch, tmp_path, row):
     (tmp_path / "spatial/work/household").mkdir(parents=True, exist_ok=True)
     (tmp_path / "spatial/work/household/rooms.json").write_text(
         json.dumps([{"name": "bedroom", "source": "mac", "target": "user@host"}]))
-    monkeypatch.setattr(hc, "load_camsig", lambda: _UnreachableMacCamsig(reason))
+    monkeypatch.setattr(hc, "load_camsig", lambda: _FakeMacCamsig(row))
     return hc.main(["camera", "--room", "bedroom", "--source", "mac", "--site", str(tmp_path)])
 
 
+UNREACHABLE = {"status": "unavailable", "reason_code": "mac_unreachable",
+               "reason": "CalledProcessError: Command '['scp', ...]' returned non-zero exit status 255."}
+
+
 def test_unreachable_mac_is_unknown_not_a_crash(tmp_path, monkeypatch):
-    # ssh/scp failing to reach the Mac is missing input: exit 4 (declared unknown code), not 1.
-    reason = "CalledProcessError: Command '['scp', ...]' returned non-zero exit status 255."
-    assert _mac_exit(monkeypatch, tmp_path, reason) == 4
+    # The reason_code the camera emits for a failed ssh/scp is missing input: exit 4 (declared unknown code).
+    assert _mac_exit(monkeypatch, tmp_path, UNREACHABLE) == 4
 
 
-def test_mac_capture_timeout_is_unknown(tmp_path, monkeypatch):
-    assert _mac_exit(monkeypatch, tmp_path, "TimeoutExpired: ssh timed out after 180 seconds") == 4
+def test_mac_timeout_with_the_code_is_unknown(tmp_path, monkeypatch):
+    row = {**UNREACHABLE, "reason": "TimeoutExpired: ssh timed out after 180 seconds"}
+    assert _mac_exit(monkeypatch, tmp_path, row) == 4
+
+
+def test_mac_failure_without_the_code_stays_a_crash(tmp_path, monkeypatch):
+    # A message that merely looks like an scp failure, with no reason_code, is not trusted: exit 1.
+    row = {"status": "unavailable", "reason": UNREACHABLE["reason"]}
+    assert _mac_exit(monkeypatch, tmp_path, row) == 1
 
 
 def test_missing_ffmpeg_on_mac_stays_a_crash(tmp_path, monkeypatch):
-    assert _mac_exit(monkeypatch, tmp_path, "ffmpeg missing") == 1
+    assert _mac_exit(monkeypatch, tmp_path, {"status": "unavailable", "reason": "ffmpeg missing"}) == 1
 
 
 def test_mac_config_error_stays_a_crash(tmp_path, monkeypatch):
-    assert _mac_exit(monkeypatch, tmp_path, "mac needs USER@HOST") == 1
+    assert _mac_exit(monkeypatch, tmp_path, {"status": "unavailable", "reason": "mac needs USER@HOST"}) == 1
+
+
+def test_captured_unreachable_mac_record_exits_unknown(tmp_path, monkeypatch):
+    # Real path: camera_signature.run with scp failing as in the site's captured record
+    # (signatures.jsonl, scp rc 255 to the bedroom Mac). Nothing faked above the subprocess layer.
+    import shutil
+    import subprocess as sp
+    camsig = hc.load_camsig()
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    def scp_refused(args, check=False, **kwargs):
+        if check:  # the first scp is check=True; ssh's rm cleanup is not and returns quietly
+            raise sp.CalledProcessError(255, args)
+        return sp.CompletedProcess(args, 255, "", "")
+
+    monkeypatch.setattr(camsig.subprocess, "run", scp_refused)
+    monkeypatch.setattr(hc, "load_camsig", lambda: camsig)
+    (tmp_path / "spatial/work/household").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "spatial/work/household/rooms.json").write_text(
+        json.dumps([{"name": "bedroom", "source": "mac", "target": "ilya@192.168.8.214"}]))
+    assert hc.main(["camera", "--room", "bedroom", "--source", "mac", "--site", str(tmp_path)]) == 4
+    row = json.loads((tmp_path / "spatial/work/household/signatures.jsonl").read_text().splitlines()[-1])
+    assert row["reason_code"] == "mac_unreachable" and "grid" not in row

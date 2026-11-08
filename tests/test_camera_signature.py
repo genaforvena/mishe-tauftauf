@@ -188,3 +188,30 @@ def test_failed_capture_record_keeps_attempt_counts(tmp_path, monkeypatch):
     assert out["status"] == "unavailable"
     assert out["capture_attempts"] == cam.WEBCAM_ATTEMPTS and out["busy_attempts"] == cam.WEBCAM_ATTEMPTS
     assert "Device or resource busy" in out["reason"]
+
+
+def test_unreachable_mac_carries_reason_code(monkeypatch):
+    # scp refused (ssh exit 255) is the Mac not answering: structured code, not a message prefix.
+    monkeypatch.setattr(cam.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    def scp_refused(args, check=False, **kwargs):
+        if check:
+            raise subprocess.CalledProcessError(255, args)
+        return subprocess.CompletedProcess(args, 255, "", "")
+
+    monkeypatch.setattr(cam.subprocess, "run", scp_refused)
+    out = cam.run("mac", "ilya@192.168.8.214", "", None)
+    assert out["status"] == "unavailable" and out["reason_code"] == "mac_unreachable"
+    assert "grid" not in out
+
+
+def test_remote_capture_failure_is_not_unreachable(monkeypatch):
+    # The Mac answered and its swiftc/capture failed (rc 1): a crash, no reachability code.
+    monkeypatch.setattr(cam.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    def remote_fails(args, **kwargs):
+        return subprocess.CompletedProcess(args, 1, "", "swiftc: error")
+
+    monkeypatch.setattr(cam.subprocess, "run", remote_fails)
+    out = cam.run("mac", "ilya@192.168.8.214", "", None)
+    assert out["status"] == "unavailable" and "reason_code" not in out
