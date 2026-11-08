@@ -372,3 +372,32 @@ def test_server_slice_probe_reads_each_pid_through_injected_containment():
     got = probe_server_slice({LIFE: ("1827", "mishe-lifeline.slice")}, containment=fake)
     assert got["state"] == "verified" and seen == {"1827": True}
     assert probe_server_slice({}, containment=fake)["state"] == "unknown"
+
+
+from mishe_tauftauf.replacement_readings import expected_from_listing, read_server_slice  # noqa: E402
+
+
+def test_server_slice_expects_only_declared_workload_sessions():
+    got = expected_from_listing("mishe-self-development-current\t1579\nplants\t1938\n")
+    assert got == {"mishe-self-development-current@1579": ("1579", "mishe-plants.slice")}
+    assert expected_from_listing("mishe-life-support\t1827\n") == {
+        "mishe-life-support@1827": ("1827", "mishe-lifeline.slice")}
+
+
+def test_server_slice_unreadable_listing_is_unknown():
+    assert expected_from_listing("garbled line\n") is None
+    assert read_server_slice(None)["state"] == "unknown"
+    assert read_server_slice(SOCK, runner=lambda s, a: None)["state"] == "unknown"
+    assert read_server_slice(SOCK, runner=lambda s, a: _done(1, "", "error connecting"))["state"] == "unknown"
+    got = read_server_slice(SOCK, runner=lambda s, a: _done(1, "", "no server running on x"))
+    assert got["state"] == "unknown" and "no expected servers" in got["sample"]
+
+
+def test_server_slice_verified_and_drift_through_socket_listing():
+    listing = lambda s, a: _done(0, "mishe-self-development-current\t1579\n")
+    ok = read_server_slice(SOCK, runner=listing, containment=lambda pid: "contained:mishe-plants.slice")
+    assert ok["id"] == "sense.host.server-slice" and ok["state"] == "verified"
+    bad = read_server_slice(SOCK, runner=listing, containment=lambda pid: "uncontained:/user.slice/mishe.slice")
+    assert bad["state"] == "drift" and "1579" in bad["sample"]
+    unread = read_server_slice(SOCK, runner=listing, containment=lambda pid: None)
+    assert unread["state"] == "unknown"
