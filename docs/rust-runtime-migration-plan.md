@@ -445,3 +445,56 @@ Trailers: this session is not inside a wake, so no `Mishe-Wake` or `Mishe-Role` 
 5. Whether a reviewer will be available, and the review turnaround.
 6. The 2026-11-03 OOM cause (1.4).
 7. Live behaviour of the 5 commits between the pin and HEAD.
+
+## 9. Executed plan and progress table (48 h, operator direction 2026-11-08)
+
+Source: the operator's 48-hour direction (`operator/vision-48h-20261108.md`, DM 298202). It asks for an executed plan of what to migrate, with an inventory, ordered slices, each predecessor, its authoritative consumer, acceptance, rollback and build budget, and as many slices live and observed as evidence allows, starting with the tape read/verify slice. Rules that stay: no shadow implementations (each cutover retires its predecessor), strong review and revert/reapply checks through Genome's delivery path, containment and headroom, and inner delivery never depending on outer panes.
+
+Measured numbers are the ones in sections 2 and 8. Nothing here is a new speedup claim.
+
+### 9.1 Progress table (updated 2026-11-08)
+
+| Slice | State now | Evidence | Next step |
+|---|---|---|---|
+| **A. Tape framing** (`mishe-tape frames`) | Committed (`9f94ede6`, `a8590afb`). Not reviewed, not activated, not observed. Pin is still `4a4b94ce`. | 298,163 live entries identical to Python. Rust 9/9 tests pass. Differential 5 passed, 18 subtests passed (rerun 2026-11-08 with a release binary built in a throwaway directory). | Write the `feed.py` cutover with the Unicode-digit fix (`HEADER_RE` to `[0-9]`). Request strong review from Genome. Tell the operator before the apply. |
+| **S0. Python hoist in `_verify_records`** | Not started. Python-first; not a boundary change. | Hypothesis from section 2.3: about 13% directory work and 9% path equality per record. | Measure before and after on a preserved tape copy. Sequence after A's cutover, since both edit `feed.py`. |
+| **B. Tape verify and verified-store lookup** (`mishe-tape verify`/`entries`) | Not started. Blocked on A observed live, on the S0 decision, and on a verified-path benchmark (section 8.6 item 2). | Verification is about two thirds of profiled `wall show` (2.3). | Benchmark the verified path on a preserved copy. Check the offline `rusqlite` graph and its build cost against the headroom budget. |
+| **C. Role projection** (`mishe-tape role`, cold-cache derived file) | Not started. Depends on B. | Cold `wall show` 15.2 s user; the cache is process-local (`feed.py:53`). | Decide after B's benchmark. Compare the output against `_force_full`. |
+| **Senses baseline** (measurement, not migration) | Not started. Needs its own declared duty, not an edit to `rust-plan-progress` (wall, section "Senses baseline"). | Source artifacts already exist under `artifacts/rust-plan-20261107/`. | Declare the duty with its own `max_age`. It reads UNKNOWN when evidence is missing or stale. |
+| Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4). `doctor` has 25 exit-1 runs, cause UNKNOWN. | Diagnose `doctor` (S3) before any move. Measure `readings` before a scheduler change (S2). |
+
+### 9.2 Inventory of runtime responsibilities
+
+| Responsibility | Measured cost | Python predecessor | Authoritative consumer | Slice |
+|---|---|---|---|---|
+| Tape framing | 1.8 s user, 34 MB per full pass. Rust 0.46 s, 2.4 MB. | `feed._iter_streamed_feed`, `_iter_text_lines`, `iter_feed_entries`, `_frame_offsets` | `Feed.entries` (44 callers), `Feed.role_entries` (4 callers) | A |
+| Tape verification and verified store | About 66% of profiled `wall show`. Not separately timed in Python. | `feed._verify_records`, `records.VerifiedStore`, `records.lookup` | same as above | S0, then B |
+| Role fold | About 2% | `feed._role_fold` | `role_entries` (`wall.py`, `wake.py`, `migrate.py`) | C |
+| Cold role projection | 15.2 s user for cold `wall show` | `feed._ROLE_ENTRIES_CACHE` (process-local) | same | C |
+| Identity index | 23.5 MB sqlite, not timed | `feed.py:527-576` | malformed-count consumers | Kept, not scheduled |
+| `readings`, `doctor`, `observer-checks` producers | 5.9k, 2.9k, 2.5k CPU-s per day | `producers.py`, the producer scripts | systemd units | Deferred (S2, S3) |
+| `discovery.py` scanner | No measured scanner cost | `discovery.py` (7,632 lines) | discovery readers | Rejected (R2) |
+| Dispatch, host-capacity, budget | Cheap by design; no CPU sample; containment-adjacent | `producers.py`, `budget.sh` | units | Rejected (R4) |
+
+### 9.3 Ordered slices, with acceptance, rollback and build budget
+
+**A. Tape framing.** Retires `_iter_text_lines`, `iter_feed_entries` and `_frame_offsets` in `feed.py`. Consumers: the streamed read path under `Feed.entries` and `Feed.role_entries`. Acceptance: the live differential stays identical after the `HEADER_RE` change; `feed.py` passes the captured handle's inode through `/proc/self/fd/N`; a cold `wall show --owner genome` gives byte-identical output; journal `Consumed` lines for `mishe-wake@genome` and `mishe-wake@senses` are compared with a pre-cutover window of equal length. Rollback: pin revert to `releases/4a4b94ce…`, which is retained. Build budget: no dependencies, so the build is seconds. Build in a throwaway directory, under `nice`, with at least 8 GB available and load below 4.
+
+**S0. Python hoist in `_verify_records`.** No predecessor is retired; this is an optimization that lowers the baseline B must beat. Acceptance: `wall show --owner genome` user time at or below 10 s, with identical output. Rollback: revert the commit. Build budget: none. It is sequenced after A because both touch `feed.py`.
+
+**B. Tape verify and verified store.** Retires `records.VerifiedStore`, `lookup`, `store`, `cached_payload`, `verified_store` and `feed._verify_records`. Consumers: all `entries` and `role_entries` callers, through A's wrapper. Acceptance: byte-identical output on the full tape; a kill during a write leaves the store consistent; the threshold in 3.3 (cold `wall show` at or below 1.5 s user and 70 MB peak RSS). Rollback: pin revert. The store format is unchanged, so Python reads it again. Build budget: `rusqlite` with bundled sqlite is a C build. Check its size and time under the headroom rule before starting.
+
+**C. Role projection.** Retires `feed._role_fold` and `_ROLE_ENTRIES_CACHE`. Acceptance: output identical to `_force_full`; at least 10× faster cold. Rollback: delete the derived file. Depends on B.
+
+### 9.4 Gates for every apply
+
+- Before any cutover or pin move, tell the operator in one DM, with the slice, the predecessor being retired and the rollback. The vision asks for this, and it is not a request for permission.
+- Strong change (`feed` reading is a protocol boundary, `parsing-policy.json`): a non-author reviewer, then the activation, revert and reapply checks, then a release request from a wake. Genome owns the delivery path.
+- Nothing counts as live until a real consumer runs the new path, and the journal and the caller's log line show it.
+
+### 9.5 Would change this plan
+
+- A reviewer rejects the framing boundary. A cutover then stops until the boundary changes.
+- S0 meets its threshold. Then B must beat the combined S0 baseline by the 3.3 threshold, or be abandoned (section 5.2).
+- Non-ASCII header bytes appear on the live tape. The Unicode-digit fix then becomes a blocking item, not a cleanup.
+- The 48-hour target is not reachable without an independent reviewer. A is then reported as committed and waiting, not as live.
