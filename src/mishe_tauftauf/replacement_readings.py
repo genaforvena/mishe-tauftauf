@@ -286,3 +286,51 @@ def probe_session_restarts(socket: str | None, now: float, *, declared: str | No
                     "sample": "no tmux server; births not observable"}
         return judge_session_restarts(None, now, declared=declared)
     return judge_session_restarts(parse_session_births(listed.stdout or ""), now, declared=declared)
+
+
+SERVER_SLICE_ID = "sense.host.server-slice"
+
+
+def judge_server_slice(expected: dict[str, str] | None,
+                       placements: dict[str, str | None] | None) -> dict[str, object]:
+    """Judge that each named mishe server sits in its managed slice.
+
+    ``expected`` maps a server label (e.g. ``mishe-life-support@1827``) to the
+    slice it must be contained in (e.g. ``mishe-lifeline.slice``). ``placements``
+    maps the same labels to ``proc_table.server_containment`` text, or None when
+    that cgroup was unreadable. Missing input is UNKNOWN, never calm: a None
+    mapping, an unreadable placement, or nothing expected at all. A server that
+    is missing, unbounded, or contained by a different slice is drift.
+    """
+    base = {"id": SERVER_SLICE_ID, "kind": "read"}
+    if expected is None or placements is None:
+        return {**base, "state": "unknown", "sample": "server containment could not be read"}
+    if not expected:
+        return {**base, "state": "unknown", "sample": "no expected servers declared"}
+    unreadable = sorted(label for label in expected if label in placements and placements[label] is None)
+    if unreadable:
+        return {**base, "state": "unknown",
+                "sample": f"containment unreadable for servers={','.join(unreadable)}"}
+    missing = sorted(label for label in expected if label not in placements)
+    if missing:
+        return {**base, "state": "drift", "sample": f"servers-missing={','.join(missing)}"}
+    wrong = []
+    for label, slice_name in sorted(expected.items()):
+        place = placements[label]
+        if proc_table.placement_unshielded(place) or place != f"contained:{slice_name}":
+            wrong.append(f"{label}={place}")
+    if wrong:
+        return {**base, "state": "drift",
+                "sample": f"not-in-expected-slice: {'; '.join(wrong)}"}
+    placed = ", ".join(f"{label}={slice_name}" for label, slice_name in sorted(expected.items()))
+    return {**base, "state": "verified", "sample": f"servers placed correctly: {placed}"}
+
+
+def probe_server_slice(expected: dict[str, tuple[str, str]] | None, *,
+                       containment=proc_table.server_containment) -> dict[str, object]:
+    """Thin probe: ``expected`` maps label -> (pid, required slice)."""
+    if not expected:
+        return judge_server_slice(None if expected is None else {}, None)
+    slices = {label: slice_name for label, (_pid, slice_name) in expected.items()}
+    placements = {label: containment(pid) for label, (pid, _slice) in expected.items()}
+    return judge_server_slice(slices, placements)

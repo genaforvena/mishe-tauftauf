@@ -329,3 +329,46 @@ def test_session_restarts_probe_parses_live_listing():
     got = probe_session_restarts(SOCK, NOW, declared="plant", runner=lambda s, a: _done(0, out))
     assert got["state"] == "verified" and got["births"] == 2
     assert got["coverage"].startswith("live sessions only")
+
+
+from mishe_tauftauf.replacement_readings import (  # noqa: E402
+    SERVER_SLICE_ID, judge_server_slice, probe_server_slice,
+)
+
+LIFE = "mishe-life-support@1827"
+PLANTS = "mishe-self-development-current@2961199"
+
+
+def test_server_slice_verified_when_each_server_in_its_slice():
+    got = judge_server_slice(
+        {PLANTS: "mishe-plants.slice", LIFE: "mishe-lifeline.slice"},
+        {PLANTS: "contained:mishe-plants.slice", LIFE: "contained:mishe-lifeline.slice"})
+    assert got["id"] == SERVER_SLICE_ID and got["state"] == "verified"
+
+
+def test_server_slice_unreadable_or_absent_input_is_unknown_not_calm():
+    assert judge_server_slice(None, {})["state"] == "unknown"
+    assert judge_server_slice({}, {})["state"] == "unknown"
+    assert judge_server_slice({LIFE: "mishe-lifeline.slice"}, None)["state"] == "unknown"
+    got = judge_server_slice({LIFE: "mishe-lifeline.slice"}, {LIFE: None})
+    assert got["state"] == "unknown"
+
+
+def test_server_slice_missing_wrong_or_unbounded_server_is_drift():
+    expected = {LIFE: "mishe-lifeline.slice"}
+    assert judge_server_slice(expected, {})["state"] == "drift"
+    assert judge_server_slice(expected, {LIFE: "contained:mishe-plants.slice"})["state"] == "drift"
+    assert judge_server_slice(expected, {LIFE: "unbounded:mishe-lifeline.slice"})["state"] == "drift"
+    assert judge_server_slice(expected, {LIFE: "uncontained:/system.slice"})["state"] == "drift"
+
+
+def test_server_slice_probe_reads_each_pid_through_injected_containment():
+    seen = {}
+
+    def fake(pid):
+        seen[pid] = True
+        return "contained:mishe-lifeline.slice"
+
+    got = probe_server_slice({LIFE: ("1827", "mishe-lifeline.slice")}, containment=fake)
+    assert got["state"] == "verified" and seen == {"1827": True}
+    assert probe_server_slice({}, containment=fake)["state"] == "unknown"
