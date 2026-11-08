@@ -81,8 +81,9 @@ files it changed. A model that differs from the configured one is stated, and ou
 cannot be read is labelled UNKNOWN with its raw tail, never hidden. Walls and site notes
 are outside git and are not counted. The original event files remain on disk, and
 `view-readability` watches that the panes stay human-readable. `wakes-view-engines`
-renders the newest retained output of each model in use through the live wakes code
-and fails on leaked bookkeeping, duplicate tool output, raw JSON or a renderer exception;
+renders the newest retained output of each model in use through both the checkout
+and live-pin wakes code, without replacing the caller's loaded package, and fails
+on leaked bookkeeping, duplicate tool output, raw JSON or a renderer exception;
 a configured model with no wake rendered yet is UNKNOWN until its first wake passes.
 Three single-pane windows follow history without repainting: `chat` follows the
 shared tape, `git` shows commit messages and file-change summaries, and `wakes`

@@ -36,12 +36,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib
+import importlib.util
 import inspect
 import json
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 KNOWN_KINDS = frozenset({
@@ -222,14 +221,11 @@ def targets(home: Path, repo: Path) -> list[tuple[str, Path]]:
 
 
 def load_renderer(root: Path):
-    """Import the renderer from one target's src, dropping any copy imported for an earlier target."""
-    for name in [m for m in sys.modules if m == 'mishe_tauftauf' or m.startswith('mishe_tauftauf.')]:
-        del sys.modules[name]
-    sys.path.insert(0, str(root / 'src'))
-    try:
-        module = importlib.import_module('mishe_tauftauf.plant_view_boundary')
-    finally:
-        sys.path.remove(str(root / 'src'))
+    """Load the target's self-contained renderer without replacing the caller's package."""
+    path = root / 'src' / 'mishe_tauftauf' / 'plant_view_boundary.py'
+    spec = importlib.util.spec_from_file_location('_wakes_view_target', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
     return module.machine_syntax, module.output_view
 
 

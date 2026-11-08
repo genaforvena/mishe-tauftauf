@@ -175,3 +175,24 @@ def test_live_pin_is_judged_as_well_as_head(tmp_path):
     (home / "runtime" / "current").symlink_to(pin)
     labels = [label for label, _ in check.targets(home, REPO)]
     assert labels[0] == "HEAD" and labels[1].startswith("live pin")
+
+
+def test_target_renderers_are_isolated_from_existing_package_and_each_other(tmp_path):
+    import mishe_tauftauf.wall as wall
+
+    original = sys.modules["mishe_tauftauf.wall"]
+    for name, rendered in (("head", "HEAD"), ("pin", "PIN")):
+        target = tmp_path / name / "src" / "mishe_tauftauf"
+        target.mkdir(parents=True)
+        (target / "plant_view_boundary.py").write_text(
+            f"def machine_syntax(text): return []\n"
+            f"def output_view(path, limit=0): return None, {rendered!r}\n"
+        )
+    _, head = check.load_renderer(tmp_path / "head")
+    _, pin = check.load_renderer(tmp_path / "pin")
+    assert head(tmp_path)[1] == "HEAD"
+    assert pin(tmp_path)[1] == "PIN"
+    assert sys.modules["mishe_tauftauf.wall"] is original is wall
+    with pytest.raises(FileNotFoundError):
+        check.load_renderer(tmp_path / "missing")
+    assert sys.modules["mishe_tauftauf.wall"] is original
