@@ -33,6 +33,12 @@ def test_frozen_due_time_with_no_timer_is_red(tmp_path):
     assert any('units-installed' in line for line in lines)
 
 
+def test_overdue_due_with_armed_retry_timer_is_green(tmp_path):
+    # arm.py re-arms an overdue target on a 120 s backoff; the armed retry timer is the evidence, not a RED.
+    code, lines = check.evaluate(home(tmp_path, NOW - 3600), NOW, ['mishe-next-due-abc.timer'])
+    assert code == 0, lines
+
+
 def test_future_due_without_timer_is_red(tmp_path):
     code, lines = check.evaluate(home(tmp_path, NOW + 600), NOW, [])
     assert code == 2 and 'no mishe-next-due timer' in lines[0]

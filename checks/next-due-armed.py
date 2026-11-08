@@ -53,7 +53,8 @@ def evaluate(home: Path, now: float, timers: list[str] | None, grace: float = GR
     problems = []
     if not (home / "units-installed").exists():
         problems.append("units-installed marker is missing, so due-time timers are not installed")
-    if due < now - grace:
+    # An overdue target with a timer armed is a retry on arm.OVERDUE_RETRY_SECONDS backoff, not an unarmed one.
+    if due < now - grace and not timers:
         problems.append(f"next due time passed {int((now - due) // 60)} min ago and was never armed")
     if timers is None:
         if problems:
