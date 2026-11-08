@@ -32,3 +32,16 @@ def test_real_scratch_layout_is_idempotent_and_preserves_foreign_windows(tmp_pat
         assert tmux('display-message', '-p', '-t', 'test:genome', '#{window_width}') == '100'
     finally:
         subprocess.run(['tmux', '-S', socket, 'kill-server'], env=env, capture_output=True)
+
+
+def test_view_pane_pins_pythonpath_instead_of_inheriting_server_environment(monkeypatch, tmp_path):
+    from pathlib import Path
+    from mishe_tauftauf import plant_tmux
+    monkeypatch.setenv('PYTHONPATH', '/stale/release/src')
+    checkout_src = str(Path(plant_tmux.__file__).resolve().parents[1])
+    default = plant_tmux.view_argv()
+    assert default[:2] == ['env', 'PYTHONPATH=' + checkout_src]
+    assert default[-2:] == ['-m', 'mishe_tauftauf.plant_view']
+    assert '/stale/release/src' not in ' '.join(default)
+    assert plant_tmux.view_argv(['/usr/bin/python3', 'view-host.py'])[-2:] == ['/usr/bin/python3', 'view-host.py']
+    assert plant_tmux.view_argv(['/usr/bin/python3', 'view-host.py'])[:2] == ['env', 'PYTHONPATH=' + checkout_src]

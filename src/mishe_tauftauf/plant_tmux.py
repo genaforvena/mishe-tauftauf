@@ -48,6 +48,16 @@ def parse_session_births(output: str) -> list[tuple[str, float]] | None:
     return births
 
 
+def view_argv(view_command=None):
+    """Program prefix for a view pane, with PYTHONPATH pinned to this checkout.
+
+    The pane must not inherit PYTHONPATH from the tmux server environment, which can
+    point at an old release (observed 2026-11-08: plant_view ran an April-era runtime/src).
+    """
+    program = list(view_command) if view_command else [sys.executable, '-m', 'mishe_tauftauf.plant_view']
+    return ['env', 'PYTHONPATH=' + str(Path(__file__).resolve().parents[1]), *program]
+
+
 def setup(socket: str, session: str, home: Path, roles, *, command=None, view_command=None):
     if not roles or any(not valid_role(r) or r in ('chat', 'git', 'wakes') for r in roles) or len(set(roles)) != len(roles):
         raise ValueError('distinct valid view roles required')
@@ -69,8 +79,7 @@ def setup(socket: str, session: str, home: Path, roles, *, command=None, view_co
         marker = tmux('show-options', '-wqv', '-t', target, '@mishe-view', check=False) if exists else ''
         if exists and marker not in (role, 'bootstrap'):
             raise ValueError(f'window {target} is not an owned view; reconcile it explicitly')
-        base = command or [*(view_command or [sys.executable, '-m', 'mishe_tauftauf.plant_view']), '--home', str(home.resolve()),
-                           '--role', role, '--follow']
+        base = command or [*view_argv(view_command), '--home', str(home.resolve()), '--role', role, '--follow']
         chat = ['tail', '-n', '100', '-F', '--', str(home.resolve() / 'chat.log')]
         tape = command or ['env', 'PYTHONPATH=' + str(Path(__file__).resolve().parents[1]),
                            sys.executable, '-m', 'mishe_tauftauf.plant_tape',
