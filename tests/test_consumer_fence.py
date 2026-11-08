@@ -45,6 +45,36 @@ def test_persistent_unknown_fails_closed_at_deadline(tmp_path, monkeypatch):
         fence.drain(tmp_path, tmp_path, 'pin', timeout=0, sleep=lambda s: None)
 
 
+def test_caller_own_invocation_is_excluded_from_drain(tmp_path, monkeypatch):
+    transition(tmp_path)
+    monkeypatch.setenv('INVOCATION_ID', 'self-inv')
+    monkeypatch.setattr(fence, 'inventory', lambda home, previous=None: {})
+    monkeypatch.setattr(fence, 'pending_old', lambda record, rows: [dict(unit='mishe-wake@x.service', invocation='self-inv', start_us=2, pids=[1])])
+    record = fence.drain(tmp_path, tmp_path, 'pin', timeout=0, sleep=lambda s: None)
+    assert record['label'] == 'pin'
+    samples = json.loads(next(tmp_path.glob('consumer-drain-pin-*.json')).read_text())['samples']
+    assert samples[-1]['pending'][0]['invocation'] == 'self-inv'  # raw evidence is kept
+
+
+def test_other_old_invocation_still_blocks_drain(tmp_path, monkeypatch):
+    transition(tmp_path)
+    monkeypatch.setenv('INVOCATION_ID', 'self-inv')
+    monkeypatch.setattr(fence, 'inventory', lambda home, previous=None: {})
+    other = dict(unit='mishe-wake@x.service', invocation='other-inv', start_us=2, pids=[2])
+    monkeypatch.setattr(fence, 'pending_old', lambda record, rows: [dict(unit='mishe-wake@x.service', invocation='self-inv', start_us=2, pids=[1]), other])
+    with pytest.raises(ValueError, match='old invocations remain'):
+        fence.drain(tmp_path, tmp_path, 'pin', timeout=0, sleep=lambda s: None)
+
+
+def test_without_invocation_id_nothing_is_excluded(tmp_path, monkeypatch):
+    transition(tmp_path)
+    monkeypatch.delenv('INVOCATION_ID', raising=False)
+    monkeypatch.setattr(fence, 'inventory', lambda home, previous=None: {})
+    monkeypatch.setattr(fence, 'pending_old', lambda record, rows: [dict(unit='mishe-wake@x.service', invocation='self-inv', start_us=2, pids=[1])])
+    with pytest.raises(ValueError, match='old invocations remain'):
+        fence.drain(tmp_path, tmp_path, 'pin', timeout=0, sleep=lambda s: None)
+
+
 def test_transient_retry_is_bounded_by_deadline(tmp_path, monkeypatch):
     transition(tmp_path)
     monkeypatch.setattr(fence, 'inventory', lambda home, previous=None: {'mishe-x.service': STARTING})

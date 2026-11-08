@@ -6,6 +6,7 @@ is transient evidence: drain retries it until the same deadline and fails
 closed with the last error if it is still UNKNOWN then.
 """
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -98,6 +99,7 @@ def drain(home, directory, label, timeout=150, sleep=time.sleep):
             or not isinstance(record.get('before'), dict) or not isinstance(record.get('after'), dict)):
         raise ValueError('transition observation UNKNOWN')
     until = time.monotonic() + timeout
+    self_id = os.environ.get('INVOCATION_ID', '')
     samples = []
     try:
         while True:
@@ -112,6 +114,8 @@ def drain(home, directory, label, timeout=150, sleep=time.sleep):
                     continue
                 raise
             samples.append(dict(at=time.time(), pending=pending, invocations=rows))
+            # The caller drains from inside its own invocation; that invocation cannot exit until drain returns.
+            pending = [p for p in pending if not (self_id and p['invocation'] == self_id)]
             if not pending: return record
             if time.monotonic() >= until: raise ValueError('old invocations remain: ' + repr(pending))
             sleep(RETRY_INTERVAL_S)
