@@ -45,6 +45,32 @@ expiring signals and bounded failure routing on the running consumer. `7:omp`
 finishes this setup with the existing delivery owner, then hands ownership to
 this inner mind and reports the verified result to `0:op` and the requester.
 
+## Continuing sensing responsibility
+
+The resident rust-plan mind owns observing the existing runtime first, then
+extending those observations as it replaces responsibilities with Rust. Reuse
+existing senses before creating new bounded deterministic producers. Coordinate
+shared acquisition with Senses; rust-plan remains responsible for interpretation,
+regressions, live consumer evidence and useful migration-specific coverage.
+
+Its canonical top pane must expose the relevant current observations with age,
+source/deployed version and baseline comparison where meaningful: CPU, peak RSS,
+latency, invocation/failure frequency, resource pressure, authoritative consumer
+implementation and recovery status. A fresh wall or plan is not performance or
+delivery evidence. If the normal pane only summarizes signal names/states,
+add bounded readable detail through the existing presentation path; keep expensive
+sampling out of rendering and avoid a new polling framework.
+
+Every migration slice includes tested observation coverage, real running caller
+measurements before/after, explicit bounds/thresholds with measurement limits,
+expiring UNKNOWN on missing/stale/broken input, a named failure resolver and
+bounded routing, controlled detector-failure exercise and observed recovery.
+Evolve subscriptions and detectors with the actual responsibility. Retire old
+coverage only after equivalent replacement coverage is tested. Avoid numerical
+noise causing wake storms; keep samples as evidence and use meaningful state
+changes/thresholds for autonomous wake triggers. Do not mark the initiative done
+until actual autonomous wake/yield/follow-up and top-pane observations are seen.
+
 ## Initial investigation brief (historical scope, superseded above)
 
 This authorizes investigation and a written migration proposal only. It does not
