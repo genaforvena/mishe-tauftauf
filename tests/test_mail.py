@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from mishe_tauftauf import owed, wake, wall
+from tests.tape_binary import pin_tape_binary
 
 
 @pytest.fixture
@@ -49,6 +50,7 @@ def test_a_self_addressed_or_invalid_dm_does_not_touch_an_inbox(site):
     assert not (site / "inbox" / "..").resolve().joinpath("escape").exists()
 
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_mail_reader_returns_only_addressed_messages_after_the_cursor(site):
     first = wall.message(site, "genome", "health", "one")
     wall.message(site, "genome", "docs", "for someone else")
@@ -72,6 +74,7 @@ def test_natural_addressed_prose_to_a_declared_role_wakes_it_but_other_prose_doe
     assert not (site / "inbox" / "the").exists() and not (site / "inbox" / "operator").exists()
 
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_the_mail_reader_returns_a_natural_addressed_message_the_wake_was_owed_for(site):
     wall.message(site, "genome", "health", "canonical")
     _append(site, "health", "health to genome: natural prose DM")

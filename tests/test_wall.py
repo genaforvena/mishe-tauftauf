@@ -7,6 +7,7 @@ import subprocess
 import pathlib
 import pytest
 from mishe_tauftauf import post_check, observations
+from tests.tape_binary import pin_tape_binary
 from mishe_tauftauf.feed import Feed
 
 
@@ -52,6 +53,7 @@ def test_wall_chat_does_not_call_receipt_reviewer(tmp_path, monkeypatch):
 
 
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_wall_context_includes_only_monitored_role_walls(tmp_path):
     setup_wall(tmp_path)
     from mishe_tauftauf import wall

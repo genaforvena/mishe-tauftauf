@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from mishe_tauftauf import wall
+from tests.tape_binary import pin_tape_binary
 from mishe_tauftauf.wall_text import document_digest
 
 
@@ -68,6 +69,7 @@ def test_wall_provenance_unknown_when_no_file(tmp_path):
     assert "no file" in pane.lower()
 
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_mind_block_shows_the_roles_last_wake_dispatch_and_no_pane_machinery(tmp_path):
     from mishe_tauftauf import wall
     from mishe_tauftauf.core.interfaces import UNKNOWN

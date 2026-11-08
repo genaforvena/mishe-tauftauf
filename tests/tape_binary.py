@@ -14,6 +14,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 
 def resolve_tape_binary() -> tuple[str | None, str]:
     """Return ``(path, "")`` when a usable binary exists, else ``(None, reason)``."""
@@ -45,3 +47,15 @@ def requires_tape_binary(test):
             return test(self, *args, **kwargs)
 
     return run
+
+
+@pytest.fixture
+def pin_tape_binary(monkeypatch):
+    """Pytest form of ``requires_tape_binary`` for module-level tests that use the feed reader.
+
+    Skips with the reason when no framer resolves; otherwise pins ``MISHE_TAPE_BIN``
+    for the test. Apply with ``@pytest.mark.usefixtures("pin_tape_binary")``.
+    """
+    if TAPE_BIN is None:
+        pytest.skip(TAPE_SKIP_REASON)
+    monkeypatch.setenv("MISHE_TAPE_BIN", TAPE_BIN)

@@ -4,6 +4,7 @@ import sys
 import pytest
 
 from mishe_tauftauf import intentions, migrate, owed, wall
+from tests.tape_binary import pin_tape_binary
 from mishe_tauftauf.core.state import DispatchStore
 from mishe_tauftauf.feed import Feed
 
@@ -31,6 +32,7 @@ def settle(home, role, seq, cont=False):
     Feed(home).append("seed", f"seed yield {role} wake={seq}{' continue=1' if cont else ''}\nTurn settled (changed); notes")
 
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_a_wake_with_no_yield_becomes_an_open_dispatch_to_reconcile(site):
     seq = wake(site, "genome")
     report = migrate.apply(site, ["genome", "health", "docs"], now=NOW)
@@ -40,6 +42,7 @@ def test_a_wake_with_no_yield_becomes_an_open_dispatch_to_reconcile(site):
     assert report["open_dispatches"] == ["genome"]
 
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_a_settled_wake_leaves_no_dispatch_but_a_continue_becomes_an_intention(site):
     settle(site, "health", wake(site, "health"), cont=True)
     settle(site, "docs", wake(site, "docs"), cont=False)
@@ -49,6 +52,7 @@ def test_a_settled_wake_leaves_no_dispatch_but_a_continue_becomes_an_intention(s
     assert "continue" not in [i["id"] for i in intentions.list_(site, "docs")]
 
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_every_role_gets_a_first_wake_intention_to_convert_its_wall_and_the_idle_initiative(site):
     migrate.apply(site, ["genome", "health"], now=NOW)
     for role in ("genome", "health"):
@@ -56,6 +60,7 @@ def test_every_role_gets_a_first_wake_intention_to_convert_its_wall_and_the_idle
         assert "migrate-wall-next-actions" in ids and "idle-initiative" in ids
 
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_messages_after_the_last_yield_are_unread_and_earlier_ones_are_not(site):
     wall.message(site, "witness", "genome", "old, already seen")
     settle(site, "genome", wake(site, "genome"))
@@ -69,6 +74,7 @@ def test_messages_after_the_last_yield_are_unread_and_earlier_ones_are_not(site)
     assert mail == [after.sequence]
 
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_apply_is_idempotent_and_never_replaces_an_existing_record(site):
     wake(site, "genome")
     migrate.apply(site, ["genome"], now=NOW)
