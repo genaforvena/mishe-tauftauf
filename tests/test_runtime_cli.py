@@ -1,4 +1,5 @@
 """End to end through the CLI with a fake `claude` binary on PATH."""
+import json
 import os
 import stat
 import subprocess
@@ -23,7 +24,9 @@ def site(tmp_path, monkeypatch):
     home = tmp_path / "site"
     (home / "charters").mkdir(parents=True)
     (home / "charters" / "genome.md").write_text("I am genome.")
-    for other in ("health", "pub", "senses"):          # every duty resolver must be a declared role
+    # every duty resolver in this checkout's duties.json must be a declared role
+    resolvers = {d["resolver"] for d in json.loads((Path(__file__).resolve().parents[1] / "duties.json").read_text())["duties"]}
+    for other in sorted(resolvers - {"genome"}):
         (home / "charters" / f"{other}.md").write_text(other)
     (home / "walls").mkdir()
     (home / "walls" / "genome.md").write_text("OLD WALL")
