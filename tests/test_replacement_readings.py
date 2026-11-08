@@ -374,6 +374,18 @@ def test_server_slice_probe_reads_each_pid_through_injected_containment():
     assert probe_server_slice({}, containment=fake)["state"] == "unknown"
 
 
+def test_server_slice_probe_empty_expected_reports_no_declared_servers_not_unreadable():
+    # A live server with no declared workload sessions is "nothing to judge",
+    # not "containment could not be read" (the reason text must say which).
+    def fake(pid):
+        raise AssertionError("no pid should be read when nothing is expected")
+
+    got = probe_server_slice({}, containment=fake)
+    assert got["state"] == "unknown"
+    assert got["sample"] == "no expected servers declared"
+    assert probe_server_slice(None, containment=fake)["sample"] == "server containment could not be read"
+
+
 from mishe_tauftauf.proc_table import expected_from_listing
 from mishe_tauftauf.replacement_readings import read_server_slice  # noqa: E402
 

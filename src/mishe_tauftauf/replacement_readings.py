@@ -330,7 +330,7 @@ def probe_server_slice(expected: dict[str, tuple[str, str]] | None, *,
                        containment=proc_table.server_containment) -> dict[str, object]:
     """Thin probe: ``expected`` maps label -> (pid, required slice)."""
     if not expected:
-        return judge_server_slice(None if expected is None else {}, None)
+        return judge_server_slice(None if expected is None else {}, None if expected is None else {})
     slices = {label: slice_name for label, (_pid, slice_name) in expected.items()}
     placements = {label: containment(pid) for label, (pid, _slice) in expected.items()}
     return judge_server_slice(slices, placements)
