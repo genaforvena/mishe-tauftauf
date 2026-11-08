@@ -313,8 +313,8 @@
         "--site",
         "{home}"
       ],
-      "every": 60,
-      "timeout": 20,
+      "every": 105,
+      "timeout": 15,
       "max_age": 120,
       "unknown_codes": [4],
       "resolver": "senses",
