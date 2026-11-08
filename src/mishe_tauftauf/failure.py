@@ -36,6 +36,33 @@ def refusal(unit: str) -> str | None:
     return None
 
 
+def clear_recovered(home, *, now, last_exit=None) -> list[str]:
+    """Observe GREEN every RED failure signal whose unit has since exited 0 after the RED reading.
+
+    A failure is a level, so the record must follow the unit: without this a unit that failed once stayed RED after
+    its next run succeeded (2026-11-08: nine cleared by hand). Only the unit's latest exit decides; a unit that is still
+    failing, or whose exit time is unreadable, stays RED. An incident written before ``unit`` was recorded is left alone.
+    """
+    from . import work_boundary
+    home = Path(home)
+    last_exit = last_exit or work_boundary.unit_last_exit
+    cleared = []
+    for name in sorted(signal_store.registry(home)):
+        if not name.startswith("failed-"):
+            continue
+        incident = read_json(home / "work/incidents" / f"{name}.json")
+        unit = incident.get("unit") if isinstance(incident, dict) else None
+        reading = signal_store.recorded(home, name)
+        if not isinstance(unit, str) or not reading or reading.get("state") != signal_store.OK or reading.get("value") != "RED":
+            continue
+        exit_ = last_exit(unit)
+        observed = reading.get("observed_at")
+        if exit_ and exit_[1] and isinstance(observed, (int, float)) and exit_[0] > observed:
+            signal_store.observe(home, name, "GREEN", now=now, source="failure-recovered")
+            cleared.append(name)
+    return cleared
+
+
 def default_notify(home, role: str, text: str) -> None:
     from . import wall
     wall.message(Path(home), "mishe", role, text)
@@ -74,7 +101,7 @@ def report(home, unit: str, *, now: float, notify=None, signature="unit-failed")
                 novel = unseen or current is None or current.state != signal_store.OK or current.value != "RED"
                 write_json(home/"work/fault-events"/f"{int(now*1e9)}-{name}.json",
                            dict(version=1, at=now, unit=unit, role=role, signature=signature, novel=novel))
-        write_json(incident_path, dict(signature=signature, signatures=(seen_modes + [signature] if signature not in seen_modes else seen_modes),
+        write_json(incident_path, dict(unit=unit, signature=signature, signatures=(seen_modes + [signature] if signature not in seen_modes else seen_modes),
                                       count=previous.get("count", 0) + 1, first_seen=previous.get("first_seen", now), last_seen=now))
     except (OSError, ValueError, TypeError) as exc:
         accounting_error = str(exc)

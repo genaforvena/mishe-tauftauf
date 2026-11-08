@@ -171,3 +171,53 @@ def test_unknown_load_state_is_not_refused(monkeypatch):
     from mishe_tauftauf import work_boundary
     monkeypatch.setattr(work_boundary, "unit_load_state", lambda unit: "UNKNOWN")
     assert failure.refusal("mishe-doctor.service") is None
+
+
+# --- a failed unit that later exits 0 clears its own RED signal -----------------------------------------------------
+
+def test_a_unit_that_fails_then_succeeds_clears_its_signal(tmp_path):
+    unit, name = "mishe-wake@docs.service", "failed-mishe-wake-docs-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    assert store.read(tmp_path, name, now=NOW).value == "RED"
+    # still failing: the latest exit is not clean, so it stays RED
+    assert failure.clear_recovered(tmp_path, now=NOW + 60, last_exit=lambda u: (NOW + 50, False)) == []
+    assert store.read(tmp_path, name, now=NOW + 60).value == "RED"
+    # the next run exits 0 after the RED reading: observed GREEN
+    assert failure.clear_recovered(tmp_path, now=NOW + 120, last_exit=lambda u: (NOW + 100, True)) == [name]
+    assert store.read(tmp_path, name, now=NOW + 120).value == "GREEN"
+
+
+def test_a_clean_exit_before_the_red_reading_does_not_clear_it(tmp_path):
+    unit, name = "mishe-wake@docs.service", "failed-mishe-wake-docs-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    assert failure.clear_recovered(tmp_path, now=NOW + 60, last_exit=lambda u: (NOW - 10, True)) == []
+    assert store.read(tmp_path, name, now=NOW + 60).value == "RED"
+
+
+def test_unreadable_exit_time_keeps_the_signal_red(tmp_path):
+    unit, name = "mishe-wake@docs.service", "failed-mishe-wake-docs-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    assert failure.clear_recovered(tmp_path, now=NOW + 60, last_exit=lambda u: None) == []
+    assert store.read(tmp_path, name, now=NOW + 60).value == "RED"
+
+
+def test_an_incident_without_a_recorded_unit_is_left_red(tmp_path):
+    # Incidents written before the unit was recorded cannot be matched to a systemd exit: never cleared by guess.
+    unit, name = "mishe-wake@docs.service", "failed-mishe-wake-docs-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    from mishe_tauftauf.state_files import read_json, write_json
+    path = tmp_path / "work/incidents" / f"{name}.json"
+    record = read_json(path)
+    record.pop("unit")
+    write_json(path, record)
+    assert failure.clear_recovered(tmp_path, now=NOW + 60, last_exit=lambda u: (NOW + 50, True)) == []
+    assert store.read(tmp_path, name, now=NOW + 60).value == "RED"
+
+
+def test_the_sweep_clears_a_recovered_failure(tmp_path, monkeypatch):
+    from mishe_tauftauf import work_boundary, work_state
+    unit, name = "mishe-wake@docs.service", "failed-mishe-wake-docs-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    monkeypatch.setattr(work_boundary, "unit_last_exit", lambda u: (NOW + 100, True))
+    work_state.sweep(tmp_path, repo=tmp_path, now=NOW + 120, notify=lambda *a: None)
+    assert store.read(tmp_path, name, now=NOW + 120).value == "GREEN"

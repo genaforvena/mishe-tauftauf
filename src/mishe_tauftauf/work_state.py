@@ -318,4 +318,6 @@ def sweep(home, *, repo, now, notify=None):
     path.parent.mkdir(parents=True,exist_ok=True)
     with path.open("a+") as handle:
         fcntl.flock(handle.fileno(),fcntl.LOCK_EX)
+        from .failure import clear_recovered
+        clear_recovered(home, now=now)
         return _sweep(home,repo=repo,now=now,notify=notify)

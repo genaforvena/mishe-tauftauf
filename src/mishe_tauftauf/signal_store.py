@@ -77,6 +77,11 @@ def rev(home, name: str) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
+def recorded(home, name: str) -> dict | None:
+    """The last stored reading as written (value, state, observed_at, source), or None. Never repaired."""
+    return _load(home, name)
+
+
 def _seen(home, name: str) -> float | None:
     try:
         return (_dir(home) / f"{name}.seen").stat().st_mtime_ns / 1e9

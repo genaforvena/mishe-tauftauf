@@ -1,6 +1,8 @@
 """Literal Git/CLI protocols for work facts; human walls are never parsed."""
 from __future__ import annotations
+import calendar
 import subprocess
+import time
 from pathlib import Path
 
 #: The exact paths whose changes cannot reach a mechanism. Each one is
@@ -41,6 +43,29 @@ def unit_load_state(unit):
         return "UNKNOWN"
     value = result.stdout.strip()
     return value if result.returncode == 0 and value else "UNKNOWN"
+
+
+def unit_last_exit(unit):
+    """``(exited_at, clean)`` for the unit's latest exit: epoch seconds and whether it exited 0 with Result=success.
+    None when systemctl cannot say or the exit time is absent (no exit yet, or unreadable: never a clean exit)."""
+    try:
+        result = subprocess.run(["systemctl", "--user", "show", unit, "-p",
+                                 "Result,ExecMainStatus,ExecMainExitTimestamp"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode:
+        return None
+    values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    stamp = values.get("ExecMainExitTimestamp", "").strip()
+    if not stamp:
+        return None
+    # systemd prints the exit in local time, e.g. "Sun 2026-11-08 00:21:39 UTC".
+    try:
+        parsed = time.strptime(stamp, "%a %Y-%m-%d %H:%M:%S %Z")
+    except ValueError:
+        return None
+    exited_at = calendar.timegm(parsed) if parsed.tm_zone in ("UTC", "GMT") else time.mktime(parsed)
+    return exited_at, values.get("Result") == "success" and values.get("ExecMainStatus") == "0"
 
 
 def failure_signature(unit):
