@@ -23,7 +23,7 @@ from .slugs import validate_slug
 from .wall_text import addressed
 
 SOURCE_RE = re.compile(r"[A-Za-z0-9._/-]+\Z")
-HEADER_RE = re.compile(r"(?:v1 )?(\d{20}) (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z) ([A-Za-z0-9._/-]+) ::\n\Z")
+HEADER_RE = re.compile(r"(?:v1 )?([0-9]{20}) ([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z) ([A-Za-z0-9._/-]+) ::\n\Z")
 FRAME_START_RE = re.compile(rb"(?m)^(?:v1 )?\d{20} \d{4}-\d{2}-\d{2}T[^\n]+ [A-Za-z0-9._/-]+ ::\n")
 RECEIPT_RE = re.compile(r"wake (?:delivered|refused) top-pain [a-z0-9-]+ for entry [1-9][0-9]*(?: generation=[1-9][0-9]*)?(?: request-id=[A-Za-z0-9._:-]{1,128})?\Z")
 INDEX_STRIDE = 128

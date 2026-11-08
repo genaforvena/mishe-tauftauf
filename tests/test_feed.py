@@ -887,3 +887,16 @@ class ReadTextTailTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FeedHeaderDigitsTest(unittest.TestCase):
+    """Headers accept ASCII digits only, matching the Rust framing core."""
+
+    def test_unicode_digit_sequence_is_rejected(self) -> None:
+        arabic_indic_zero = "٠"
+        header = f"{arabic_indic_zero * 20} 2026-11-08T00:00:00Z chat ::\n"
+        self.assertIsNone(feed_module.HEADER_RE.fullmatch(header))
+
+    def test_ascii_header_still_matches(self) -> None:
+        header = "0" * 19 + "1 2026-11-08T00:00:00.5Z chat ::\n"
+        self.assertIsNotNone(feed_module.HEADER_RE.fullmatch(header))
