@@ -374,7 +374,8 @@ def test_server_slice_probe_reads_each_pid_through_injected_containment():
     assert probe_server_slice({}, containment=fake)["state"] == "unknown"
 
 
-from mishe_tauftauf.replacement_readings import expected_from_listing, read_server_slice  # noqa: E402
+from mishe_tauftauf.proc_table import expected_from_listing
+from mishe_tauftauf.replacement_readings import read_server_slice  # noqa: E402
 
 
 def test_server_slice_expects_only_declared_workload_sessions():

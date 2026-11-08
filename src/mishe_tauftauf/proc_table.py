@@ -457,6 +457,26 @@ def expected_workload_slice(session: str) -> str | None:
     return None
 
 
+def expected_from_listing(stdout: str) -> dict[str, tuple[str, str]] | None:
+    """Expected server placements from ``list-sessions -F "#{session_name}\\t#{pid}"``.
+
+    Only sessions with a declared workload slice (``expected_workload_slice``)
+    are judged; each label is ``session@pid`` and maps to ``(pid, slice)``. A line
+    that is not ``name<TAB>digits`` makes the whole listing unreadable (None).
+    """
+    expected: dict[str, tuple[str, str]] = {}
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        name, sep, pid = line.rpartition("\t")
+        if not sep or not name or not pid.isdigit():
+            return None
+        slice_name = expected_workload_slice(name)
+        if slice_name is not None:
+            expected[f"{name}@{pid}"] = (pid, slice_name)
+    return expected
+
+
 def is_mishe_slice(value: str | None) -> bool:
     """Whether ``value`` is a Mishe-managed slice name."""
     if not isinstance(value, str) or not value:

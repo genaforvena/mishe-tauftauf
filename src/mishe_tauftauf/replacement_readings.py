@@ -336,26 +336,6 @@ def probe_server_slice(expected: dict[str, tuple[str, str]] | None, *,
     return judge_server_slice(slices, placements)
 
 
-def expected_from_listing(stdout: str) -> dict[str, tuple[str, str]] | None:
-    """Expected server placements from ``list-sessions -F "#{session_name}\\t#{pid}"``.
-
-    Only sessions with a declared workload slice (``proc_table.expected_workload_slice``)
-    are judged; each label is ``session@pid`` and maps to ``(pid, slice)``. A line
-    that is not ``name<TAB>digits`` makes the whole listing unreadable (None).
-    """
-    expected: dict[str, tuple[str, str]] = {}
-    for line in stdout.splitlines():
-        if not line.strip():
-            continue
-        name, sep, pid = line.rpartition("\t")
-        if not sep or not name or not pid.isdigit():
-            return None
-        slice_name = proc_table.expected_workload_slice(name)
-        if slice_name is not None:
-            expected[f"{name}@{pid}"] = (pid, slice_name)
-    return expected
-
-
 def read_server_slice(socket: str | None, *, runner=_run_socket_tmux,
                       containment=proc_table.server_containment) -> dict[str, object]:
     """Server-slice reading over the plant's own tmux socket (sessions it lists).
@@ -370,7 +350,7 @@ def read_server_slice(socket: str | None, *, runner=_run_socket_tmux,
     if listed is None:
         return probe_server_slice(None)
     if listed.returncode == 0:
-        return probe_server_slice(expected_from_listing(listed.stdout or ""), containment=containment)
+        return probe_server_slice(proc_table.expected_from_listing(listed.stdout or ""), containment=containment)
     if "no server running" in (listed.stderr or ""):
         return judge_server_slice({}, {})
     return probe_server_slice(None)
