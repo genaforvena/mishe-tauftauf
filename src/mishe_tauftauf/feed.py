@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import tempfile
 import threading
 from collections import OrderedDict, deque
@@ -146,85 +147,143 @@ def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None 
     return list(_iter_parsed_feed(data, start_sequence=start_sequence, home=home))
 
 
+class TapeUnknown(RuntimeError):
+    """mishe-tape gave a result outside its contract, or no verified binary exists.
+
+    UNKNOWN, never GREEN: a reader that sees this must not fold any entries from
+    the read that raised it.
+    """
+
+
+def _tape_binary() -> str:
+    """Resolve the mishe-tape framer. Fails closed; never falls back to Python.
+
+    ``MISHE_TAPE_BIN`` is an explicit override (tests, scratch builds). Otherwise
+    the site-local install ``$SITE/bin/mishe-tape`` is used, and it must match the
+    sha256 recorded beside it in ``mishe-tape.install.json``.
+    """
+    override = os.environ.get("MISHE_TAPE_BIN")
+    if override:
+        if not os.path.isfile(override) or not os.access(override, os.X_OK):
+            raise TapeUnknown("MISHE_TAPE_BIN names no executable file")
+        return override
+    home = os.environ.get("MISHE_SEED_HOME") or os.environ.get("MISHE_TAUFTAUF_HOME")
+    if not home:
+        raise TapeUnknown("mishe-tape unavailable: no site home and no MISHE_TAPE_BIN")
+    binary = Path(home) / "bin" / "mishe-tape"
+    try:
+        record = json.loads((binary.parent / "mishe-tape.install.json").read_text(encoding="utf-8"))
+        digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    except (OSError, ValueError) as exc:
+        raise TapeUnknown(f"mishe-tape install missing or unreadable: {exc}") from exc
+    if not os.access(binary, os.X_OK) or record.get("sha256") != digest:
+        raise TapeUnknown("mishe-tape install is not executable or does not match its recorded sha256")
+    return str(binary)
+
+
+def _spawn_frames(handle, *, start_sequence: int, offset: int, size: int, extra=()):
+    fd = handle.fileno()
+    argv = [_tape_binary(), "frames", f"/proc/self/fd/{fd}",
+            "--start", str(start_sequence), "--offset", str(offset), "--size", str(size), *extra]
+    # pass_fds keeps the same fd number in the child, so /proc/self/fd/N names the
+    # inode the caller captured under the lock, not whatever the path now points to.
+    return subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, pass_fds=(fd,), close_fds=True)
+
+
+def _close_tape(proc, *, complete: bool) -> None:
+    """Reap the framer. A reader that stopped early kills it; its exit is not a result."""
+    if not complete:
+        proc.kill()
+        proc.wait()
+        proc.stdout.close()
+        proc.stderr.close()
+        return
+    proc.stdout.close()
+    rc = proc.wait()
+    err = proc.stderr.read().decode("utf-8", "replace").strip()
+    proc.stderr.close()
+    if rc == 0:
+        return
+    if rc == 2:
+        # Framing fault: the entries before it were already yielded. Same FeedError text as Python.
+        raise FeedError(err)
+    raise TapeUnknown(f"mishe-tape exit {rc}: {err}")
+
+
 def _iter_streamed_feed(handle, *, start_sequence: int = 1, home=None,
-                         offset: int = 0, size: int | None = None):
-    """Yield the tape's entries from a byte range without holding the range.
+                        offset: int = 0, size: int | None = None):
+    """Yield the tape's entries from a byte range, framed by mishe-tape.
 
-    ``iter_feed_file`` streams a whole file; this variant streams one byte
-    range, so a reader that resumes from a cached offset parses only the
-    bytes it has not seen. The range ends at the size the caller observed
-    under the tape's shared lock, so a writer appending during the parse
-    cannot shift the bytes this reader sees.
-
-    The bytes come from the caller's open handle, not from the path. A handle
-    names the file the caller captured, so a tape replaced at the path while
-    this reader parses cannot be read in its place; the caller holds the
-    inode it observed under the lock.
+    The framing responsibility lives in ``rust/mishe-tape`` (contract:
+    ``rust/mishe-tape/CONTRACT.md``). This reader only parses the framer's
+    output: ``E <sequence> <timestamp> <source> <nbytes>`` then the body bytes
+    and a newline. The range ends at ``size`` as observed under the tape's
+    shared lock, and the bytes come from the caller's open handle, so the inode
+    the caller captured is the one framed.
     """
     if size is None:
         size = os.fstat(handle.fileno()).st_size
-    handle.seek(offset)
-
-    def chunks():
-        decoder = codecs.getincrementaldecoder("utf-8")()
-        remaining = max(0, size - offset)
-        while remaining > 0:
-            chunk = handle.read(min(STREAM_CHUNK_BYTES, remaining))
-            if not chunk:
-                break
-            remaining -= len(chunk)
-            yield decoder.decode(chunk)
-        yield decoder.decode(b"", final=True)
-
+    proc = _spawn_frames(handle, start_sequence=start_sequence, offset=offset, size=size)
+    complete = False
     try:
-        for entry in iter_feed_entries(_iter_text_lines(chunks()),
-                                       start_sequence=start_sequence, home=home):
-            yield entry
-    except UnicodeDecodeError as exc:
-        raise FeedError(f"feed is not UTF-8: {exc}") from exc
+        stdout = proc.stdout
+        while True:
+            line = stdout.readline()
+            if not line:
+                break
+            if not line.endswith(b"\n"):
+                raise TapeUnknown("mishe-tape output truncated mid-header")
+            parts = line[:-1].split(b" ", 4)
+            if len(parts) != 5 or parts[0] != b"E":
+                raise TapeUnknown("mishe-tape emitted a non-contract header")
+            try:
+                sequence, nbytes = int(parts[1]), int(parts[4])
+                timestamp, source = parts[2].decode("ascii"), parts[3].decode("ascii")
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise TapeUnknown(f"mishe-tape header field invalid: {exc}") from exc
+            body = stdout.read(nbytes)
+            if len(body) != nbytes or stdout.read(1) != b"\n":
+                raise TapeUnknown("mishe-tape body length disagrees with header")
+            try:
+                text = body.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                # The contract makes non-UTF-8 a framer fault (exit 2), so a body
+                # that reaches here is a contract violation: UNKNOWN.
+                raise TapeUnknown(f"mishe-tape body is not UTF-8: {exc}") from exc
+            yield FeedEntry(sequence, timestamp, source, text,
+                            Path(home) if home is not None else None)
+        complete = True
+    finally:
+        _close_tape(proc, complete=complete)
 
 
-def _frame_offsets(handle, offset: int, size: int) -> list[int]:
-    """The byte offsets of every entry frame in a range, read as a stream.
+def _frame_offsets(handle, offset: int, size: int, *, start_sequence: int = 1) -> list[int]:
+    """The byte offsets of every entry frame in a range, framed by mishe-tape.
 
-    The frame index the checkpoint records is the list of entry starts. It is
-    rebuilt only when the checkpoint does not describe the current revision,
-    and it must be the same list the whole-tape reader produced, so it is
-    gathered by the same scan over the same bytes.
-
-    A frame start can straddle a chunk boundary, so the tail of each chunk is
-    carried into the next. The carried tail is the overlap between two
-    windows, and it holds the opening bytes of a frame that the previous
-    window could not complete.
-
-    A frame is reported by the first window that holds all of its bytes, and
-    by no other: a frame the previous window already held ends before that
-    window's end, so it is skipped here, while a frame that straddles the
-    boundary ends after it and is complete here. Reporting on that rule
-    rather than on the position of the match alone is what keeps the
-    checkpoint's frame list equal to the whole-tape reader's list.
+    The checkpoint's frame index is the list of entry starts. ``start_sequence``
+    must be the sequence the range's first frame carries: a mid-tape range
+    (``offset > 0``) starts at the cached sequence, or the framer reports a
+    non-contiguous sequence fault.
     """
+    proc = _spawn_frames(handle, start_sequence=start_sequence, offset=offset, size=size,
+                         extra=("--offsets",))
     offsets: list[int] = []
-    handle.seek(offset)
-    position = offset
-    remainder = b""
-    previous_end = offset
-    while position < size:
-        chunk = handle.read(min(STREAM_CHUNK_BYTES, size - position))
-        if not chunk:
-            break
-        window = remainder + chunk
-        base = position - len(remainder)
-        for match in FRAME_START_RE.finditer(window):
-            if match.end() > len(window):
-                continue  # the frame continues past this window
-            absolute = base + match.start()
-            if absolute + (match.end() - match.start()) <= previous_end:
-                continue  # the previous window already held this frame
-            offsets.append(absolute)
-        previous_end = position + len(chunk)
-        remainder = window[-_FRAME_START_TAIL:]
-        position += len(chunk)
+    complete = False
+    try:
+        for raw in proc.stdout:
+            if not raw.endswith(b"\n"):
+                raise TapeUnknown("mishe-tape offset line truncated")
+            parts = raw[:-1].split(b" ")
+            if len(parts) != 3 or parts[0] != b"O":
+                raise TapeUnknown("mishe-tape emitted a non-contract offset line")
+            try:
+                offsets.append(int(parts[2]))
+            except ValueError as exc:
+                raise TapeUnknown(f"mishe-tape offset invalid: {exc}") from exc
+        complete = True
+    finally:
+        _close_tape(proc, complete=complete)
     return offsets
 
 
@@ -921,7 +980,7 @@ class Feed:
             if valid and tail != checkpoint["sequence"]:
                 raise FeedError("role view disagrees with canonical checkpoint")
             if not valid:
-                offsets = _frame_offsets(handle, offset, size)
+                offsets = _frame_offsets(handle, offset, size, start_sequence=start)
                 if len(offsets) != tail:
                     raise FeedError("role view frame index disagrees with canonical parser")
                 index = {"version": 1, "sequence": tail, "tail_offset": offsets[-1] if offsets else 0,

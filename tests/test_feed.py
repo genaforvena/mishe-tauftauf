@@ -120,13 +120,15 @@ class FeedTests(unittest.TestCase):
                          n + 1, "2026-10-23T18:00:00Z", "sensor/noise", "x" * 4096))]
                          for n in range(0, entries_count, feed_module.INDEX_STRIDE)]},
                     metadata)
-                with patch.object(feed_module, "STREAM_CHUNK_BYTES", chunk):
-                    tracemalloc.start()
-                    try:
-                        view = feed.role_entries("genome")
-                        _, peak = tracemalloc.get_traced_memory()
-                    finally:
-                        tracemalloc.stop()
+                # The framing runs in the mishe-tape child, so this in-process
+                # peak measures only the reader's parent side. The child's own
+                # RSS is UNKNOWN here until measured on a quiet host.
+                tracemalloc.start()
+                try:
+                    view = feed.role_entries("genome")
+                    _, peak = tracemalloc.get_traced_memory()
+                finally:
+                    tracemalloc.stop()
                 # The projection keeps twelve recent entries plus the latest
                 # per source, not one entry per tape entry.
                 self.assertLessEqual(len(view), 13)
@@ -143,30 +145,28 @@ class FeedTests(unittest.TestCase):
                         "the peak must not grow with the tape's length")
 
     def test_streamed_frame_offsets_match_the_whole_tape_scan(self):
-        # The checkpoint's frame list is rebuilt by this scan when the
+        # The checkpoint's frame list is rebuilt by the framer when the
         # checkpoint does not describe the current revision. It must equal the
-        # list the whole-tape scan produces, or the checkpoint records a frame
-        # index the canonical parser disagrees with. A frame that straddles a
-        # chunk boundary is reported by the window that holds all of it, and
-        # by no other.
-        header = feed_module._encode_entry(1, "2026-10-23T18:00:00Z", "seed", "hello")
-        for chunk in (16, 32, 64, 128, 256):
-            with tempfile.TemporaryDirectory() as directory:
-                path = Path(directory) / "chat.log"
-                blob = bytearray()
-                for target in (chunk - 10, 2 * chunk - 5, 3 * chunk + 7):
-                    while len(blob) < target:
-                        blob += b"x\n"
-                    blob += header
-                path.write_bytes(bytes(blob))
-                whole = [m.start() for m in
-                         feed_module.FRAME_START_RE.finditer(bytes(blob))]
-                with patch.object(feed_module, "STREAM_CHUNK_BYTES", chunk):
-                    with path.open("rb") as handle:
-                        streamed = feed_module._frame_offsets(handle, 0, len(blob))
-                self.assertEqual(whole, streamed,
-                                 f"frame offsets differ at chunk size {chunk}")
-
+        # list the whole-tape scan produces over the same valid tape, or the
+        # checkpoint records a frame index the canonical parser disagrees with.
+        # The framer is strict: junk between entries is a framing fault, so
+        # every fixture here is a sequence of whole entries.
+        try:
+            feed_module._tape_binary()
+        except feed_module.TapeUnknown as exc:
+            self.skipTest(str(exc))
+        entries = [feed_module._encode_entry(n, "2026-10-23T18:00:00Z", "seed",
+                                             ("line\n" * (n % 7)) + "end")
+                   for n in range(1, 40)]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "chat.log"
+            blob = b"".join(entries)
+            path.write_bytes(blob)
+            whole = [m.start() for m in feed_module.FRAME_START_RE.finditer(blob)]
+            with path.open("rb") as handle:
+                streamed = feed_module._frame_offsets(handle, 0, len(blob))
+            self.assertEqual(whole, streamed)
+            self.assertEqual(len(streamed), len(entries))
 
     def test_role_cache_extends_from_canonical_tail_not_last_selected_entry(self):
         with tempfile.TemporaryDirectory() as directory:
