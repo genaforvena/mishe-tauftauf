@@ -19,6 +19,7 @@ def git_step(repo, cursor):
 OUTPUT_GRACE_SECONDS = 300
 PROGRESS_SECONDS = 120
 PROGRESS_LINES = 6
+PROGRESS_MAX_AGE = 2 * 3600   # an unsettled record older than any wake can run is a stale record, not a running wake
 
 
 def wakes_step(home, cursor):
@@ -77,7 +78,10 @@ def wakes_step(home, cursor):
         if (root / (key + '.work.json')).exists() or (root / (key + '.yield.json')).exists():
             continue
         outputs = sorted(root.glob(key + '.prompt.out.*'))
-        bucket = int((now - start.stat().st_mtime) // PROGRESS_SECONDS)
+        age = now - start.stat().st_mtime
+        if age > PROGRESS_MAX_AGE:
+            continue
+        bucket = int(age // PROGRESS_SECONDS)
         mark = f'progress:{key}:{bucket}'
         if not outputs or bucket < 1 or mark in known:
             continue
