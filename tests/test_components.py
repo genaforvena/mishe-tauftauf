@@ -129,3 +129,25 @@ def test_rollback_without_previous_is_refused(site):
     c.promote(home, repo, NAME, first, check=CHECK, builder=make_builder("A"))
     with pytest.raises(ValueError, match="no previous"):
         c.rollback(home, NAME)
+
+
+# Passes the pre-swap check, then appends one byte to bin/NAME after the
+# manifest hash was recorded, so only the new release verifies RED.
+CHECK_TAMPER = [sys.executable, "-c",
+                "import os,sys; p=os.path.join(os.getcwd(),'bin','tool-x');"
+                "sys.exit(1) if not os.path.isfile(p) else open(p,'ab').write(b'X') or sys.exit(0)"]
+
+
+def test_auto_rollback_reports_rolled_back_only_when_restored_green(site):
+    repo, home, first, second = site
+    c.promote(home, repo, NAME, first, check=CHECK, builder=make_builder("A"))
+    result = c.promote(home, repo, NAME, second, check=CHECK_TAMPER, builder=make_builder("B"))
+    assert result["phase"] == "rolled-back"
+    assert result["current"] == c.pointed_sha(home, NAME) == first
+    assert result["verify"]["state"] == "RED"
+    assert any("sha256" in p for p in result["verify"]["problems"])
+    assert result["rollback_verify"]["state"] == "GREEN"
+    assert c.verify(home, NAME)["state"] == "GREEN"
+    last = c._ledger_events(home, NAME)[-1]
+    assert last["event"] == "auto-rollback" and last["to"] == first
+    assert last["verify"]["state"] == "GREEN"
