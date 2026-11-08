@@ -71,7 +71,10 @@ Every entry before a fault is written before the fault is reported.
   reader decodes in 64 KiB or stream chunks, so a UTF-8 fault in the same chunk as
   earlier entries yields none of them, while the binary yields every entry before
   the bad bytes. Callers must treat a UTF-8 fault as "no entries from this read"
-  and never fold the entries that preceded it. Observed in a scratch differential
+  and never fold the entries that preceded it. Streaming callers (`iter_feed_file`:
+  `outcome_events.py`, `discovery.py`) may have received those entries before the
+  `FeedError`, so they discard their partial result on a fault; checked 2026-11-08,
+  both return UNKNOWN or an empty classification. Observed in a scratch differential
   on 2026-11-08 (not committed): a tape with one valid entry followed by a
   non-UTF-8 entry gave Python zero entries and the binary one entry, both exit 2.
 
