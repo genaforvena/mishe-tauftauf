@@ -303,12 +303,8 @@
       "name": "audio-hint-livingroom",
       "command": [
         "{python}",
-        "{repo}/tools/audio_hint.py",
-        "window",
-        "--seconds",
-        "8",
-        "--room",
-        "livingroom",
+        "{repo}/tools/audio_listener.py",
+        "hint",
         "--site",
         "{home}"
       ],
