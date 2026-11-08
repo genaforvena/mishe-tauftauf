@@ -71,6 +71,30 @@ def lock(home):
         yield
 
 
+def refuse_inside_own_wake(home):
+    """Refuse activation from inside a wake while that wake holds the dispatch lock.
+
+    A wake holds the dispatch lock for its whole run.  An apply or revert that
+    runs inside it can only wait for the lock its own wake will not release
+    until the apply returns, so it times out and aborts without applying (seen
+    2026-11-08 08:42Z and 09:12Z).  Inside a wake the lock is busy by
+    definition, so the refusal is immediate instead of a long wait.  Outside a
+    wake, or when the lock is free, activation proceeds.
+    """
+    if not os.environ.get("MISHE_WAKE_KEY"):
+        return
+    from .core.state import DispatchStore
+    with DispatchStore(Path(home) / "dispatch").lock_path.open("a+") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise ValueError(
+                f"activation refused: wake {os.environ['MISHE_WAKE_KEY']} holds the dispatch lock; "
+                "run the delivery after the wake settles (mishe release request or a later wake)"
+            ) from None
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def status(home, identity):
     return json.loads(location(home, identity).read_text())
 
@@ -344,6 +368,7 @@ def _revert(home, identity, record, activate):
 
 def revert(home, identity, activate):
     from .delivery_requests import check_admission
+    refuse_inside_own_wake(home)
     with lock(home):
         check_admission(home)
         record = status(home, identity)
@@ -352,6 +377,7 @@ def revert(home, identity, activate):
 
 def apply(home, identity, activate, observe):
     from .delivery_requests import check_admission
+    refuse_inside_own_wake(home)
     check_admission(home)
     with lock(home):
         check_admission(home)

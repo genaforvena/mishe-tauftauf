@@ -238,6 +238,36 @@ def test_delivery_does_not_certify_failed_revert_observation(tmp_path, monkeypat
     assert deployed.read_text() == "before\n"
 
 
+def test_activation_refused_inside_the_wake_holding_the_dispatch_lock(tmp_path, monkeypatch):
+    import fcntl
+    from mishe_tauftauf.core.state import DispatchStore
+    home, source, deployed = layout(tmp_path)
+    lock_file = DispatchStore(home / "dispatch").lock_path.open("a+")
+    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+    try:
+        monkeypatch.setenv("MISHE_WAKE_KEY", "wake-own")
+        with pytest.raises(ValueError, match="holds the dispatch lock"):
+            wall_patch.refuse_inside_own_wake(home)
+        command = [sys.executable, "-c", "pass"]
+        with pytest.raises(ValueError, match="holds the dispatch lock"):
+            wall_patch.apply(home, "change", command, command)
+        with pytest.raises(ValueError, match="holds the dispatch lock"):
+            wall_patch.revert(home, "change", command)
+        monkeypatch.delenv("MISHE_WAKE_KEY")
+        wall_patch.refuse_inside_own_wake(home)  # outside a wake the guard is silent
+    finally:
+        lock_file.close()
+
+
+def test_activation_allowed_inside_a_wake_when_dispatch_lock_is_free(tmp_path, monkeypatch):
+    from mishe_tauftauf.core.state import DispatchStore
+    home, source, deployed = layout(tmp_path)
+    DispatchStore(home / "dispatch")
+    monkeypatch.setenv("MISHE_WAKE_KEY", "wake-consumer")
+    wall_patch.refuse_inside_own_wake(home)  # free lock: the guard lets it through
+    monkeypatch.delenv("MISHE_WAKE_KEY")
+
+
 def test_reviewed_delivery_script_cannot_change_before_apply(tmp_path, monkeypatch):
     home, source, deployed = layout(tmp_path)
     wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
