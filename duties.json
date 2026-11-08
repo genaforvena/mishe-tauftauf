@@ -38,6 +38,8 @@
       "every": 300,
       "timeout": 120,
       "max_age": 900,
+      "red_codes": [2],
+      "unknown_codes": [3],
       "resolver": "health",
       "replaces": [
         "exit-node-egress",
