@@ -164,7 +164,16 @@ def promote(home, repo, name: str, sha: str, *, check: list[str], builder=None) 
                 raise RuntimeError(f"check failed for {name}@{sha}: exit {checked['code']}: {checked['output']}")
             shutil.rmtree(staging / "src", ignore_errors=True); shutil.rmtree(staging / "target", ignore_errors=True)
             final.parent.mkdir(parents=True, exist_ok=True)
-            os.rename(out, final)
+            if final.exists():
+                quarantine = final.parent / f".corrupt-{sha}-{time.time_ns()}"
+                os.rename(final, quarantine)
+                try:
+                    os.rename(out, final)
+                except OSError:
+                    os.rename(quarantine, final)
+                    raise
+            else:
+                os.rename(out, final)
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
             raise

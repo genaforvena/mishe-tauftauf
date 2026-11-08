@@ -25,6 +25,7 @@ SITE_HOME/components/NAME/
 2. **Promotion** is atomic: build the release dir, run its check against those bytes, create `current.tmp` beside `current`, then `rename(2)` over `current`. No global hold; wakes keep running.
 3. **Rollback** is re-pointing `current` at the previous release SHA with the same rename. The previous SHA is recorded in the promotion record before the swap.
    If post-swap verification is RED and no previous SHA is known, the new pointer remains in place and the result is `unknown`, not a rollback. With a previous SHA, automatic rollback is reported as `rolled-back` only if the restored pointer verifies GREEN; otherwise it is `unknown`. Inspect the recorded problems and live pointer before recovery.
+   If an existing release fails its manifest check, promotion builds and checks replacement bytes first, then preserves the invalid release under `releases/.corrupt-SHA-TIMESTAMP` before installing the replacement. The release path may briefly be unavailable during replacement; a failed installation attempts to restore the invalid directory.
 4. **Contract.** Each component's `CONTRACT.md` names its inputs, outputs and exit codes. Its check runs against the release dir, not the working tree.
 5. **Docs-only commits** need no promotion.
 

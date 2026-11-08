@@ -106,6 +106,21 @@ def test_tampered_binary_turns_detector_red(site):
     assert any("sha256" in p for p in verdict["problems"])
 
 
+def test_promote_rebuilds_corrupted_existing_release(site):
+    repo, home, first, _ = site
+    c.promote(home, repo, NAME, first, check=CHECK, builder=make_builder("original"))
+    release = c.release_dir(home, NAME, first)
+    (release / "bin" / NAME).write_text("corrupted")
+    assert c.verify(home, NAME)["state"] == "RED"
+
+    result = c.promote(home, repo, NAME, first, check=CHECK, builder=make_builder("rebuilt"))
+    assert result["phase"] == "promoted"
+    assert c.verify(home, NAME)["state"] == "GREEN"
+    assert subprocess.check_output([str(c.current(home, NAME) / "bin" / NAME)], text=True).strip() == "rebuilt"
+    assert any((p / "bin" / NAME).read_text() == "corrupted"
+               for p in release.parent.glob(f".corrupt-{first}-*"))
+
+
 def test_missing_pointer_is_red_and_runtime_copy_is_red(site):
     repo, home, first, _ = site
     assert c.verify(home, NAME)["state"] == "RED"
