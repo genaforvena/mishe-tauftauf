@@ -108,7 +108,8 @@ review. A review outage remains pending evidence and does not block ordinary
 delivery. Classification is conservative; mixed changes take the strong path.
 
 Ordinary means the diff cannot reach a mechanism. The admitted paths are
-`docs/*.md`, `tests/*`, `README.md` and `src/mishe_tauftauf/producers.py`.
+Markdown files under `docs/` (subdirectories included), anything under `tests/`,
+`README.md` and `src/mishe_tauftauf/producers.py`.
 `README.md` is admitted by that exact path, not by extension: it is the
 reader's front page, which the runtime names as a default document to render
 and as a search corpus, and never reads to decide behaviour. Everything else
