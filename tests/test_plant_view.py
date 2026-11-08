@@ -547,8 +547,10 @@ def test_log_mode_renders_a_multi_event_jsonl_stream_as_readable_text(tmp_path):
     write_json(yielding.receipt_path(tmp_path, key), {'role': 'genome', 'key': key, 'result': 'changed', 'continue': False, 'settled_at': T0 + 30})
     dispatch_state(tmp_path, key, 'completed')
     text = '\n'.join(view.log_step(tmp_path, 'genome', T0 + 100))
-    for expected in ('Reading the signals', '[tool bash] mishe signal show ci', '[tool output] GREEN', 'CI is green; nothing to do.'):
+    # A settled OMP wake reads like a Claude wake: the final message, with a count of the tool calls behind it.
+    for expected in ('CI is green; nothing to do.', '(1 tool calls)'):
         assert expected in text
+    assert '[tool output] GREEN' not in text
     assert 'malformed' not in text and 'UNKNOWN stream' not in text and 'raw tail' not in text   # not the single-document path
     assert 'assistantMessageEvent' not in text and machine_syntax(text) == []
     assert 'model' in text.splitlines()[1]          # the header still says which model (configured, as a stream has none)
@@ -681,3 +683,13 @@ def test_finished_omp_wake_reads_like_a_claude_wake(tmp_path):
     (root / "wake-x-1.prompt.out.jsonl").write_text('\n'.join(json.dumps(e) for e in ev) + '\n')
     _, text = plant_tape.wakes_step(tmp_path, None)
     assert "Final summary here" in text and "(1 tool calls)" in text and "NOISE" not in text
+
+
+def test_provider_retry_events_are_read_not_unknown(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import output_text
+    out = tmp_path / "w.prompt.out.jsonl"
+    ev = [{"type": "auto_retry_start", "attempt": 1, "errorMessage": "429 limit"},
+          {"type": "auto_retry_end", "success": False, "finalError": "429 Go usage limit exceeded\nmore"}]
+    out.write_text('\n'.join(json.dumps(e) for e in ev) + '\n')
+    text = output_text(out)
+    assert "UNKNOWN" not in text and "[provider error] 429 Go usage limit exceeded" in text

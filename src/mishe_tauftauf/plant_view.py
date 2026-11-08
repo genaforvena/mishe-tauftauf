@@ -382,7 +382,7 @@ def render_output(home, role: str, *, now: float) -> str:
 # --- the bottom pane as a log: each wake's output is appended once, never repainted ----------
 
 def _wake_block(home, role, path, now, configured, *, running):
-    facts, text = output_view(path)
+    facts, text = output_view(path, final=not running)
     span = _wake_span(home, wake_key(path), now, running=running, out_path=path)
     commits = _changes(home, span)
     head = '══ ' + ' · '.join([_model_text(facts, configured)] + _summary_parts(span, facts, commits, now)) + ' ══'

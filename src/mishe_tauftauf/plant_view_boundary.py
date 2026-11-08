@@ -96,6 +96,12 @@ def stream_text(text: str) -> str:
                     open_tool = len(out) - 1
                 if kind == 'tool_execution_end':
                     open_tool = None
+            elif kind == 'auto_retry_start':
+                out.append('[provider retry] attempt ' + str(event.get('attempt', '?')) + ': '
+                           + str(event.get('errorMessage') or event.get('error') or 'provider error')[:300])
+            elif kind == 'auto_retry_end':
+                out.append('[provider retry succeeded]' if event.get('success') is True
+                           else '[provider error] ' + str(event.get('finalError', 'retry failed')).splitlines()[0][:300])
             elif kind in quiet:
                 continue
             elif kind in lifecycle:
@@ -245,7 +251,7 @@ def envelope_facts(value: object) -> dict | None:
     }
 
 
-def output_view(path: Path, limit: int = 16000) -> tuple[dict | None, str]:
+def output_view(path: Path, limit: int = 16000, final: bool = False) -> tuple[dict | None, str]:
     """Return (envelope facts or None, human text) for one retained engine output.
 
     Parsed JSON is never echoed: a recognised envelope shows its ``result`` text,
@@ -268,6 +274,8 @@ def output_view(path: Path, limit: int = 16000) -> tuple[dict | None, str]:
             text = text.partition('\n')[2]
             prefix += 'UNKNOWN leading stream event truncated; original bytes retained in file\n'
         text = stream_text(text)
+        if final:
+            text = final_answer(text)   # a settled OMP wake reads like a Claude wake: its last message
         if len(text) > limit:
             text = '[rendered tail]\n' + text[-limit:]
     elif path.suffix == '.json':
