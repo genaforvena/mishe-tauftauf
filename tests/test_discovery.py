@@ -6811,6 +6811,13 @@ def _loop_stall_coverage(overrides):
     return fake
 
 
+def test_loop_stall_roles_exclude_retired_roles():
+    """Retired roles in the rollup list read unknown forever and mask real unknowns."""
+    for retired in ("operator-view", "body-research", "inference-research"):
+        assert retired not in discovery.LOOP_STALL_ROLES
+    assert "senses" in discovery.LOOP_STALL_ROLES
+
+
 def test_loop_stall_watches_an_open_wake_past_its_bound(monkeypatch, tmp_path):
     """Stale open wake (age beyond the engine bound) reads watch-loop-stall."""
     monkeypatch.setattr(discovery, "_mind_role_coverage", _loop_stall_coverage(

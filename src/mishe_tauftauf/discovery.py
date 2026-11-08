@@ -1236,8 +1236,11 @@ def _mind_docs_treadmill(home: Path) -> dict:
 ARTIFACT_RECURRENCE_MIN_WAKES = 3
 ARTIFACT_RECURRENCE_WINDOW_WAKES = 5
 
-LOOP_STALL_ROLES = ("inference-research", "body-research", "docs", "health", "senses",
-                    "discover", "genome", "witness", "research-methods", "operator-view")
+# Live roster only: duties.json retires ``operator-view`` and the role residents
+# ``body-research`` / ``inference-research`` (woken by trigger, no standing
+# dispatch). Listing them made the rollup permanently ``unknown``.
+LOOP_STALL_ROLES = ("docs", "health", "senses", "discover", "genome", "witness",
+                    "research-methods")
 
 # An open wake older than this has outlived the engine's own bound: units.py
 # passes ``--timeout WAKE_TIMEOUT`` (1800 s) to every wake. Past it the wake is
