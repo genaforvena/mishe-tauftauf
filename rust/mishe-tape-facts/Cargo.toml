@@ -1,0 +1,11 @@
+[package]
+name = "mishe-tape-facts"
+version = "0.1.0"
+edition = "2021"
+description = "Byte-level tape facts for Mishe disposition reading (contract: CONTRACT.md)"
+license = "CC0-1.0"
+
+[dependencies]
+
+[profile.release]
+debug = false

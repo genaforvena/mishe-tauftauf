@@ -1,0 +1,106 @@
+"""Differential test: rust/mishe-tape-facts against the Python disposition regexes.
+
+Run with MISHE_TAPE_FACTS_BIN pointing at a built binary. Without it the test is
+skipped and says so; a skip is not a pass. For every fixture entry the binary's
+DM/REF/OUT facts must equal discovery.py's regexes, or the entry must be marked
+DEFER (or the OUT runs '!'), which hands that entry back to the Python regex.
+"""
+
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from mishe_tauftauf.discovery import DM_TO_RE, RECORD_REF_RE, WALL_OUTCOME_RE
+
+HEX = "a" * 64
+HEX2 = "b" * 64
+
+FIXTURES = [
+    "[dm] to=senses hello",
+    "[dm] to=rust-plan.x_1 hi",
+    "[dm] to=chat",
+    "[dm] to= empty",
+    "[dm] to=Розалия hi",
+    "[record] records/%s.json sha256=%s checked" % (HEX, HEX2),
+    "prefix [record] records/%s.json sha256=%s" % (HEX, HEX2),
+    "[record] records/%s.json sha256=%s" % (HEX.upper(), HEX2),
+    "Wall outcome 9ebe by genome for 12 and 40",
+    "Wall outcome a-b by rust-plan.x 7",
+    "Wall outcome x by  (none)",
+    "Wall outcome x by 1 2 3",
+    "Wall outcome abc by role-1 no digits here",
+    "Wall outcome a\tb by x 5",
+    "Wall outcome a b by x 5",
+    "Wall outcome a by x 1٣ 2",
+    "Wall outcome a by x ٣ 12",
+    "Wall outcome a by x 12é and 3",
+    "Wall outcome a by x 1٣2",
+    "plain text 12",
+]
+
+
+def _tape(bodies):
+    parts = []
+    for seq, body in enumerate(bodies, start=1):
+        data = body.encode("utf-8")
+        parts.append(f"E {seq} 2026-11-08T12:00:00Z senses {len(data)}\n".encode())
+        parts.append(data + b"\n")
+    return b"".join(parts)
+
+
+def _run(binary, tape):
+    proc = subprocess.run([binary], input=tape, capture_output=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr.decode()
+    return proc.stdout.decode("utf-8").splitlines()
+
+
+def _python_cited(body, seq):
+    import re
+    return re.search(rf"(?<!\d){seq}(?!\d)", body) is not None
+
+
+@pytest.fixture
+def binary():
+    value = os.environ.get("MISHE_TAPE_FACTS_BIN")
+    if not value:
+        pytest.skip("MISHE_TAPE_FACTS_BIN not set: differential not run")
+    return value
+
+
+def test_facts_match_python_regexes(binary):
+    lines = _run(binary, _tape(FIXTURES))
+    dm, ref, out, defer = {}, {}, {}, set()
+    for line in lines:
+        fields = line.split(" ")
+        kind, seq = fields[0], int(fields[1])
+        if kind == "DM":
+            dm[seq] = fields[4]
+        elif kind == "REF":
+            ref[seq] = fields[3]
+        elif kind == "OUT":
+            out[seq] = fields[3:]
+        elif kind == "DEFER":
+            defer.add(seq)
+        else:
+            pytest.fail(f"unknown line kind: {line!r}")
+    for seq, body in enumerate(FIXTURES, start=1):
+        m = DM_TO_RE.match(body)
+        assert (dm.get(seq) == (m.group(1) if m else None)), (seq, body)
+        r = RECORD_REF_RE.search(body)
+        assert (ref.get(seq) == (r.group(1) if r else None)), (seq, body)
+        o = WALL_OUTCOME_RE.match(body) if body.startswith("Wall outcome ") else None
+        if seq in defer:
+            continue
+        if o is None:
+            assert seq not in out, (seq, body, out.get(seq))
+            continue
+        assert seq in out, (seq, body)
+        role, runs = out[seq][0], out[seq][1]
+        assert role == o.group(1), (seq, body)
+        if runs == "!":
+            continue
+        for probe in range(1, 6):
+            cited_rust = str(probe) in (runs.split(",") if runs != "-" else [])
+            assert cited_rust == _python_cited(body, probe), (seq, body, probe, runs)
