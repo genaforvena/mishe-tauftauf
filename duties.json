@@ -249,6 +249,21 @@
       "covers": "local main reaches GitHub within two hours: RED when the oldest unpushed commit is older, or main has diverged; UNKNOWN when the remote cannot be read"
     },
     {
+      "name": "next-due-armed",
+      "command": [
+        "{python}",
+        "{repo}/checks/next-due-armed.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 300,
+      "timeout": 45,
+      "max_age": 900,
+      "resolver": "genome",
+      "replaces": [],
+      "covers": "due-time wakes are armed: RED when the recorded next due time passed more than five minutes ago with no mishe-next-due timer, or the units-installed marker is missing; UNKNOWN when next-due.json or systemd cannot be read"
+    },
+    {
       "name": "work-trial",
       "command": [
         "{python}",
