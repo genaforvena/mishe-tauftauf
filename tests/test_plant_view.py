@@ -638,3 +638,18 @@ def test_pain_read_of_a_role_shows_the_plant_view_not_the_deleted_renderer_chain
     assert done.returncode == 0, done.stderr
     assert done.stdout.startswith("genome \u2014 model ") and "wall_view" not in done.stdout + done.stderr and "renderer exit" not in done.stdout
     assert "Wall UNKNOWN" in done.stdout or "Wall (" in done.stdout            # a missing wall is UNKNOWN, never a renderer failure
+
+
+def test_omp_tool_updates_replace_their_own_line_and_bookkeeping_is_quiet(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import output_text
+    out = tmp_path / "wake.prompt.out.jsonl"
+    tool = lambda kind, text: {"type": kind, "toolName": "bash", "result": {"content": [{"type": "text", "text": text}]},
+                               "partialResult": {"content": [{"type": "text", "text": text}]}}
+    events = [{"type": "turn_start"}, {"type": "message_start"},
+              {"type": "tool_execution_start", "toolName": "bash", "args": {"command": "echo hi"}},
+              tool("tool_execution_update", "hi"), tool("tool_execution_end", "hi\nhi done"),
+              {"type": "turn_end"}]
+    out.write_text('\n'.join(json.dumps(e) for e in events) + '\n')
+    text = output_text(out)
+    assert text.count("[tool output]") == 1 and "hi done" in text
+    assert "turn_start" not in text and "message_start" not in text and "turn_end" not in text

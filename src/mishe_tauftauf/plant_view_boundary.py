@@ -44,8 +44,10 @@ def _tool_args(args) -> str:
 def stream_text(text: str) -> str:
     """Decode OMP JSON-lines at the literal output boundary, never as actions."""
     out, pending = [], ''
-    lifecycle = {'session', 'agent_start', 'agent_end', 'turn_start', 'turn_end',
-                 'message_start', 'tool_stream_update'}
+    open_tool = None  # index in `out` of the running tool's output line: updates and the end replace it, not repeat it
+    # Pure bookkeeping of the OMP stream, never shown; agent start/end stay visible as the bounds of the run.
+    quiet = {'session', 'turn_start', 'turn_end', 'message_start', 'tool_stream_update', 'thinking_level_changed'}
+    lifecycle = {'agent_start', 'agent_end'}
     for line in text.splitlines():
         if not line.strip():
             continue
@@ -81,11 +83,21 @@ def stream_text(text: str) -> str:
                 pending = ''
             if kind == 'tool_execution_start':
                 out.append('[tool ' + str(event.get('toolName', '?')) + '] ' + _tool_args(event.get('args')))
+                open_tool = None
             elif kind in {'tool_execution_update', 'tool_execution_end'}:
                 key = 'partialResult' if kind == 'tool_execution_update' else 'result'
                 content = _content_text(event.get(key))
                 label = 'tool error' if event.get('isError') is True else 'tool output'
-                out.append('[' + label + '] ' + (content or '[non-text result; see raw record]'))
+                line_text = '[' + label + '] ' + (content or '[non-text result; see raw record]')
+                if open_tool is not None:
+                    out[open_tool] = line_text
+                else:
+                    out.append(line_text)
+                    open_tool = len(out) - 1
+                if kind == 'tool_execution_end':
+                    open_tool = None
+            elif kind in quiet:
+                continue
             elif kind in lifecycle:
                 out.append('[' + kind + ']')
             else:
