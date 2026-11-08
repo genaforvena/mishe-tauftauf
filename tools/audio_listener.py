@@ -23,6 +23,7 @@ Usage:
   python tools/audio_listener.py listen [--device plughw:0,0] [--room livingroom] [--site SITE_HOME]
   python tools/audio_listener.py status [--site SITE_HOME]
   python tools/audio_listener.py heartbeat [--site SITE_HOME]
+  python tools/audio_listener.py hint [--site SITE_HOME]   (duty: 0 = listener observed, 3 = UNKNOWN)
 
 Status: SITE_HOME/spatial/work/household/audio-listener-status.json (rewritten every 30 s).
 Rows: SITE_HOME/spatial/work/household/audio.jsonl (same file as the window producer).
@@ -465,6 +466,52 @@ def heartbeat(args: argparse.Namespace) -> int:
     return {"GREEN": EXIT_GREEN, "RED": EXIT_RED}.get(value, EXIT_UNKNOWN)
 
 
+HINT_FRESH_S = 150.0  # the hint duty's max_age: a listener row older than this is not an observation
+EXIT_HINT_UNKNOWN = 3  # the audio-hint-livingroom duty's declared UNKNOWN code
+
+
+def last_listen_row(site: Path) -> dict | None:
+    """Newest listener row (mode == listen) in audio.jsonl, read from the file tail only."""
+    path = ah.out_dir(site) / "audio.jsonl"
+    if not path.exists():
+        return None
+    with path.open("rb") as fh:
+        fh.seek(0, 2)
+        fh.seek(max(0, fh.tell() - 65536))
+        lines = fh.read().decode("utf-8", "replace").splitlines()
+    for line in reversed(lines):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue  # a partial first line of the tail, or a torn write
+        if isinstance(row, dict) and row.get("mode") == "listen":
+            return row
+    return None
+
+
+def hint_reading(row: dict | None, now: float) -> tuple[str, str]:
+    """(GREEN|UNKNOWN, reason). The hint duty observes through the listener, not a second capture."""
+    if row is None:
+        return "UNKNOWN", "no listener row"
+    age = now - float(row.get("t", 0))
+    if age > HINT_FRESH_S:
+        return "UNKNOWN", f"last listener row {round(age)} s old"
+    status = row.get("status")
+    if status in (None, "UNKNOWN", "SUSPENDED"):
+        return "UNKNOWN", f"listener row status {status}"
+    return "GREEN", f"listener analysed a segment: {status}"
+
+
+def hint(args: argparse.Namespace) -> int:
+    site = ah.site_home(args.site)
+    now = time.time()
+    row = last_listen_row(site)
+    value, why = hint_reading(row, now)
+    out = {"reading": value, "reason": why, "status": (row or {}).get("status")}
+    print(json.dumps(out, sort_keys=True, ensure_ascii=False))
+    return EXIT_GREEN if value == "GREEN" else EXIT_HINT_UNKNOWN
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -476,11 +523,15 @@ def main(argv: list[str] | None = None) -> int:
     st.add_argument("--site")
     hb = sub.add_parser("heartbeat")
     hb.add_argument("--site")
+    hn = sub.add_parser("hint")
+    hn.add_argument("--site")
     args = ap.parse_args(argv)
     if args.cmd == "listen":
         return listen(args)
     if args.cmd == "heartbeat":
         return heartbeat(args)
+    if args.cmd == "hint":
+        return hint(args)
     return status(args)
 
 

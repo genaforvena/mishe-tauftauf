@@ -240,3 +240,26 @@ def test_echo_at_spot_stage_is_spot_unconfirmed(monkeypatch, tmp_path):
     assert row["status"] == "SPOT_UNCONFIRMED"
     assert row["reject"].startswith("prompt echo")
     assert "hint" not in row and "text" not in row
+
+
+def test_hint_reading_observes_through_listener_rows_only(tmp_path):
+    import json
+    import time as _t
+    now = _t.time()
+    assert al.hint_reading(None, now)[0] == "UNKNOWN"
+    assert al.hint_reading({"mode": "listen", "t": now - 200, "status": "NO_HINT"}, now)[0] == "UNKNOWN"  # stale
+    assert al.hint_reading({"mode": "listen", "t": now, "status": "UNKNOWN"}, now)[0] == "UNKNOWN"
+    assert al.hint_reading({"mode": "listen", "t": now, "status": "SUSPENDED"}, now)[0] == "UNKNOWN"
+    assert al.hint_reading({"mode": "listen", "t": now, "status": "NO_HINT"}, now)[0] == "GREEN"
+    site = tmp_path
+    path = ah.out_dir(site) / "audio.jsonl"
+    path.write_text(
+        json.dumps({"mode": "window", "t": now, "status": "UNKNOWN"}) + "\n"
+        + json.dumps({"mode": "listen", "t": now - 5, "status": "NO_SPEECH"}) + "\n"
+        + "{torn line\n"
+        + json.dumps({"mode": "window", "t": now, "status": "UNKNOWN"}) + "\n")
+    row = al.last_listen_row(site)
+    assert row["status"] == "NO_SPEECH"  # window rows and torn lines are ignored
+    assert al.main(["hint", "--site", str(site)]) == al.EXIT_GREEN
+    path.unlink()
+    assert al.main(["hint", "--site", str(site)]) == al.EXIT_HINT_UNKNOWN
