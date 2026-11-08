@@ -43,10 +43,10 @@ def test_missing_input_is_unavailable_not_invented(tmp_path):
 def test_capture_temp_frame_is_deleted(tmp_path, monkeypatch):
     seen = []
 
-    def fake(out, device):
+    def fake(out, device, telemetry):
         seen.append(out)
         _frame(out.with_suffix(".png"), "gray").rename(out)
-        return 1, 0
+        telemetry.update(capture_attempts=1, busy_attempts=0)
 
     monkeypatch.setattr(cam, "_capture_webcam", fake)
     result = cam.run("webcam", None, "/dev/video0", None)
@@ -150,3 +150,41 @@ def test_clean_first_attempt_record_has_no_busy(tmp_path, monkeypatch):
     monkeypatch.setattr(cam, "signature", lambda image: {"grid": [0.0]})
     out = cam.run("webcam", None, "/dev/video0", None)
     assert out["capture_attempts"] == 1 and out["busy_attempts"] == 0
+
+
+def test_nonzero_busy_exit_is_counted_and_retried(tmp_path, monkeypatch):
+    """check=True used to raise on a nonzero fswebcam exit before the busy count and retry ran."""
+    calls = []
+
+    def busy_nonzero_then_ok(args, **kwargs):
+        if args[0] == "ffmpeg":
+            return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=b"")
+        calls.append(kwargs.get("check"))
+        if len(calls) == 1:
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="VIDIOC_S_INPUT: Device or resource busy")
+        Path(args[-1]).write_bytes(b"x")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(cam.time, "sleep", lambda s: None)
+    monkeypatch.setattr(cam.subprocess, "run", busy_nonzero_then_ok)
+    monkeypatch.setattr(cam.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(cam, "signature", lambda image: {"grid": [0.0]})
+    out = cam.run("webcam", None, "/dev/video0", None)
+    assert out["status"] == "ok"
+    assert out["capture_attempts"] == 2 and out["busy_attempts"] == 1
+    assert calls == [False, False]
+
+
+def test_failed_capture_record_keeps_attempt_counts(tmp_path, monkeypatch):
+    """Observed 2026-11-08 16:57Z and 17:02Z: busy failures had no capture counts in the record."""
+    def always_busy(args, **kwargs):
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="VIDIOC_S_INPUT: Device or resource busy")
+
+    monkeypatch.setattr(cam, "WEBCAM_RETRY_PAUSE_S", 0)
+    monkeypatch.setattr(cam.time, "sleep", lambda s: None)
+    monkeypatch.setattr(cam.subprocess, "run", always_busy)
+    monkeypatch.setattr(cam.shutil, "which", lambda name: f"/usr/bin/{name}")
+    out = cam.run("webcam", None, "/dev/video0", None)
+    assert out["status"] == "unavailable"
+    assert out["capture_attempts"] == cam.WEBCAM_ATTEMPTS and out["busy_attempts"] == cam.WEBCAM_ATTEMPTS
+    assert "Device or resource busy" in out["reason"]

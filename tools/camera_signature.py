@@ -64,11 +64,14 @@ WEBCAM_ATTEMPTS = 3
 WEBCAM_RETRY_PAUSE_S = 3.0
 
 
-def _capture_webcam(out: Path, device: str) -> tuple[int, int]:
+def _capture_webcam(out: Path, device: str, telemetry: dict) -> None:
     """One frame from fswebcam. fswebcam can exit 0 without writing a file
     (observed 1 in 30 on /dev/video0), so the file is checked, not the exit code.
-    A missing frame is retried after a short pause before being reported as unavailable.
-    Returns (attempts used, attempts whose stderr reported a busy device) for the record."""
+    A nonzero exit is treated like a missing frame: check=False keeps the busy
+    stderr count and the retry reachable. A missing frame is retried after a short
+    pause before being reported as unavailable.
+    telemetry is updated in place after every attempt (capture_attempts,
+    busy_attempts), so a failed capture still carries its counts in the record."""
     last = ""
     busy = 0
     for attempt in range(WEBCAM_ATTEMPTS):
@@ -76,13 +79,15 @@ def _capture_webcam(out: Path, device: str) -> tuple[int, int]:
             time.sleep(WEBCAM_RETRY_PAUSE_S)
         run = subprocess.run(["fswebcam", "-d", device, "-q", "-r", "640x480",
                               "--no-banner", "-S", "15", str(out)],
-                             check=True, capture_output=True, text=True, timeout=60)
-        if "Device or resource busy" in (run.stderr or ""):
+                             check=False, capture_output=True, text=True, timeout=60)
+        stderr = run.stderr or ""
+        if "Device or resource busy" in stderr:
             busy += 1
+        telemetry.update(capture_attempts=attempt + 1, busy_attempts=busy)
         if out.is_file() and out.stat().st_size > 0:
-            return attempt + 1, busy
-        last = (run.stderr or "").strip()[-160:]
-    raise RuntimeError(f"fswebcam exited 0 but wrote no frame to {out.name}"
+            return
+        last = stderr.strip()[-160:] or f"fswebcam exit {run.returncode}"
+    raise RuntimeError(f"fswebcam wrote no frame to {out.name} after {WEBCAM_ATTEMPTS} attempts"
                        + (f": {last}" if last else ""))
 
 
@@ -111,8 +116,8 @@ def run(source: str, host: str | None, device: str, frame: Path | None) -> dict:
     if shutil.which("ffmpeg") is None:
         return {**record, "status": "unavailable", "reason": "ffmpeg missing"}
     tmp = Path(tempfile.mkdtemp(prefix="camsig-"))
+    capture: dict = {}  # filled by the capture step; kept on failure so the record shows what was tried
     try:
-        capture: dict = {}
         if source == "file":
             if frame is None:
                 return {**record, "status": "unavailable", "reason": "no frame given"}
@@ -120,15 +125,15 @@ def run(source: str, host: str | None, device: str, frame: Path | None) -> dict:
         else:
             image = tmp / "frame.jpg"
             if source == "webcam":
-                attempts, busy = _capture_webcam(image, device)
-                capture = {"capture_attempts": attempts, "busy_attempts": busy}
+                _capture_webcam(image, device, capture)
             elif source == "mac":
                 if not host:
                     return {**record, "status": "unavailable", "reason": "mac needs USER@HOST"}
                 _capture_mac(image, host)
         return {**record, "status": "ok", **capture, **signature(image)}
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-        return {**record, "status": "unavailable", "reason": f"{type(exc).__name__}: {exc}"[:300]}
+        return {**record, **capture, "status": "unavailable",
+                "reason": f"{type(exc).__name__}: {exc}"[:300]}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
