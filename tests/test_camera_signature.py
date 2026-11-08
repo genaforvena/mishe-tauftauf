@@ -46,6 +46,7 @@ def test_capture_temp_frame_is_deleted(tmp_path, monkeypatch):
     def fake(out, device):
         seen.append(out)
         _frame(out.with_suffix(".png"), "gray").rename(out)
+        return 1, 0
 
     monkeypatch.setattr(cam, "_capture_webcam", fake)
     result = cam.run("webcam", None, "/dev/video0", None)
@@ -113,3 +114,39 @@ def test_fswebcam_busy_device_then_frame_is_used(tmp_path, monkeypatch):
     out = cam.run("webcam", None, "/dev/video0", None)
     assert len(attempts) == 3 and pauses == [2.5, 2.5]
     assert out["status"] == "unavailable" and "grid" not in out  # frame bytes not decodable; no invented grid
+
+
+def test_busy_then_frame_record_counts_attempts(tmp_path, monkeypatch):
+    """Observed 2026-11-07/08: a retried busy input must be visible in the record, since success is otherwise silent."""
+    attempts = []
+
+    def busy_then_ok(args, **kwargs):
+        if args[0] != "fswebcam":
+            return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=b"")
+        attempts.append(args)
+        if len(attempts) < 3:
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="VIDIOC_S_INPUT: Device or resource busy")
+        Path(args[-1]).write_bytes(b"\xff\xd8 frame")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(cam.subprocess, "run", busy_then_ok)
+    monkeypatch.setattr(cam.time, "sleep", lambda s: None)
+    monkeypatch.setattr(cam.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(cam, "signature", lambda image: {"grid": [0.0]})
+    out = cam.run("webcam", None, "/dev/video0", None)
+    assert out["status"] == "ok"
+    assert out["capture_attempts"] == 3 and out["busy_attempts"] == 2
+
+
+def test_clean_first_attempt_record_has_no_busy(tmp_path, monkeypatch):
+    def clean(args, **kwargs):
+        if args[0] != "fswebcam":
+            return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=b"")
+        Path(args[-1]).write_bytes(b"\xff\xd8 frame")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(cam.subprocess, "run", clean)
+    monkeypatch.setattr(cam.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(cam, "signature", lambda image: {"grid": [0.0]})
+    out = cam.run("webcam", None, "/dev/video0", None)
+    assert out["capture_attempts"] == 1 and out["busy_attempts"] == 0

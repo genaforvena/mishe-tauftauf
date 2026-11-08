@@ -64,19 +64,23 @@ WEBCAM_ATTEMPTS = 3
 WEBCAM_RETRY_PAUSE_S = 3.0
 
 
-def _capture_webcam(out: Path, device: str) -> None:
+def _capture_webcam(out: Path, device: str) -> tuple[int, int]:
     """One frame from fswebcam. fswebcam can exit 0 without writing a file
     (observed 1 in 30 on /dev/video0), so the file is checked, not the exit code.
-    A missing frame is retried after a short pause before being reported as unavailable."""
+    A missing frame is retried after a short pause before being reported as unavailable.
+    Returns (attempts used, attempts whose stderr reported a busy device) for the record."""
     last = ""
+    busy = 0
     for attempt in range(WEBCAM_ATTEMPTS):
         if attempt:
             time.sleep(WEBCAM_RETRY_PAUSE_S)
         run = subprocess.run(["fswebcam", "-d", device, "-q", "-r", "640x480",
                               "--no-banner", "-S", "15", str(out)],
                              check=True, capture_output=True, text=True, timeout=60)
+        if "Device or resource busy" in (run.stderr or ""):
+            busy += 1
         if out.is_file() and out.stat().st_size > 0:
-            return
+            return attempt + 1, busy
         last = (run.stderr or "").strip()[-160:]
     raise RuntimeError(f"fswebcam exited 0 but wrote no frame to {out.name}"
                        + (f": {last}" if last else ""))
@@ -108,6 +112,7 @@ def run(source: str, host: str | None, device: str, frame: Path | None) -> dict:
         return {**record, "status": "unavailable", "reason": "ffmpeg missing"}
     tmp = Path(tempfile.mkdtemp(prefix="camsig-"))
     try:
+        capture: dict = {}
         if source == "file":
             if frame is None:
                 return {**record, "status": "unavailable", "reason": "no frame given"}
@@ -115,12 +120,13 @@ def run(source: str, host: str | None, device: str, frame: Path | None) -> dict:
         else:
             image = tmp / "frame.jpg"
             if source == "webcam":
-                _capture_webcam(image, device)
+                attempts, busy = _capture_webcam(image, device)
+                capture = {"capture_attempts": attempts, "busy_attempts": busy}
             elif source == "mac":
                 if not host:
                     return {**record, "status": "unavailable", "reason": "mac needs USER@HOST"}
                 _capture_mac(image, host)
-        return {**record, "status": "ok", **signature(image)}
+        return {**record, "status": "ok", **capture, **signature(image)}
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         return {**record, "status": "unavailable", "reason": f"{type(exc).__name__}: {exc}"[:300]}
     finally:
