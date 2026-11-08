@@ -43,7 +43,7 @@ entry with no fact emits nothing. Fields are separated by single spaces.
 |---|---|---|
 | `DM <seq> <ts> <source> <target>` | body starts with `[dm] to=` followed by one or more of `[A-Za-z0-9_.-]` | an addressed DM; `target` is the maximal such run |
 | `REF <seq> <ts> <sha>` | body contains `[record] records/<64 lowercase hex>.json sha256=<64 lowercase hex>` | the first such match; `sha` is the first 64-hex group |
-| `OUT <seq> <ts> <role> <runs>` | body starts with `Wall outcome `, a non-empty token with no ASCII whitespace, a single space, `by `, then one or more `[A-Za-z0-9_.-]` | `role` is that run; `runs` is described below |
+| `OUT <seq> <ts> <role> <runs>` | body starts with `Wall outcome `, a non-empty token with no whitespace in the ASCII set Python `str` `\s` matches (0x09-0x0D and 0x1C-0x20; a non-ASCII byte in the token defers), a single space, `by `, then one or more `[A-Za-z0-9_.-]` | `role` is that run; `runs` is described below |
 | `DEFER <seq> <ts>` | body starts with `Wall outcome ` and its header token contains a non-ASCII byte | the caller must apply the Python rule (`WALL_OUTCOME_RE`) to this entry's body itself |
 
 - `seq` is the entry's sequence, decimal, as in the `E` header. `ts` and `source`
