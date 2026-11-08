@@ -146,9 +146,10 @@ def status_doc(ledger: Ledger, state: str) -> dict:
     s = ledger.summary()
     wall, ana, cap = s["wall"], s["analysed"], s["captured"]
     if wall >= MIN_WALL_S:
-        cov = round(ana / wall, 3)
+        raw = ana / wall  # compare the unrounded ratio: 0.4996 must read RED, not round up to GREEN
+        cov = round(raw, 3)
         cov_cap = round(cap / wall, 3)
-        coverage_state = "RED" if cov < COVERAGE_MIN else "GREEN"
+        coverage_state = "RED" if raw < COVERAGE_MIN else "GREEN"
     else:
         cov = cov_cap = None
         coverage_state = "WARMING"

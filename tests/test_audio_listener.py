@@ -104,6 +104,15 @@ def test_hint_row_chains_call_watcher_and_silence_does_not(monkeypatch, tmp_path
     assert chained == [tmp_path]
 
 
+def test_coverage_just_under_half_reads_red_not_rounded_green():
+    ledger = al.Ledger()
+    ledger.add("wall", 10000.0)
+    ledger.add("captured", 10000.0)
+    ledger.add("analysed", 4996.0)  # raw 0.4996 rounds to 0.5 at three places
+    doc = al.status_doc(ledger, "LISTENING")
+    assert doc["coverage_state"] == "RED"
+
+
 def test_coverage_warms_up_before_min_wall():
     ledger = al.Ledger()
     ledger.add("wall", 100.0)
