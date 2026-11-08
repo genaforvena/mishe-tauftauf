@@ -31,18 +31,23 @@ def python_items(data: bytes):
 def rust_items(path: Path, size: int):
     proc = subprocess.Popen([BIN, "frames", str(path), "--size", str(size)],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    out = proc.stdout
-    while True:
-        line = out.readline()
-        if not line:
-            break
-        parts = line.decode("utf-8").rstrip("\n").split(" ")
-        seq, ts, src, count = int(parts[1]), parts[2], parts[3], int(parts[4])
-        body = out.read(count).decode("utf-8")
-        assert out.read(1) == b"\n"
-        yield ("E", seq, ts, src, body)
-    rc = proc.wait()
-    err = proc.stderr.read().decode("utf-8").strip()
+    try:
+        out = proc.stdout
+        while True:
+            line = out.readline()
+            if not line:
+                break
+            parts = line.decode("utf-8").rstrip("\n").split(" ")
+            seq, ts, src, count = int(parts[1]), parts[2], parts[3], int(parts[4])
+            body = out.read(count).decode("utf-8")
+            assert out.read(1) == b"\n"
+            yield ("E", seq, ts, src, body)
+        rc = proc.wait()
+        err = proc.stderr.read().decode("utf-8").strip()
+    finally:
+        proc.stdout.close()
+        proc.stderr.close()
+        proc.wait()
     if rc == 2:
         yield ("ERR", err)
     else:
