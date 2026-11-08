@@ -31,7 +31,7 @@ Common to all producer units: `Type=oneshot`, `KillMode=control-group`, `MemoryH
 
 | Unit | ExecStart (abridged) | Timer | TimeoutStart / Stop | Duty (`duties.json`) |
 |---|---|---|---|---|
-| `mishe-producer-dispatch` | `python -m mishe_tauftauf produce dispatch` | 60 s | 1 min / 1 min 30 s | `duties.json:18-23` (every 60, timeout 30, max_age 300) |
+| `mishe-producer-dispatch` | `python3 -m mishe_tauftauf produce dispatch` | 60 s | 1 min / 1 min 30 s | `duties.json:18-23` (every 60, timeout 30, max_age 300) |
 | `mishe-producer-readings` | `signal run readings --timeout 300 -- … discover scan` | 600 s | 5 min 30 s / 1 min 30 s | `duties.json:197-212` (every 600, timeout 300, max_age 900) |
 | `mishe-producer-observer-checks` | `signal run observer-checks --timeout 900 -- /usr/bin/python3 …/checks-runner/observer-checks.py --once` | 900 s | 15 min 30 s / 1 min 30 s | `duties.json:93-108` (every 900, timeout 900, max_age 2700) |
 | `mishe-producer-host-capacity` | `signal run host-capacity -- producers/host-capacity.sh` | 120 s | 1 min 30 s / 1 min 30 s | `duties.json:168-173` (every 120, timeout 60) |
