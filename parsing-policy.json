@@ -7,6 +7,7 @@
     "src/mishe_tauftauf/claude_quota_text.py",
     "src/mishe_tauftauf/cli.py",
     "src/mishe_tauftauf/coord_tape.py",
+    "src/mishe_tauftauf/consumer_fence.py",
     "src/mishe_tauftauf/core/containment_config.py",
     "src/mishe_tauftauf/core/dispatch_record.py",
     "src/mishe_tauftauf/core/restore_request.py",
