@@ -12,10 +12,13 @@ reading of the whole tape, so none of them are returned. The caller gets
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 from .feed import TapeUnknown
 
@@ -53,14 +56,29 @@ TapeFact = DmFact | RefFact | OutFact | DeferFact
 
 
 def facts_binary() -> str:
-    """Resolve ``mishe-tape-facts``. ``MISHE_TAPE_FACTS_BIN`` is the only source for now.
+    """Resolve ``mishe-tape-facts``. Fails closed; never falls back to Python.
 
-    Fails closed: no binary means UNKNOWN, not a Python fallback.
+    ``MISHE_TAPE_FACTS_BIN`` is an explicit override (tests, scratch builds).
+    Otherwise the site-local install ``$SITE/bin/mishe-tape-facts`` is used, and
+    it must match the sha256 recorded beside it in ``mishe-tape-facts.install.json``.
     """
     override = os.environ.get("MISHE_TAPE_FACTS_BIN")
-    if not override or not os.path.isfile(override) or not os.access(override, os.X_OK):
-        raise TapeUnknown("mishe-tape-facts unavailable: MISHE_TAPE_FACTS_BIN names no executable file")
-    return override
+    if override:
+        if not os.path.isfile(override) or not os.access(override, os.X_OK):
+            raise TapeUnknown("MISHE_TAPE_FACTS_BIN names no executable file")
+        return override
+    home = os.environ.get("MISHE_SEED_HOME") or os.environ.get("MISHE_TAUFTAUF_HOME")
+    if not home:
+        raise TapeUnknown("mishe-tape-facts unavailable: no site home and no MISHE_TAPE_FACTS_BIN")
+    binary = Path(home) / "bin" / "mishe-tape-facts"
+    try:
+        record = json.loads((binary.parent / "mishe-tape-facts.install.json").read_text(encoding="utf-8"))
+        digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    except (OSError, ValueError) as exc:
+        raise TapeUnknown(f"mishe-tape-facts install missing or unreadable: {exc}") from exc
+    if not os.access(binary, os.X_OK) or record.get("sha256") != digest:
+        raise TapeUnknown("mishe-tape-facts install is not executable or its sha256 does not match the install record")
+    return str(binary)
 
 
 def parse_facts(output: bytes) -> list[TapeFact]:

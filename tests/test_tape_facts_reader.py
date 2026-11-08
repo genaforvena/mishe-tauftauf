@@ -73,3 +73,41 @@ def test_unknown_output_line_is_unknown():
         parse_facts(b"DM 1 t senses\n")
     with pytest.raises(TapeUnknown, match="not UTF-8"):
         parse_facts(b"\xff\n")
+
+
+def _site_with_facts_install(tmp_path, body: bytes, record_sha: str | None):
+    import hashlib
+    import json
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    binary = bindir / "mishe-tape-facts"
+    binary.write_bytes(body)
+    binary.chmod(0o755)
+    digest = record_sha if record_sha is not None else hashlib.sha256(body).hexdigest()
+    (bindir / "mishe-tape-facts.install.json").write_text(json.dumps({"sha256": digest}))
+    return binary
+
+
+def test_site_install_with_matching_sha_resolves(tmp_path, monkeypatch):
+    from mishe_tauftauf.tape_facts import facts_binary
+    binary = _site_with_facts_install(tmp_path, b"#!/bin/sh\nexit 0\n", None)
+    monkeypatch.delenv("MISHE_TAPE_FACTS_BIN", raising=False)
+    monkeypatch.setenv("MISHE_SEED_HOME", str(tmp_path))
+    assert facts_binary() == str(binary)
+
+
+def test_site_install_with_sha_mismatch_is_unknown(tmp_path, monkeypatch):
+    from mishe_tauftauf.tape_facts import facts_binary
+    _site_with_facts_install(tmp_path, b"#!/bin/sh\nexit 0\n", "0" * 64)
+    monkeypatch.delenv("MISHE_TAPE_FACTS_BIN", raising=False)
+    monkeypatch.setenv("MISHE_SEED_HOME", str(tmp_path))
+    with pytest.raises(TapeUnknown):
+        facts_binary()
+
+
+def test_no_site_install_and_no_override_is_unknown(tmp_path, monkeypatch):
+    from mishe_tauftauf.tape_facts import facts_binary
+    monkeypatch.delenv("MISHE_TAPE_FACTS_BIN", raising=False)
+    monkeypatch.setenv("MISHE_SEED_HOME", str(tmp_path))
+    with pytest.raises(TapeUnknown):
+        facts_binary()
