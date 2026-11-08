@@ -11,12 +11,18 @@ Per segment (the gates are not bypassed):
   -> base model confirms it on the same language -> text gate -> keep text from the hint word.
 Only hint lines keep text. Every row records the language chosen (`lang`) and the models used.
 
-Coverage (the reading that gates RED) = seconds analysed / wall seconds over the last hour,
-suspended time excluded. Captured seconds are reported separately. Under 80 % reads RED.
+Coverage = seconds analysed / wall seconds over the last hour, suspended time excluded.
+A silent segment that the RMS gate drops still counts as analysed (it was observed). Captured
+seconds are reported separately. Under 50 % reads RED; a dead, stalled, suspended or warming
+listener reads UNKNOWN, never GREEN.
+
+`heartbeat` is the duty check: exit 0 = GREEN, 2 = RED (coverage under the minimum), 4 = UNKNOWN
+(missing, stale, stopped, restarting, suspended or warming status).
 
 Usage:
   python tools/audio_listener.py listen [--device plughw:0,0] [--room livingroom] [--site SITE_HOME]
   python tools/audio_listener.py status [--site SITE_HOME]
+  python tools/audio_listener.py heartbeat [--site SITE_HOME]
 
 Status: SITE_HOME/spatial/work/household/audio-listener-status.json (rewritten every 30 s).
 Rows: SITE_HOME/spatial/work/household/audio.jsonl (same file as the window producer).
@@ -48,7 +54,8 @@ TINY = Path.home() / ".mesh" / "whispercpp" / "models" / "ggml-tiny.bin"
 BASE = ah.MODEL
 WINDOW_S = 3600
 MIN_WALL_S = 600  # coverage reads WARMING until this much wall time has been observed
-COVERAGE_RED = 0.8
+COVERAGE_MIN = 0.5  # coverage under this reads RED (target: at least half of wall time observed)
+EXIT_GREEN, EXIT_RED, EXIT_UNKNOWN = 0, 2, 4
 QUEUE_MAX = 3
 STATUS_EVERY = 30.0
 STATUS_NAME = "audio-listener-status.json"
@@ -141,7 +148,7 @@ def status_doc(ledger: Ledger, state: str) -> dict:
     if wall >= MIN_WALL_S:
         cov = round(ana / wall, 3)
         cov_cap = round(cap / wall, 3)
-        coverage_state = "RED" if cov < COVERAGE_RED else "GREEN"
+        coverage_state = "RED" if cov < COVERAGE_MIN else "GREEN"
     else:
         cov = cov_cap = None
         coverage_state = "WARMING"
@@ -299,6 +306,7 @@ def process(seg: Segment, ledger: Ledger, site: Path, vocab: dict, room: str, de
         ledger.add("analysed", seg.new_s)
     if row["status"] == "HINT":
         ledger.add("hint", 0.0, {"t": row["t"], "lang": row["lang"], "text": row["text"]})
+        ah.chain_call_watcher(site)  # the resident listener answers calls as the one-shot window did
 
 
 def worker(q: queue.Queue, ledger: Ledger, site: Path, vocab: dict, room: str, device: str) -> None:
@@ -407,21 +415,53 @@ def listen(args: argparse.Namespace) -> int:
     return 0
 
 
-def status(args: argparse.Namespace) -> int:
-    site = ah.site_home(args.site)
+def reading(doc: dict | None, now: float) -> tuple[str, str]:
+    """(GREEN|RED|UNKNOWN, reason) from a status document. Anything not freshly observed is UNKNOWN."""
+    if doc is None:
+        return "UNKNOWN", "no listener status file"
+    age = now - float(doc.get("t", 0))
+    if age > STALE_S:
+        return "UNKNOWN", f"status stale: {round(age)} s old"
+    state = doc.get("state")
+    if state == "SUSPENDED":
+        return "UNKNOWN", "suspended by a household stop: not observed"
+    if state != "LISTENING":
+        return "UNKNOWN", f"listener state {state}"
+    cov_state = doc.get("coverage_state")
+    if cov_state == "WARMING":
+        return "UNKNOWN", "warming up: coverage not yet measured"
+    if cov_state == "RED":
+        return "RED", f"coverage {doc.get('coverage')} under {COVERAGE_MIN}"
+    if cov_state == "GREEN":
+        return "GREEN", f"coverage {doc.get('coverage')}"
+    return "UNKNOWN", f"coverage_state {cov_state}"
+
+
+def load_status(site: Path) -> dict | None:
     path = ah.out_dir(site) / STATUS_NAME
     if not path.exists():
-        print(json.dumps({"reading": "UNKNOWN", "reason": "no listener status file"}))
-        return 0
-    doc = json.loads(path.read_text())
-    age = round(time.time() - float(doc.get("t", 0)), 1)
-    doc["age_s"] = age
-    if age > STALE_S or doc.get("state") in ("UNKNOWN", "STOPPED"):
-        doc["reading"] = "UNKNOWN"
-    else:
-        doc["reading"] = "RED" if doc.get("coverage_state") == "RED" else "OK"
-    print(json.dumps(doc, sort_keys=True, ensure_ascii=False))
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {"t": 0, "state": "UNREADABLE"}
+
+
+def status(args: argparse.Namespace) -> int:
+    site = ah.site_home(args.site)
+    doc = load_status(site)
+    now = time.time()
+    value, why = reading(doc, now)
+    out = dict(doc or {}, reading=value, reason=why, age_s=round(now - float((doc or {}).get("t", 0)), 1))
+    print(json.dumps(out, sort_keys=True, ensure_ascii=False))
     return 0
+
+
+def heartbeat(args: argparse.Namespace) -> int:
+    site = ah.site_home(args.site)
+    value, why = reading(load_status(site), time.time())
+    print(json.dumps({"reading": value, "reason": why}, sort_keys=True, ensure_ascii=False))
+    return {"GREEN": EXIT_GREEN, "RED": EXIT_RED}.get(value, EXIT_UNKNOWN)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -433,9 +473,13 @@ def main(argv: list[str] | None = None) -> int:
     li.add_argument("--site")
     st = sub.add_parser("status")
     st.add_argument("--site")
+    hb = sub.add_parser("heartbeat")
+    hb.add_argument("--site")
     args = ap.parse_args(argv)
     if args.cmd == "listen":
         return listen(args)
+    if args.cmd == "heartbeat":
+        return heartbeat(args)
     return status(args)
 
 

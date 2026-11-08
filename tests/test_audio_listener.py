@@ -49,15 +49,59 @@ def test_queue_drops_oldest_and_counts():
     assert [q.get_nowait(), q.get_nowait()] == ["d", "e"]
 
 
-def test_coverage_is_analysed_over_wall_and_reads_red_under_80():
+def test_coverage_is_analysed_over_wall_and_reads_red_under_50():
     ledger = al.Ledger()
     ledger.add("wall", 700.0)
     ledger.add("captured", 700.0)
-    ledger.add("analysed", 500.0)  # 0.714
+    ledger.add("analysed", 300.0)  # 0.429
     doc = al.status_doc(ledger, "LISTENING")
-    assert doc["coverage"] == 0.714 and doc["coverage_state"] == "RED"
-    ledger.add("analysed", 200.0)  # 0.997
+    assert doc["coverage"] == 0.429 and doc["coverage_state"] == "RED"
+    ledger.add("analysed", 200.0)  # 0.714
     assert al.status_doc(ledger, "LISTENING")["coverage_state"] == "GREEN"
+
+
+def test_heartbeat_reading_is_green_red_or_unknown_never_green_when_stale():
+    now = 1_000_000.0
+    fresh = {"t": now - 10, "state": "LISTENING", "coverage_state": "GREEN", "coverage": 0.9}
+    assert al.reading(fresh, now) == ("GREEN", "coverage 0.9")
+    low = dict(fresh, coverage_state="RED", coverage=0.3)
+    assert al.reading(low, now)[0] == "RED"
+    assert al.reading(dict(fresh, t=now - 500), now)[0] == "UNKNOWN"  # stale
+    assert al.reading(None, now)[0] == "UNKNOWN"  # missing
+    assert al.reading(dict(fresh, state="RESTARTING"), now)[0] == "UNKNOWN"
+    assert al.reading(dict(fresh, state="SUSPENDED"), now)[0] == "UNKNOWN"
+    assert al.reading(dict(fresh, state="STOPPED"), now)[0] == "UNKNOWN"
+    assert al.reading(dict(fresh, coverage_state="WARMING", coverage=None), now)[0] == "UNKNOWN"
+
+
+def test_heartbeat_exit_codes(tmp_path, monkeypatch):
+    import json
+    import time as _t
+    site = tmp_path
+    (ah.out_dir(site) / al.STATUS_NAME).write_text(json.dumps(
+        {"t": _t.time(), "state": "LISTENING", "coverage_state": "GREEN", "coverage": 0.8}))
+    assert al.main(["heartbeat", "--site", str(site)]) == al.EXIT_GREEN
+    (ah.out_dir(site) / al.STATUS_NAME).write_text(json.dumps(
+        {"t": _t.time(), "state": "LISTENING", "coverage_state": "RED", "coverage": 0.2}))
+    assert al.main(["heartbeat", "--site", str(site)]) == al.EXIT_RED
+    (ah.out_dir(site) / al.STATUS_NAME).unlink()
+    assert al.main(["heartbeat", "--site", str(site)]) == al.EXIT_UNKNOWN
+
+
+def test_hint_row_chains_call_watcher_and_silence_does_not(monkeypatch, tmp_path):
+    chained = []
+    monkeypatch.setattr(ah, "chain_call_watcher", lambda site: chained.append(site))
+    monkeypatch.setattr(ah, "emit", lambda site, row: None)
+    monkeypatch.setattr(ah, "gate_wav", lambda p: "PASS")
+    monkeypatch.setattr(ah, "text_gate", lambda t: "PASS")
+    monkeypatch.setattr(ah, "transcribe", lambda *a, **k: "Миша включи свет")
+    monkeypatch.setattr(al, "classify", lambda wav, row, v, site, spot, confirm: row.update(status="HINT", lang="ru", text="x"))
+    seg = al.Segment(1.0, b"\0" * (al.SEG_S * al.BPS), 7.0)
+    al.process(seg, al.Ledger(), tmp_path, vocab(), "livingroom", "plughw:0,0")
+    assert chained == [tmp_path]
+    monkeypatch.setattr(al, "classify", lambda wav, row, v, site, spot, confirm: row.update(status="SILENT_OR_DROPPED"))
+    al.process(seg, al.Ledger(), tmp_path, vocab(), "livingroom", "plughw:0,0")
+    assert chained == [tmp_path]
 
 
 def test_coverage_warms_up_before_min_wall():

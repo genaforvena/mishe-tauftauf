@@ -305,6 +305,23 @@
       "replaces": []
     },
     {
+      "name": "audio-listener-coverage",
+      "command": [
+        "{python}",
+        "{repo}/tools/audio_listener.py",
+        "heartbeat",
+        "--site",
+        "{home}"
+      ],
+      "every": 60,
+      "timeout": 20,
+      "max_age": 120,
+      "unknown_codes": [4],
+      "resolver": "senses",
+      "covers": "resident living-room listener heartbeat: GREEN when its status is fresh and at least half of wall time is observed, RED under 50 %, UNKNOWN when the status is stale, missing, stopped, restarting, suspended or warming up",
+      "replaces": []
+    },
+    {
       "name": "voice-clone-ready",
       "command": [
         "{python}",
