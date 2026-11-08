@@ -10,11 +10,12 @@
       Reads the newest Note3 sensor sample and the Redmi10 stream from the
       discovery snapshot, appends one row to spatial/work/household/phones.jsonl.
 
-Exit codes follow the duty runner: 0 = fresh and valid (GREEN), 1 = cannot tell
-(a crash or failed capture; the runner fails the unit). phones exits 4 when a phone
-is stale, missing or without values: the duty declares 4 as an unknown code, so the
-signal ages to UNKNOWN without failing the unit. Nothing here reports RED. Every run
-prints one JSON line on stdout, which becomes the duty detail.
+Exit codes follow the duty runner: 0 = fresh and valid (GREEN), 2 = observed blind
+camera (RED), 1 = cannot tell (a crash or failed local capture; the runner fails the
+unit). phones and the bedroom Mac camera exit 4 when their input is stale, missing or
+unreachable: those duties declare 4 as an unknown code, so the signal ages to UNKNOWN
+without failing the unit. Every run prints one JSON line on stdout, which becomes the
+duty detail.
 """
 from __future__ import annotations
 
@@ -136,12 +137,22 @@ def cmd_camera(args) -> int:
     append(site_path(args.site, "spatial/work/household/signatures.jsonl"), row)
     print(json.dumps({k: v for k, v in row.items() if k != "grid"}, sort_keys=True))
     # 0 = ok observation (GREEN); 2 = observed blind camera (RED, recorded, not a crash);
-    # 1 = cannot tell (unavailable config or a failed capture), which the producer treats as a crash.
+    # 4 = input missing: the remote Mac could not be reached or captured from (UNKNOWN, unit succeeds);
+    # 1 = cannot tell (unavailable config or a failed local capture), which the producer treats as a crash.
     if row.get("status") == "ok":
         return 0
     if row.get("status") == "blind":
         return 2
+    if _device_unreachable(row):
+        return 4
     return 1
+
+
+def _device_unreachable(row) -> bool:
+    # A mac capture runs ssh/scp; a failed or timed-out transfer means the device is not reachable.
+    # Config errors ("mac needs USER@HOST") and a missing ffmpeg stay crashes (exit 1).
+    return (row.get("source") == "mac" and row.get("status") == "unavailable"
+            and str(row.get("reason", "")).startswith(("CalledProcessError", "TimeoutExpired")))
 
 
 def newest_note3(site: str):

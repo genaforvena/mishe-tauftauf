@@ -208,3 +208,37 @@ def test_unavailable_room_is_cannot_tell(tmp_path, monkeypatch):
     (tmp_path / "spatial/work/household").mkdir(parents=True)
     (tmp_path / "spatial/work/household/rooms.json").write_text("[]")
     assert hc.main(["camera", "--room", "living room", "--source", "webcam", "--site", str(tmp_path)]) == 1
+
+
+class _UnreachableMacCamsig:
+    def __init__(self, reason):
+        self.reason = reason
+
+    def run(self, source, target, device, extra):
+        return {"captured_at_epoch_s": 1.0, "source": source, "status": "unavailable", "reason": self.reason}
+
+
+def _mac_exit(monkeypatch, tmp_path, reason):
+    (tmp_path / "spatial/work/household").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "spatial/work/household/rooms.json").write_text(
+        json.dumps([{"name": "bedroom", "source": "mac", "target": "user@host"}]))
+    monkeypatch.setattr(hc, "load_camsig", lambda: _UnreachableMacCamsig(reason))
+    return hc.main(["camera", "--room", "bedroom", "--source", "mac", "--site", str(tmp_path)])
+
+
+def test_unreachable_mac_is_unknown_not_a_crash(tmp_path, monkeypatch):
+    # ssh/scp failing to reach the Mac is missing input: exit 4 (declared unknown code), not 1.
+    reason = "CalledProcessError: Command '['scp', ...]' returned non-zero exit status 255."
+    assert _mac_exit(monkeypatch, tmp_path, reason) == 4
+
+
+def test_mac_capture_timeout_is_unknown(tmp_path, monkeypatch):
+    assert _mac_exit(monkeypatch, tmp_path, "TimeoutExpired: ssh timed out after 180 seconds") == 4
+
+
+def test_missing_ffmpeg_on_mac_stays_a_crash(tmp_path, monkeypatch):
+    assert _mac_exit(monkeypatch, tmp_path, "ffmpeg missing") == 1
+
+
+def test_mac_config_error_stays_a_crash(tmp_path, monkeypatch):
+    assert _mac_exit(monkeypatch, tmp_path, "mac needs USER@HOST") == 1

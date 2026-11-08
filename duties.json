@@ -385,8 +385,9 @@
       "every": 240,
       "timeout": 240,
       "max_age": 900,
+      "unknown_codes": [4],
       "resolver": "senses",
-      "covers": "bedroom Mac camera brightness grid every four minutes; a blind lens is status blind, recorded and exits 2 (RED, observed); a failed capture exits 1 (crash)",
+      "covers": "bedroom Mac camera brightness grid every four minutes; a blind lens is status blind, recorded and exits 2 (RED, observed); an unreachable Mac exits 4 (UNKNOWN, input missing, unit succeeds); a local crash or config error exits 1 (crash)",
       "replaces": []
     },
     {
