@@ -18,10 +18,14 @@ UNITS = ('mishe-wake-health.path loaded inactive dead Mishe wake triggers\n'
 
 class Fake(revive.Host):
     def __init__(self, tmp_path, *, latch=LATCH, emergency=False, ready=READY, inside=False, restores=(),
-                 units=UNITS, views=False, io=0, restore_works=True, hold=False, life=None):
+                 units=UNITS, views=False, io=0, restore_works=True, hold=False, life=None,
+                 inventory=(), archives=(), start_fails=(), enabled=True):
         super().__init__(tmp_path / 'site', tmp_path / 'repo')
         self.t = NOW
         self.files, self.calls, self.inside, self.restores = {}, [], inside, list(restores)
+        self.archives, self.start_fails, self.enabled, self.started = list(archives), set(start_fails), enabled, set()
+        if inventory:
+            self.files[str(revive.INVENTORY)] = json.dumps({'units': list(inventory)})
         self.latched = latch is not None
         if latch is not None:
             self.files[str(STATE / 'tripped')] = json.dumps(latch)
@@ -40,6 +44,7 @@ class Fake(revive.Host):
     def write(self, path, text): self.files[str(path)] = text
     def append(self, path, text): self.files[str(path)] = self.files.get(str(path), '') + text
     def archived_restores(self): return self.restores
+    def latch_archive_times(self): return list(self.archives)
     def inside_mishe(self): return self.inside
 
     def run(self, argv, timeout=60, env=None):
@@ -60,7 +65,16 @@ class Fake(revive.Host):
                 return 0, '', ''
             return 1, '', 'restore evidence must name exactly the latches it clears'
         if argv[:3] == ['systemctl', '--user', 'list-units']:
-            return 0, self.units, ''
+            names = argv[argv.index('--no-legend') + 1:]
+            rows = ''.join(f'{u} loaded active running x\n' for u in sorted(self.started) if not names or u in names)
+            return 0, self.units + rows, ''
+        if argv[:3] == ['systemctl', '--user', 'start']:
+            if argv[3] in self.start_fails:
+                return 1, '', 'Failed to start'
+            self.started.add(argv[3])
+            return 0, '', ''
+        if argv[:3] == ['systemctl', '--user', 'is-enabled']:
+            return 0, ('enabled' if self.enabled else 'disabled'), ''
         if argv[0] == 'tmux':
             return (0, 'mishe\n', '') if self.views else (1, '', 'no server')
         return 0, '', ''
@@ -170,3 +184,68 @@ def test_boundary_decoders_never_trust_malformed_input():
     assert b.unit_kind('mishe-wake-docs.path') == 'wake-path' and b.unit_kind('run-x.scope') == 'other'
     assert b.unit_kind('mishe-wake@docs.service') == 'wake-service' and b.unit_kind('mishe-producer-x.service') == 'service'
     assert b.unit_rows('a.service loaded failed failed Some thing\nshort\n') == [('a.service', 'failed', 'failed', 'Some thing')]
+
+
+PHONE = ('light-cycle-monitor.service', 'android-body-rendezvous.service')
+PHONE_UP = ''.join(f'{u} loaded active running x\n' for u in PHONE)
+
+
+def test_a_healthy_pass_samples_the_running_inventory_and_starts_nothing(tmp_path):
+    h = Fake(tmp_path, latch=None, inventory=PHONE, units=PHONE_UP, views=True)
+    r = revive.run(h)
+    doc = json.loads(h.files[str(h.home / revive.RUNNING)])
+    assert doc['active'] == sorted(PHONE) and doc['checked'] == NOW and 'owed' not in doc
+    assert not acted(h) and r.code == 0 and 'alive: nothing to revive' in r.lines[-1]
+
+
+def test_units_running_before_a_trip_come_back_after_rearm(tmp_path):
+    h = Fake(tmp_path, inventory=PHONE)           # latched: the guard stopped the phone units
+    h.files[str(h.home / revive.RUNNING)] = json.dumps({'active': list(PHONE), 'checked': NOW - 600})
+    r = revive.run(h)
+    assert r.code == 0 and h.verb == 'rearm'
+    assert set(PHONE) <= h.started
+    doc = json.loads(h.files[str(h.home / revive.RUNNING)])
+    assert doc['owed'] == [] and doc['active'] == []     # the sample taken after the restart saw nothing active yet
+    assert 'restarted after rearm' in ' '.join(r.lines)
+
+
+def test_a_rearm_seen_only_in_the_archive_still_owes_the_pre_trip_set(tmp_path):
+    h = Fake(tmp_path, latch=None, inventory=PHONE, archives=(NOW - 100,))   # trip and rearm between two passes
+    h.files[str(h.home / revive.RUNNING)] = json.dumps({'active': list(PHONE), 'checked': NOW - 600})
+    r = revive.run(h)
+    assert r.code == 0 and set(PHONE) <= h.started, r.lines
+
+
+def test_a_unit_that_stays_down_is_unknown_and_retried_not_silent(tmp_path):
+    h = Fake(tmp_path, inventory=PHONE, start_fails=('light-cycle-monitor.service',))
+    h.files[str(h.home / revive.RUNNING)] = json.dumps({'active': list(PHONE), 'checked': NOW - 600})
+    r = revive.run(h)
+    text = ' '.join(r.lines)
+    assert r.code == 3 and 'UNKNOWN' in text and 'light-cycle-monitor.service' in text
+    doc = json.loads(h.files[str(h.home / revive.RUNNING)])
+    assert doc['owed'] == ['light-cycle-monitor.service'] and doc['attempts'] == {'light-cycle-monitor.service': 1}
+
+
+def test_owed_unit_gives_up_after_the_bounded_attempts(tmp_path):
+    h = Fake(tmp_path, latch=None, inventory=PHONE, start_fails=PHONE)
+    h.files[str(h.home / revive.RUNNING)] = json.dumps({'active': [], 'owed': list(PHONE), 'checked': NOW,
+                                                         'attempts': {u: revive.MAX_OWED_ATTEMPTS - 1 for u in PHONE}})
+    r = revive.run(h)
+    assert r.code == 3 and 'gave up' in ' '.join(r.lines)
+    assert json.loads(h.files[str(h.home / revive.RUNNING)])['owed'] == []
+
+
+def test_a_disabled_owed_unit_is_reported_and_not_enabled_by_revive(tmp_path):
+    h = Fake(tmp_path, latch=None, inventory=PHONE, enabled=False)
+    h.files[str(h.home / revive.RUNNING)] = json.dumps({'active': [], 'owed': [PHONE[0]], 'checked': NOW})
+    r = revive.run(h)
+    assert 'is not enabled' in ' '.join(r.lines)
+    assert not any(c[:3] == ['systemctl', '--user', 'enable'] for c in h.calls)
+
+
+def test_dry_run_samples_nothing_and_starts_nothing(tmp_path):
+    h = Fake(tmp_path, inventory=PHONE)
+    h.files[str(h.home / revive.RUNNING)] = json.dumps({'active': list(PHONE), 'checked': NOW - 600})
+    before = h.files[str(h.home / revive.RUNNING)]
+    revive.run(h, dry_run=True)
+    assert h.files[str(h.home / revive.RUNNING)] == before and not h.started

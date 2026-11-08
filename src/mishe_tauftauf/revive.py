@@ -40,6 +40,12 @@ MAX_RESTORES_PER_DAY = 24
 # it would erase that evidence every few minutes and its rate counter with it.
 RESETTABLE = ('wake-path', 'wake-service', 'timer', 'plant-scope')
 HEALTHY_STATES = ('NORMAL', 'READY')   # READY is the armed state of a guard configured without life support
+# The guard stops every unit in its inventory on a trip (`stop` in host_containment.py) and records nothing about which
+# were running. Revive therefore keeps its own sample: the inventory units active on each healthy pass, and the set
+# owed a restart once a trip has been seen (latch present) or its rearm archived since the last healthy pass.
+INVENTORY = Path('/etc/mishe-containment.json')
+RUNNING = 'operator/running-units.json'      # under the site home; never committed
+MAX_OWED_ATTEMPTS = 12                        # 12 passes of the 5-minute timer = one hour; then UNKNOWN, not silent retry
 
 
 class Host:
@@ -85,6 +91,15 @@ class Host:
         found = [b.restore_archive(p.name, self.read(p)) for p in sorted(STATE.glob('tripped-*.json'))]
         return [item for item in found if item is not None]
 
+    def latch_archive_times(self) -> list:
+        """Rearm times (seconds) from the archive names; the archive is written when the latch is cleared."""
+        times = []
+        for p in STATE.glob('tripped-*.json'):
+            stem = p.name[len('tripped-'):-len('.json')]
+            if stem.isdigit():
+                times.append(int(stem) / 1e9)
+        return times
+
     def inside_mishe(self) -> bool:
         pid = os.getpid()
         for _ in range(64):
@@ -112,6 +127,8 @@ class Probe:
     needs_start: list = field(default_factory=list)      # wake paths / timers that are not active
     failed: list = field(default_factory=list)           # failed units (name, kind)
     views: bool = False                                  # the inner tmux session answers
+    inventory: list = field(default_factory=list)        # the guard's stop inventory (units it stops on a trip)
+    active_inventory: list = field(default_factory=list) # the inventory units active now
 
 
 @dataclass
@@ -146,7 +163,95 @@ def probe(h: Host) -> Probe:
             p.failed.append((name, kind))
     _, sessions, _ = h.run(['tmux', '-S', h.inner_socket, 'list-sessions', '-F', '#{session_name}'])
     p.views = bool(b.session_names(sessions))
+    p.inventory = inventory_units(h)
+    p.active_inventory = active_units(h, p.inventory)
     return p
+
+
+def inventory_units(h: Host) -> list:
+    config = b.decode_json(h.read(INVENTORY))
+    units = config.get('units') if isinstance(config, dict) else None
+    return [u for u in units if isinstance(u, str)] if isinstance(units, list) else []
+
+
+def active_units(h: Host, names) -> list:
+    """Which of these user units are active now; systemd prints nothing for a name it does not know."""
+    if not names:
+        return []
+    _, listing, _ = h.run(['systemctl', '--user', 'list-units', '--all', '--plain', '--no-legend', *names])
+    return sorted(name for name, active, _sub, _desc in b.unit_rows(listing) if active == 'active' and name in names)
+
+
+def load_running(h: Host) -> dict:
+    doc = b.decode_json(h.read(h.home / RUNNING))
+    return doc if isinstance(doc, dict) else {}
+
+
+def save_running(h: Host, doc: dict) -> None:
+    h.write(h.home / RUNNING, b.dumps(doc) + '\n')
+
+
+def note_trip(h: Host, dry_run: bool) -> None:
+    """A latch is present: the units active before the trip are owed a restart once the guard is rearmed."""
+    if dry_run:
+        return
+    doc = load_running(h)
+    doc['owed'] = sorted(set(doc.get('owed', [])) | set(doc.get('active', [])))
+    save_running(h, doc)
+
+
+def note_healthy(h: Host, p: Probe, r: Result, dry_run: bool) -> None:
+    """Healthy guard: owe the pre-trip set if a rearm happened since the last sample; then sample the running set."""
+    doc = load_running(h)
+    last = doc.get('checked')
+    if last is not None and any(t > last for t in h.latch_archive_times()):
+        doc['owed'] = sorted(set(doc.get('owed', [])) | set(doc.get('active', [])))
+        r.say(f'a trip was rearmed since the last sample; owed restarts: {", ".join(doc["owed"]) or "none"}')
+    doc['active'], doc['checked'] = p.active_inventory, h.now()
+    if not dry_run:
+        save_running(h, doc)
+
+
+def restart_owed(h: Host, p: Probe, r: Result, *, dry_run: bool) -> None:
+    """Start the owed units that are still down. Each one that stays down is retried, bounded, and reported UNKNOWN."""
+    doc = load_running(h)
+    owed = [u for u in doc.get('owed', []) if u not in p.active_inventory]
+    if not owed:
+        return
+    if p.hold:
+        r.say(f'the plant is HELD: {len(owed)} owed unit(s) wait for `mishe hold off`: {", ".join(owed)}')
+        return
+    attempts = doc.get('attempts', {})
+    for name in owed:
+        if dry_run:
+            r.say(f'dry run: would systemctl --user start {name}')
+            continue
+        attempts[name] = attempts.get(name, 0) + 1
+        code, _, err = h.run(['systemctl', '--user', 'start', name], timeout=90)
+        r.actions.append(f'start {name}')
+        _, enabled, _ = h.run(['systemctl', '--user', 'is-enabled', name])
+        state = b.first_line(enabled)
+        if state != 'enabled':
+            r.say(f'{name} is not enabled ({state or "unknown"}): it will not come back after a reboot; its owner enables it')
+        if code != 0:
+            r.say(f'start {name} failed: {b.first_line(err)}')
+    if dry_run:
+        return
+    back = set(active_units(h, owed))
+    still = [u for u in owed if u not in back]
+    done = {u for u in owed if u in back}
+    doc['attempts'] = {k: v for k, v in attempts.items() if k in still}
+    doc['owed'] = sorted((set(doc.get('owed', [])) - done) - {u for u in still if attempts.get(u, 0) >= MAX_OWED_ATTEMPTS})
+    save_running(h, doc)
+    given_up = [u for u in still if attempts.get(u, 0) >= MAX_OWED_ATTEMPTS]
+    if given_up:
+        r.code = max(r.code, 3)
+        r.say(f'UNKNOWN: gave up after {MAX_OWED_ATTEMPTS} attempts; these did not return: {", ".join(given_up)}')
+    elif still:
+        r.code = max(r.code, 3)
+        r.say(f'UNKNOWN: {len(still)} owed unit(s) still down after the rearm: {", ".join(still)}')
+    if done:
+        r.say(f'restarted after rearm: {", ".join(sorted(done))}')
 
 
 def describe(p: Probe) -> str:
@@ -305,6 +410,7 @@ def run(h: Host, *, auto=False, dry_run=False, allow_repeat=False, diagnosis='')
             r.code = 3
             r.say('UNDECIDABLE: the guard reports TRIPPED but no latch file is readable')
             return r
+        note_trip(h, dry_run)                 # before any restore attempt: the pre-trip set must survive a failed one
         if not restore_latch(h, p, r, auto=auto, dry_run=dry_run, allow_repeat=allow_repeat, diagnosis=diagnosis):
             return r
         if not wait_normal(h, r):
@@ -313,6 +419,8 @@ def run(h: Host, *, auto=False, dry_run=False, allow_repeat=False, diagnosis='')
     elif p.state not in HEALTHY_STATES:
         r.say(f'the guard is {p.state}; waiting for it to settle before changing anything')
         return r
+    note_healthy(h, p, r, dry_run)
+    restart_owed(h, p, r, dry_run=dry_run)
     if not (p.needs_start or p.failed or not p.views):
         r.say('alive: nothing to revive')
         return r
