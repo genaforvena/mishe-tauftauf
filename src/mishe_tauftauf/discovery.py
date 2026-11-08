@@ -55,7 +55,7 @@ from .slice_throttle import read_slice_throttle
 from .unit_cpu import read_unit_cpu
 from .unit_psi_reading import read_unit_psi
 from .roles import declared as seated_roles
-from .feed import (Feed, FeedEntry, entry_timestamp as _feed_entry_timestamp,
+from .feed import (Feed, FeedEntry, TapeUnknown, entry_timestamp as _feed_entry_timestamp,
                   iter_feed_file, publication_lock, read_scan_acquisitions, read_scan_series,
                   read_text_tail)
 from .chat_protocol import decode_lifecycle, ProtocolError
@@ -4617,7 +4617,7 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
                 "sample": "chat tape unavailable", "kind": "read"}
     try:
         entries = iter_feed_file(tape_path, home=home)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TapeUnknown) as exc:
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
                 "sample": f"chat tape unreadable: {exc}", "kind": "read"}
     window_start = now - timedelta(seconds=DM_DISPOSITION_WINDOW_SECONDS)
@@ -4644,7 +4644,7 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
                 out_match = WALL_OUTCOME_RE.match(entry.body)
                 if out_match:
                     outcome_entries.append((ts, out_match.group(1), entry.body))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TapeUnknown) as exc:
         # A tape that faults is not a shorter tape: the reading is abandoned
         # whole, as the whole-tape read abandoned it.
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",

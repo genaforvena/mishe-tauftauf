@@ -2547,6 +2547,17 @@ def test_dm_disposition_age_missing_tape(tmp_path):
     assert result["sample"] == "chat tape unavailable"
 
 
+def test_dm_disposition_missing_framer_is_unknown_for_both_readings(tmp_path, monkeypatch):
+    (tmp_path / "chat.log").write_bytes(b"")
+    monkeypatch.setenv("MISHE_TAPE_BIN", str(tmp_path / "missing-framer"))
+    disposition = discovery._coord_dm_disposition_age(tmp_path, now=_dm_now())
+    assert disposition["state"] == "unknown"
+    assert "MISHE_TAPE_BIN names no executable file" in disposition["sample"]
+    gate = discovery._coord_gate_latency(tmp_path, now=_dm_now(), disposition=disposition)
+    assert gate["state"] == "unknown"
+    assert "MISHE_TAPE_BIN names no executable file" in gate["sample"]
+
+
 def test_dm_disposition_age_missing_records(tmp_path):
     home = tmp_path / "site"
     home.mkdir(parents=True, exist_ok=True)
