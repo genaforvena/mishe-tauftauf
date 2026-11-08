@@ -234,8 +234,12 @@ def restart_owed(h: Host, p: Probe, r: Result, *, dry_run: bool) -> None:
     """Start the owed units that are still down. Each one that stays down is retried, bounded, and reported UNKNOWN."""
     doc = load_running(h)
     owed = [u for u in doc.get('owed', []) if u not in p.active_inventory]
+    came_back = [u for u in doc.get('owed', []) if u in p.active_inventory]   # already running: owed is settled
     unknown = dict(doc['unknown']) if isinstance(doc.get('unknown'), dict) else {}
     if not owed and not unknown:
+        if came_back and not dry_run:
+            doc['owed'] = [u for u in doc['owed'] if u not in came_back]
+            save_running(h, doc)
         return
     back_up = sorted(set(active_units(h, sorted(unknown))))
     for name in back_up:
@@ -265,7 +269,7 @@ def restart_owed(h: Host, p: Probe, r: Result, *, dry_run: bool) -> None:
         return
     back = set(active_units(h, owed_to_start))
     still = [u for u in owed_to_start if u not in back]
-    done = {u for u in owed_to_start if u in back}
+    done = {u for u in owed_to_start if u in back} | set(came_back)
     give_up = [u for u in still if attempts.get(u, 0) >= MAX_OWED_ATTEMPTS]
     for name in give_up:
         unknown[name] = attempts[name]

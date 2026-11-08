@@ -287,6 +287,15 @@ def test_a_new_trip_gives_a_newly_owed_unit_a_fresh_retry_budget(tmp_path):
     assert doc['owed'] == [PHONE[0]]
 
 
+def test_an_owed_unit_already_back_on_its_own_is_cleared_from_owed(tmp_path):
+    h = Fake(tmp_path, latch=None, inventory=PHONE)
+    h.started = {PHONE[0]}                          # systemd already has it running; the record still says owed
+    h.files[str(h.home / revive.RUNNING)] = json.dumps({'active': [], 'owed': [PHONE[0]], 'checked': NOW})
+    revive.run(h)
+    assert json.loads(h.files[str(h.home / revive.RUNNING)])['owed'] == []
+    assert not any(c[:3] == ['systemctl', '--user', 'start'] and c[3] == PHONE[0] for c in h.calls)
+
+
 def test_a_dry_run_reports_a_persisting_unknown_record(tmp_path):
     h = Fake(tmp_path, latch=None, inventory=PHONE)
     h.files[str(h.home / revive.RUNNING)] = json.dumps({'active': [], 'checked': NOW,
