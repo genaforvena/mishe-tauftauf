@@ -128,14 +128,16 @@ def final_answer(text: str) -> str:
     `text` is the decoded stream from `stream_text`; a stream that never produced an assistant message is returned whole."""
     lines = text.splitlines()
     starts = [i for i, ln in enumerate(lines) if ln.startswith('[assistant] ')]
+    calls = sum(1 for ln in lines if ln.startswith('[tool ') and not ln.startswith(('[tool output]', '[tool error]')))
     if not starts:
-        return text
+        # A wake that ended without a final message (a provider error, a kill): the failure lines, not the whole stream.
+        faults = [ln for ln in lines if ln.startswith(('[provider', '[assistant error', 'UNKNOWN'))]
+        return (f'({calls} tool calls; the wake ended without a final message)\n' + '\n'.join(faults[-5:])).rstrip()
     tail = []
     for ln in lines[starts[-1]:]:
         if ln.startswith('[agent_end]'):
             break
         tail.append(ln)
-    calls = sum(1 for ln in lines if ln.startswith('[tool ') and not ln.startswith(('[tool output]', '[tool error]')))
     answer = '\n'.join(tail).replace('[assistant] ', '', 1)
     return (f'({calls} tool calls)\n' if calls else '') + answer
 

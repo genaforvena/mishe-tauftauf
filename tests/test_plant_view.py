@@ -730,3 +730,15 @@ def test_progress_block_hides_the_retention_preamble(tmp_path):
     os.utime(root / "wake-x-4.work-start.json", (old, old))
     _, text = plant_tape.wakes_step(tmp_path, None)
     assert "RUNNING x" in text and "[tool bash] ls" in text and "retained tail" not in text and "UNKNOWN leading" not in text
+
+
+def test_wake_without_a_final_message_shows_the_failure_not_the_stream(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import output_view
+    out = tmp_path / "w.prompt.out.jsonl"
+    ev = [{"type": "tool_execution_start", "toolName": "read", "args": {"path": "a.py"}},
+          {"type": "tool_execution_end", "result": {"content": [{"type": "text", "text": "SOURCE LISTING\n" * 50}]}},
+          {"type": "auto_retry_end", "success": False, "finalError": "usage_limit_reached"},
+          {"type": "agent_end"}]
+    out.write_text('\n'.join(json.dumps(e) for e in ev) + '\n')
+    _, text = output_view(out, final=True)
+    assert "SOURCE LISTING" not in text and "usage_limit_reached" in text and "without a final message" in text
