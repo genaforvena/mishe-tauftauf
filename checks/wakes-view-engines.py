@@ -172,8 +172,8 @@ def signature(sample_key: str, problems: list[str]) -> str:
     return hashlib.sha256('\n'.join([sample_key, *sorted(problems)]).encode()).hexdigest()
 
 
-def route(home: Path, problems: list[tuple[str, str, str]]) -> None:
-    """One DM to the renderer owner per distinct failure; nothing for a repeat."""
+def route(home: Path, problems: list[tuple[str, str, str]]) -> str:
+    """One DM to the renderer owner per distinct failure; nothing for a repeat. Returns what happened."""
     state_path = home / 'checks' / 'wakes-view-engines-route.json'
     key_sig = hashlib.sha256('\n'.join(sorted(f'{k}|{p}' for _, k, p in problems)).encode()).hexdigest()
     try:
@@ -181,7 +181,7 @@ def route(home: Path, problems: list[tuple[str, str, str]]) -> None:
     except (OSError, ValueError, AttributeError):
         last = None
     if last == key_sig:
-        return
+        return 'already routed to genome for this failure'
     lines = ['[dm] to=genome',
              'Wakes view: a renderer failure for the engine outputs listed below (check wakes-view-engines).',
              'Resolver=genome (renderer). Live path: src/mishe_tauftauf/plant_view_boundary.py output_view and stream_text.']
@@ -189,11 +189,16 @@ def route(home: Path, problems: list[tuple[str, str, str]]) -> None:
         lines.append(f'- model={model} sample={sample_key}: {problem}')
     lines.append('Re-run: checks/wakes-view-engines.py --home SITE --repo REPO. A repeated failure is not re-sent.')
     cli = home / 'bin' / 'mishe-tauftauf'
-    result = subprocess.run([str(cli), '--home', str(home), 'append', '--source', 'sensor/wakes-view-engines'],
-                            input='\n'.join(lines), text=True, capture_output=True, timeout=60)
-    if result.returncode == 0:
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(json.dumps({'signature': key_sig}), encoding='utf-8')
+    try:
+        result = subprocess.run([str(cli), '--home', str(home), 'append', '--source', 'sensor/wakes-view-engines'],
+                                input='\n'.join(lines), text=True, capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f'route UNKNOWN: genome not told ({type(exc).__name__}: {exc})'
+    if result.returncode != 0:
+        return 'route UNKNOWN: genome not told (' + (' '.join(result.stderr.split())[:160] or 'no stderr') + ')'
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({'signature': key_sig}), encoding='utf-8')
+    return 'routed to genome (renderer) with the sample wake key'
 
 
 def evaluate(home: Path, repo: Path, limit: int, do_route: bool) -> tuple[int, list[str]]:
@@ -218,9 +223,9 @@ def evaluate(home: Path, repo: Path, limit: int, do_route: bool) -> tuple[int, l
         if model not in newest:
             pending.append(f'role {role}: model {model} ({engine}) has no retained wake output yet; UNKNOWN until its first wake renders')
     if failures:
-        if do_route:
-            route(home, failures)
         out = [f'{len(failures)} rendering violation(s) across {len(newest)} model(s)']
+        if do_route:
+            out.append(route(home, failures))
         out += [f'{m} sample={k}: {p}' for m, k, p in failures[:12]]
         return 2, out + lines + pending
     if pending:

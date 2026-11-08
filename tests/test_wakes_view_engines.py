@@ -143,3 +143,14 @@ def test_route_sends_once_per_distinct_failure(tmp_path, monkeypatch):
     assert sent.read_text().count("[dm] to=genome") == 1
     check.route(home, [("gpt-6.1-terra", "wake-genome-5", "UNKNOWN event for known type turn_end")])
     assert sent.read_text().count("[dm] to=genome") == 2
+
+
+def test_failed_send_is_reported_and_not_remembered(tmp_path):
+    home = tmp_path / "site"
+    (home / "bin").mkdir(parents=True)
+    cli = home / "bin" / "mishe-tauftauf"
+    cli.write_text("#!/bin/sh\necho 'site home mismatch' >&2\nexit 2\n")
+    cli.chmod(0o755)
+    outcome = check.route(home, [("gpt-6.1-terra", "wake-genome-7", "UNKNOWN stream record for known type message_end")])
+    assert outcome.startswith("route UNKNOWN: genome not told") and "site home mismatch" in outcome
+    assert not (home / "checks" / "wakes-view-engines-route.json").exists()
