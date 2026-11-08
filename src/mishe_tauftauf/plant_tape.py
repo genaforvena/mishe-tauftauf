@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from .state_files import read_json
-from .plant_view_boundary import git_tape, safe, tape_arguments, output_text, wake_key
+from .plant_view_boundary import git_tape, safe, tape_arguments, output_text, wake_key, last_lines
 
 
 def git_step(repo, cursor):
@@ -81,7 +81,7 @@ def wakes_step(home, cursor):
         if not outputs or bucket < 1 or mark in known:
             continue
         progress.add(mark)
-        tail = '\n'.join(output_text(outputs[-1]).splitlines()[-PROGRESS_LINES:])
+        tail = last_lines(output_text(outputs[-1]), PROGRESS_LINES)
         record = read_json(start)
         role = safe(record.get('role', '?')) if isinstance(record, dict) else '?'
         stamp = time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(now))
