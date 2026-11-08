@@ -178,7 +178,6 @@
       "replaces": [
         "host-capacity",
         "host-capacity-guard",
-        "unit-psi-sampler",
         "plants-anon-split-sampler"
       ],
       "covers": "memory/CPU/IO pressure and anon split, admission for optional work"
