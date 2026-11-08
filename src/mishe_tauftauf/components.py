@@ -15,27 +15,26 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import tarfile
 import time
 from pathlib import Path
 
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
-SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+from . import component_text as ctext
+
 STATES = ("GREEN", "RED")
 CARGO = os.environ.get("MISHE_CARGO", str(Path.home() / ".cargo" / "bin" / "cargo"))
 
 
 def _name(name: str) -> str:
-    if not NAME_RE.match(name or ""):
-        raise ValueError(f"component name must match {NAME_RE.pattern}: {name!r}")
+    if not ctext.name_ok(name):
+        raise ValueError(f"component name must match {ctext.NAME_PATTERN}: {name!r}")
     return name
 
 
 def _sha(sha: str) -> str:
-    if not SHA_RE.match(sha or ""):
+    if not ctext.sha_ok(sha):
         raise ValueError("component release must be a full 40-hex commit sha")
     return sha
 
@@ -67,7 +66,7 @@ def _ledger_events(home, name: str) -> list[dict]:
     path = _ledger(home, name)
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return ctext.decode_ledger(path.read_text())
 
 
 def pointed_sha(home, name: str) -> str | None:
@@ -78,10 +77,7 @@ def pointed_sha(home, name: str) -> str | None:
     target = Path(os.readlink(link))
     if not target.is_absolute():
         target = link.parent / target
-    parts = target.parts
-    if len(parts) < 2 or parts[-2] != "releases" or not SHA_RE.match(parts[-1]):
-        return None
-    return parts[-1]
+    return ctext.sha_from_parts(target.parts)
 
 
 def _swap(home, name: str, sha: str) -> None:
@@ -99,7 +95,7 @@ def _sha256(path: Path) -> str:
 
 
 def _git(repo, *args) -> str:
-    return subprocess.check_output(["git", "-C", str(repo), *args], text=True, stderr=subprocess.PIPE).strip()
+    return ctext.git_line(subprocess.check_output(["git", "-C", str(repo), *args], text=True, stderr=subprocess.PIPE))
 
 
 def _build(staging: Path, repo, name: str, sha: str) -> Path:
@@ -189,7 +185,7 @@ def promote(home, repo, name: str, sha: str, *, check: list[str], builder=None) 
 
 def _manifest_ok(release: Path, name: str, sha: str) -> bool:
     try:
-        manifest = json.loads((release / "manifest.json").read_text())
+        manifest = ctext.decode_manifest((release / "manifest.json").read_text())
         return manifest.get("sha") == sha and _sha256(release / "bin" / name) == manifest.get("bin_sha256")
     except (OSError, ValueError):
         return False
@@ -249,7 +245,7 @@ def main_component(args) -> int:
         if args.component_command == "promote":
             if not args.repo:
                 raise ValueError("promote needs --repo or MISHE_REPO")
-            result = promote(home, args.repo, args.name, args.sha, check=json.loads(args.check_file.read_text()))
+            result = promote(home, args.repo, args.name, args.sha, check=ctext.decode_check(args.check_file.read_text()))
         else:
             result = rollback(home, args.name)
     except (subprocess.CalledProcessError, RuntimeError) as exc:
