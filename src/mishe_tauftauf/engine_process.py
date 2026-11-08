@@ -29,6 +29,42 @@ def _kill_group(process: subprocess.Popen) -> None:
             continue
 
 
+def _descendants(root: int) -> set[int]:
+    """Live descendants of ``root`` by parent-pid links, regardless of session.
+
+    A child that calls ``setsid`` leaves the engine's process group, so a group
+    kill alone does not reach it; its parent link still does. Collect these
+    while the root is alive: once the root dies, orphans reparent away.
+    """
+    children: dict[int, list[int]] = {}
+    for entry in os.scandir("/proc"):
+        if not entry.name.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry.name}/stat", "rb") as handle:
+                stat = handle.read().decode("ascii", "replace")
+        except OSError:
+            continue
+        ppid = int(stat.rsplit(")", 1)[1].split()[1])
+        children.setdefault(ppid, []).append(int(entry.name))
+    found: set[int] = set()
+    frontier = [root]
+    while frontier:
+        for child in children.get(frontier.pop(), []):
+            if child not in found:
+                found.add(child)
+                frontier.append(child)
+    return found
+
+
+def _kill_pids(pids: set[int]) -> None:
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            continue
+
+
 def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
                 stdin_from: Path | None = None, stdout_to: Path | None = None, on_start=None) -> int:
     stdin = open(stdin_from, "rb") if stdin_from else subprocess.DEVNULL
@@ -44,7 +80,9 @@ def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
         try:
             return process.wait(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
+            escaped = _descendants(process.pid)
             _kill_group(process)
+            _kill_pids(escaped)
             raise EngineTimeout(f"exceeded {timeout:g}s") from exc
         finally:
             _kill_group(process) if process.poll() is None else None
