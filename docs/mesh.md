@@ -80,7 +80,10 @@ turns, duration, cost and git change in lines, followed by the mind's final text
 files it changed. A model that differs from the configured one is stated, and output that
 cannot be read is labelled UNKNOWN with its raw tail, never hidden. Walls and site notes
 are outside git and are not counted. The original event files remain on disk, and
-`view-readability` watches that the panes stay human-readable.
+`view-readability` watches that the panes stay human-readable. `wakes-view-engines`
+renders the newest retained output of each model in use through the live wakes code
+and fails on leaked bookkeeping, duplicate tool output, raw JSON or a renderer exception;
+a configured model with no wake rendered yet is UNKNOWN until its first wake passes.
 Three single-pane windows follow history without repainting: `chat` follows the
 shared tape, `git` shows commit messages and file-change summaries, and `wakes`
 shows wake starts, settlements and retained engine output. They open with
