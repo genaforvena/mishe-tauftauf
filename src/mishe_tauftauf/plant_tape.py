@@ -17,6 +17,8 @@ def git_step(repo, cursor):
 
 
 OUTPUT_GRACE_SECONDS = 300
+PROGRESS_SECONDS = 120
+PROGRESS_LINES = 6
 
 
 def wakes_step(home, cursor):
@@ -65,8 +67,27 @@ def wakes_step(home, cursor):
         blocks.append(f'══ {stamp} · {label} {role} · {key} ══\n{text}\n')
     if cursor is None and not paths:
         blocks.append('Wake history empty; following new starts and settlements.')
+    # A wake's output block appears only when it ends, so a long wake (slower omp models) showed nothing for minutes.
+    # While a wake runs, add one short progress block per PROGRESS_SECONDS bucket: the last lines of its stream so far.
+    progress = set()
+    now = time.time()
+    for start in root.glob('*.work-start.json'):
+        key = wake_key(start)
+        if (root / (key + '.work.json')).exists() or (root / (key + '.yield.json')).exists():
+            continue
+        outputs = sorted(root.glob(key + '.prompt.out.*'))
+        bucket = int((now - start.stat().st_mtime) // PROGRESS_SECONDS)
+        mark = f'progress:{key}:{bucket}'
+        if not outputs or bucket < 1 or mark in known:
+            continue
+        progress.add(mark)
+        tail = '\n'.join(output_text(outputs[-1]).splitlines()[-PROGRESS_LINES:])
+        record = read_json(start)
+        role = safe(record.get('role', '?')) if isinstance(record, dict) else '?'
+        stamp = time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(now))
+        blocks.append(f'── {stamp} · RUNNING {role} {bucket * PROGRESS_SECONDS // 60}+ min · {key} · latest ──\n{tail}\n')
     # Retain seen names across deletion, so history is never silently replayed.
-    return known | (names - deferred), '\n'.join(blocks)
+    return known | (names - deferred) | progress, '\n'.join(blocks)
 
 
 class Follower:

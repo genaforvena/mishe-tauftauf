@@ -653,3 +653,17 @@ def test_omp_tool_updates_replace_their_own_line_and_bookkeeping_is_quiet(tmp_pa
     text = output_text(out)
     assert text.count("[tool output]") == 1 and "hi done" in text
     assert "turn_start" not in text and "message_start" not in text and "turn_end" not in text
+
+
+def test_running_wake_shows_a_progress_block_per_bucket(tmp_path):
+    import os, time
+    from mishe_tauftauf import plant_tape
+    root = tmp_path / "wakes"; root.mkdir()
+    (root / "wake-x-1.work-start.json").write_text(json.dumps({"role": "x"}))
+    (root / "wake-x-1.prompt.out.jsonl").write_text(json.dumps({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": "still working"}}) + '\n')
+    old = time.time() - 3 * plant_tape.PROGRESS_SECONDS
+    os.utime(root / "wake-x-1.work-start.json", (old, old))
+    cursor, text = plant_tape.wakes_step(tmp_path, None)
+    assert "RUNNING x" in text and "still working" in text
+    cursor2, text2 = plant_tape.wakes_step(tmp_path, cursor)
+    assert "RUNNING" not in text2
