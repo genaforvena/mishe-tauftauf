@@ -33,6 +33,15 @@ FIXTURES = [
     "Wall outcome abc by role-1 no digits here",
     "Wall outcome a\tb by x 5",
     "Wall outcome a b by x 5",
+    # 0x1C-0x1F: Python str `\s`/`\S` treat these as whitespace (isspace() is
+    # True), so a header token stops there and " by " must follow a real space.
+    "Wall outcome a\x1cb by x 5",
+    "Wall outcome a\x1fb by x 5",
+    "Wall outcome a\x1d by x 5",
+    "Wall outcome a by\x1ex 5",
+    "Wall outcome a by x\x1c5",
+    "Wall outcome a\x1c",
+    "Wall outcome a by x 1\x1f2",
     "Wall outcome a by x 1٣ 2",
     "Wall outcome a by x ٣ 12",
     "Wall outcome a by x 12é and 3",
