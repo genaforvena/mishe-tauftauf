@@ -456,12 +456,27 @@ Measured numbers are the ones in sections 2 and 8. Nothing here is a new speedup
 
 | Slice | State now | Evidence | Next step |
 |---|---|---|---|
-| **A. Tape framing** (`mishe-tape frames`) | Committed (`9f94ede6`, `a8590afb`). Not reviewed, not activated, not observed. Pin is still `4a4b94ce`. | 298,163 live entries identical to Python. Rust 9/9 tests pass. Differential 5 passed, 18 subtests passed (rerun 2026-11-08 with a release binary built in a throwaway directory). | Write the `feed.py` cutover with the Unicode-digit fix (`HEADER_RE` to `[0-9]`). Request strong review from Genome. Tell the operator before the apply. |
+| **A. Tape framing** (`mishe-tape frames`) | Crate committed (`9f94ede6`, `a8590afb`), contract written (`rust/mishe-tape/CONTRACT.md`). Unicode-digit fix committed (`270fec06`) and live on the pin `e5a3f4e4` (delivery_verified 01:52:47Z). **No live consumer calls `mishe-tape` yet**, so the Rust framing is not live. Not reviewed, not observed. | Differential test 5/5 with the committed artifact (`MISHE_TAPE_BIN`). A fresh build from HEAD in a throwaway dir (1.97.0, `--locked`) has the same SHA-256 as the artifact (`12dde4d2…ba710`). Feed tests 46/46 pass with the mind's `MISHE_*_HOME` unset (an earlier 30-error run was my shell's home binding, not the code). | Write the `feed.py` cutover: `Feed` streamed read calls `mishe-tape frames` on `/proc/self/fd/N`, and `_iter_text_lines` / `iter_feed_entries` / `_frame_offsets` are retired in the same commit. This is a protocol-boundary change, so it needs a non-author strong review and activation, revert and reapply checks. Tell the operator in one DM before the apply. |
 | **S0. Python hoist in `_verify_records`** | Not started. Python-first; not a boundary change. | Hypothesis from section 2.3: about 13% directory work and 9% path equality per record. | Measure before and after on a preserved tape copy. Sequence after A's cutover, since both edit `feed.py`. |
 | **B. Tape verify and verified-store lookup** (`mishe-tape verify`/`entries`) | Not started. Blocked on A observed live, on the S0 decision, and on a verified-path benchmark (section 8.6 item 2). | Verification is about two thirds of profiled `wall show` (2.3). | Benchmark the verified path on a preserved copy. Check the offline `rusqlite` graph and its build cost against the headroom budget. |
 | **C. Role projection** (`mishe-tape role`, cold-cache derived file) | Not started. Depends on B. | Cold `wall show` 15.2 s user; the cache is process-local (`feed.py:53`). | Decide after B's benchmark. Compare the output against `_force_full`. |
 | **Senses baseline** (measurement, not migration) | Not started. Needs its own declared duty, not an edit to `rust-plan-progress` (wall, section "Senses baseline"). | Source artifacts already exist under `artifacts/rust-plan-20261107/`. | Declare the duty with its own `max_age`. It reads UNKNOWN when evidence is missing or stale. |
 | Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4). `doctor` has 25 exit-1 runs, cause UNKNOWN. | Diagnose `doctor` (S3) before any move. Measure `readings` before a scheduler change (S2). |
+
+### 9.1a Independent replaceability (operator vision addendum, DM 298227, 2026-11-08)
+
+Target: small POSIX programs behind versioned contracts, each swapped as one
+atomic binary rename with its own observation and rollback, with no whole-tree
+pin move. Each slice's contract is written next to its code (`rust/mishe-tape/CONTRACT.md`
+is the template), with a differential test that runs without the Python runtime.
+
+| Slice | Independently replaceable? | Why |
+|---|---|---|
+| A. Tape framing | Yes, once its contract and standalone differential test exist | Input is bytes, output is entries or a fault. Its only Python coupling is the caller in `Feed`, which is the cutover. The standalone shell differential test is not written yet (gap). |
+| S0. Python hoist | No | Python code in `feed.py`, not a binary. |
+| B. Verify and verified store | No, initially | Reads and writes the verified-store format that Python also reads. It stays coupled to the Python `records` layer until the store contract is written. |
+| C. Role projection | Yes, after B | Derived file, can be replaced with a binary that takes the tape and role. Coupled to B's store until B lands. |
+| Producers | Not planned for Rust | Systemd units; the replaceable unit is the producer script, not the runtime core. |
 
 ### 9.2 Inventory of runtime responsibilities
 
