@@ -249,3 +249,47 @@ def test_dry_run_samples_nothing_and_starts_nothing(tmp_path):
     before = h.files[str(h.home / revive.RUNNING)]
     revive.run(h, dry_run=True)
     assert h.files[str(h.home / revive.RUNNING)] == before and not h.started
+
+
+def test_a_given_up_unit_stays_unknown_on_every_pass_until_it_is_back(tmp_path):
+    h = Fake(tmp_path, latch=None, inventory=PHONE, start_fails=PHONE)
+    h.files[str(h.home / revive.RUNNING)] = json.dumps({'active': [], 'owed': list(PHONE), 'checked': NOW,
+                                                         'attempts': {u: revive.MAX_OWED_ATTEMPTS - 1 for u in PHONE}})
+    first = revive.run(h)
+    assert first.code == 3 and 'gave up after 12 attempts' in ' '.join(first.lines)
+    starts = lambda: [c[3] for c in h.calls if c[:3] == ['systemctl', '--user', 'start'] and c[3] in PHONE]
+    starts_after_give_up = len(starts())
+    second = revive.run(h)                       # no change in the world: the record must still say UNKNOWN
+    assert second.code == 3 and all(u in ' '.join(second.lines) for u in PHONE)
+    assert starts_after_give_up == 2 and len(starts()) == 2   # one attempt per unit on pass 1, none on pass 2
+    doc = json.loads(h.files[str(h.home / revive.RUNNING)])
+    assert doc['owed'] == [] and doc['unknown'] == {u: revive.MAX_OWED_ATTEMPTS for u in PHONE}
+
+
+def test_a_given_up_unit_that_comes_back_clears_its_record(tmp_path):
+    h = Fake(tmp_path, latch=None, inventory=PHONE, units=PHONE_UP)
+    h.files[str(h.home / revive.RUNNING)] = json.dumps({'active': [], 'owed': [], 'checked': NOW,
+                                                         'unknown': {PHONE[0]: revive.MAX_OWED_ATTEMPTS}})
+    r = revive.run(h)
+    assert r.code == 0 and 'back up after giving up' in ' '.join(r.lines)
+    assert json.loads(h.files[str(h.home / revive.RUNNING)])['unknown'] == {}
+
+
+def test_a_new_trip_gives_a_newly_owed_unit_a_fresh_retry_budget(tmp_path):
+    h = Fake(tmp_path, inventory=PHONE, start_fails=(PHONE[0],))     # latched: the guard stopped the units
+    h.files[str(h.home / revive.RUNNING)] = json.dumps({'active': [PHONE[0]], 'checked': NOW - 600,
+                                                         'attempts': {PHONE[0]: revive.MAX_OWED_ATTEMPTS - 1}})
+    r = revive.run(h)
+    text = ' '.join(r.lines)
+    doc = json.loads(h.files[str(h.home / revive.RUNNING)])
+    assert 'gave up' not in text and 'still down after the rearm' in text
+    assert doc['attempts'] == {PHONE[0]: 1} and doc.get('unknown', {}) == {}
+    assert doc['owed'] == [PHONE[0]]
+
+
+def test_a_dry_run_reports_a_persisting_unknown_record(tmp_path):
+    h = Fake(tmp_path, latch=None, inventory=PHONE)
+    h.files[str(h.home / revive.RUNNING)] = json.dumps({'active': [], 'checked': NOW,
+                                                         'unknown': {PHONE[1]: revive.MAX_OWED_ATTEMPTS}})
+    r = revive.run(h, dry_run=True)
+    assert r.code == 3 and 'gave up after 12 attempts' in ' '.join(r.lines) and not acted(h)

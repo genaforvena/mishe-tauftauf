@@ -191,12 +191,22 @@ def save_running(h: Host, doc: dict) -> None:
     h.write(h.home / RUNNING, b.dumps(doc) + '\n')
 
 
+def owe(doc: dict, names) -> None:
+    """Add units to the owed set. A unit newly owed starts with a fresh retry budget and leaves any unknown record."""
+    names = set(names)
+    fresh = names - set(doc.get('owed', []))
+    doc['owed'] = sorted(set(doc.get('owed', [])) | names)
+    doc['attempts'] = {k: v for k, v in dict(doc.get('attempts', {})).items() if k not in fresh}
+    if isinstance(doc.get('unknown'), dict):
+        doc['unknown'] = {k: v for k, v in doc['unknown'].items() if k not in names}
+
+
 def note_trip(h: Host, dry_run: bool) -> None:
     """A latch is present: the units active before the trip are owed a restart once the guard is rearmed."""
     if dry_run:
         return
     doc = load_running(h)
-    doc['owed'] = sorted(set(doc.get('owed', [])) | set(doc.get('active', [])))
+    owe(doc, doc.get('active', []))
     save_running(h, doc)
 
 
@@ -205,24 +215,39 @@ def note_healthy(h: Host, p: Probe, r: Result, dry_run: bool) -> None:
     doc = load_running(h)
     last = doc.get('checked')
     if last is not None and any(t > last for t in h.latch_archive_times()):
-        doc['owed'] = sorted(set(doc.get('owed', [])) | set(doc.get('active', [])))
+        owe(doc, doc.get('active', []))
         r.say(f'a trip was rearmed since the last sample; owed restarts: {", ".join(doc["owed"]) or "none"}')
     doc['active'], doc['checked'] = p.active_inventory, h.now()
     if not dry_run:
         save_running(h, doc)
 
 
+def _report_unknown(r: Result, unknown: dict) -> None:
+    """Every pass reports the given-up units until they are back: a silent give-up is the failure this prevents."""
+    if unknown:
+        r.code = max(r.code, 3)
+        r.say('UNKNOWN: not back after the bounded attempts, not retried (clear the record once fixed): '
+              + '; '.join(f'{name} gave up after {count} attempts' for name, count in sorted(unknown.items())))
+
+
 def restart_owed(h: Host, p: Probe, r: Result, *, dry_run: bool) -> None:
     """Start the owed units that are still down. Each one that stays down is retried, bounded, and reported UNKNOWN."""
     doc = load_running(h)
     owed = [u for u in doc.get('owed', []) if u not in p.active_inventory]
-    if not owed:
+    unknown = dict(doc['unknown']) if isinstance(doc.get('unknown'), dict) else {}
+    if not owed and not unknown:
         return
-    if p.hold:
+    back_up = sorted(set(active_units(h, sorted(unknown))))
+    for name in back_up:
+        unknown.pop(name)
+        r.say(f'{name} is back up after giving up; its UNKNOWN record is cleared')
+    if p.hold and owed:
         r.say(f'the plant is HELD: {len(owed)} owed unit(s) wait for `mishe hold off`: {", ".join(owed)}')
-        return
-    attempts = doc.get('attempts', {})
-    for name in owed:
+        owed_to_start = []
+    else:
+        owed_to_start = owed
+    attempts = dict(doc.get('attempts', {}))
+    for name in owed_to_start:
         if dry_run:
             r.say(f'dry run: would systemctl --user start {name}')
             continue
@@ -236,20 +261,23 @@ def restart_owed(h: Host, p: Probe, r: Result, *, dry_run: bool) -> None:
         if code != 0:
             r.say(f'start {name} failed: {b.first_line(err)}')
     if dry_run:
+        _report_unknown(r, unknown)
         return
-    back = set(active_units(h, owed))
-    still = [u for u in owed if u not in back]
-    done = {u for u in owed if u in back}
-    doc['attempts'] = {k: v for k, v in attempts.items() if k in still}
-    doc['owed'] = sorted((set(doc.get('owed', [])) - done) - {u for u in still if attempts.get(u, 0) >= MAX_OWED_ATTEMPTS})
+    back = set(active_units(h, owed_to_start))
+    still = [u for u in owed_to_start if u not in back]
+    done = {u for u in owed_to_start if u in back}
+    give_up = [u for u in still if attempts.get(u, 0) >= MAX_OWED_ATTEMPTS]
+    for name in give_up:
+        unknown[name] = attempts[name]
+    doc['unknown'] = unknown
+    doc['attempts'] = {k: v for k, v in attempts.items() if k in still and k not in give_up}
+    doc['owed'] = sorted((set(doc.get('owed', [])) - done) - set(give_up))
     save_running(h, doc)
-    given_up = [u for u in still if attempts.get(u, 0) >= MAX_OWED_ATTEMPTS]
-    if given_up:
+    _report_unknown(r, unknown)
+    retrying = [u for u in still if u not in give_up]
+    if retrying:
         r.code = max(r.code, 3)
-        r.say(f'UNKNOWN: gave up after {MAX_OWED_ATTEMPTS} attempts; these did not return: {", ".join(given_up)}')
-    elif still:
-        r.code = max(r.code, 3)
-        r.say(f'UNKNOWN: {len(still)} owed unit(s) still down after the rearm: {", ".join(still)}')
+        r.say(f'UNKNOWN: {len(retrying)} owed unit(s) still down after the rearm: {", ".join(retrying)}')
     if done:
         r.say(f'restarted after rearm: {", ".join(sorted(done))}')
 
