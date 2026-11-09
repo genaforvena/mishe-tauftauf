@@ -19,6 +19,8 @@ PROBE = SITE / "network" / "probe.jsonl"
 SPARK = "▁▂▃▄▅▆▇█"
 STALE_S = 300
 ROUTER_EVERY_S = 60
+SLOW_WEB_MS = 1500
+SLOW_DNS_MS = 500
 _router = {"at": 0.0, "text": None}
 
 
@@ -41,18 +43,27 @@ def spark(values, width=40):
     return "".join(SPARK[min(7, int(v / hi * 7.999))] for v in values)
 
 
+def web_ms(row, name):
+    """Total time of one secure web check in this row, or None when it did not load (or was not measured)."""
+    check = ((row or {}).get("internet") or {}).get(name)
+    return check.get("total_ms") if isinstance(check, dict) and check.get("ok") else None
+
+
 def verdict(row, a):
     if row is None or a is None or a > STALE_S:
         return "UNKNOWN (no fresh probe)"
-    gw, cf, gg = row.get("gateway"), row.get("cloudflare"), row.get("google")
+    if "internet" not in row:
+        return "UNKNOWN (probe is from before the secure web check)"
+    gw = row.get("gateway")
     if gw is None or gw["loss_pct"] >= 50:
         return "DOWN inside the home (router/LAN not answering)"
-    if (cf is None or cf["loss_pct"] >= 50) and (gg is None or gg["loss_pct"] >= 50):
-        return "DOWN: router answers, internet does not"
-    bad = [n for n, r in (("gateway", gw), ("cloudflare", cf), ("google", gg)) if r and r["loss_pct"] > 0]
-    slow = row.get("https_ms") is None or row["https_ms"] > 1500 or (row.get("dns_ms") or 0) > 500
-    if bad or slow:
-        return "DEGRADED: " + ("loss to " + ",".join(bad) if bad else "slow DNS/HTTPS")
+    if not any(web_ms(row, n) is not None for n in row["internet"]):
+        return "DOWN: router answers, but no secure website does"
+    if gw["loss_pct"] > 0:
+        return "DEGRADED: loss to the router"
+    best = min(v for v in (web_ms(row, n) for n in row["internet"]) if v is not None)
+    if best > SLOW_WEB_MS or (row.get("dns_ms") or 0) > SLOW_DNS_MS:
+        return "DEGRADED: slow " + ("DNS" if (row.get("dns_ms") or 0) > SLOW_DNS_MS else "web pages")
     return "OK"
 
 
@@ -72,14 +83,23 @@ def router_facts():
     return _router["text"]
 
 
-def line(label, key, data):
-    cur = data[-1].get(key) if data else None
-    vals = [(r.get(key) or {}).get("avg_ms") if isinstance(r.get(key), dict) else None for r in data]
-    loss = [(r.get(key) or {}).get("loss_pct") if isinstance(r.get(key), dict) else None for r in data]
-    now = f"{cur['avg_ms']:.1f} ms" if isinstance(cur, dict) and "avg_ms" in cur else "UNKNOWN"
-    lossnow = f"{cur['loss_pct']:.0f}% loss" if isinstance(cur, dict) else ""
+def gateway_line(data):
+    cur = (data[-1].get("gateway") if data else None) or {}
+    vals = [((r.get("gateway") or {}).get("avg_ms")) for r in data]
+    loss = [((r.get("gateway") or {}).get("loss_pct")) for r in data]
+    now = f"{cur['avg_ms']:.1f} ms" if "avg_ms" in cur else "UNKNOWN"
+    lossnow = f"{cur['loss_pct']:.0f}% loss" if "loss_pct" in cur else ""
     worst = max([v for v in loss if v is not None], default=None)
-    return f"  {label:<22}{now:>10}  {lossnow:<9} {spark(vals)}  worst loss {('%.0f%%' % worst) if worst is not None else 'UNKNOWN'}"
+    return (f"  {'router (LAN)':<22}{now:>10}  {lossnow:<9} {spark(vals)}  "
+            f"worst loss {('%.0f%%' % worst) if worst is not None else 'UNKNOWN'}")
+
+
+def web_line(label, name, data):
+    vals = [web_ms(r, name) for r in data]
+    cur = vals[-1] if vals else None
+    now = f"{cur:.0f} ms" if cur is not None else "UNKNOWN"
+    failed = sum(1 for v in vals[-40:] if v is None)
+    return f"  {label:<22}{now:>10}  {spark(vals)}  failed in last {min(len(vals), 40)}: {failed}"
 
 
 def draw():
@@ -90,22 +110,22 @@ def draw():
     out.append(f"  HOME INTERNET: {verdict(last, a)}")
     out.append(f"  last probe: {'%ds ago' % a if a is not None else 'never'}   (one probe a minute; sparklines = last {min(len(data), 40)} probes)")
     out.append("")
-    out.append("  LATENCY (average of 5 pings) and LOSS")
-    out.append(line("router (gateway)", "gateway", data))
-    out.append(line("internet 1.1.1.1", "cloudflare", data))
-    out.append(line("internet 8.8.8.8", "google", data))
+    out.append("  ROUTER AND LOCAL LINK (ping, average of 5)")
+    out.append(gateway_line(data))
     out.append("")
+    out.append("  INTERNET (secure web pages, full time to finish)")
+    out.append(web_line("gstatic.com", "gstatic", data))
+    out.append(web_line("cloudflare.com", "cloudflare", data))
     dns = [r.get("dns_ms") for r in data]
-    https = [r.get("https_ms") for r in data]
     out.append(f"  DNS lookup            {('%.0f ms' % dns[-1]) if dns and dns[-1] is not None else 'UNKNOWN':>10}  {spark(dns)}")
-    out.append(f"  web page (HTTPS)      {('%.0f ms' % https[-1]) if https and https[-1] is not None else 'UNKNOWN':>10}  {spark(https)}")
     out.append("")
     out.append("  SPEED         UNKNOWN (no bounded speed test has been built yet)")
     out.append("  WI-FI         UNKNOWN (clients and signal not read yet)")
     rf = router_facts()
     out.append("  ROUTER        " + (rf or "UNKNOWN (ssh read failed)") + "   (read-only)")
     out.append("")
-    out.append("  note: 1.1.1.1 answering in ~1 ms looks like the router answering for it; the network mind is to check what that means")
+    out.append("  note: pings to public addresses are not used: the router answers them itself,")
+    out.append("  so they look fast even when the internet is down. Internet checks are secure page loads.")
     return "\n".join(out)
 
 
