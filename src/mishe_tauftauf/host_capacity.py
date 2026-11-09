@@ -24,7 +24,7 @@ from . import recovery_io as recovery
 GUARD_MAX_AGE = 180
 
 
-def decide(previous, observation, *, now, stable_seconds=120):
+def decide(previous, observation, *, now, stable_seconds=120, max_gap=20):
     old = previous or {}
     row = {"version": 1, "checked_at": now, "max_age": 20,
            "observation": observation, "managed_units": old.get("managed_units", []),
@@ -55,7 +55,10 @@ def decide(previous, observation, *, now, stable_seconds=120):
         # In-band (0.85-0.9*high, not overloaded): a running clear timer is held, not reset, so a plateau
         # straddling the clear cut cannot latch LIMITED. A timer is only started by a sample below the cut.
         in_band = current < high * .9 and available >= .18 and memory < 1 and io < 10
-        contiguous = 0 <= now - old.get("checked_at", now) <= 20
+        # max_gap bounds how stale the previous sample may be and still count toward the hold. The
+        # producer timer runs every 120 s, so the production tick passes GUARD_MAX_AGE; a 20 s gap
+        # would reset clear_since on every 120 s sample and LIMITED could never clear (2026-11-09).
+        contiguous = 0 <= now - old.get("checked_at", now) <= max_gap
         since = old.get("clear_since") if contiguous else None
         if not overloaded:
             if since is not None and in_band:
@@ -265,7 +268,7 @@ def tick(root, config, *, now=None):
             if previous is not None and (not isinstance(previous, dict) or previous.get("version") != 1):
                 raise ValueError("corrupt capacity state retained; reconcile before reset")
             row = decide(previous, observe(config["slice_path"]), now=now,
-                         stable_seconds=config.get("stable_seconds", 120))
+                         stable_seconds=config.get("stable_seconds", 120), max_gap=GUARD_MAX_AGE)
             try:
                 row = reconcile(root, row, config)
             except (OSError, ValueError) as exc:

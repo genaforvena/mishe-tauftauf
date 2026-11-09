@@ -27,6 +27,25 @@ def test_pressure_closes_admission_and_requires_continuous_recovery():
     assert row["state"] == "NORMAL"
 
 
+def test_clear_hold_completes_at_production_timer_cadence():
+    # The producer timer fires every 120 s. The hold must survive that cadence and clear after
+    # stable_seconds of clear samples; with the 20 s default gap it never could.
+    row = host.decide(None, sample(current=1150), now=0, stable_seconds=120, max_gap=host.GUARD_MAX_AGE)
+    now = 0
+    for _ in range(3):
+        now += 120
+        row = host.decide(row, sample(), now=now, stable_seconds=120, max_gap=host.GUARD_MAX_AGE)
+    assert row["state"] == "NORMAL", row
+    assert row["clear_since"] == 120, "hold started at the first clear sample and carried"
+
+
+def test_default_gap_still_breaks_clear_hold_at_long_intervals():
+    row = host.decide(None, sample(current=1150), now=0, stable_seconds=120)
+    row = host.decide(row, sample(), now=5, stable_seconds=120)
+    row = host.decide(row, sample(), now=125, stable_seconds=120)
+    assert row["limited"], "a 120 s gap is not contiguous under the default 20 s bound"
+
+
 def test_host_sample_row_labels_pressure_window():
     row = host.decide(None, sample(), now=100, stable_seconds=20)
     assert row["pressure_window"] == {"memory_full": "avg60 full", "io_full": "avg60 full"}
