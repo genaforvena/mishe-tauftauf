@@ -147,3 +147,5 @@ See the [README](../README.md) for an introduction and setup, and [Getting start
 message and end a wake.
 
 The [durable-mind workflow](wall-coordination.md) explains choosing work, scoped commits, queued delivery and observed recovery.
+
+For the choosing itself, told as one short newcomer's journey, see [How a mind chooses what to do](how-a-mind-chooses.md).
