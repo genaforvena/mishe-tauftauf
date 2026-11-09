@@ -1,8 +1,9 @@
 # mishe-network-probe contract (version 0.1, responsibility: one network probe row)
 
-Status: BUILT and differentially checked against the retired Python probe
-(`tests/test_mishe_network_probe.py`). Not yet installed, not wired into any
-live consumer, not delivered. Owner: rust-plan.
+Status: LIVE. The Python probe (`checks/network_probe.py`) is retired; the
+`network-probe` duty runs this binary. Differentially checked against the
+retired Python probe's answers (`tests/test_mishe_network_probe.py`). Owner:
+rust-plan.
 
 This contract is the shape of the piece, not a speed claim. The point of the
 slice is a boundary: a tiny POSIX executable that owns one responsibility

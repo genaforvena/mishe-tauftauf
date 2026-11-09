@@ -470,8 +470,7 @@
     {
       "name": "network-probe",
       "command": [
-        "{python}",
-        "{repo}/checks/network_probe.py",
+        "{home}/bin/mishe-network-probe",
         "--home",
         "{home}"
       ],

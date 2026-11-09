@@ -15,7 +15,7 @@ from pathlib import Path
 
 WALL_MAX_AGE_S = 6 * 3600
 COMMIT_MAX_AGE_S = 48 * 3600
-FILES = ("tools/network_view.py", "tools/network_boundary.py", "checks/network_probe.py", "checks/network-care.py")
+FILES = ("tools/network_view.py", "tools/network_boundary.py", "rust/mishe-network-probe", "checks/network-care.py")
 
 
 def window(session):
