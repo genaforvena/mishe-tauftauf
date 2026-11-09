@@ -107,14 +107,14 @@ def _with_routed(home, facts, key, role, running):
         return facts
     blank = {'text': '', 'turns': None, 'seconds': None, 'cost': None, 'tokens_in': None, 'tokens_out': None,
              'error': False, 'subtype': None, 'stop': None, 'denials': None}
-    return dict(blank, **(facts or {}), models=[safe(model)])
+    return dict(blank, **(facts or {}), models=[safe(model)], routed=True)
 
 
 def _model_text(facts, configured) -> str:
     engine, model = configured
     if facts and facts.get('models'):
         actual = ', '.join(facts['models'])
-        note = '' if model is None or model in facts['models'] else f' (configured {model}; differs)'
+        note = '' if model is None or model in facts['models'] or facts.get('routed') else f' (configured {model}; differs)'
         return f'model {actual}{note}'
     return f'model {model or "UNKNOWN"} (configured, {engine} engine; not reported by the run)'
 
