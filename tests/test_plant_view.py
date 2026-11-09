@@ -778,3 +778,16 @@ def test_a_timed_out_wake_shows_its_last_words_not_the_tool_output_after_them():
     assert "did not finish" in out
     done = b.final_answer(text + "[agent_end]\n")
     assert "did not finish" not in done and "DUMP" not in done
+
+
+def test_model_label_comes_from_the_router_ledger_when_the_run_reports_none(tmp_path):
+    import json, time
+    from mishe_tauftauf import plant_view
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "engine" / "routing-ledger.jsonl").write_text(
+        json.dumps({"event": "select", "role": "health", "key": "omp:longcat-2.5-free:-"}) + "\n" +
+        json.dumps({"event": "outcome", "role": "health", "key": "omp:longcat-2.5-free:-", "wake": "wake-health-1", "outcome": "yielded"}) + "\n")
+    facts = plant_view._with_routed(tmp_path, None, "wake-health-1", "health", False)
+    assert facts["models"] == ["longcat-2.5-free"]
+    assert plant_view._with_routed(tmp_path, None, "wake-health-2", "health", False) is None
+    assert plant_view._with_routed(tmp_path, None, "wake-health-2", "health", True)["models"] == ["longcat-2.5-free"]

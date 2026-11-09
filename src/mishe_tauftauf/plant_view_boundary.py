@@ -445,3 +445,25 @@ def arguments():
     parser.add_argument('--log', action='store_true',
                         help='append each wake\'s output once to pane-logs/ROLE.log and the pane; never repaint')
     return parser.parse_args()
+
+
+def routed_models(path) -> tuple[dict, dict]:
+    """({wake key: model}, {role: model of its latest select}) from the router's ledger: the engine a wake REALLY ran on."""
+    by_wake, by_role = {}, {}
+    try:
+        lines = Path(path).read_text(encoding='utf-8', errors='replace').splitlines()[-1500:]
+    except OSError:
+        return by_wake, by_role
+    for line in lines:
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(ev, dict) or not isinstance(ev.get('key'), str):
+            continue
+        model = ev['key'].partition(':')[2].rsplit(':', 1)[0]
+        if ev.get('event') == 'select' and isinstance(ev.get('role'), str):
+            by_role[ev['role']] = model
+        elif ev.get('event') == 'outcome' and isinstance(ev.get('wake'), str):
+            by_wake[ev['wake']] = model
+    return by_wake, by_role

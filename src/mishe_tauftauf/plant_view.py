@@ -16,7 +16,7 @@ from . import intentions, owed, signal_store, yielding
 from .core.dispatch_record import read_record_fields, valid_role
 from .engines import DEFAULT_CLAUDE_MODEL
 from .feed import Feed
-from .plant_view_boundary import (arguments, brief, cut, last_lines, output_view, safe, uncommitted, wake_commits,
+from .plant_view_boundary import (arguments, brief, cut, last_lines, output_view, routed_models, safe, uncommitted, wake_commits,
                                   wake_key, wall_lines, would_cut)
 from .state_files import read_json, write_json
 from .wall import addressed
@@ -95,6 +95,19 @@ def _configured(home, role) -> tuple[str, str | None]:
     kind = config.get('engine', 'claude')
     model = config.get('model', DEFAULT_CLAUDE_MODEL if kind == 'claude' else None)
     return safe(kind), safe(model) if model else None
+
+
+def _with_routed(home, facts, key, role, running):
+    """facts with `models` filled from the router ledger when the run reported none (omp never does)."""
+    if facts and facts.get('models'):
+        return facts
+    by_wake, by_role = routed_models(Path(home) / 'engine' / 'routing-ledger.jsonl')
+    model = by_wake.get(key) or (by_role.get(role) if running else None)
+    if not model:
+        return facts
+    blank = {'text': '', 'turns': None, 'seconds': None, 'cost': None, 'tokens_in': None, 'tokens_out': None,
+             'error': False, 'subtype': None, 'stop': None, 'denials': None}
+    return dict(blank, **(facts or {}), models=[safe(model)])
 
 
 def _model_text(facts, configured) -> str:
@@ -354,6 +367,7 @@ def render_output(home, role: str, *, now: float) -> str:
         try:
             facts, text = output_view(path)
             file_key = wake_key(path)
+            facts = _with_routed(home, facts, file_key, role, running and file_key == key)
             span = _wake_span(home, file_key, now, running=running and file_key == key, out_path=path)
             views.append((path, facts, text, span, _changes(home, span)))
         except OSError as exc:
@@ -383,6 +397,7 @@ def render_output(home, role: str, *, now: float) -> str:
 
 def _wake_block(home, role, path, now, configured, *, running):
     facts, text = output_view(path, final=not running)
+    facts = _with_routed(home, facts, wake_key(path), role, running)
     span = _wake_span(home, wake_key(path), now, running=running, out_path=path)
     commits = _changes(home, span)
     head = '══ ' + ' · '.join([_model_text(facts, configured)] + _summary_parts(span, facts, commits, now)) + ' ══'
