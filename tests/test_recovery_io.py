@@ -255,12 +255,19 @@ def test_original_renderer_is_bounded_when_its_wrapper_is_killed(tmp_path):
         child = int(pid_path.read_text())
         parent.kill()
         parent.wait(timeout=2)
+        def child_state():
+            # The kernel may reap the child between any two reads; a vanished entry means it exited.
+            try:
+                return Path(f"/proc/{child}/stat").read_text().split()[2]
+            except FileNotFoundError:
+                return None
+
         cutoff = time.monotonic() + 3
-        while Path(f"/proc/{child}/stat").exists() and time.monotonic() < cutoff:
-            if Path(f"/proc/{child}/stat").read_text().split()[2] == "Z":
-                break
+        state = child_state()
+        while state not in (None, "Z") and time.monotonic() < cutoff:
             time.sleep(.02)
-        assert not Path(f"/proc/{child}/stat").exists() or Path(f"/proc/{child}/stat").read_text().split()[2] == "Z"
+            state = child_state()
+        assert state in (None, "Z")
     finally:
         if parent.poll() is None:
             parent.kill()
