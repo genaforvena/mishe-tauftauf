@@ -1,3 +1,5 @@
+import json
+
 from mishe_tauftauf import dossier, owed
 
 
@@ -44,3 +46,64 @@ def test_dossier_states_the_wake_time_budget(tmp_path):
     assert "## Time budget" in out
     assert "cut at 30 minutes" in out
     assert "by minute 25" in out
+
+
+def _record(key, state="unknown", detail="engine timed out: exceeded 1800s"):
+    from mishe_tauftauf.core.interfaces import DispatchState
+    from mishe_tauftauf.core.state import DispatchRecord
+    return DispatchRecord(role="health", key=key, state=DispatchState(state), detail=detail, attempt=7)
+
+
+def test_reconcile_dossier_carries_the_lost_wakes_own_words(tmp_path):
+    (tmp_path / "wakes").mkdir()
+    stream = tmp_path / "wakes/wake-health-old.prompt.out.jsonl"
+    stream.write_text("\n".join(json.dumps(event) for event in [
+        {"type": "tool_execution_start", "toolCallId": "c1", "toolName": "bash",
+         "args": {"command": "grep -rn quota src/"}},
+        {"type": "message_end", "message": {"role": "assistant", "stopReason": "end_turn",
+         "content": [{"type": "text", "text": "The account is out of quota at 21:29."}]}},
+    ]) + "\n")
+    out = dossier.build(tmp_path, "health", owed.Snapshot(), key="now", now=100, mail=[],
+                        reconcile_of=_record("wake-health-old"))
+    assert "### What that wake left behind" in out
+    assert "The account is out of quota at 21:29." in out
+    assert "grep -rn quota src/" in out
+
+
+def test_reconcile_dossier_without_a_lost_stream_says_nothing_extra(tmp_path):
+    out = dossier.build(tmp_path, "health", owed.Snapshot(), key="now", now=100, mail=[],
+                        reconcile_of=_record("wake-health-absent"))
+    assert "### What that wake left behind" not in out
+    assert "RECONCILE FIRST" in out
+
+
+def test_salvage_reads_the_provider_fault_that_ended_the_wake(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import salvage_text
+    stream = tmp_path / "wake.out.jsonl"
+    stream.write_text("\n".join(json.dumps(event) for event in [
+        {"type": "auto_retry_end", "success": False,
+         "finalError": "402 The Token Plan usage limit has been reached"},
+    ]) + "\n")
+    text = salvage_text(stream)
+    assert "402 The Token Plan usage limit has been reached" in text
+    assert "Provider faults it hit" in text
+
+
+def test_salvage_of_an_absent_stream_is_empty(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import salvage_text
+    assert salvage_text(tmp_path / "missing.out.jsonl") == ""
+
+
+def test_salvage_skips_streaming_update_lines_without_decoding_them(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import salvage_text
+    stream = tmp_path / "wake.out.jsonl"
+    with stream.open("w") as handle:
+        for _ in range(500):
+            handle.write(json.dumps({"type": "tool_execution_update", "toolCallId": "c",
+                                     "partialResult": {"content": [{"type": "text", "text": "x" * 100}]}}) + "\n")
+        handle.write(json.dumps({"type": "message_end", "message": {"role": "assistant",
+                                 "stopReason": "end_turn",
+                                 "content": [{"type": "text", "text": "the last words"}]}}) + "\n")
+    text = salvage_text(stream)
+    assert "the last words" in text
+    assert "tool_execution_update" not in text

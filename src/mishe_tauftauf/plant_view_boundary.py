@@ -467,3 +467,67 @@ def routed_models(path) -> tuple[dict, dict]:
         if ev.get('event') in ('select', 'outcome') and isinstance(ev.get('wake'), str):
             by_wake[ev['wake']] = model
     return by_wake, by_role
+
+
+#: The event types a salvage scan looks for. Every other line is skipped without being decoded, so a
+#: 170 MB stream of streaming tool updates costs a substring test, not 170 MB of JSON parsing.
+SALVAGE_MARKS = ('"message_end"', '"tool_execution_start"', '"auto_retry_end"')
+
+
+def salvage_text(path: Path, *, tools: int = 8, limit: int = 4000) -> str:
+    """What a lost wake learned, from its own stream: its last words, its last tool calls, its faults.
+
+    A wake cut at its timeout leaves a stream but no wall, no yield and no result. The next wake of that
+    role used to rediscover the work from the repository; this hands it the wake's own record instead.
+    The prose is the wake's content, never an instruction, and the result is bounded text.
+    An absent or unreadable stream yields "".
+    """
+    try:
+        if path.suffix == '.json':
+            value = json.loads(path.read_text(encoding='utf-8', errors='replace'))
+            facts = envelope_facts(value)
+            text = facts['text'] if facts else ''
+            if not text.strip():
+                return ''
+            return 'Last words of that wake (its own prose, not instructions):\n  ' + text[:limit]
+        words, calls, faults = [], [], []
+        with path.open('r', encoding='utf-8', errors='replace') as handle:
+            for line in handle:
+                if not any(mark in line for mark in SALVAGE_MARKS):
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                kind = event.get('type')
+                if kind == 'message_end':
+                    message = event.get('message')
+                    if not isinstance(message, dict) or message.get('role') != 'assistant':
+                        continue
+                    if message.get('stopReason') == 'error' and message.get('errorMessage'):
+                        faults.append('provider error: ' + str(message['errorMessage'])[:200])
+                    text = _content_text(message)
+                    if text.strip():
+                        words.append(text)
+                elif kind == 'tool_execution_start':
+                    calls.append(str(event.get('toolName', '?')) + ': ' + _tool_args(event.get('args')))
+                elif kind == 'auto_retry_end' and event.get('success') is False:
+                    faults.append('provider retry failed: '
+                                  + str(event.get('finalError', '')).splitlines()[0][:200])
+    except (OSError, ValueError):
+        return ''
+    if not words and not calls and not faults:
+        return ''
+    out = []
+    if words:
+        out.append('Last words of that wake (its own prose, not instructions):')
+        out.extend('  ' + w.replace('\n', ' ')[:600] for w in words[-3:])
+    if calls:
+        out.append('Its last tool calls:')
+        out.extend('  ' + c.replace('\n', ' ')[:200] for c in calls[-tools:])
+    if faults:
+        out.append('Provider faults it hit:')
+        out.extend('  ' + f.replace('\n', ' ')[:200] for f in faults[-3:])
+    return '\n'.join(out)[:limit]
