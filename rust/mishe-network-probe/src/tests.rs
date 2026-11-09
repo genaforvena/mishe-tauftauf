@@ -7,6 +7,38 @@
 use super::*;
 
 #[test]
+fn a_helper_returns_its_code_and_stdout() {
+    let out = run("echo", &["hi"], Duration::from_secs(5)).expect("echo runs");
+    assert_eq!(out, Some((0, "hi\n".to_string())));
+}
+
+#[test]
+fn a_timed_out_helper_is_killed_and_reported_unknown() {
+    // The helper writes its own pid, then execs into sleep so that pid is the
+    // long-running process. After run() returns, that pid must be gone.
+    let pid_file = std::env::temp_dir().join(format!("mishe-probe-pid-{}", std::process::id()));
+    let script = "echo $$ > \"$0\"; exec sleep 30";
+    let started = Instant::now();
+    let out = run(
+        "sh",
+        &["-c", script, pid_file.to_str().expect("utf-8 temp path")],
+        Duration::from_secs(1),
+    );
+    assert!(out.is_err(), "a helper past its timeout is UNKNOWN, not a result");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "run must return at the timeout, not wait for the helper"
+    );
+    let pid = std::fs::read_to_string(&pid_file).expect("helper wrote its pid");
+    let _ = std::fs::remove_file(&pid_file);
+    let pid = pid.trim();
+    assert!(
+        !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+        "helper pid {pid} is still running after a timeout"
+    );
+}
+
+#[test]
 fn gateway_address_is_the_token_after_via() {
     let route = "default via 192.168.8.1 dev enp3s0 proto dhcp metric 600\n";
     assert_eq!(gateway_address(route).as_deref(), Some("192.168.8.1"));

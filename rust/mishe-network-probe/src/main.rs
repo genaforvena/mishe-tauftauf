@@ -13,7 +13,6 @@ use std::fmt::Write as _;
 use std::io::Write as _;
 use std::net::ToSocketAddrs;
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
@@ -77,7 +76,7 @@ fn main() {
     };
     let internet_down = !row.internet.iter().any(|site| site.ok);
     if gateway_down || internet_down {
-        print!(
+        println!(
             "network down: {}{}",
             if gateway_down { "router/LAN not answering" } else { "" },
             if internet_down { " internet unreachable (no secure site answered)" } else { "" }
@@ -366,26 +365,58 @@ fn json_f64(value: f64) -> String {
 /// Run a helper and return its exit code and stdout. `Err` when the helper
 /// could not be run or did not finish in time (UNKNOWN). `Ok(None)` when it
 /// ran and failed; the caller decides what that means.
+/// A timed-out helper is killed and reaped before this returns, so it cannot
+/// outlive the probe as an orphan.
 fn run(program: &str, args: &[&str], timeout: Duration) -> Result<Option<(i32, String)>, String> {
-    let child = Command::new(program)
+    let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("cannot run {program}: {e}"))?;
-    let (sender, receiver) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = sender.send(child.wait_with_output());
-    });
-    match receiver.recv_timeout(timeout) {
-        Ok(Ok(done)) => Ok(Some((
-            done.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&done.stdout).into_owned(),
-        ))),
-        Ok(Err(e)) => Err(format!("{program} failed: {e}")),
-        Err(_) => Err(format!("{program} did not finish in time")),
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let out = stdout.join().unwrap_or_default();
+                let _ = stderr.join();
+                return Ok(Some((
+                    status.code().unwrap_or(-1),
+                    String::from_utf8_lossy(&out).into_owned(),
+                )));
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout.join();
+                let _ = stderr.join();
+                return Err(format!("{program} did not finish in time"));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout.join();
+                let _ = stderr.join();
+                return Err(format!("{program} failed: {e}"));
+            }
+        }
     }
+}
+
+/// Read a child's pipe on its own thread so a chatty helper cannot block on a
+/// full pipe while the probe polls for its exit.
+fn drain<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    })
 }
 
 /// The number right before a marker, as `([0-9.]+)% packet loss` reads it.
