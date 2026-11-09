@@ -143,15 +143,18 @@ def cmd_camera(args) -> int:
         return 0
     if row.get("status") == "blind":
         return 2
-    if _device_unreachable(row):
+    if _input_missing(row):
         return 4
     return 1
 
 
-def _device_unreachable(row) -> bool:
-    # camera_signature sets reason_code mac_unreachable when ssh/scp could not reach the Mac.
+def _input_missing(row) -> bool:
+    # camera_signature sets reason_code mac_unreachable when ssh/scp could not reach the Mac, and
+    # device_busy when every bounded webcam attempt found the V4L2 input held by another process.
     # Config errors ("mac needs USER@HOST") and a missing ffmpeg carry no code and stay crashes (exit 1).
-    return row.get("source") == "mac" and row.get("reason_code") == "mac_unreachable"
+    code = row.get("reason_code")
+    return (row.get("source") == "mac" and code == "mac_unreachable") or \
+           (row.get("source") == "webcam" and code == "device_busy")
 
 
 def newest_note3(site: str):

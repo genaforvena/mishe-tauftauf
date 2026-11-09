@@ -87,12 +87,19 @@ def _capture_webcam(out: Path, device: str, telemetry: dict) -> None:
         if out.is_file() and out.stat().st_size > 0:
             return
         last = stderr.strip()[-160:] or f"fswebcam exit {run.returncode}"
+    if busy == WEBCAM_ATTEMPTS:
+        # Every attempt found the input held: the input is missing, not a failed capture.
+        raise DeviceBusy(f"{out.name}: V4L2 input busy on all {WEBCAM_ATTEMPTS} attempts: {last}")
     raise RuntimeError(f"fswebcam wrote no frame to {out.name} after {WEBCAM_ATTEMPTS} attempts"
                        + (f": {last}" if last else ""))
 
 
 class DeviceUnreachable(RuntimeError):
     """The Mac did not answer: a failed or timed-out ssh/scp step, or ssh's own exit 255."""
+
+
+class DeviceBusy(RuntimeError):
+    """The local webcam input stayed held by another process across every bounded attempt."""
 
 
 def _capture_mac(out: Path, host: str) -> None:
@@ -145,6 +152,9 @@ def run(source: str, host: str | None, device: str, frame: Path | None) -> dict:
         return {**record, "status": "ok", **capture, **signature(image)}
     except DeviceUnreachable as exc:
         return {**record, **capture, "status": "unavailable", "reason_code": "mac_unreachable",
+                "reason": f"{type(exc).__name__}: {exc}"[:300]}
+    except DeviceBusy as exc:
+        return {**record, **capture, "status": "unavailable", "reason_code": "device_busy",
                 "reason": f"{type(exc).__name__}: {exc}"[:300]}
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         return {**record, **capture, "status": "unavailable",

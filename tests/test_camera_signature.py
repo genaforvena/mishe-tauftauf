@@ -215,3 +215,40 @@ def test_remote_capture_failure_is_not_unreachable(monkeypatch):
     monkeypatch.setattr(cam.subprocess, "run", remote_fails)
     out = cam.run("mac", "ilya@192.168.8.214", "", None)
     assert out["status"] == "unavailable" and "reason_code" not in out
+
+
+def test_fswebcam_busy_on_every_attempt_is_device_busy_not_a_crash(tmp_path, monkeypatch):
+    """Observed 2026-11-08/09: every bounded attempt finds the V4L2 input held; that is missing input, not a failed capture."""
+    attempts = []
+
+    def always_busy(args, **kwargs):
+        if args[0] != "fswebcam":
+            return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=b"")
+        attempts.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="VIDIOC_S_INPUT: Device or resource busy")
+
+    monkeypatch.setattr(cam.subprocess, "run", always_busy)
+    monkeypatch.setattr(cam.time, "sleep", lambda s: None)
+    monkeypatch.setattr(cam.shutil, "which", lambda name: f"/usr/bin/{name}")
+    out = cam.run("webcam", None, "/dev/video0", None)
+    assert out["status"] == "unavailable" and out["reason_code"] == "device_busy"
+    assert out["capture_attempts"] == cam.WEBCAM_ATTEMPTS and out["busy_attempts"] == cam.WEBCAM_ATTEMPTS
+    assert "grid" not in out
+
+
+def test_fswebcam_partly_busy_then_no_frame_stays_a_crash(tmp_path, monkeypatch):
+    """Only the all-busy exhaustion is input-missing; a busy first attempt followed by a silent failure stays a crash."""
+    attempts = []
+
+    def busy_then_silent(args, **kwargs):
+        if args[0] != "fswebcam":
+            return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=b"")
+        attempts.append(args)
+        stderr = "VIDIOC_S_INPUT: Device or resource busy" if len(attempts) == 1 else "some other error"
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr=stderr)
+
+    monkeypatch.setattr(cam.subprocess, "run", busy_then_silent)
+    monkeypatch.setattr(cam.time, "sleep", lambda s: None)
+    monkeypatch.setattr(cam.shutil, "which", lambda name: f"/usr/bin/{name}")
+    out = cam.run("webcam", None, "/dev/video0", None)
+    assert out["status"] == "unavailable" and "reason_code" not in out

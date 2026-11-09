@@ -365,8 +365,9 @@
       "every": 150,
       "timeout": 120,
       "max_age": 300,
+      "unknown_codes": [4],
       "resolver": "senses",
-      "covers": "living-room webcam brightness grid, one row every 150 s (kept under the unit start budget); a blind lens (covered, dark or flat) is status blind, recorded and exits 2 (RED, observed); a failed capture exits 1 (crash)",
+      "covers": "living-room webcam brightness grid, one row every 150 s (kept under the unit start budget); a blind lens (covered, dark or flat) is status blind, recorded and exits 2 (RED, observed); the V4L2 input held by another process on every bounded attempt exits 4 (UNKNOWN, input missing, unit succeeds); any other failed capture exits 1 (crash)",
       "replaces": []
     },
     {

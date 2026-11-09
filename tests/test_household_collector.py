@@ -275,3 +275,25 @@ def test_captured_unreachable_mac_record_exits_unknown(tmp_path, monkeypatch):
     assert hc.main(["camera", "--room", "bedroom", "--source", "mac", "--site", str(tmp_path)]) == 4
     row = json.loads((tmp_path / "spatial/work/household/signatures.jsonl").read_text().splitlines()[-1])
     assert row["reason_code"] == "mac_unreachable" and "grid" not in row
+
+
+def test_webcam_held_on_every_attempt_exits_unknown_not_a_crash(tmp_path, monkeypatch):
+    # Real path: camera_signature.run with fswebcam reporting the V4L2 input busy on every attempt,
+    # as in the 2026-11-09 00:14 livingroom failure. Nothing faked above the subprocess layer.
+    import shutil
+    import subprocess as sp
+    camsig = hc.load_camsig()
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(camsig.time, "sleep", lambda s: None)
+
+    def held(args, **kwargs):
+        return sp.CompletedProcess(args, 0, stdout="", stderr="VIDIOC_S_INPUT: Device or resource busy")
+
+    monkeypatch.setattr(camsig.subprocess, "run", held)
+    monkeypatch.setattr(hc, "load_camsig", lambda: camsig)
+    (tmp_path / "spatial/work/household").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "spatial/work/household/rooms.json").write_text(
+        json.dumps([{"name": "living room", "source": "webcam"}]))
+    assert hc.main(["camera", "--room", "living room", "--source", "webcam", "--site", str(tmp_path)]) == 4
+    row = json.loads((tmp_path / "spatial/work/household/signatures.jsonl").read_text().splitlines()[-1])
+    assert row["reason_code"] == "device_busy" and row["status"] == "unavailable" and "grid" not in row
