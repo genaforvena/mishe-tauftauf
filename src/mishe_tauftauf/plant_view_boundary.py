@@ -464,6 +464,6 @@ def routed_models(path) -> tuple[dict, dict]:
         model = ev['key'].partition(':')[2].rsplit(':', 1)[0]
         if ev.get('event') == 'select' and isinstance(ev.get('role'), str):
             by_role[ev['role']] = model
-        elif ev.get('event') == 'outcome' and isinstance(ev.get('wake'), str):
+        if ev.get('event') in ('select', 'outcome') and isinstance(ev.get('wake'), str):
             by_wake[ev['wake']] = model
     return by_wake, by_role

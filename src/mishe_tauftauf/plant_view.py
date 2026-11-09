@@ -463,7 +463,7 @@ def log_step(home, role: str, now: float, *, replay: bool = False) -> list[str]:
     if running and key is not None and announced != key:
         start, _, _ = _wake_span(home, key, now, running=True)
         new.append(f'▶ wake started {_clock(start) if start is not None else "(start not recorded)"}; '
-                   f'{_model_text(None, configured)} — its output appears here when it settles')
+                   f'{_model_text(_with_routed(home, None, key, role, True), configured)} — its output appears here when it settles')
         announced = key
     if not paths and not new and (fresh or replay):     # said once per pane start; an idle poll prints nothing
         new.append('IDLE / UNKNOWN output: no reactive engine output retained; see historical archives')
@@ -497,7 +497,7 @@ def render(home, role: str, *, now: float, output=False) -> str:
     if output:
         return render_output(home, role, now=now)
     configured = _configured(home, role)
-    out = _header(home, role, now, configured)
+    out = _header(home, role, now, configured, _with_routed(home, None, None, role, True))
     lines, key, running = _dispatch(home, role, now)
     out += lines
     if key is not None:

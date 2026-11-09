@@ -791,3 +791,13 @@ def test_model_label_comes_from_the_router_ledger_when_the_run_reports_none(tmp_
     assert facts["models"] == ["longcat-2.5-free"]
     assert plant_view._with_routed(tmp_path, None, "wake-health-2", "health", False) is None
     assert plant_view._with_routed(tmp_path, None, "wake-health-2", "health", True)["models"] == ["longcat-2.5-free"]
+
+
+def test_a_running_wake_and_the_top_header_name_the_engine_the_router_selected(tmp_path):
+    import json
+    from mishe_tauftauf import plant_view
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "engine" / "routing-ledger.jsonl").write_text(
+        json.dumps({"event": "select", "role": "docs", "key": "omp:longcat-2.5-free:-", "wake": "wake-docs-9"}) + "\n")
+    assert plant_view._with_routed(tmp_path, None, "wake-docs-9", "docs", False)["models"] == ["longcat-2.5-free"]
+    assert plant_view._with_routed(tmp_path, None, None, "docs", True)["models"] == ["longcat-2.5-free"]
