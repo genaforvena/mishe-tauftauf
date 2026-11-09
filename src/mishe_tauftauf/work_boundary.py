@@ -47,16 +47,22 @@ def unit_load_state(unit):
 
 def unit_last_exit(unit):
     """``(exited_at, clean)`` for the unit's latest exit: epoch seconds and whether it exited 0 with Result=success.
-    None when systemctl cannot say or the exit time is absent (no exit yet, or unreadable: never a clean exit)."""
+    None when systemctl cannot say or the exit time is absent (no exit yet, or unreadable: never a clean exit).
+
+    systemd clears ``ExecMainExitTimestamp`` as soon as the next start is queued (``activating``), so a unit waiting
+    behind dispatch read as "never exited" and its RED signal could not clear (2026-11-09: genome, steward, senses).
+    ``InactiveEnterTimestamp`` keeps the last exit through that queued start, so it is the fallback.
+    """
     try:
         result = subprocess.run(["systemctl", "--user", "show", unit, "-p",
-                                 "Result,ExecMainStatus,ExecMainExitTimestamp"], capture_output=True, text=True, timeout=10)
+                                 "Result,ExecMainStatus,ExecMainExitTimestamp,InactiveEnterTimestamp"],
+                                capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode:
         return None
     values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-    stamp = values.get("ExecMainExitTimestamp", "").strip()
+    stamp = (values.get("ExecMainExitTimestamp", "") or values.get("InactiveEnterTimestamp", "")).strip()
     if not stamp:
         return None
     # systemd prints the exit in local time, e.g. "Sun 2026-11-08 00:21:39 UTC".
