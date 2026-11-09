@@ -17,7 +17,7 @@ def git_step(repo, cursor):
 
 
 OUTPUT_GRACE_SECONDS = 300
-PROGRESS_SECONDS = 120
+PROGRESS_SECONDS = 600   # one progress block per running wake per ten minutes: concurrent omp wakes made the tape scroll every two
 PROGRESS_LINES = 6
 PROGRESS_MAX_AGE = 2 * 3600   # an unsettled record older than any wake can run is a stale record, not a running wake
 
