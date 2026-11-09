@@ -45,3 +45,11 @@ def test_view_pane_pins_pythonpath_instead_of_inheriting_server_environment(monk
     assert '/stale/release/src' not in ' '.join(default)
     assert plant_tmux.view_argv(['/usr/bin/python3', 'view-host.py'])[-2:] == ['/usr/bin/python3', 'view-host.py']
     assert plant_tmux.view_argv(['/usr/bin/python3', 'view-host.py'])[:2] == ['env', 'PYTHONPATH=' + checkout_src]
+
+
+def test_parse_session_pids_maps_names_and_rejects_malformed_lines():
+    from mishe_tauftauf.plant_tmux import parse_session_pids
+    assert parse_session_pids("genome\t101\n\nhealth\t202\n") == {"genome": "101", "health": "202"}
+    assert parse_session_pids("") == {}
+    assert parse_session_pids("no-tab-here\n") is None
+    assert parse_session_pids("bad\tpid\n") is None

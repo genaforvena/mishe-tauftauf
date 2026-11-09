@@ -35,6 +35,19 @@ def parse_list_windows(text: str) -> list[dict[str, object]] | None:
     return windows
 
 
+def parse_session_pids(text: str) -> dict[str, str] | None:
+    """Parse ``#{session_name}\\t#{pid}`` lines into name -> pid; None when malformed."""
+    sessions: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        name, sep, pid = line.rpartition("\t")
+        if not sep or not name or not pid.isdigit():
+            return None
+        sessions[name] = pid
+    return sessions
+
+
 def parse_session_births(output: str) -> list[tuple[str, float]] | None:
     """Parse ``#{session_name}\\t#{session_created}`` lines; None when malformed."""
     births: list[tuple[str, float]] = []

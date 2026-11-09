@@ -26,7 +26,7 @@ RENDERER_SENSE_ID = "sense.runtime.renderer-coverage"
 RENDERER_MODULES = ("plant_view", "plant_view_boundary")
 
 from . import proc_table
-from .plant_tmux import WINDOW_FORMAT as _WINDOW_FORMAT, parse_list_windows, parse_session_births
+from .plant_tmux import WINDOW_FORMAT as _WINDOW_FORMAT, parse_list_windows, parse_session_births, parse_session_pids
 
 
 def _run_tmux(socket: str, args: list[str], timeout: float = 5) -> subprocess.CompletedProcess | None:
@@ -403,12 +403,8 @@ def read_server_keeper(socket: str | None, *, runner=_run_socket_tmux,
         return judge_server_keeper(None)
     if listed.returncode != 0:
         return judge_server_keeper(None)
-    sessions: dict[str, tuple[str, str]] = {}
-    for line in (listed.stdout or "").splitlines():
-        if not line.strip():
-            continue
-        name, sep, pid = line.rpartition("\t")
-        if not sep or not name or not pid.isdigit():
-            return judge_server_keeper(None)
-        sessions[name] = (pid, cgroup_unit(pid))
+    pids = parse_session_pids(listed.stdout or "")
+    if pids is None:
+        return judge_server_keeper(None)
+    sessions = {name: (pid, cgroup_unit(pid)) for name, pid in pids.items()}
     return judge_server_keeper(sessions)

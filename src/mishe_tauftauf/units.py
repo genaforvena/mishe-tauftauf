@@ -179,6 +179,24 @@ def user_timer_names(glob: str) -> list[str]:
     return [line.split()[0] for line in listed.splitlines() if line.strip()]
 
 
+def unit_file_service_names(listing: str, prefix: str) -> list[str]:
+    """Installed non-template services under ``prefix`` from ``list-unit-files`` text.
+
+    The first column of each row is the unit name. A template such as
+    ``name@.service`` is left out: ``systemctl show`` rejects a whole batch when
+    one of its names is a template.
+    """
+    units: list[str] = []
+    for row in listing.splitlines():
+        columns = row.split()
+        if not columns:
+            continue
+        unit = columns[0]
+        if unit.startswith(prefix) and unit.endswith(".service") and "@" not in unit:
+            units.append(unit)
+    return units
+
+
 def _installed(cfg: Config) -> dict:
     found = {}
     if not cfg.unit_dir.is_dir():

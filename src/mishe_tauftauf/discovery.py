@@ -52,6 +52,7 @@ from .replacement_readings import (
     read_role_render_coverage, read_server_keeper, read_server_slice, read_tmux_windows,
 )
 from .slice_throttle import read_slice_throttle
+from .units import unit_file_service_names
 from .unit_cpu import read_unit_cpu
 from .unit_psi_reading import read_unit_psi
 from .roles import declared as seated_roles
@@ -1798,15 +1799,7 @@ def _installed_site_units() -> tuple[list[str], str | None]:
         return [], "systemctl unavailable"
     if result.returncode:
         return [], "systemctl failed"
-    units: list[str] = []
-    for row in result.stdout.splitlines():
-        columns = row.split()
-        if not columns:
-            continue
-        unit = columns[0]
-        if unit.startswith(SITE_UNIT_PREFIX) and unit.endswith(".service") and "@" not in unit:
-            units.append(unit)
-    return units, None
+    return unit_file_service_names(result.stdout, SITE_UNIT_PREFIX), None
 
 
 def _pinned_root(home: Path, default: str) -> tuple[str | None, str | None]:

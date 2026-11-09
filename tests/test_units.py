@@ -335,3 +335,17 @@ def test_pin_import_check_never_reports_a_name_it_cannot_decide(tmp_path):
     assert units._pin_import_problems(broken) == ["pin m.py: unreadable (SyntaxError)"]
     dyn = _pin(tmp_path / "dyn", {"__init__.py": "", "a.py": "from .m import anything\n", "m.py": "globals()['anything'] = 1\n"})
     assert units._pin_import_problems(dyn) == []
+
+
+def test_unit_file_service_names_keeps_site_services_and_drops_templates():
+    listing = (
+        "mishe-wake@.service       static  -\n"
+        "mishe-producer-host-capacity.service enabled -\n"
+        "mishe-doctor.service      static  -\n"
+        "mishe-doctor.timer        enabled -\n"
+        "\n"
+        "other.service             enabled -\n"
+    )
+    assert units.unit_file_service_names(listing, "mishe-") == [
+        "mishe-producer-host-capacity.service", "mishe-doctor.service"]
+    assert units.unit_file_service_names("", "mishe-") == []
