@@ -1,9 +1,11 @@
 """omp as a one-shot engine: ``omp --print --no-session`` reading the dossier file."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from . import engine_process
+from .wake import EngineRejected
 
 
 # omp's own default thinking is high: a wake on longcat-2.5-free spent 19k thinking deltas against 165 of text
@@ -21,6 +23,27 @@ def command(model: str | None, cwd: Path, prompt_file: Path, thinking: str | Non
     return cmd + [f"@{prompt_file}"]
 
 
+def refused_before_effect(stream: Path) -> str | None:
+    """The model error that ended a stream with no tool call (so nothing ran), else None."""
+    if not stream.exists():
+        return None
+    error = None
+    with stream.open(encoding="utf-8", errors="replace") as lines:
+        for line in lines:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            message = event.get("message") if isinstance(event, dict) else None
+            if not isinstance(message, dict):
+                continue
+            if any(isinstance(b, dict) and b.get("type") == "toolCall" for b in message.get("content") or []):
+                return None
+            if message.get("role") == "assistant" and message.get("stopReason") == "error":
+                error = str(message.get("errorMessage") or "model error")[:300]
+    return error
+
+
 class OmpEngine:
     name = "omp"
 
@@ -29,6 +52,11 @@ class OmpEngine:
 
     def run(self, prompt_file, *, env, cwd, timeout, on_start=None) -> int:
         prompt_file = Path(prompt_file)
-        return engine_process.run_bounded(
+        stream = prompt_file.with_suffix(".out.jsonl")
+        code = engine_process.run_bounded(
             command(self.model, Path(cwd), prompt_file, self.thinking), env=dict(env, **self.extra_env),
-            cwd=Path(cwd), timeout=timeout, stdout_to=prompt_file.with_suffix(".out.jsonl"), on_start=on_start)
+            cwd=Path(cwd), timeout=timeout, stdout_to=stream, on_start=on_start)
+        error = refused_before_effect(stream) if code != 0 else None
+        if error is not None:
+            raise EngineRejected(f"model refused before any tool call: {error}")
+        return code

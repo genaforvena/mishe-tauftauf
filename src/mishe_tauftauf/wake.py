@@ -29,6 +29,10 @@ class EngineNotStarted(Exception):
     """The engine command never started, so it had no effect."""
 
 
+class EngineRejected(EngineNotStarted):
+    """The engine ran, but its model refused before any tool call: no effect, and the candidate is unusable now."""
+
+
 class EngineTimeout(Exception):
     """The engine ran past its bound; its effect is unknown."""
 

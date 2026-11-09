@@ -38,7 +38,7 @@ from . import engine_policy as policy
 from .router_text import file_lines, load_json, split_cooling_key
 from . import signal_store
 from . import yielding
-from .wake import EngineNotStarted, EngineTimeout
+from .wake import EngineNotStarted, EngineRejected, EngineTimeout
 
 ROUTES = "routes.json"
 STATE = "routing-state.json"
@@ -342,6 +342,14 @@ class RoutedEngine:
                 limit = min(timeout, cand["timeout_s"]) if cand.get("timeout_s") else timeout
                 code = engine.run(prompt_file, env=dict(env, **self.extra_env), cwd=cwd, timeout=limit,
                                   on_start=on_start)
+            except EngineRejected as exc:
+                # The model refused before any tool call: no effect, so fall through now, and cool this
+                # candidate so the next wake does not pick it first again.
+                record(self.home, {"role": self.role, "event": "fallback", "wake": key_wake, "key": key,
+                                   "reason": f"refused: {exc}"}, now_ms=time.time() * 1000)
+                self._cool(cand, time.time() * 1000)
+                tried.add(key)
+                continue
             except EngineNotStarted as exc:
                 # The command never ran, so the wake has no effect: fall through to the next candidate now.
                 # No cool-off: an unavailable binary is not evidence the account is exhausted.

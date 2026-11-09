@@ -5,7 +5,7 @@ import pytest
 
 from mishe_tauftauf import engine_router as router
 from mishe_tauftauf import signal_store, yielding
-from mishe_tauftauf.wake import EngineNotStarted, EngineTimeout
+from mishe_tauftauf.wake import EngineNotStarted, EngineRejected, EngineTimeout
 
 NOW_MS = 1_792_712_432_000
 RESET = router._iso(NOW_MS + 3_600_000)
@@ -121,6 +121,8 @@ class FakeEngine:
             raise EngineNotStarted("missing binary")
         if action == "timeout":
             raise EngineTimeout("exceeded")
+        if action == "refused":
+            raise EngineRejected("model refused before any tool call")
         if action == "yield":
             path = yielding.receipt_path(env["MISHE_SEED_HOME"], env["MISHE_WAKE_KEY"])
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -270,3 +272,31 @@ def test_a_free_candidate_needs_no_account_and_keeps_its_thinking(tmp_path):
     import pytest
     with pytest.raises(ValueError):
         er.load_routes(tmp_path)
+
+
+def test_refused_candidate_falls_through_within_same_wake_and_is_cooled(routed):
+    FakeEngine.script = {GO["model"]: "refused", MINI["model"]: "yield"}
+    eng = router.for_role(routed, "health")
+    assert eng.run(routed / "p.md", env=_env(routed, "k9"), cwd=routed, timeout=5) == 0
+    events = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()]
+    assert [e["event"] for e in events] == ["select", "fallback", "select", "outcome"]
+    assert events[1]["reason"].startswith("refused:")
+    cooling = json.loads((routed / "engine" / router.STATE).read_text())["cooling"]
+    assert router.candidate_key(GO) in cooling
+    assert router.candidate_key(MINI) not in cooling
+
+
+def test_refused_before_effect_reads_error_only_without_tool_calls(tmp_path):
+    from mishe_tauftauf import engine_omp
+    refused = tmp_path / "refused.out.jsonl"
+    refused.write_text(
+        '{"type":"agent_start"}\n'
+        '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error",'
+        '"errorMessage":"400 This Go model is hosted outside Europe"}}\n')
+    assert engine_omp.refused_before_effect(refused).startswith("400 This Go model")
+    acted = tmp_path / "acted.out.jsonl"
+    acted.write_text(
+        '{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash"}],'
+        '"stopReason":"error","errorMessage":"later failure"}}\n')
+    assert engine_omp.refused_before_effect(acted) is None
+    assert engine_omp.refused_before_effect(tmp_path / "missing.out.jsonl") is None
