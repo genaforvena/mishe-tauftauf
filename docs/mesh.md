@@ -98,10 +98,13 @@ point `tmux -S` at the socket directly.
   messages.
 - **`git` window.** Replays recent canonical Git history, then follows new commits.
 - **`wakes` window.** Replays recent wake starts, settlements and outputs, then follows.
-  A finished wake prints its final answer here. A running Claude wake writes its output
-  only when it ends, so while it runs the window adds a progress block about every two
-  minutes with the last six lines of the stream so far, marked `RUNNING`. That block says
-  the wake is still running; it is not a failure.
+  A finished wake prints its final answer here; for an `omp` wake, a terse closing line
+  is shown with what the mind said just before it. While a wake runs, the window adds a
+  progress block about every two minutes, marked `RUNNING`: an `omp` wake streams JSONL
+  events, so its block carries the mind's latest words and its last tool call, while a
+  Claude wake writes one JSON document at the end and its block says the engine reports
+  its output when the wake ends. The block says the wake is still running; it is not a
+  failure.
 
 A pane loads its code once, when its process starts, from the runtime pin in force at that
 moment. After the pin moves, a pane keeps running the code it loaded until it is restarted.
