@@ -466,6 +466,27 @@
       "resolver": "rust-plan",
       "covers": "the rust-plan investigation is making progress: its canonical wall exists and is inside its bound, and the plan document is present and non-empty; a missing or stale wall is RED, an unreadable observation is UNKNOWN, and a producer that stops running ages the signal to UNKNOWN",
       "replaces": []
+    },
+    {
+      "name": "network-probe",
+      "command": [
+        "{python}",
+        "{repo}/checks/network_probe.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 60,
+      "timeout": 90,
+      "max_age": 300,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "network",
+      "covers": "home connectivity: gateway and public-resolver latency and loss, DNS and HTTPS timing (rows in network/probe.jsonl); RED when the internet is unreachable, UNKNOWN when the probe cannot run",
+      "replaces": []
     }
   ],
   "retired": [
