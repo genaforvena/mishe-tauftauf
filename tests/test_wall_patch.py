@@ -704,3 +704,45 @@ def test_verify_refused_inside_the_wake_holding_the_dispatch_lock(tmp_path, monk
     finally:
         monkeypatch.delenv("MISHE_WAKE_KEY")
         lock_file.close()
+
+
+def test_prepare_with_base_expresses_a_committed_change(tmp_path):
+    import base64
+    home, source, deployed = layout(tmp_path)
+    name = "src/mishe_tauftauf/example.py"
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t",
+                               "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    git("add", "src")
+    git("commit", "-qm", "before")
+    source.write_text("after\n")
+    git("add", "src")
+    git("commit", "-qm", "after")
+
+    wall_patch.prepare(home, "change", [name], base="HEAD~1")
+    record = wall_patch.status(home, "change")
+    assert record["base"] == "HEAD~1"
+    before = base64.b64decode(record["files"][name]["before"]["bytes"]).decode()
+    assert before == "before\n"
+    assert record["files"][name]["before"]["bytes"] != base64.b64encode(source.read_bytes()).decode()
+
+
+def test_prepare_without_base_keeps_working_tree_before(tmp_path):
+    import base64
+    home, source, deployed = layout(tmp_path)
+    name = "src/mishe_tauftauf/example.py"
+    wall_patch.prepare(home, "change", [name])
+    record = wall_patch.status(home, "change")
+    assert "base" not in record
+    assert base64.b64decode(record["files"][name]["before"]["bytes"]).decode() == "before\n"
+
+
+def test_base_rejects_option_like_ref_and_escaping_path(tmp_path):
+    home, source, deployed = layout(tmp_path)
+    with pytest.raises(ValueError, match="invalid base ref"):
+        wall_patch.base_snapshot(home.parent, "--output=/tmp/x", "src/mishe_tauftauf/example.py")
+    with pytest.raises(ValueError, match="invalid patch path"):
+        wall_patch.base_snapshot(home.parent, "HEAD", "../escape.py")

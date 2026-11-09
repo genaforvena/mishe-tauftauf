@@ -214,7 +214,26 @@ def _worker_timeout(config) -> float:
     return float(chosen) + WORKER_SETTLE_SECONDS
 
 
-def prepare(home, identity, paths):
+def base_snapshot(root, base, name):
+    """Committed bytes of ``name`` at ``base``: the "before" of a patch whose
+    working tree already equals HEAD. Without this, before == after and the
+    review diff is empty for a committed change."""
+    if base.startswith("-"):
+        raise ValueError(f"invalid base ref: {base}")
+    target(root, name)
+    listing = subprocess.run(["git", "-C", str(root), "ls-tree", base, "--", name], capture_output=True, text=True)
+    if listing.returncode:
+        raise ValueError(f"base ref not readable: {base}")
+    if not listing.stdout.strip():
+        return None
+    mode, kind, _ = listing.stdout.split(None, 2)
+    if kind != "blob":
+        raise ValueError(f"base path is not a file: {name}")
+    data = subprocess.run(["git", "-C", str(root), "show", f"{base}:{name}"], capture_output=True, check=True).stdout
+    return {"bytes": base64.b64encode(data).decode(), "mode": int(mode, 8) & 0o777}
+
+
+def prepare(home, identity, paths, base=None):
     with lock(home):
         path = location(home, identity)
         if path.exists():
@@ -222,11 +241,15 @@ def prepare(home, identity, paths):
         runtime = Path(settings(home)["runtime"]).resolve()
         if runtime == home.parent.resolve():
             raise ValueError("runtime snapshot must be separate from shared checkout")
-        files = {name: {"before": snapshot(target(home.parent, name)), "runtime_before": snapshot(target(runtime, name))} for name in paths}
+        files = {name: {"before": base_snapshot(home.parent, base, name) if base else snapshot(target(home.parent, name)),
+                        "runtime_before": snapshot(target(runtime, name))} for name in paths}
         if not files:
             raise ValueError("empty patch")
-        _save(path, {"phase": "prepared", "runtime": str(runtime), "files": files,
-                     "prepared_at": datetime.now(timezone.utc).isoformat()})
+        record = {"phase": "prepared", "runtime": str(runtime), "files": files,
+                  "prepared_at": datetime.now(timezone.utc).isoformat()}
+        if base:
+            record["base"] = base
+        _save(path, record)
 
 
 def review(home, record):
@@ -483,6 +506,7 @@ def main():
     parser.add_argument("--id", required=True)
     parser.add_argument("action", choices=["prepare", "check", "apply", "revert", "verify", "status"])
     parser.add_argument("--files", nargs="+")
+    parser.add_argument("--base", help="git ref whose committed bytes are the patch's before (for a change already committed)")
     parser.add_argument("--command", help="JSON argument list for deterministic check")
     parser.add_argument("--activate", help="JSON argument list restarting affected consumers")
     parser.add_argument("--observe", help="JSON argument list checking real live consumers")
@@ -490,7 +514,7 @@ def main():
     parser.add_argument("--revert", help="JSON argument list restoring the old consumer pin")
     args = parser.parse_args()
     if args.action == "prepare":
-        prepare(args.home, args.id, args.files or [])
+        prepare(args.home, args.id, args.files or [], base=args.base)
     elif args.action == "check":
         check(args.home, args.id, decode_argv(args.command),
               activate=decode_argv(args.activate),
