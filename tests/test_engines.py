@@ -78,3 +78,12 @@ def test_omp_streams_events_before_completion(tmp_path, monkeypatch):
     assert engine_omp.OmpEngine("m").run(prompt, env={}, cwd=tmp_path, timeout=10) == 0
     assert seen["command"][seen["command"].index("--mode") + 1] == "json"
     assert seen["stdout_to"] == tmp_path / "wake.prompt.out.jsonl"
+
+
+def test_omp_wakes_bound_thinking_and_honour_a_configured_level(tmp_path):
+    cmd = engine_omp.command("m", tmp_path, tmp_path / "p.md")
+    assert cmd[cmd.index("--thinking") + 1] == "low"
+    cmd = engine_omp.command("m", tmp_path, tmp_path / "p.md", "minimal")
+    assert cmd[cmd.index("--thinking") + 1] == "minimal"
+    cmd = engine_omp.command("m", tmp_path, tmp_path / "p.md", "bogus")
+    assert cmd[cmd.index("--thinking") + 1] == "low"

@@ -261,7 +261,7 @@ class RoutedEngine:
         from .engine_omp import OmpEngine
         if cand["engine"] == "claude":
             return ClaudeEngine(cand["model"])
-        return OmpEngine(cand["model"])
+        return OmpEngine(cand["model"], thinking=cand.get("thinking"))
 
     def _cool(self, cand: dict, now_ms: float) -> None:
         # The Claude safety net is never cooled: a cooled last candidate leaves the role with no engine.

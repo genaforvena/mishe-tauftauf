@@ -22,5 +22,5 @@ def for_role(home, role: str):
         tools = tuple(config.get("tools") or ALLOW)
         return ClaudeEngine(config.get("model", DEFAULT_CLAUDE_MODEL), env, tools)
     if kind == "omp":
-        return OmpEngine(config.get("model"), env)
+        return OmpEngine(config.get("model"), env, config.get("thinking"))
     raise ValueError(f"unsupported engine {kind!r} for {role!r}; use claude or omp")
