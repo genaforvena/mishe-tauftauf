@@ -98,7 +98,9 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         # Initial serialization check and dispatch/reconcile each have a
         # bounded lock wait. The engine retains its full configured budget.
         f"TimeoutStartSec={3 * WAKE_TIMEOUT + SLACK}\nTimeoutStopSec=20\nKillMode=control-group\n"
-        "MemoryAccounting=yes\nMemoryMax=2G\nTasksMax=256\nCPUWeight=50\nIOWeight=50\n")
+        # MemoryHigh throttles a wake before MemoryMax kills it: an engine plus a 760 MB tape scan
+        # otherwise sits at the 1G prefix default and stalls on memory pressure.
+        "MemoryAccounting=yes\nMemoryHigh=1536M\nMemoryMax=2G\nTasksMax=256\nCPUWeight=50\nIOWeight=50\n")
     registry = signal_store.registry(cfg.home)
     for role in sorted(roles):
         slice_name = cfg.lifeline_slice if role in cfg.lifeline_roles else cfg.plants_slice

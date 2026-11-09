@@ -40,7 +40,7 @@ def test_every_role_gets_a_path_unit_watching_inbox_and_subscribed_signals(cfg):
 
 def test_wake_service_is_bounded_oneshot_with_onfailure(cfg):
     svc = units.render(cfg, ROLES)["mishe-wake@.service"]
-    for needle in ("Type=oneshot", "TimeoutStartSec=", "MemoryMax=", "OnFailure=mishe-failed@%n.service",
+    for needle in ("Type=oneshot", "TimeoutStartSec=", "MemoryHigh=1536M", "MemoryMax=", "OnFailure=mishe-failed@%n.service",
                    "wake %i", f"MISHE_SEED_HOME={cfg.home}", "KillMode=control-group"):
         assert needle in svc
     # RuntimeMaxSec is ignored for Type=oneshot; the start timeout is the real hard cap.
