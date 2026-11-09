@@ -5,11 +5,14 @@ Reads the rows the `network-probe` duty appends to SITE/network/probe.jsonl and,
 a few facts from the router over ssh (never writes there).  Anything not measured, or too old,
 is shown as UNKNOWN.  The network mind improves this file.
 """
-import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import network_boundary as nb
 
 SITE = Path(os.environ.get("MISHE_TAUFTAUF_HOME") or os.environ.get("MISHE_SEED_HOME") or ".mishe-tauftauf")
 PROBE = SITE / "network" / "probe.jsonl"
@@ -21,24 +24,13 @@ _router = {"at": 0.0, "text": None}
 
 def rows(limit=1440):
     try:
-        lines = PROBE.read_text().splitlines()[-limit:]
+        return nb.decode_rows(PROBE.read_text(), limit)
     except OSError:
         return []
-    out = []
-    for line in lines:
-        try:
-            out.append(json.loads(line))
-        except ValueError:
-            continue
-    return out
 
 
 def age(row):
-    try:
-        t = time.mktime(time.strptime(row["at"], "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
-    except (KeyError, ValueError):
-        return None
-    return time.time() - t
+    return nb.row_age_seconds(row)
 
 
 def spark(values, width=40):
@@ -73,9 +65,8 @@ def router_facts():
                             "cut -d' ' -f1 /proc/uptime; cut -d' ' -f1-3 /proc/loadavg; "
                             "ubus call network.interface.wan status | grep -E '\"up\"|\"uptime\"' | tr -d ' \\n'"],
                            capture_output=True, text=True, timeout=12)
-        up, load, wan = (r.stdout.splitlines() + ["", "", ""])[:3]
-        days = float(up) / 86400
-        _router["text"] = f"router up {days:.1f} days, load {load}, WAN {'up' if '\"up\":true' in wan else 'UNKNOWN/down'}"
+        days, load, wan = nb.decode_router(r.stdout)
+        _router["text"] = f"router up {days:.1f} days, load {load}, WAN {'up' if wan else 'UNKNOWN/down'}"
     except (OSError, ValueError, subprocess.SubprocessError):
         _router["text"] = None
     return _router["text"]
@@ -119,7 +110,6 @@ def draw():
 
 
 if __name__ == "__main__":
-    import sys
     if "--once" in sys.argv:
         print(draw())
     else:
