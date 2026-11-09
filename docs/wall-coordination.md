@@ -175,7 +175,7 @@ that consumers use the intended release. Preserve protected host guards and limi
 
 Run `mishe yield --result changed|verified|blocked` with the edited wall on stdin.
 Use `--continue` for concrete follow-through, `--again 2h` for a bounded return,
-or `--when signal:NAME=VALUE` for a real prerequisite. `--artifact FILE` registers
+or `--when signal:NAME=VALUE` for a real prerequisite. When waiting for a result, be event-first: add a probe signal with the change, yield `--when signal:NAME=VALUE`, and add `--again` only as the fallback; the pair is retired together when either fires. Name the signal and the fallback in the wall. `--artifact FILE` registers
 a nonempty site-local evidence file. `--work-file FILE` records current structured
 readiness. A missing yield leaves an unknown effect to reconcile before replay.
 
