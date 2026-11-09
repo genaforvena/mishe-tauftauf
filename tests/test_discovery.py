@@ -6865,6 +6865,81 @@ def test_loop_stall_missing_record_is_unknown_not_clean(monkeypatch, tmp_path):
     assert "unknown=health" in result["sample"]
 
 
+def _watch_wait_fixture(monkeypatch, overrides, descendants):
+    """Coverage and wake pid fixed per role; descendant walk answered by ``descendants``."""
+    monkeypatch.setattr(discovery, "_mind_role_coverage", _loop_stall_coverage(overrides))
+    monkeypatch.setattr(discovery, "_open_wake_pid", lambda home, role: 4242 if role == "senses" else None)
+    monkeypatch.setattr(discovery, "_open_wait_descendants",
+                        lambda pid: descendants if descendants is None else (descendants, 3))
+
+
+def test_watch_wait_argv_shapes_match_only_waits():
+    """CI watches and sleeps match; reads and unbounded sleeps do not."""
+    matches = lambda args: any(p.search(args) for p in discovery.WATCH_WAIT_ARGV_PATTERNS)
+    assert matches("gh run watch 123456 --exit-status")
+    assert matches("gh pr checks 9 --watch")
+    assert matches("sleep 150")
+    assert not matches("gh run view 123456")
+    assert not matches("gh pr checks 9")
+    assert not matches("sleep infinity")
+    assert not matches("python3 -c 'print(1)'")
+
+
+def test_watch_wait_past_bound_reads_watch_wait(monkeypatch, tmp_path):
+    """An open wake whose CI wait outlived the bound reads watch-wait and names the pid."""
+    _watch_wait_fixture(monkeypatch,
+                        {"senses": {"pending": "wake-x", "idle_s": 900}},
+                        [(777, discovery.WATCH_WAIT_BOUND_SECONDS + 5, "gh run watch 1")])
+    result = discovery._mind_watch_wait(tmp_path)
+    assert result["id"] == "sense.mind.watch-wait"
+    assert result["verdict"] == "watch-wait"
+    assert result["roles"]["senses"]["verdict"] == "watch-wait"
+    assert "pid 777" in result["roles"]["senses"]["detail"]
+    assert result["roles"]["docs"]["verdict"] == "clean"
+    assert "watch-wait=watch-wait" in result["sample"]
+
+
+def test_watch_wait_inside_bound_and_no_wait_are_clean(monkeypatch, tmp_path):
+    """A fresh wait and an open wake with no wait-shaped child are not watch-waits."""
+    _watch_wait_fixture(monkeypatch,
+                        {"senses": {"pending": "wake-y", "idle_s": 10}},
+                        [(778, 30, "sleep 30")])
+    assert discovery._mind_watch_wait(tmp_path)["roles"]["senses"]["detail"] == "external wait inside bound"
+    _watch_wait_fixture(monkeypatch,
+                        {"senses": {"pending": "wake-y", "idle_s": 10}}, [])
+    result = discovery._mind_watch_wait(tmp_path)
+    assert result["verdict"] == "clean"
+    assert result["roles"]["senses"]["detail"] == "open wake without external wait"
+
+
+def test_watch_wait_unreadable_tree_and_missing_record_are_unknown(monkeypatch, tmp_path):
+    """A dead or unreadable wake pid and a missing dispatch record stay UNKNOWN, never clean."""
+    _watch_wait_fixture(monkeypatch,
+                        {"senses": {"pending": "wake-z", "idle_s": 10},
+                         "health": {"pending": None, "idle_s": None, "last_yield": None}},
+                        None)
+    result = discovery._mind_watch_wait(tmp_path)
+    assert result["roles"]["senses"]["verdict"] == "unknown"
+    assert result["roles"]["health"]["verdict"] == "unknown"
+    assert result["verdict"] == "unknown"
+    assert "unknown=health,senses" in result["sample"]
+
+
+def test_watch_wait_walks_a_live_sleep_child(tmp_path):
+    """The real process walk finds a live `sleep` child of this process."""
+    import subprocess as _sp
+    child = _sp.Popen(["sleep", "30"])
+    try:
+        walked = discovery._open_wait_descendants(os.getpid())
+        assert walked is not None
+        waits, _seen = walked
+        assert any(pid == child.pid for pid, _etimes, _args in waits)
+    finally:
+        child.kill()
+        child.wait()
+    assert discovery._open_wait_descendants(999999999) is None
+
+
 
 class _FakeTape:
     """Stands in for Feed so the reading is tested without the mishe-tape binary."""

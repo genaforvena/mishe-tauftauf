@@ -810,19 +810,23 @@ def _provider_error_class(record: dict) -> str:
 
 
 
-WATCH_WAIT_SAMPLE_GAP_SECONDS = 3.0
-_WATCH_VERDICTS = frozenset({"watch-treadmill", "watch-docs-treadmill"})
-"""Seconds between the two pane captures a watch-wait verdict compares.
+WATCH_WAIT_BOUND_SECONDS = 600
+"""An external-state wait inside an open wake older than this is a watch-wait.
 
-Long enough that a live TUI frame advances its elapsed timer between reads
-(the probe measured timer ticks inside 15 s), short enough that the two
-``capture-pane`` round trips stay a bounded addition to the scan. Shorter
-than the CI poll loops the sense excuses (150 s sleeps), so a verdict never
-spans the wait it names.
+A wake holds the only dispatch slot while it runs. Polling CI or an external
+state for longer than this should yield with ``--when``/``--again`` instead.
 """
 
-WATCH_WAIT_GH_TIMEOUT_SECONDS = 10
-"""Bound for one ``gh run view`` external-state read per pane."""
+WATCH_WAIT_MAX_DEPTH = 6
+WATCH_WAIT_MAX_PROCESSES = 64
+"""Bounds for the descendant walk under an open wake's process."""
+
+WATCH_WAIT_ARGV_PATTERNS = (
+    re.compile(r"(?:^|\s|/)gh\s+run\s+watch\b"),
+    re.compile(r"(?:^|\s|/)gh\s+pr\s+checks\b.*--watch\b"),
+    re.compile(r"(?:^|[\s/])sleep\s+\d+(?:\.\d+)?(?:\s|$)"),
+)
+"""argv shapes that mean a wake is waiting on CI or an external state."""
 
 
 
@@ -1367,6 +1371,137 @@ def _mind_loop_stall(home: Path, now: datetime | None = None) -> dict:
             "consumer": "health mishe-wide loop-stall rollup",
             "validity": {"now": now.isoformat(timespec="seconds"),
                          "bound_seconds": LOOP_STALL_WAKE_SECONDS}}
+
+
+def _process_argv(pid: int) -> tuple[int, str] | None:
+    """(elapsed seconds, argv text) for one live pid, or None when unreadable."""
+    try:
+        result = subprocess.run(["ps", "-o", "etimes=,args=", "-p", str(pid)],
+                                capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    line = result.stdout.strip()
+    if result.returncode or not line:
+        return None
+    etimes_text, _, args = line.partition(" ")
+    if not etimes_text.isdigit():
+        return None
+    return int(etimes_text), args.strip()
+
+
+def _open_wait_descendants(root: int) -> tuple[list[tuple[int, int, str]], int] | None:
+    """Wait-shaped descendants of ``root`` as (pid, etimes, argv), plus pids seen.
+
+    None when the root process is gone or its argv is unreadable; the caller
+    reads that as UNKNOWN, never as clean. The walk is breadth-first and
+    bounded by ``WATCH_WAIT_MAX_DEPTH`` and ``WATCH_WAIT_MAX_PROCESSES``.
+    """
+    if _process_argv(root) is None:
+        return None
+    waits: list[tuple[int, int, str]] = []
+    frontier = [root]
+    seen = 1
+    for _depth in range(WATCH_WAIT_MAX_DEPTH):
+        next_frontier: list[int] = []
+        for parent in frontier:
+            for child in _child_pids(parent):
+                if seen >= WATCH_WAIT_MAX_PROCESSES:
+                    return waits, seen
+                seen += 1
+                row = _process_argv(child)
+                if row is None:
+                    continue
+                etimes, args = row
+                if any(pattern.search(args) for pattern in WATCH_WAIT_ARGV_PATTERNS):
+                    waits.append((child, etimes, args))
+                next_frontier.append(child)
+        if not next_frontier:
+            break
+        frontier = next_frontier
+    return waits, seen
+
+
+def _open_wake_pid(home: Path, role: str) -> int | None:
+    """The pid the role's open dispatch record names, or None."""
+    try:
+        from .core.state import DispatchStore
+        record = DispatchStore(home / "dispatch").read(role)
+    except (OSError, ValueError):
+        return None
+    return None if record is None else record.pid
+
+
+def _mind_watch_wait(home: Path, now: datetime | None = None) -> dict:
+    """Replacement for the retired pane-capture ``sense.mind.watch-wait``.
+
+    Source: the open wake's own process tree, read from the dispatch record's
+    pid. No pane is captured. Rule WW (watch-wait):
+
+    - no dispatch record, or an open wake whose pid is missing or not live →
+      ``unknown`` for that role;
+    - a settled role (no open wake) → ``clean``;
+    - an open wake with no wait-shaped descendant (``gh run watch``,
+      ``gh pr checks --watch``, ``sleep N``) → ``clean``;
+    - an open wake whose oldest wait-shaped descendant is inside
+      ``WATCH_WAIT_BOUND_SECONDS`` → ``clean``;
+    - an open wake whose wait-shaped descendant outlived that bound →
+      ``watch-wait``: the wake holds the only dispatch slot and should yield
+      with ``--when``/``--again`` rather than keep polling.
+
+    A descendant walk that cannot list processes reads ``unknown``. The
+    reading sees only argv shapes, so a wait under an unrecognised tool
+    stays clean. Retired roles are excluded via ``LOOP_STALL_ROLES``.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    try:
+        entries: list | None = Feed(home).entries()
+    except (OSError, ValueError):
+        entries = None
+    pairs: dict[str, dict] = {}
+    worst = "clean"
+    for role in LOOP_STALL_ROLES:
+        coverage = _mind_role_coverage(home, role, now, entries)
+        pending = coverage.get("pending")
+        pid = _open_wake_pid(home, role) if pending else None
+        waits: list[tuple[int, int, str]] = []
+        if coverage.get("idle_s") is None:
+            verdict, detail = "unknown", "dispatch record missing or unreadable"
+        elif not pending:
+            verdict, detail = "clean", "settled"
+        elif pid is None:
+            verdict, detail = "unknown", "open wake has no pid"
+        else:
+            walked = _open_wait_descendants(pid)
+            if walked is None:
+                verdict, detail = "unknown", f"open wake pid {pid} not live or unreadable"
+            else:
+                waits, _seen = walked
+                oldest = max(waits, key=lambda row: row[1], default=None)
+                if oldest is None:
+                    verdict, detail = "clean", "open wake without external wait"
+                elif oldest[1] > WATCH_WAIT_BOUND_SECONDS:
+                    verdict = "watch-wait"
+                    detail = (f"open wake {pending} waited {oldest[1]}s on pid {oldest[0]} "
+                              f"past {WATCH_WAIT_BOUND_SECONDS}s bound")
+                else:
+                    verdict, detail = "clean", "external wait inside bound"
+        if verdict == "watch-wait":
+            worst = "watch-wait"
+        elif verdict == "unknown" and worst == "clean":
+            worst = "unknown"
+        pairs[role] = {"verdict": verdict, "detail": detail, "pid": pid,
+                       "waits": len(waits), **coverage}
+    sample = "watch-wait=" + worst + " " + " ".join(
+        f"{role}({pairs[role]['verdict']},waits={pairs[role]['waits']},"
+        f"pending={pairs[role].get('pending')})" for role in sorted(pairs))
+    unknown = sorted(role for role, pair in pairs.items() if pair["verdict"] == "unknown")
+    if unknown:
+        sample += " unknown=" + ",".join(unknown)
+    return {"id": "sense.mind.watch-wait", "state": "verified" if pairs else "unknown",
+            "sample": sample, "roles": pairs, "verdict": worst, "kind": "read",
+            "validity": {"now": now.isoformat(timespec="seconds"),
+                         "bound_seconds": WATCH_WAIT_BOUND_SECONDS}}
 
 
 def _entry_timestamp(entry: FeedEntry) -> datetime | None:
@@ -6993,6 +7128,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_mind_docs_treadmill(home))
     observed.append(_mind_artifact_recurrence(home))
     observed.append(_mind_loop_stall(home))
+    observed.append(_mind_watch_wait(home))
     observed.append(_seed_settle_result_mix(home))
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
