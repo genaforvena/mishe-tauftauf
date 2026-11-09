@@ -18,7 +18,10 @@ def duration(text: str) -> float:
     return float(text[:-1]) * UNITS[text[-1]]
 
 
-FEED_RECORD_VERIFY_INTERVAL = 3600.0   # seconds between full per-record tape verifications by doctor
+# Tape entries whose record payloads doctor verifies per run. A cold slice of 2000
+# entries measured 0.3-0.5 s (2026-11-09), so 20000 keeps a run to a few seconds
+# and a cold full tape (~230 s measured) completes in about 15 doctor runs.
+FEED_VERIFY_SLICE = 20000
 
 
 def default_home() -> Path:
@@ -362,21 +365,29 @@ def run_units(args, home: Path, now: float) -> int:
     if (home / "chat.log").exists():                   # the tape is the record; unreadable means not GREEN
         from .feed import Feed, FeedError
         from .state_files import read_json, write_json
-        # Every run parses the whole tape (tape-level checks, measured ~2.6 s).
-        # Per-record payload verification (~7-9 s and the memory peak that stalls
-        # under MemoryHigh) runs at most once per FEED_RECORD_VERIFY_INTERVAL; the
-        # stamp keeps the last full pass visible so a missed cadence cannot hide.
+        # Every run parses the whole tape (tape-level checks, ~2-3 s). Record payload
+        # verification covers one FEED_VERIFY_SLICE window per run, starting at the
+        # stamped cursor and wrapping at the tape end, so a cold store (a full pass
+        # measured ~230 s, longer than the unit's start timeout) never kills doctor.
+        # The stamp keeps the cursor and the time the last full cycle completed.
         stamp_path = home / "doctor-feed-verified.json"
+        cursor, cycle_done = 1, 0.0
         try:
             stamp = read_json(stamp_path)
-            last_full = float(stamp.get("verified_at", 0)) if isinstance(stamp, dict) else 0.0
+            if isinstance(stamp, dict):
+                cursor = max(1, int(stamp.get("cursor", 1)))
+                cycle_done = float(stamp.get("verified_at", 0.0))
         except (TypeError, ValueError):
-            last_full = 0.0
-        full = now - last_full >= FEED_RECORD_VERIFY_INTERVAL
+            cursor, cycle_done = 1, 0.0
         try:
-            Feed(home).entries(verify_records=full)
-            if full:
-                write_json(stamp_path, {"verified_at": now})
+            feed = Feed(home)
+            feed.entries(verify_records=False)
+            window = feed.entries(start=cursor, limit=FEED_VERIFY_SLICE)
+            if len(window) < FEED_VERIFY_SLICE:           # reached the tape end: the cycle is complete
+                cursor, cycle_done = 1, now
+            else:
+                cursor = window[-1].sequence + 1
+            write_json(stamp_path, {"cursor": cursor, "verified_at": cycle_done})
         except FeedError as exc:
             report.state = "RED"
             report.problems.append(f"chat.log: feed-corrupt: {exc}")

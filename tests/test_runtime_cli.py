@@ -295,41 +295,69 @@ def _doctor_feed_calls(site, tmp_path, monkeypatch):
     return units_dir, seen
 
 
-def test_doctor_verifies_records_on_first_run_then_hourly(site, tmp_path, monkeypatch):
-    from mishe_tauftauf import runtime_cli as rc
-    units_dir, seen = _doctor_feed_calls(site, tmp_path, monkeypatch)
-    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
-    assert seen == [True]                                   # no stamp yet: full pass
-    assert (site / "doctor-feed-verified.json").exists()
-    seen.clear()
-    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
-    assert seen == [False]                                  # fresh stamp: tape parse only
-    seen.clear()
-    stamp = site / "doctor-feed-verified.json"
-    stamp.write_text('{"verified_at": %f}' % (__import__("time").time() - rc.FEED_RECORD_VERIFY_INTERVAL - 1))
-    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
-    assert seen == [True]                                   # stale stamp: full pass again
+def _fake_tape(monkeypatch, seen, length):
+    """Stand in for the tape: the whole-tape parse records "parse", a window records its start.
+
+    The real framer is not needed to test the cursor, so these tests run without a built mishe-tape.
+    """
+    from types import SimpleNamespace
+    from mishe_tauftauf import feed as feed_mod
+
+    def fake(self, *a, **kw):
+        if kw.get("verify_records", True) is False:
+            seen.append("parse")
+            return []
+        start = kw.get("start", 1)
+        seen.append(start)
+        return [SimpleNamespace(sequence=s) for s in range(start, min(start + kw["limit"], length + 1))]
+    monkeypatch.setattr(feed_mod.Feed, "entries", fake)
 
 
-def test_doctor_reads_malformed_stamp_json_as_stale(site, tmp_path, monkeypatch):
-    """A stamp that is valid JSON but not an object is stale (full pass), not a doctor crash."""
+def test_doctor_verifies_one_window_per_run_and_advances_cursor(site, tmp_path, monkeypatch):
+    """Doctor verifies a FEED_VERIFY_SLICE window per run, advances the stamped cursor,
+    and wraps at the tape end, completing a cycle with the stamp time."""
+    import time
     from mishe_tauftauf import runtime_cli as rc
     units_dir, seen = _doctor_feed_calls(site, tmp_path, monkeypatch)
+    monkeypatch.setattr(rc, "FEED_VERIFY_SLICE", 2)
+    _fake_tape(monkeypatch, seen, length=5)
     stamp = site / "doctor-feed-verified.json"
-    stamp.write_text('["just", "a", "list"]')
-    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
-    assert seen == [True]                                   # full pass on stale garbage
+    for expected_cursor in (3, 5):
+        assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+        assert json.loads(stamp.read_text())["cursor"] == expected_cursor
+    assert seen == ["parse", 1, "parse", 3]
+    assert json.loads(stamp.read_text())["verified_at"] == 0.0   # no cycle completed yet
     seen.clear()
-    stamp.write_text('"unix epoch string"')
-    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
-    assert seen == [True]
+    before = time.time()
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 0     # window [5] is short: wrap
+    assert seen == ["parse", 5]
+    written = json.loads(stamp.read_text())
+    assert written["cursor"] == 1 and written["verified_at"] >= before
     seen.clear()
-    stamp.write_text('42')
     assert cli("doctor", "--unit-dir", str(units_dir)) == 0
-    assert seen == [True]
-    # a stuffed-canonical rewrite after a full pass is a valid object again
-    written = (site / "doctor-feed-verified.json").read_text()
-    assert '"verified_at"' in written
+    assert seen == ["parse", 1]                                  # the next cycle starts at the head
+
+
+def test_doctor_first_run_verifies_from_head(site, tmp_path, monkeypatch):
+    units_dir, seen = _doctor_feed_calls(site, tmp_path, monkeypatch)
+    _fake_tape(monkeypatch, seen, length=0)
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+    assert seen == ["parse", 1]                                  # tape parse, then one window from the head
+    stamp = json.loads((site / "doctor-feed-verified.json").read_text())
+    assert stamp["cursor"] == 1                                  # empty tape: the window wrapped at once
+
+
+def test_doctor_reads_malformed_stamp_json_as_head(site, tmp_path, monkeypatch):
+    """A stamp that is not a valid cursor object restarts the cycle at the head, not a doctor crash."""
+    units_dir, seen = _doctor_feed_calls(site, tmp_path, monkeypatch)
+    _fake_tape(monkeypatch, seen, length=0)
+    stamp = site / "doctor-feed-verified.json"
+    for garbage in ('["just", "a", "list"]', '"unix epoch string"', '42', '{"cursor": "x"}'):
+        stamp.write_text(garbage)
+        seen.clear()
+        assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+        assert seen == ["parse", 1]
+    assert '"cursor"' in stamp.read_text()                       # a valid object is written back
 
 
 def test_doctor_stays_red_on_corrupt_tape_without_full_pass(site, tmp_path, monkeypatch):
