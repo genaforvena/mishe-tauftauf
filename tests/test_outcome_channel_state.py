@@ -174,3 +174,49 @@ def test_the_check_writes_nothing_to_the_plant(tmp_path):
     assert result.returncode == 2
     after = {path: path.read_bytes() for path in sorted(home.rglob("*")) if path.is_file()}
     assert before == after
+
+
+def make_root(base: Path, body: str) -> Path:
+    """A minimal import root whose package carries the given source."""
+    root = base / "src"
+    package = root / "mishe_tauftauf"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(body, encoding="utf-8")
+    return root
+
+
+def test_the_measurement_key_is_stable_for_identical_inputs(tmp_path):
+    """Two roots with the same bytes over the same home share one key, so the second reuses."""
+    check = load_check()
+    home = write_home(tmp_path / "site", BLOCKING_BODY)
+    running = make_root(tmp_path / "a", "x = 1\n")
+    reference = make_root(tmp_path / "b", "x = 1\n")
+    key = check.measurement_key(running, home)
+    assert key and key == check.measurement_key(reference, home)
+
+
+def test_the_measurement_key_separates_different_code(tmp_path):
+    """A root whose bytes differ must classify on its own, never reuse."""
+    check = load_check()
+    home = write_home(tmp_path / "site", BLOCKING_BODY)
+    running = make_root(tmp_path / "a", "x = 1\n")
+    reference = make_root(tmp_path / "b", "x = 2\n")
+    assert check.measurement_key(running, home) != check.measurement_key(reference, home)
+
+
+def test_the_measurement_key_moves_when_the_tape_grows(tmp_path):
+    """An appended row changes the tape identity, so a later run cannot reuse a stale classification."""
+    check = load_check()
+    home = write_home(tmp_path / "site", BLOCKING_BODY)
+    root = make_root(tmp_path / "a", "x = 1\n")
+    before = check.measurement_key(root, home)
+    with (home / "chat.log").open("a", encoding="utf-8") as handle:
+        handle.write("v1 00000000000000000002 2026-10-20T00:00:01.000000Z probe ::\n")
+    assert check.measurement_key(root, home) != before
+
+
+def test_an_unreadable_identity_gives_no_key(tmp_path):
+    """Without a tape or record store the key is empty and both roots classify uncached."""
+    check = load_check()
+    root = make_root(tmp_path / "a", "x = 1\n")
+    assert check.measurement_key(root, tmp_path / "no-such-home") == ""

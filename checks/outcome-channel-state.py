@@ -43,6 +43,7 @@ compared. A runner may read the exit status alone.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -78,6 +79,8 @@ for entry in sys.path:
 sys.path = [root] + keep
 
 home = Path(sys.argv[2])
+cache_path = sys.argv[3]
+cache_key = sys.argv[4]
 
 from mishe_tauftauf import outcome_events
 from mishe_tauftauf import wall
@@ -87,10 +90,35 @@ module = os.path.abspath(wall.__file__)
 if not module.startswith(root + os.sep):
     raise SystemExit("the package came from " + module + ", not from " + root)
 
-coverage = outcome_events.classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME)
-rows = [{"sequence": row.get("sequence"), "reason": row.get("reason"),
-         "binding": row.get("binding", "unscoped")}
-        for row in coverage["incomplete"]]
+# The classification is the expensive part (a full tape pass). The parent keys
+# it by the code bytes of this root plus the tape and record-store identity, so
+# a second root with the same bytes and the same inputs reuses the result.
+# An empty key disables the reuse and always classifies.
+classified = None
+if cache_key:
+    try:
+        stored = json.loads(Path(cache_path).read_text(encoding="utf-8"))
+        if isinstance(stored, dict) and stored.get("key") == cache_key:
+            classified = stored["classify"]
+    except (OSError, ValueError, KeyError):
+        classified = None
+source = "reused"
+if classified is None:
+    source = "computed"
+    coverage = outcome_events.classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME)
+    classified = {
+        "rows": [{"sequence": row.get("sequence"), "reason": row.get("reason"),
+                  "binding": row.get("binding", "unscoped")}
+                 for row in coverage["incomplete"]],
+        "events": len(coverage["events"]),
+        "unavailable": coverage["unavailable"],
+    }
+    if cache_key:
+        tmp = cache_path + ".tmp"
+        Path(tmp).write_text(json.dumps({"key": cache_key, "classify": classified}),
+                             encoding="utf-8")
+        os.replace(tmp, cache_path)
+rows = classified["rows"]
 
 channel = "open"
 reason = ""
@@ -150,8 +178,9 @@ print(json.dumps({
     "channel": channel,
     "reason": reason,
     "rows": rows,
-    "events": len(coverage["events"]),
-    "unavailable": coverage["unavailable"],
+    "events": classified["events"],
+    "unavailable": classified["unavailable"],
+    "classify": source,
     "bound": None if bound is None else len(bound),
     "denial": denial,
     "denial_reason": denial_reason,
@@ -200,12 +229,48 @@ def export_head(repo: Path, workdir: Path) -> Path:
     return root
 
 
-def run_child(root: Path, home: Path, cwd: Path) -> dict:
+def measurement_key(root: Path, home: Path) -> str:
+    """Identity of every input the classification reads, or "" when unknown.
+
+    The classification depends on the code under ``root`` and on what the home
+    holds: the tape (size, mtime and the first and last 64 KiB) and the record
+    store (the directory's mtime, ctime and inode; records are write-once, so a
+    record is added or removed through the directory and changes it). An
+    in-place edit of the middle of a tape that keeps size and mtime is not seen;
+    the key is only used within one run, so that gap is bounded to one check.
+    An empty key means the identity cannot be read, and both roots classify.
+    """
+    digest = hashlib.sha256()
+    try:
+        package = root / PACKAGE
+        for path in sorted(package.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            digest.update(str(path.relative_to(root)).encode("utf-8") + b"\0")
+            digest.update(path.read_bytes() + b"\0")
+        tape = home / "chat.log"
+        stat = tape.stat()
+        digest.update(("tape %d %d" % (stat.st_size, stat.st_mtime_ns)).encode("ascii"))
+        with tape.open("rb") as handle:
+            digest.update(handle.read(65536))
+            if stat.st_size > 65536:
+                handle.seek(max(0, stat.st_size - 65536))
+                digest.update(handle.read(65536))
+        store = os.stat(home / "records")
+        digest.update(("records %d %d %d" % (store.st_ino, store.st_mtime_ns,
+                                             store.st_ctime_ns)).encode("ascii"))
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
+def run_child(root: Path, home: Path, cwd: Path, cache: Path, key: str) -> dict:
     """Ask the code under one import root about the channel it offers."""
     # The tape is framed through the home named here, never an ambient site or override.
-    env = {key: value for key, value in os.environ.items() if key != "MISHE_TAPE_BIN"}
+    env = {name: value for name, value in os.environ.items() if name != "MISHE_TAPE_BIN"}
     env["MISHE_SEED_HOME"] = str(home)
-    result = subprocess.run([sys.executable, "-I", "-c", CHILD, str(root), str(home)],
+    result = subprocess.run([sys.executable, "-I", "-c", CHILD, str(root), str(home),
+                             str(cache), key],
                             capture_output=True, text=True, cwd=str(cwd), env=env)
     if result.returncode:
         raise Undecidable("the measurement under " + str(root) + " failed: "
@@ -262,8 +327,11 @@ def main() -> int:
                         else pin_root(home))
         reference_root = (args.reference_src.resolve() if args.reference_src
                           else export_head(repo, workdir))
-        running = run_child(running_root, home, workdir)
-        reference = run_child(reference_root, home, workdir)
+        cache = workdir / "classify-cache.json"
+        running = run_child(running_root, home, workdir, cache,
+                            measurement_key(running_root, home))
+        reference = run_child(reference_root, home, workdir, cache,
+                              measurement_key(reference_root, home))
     except Undecidable as exc:
         print("UNKNOWN — " + str(exc))
         return 4
@@ -280,6 +348,8 @@ def main() -> int:
     print("reference gaps:", ", ".join(
         "%s(%s)" % (row.get("sequence"), row.get("binding")) for row in reference.get("rows", []))
         or "none")
+    print("classify   : running", running.get("classify"), "- reference",
+          reference.get("classify"))
     print("running channel  :", running.get("channel"),
           ("- " + running.get("reason")) if running.get("reason") else "")
     print("reference channel:", reference.get("channel"),
