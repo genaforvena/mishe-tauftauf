@@ -15,6 +15,7 @@ Nothing here is wired into the running scanner; the wiring is a reviewed patch.
 from __future__ import annotations
 
 import ast
+import os
 import subprocess
 from pathlib import Path
 
@@ -25,7 +26,7 @@ RENDERER_SENSE_ID = "sense.runtime.renderer-coverage"
 # execs ``mishe_tauftauf.plant_view``; the boundary module is imported by it.
 RENDERER_MODULES = ("plant_view", "plant_view_boundary")
 
-from . import proc_table
+from . import proc_table, unit_properties
 from .plant_tmux import WINDOW_FORMAT as _WINDOW_FORMAT, parse_list_windows, parse_session_births, parse_session_pids
 
 
@@ -408,3 +409,110 @@ def read_server_keeper(socket: str | None, *, runner=_run_socket_tmux,
         return judge_server_keeper(None)
     sessions = {name: (pid, cgroup_unit(pid)) for name, pid in pids.items()}
     return judge_server_keeper(sessions)
+
+
+DRIFT_SITES_ID = "sense.runtime.drift-across-sites"
+DRIFT_SITES_TIMEOUT = 5
+
+
+def judge_drift_across_sites(units: dict[str, dict] | None, site: str) -> dict[str, object]:
+    """Judge that no unit under a mishe slice mixes site homes or foreign ones.
+
+    ``units`` maps a unit name to ``{"declared": set, "live": set, "readable": bool}``:
+    the site homes its ExecStart/WorkingDirectory declare, the site homes its live
+    processes run from (cwd and argv), and whether both were read. A unit whose
+    declared and live homes together name more than one site is drift (a unit
+    running from another site than it declares, or two sites at once). A unit
+    whose homes never include this site (``site``) is drift: a foreign-site
+    service placed in this plant's slice. A unit naming no site home is not
+    attributable and is left out. None, an empty mapping or no attributable unit
+    is UNKNOWN, and so is an unreadable unit unless a drift fact already exists.
+    """
+    base = {"id": DRIFT_SITES_ID, "kind": "read", "site": site or "unset"}
+    if units is None:
+        return {**base, "state": "unknown", "sample": "mishe slice membership could not be read"}
+    if not units:
+        return {**base, "state": "unknown", "sample": "no unit under a mishe slice to judge"}
+    drift: list[str] = []
+    unreadable: list[str] = []
+    attributed = 0
+    for name, row in sorted(units.items()):
+        if not row.get("readable"):
+            unreadable.append(name)
+            continue
+        every = set(row["declared"]) | set(row["live"])
+        if not every:
+            continue
+        attributed += 1
+        homes = ",".join(sorted(every))
+        if len(every) > 1:
+            drift.append(f"{name} spans sites={homes}")
+        elif site not in every:
+            drift.append(f"{name} foreign-site={homes} placed in mishe slice")
+    if drift:
+        return {**base, "state": "drift", "drift": len(drift),
+                "sample": "; ".join(drift) + (f"; unreadable={','.join(unreadable)}" if unreadable else "")}
+    if unreadable:
+        return {**base, "state": "unknown",
+                "sample": f"unit data unreadable for {','.join(unreadable)}"}
+    if not attributed:
+        return {**base, "state": "unknown", "sample": "no unit names a site home"}
+    return {**base, "state": "verified", "attributed": attributed,
+            "sample": f"units={attributed} single-site={site}"}
+
+
+def _run_user_show(unit: str) -> str | None:
+    """``systemctl --user show`` declaration text for one unit, None when it cannot run."""
+    try:
+        done = subprocess.run(["systemctl", "--user", "show", unit, "-p", "ExecStart", "-p", "WorkingDirectory"],
+                              capture_output=True, text=True, timeout=DRIFT_SITES_TIMEOUT, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout if done.returncode == 0 else None
+
+
+def read_drift_across_sites(site: str | None, *, proc_root: Path = Path("/proc"),
+                            declared=_run_user_show,
+                            cgroup_of=proc_table.read_cgroup_path) -> dict[str, object]:
+    """Thin probe: group same-uid processes by mishe slice unit and judge their homes.
+
+    Processes in another uid's cgroup are not listed by the user instance and are
+    outside this reading, as they were for the legacy one. A process whose cgroup
+    cannot be read while it still exists is an unreadable member, not calm.
+    """
+    if not site:
+        return judge_drift_across_sites(None, "")
+    try:
+        pids = [name for name in os.listdir(proc_root) if name.isdigit()]
+    except OSError:
+        return judge_drift_across_sites(None, site)
+    units: dict[str, dict] = {}
+    for pid in pids:
+        cgroup = cgroup_of(pid)
+        unit = unit_properties.mishe_slice_unit(cgroup)
+        if unit is None:
+            if cgroup is None and (proc_root / pid).is_dir():
+                units.setdefault("<unreadable-cgroup>", {"declared": set(), "live": set(), "readable": False})
+            continue
+        row = units.setdefault(unit, {"declared": set(), "live": set(), "readable": True})
+        try:
+            cmdline = (proc_root / pid / "cmdline").read_bytes()
+            cwd = os.readlink(proc_root / pid / "cwd")
+        except FileNotFoundError:
+            continue  # exited between listing and reading
+        except OSError:
+            row["readable"] = False
+            continue
+        row["live"] |= unit_properties.cmdline_site_homes(cmdline)
+        home = unit_properties.site_home(cwd)
+        if home:
+            row["live"].add(home)
+    for unit, row in units.items():
+        if not row["readable"]:
+            continue
+        text = declared(unit)
+        if text is None:
+            row["readable"] = False
+        else:
+            row["declared"] = unit_properties.declared_site_homes(text)
+    return judge_drift_across_sites(units, site)

@@ -51,3 +51,42 @@ second site's services visible to a scan of this one.
 def is_site_unit(unit_name: str) -> bool:
     """Whether a unit name belongs to this plant (starts with the site prefix)."""
     return unit_name.startswith(SITE_UNIT_PREFIX)
+
+
+SITE_HOME = re.compile(r"(/home/[^/\s]+/[^/\s]+)/\.mishe-[^/\s]+")
+"""A site home: the directory holding a ``.mishe-<name>`` state tree under /home."""
+
+MISHE_SLICE_SEGMENT = "/mishe.slice/"
+"""Cgroup path segment every managed plant slice sits under."""
+
+
+def site_home(path: str) -> str | None:
+    """The site home a path lies in (``/home/u/site`` for ``/home/u/site/.mishe-x/...``), or None."""
+    match = SITE_HOME.search(path)
+    return match.group(1) if match else None
+
+
+def declared_site_homes(text: str) -> set[str]:
+    """Site homes the paths a unit's ExecStart/WorkingDirectory text declares."""
+    return {home for home in (site_home(path) for path in declared_paths(text)) if home}
+
+
+def cmdline_site_homes(raw: bytes) -> set[str]:
+    """Site homes named by the NUL-separated argv of a live process.
+
+    Only the homes are returned, never the argument text, so a secret passed
+    on a command line cannot leak into a reading.
+    """
+    homes: set[str] = set()
+    for arg in raw.decode("utf-8", errors="replace").split("\0"):
+        home = site_home(arg)
+        if home:
+            homes.add(home)
+    return homes
+
+
+def mishe_slice_unit(cgroup_path: str | None) -> str | None:
+    """The unit (last cgroup component) of a process inside a mishe slice, or None."""
+    if not cgroup_path or MISHE_SLICE_SEGMENT not in cgroup_path:
+        return None
+    return cgroup_path.rsplit("/", 1)[-1] or None

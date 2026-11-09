@@ -48,7 +48,7 @@ from .multibody import read_multibody_coverage
 from .redmi10_stream import read_redmi10_stream
 from .redmi10_accel import read_redmi10_accel_coverage
 from .replacement_readings import (
-    probe_session_restarts, probe_session_stability, read_renderer_coverage,
+    probe_session_restarts, probe_session_stability, read_drift_across_sites, read_renderer_coverage,
     read_role_render_coverage, read_server_keeper, read_server_slice, read_tmux_windows,
 )
 from .slice_throttle import read_slice_throttle
@@ -7345,6 +7345,8 @@ def sample(home: Path) -> dict[str, object]:
                                             _inner_tmux_socket()))
     observed.append(read_server_slice(_inner_tmux_socket()))
     observed.append(read_server_keeper(_inner_tmux_socket()))
+    # The site home is the directory holding this plant's .mishe-* state tree.
+    observed.append(read_drift_across_sites(str(home.parent)))
     observed.append(probe_session_restarts(_inner_tmux_socket(), time.time(),
                                            declared=os.environ.get("MISHE_SEED_SESSION") or None))
     observed.append(read_renderer_coverage(_pinned_runtime_root()))

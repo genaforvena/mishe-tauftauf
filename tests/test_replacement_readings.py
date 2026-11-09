@@ -457,3 +457,69 @@ def test_server_keeper_read_through_socket_listing():
     bad = lambda s, a: Done(0, "no tab here\n")
     assert read_server_keeper("/tmp/s", runner=bad)["state"] == "unknown"
     assert read_server_keeper(None)["state"] == "unknown"
+
+
+from mishe_tauftauf.replacement_readings import DRIFT_SITES_ID, judge_drift_across_sites, read_drift_across_sites
+from mishe_tauftauf import unit_properties
+
+OURS = "/home/mesh-home/mishe-tauftauf"
+FOREIGN = "/home/mesh-home/android-body"
+
+
+def _row(declared=(), live=(), readable=True):
+    return {"declared": set(declared), "live": set(live), "readable": readable}
+
+
+def test_single_site_units_verified_and_foreign_only_unit_is_drift():
+    ok = judge_drift_across_sites({"senses.service": _row([OURS], [OURS])}, OURS)
+    assert ok["state"] == "verified" and ok["id"] == DRIFT_SITES_ID
+    foreign = judge_drift_across_sites({"light.service": _row([FOREIGN], [FOREIGN]),
+                                        "senses.service": _row([OURS], [OURS])}, OURS)
+    assert foreign["state"] == "drift" and "light.service foreign-site" in foreign["sample"]
+
+
+def test_unit_declaring_one_site_and_running_another_is_drift():
+    row = judge_drift_across_sites({"life.service": _row([FOREIGN], [OURS])}, OURS)
+    assert row["state"] == "drift" and "spans sites" in row["sample"]
+
+
+def test_unreadable_or_absent_input_is_unknown_never_calm():
+    assert judge_drift_across_sites(None, OURS)["state"] == "unknown"
+    assert judge_drift_across_sites({}, OURS)["state"] == "unknown"
+    assert judge_drift_across_sites({"x.service": _row(readable=False)}, OURS)["state"] == "unknown"
+    assert judge_drift_across_sites({"x.service": _row()}, OURS)["state"] == "unknown"  # no site named
+    mixed = judge_drift_across_sites({"x.service": _row(readable=False),
+                                      "y.service": _row([FOREIGN], [FOREIGN])}, OURS)
+    assert mixed["state"] == "drift"  # a drift fact outranks an unreadable neighbour
+
+
+def test_site_home_and_cmdline_decoding_keeps_only_homes():
+    assert unit_properties.site_home(f"{FOREIGN}/.mishe-tauftauf/body/x.py") == FOREIGN
+    assert unit_properties.site_home("/usr/bin/python3") is None
+    raw = b"python3\0/home/mesh-home/android-body/.mishe-tauftauf/a.py\0--token\0SECRET\0"
+    assert unit_properties.cmdline_site_homes(raw) == {FOREIGN}
+    assert unit_properties.mishe_slice_unit(
+        "/user.slice/user@1000.service/mishe.slice/mishe-plants.slice/x.service") == "x.service"
+    assert unit_properties.mishe_slice_unit("/user.slice/user@1000.service/app.slice/y.service") is None
+
+
+def test_probe_groups_processes_by_mishe_slice_unit(tmp_path):
+    cgroups = {}
+
+    def proc(pid, cgroup, cmdline, cwd):
+        d = tmp_path / pid
+        d.mkdir()
+        cgroups[pid] = cgroup
+        (d / "cmdline").write_bytes(cmdline)
+        (d / "cwd").symlink_to(cwd)
+    proc("100", "/mishe.slice/mishe-plants.slice/senses.service", b"python3\0-m\0x\0", OURS)
+    proc("101", "/mishe.slice/mishe-plants.slice/light.service", b"python3\0/home/mesh-home/android-body/.mishe-tauftauf/l.py\0", "/")
+    declared = {"senses.service": f"ExecStart={{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 {OURS}/.mishe-tauftauf/s.py }}",
+                "light.service": f"ExecStart={{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 {FOREIGN}/.mishe-tauftauf/l.py }}"}
+    result = read_drift_across_sites(OURS, proc_root=tmp_path, declared=lambda unit: declared.get(unit),
+                                     cgroup_of=lambda pid: cgroups.get(pid))
+    assert result["state"] == "drift" and "light.service" in result["sample"]
+    assert "--token" not in result["sample"] and "SECRET" not in result["sample"]
+    gone = read_drift_across_sites(OURS, proc_root=tmp_path, declared=lambda unit: None,
+                                   cgroup_of=lambda pid: cgroups.get(pid))
+    assert gone["state"] == "unknown"
