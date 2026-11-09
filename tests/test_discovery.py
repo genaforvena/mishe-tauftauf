@@ -14,7 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from mishe_tauftauf.discovery import _cpu_busy, latest, renew_scan, scan, scan_age
-from mishe_tauftauf import discovery
+from mishe_tauftauf import argv_text, discovery
 from mishe_tauftauf import proc_table
 from mishe_tauftauf.feed import Feed
 
@@ -6875,7 +6875,7 @@ def _watch_wait_fixture(monkeypatch, overrides, descendants):
 
 def test_watch_wait_argv_shapes_match_only_waits():
     """CI watches and sleeps match; reads and unbounded sleeps do not."""
-    matches = lambda args: any(p.search(args) for p in discovery.WATCH_WAIT_ARGV_PATTERNS)
+    matches = argv_text.is_wait_argv
     assert matches("gh run watch 123456 --exit-status")
     assert matches("gh pr checks 9 --watch")
     assert matches("sleep 150")

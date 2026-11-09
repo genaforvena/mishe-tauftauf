@@ -40,7 +40,7 @@ from subprocess import TimeoutExpired as _TimeoutExpired
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
-from . import head_rewind_dispositions, host_boot, proc_table, recovery_io, space_text
+from . import argv_text, head_rewind_dispositions, host_boot, proc_table, recovery_io, space_text
 from .body_perception import (read_redmi10, read_redmi10_dense_baseline,
                              read_redmi10_delivery_gaps, read_redmi10_light,
                              read_redmi10_peer_delivery)
@@ -821,12 +821,8 @@ WATCH_WAIT_MAX_DEPTH = 6
 WATCH_WAIT_MAX_PROCESSES = 64
 """Bounds for the descendant walk under an open wake's process."""
 
-WATCH_WAIT_ARGV_PATTERNS = (
-    re.compile(r"(?:^|\s|/)gh\s+run\s+watch\b"),
-    re.compile(r"(?:^|\s|/)gh\s+pr\s+checks\b.*--watch\b"),
-    re.compile(r"(?:^|[\s/])sleep\s+\d+(?:\.\d+)?(?:\s|$)"),
-)
-"""argv shapes that mean a wake is waiting on CI or an external state."""
+# The argv shapes that mean a wake is waiting on CI or an external state live in
+# argv_text.WAIT_ARGV_PATTERNS (a boundary adapter).
 
 
 
@@ -1380,13 +1376,9 @@ def _process_argv(pid: int) -> tuple[int, str] | None:
                                 capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return None
-    line = result.stdout.strip()
-    if result.returncode or not line:
+    if result.returncode:
         return None
-    etimes_text, _, args = line.partition(" ")
-    if not etimes_text.isdigit():
-        return None
-    return int(etimes_text), args.strip()
+    return argv_text.parse_ps_row(result.stdout)
 
 
 def _open_wait_descendants(root: int) -> tuple[list[tuple[int, int, str]], int] | None:
@@ -1412,7 +1404,7 @@ def _open_wait_descendants(root: int) -> tuple[list[tuple[int, int, str]], int] 
                 if row is None:
                     continue
                 etimes, args = row
-                if any(pattern.search(args) for pattern in WATCH_WAIT_ARGV_PATTERNS):
+                if argv_text.is_wait_argv(args):
                     waits.append((child, etimes, args))
                 next_frontier.append(child)
         if not next_frontier:
