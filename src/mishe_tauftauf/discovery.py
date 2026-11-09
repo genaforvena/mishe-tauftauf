@@ -1301,10 +1301,15 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
     last_blocked = next((index for index in range(len(settlements) - 1, -1, -1)
                          if settlements[index][1] == "blocked"), None)
     since_last = None if last_blocked is None else len(settlements) - 1 - last_blocked
+    last_blocked_at = (
+        "none" if last_blocked is None
+        else settlements[last_blocked][0].strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
     sample = (f"n={len(window)} verified={counts['verified']} "
               f"changed={counts['changed']} blocked={counts['blocked']} "
               f"other={counts['other']} incidents={incidents} "
-              f"since_last={'none' if since_last is None else since_last}")
+              f"since_last={'none' if since_last is None else since_last} "
+              f"last_blocked={last_blocked_at}")
     return {"id": "sense.seed.settle-result-mix",
             "state": "drift" if blocked_times else "verified",
             "sample": sample, "kind": "read", "window": len(window)}

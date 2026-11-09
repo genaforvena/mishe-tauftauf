@@ -6922,6 +6922,23 @@ def test_settle_result_mix_blocked_drifts_and_counts_since_last(tmp_path, monkey
     assert "since_last=2" in result["sample"]
 
 
+def test_settle_result_mix_sample_names_last_blocked_time(tmp_path, monkeypatch):
+    _seed_tape(monkeypatch, tmp_path, [_settle("senses", 1, "blocked"),
+                                       _settle("senses", 2, "verified")])
+    result = discovery._seed_settle_result_mix(tmp_path)
+    assert result["state"] == "drift"
+    assert "last_blocked=" in result["sample"]
+    assert "last_blocked=none" not in result["sample"]
+    assert re.search(r"last_blocked=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", result["sample"])
+
+
+def test_settle_result_mix_sample_reports_none_when_no_blocked(tmp_path, monkeypatch):
+    _seed_tape(monkeypatch, tmp_path, [_settle("senses", 1, "changed")])
+    result = discovery._seed_settle_result_mix(tmp_path)
+    assert result["state"] == "verified"
+    assert "last_blocked=none" in result["sample"]
+
+
 def test_settle_result_mix_window_is_trailing(tmp_path, monkeypatch):
     monkeypatch.setattr(discovery, "SETTLE_RESULT_WINDOW", 2)
     _seed_tape(monkeypatch, tmp_path, [_settle("senses", 1, "blocked"),
