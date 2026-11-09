@@ -79,10 +79,34 @@ last wake changed in git, the wall's opening lines, signals, the next due item a
 mail. Its bottom part shows the model that ran, the wake's turns, duration and git change,
 then the mind's final text. A model that differs from the configured one is stated, and
 output that cannot be read is labelled UNKNOWN with its raw tail, never hidden. Walls and
-site notes are outside git and are not counted. Nothing repaints: no resident process keeps
-panes or windows open, so a view is as current as the moment it was read. The tmux panes
-and `Ctrl-a` windows were removed with the pane runtime (`943276d9`). A failed read stays
-visibly UNKNOWN.
+site notes are outside git and are not counted. A failed read stays visibly UNKNOWN.
+
+The live tmux views show the same information on screen while the plant runs. They live
+in the inner tmux server, on the socket `/tmp/tmux-<uid>/mishe-tauftauf/tmux-<uid>/default`,
+in the session named in the site's `presentation.json`. The prefix is `Ctrl-a`, and
+`Ctrl-a [` scrolls. Attach through the `mishe` window of the outer `plants` session, or
+point `tmux -S` at the socket directly.
+
+- **Role windows.** Each active or resting role has a window named after the role, with
+  two panes stacked vertically. The top pane is the dashboard described above: it redraws
+  when its text changes, checks every five seconds, and clears its scrollback on each
+  redraw. The bottom pane is an append-only log of that role's wakes. Each wake's final
+  output appears once, when the wake settles. While a wake runs, the pane shows one line,
+  `▶ wake started`, and the output follows when the wake ends. The log is kept in the site
+  as `pane-logs/ROLE.log`.
+- **`chat` window.** Tails the last hundred lines of the site's `chat.log` and follows new
+  messages.
+- **`git` window.** Replays recent canonical Git history, then follows new commits.
+- **`wakes` window.** Replays recent wake starts, settlements and outputs, then follows.
+  A finished wake prints its final answer here. A running Claude wake writes its output
+  only when it ends, so while it runs the window adds a progress block about every two
+  minutes with the last six lines of the stream so far, marked `RUNNING`. That block says
+  the wake is still running; it is not a failure.
+
+A pane loads its code once, when its process starts, from the runtime pin in force at that
+moment. After the pin moves, a pane keeps running the code it loaded until it is restarted.
+A failed read in any window shows `View UNKNOWN` with the cause, and the window keeps
+following.
 Senses' readings renew independently every ten minutes. `mishe discover show`
 shows the acquisition freshness and each source's state; a new host scan cannot
 make an old phone sample current.
