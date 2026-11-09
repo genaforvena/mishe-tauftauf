@@ -66,6 +66,22 @@ def test_missing_facts_binary_is_unknown(tmp_path):
                         facts_bin=str(tmp_path / "no-such-facts"))
 
 
+@needs_binaries
+def test_hung_facts_stage_times_out_as_unknown(tmp_path):
+    # A facts stage that never finishes must become UNKNOWN, not a raw
+    # TimeoutExpired escaping the reader.
+    import time
+    hung = tmp_path / "hung-facts"
+    hung.write_text("#!/bin/sh\nsleep 30\n")
+    hung.chmod(0o755)
+    tape = tmp_path / "chat.log"
+    tape.write_bytes(_entry(1, b"[dm] to=rust-plan hello"))
+    started = time.monotonic()
+    with pytest.raises(TapeUnknown, match="timed out"):
+        read_tape_facts(str(tape), tape_bin=TAPE_BIN, facts_bin=str(hung), timeout=0.5)
+    assert time.monotonic() - started < 20
+
+
 def test_unknown_output_line_is_unknown():
     from mishe_tauftauf.tape_facts import parse_facts
 

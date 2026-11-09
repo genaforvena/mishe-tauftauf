@@ -107,11 +107,13 @@ def parse_facts(output: bytes) -> list[TapeFact]:
     return facts
 
 
-def read_tape_facts(tape_path: str, *, tape_bin: str, facts_bin: str | None = None) -> list[TapeFact]:
+def read_tape_facts(tape_path: str, *, tape_bin: str, facts_bin: str | None = None,
+                    timeout: float = 300) -> list[TapeFact]:
     """Run ``tape_bin frames tape_path | facts_bin`` and return every fact, or raise.
 
     Raises ``TapeUnknown`` when either stage exits non-zero, when a stage cannot
-    start, or when the output breaks the contract. No partial facts are returned.
+    start, when the facts stage times out, or when the output breaks the contract.
+    No partial facts are returned.
     """
     facts_bin = facts_bin or facts_binary()
     with tempfile.TemporaryFile() as framer_err:
@@ -124,7 +126,11 @@ def read_tape_facts(tape_path: str, *, tape_bin: str, facts_bin: str | None = No
         try:
             extracted = subprocess.run([facts_bin], stdin=framer.stdout,
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                       timeout=300)
+                                       timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            framer.kill()
+            framer.wait()
+            raise TapeUnknown(f"mishe-tape-facts timed out after {timeout} s") from exc
         except OSError as exc:
             framer.kill()
             framer.wait()
