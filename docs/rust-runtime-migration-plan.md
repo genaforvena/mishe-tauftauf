@@ -444,6 +444,7 @@ Trailers: the crate commits were authored outside a wake and carry only the Clau
 4. The acceptance comparison named in 9.3 A — journal `Consumed` lines for `mishe-wake@genome`/`mishe-wake@senses` against a pre-cutover window, and a cold `wall show --owner genome` — has not been taken; the live observation is the role-cache and producer evidence in 8.3.
 5. The 2026-11-03 OOM cause (1.4).
 6. Whether the site-local `mishe-tape` install (8.4 step 4) is acceptable as the permanent provenance mechanism, or whether the binary should move into the release tree.
+7. The live pin is `7ce12523`; HEAD has moved past it with other minds' commits (engine router, view readability). Their live behaviour is not this slice's evidence.
 
 ## 9. Executed plan and progress table (48 h, operator direction 2026-11-08)
 
