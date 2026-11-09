@@ -382,8 +382,8 @@ def _numstat(lines) -> list[tuple[int | None, int | None, str]]:
 def wake_commits(cwd: Path, since: float, until: float) -> list[dict]:
     """Commits dated inside a wake's run window, with per-file line counts.
 
-    Wakes are globally serialized, so commits made inside one wake's window are
-    its work (a human commit in the same window would also appear; the author
+    Wakes run concurrently (one per role), so commits in a wake's window may include peers';
+    treat them as candidates (a human commit in the same window would also appear; the author
     is shown). Walls, notes and other site files are not in git and not counted.
     """
     if not (since <= until):
