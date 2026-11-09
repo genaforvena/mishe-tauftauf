@@ -64,9 +64,16 @@ def git_delta(repo: Path | None, since: str | None) -> str:
 
 
 def build(home, role: str, snap, *, key: str, now: float, mail: list, reconcile_of=None,
-          repo: Path | None = None, since: str | None = None) -> str:
+          repo: Path | None = None, since: str | None = None, timeout: float | None = None) -> str:
     home = Path(home)
     out = [f"# Wake {key} for {role}", ""]
+    if timeout:
+        minutes = max(1, int(timeout // 60))
+        out += ["## Time budget", "",
+                f"This wake is cut at {minutes} minutes of engine time, and a cut wake loses everything it learned "
+                "that is not in its wall or yield. So: write your wall checkpoint (plate, evidence so far, next "
+                f"command) within the first {max(1, minutes // 3)} minutes, keep to one incident or one bounded "
+                f"change per wake, and yield by minute {max(1, minutes - 5)} at the latest.", ""]
     if reconcile_of is not None:
         out += ["## RECONCILE FIRST", "",
                 f"An earlier wake ({reconcile_of.key}, attempt {reconcile_of.attempt}) ended {reconcile_of.state.name} "

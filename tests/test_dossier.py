@@ -37,3 +37,10 @@ def test_broken_previous_receipt_is_explicit_unknown(tmp_path):
     p.parent.mkdir(); p.write_text("{broken")
     out = dossier.build(tmp_path, "docs", owed.Snapshot(), key="current", now=100, mail=[])
     assert "Previous wake evidence UNKNOWN" in out
+
+
+def test_dossier_states_the_wake_time_budget(tmp_path):
+    out = dossier.build(tmp_path, "docs", owed.Snapshot(), key="budget", now=100, mail=[], timeout=1800)
+    assert "## Time budget" in out
+    assert "cut at 30 minutes" in out
+    assert "by minute 25" in out

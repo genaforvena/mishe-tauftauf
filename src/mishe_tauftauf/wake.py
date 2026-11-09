@@ -110,7 +110,7 @@ def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, ti
                work_receipts.begin(repo, role=role, key=key, now=now, home=home))
     prompt = yielding.wakes_dir(home) / f"{key}.prompt.md"
     prompt.write_text(dossier.build(home, role, snap, key=key, now=now, mail=mail,
-                                    reconcile_of=reconcile_of, repo=repo), encoding="utf-8")
+                                    reconcile_of=reconcile_of, repo=repo, timeout=timeout), encoding="utf-8")
     env = dict(os.environ, MISHE_SEED_HOME=str(home), MISHE_ROLE=role, MISHE_WAKE_KEY=key)
     engine_started = time.monotonic()
     try:
