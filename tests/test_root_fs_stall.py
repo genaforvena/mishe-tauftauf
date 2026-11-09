@@ -28,6 +28,16 @@ def test_old_stall_outside_window_is_ignored():
     assert mod.evaluate([rec(), rec(event="slow", at=NOW - 5000, total=9.9)], NOW)[0] == 0
 
 
+def test_old_stall_is_reported_as_recurrence_while_quiet():
+    code, lines = mod.evaluate([rec(), rec(event="slow", at=NOW - 5000, total=9.9)], NOW)
+    assert code == 0 and "recurrence: 1 stall" in lines[0] and "most recent 83 min ago" in lines[0]
+
+
+def test_stall_older_than_a_day_is_not_recurrence():
+    code, lines = mod.evaluate([rec(), rec(event="slow", at=NOW - 90000, total=9.9)], NOW)
+    assert code == 0 and "recurrence" not in lines[0]
+
+
 def test_short_slow_probe_is_not_a_stall():
     assert mod.evaluate([rec(), rec(event="slow", at=NOW - 30, total=1.2)], NOW)[0] == 0
 

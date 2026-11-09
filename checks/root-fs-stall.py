@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 WINDOW_S = 900.0
+RECURRENCE_S = 86400.0
 STALE_S = 300.0
 STALL_S = 5.0
 TARGET = "root"
@@ -41,7 +42,14 @@ def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
         worst = max(stalls, key=lambda r: r["total"])
         return 2, [f"{len(stalls)} root-filesystem stall(s) >= {STALL_S:.0f}s in the last {WINDOW_S:.0f}s; "
                    f"worst {worst['total']:.1f}s (create {worst.get('create')}, fsync {worst.get('fsync')})"]
-    return 0, [f"root probe fresh ({now - newest:.0f}s) with no stall >= {STALL_S:.0f}s in {WINDOW_S:.0f}s"]
+    recurrence = [r for r in seen if r.get("event") == "slow" and now - r["at"] <= RECURRENCE_S
+                  and (r.get("total") or 0) >= STALL_S]
+    line = f"root probe fresh ({now - newest:.0f}s) with no stall >= {STALL_S:.0f}s in {WINDOW_S:.0f}s"
+    if recurrence:
+        last = max(r["at"] for r in recurrence)
+        line += (f"; recurrence: {len(recurrence)} stall(s) >= {STALL_S:.0f}s in the last "
+                 f"{RECURRENCE_S / 3600:.0f} h, most recent {(now - last) / 60:.0f} min ago")
+    return 0, [line]
 
 
 def load(path: Path) -> list[dict]:
