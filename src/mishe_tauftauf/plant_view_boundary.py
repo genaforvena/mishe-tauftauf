@@ -203,6 +203,14 @@ def wake_key(path: Path) -> str:
 
 RAW_OPEN, RAW_CLOSE = '[raw unreadable bytes follow]', '[end of raw bytes]'
 
+# A command's output is content the mind asked for and read, not chrome the renderer printed: a tool may
+# legitimately print JSON, dicts, paths or epochs. The block runs from its label to the next renderer line,
+# and a command may print a line that looks like one, so the end is a known renderer line, not any bracket.
+TOOL_LABELS = ('[tool output]', '[tool error]')
+RENDERER_LINES = ('[assistant', '[tool ', '[provider ', '[agent_', '[rendered tail]', '[retained tail;',
+                  '[raw unreadable bytes follow]', '[end of raw bytes]', '[waiting for stream events',
+                  '[final text truncated', '[output truncated', '[the mind returned no final text')
+
 # Machine syntax a person should never have to read in a pane: JSON/dict keys, a
 # line that opens or closes a structure, escaped newlines, epoch numbers and the
 # interpreter's private path. Lines marked UNKNOWN and the delimited raw block are
@@ -229,12 +237,18 @@ _PROSE_RULES = ('a line that opens or closes a JSON structure', 'a control byte'
 
 def machine_syntax(text: str) -> list[str]:
     """Describe each non-exempt line of a rendered pane that is not human text."""
-    found, raw, prose = [], False, False
+    found, raw, prose, tool = [], False, False, False
     for number, line in enumerate(text.splitlines(), 1):
         if line.strip() == RAW_OPEN:
             raw = True
         if raw or line.startswith('UNKNOWN'):
             raw = raw and line.strip() != RAW_CLOSE
+            continue
+        if line.startswith(TOOL_LABELS):
+            tool = True
+        elif line.startswith(RENDERER_LINES):
+            tool = False
+        if tool:
             continue
         if line.startswith(_PROSE_CLOSES):
             prose = False
