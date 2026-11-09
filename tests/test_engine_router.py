@@ -112,8 +112,13 @@ class FakeEngine:
     """Records calls; behaviour per candidate model is scripted."""
     script = {}
 
+    spent = None
+
     def __init__(self, model):
         self.model = model
+
+    def spent_quota(self):
+        return self.spent
 
     def run(self, prompt_file, *, env, cwd, timeout, on_start=None):
         action = FakeEngine.script[self.model]
@@ -125,6 +130,9 @@ class FakeEngine:
             raise EngineRejected("model refused before any tool call")
         if action == "exhausted":
             raise EngineExhausted("account out of quota before any tool call")
+        if action == "spent-after-effect":
+            self.spent = "Provider requested 1800000ms wait. Original error: 402 usage limit (type=insufficient_balance_error)"
+            return 0
         if action == "yield":
             path = yielding.receipt_path(env["MISHE_SEED_HOME"], env["MISHE_WAKE_KEY"])
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -339,3 +347,35 @@ def test_routes_loader_reads_account_cool_off(tmp_path):
     d.write_text(json.dumps({"version": 1, "cool_off_s": 1800, "account_cool_off_s": 600,
                              "roles": {"health": [HAIKU]}}))
     assert router.load_routes(tmp_path)["account_cool_off_s"] == 600
+
+
+def test_quota_spent_after_tool_calls_cools_account_without_fall_through(routed):
+    FakeEngine.script = {GO["model"]: "spent-after-effect", MINI["model"]: "yield"}
+    eng = router.for_role(routed, "health")
+    assert eng.run(routed / "p.md", env=_env(routed, "k20"), cwd=routed, timeout=5) == 0
+    ledger = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()]
+    # no fall-through: the effect may have happened, so only one candidate was run
+    assert [e["event"] for e in ledger] == ["select", "outcome"]
+    assert "quota spent after acting" in ledger[-1]["outcome"]
+    state = json.loads((routed / "engine" / router.STATE).read_text())["cooling"]
+    assert state[router.candidate_key(GO)] == NOW_MS + 5_400_000
+
+
+def test_spent_quota_reads_structured_provider_errors_only(tmp_path):
+    from mishe_tauftauf import engine_omp
+    retry = tmp_path / "retry.out.jsonl"
+    retry.write_text(
+        '{"type":"message_end","message":{"role":"toolResult","content":[{"type":"text",'
+        '"text":"insufficient_balance usage limit has been reached"}]}}\n'
+        '{"type":"auto_retry_end","success":false,"attempt":1,"finalError":"402 The Token Plan usage limit '
+        'has been reached (type=insufficient_balance_error)"}\n')
+    assert engine_omp.spent_quota_after_effect(retry).startswith("402 The Token Plan")
+    tool_only = tmp_path / "tool_only.out.jsonl"
+    tool_only.write_text(
+        '{"type":"message_end","message":{"role":"toolResult","content":[{"type":"text",'
+        '"text":"402 insufficient_balance in a file we read"}]}}\n')
+    assert engine_omp.spent_quota_after_effect(tool_only) is None
+    ok = tmp_path / "ok.out.jsonl"
+    ok.write_text('{"type":"auto_retry_end","success":true,"attempt":1}\n')
+    assert engine_omp.spent_quota_after_effect(ok) is None
+    assert engine_omp.spent_quota_after_effect(tmp_path / "missing.out.jsonl") is None

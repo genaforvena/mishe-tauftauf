@@ -377,11 +377,19 @@ class RoutedEngine:
                 self._observe(status, time.time() * 1000)
                 raise
             yielded = bool(key_wake) and yielding.receipt_path(self.home, key_wake).exists()
+            # Quota spent after the run acted: the effect is unknown (no yield), so the wake stays unknown and does
+            # not fall through, but the account is out for every role until its window resets.
+            spent = None if yielded else (engine.spent_quota() if hasattr(engine, "spent_quota") else None)
             outcome = "yielded" if yielded else f"no yield (exit {code})"
+            if spent:
+                outcome += ", quota spent after acting"
             record(self.home, {"role": self.role, "event": "outcome", "wake": key_wake, "key": key,
-                               "outcome": outcome}, now_ms=time.time() * 1000)
+                               "outcome": outcome, **({"scope": "account", "reason": spent} if spent else {})},
+                   now_ms=time.time() * 1000)
             if yielded:
                 self._clear(key)
+            elif spent:
+                self._cool(cand, time.time() * 1000, off_ms=self.account_cool_off_ms)
             else:
                 self._cool(cand, time.time() * 1000)
             self._observe(status, time.time() * 1000)

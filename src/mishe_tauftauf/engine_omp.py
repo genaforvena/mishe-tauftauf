@@ -48,15 +48,41 @@ def is_quota_error(error: str | None) -> bool:
     return any(marker in low for marker in QUOTA_MARKERS)
 
 
+def spent_quota_after_effect(stream: Path) -> str | None:
+    """The quota error the provider returned to the run's own retry or assistant turn, else None.
+
+    Only structured provider errors count (an auto-retry that ended in failure, an assistant error turn), never
+    tool output: a tool result that quotes quota text is not the account running out. The effect may already have
+    happened (tool calls ran), so the caller cools the account and does not fall through to another candidate.
+    """
+    error = None
+    for event in stream_events(stream):
+        if event.get("type") == "auto_retry_end" and event.get("success") is False:
+            text = event.get("finalError")
+        else:
+            message = event.get("message")
+            if not isinstance(message, dict) or message.get("role") != "assistant" or message.get("stopReason") != "error":
+                continue
+            text = message.get("errorMessage")
+        if text and is_quota_error(str(text)):
+            error = str(text)[:300]
+    return error
+
+
 class OmpEngine:
     name = "omp"
 
     def __init__(self, model: str | None = None, env: dict | None = None, thinking: str | None = None):
         self.model, self.extra_env, self.thinking = model, env or {}, thinking
+        self.stream: Path | None = None
+
+    def spent_quota(self) -> str | None:
+        """After a run: the quota error that ended it after acting, for the router to cool the account."""
+        return spent_quota_after_effect(self.stream) if self.stream else None
 
     def run(self, prompt_file, *, env, cwd, timeout, on_start=None) -> int:
         prompt_file = Path(prompt_file)
-        stream = prompt_file.with_suffix(".out.jsonl")
+        stream = self.stream = prompt_file.with_suffix(".out.jsonl")
         code = engine_process.run_bounded(
             command(self.model, Path(cwd), prompt_file, self.thinking), env=dict(env, **self.extra_env),
             cwd=Path(cwd), timeout=timeout, stdout_to=stream, on_start=on_start)
