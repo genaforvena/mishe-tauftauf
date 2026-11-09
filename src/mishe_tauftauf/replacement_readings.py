@@ -354,3 +354,61 @@ def read_server_slice(socket: str | None, *, runner=_run_socket_tmux,
     if "no server running" in (listed.stderr or ""):
         return judge_server_slice({}, {})
     return probe_server_slice(None)
+
+
+SERVER_KEEPER_ID = "sense.host.server-keeper"
+
+
+def judge_server_keeper(sessions: dict[str, tuple[str, str]] | None) -> dict[str, object]:
+    """Judge that each live session's tmux server is held by its own keeper unit.
+
+    ``sessions`` maps a session name to ``(server pid, cgroup unit)``; the unit is
+    ``proc_table.read_cgroup_unit`` of that pid, "" when unreadable. A session's
+    server is verified only when its cgroup unit is one of that session's own
+    keeper units (``proc_table.belongs_to_session``). A server held by a foreign
+    unit (for example a test keeper) is drift, because nothing restarts it for the
+    session. None, an empty mapping or an unreadable unit is UNKNOWN, never calm.
+    """
+    base = {"id": SERVER_KEEPER_ID, "kind": "read"}
+    if sessions is None:
+        return {**base, "state": "unknown", "sample": "session listing could not be read"}
+    if not sessions:
+        return {**base, "state": "unknown", "sample": "no live session to judge"}
+    unreadable = sorted(name for name, (_pid, unit) in sessions.items() if not unit)
+    if unreadable:
+        return {**base, "state": "unknown",
+                "sample": f"keeper unit unreadable for sessions={','.join(unreadable)}"}
+    foreign = []
+    for name, (pid, unit) in sorted(sessions.items()):
+        if not proc_table.belongs_to_session(unit, name):
+            foreign.append(f"{name} server-pid={pid} held-by={unit}")
+    if foreign:
+        return {**base, "state": "drift", "sample": "not held by own keeper: " + "; ".join(foreign)}
+    held = "; ".join(f"session={name} server-pid={pid} keeper={unit}"
+                     for name, (pid, unit) in sorted(sessions.items()))
+    return {**base, "state": "verified", "sample": held}
+
+
+def read_server_keeper(socket: str | None, *, runner=_run_socket_tmux,
+                       cgroup_unit=proc_table.read_cgroup_unit) -> dict[str, object]:
+    """Server-keeper reading over the plant's own tmux socket.
+
+    An unset socket, a failed listing or a malformed line is UNKNOWN. A socket
+    with no running server has no keeper to judge, so it is also UNKNOWN.
+    """
+    if not socket:
+        return judge_server_keeper(None)
+    listed = runner(socket, ["list-sessions", "-F", "#{session_name}\t#{pid}"])
+    if listed is None:
+        return judge_server_keeper(None)
+    if listed.returncode != 0:
+        return judge_server_keeper(None)
+    sessions: dict[str, tuple[str, str]] = {}
+    for line in (listed.stdout or "").splitlines():
+        if not line.strip():
+            continue
+        name, sep, pid = line.rpartition("\t")
+        if not sep or not name or not pid.isdigit():
+            return judge_server_keeper(None)
+        sessions[name] = (pid, cgroup_unit(pid))
+    return judge_server_keeper(sessions)
