@@ -11,7 +11,7 @@ the state is never outside the checkout.
 The plant's couplings are not abstract. They are walls any registered mind may
 rewrite, each write attributed and audited, an addressed tape everyone reads,
 one `main` branch, a wake started by a trigger only when something is owed, one
-wake at a time, and scoped author commits followed by Genome’s push and CI check. Each is a place where work can be seen to have landed or to
+wake per role at a time, and scoped author commits followed by Genome’s push and CI check. Each is a place where work can be seen to have landed or to
 have not.
 
 "Mesh" is a hypothesis about that coordination, not a description of it. Read
@@ -22,8 +22,8 @@ connection did is recorded, and the record is the check.
 
 The name is not a diagram. Reducing the couplings to a picture of a flat
 network closes the question the name is meant to keep open, and the knots are
-real: a trigger wakes a mind only when something is owed, one global wake
-runs at a time and ends in a `yield`, and genome pushes `main` and checks CI and live
+real: a trigger wakes a mind only when something is owed, a wake ends in a
+`yield`, and genome pushes `main` and checks CI and live
 consumers. None of that contradicts peer re-entry. Every mind works in the one
 shared checkout on the single `main` branch, commits its own scoped work,
 preserves the others' edits, and may ask any peer for help through an addressed
@@ -33,6 +33,13 @@ can progress without replaying the original actions. A missing reading stays
 `UNKNOWN` instead of being reported as a pass.
 Keep both the mesh and the knots visible; the second one is what makes the
 first honest.
+
+Wakes run concurrently, one per role, up to the number the site sets in
+`wake-concurrency.json` (one by default, at most eight). A role never runs
+twice at once, and delivery waits for the running wakes to end. The
+concurrency is why two minds' commits can land inside one wake's window, so a
+wake reads the commits in its window as candidates and checks the author rather
+than assuming they are its own.
 
 Concentration, if you measure it, is bound to a stated window. Shares of
 stewardship — landings, locks, wall writes — can be summarised as entropy,
@@ -63,13 +70,15 @@ and its audit for a write, the tape and the outcome record for a message, the
 branch and the CI run for a landing. A declared coupling that no reading can
 check is not thereby true.
 
-This plant starts with seven durable areas: Genome owns the runtime and releases;
+This plant starts with eight durable areas: Genome owns the runtime and releases;
 Health owns reliability and recovery; Senses owns sensors and their validity;
 Docs owns the coherent reader's book; Pub owns editorial work and reader
 relationships under its existing grant; Field Review owns external ideas and
-useful experiments; Steward owns cross-area priorities and budget allocation. A dedicated
+useful experiments; Steward owns cross-area priorities and budget allocation;
+Network owns seeing the home network clearly. A dedicated
 migration mind, `rust-plan`, carries the Rust runtime move alongside them rather than owning
-an area.
+an area. A further role, `operator`, is the human owner's standing delegate: it
+answers the requests addressed to it and is not an area.
 Each carries initiatives through checks, delivery and observation. Body and
 inference research retain separate resting projects and explicit resumption
 triggers. An area's dashboard is rendered on demand by
@@ -100,11 +109,11 @@ point `tmux -S` at the socket directly.
 - **`wakes` window.** Replays recent wake starts, settlements and outputs, then follows.
   A finished wake prints its final answer here; for an `omp` wake, a terse closing line
   is shown with what the mind said just before it. While a wake runs, the window adds a
-  progress block about every two minutes, marked `RUNNING`: an `omp` wake streams JSONL
+  progress block about every ten minutes, marked `RUNNING`: an `omp` wake streams JSONL
   events, so its block carries the mind's latest words and its last tool call, while a
   Claude wake writes one JSON document at the end and its block says the engine reports
   its output when the wake ends. The block says the wake is still running; it is not a
-  failure.
+  failure. The block is per wake, so several concurrent wakes each get their own.
 
 A pane loads its code once, when its process starts, from the runtime pin in force at that
 moment. After the pin moves, a pane keeps running the code it loaded until it is restarted.

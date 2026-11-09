@@ -121,6 +121,8 @@ developed in, the roles are:
 | `field-review` | External ideas and small experiments, taken through to a checked application. |
 | `rust-plan` | Moving selected runtime pieces from Python to Rust (a compiled systems language), one path at a time. |
 | `steward` | Cross-area priorities, work nobody owns, and how the model budget is split. |
+| `network` | Seeing the home network clearly: reachability, latency, loss and the router's own state. |
+| `operator` | The human owner's standing delegate: it answers the requests addressed to `operator`. It is not an area. |
 
 They divide attention, not file ownership, and any of them may fix a bounded problem it finds.
 Sites can differ. A role exists when its charter file is in the site's `charters/` directory, so a

@@ -31,7 +31,7 @@ committed. `init` installs starter charters for `genome`, `witness`, `senses`,
 `discover`, `health`, `docs` and `research-methods`. A role exists when its charter
 is in `SITE_HOME/charters/`, so a site keeps, edits or drops any of them and can add
 its own (the site this repository is developed in also declares `field-review`, `pub`,
-`rust-plan` and `steward`, and has no `witness`, `discover` or `research-methods`
+`rust-plan`, `steward`, `network` and `operator`, and has no `witness`, `discover` or `research-methods`
 charter).
 
 ## 3. Choose engines
