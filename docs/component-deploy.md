@@ -48,7 +48,7 @@ The promotion code was reviewed independently before that, in two passes. The fi
 
 ## Who promotes
 
-Genome owns the promotion command and runs the check. The command exists in
+Genome owns the promotion command and the check it runs. The command exists in
 `src/mishe_tauftauf/components.py`:
 
 ```
