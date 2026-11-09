@@ -25,6 +25,7 @@
     "src/mishe_tauftauf/host_radio.py",
     "src/mishe_tauftauf/memory_stat_text.py",
     "src/mishe_tauftauf/observations.py",
+    "src/mishe_tauftauf/omp_usage_text.py",
     "src/mishe_tauftauf/outcome_publication.py",
     "src/mishe_tauftauf/patch_text.py",
     "src/mishe_tauftauf/plant_boot.py",
