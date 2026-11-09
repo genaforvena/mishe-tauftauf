@@ -475,7 +475,7 @@
         "--home",
         "{home}"
       ],
-      "every": 60,
+      "every": 180,
       "timeout": 90,
       "max_age": 300,
       "red_codes": [
@@ -534,6 +534,27 @@
       ],
       "resolver": "network",
       "covers": "the network mind keeps improving network visibility: its wall is under six hours old and network files were committed within 48 hours; RED when it has gone quiet, UNKNOWN when git cannot be read",
+      "replaces": []
+    },
+    {
+      "name": "wake-waste",
+      "command": [
+        "{python}",
+        "{repo}/checks/wake-waste.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 600,
+      "timeout": 60,
+      "max_age": 1800,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "steward",
+      "covers": "wakes that did real work and were thrown away: a wake in the last two hours ended by timeout, or without a yield after a stream of a megabyte or more; RED names role, model, outcome, minutes and size so the resolver fixes timeout policy, wake scope or engine use; UNKNOWN when the routing ledger cannot be read",
       "replaces": []
     }
   ],
