@@ -274,7 +274,14 @@ def test_original_renderer_is_bounded_when_its_wrapper_is_killed(tmp_path):
             parent.wait(timeout=2)
 
 
-def test_real_outbox_publication_uses_prose_and_is_idempotent(tmp_path):
+def test_real_outbox_publication_uses_prose_and_is_idempotent(tmp_path, monkeypatch):
+    # The publisher runs mishe-tape in a child process; a disposable tmp_path has
+    # no site bin, so name the built framer explicitly (MISHE_TAPE_BIN override).
+    # Without a built binary the publish path cannot run: skip, do not fail.
+    tape = os.environ.get("MISHE_TAPE_BIN") or str(Path(__file__).resolve().parents[1] / ".mishe-tauftauf" / "bin" / "mishe-tape")
+    if not (os.path.isfile(tape) and os.access(tape, os.X_OK)):
+        pytest.skip("no built mishe-tape: set MISHE_TAPE_BIN to exercise real outbox publication")
+    monkeypatch.setenv("MISHE_TAPE_BIN", tape)
     from mishe_tauftauf.feed import Feed
     root = tmp_path / "recovery"
     recovery.event(root, {"at": 100, "function": {"name": "seed-lock", "state": "FAILED", "episode": 1, "resolver": "health"}}, recipients=["health"])
