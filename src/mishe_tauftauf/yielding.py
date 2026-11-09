@@ -57,10 +57,12 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
     owed.advance(home, role, snap)
     if continue_:
         intentions.add(home, role, "continue", note="continue the work started in the previous wake", due=now)
+    # The fallback timer and the signal condition of one yield share a pair: whichever fires first retires the other.
+    pair = key if (again is not None and when is not None) else None
     if again is not None:
-        intentions.add(home, role, "again", note="scheduled return", due=now + again)
+        intentions.add(home, role, "again", note="scheduled return", due=now + again, pair=pair)
     if when is not None:
-        intentions.add(home, role, f"when-{when['signal']}", note="signal condition you asked to be woken on", when=when)
+        intentions.add(home, role, f"when-{when['signal']}", note="signal condition you asked to be woken on", when=when, pair=pair)
     for name, entry in sorted(signal_store.registry(home).items()):
         if role in entry.get("subscribers", []) and "reoffer" in entry:
             sig = signal_store.read(home, name, now=now)

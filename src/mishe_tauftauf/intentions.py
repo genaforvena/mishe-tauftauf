@@ -20,7 +20,8 @@ def _dir(home, role: str) -> Path:
 
 
 def add(home, role: str, id: str, *, note: str, due: float | None = None,
-        when: dict | None = None, spontaneous: bool = False) -> None:
+        when: dict | None = None, spontaneous: bool = False, pair: str | None = None) -> None:
+    """``pair`` ties alternatives from one yield: when one of them is consumed, the rest go too."""
     if not id or not set(id) <= _ID_OK:
         raise ValueError(f"intention id {id!r} must be lowercase letters, digits, - _ or .")
     if due is None and when is None:
@@ -32,6 +33,8 @@ def add(home, role: str, id: str, *, note: str, due: float | None = None,
         if "signal" not in when or not ({"equals", "state"} & set(when)):
             raise ValueError("when needs a signal and equals or state")
         entry["when"] = when
+    if pair is not None:
+        entry["pair"] = str(pair)
     write_json(_dir(home, role) / f"{id}.json", entry)
 
 

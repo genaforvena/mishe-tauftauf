@@ -120,3 +120,57 @@ def test_corrupt_cursor_is_not_treated_as_nothing_owed(home):
     (home / "cursors").mkdir()
     (home / "cursors" / "genome.json").write_text("{oops")
     assert owed.check(home, "genome", now=1.0).reasons == ["cursor-unreadable"]
+
+
+def _ids(home):
+    return sorted(i["id"] for i in intentions.list_(home, "genome"))
+
+
+def test_signal_fires_first_retires_the_paired_fallback(home):
+    intentions.add(home, "genome", "again", note="n", due=500.0, pair="wake-1")
+    intentions.add(home, "genome", "when-ci", note="n", when={"signal": "ci", "equals": "RED"}, pair="wake-1")
+    store.observe(home, "ci", "RED", now=100.0, source="t")
+    snap = owed.check(home, "genome", now=100.0)
+    assert "intention:when-ci" in snap.reasons
+    owed.advance(home, "genome", snap)
+    assert _ids(home) == []
+
+
+def test_fallback_fires_first_retires_the_paired_signal(home):
+    intentions.add(home, "genome", "again", note="n", due=50.0, pair="wake-1")
+    intentions.add(home, "genome", "when-ci", note="n", when={"signal": "ci", "equals": "RED"}, pair="wake-1")
+    snap = owed.check(home, "genome", now=60.0)
+    assert snap.reasons == ["intention:again"]
+    owed.advance(home, "genome", snap)
+    assert _ids(home) == []
+
+
+def test_pairs_from_different_yields_do_not_interfere(home):
+    intentions.add(home, "genome", "again", note="n", due=50.0, pair="wake-1")
+    intentions.add(home, "genome", "when-ci", note="n", when={"signal": "ci", "equals": "RED"}, pair="wake-2")
+    owed.advance(home, "genome", owed.check(home, "genome", now=60.0))
+    assert _ids(home) == ["when-ci"]
+
+
+def test_unpaired_intentions_are_unchanged(home):
+    intentions.add(home, "genome", "again", note="n", due=50.0)
+    intentions.add(home, "genome", "when-ci", note="n", when={"signal": "ci", "equals": "RED"})
+    owed.advance(home, "genome", owed.check(home, "genome", now=60.0))
+    assert _ids(home) == ["when-ci"]
+
+
+def test_settle_pairs_fallback_and_signal_of_one_yield(tmp_path):
+    from mishe_tauftauf import yielding
+    from mishe_tauftauf.state_files import write_json
+    store.register(tmp_path, "ci", max_age=600, subscribers=["genome"])
+    store.observe(tmp_path, "ci", "GREEN", now=100.0, source="t")
+    write_json(yielding.snapshot_path(tmp_path, "wake-9"),
+               {"role": "genome", "snapshot": owed.check(tmp_path, "genome", now=100.0).to_json()})
+    yielding.settle(tmp_path, "genome", "wake-9", text="wall", result="changed", now=100.0,
+                    again=500.0, when={"signal": "ci", "equals": "RED"},
+                    wall_writer=lambda home, role, text: None)
+    pairs = {i["id"]: i.get("pair") for i in intentions.list_(tmp_path, "genome")}
+    assert pairs["again"] == "wake-9" and pairs["when-ci"] == "wake-9"
+    store.observe(tmp_path, "ci", "RED", now=101.0, source="t")
+    owed.advance(tmp_path, "genome", owed.check(tmp_path, "genome", now=101.0))
+    assert "when-ci" not in _ids(tmp_path) and "again" not in _ids(tmp_path)

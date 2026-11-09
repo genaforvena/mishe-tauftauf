@@ -126,8 +126,18 @@ def check(home, role: str, *, now: float) -> Snapshot:
 
 
 def advance(home, role: str, snap: Snapshot) -> None:
-    """Move the cursor to what the wake saw and drop the intentions it consumed."""
+    """Move the cursor to what the wake saw and drop the intentions it consumed.
+
+    Intentions that share a ``pair`` with a consumed one answered the same
+    yield, so they go too: a fallback timer does not fire after its signal did.
+    """
     write_json(cursor_path(home, role), {"inbox_ns": snap.inbox_ns, "signals": snap.signal_revs,
                                          "tape_seq": snap.tape_seq})
+    listed = intentions.list_(home, role)
+    consumed = set(snap.consumed)
+    pairs = {e["pair"] for e in listed if e["id"] in consumed and e.get("pair")}
     for id in snap.consumed:
         intentions.remove(home, role, id)
+    for e in listed:
+        if pairs and e.get("pair") in pairs:
+            intentions.remove(home, role, e["id"])
