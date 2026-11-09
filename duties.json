@@ -487,6 +487,54 @@
       "resolver": "network",
       "covers": "home connectivity: gateway and public-resolver latency and loss, DNS and HTTPS timing (rows in network/probe.jsonl); RED when the internet is unreachable, UNKNOWN when the probe cannot run",
       "replaces": []
+    },
+    {
+      "name": "network-window",
+      "command": [
+        "{python}",
+        "{repo}/checks/network-care.py",
+        "window",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 300,
+      "timeout": 30,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "network",
+      "covers": "the outer tmux window plants:network exists and runs tools/network_view.py; RED when missing or dead, UNKNOWN when tmux cannot be read",
+      "replaces": []
+    },
+    {
+      "name": "network-progress",
+      "command": [
+        "{python}",
+        "{repo}/checks/network-care.py",
+        "progress",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 900,
+      "timeout": 60,
+      "max_age": 1800,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "network",
+      "covers": "the network mind keeps improving network visibility: its wall is under six hours old and network files were committed within 48 hours; RED when it has gone quiet, UNKNOWN when git cannot be read",
+      "replaces": []
     }
   ],
   "retired": [
