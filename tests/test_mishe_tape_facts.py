@@ -136,3 +136,18 @@ def test_missing_body_terminator_exits_2(binary):
     proc = subprocess.run([binary], input=tape, capture_output=True, timeout=30)
     assert proc.returncode == 2, proc.returncode
     assert proc.stdout == b"", proc.stdout
+
+
+def test_non_utf8_body_exits_2_without_facts(binary):
+    """Fail closed: a body the framer would have rejected never yields a fact.
+
+    `mishe-tape frames` rejects non-UTF-8 input, so this reaches the facts binary
+    only from a caller that bypassed the framer. The binary must not emit an OUT
+    line for it and exit 0.
+    """
+    body = b"Wall outcome ok by ops 7 \xff"
+    tape = f"E 1 2026-11-08T12:00:00Z senses {len(body)}\n".encode() + body + b"\n"
+    proc = subprocess.run([binary], input=tape, capture_output=True, timeout=30)
+    assert proc.returncode == 2, proc.returncode
+    assert proc.stdout == b"", proc.stdout
+    assert proc.stderr.startswith(b"mishe-tape-facts: body is not UTF-8"), proc.stderr

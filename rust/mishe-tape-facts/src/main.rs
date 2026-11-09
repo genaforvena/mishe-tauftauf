@@ -171,6 +171,12 @@ fn main() -> ExitCode {
         if input.read_exact(&mut terminator).is_err() || terminator[0] != b'\n' {
             return fail(2, "missing body terminator");
         }
+        // The framer guarantees UTF-8 bodies; a body that is not UTF-8 means the
+        // input did not come from a valid `mishe-tape frames`. Fail closed before
+        // emitting anything for this entry.
+        if std::str::from_utf8(&body).is_err() {
+            return fail(2, "body is not UTF-8");
+        }
         let written = (|| -> io::Result<()> {
             if let Some(target) = dm_target(&body) {
                 out.write_all(format!("DM {} {} {} ", seq, ts, source).as_bytes())?;

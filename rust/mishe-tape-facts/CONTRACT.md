@@ -76,9 +76,15 @@ Any mismatch outside a deferral fails the test.
 |---|---|---|
 | 0 | Whole input read, all facts written | Facts are complete for the framed entries |
 | 1 | Usage error (any argument) | Not a result; UNKNOWN |
-| 2 | Malformed input: an `E` line the binary cannot parse, a short body, or a missing body terminator | Discard all facts from this run; UNKNOWN. The tape is not a shorter tape |
+| 2 | Malformed input: an `E` line the binary cannot parse, a short body, a missing body terminator, or a body that is not UTF-8 (`body is not UTF-8`, checked before that entry's facts are written) | Discard all facts from this run; UNKNOWN. The tape is not a shorter tape |
 | 3 | Read or write error | UNKNOWN |
 | any other | Not part of the contract | UNKNOWN, never GREEN |
+
+A pipeline status is not this binary's status. `mishe-tape frames PATH | mishe-tape-facts`
+exits with the status of the last stage only: if `frames` exits 2 on a framing fault,
+the empty stdin still gives facts exit 0 with no lines. Every caller must check
+`frames`' status (for example `set -o pipefail` or `PIPESTATUS`), or read the
+framer's status before trusting empty facts.
 
 ## Build
 
