@@ -1,0 +1,11 @@
+[package]
+name = "mishe-network-probe"
+version = "0.1.0"
+edition = "2021"
+description = "One bounded network probe row for Mishe (contract: CONTRACT.md)"
+license = "CC0-1.0"
+
+[dependencies]
+
+[profile.release]
+debug = false

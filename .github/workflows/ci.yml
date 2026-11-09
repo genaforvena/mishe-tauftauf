@@ -30,6 +30,17 @@ jobs:
         run: |
           cargo build --release --locked --manifest-path rust/mishe-tape/Cargo.toml
           echo "MISHE_TAPE_BIN=$GITHUB_WORKSPACE/rust/mishe-tape/target/release/mishe-tape" >> "$GITHUB_ENV"
+      # The network probe is a second Rust leaf with its own contract.  Its
+      # Rust unit tests check the decoders (the gateway address, ping's loss
+      # and RTT line, curl's timing line, the UTC calendar), and the Python
+      # test compares the built binary's rows against the retired Python
+      # probe's shape on the CI host.  The binary is exported so that test
+      # runs against real bytes, not a skip.
+      - name: Build and test mishe-network-probe
+        run: |
+          cargo build --release --locked --manifest-path rust/mishe-network-probe/Cargo.toml
+          cargo test --release --locked --manifest-path rust/mishe-network-probe/Cargo.toml
+          echo "MISHE_NETWORK_PROBE_BIN=$GITHUB_WORKSPACE/rust/mishe-network-probe/target/release/mishe-network-probe" >> "$GITHUB_ENV"
       - run: python tools/check_parsing.py
       - run: python tools/check_dangling.py
       - run: python checks/parsing-legacy-freeze.py
