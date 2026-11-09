@@ -76,6 +76,8 @@ def private_tmux_server(tmp_path_factory):
     # to describe the tree under test exactly as CI does; the binding itself is
     # covered where it lives, in tests/test_site_home.py.
     patch.delenv("MISHE_SEED_HOME", raising=False)
+    # Record-kind index lives in the user cache; a suite run must not write there.
+    patch.setenv("XDG_CACHE_HOME", str(root / "xdg-cache"))
     try:
         yield root
     finally:

@@ -113,6 +113,7 @@ def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dic
         directory = records._directory(home)
     except OSError as exc:
         return {'events': events, 'incomplete': incomplete, 'unavailable': f'outcome store unreadable: {exc}'}
+    kinds = records.KindIndex(home)
     try:
         stream = iter(entries)
         while True:
@@ -150,8 +151,7 @@ def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dic
                 # to the full envelope verification so the gap stays UNKNOWN with
                 # the correct binding, exactly as before.
                 digest = reference_digest(refs[0])
-                head = records.record_head_dir(directory, digest)
-                kind = records.record_kind(head) if head is not None else None
+                kind = kinds.kind(directory, digest)
                 if kind is not None and not reserved and kind != 'wall-outcome':
                     continue
                 envelope = records.envelope(entry)
@@ -185,6 +185,7 @@ def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dic
                            'role': payload['role'], 'kind': payload['kind'], 'evidence': evidence,
                            'supersedes': supersedes})
     finally:
+        kinds.close()
         if directory is not None:
             _os.close(directory)
     return {'events': events, 'incomplete': incomplete, 'unavailable': None}

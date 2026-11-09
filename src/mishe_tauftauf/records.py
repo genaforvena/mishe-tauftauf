@@ -79,15 +79,6 @@ def record_head(home: Path | str, digest: str) -> bytes | None:
         os.close(directory)
 
 
-def record_head_dir(directory: int, digest: str) -> bytes | None:
-    """The first bytes of a stored record via an already-opened directory fd."""
-    try:
-        fd = os.open(digest + ".json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-                     dir_fd=directory)
-        with os.fdopen(fd, "rb") as handle:
-            return handle.read(HEAD_BYTES)
-    except OSError:
-        return None
 def _directory(home: Path) -> int:
     # The site root is trusted; its record subdirectory must never be followed.
     return os.open(home / "records", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -318,6 +309,120 @@ def verified_store(home: Path | str) -> VerifiedStore:
         if store is None:
             store = _STORES[key] = VerifiedStore(Path(home))
         return store
+
+
+#: Record kinds persist outside the plant, under the user cache directory, keyed by the
+#: site path: classify runs from read-only probes, which must leave the plant untouched.
+#: A kind is cached only with the identity the record file had when its head was read,
+#: so a hit needs one stat and a changed file misses.
+KIND_INDEX_DIR = "mishe-tauftauf"
+
+
+def kind_index_path(home: Path | str) -> Path:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    key = hashlib.sha256(str(Path(home)).encode()).hexdigest()[:24]
+    return Path(base) / KIND_INDEX_DIR / f"records-kinds-{key}.sqlite3"
+
+
+class KindIndex:
+    """Per-digest record kind (the kind named by the head), validated by file identity.
+
+    A stored entry is served only when the record's (inode, size, ctime_ns, mtime_ns)
+    still equal the identity captured before its head was read. The head is read
+    through the descriptor that is fstat'ed, so the identity and the bytes belong to
+    the same inode; a rewrite moves ctime and forces the direct read. Anything the
+    index cannot answer (missing, corrupt or locked store, non-regular file) falls
+    back to the direct head read, which is exactly the uncached answer.
+    """
+
+    def __init__(self, home: Path | str):
+        self.path = kind_index_path(home)
+        self._connection = None
+        self._broken = False
+        self._loaded = False
+        self._known: dict[str, tuple] = {}
+        self._pending: dict[str, tuple] = {}
+
+    def _connect(self):
+        if self._connection is None and not self._broken:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                connection = sqlite3.connect(self.path, timeout=10, check_same_thread=False)
+                connection.execute("PRAGMA journal_mode=WAL")
+                connection.execute("CREATE TABLE IF NOT EXISTS kinds ("
+                                   "digest TEXT PRIMARY KEY, ino INTEGER, size INTEGER, "
+                                   "ctime_ns INTEGER, mtime_ns INTEGER, kind TEXT)")
+                connection.commit()
+                self._connection = connection
+            except (sqlite3.Error, OSError):
+                self._broken = True
+        return self._connection
+
+    def _load(self) -> None:
+        self._loaded = True
+        connection = self._connect()
+        if connection is None:
+            return
+        try:
+            for digest, ino, size, ctime_ns, mtime_ns, kind in connection.execute(
+                    "SELECT digest, ino, size, ctime_ns, mtime_ns, kind FROM kinds"):
+                self._known[digest] = (ino, size, ctime_ns, mtime_ns, kind)
+        except sqlite3.Error:
+            self._broken = True
+            self._known = {}
+
+    def kind(self, directory: int, digest: str) -> str | None:
+        """The kind the record's head names, or None, exactly as record_kind(head)."""
+        if not self._loaded:
+            self._load()
+        name = digest + ".json"
+        cached = self._known.get(digest)
+        if cached is not None:
+            try:
+                info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            except OSError:
+                info = None
+            if (info is not None and stat.S_ISREG(info.st_mode)
+                    and (info.st_ino, info.st_size, info.st_ctime_ns, info.st_mtime_ns) == cached[:4]):
+                return cached[4]
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        except OSError:
+            return None
+        try:
+            with os.fdopen(fd, "rb") as handle:
+                info = os.fstat(handle.fileno())
+                identity = (info.st_ino, info.st_size, info.st_ctime_ns, info.st_mtime_ns)
+                kind = record_kind(handle.read(HEAD_BYTES))
+        except OSError:
+            return None
+        if stat.S_ISREG(info.st_mode):
+            entry = (*identity, kind)
+            self._known[digest] = entry
+            self._pending[digest] = entry
+        return kind
+
+    def flush(self) -> None:
+        """Persist the entries read since the last flush; a failed write only costs future reads."""
+        pending, self._pending = self._pending, {}
+        if not pending or self._broken:
+            return
+        connection = self._connect()
+        if connection is None:
+            return
+        try:
+            with connection:
+                connection.executemany(
+                    "INSERT OR REPLACE INTO kinds VALUES (?, ?, ?, ?, ?, ?)",
+                    [(digest, *entry) for digest, entry in pending.items()])
+        except sqlite3.Error:
+            self._broken = True
+
+    def close(self) -> None:
+        self.flush()
+        if self._connection is not None:
+            self._connection.close()
+            self._connection = None
 
 
 def cached_payload(entry, pending: dict, store: VerifiedStore | None = None, *,
