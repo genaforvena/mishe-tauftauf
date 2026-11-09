@@ -45,6 +45,7 @@ LEDGER = "routing-ledger.jsonl"
 SIGNAL = "engine-routing"
 SIGNAL_MAX_AGE = 900.0
 DEFAULT_COOL_OFF_S = 1800
+INVALIDATE_BUDGET_S = 20.0  # total wall time for stale-window refetches per wake
 ENGINES = ("claude", "omp")
 STALE_STATES = ("STALE", "UNKNOWN", "UNATTRIBUTED")
 
@@ -59,6 +60,10 @@ def _iso(ms) -> str:
 
 def candidate_key(c: dict) -> str:
     return f"{c['engine']}:{c['model']}:{c['account'] or '-'}"
+
+
+def _is_safety_net(c: dict) -> bool:
+    return c["engine"] == "claude" and c["account"] is None
 
 
 def load_routes(home) -> dict | None:
@@ -118,7 +123,7 @@ def record(home, event: dict, *, now_ms: float) -> None:
 
 
 def _eligible(role: str, cand: dict, status, now_ms) -> tuple[bool, str]:
-    if cand["engine"] == "claude" and cand["account"] is None:
+    if _is_safety_net(cand):
         return True, "Claude subscription safety net (no account window read in the router)"
     alias = cand["account"]
     if status is None:
@@ -167,13 +172,17 @@ def _invalidate_stale(home, status: dict) -> bool:
     import subprocess
     from . import engine_usage
     touched = False
+    deadline = time.monotonic() + INVALIDATE_BUDGET_S
     for row in (status.get("accounts") or {}).values():
         if row.get("state") != "STALE" or row.get("registry_state") != "configured":
             continue
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         env = dict(os.environ, PI_CODING_AGENT_DIR=str(Path(home) / row["store"]))
         try:
             subprocess.run(["omp", "usage", "invalidate", "--provider", row["provider"]], env=env,
-                           capture_output=True, timeout=60, check=False)
+                           capture_output=True, timeout=remaining, check=False)
             touched = True
         except (OSError, subprocess.SubprocessError):
             continue
@@ -254,9 +263,12 @@ class RoutedEngine:
             return ClaudeEngine(cand["model"])
         return OmpEngine(cand["model"])
 
-    def _cool(self, key: str, now_ms: float) -> None:
+    def _cool(self, cand: dict, now_ms: float) -> None:
+        # The Claude safety net is never cooled: a cooled last candidate leaves the role with no engine.
+        if _is_safety_net(cand):
+            return
         state = _load_state(self.home)
-        state["cooling"][key] = now_ms + self.cool_off_ms
+        state["cooling"][candidate_key(cand)] = now_ms + self.cool_off_ms
         _save_state(self.home, state)
 
     def _clear(self, key: str) -> None:
@@ -293,13 +305,13 @@ class RoutedEngine:
                 # The command never ran, so the wake has no effect: fall through to the next candidate now.
                 record(self.home, {"role": self.role, "event": "fallback", "wake": key_wake, "key": key,
                                    "reason": f"did not start: {exc}"}, now_ms=time.time() * 1000)
-                self._cool(key, time.time() * 1000)
+                self._cool(cand, time.time() * 1000)
                 tried.add(key)
                 continue
             except EngineTimeout as exc:
                 record(self.home, {"role": self.role, "event": "outcome", "wake": key_wake, "key": key,
                                    "outcome": "timeout", "reason": str(exc)}, now_ms=time.time() * 1000)
-                self._cool(key, time.time() * 1000)
+                self._cool(cand, time.time() * 1000)
                 self._observe(status, time.time() * 1000)
                 raise
             yielded = bool(key_wake) and yielding.receipt_path(self.home, key_wake).exists()
@@ -309,7 +321,7 @@ class RoutedEngine:
             if yielded:
                 self._clear(key)
             else:
-                self._cool(key, time.time() * 1000)
+                self._cool(cand, time.time() * 1000)
             self._observe(status, time.time() * 1000)
             return code
 

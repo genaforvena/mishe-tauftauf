@@ -182,6 +182,21 @@ def test_timeout_cools_and_reraises(routed):
     assert router.candidate_key(GO) in json.loads((routed / "engine" / router.STATE).read_text())["cooling"]
 
 
+def test_safety_net_is_never_cooled_so_role_keeps_an_engine(tmp_path, monkeypatch):
+    monkeypatch.setattr(router, "live_status", lambda home: status(**{"go-a": account()}))
+    monkeypatch.setattr(router.time, "time", lambda: NOW_MS / 1000)
+    monkeypatch.setattr(router.RoutedEngine, "_build", lambda self, cand: FakeEngine(cand["model"]))
+    FakeEngine.script = {HAIKU["model"]: "timeout"}
+    routes_file(tmp_path, {"genome": [HAIKU]})
+    eng = router.for_role(tmp_path, "genome")
+    with pytest.raises(EngineTimeout):
+        eng.run(tmp_path / "p.md", env=_env(tmp_path, "k6"), cwd=tmp_path, timeout=5)
+    path = tmp_path / "engine" / router.STATE
+    assert not path.exists() or router.candidate_key(HAIKU) not in json.loads(path.read_text())["cooling"]
+    FakeEngine.script = {HAIKU["model"]: "yield"}
+    assert eng.run(tmp_path / "p.md", env=_env(tmp_path, "k7"), cwd=tmp_path, timeout=5) == 0
+
+
 def test_publish_observes_engine_routing_signal(routed):
     result = router.publish(routed, now=NOW_MS / 1000)
     assert result["state"] == "GREEN"
