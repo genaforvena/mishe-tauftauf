@@ -174,6 +174,7 @@
       "every": 120,
       "timeout": 60,
       "max_age": 300,
+      "unknown_codes": [3],
       "resolver": "health",
       "replaces": [
         "host-capacity",
