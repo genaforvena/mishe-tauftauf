@@ -742,3 +742,28 @@ def test_wake_without_a_final_message_shows_the_failure_not_the_stream(tmp_path)
     out.write_text('\n'.join(json.dumps(e) for e in ev) + '\n')
     _, text = output_view(out, final=True)
     assert "SOURCE LISTING" not in text and "usage_limit_reached" in text and "without a final message" in text
+
+
+def test_progress_shows_words_and_last_call_not_tool_output(tmp_path):
+    import os, time
+    from mishe_tauftauf import plant_tape
+    root = tmp_path / "wakes"; root.mkdir()
+    (root / "wake-x-5.work-start.json").write_text(json.dumps({"role": "x"}))
+    ev = [{"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "Checking the router commit"}]}},
+          {"type": "tool_execution_start", "toolName": "bash", "args": {"command": "git show --stat HEAD"}},
+          {"type": "tool_execution_end", "result": {"content": [{"type": "text", "text": "Wall time: 0.03 seconds\nNOISE LISTING"}]}}]
+    (root / "wake-x-5.prompt.out.jsonl").write_text('\n'.join(json.dumps(e) for e in ev) + '\n')
+    old = time.time() - 3 * plant_tape.PROGRESS_SECONDS
+    os.utime(root / "wake-x-5.work-start.json", (old, old))
+    _, text = plant_tape.wakes_step(tmp_path, None)
+    assert "says: Checking the router commit" in text and "last call: [tool bash] git show --stat HEAD" in text
+    assert "NOISE LISTING" not in text and "Wall time" not in text
+
+
+def test_terse_closing_line_is_shown_with_what_came_before(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import output_view
+    out = tmp_path / "w.prompt.out.jsonl"
+    msg = lambda t: {"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": t}]}}
+    out.write_text('\n'.join(json.dumps(e) for e in [msg("Found the stale probe and cleared it, evidence in the wall."), {"type": "tool_execution_start", "toolName": "bash", "args": {"command": "x"}}, msg("Yielded verified."), {"type": "agent_end"}]) + '\n')
+    _, text = output_view(out, final=True)
+    assert "Found the stale probe" in text and "Yielded verified." in text

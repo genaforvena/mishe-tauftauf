@@ -116,10 +116,24 @@ def stream_text(text: str) -> str:
 
 
 def progress_text(path: Path) -> str:
-    """The live tail of a running stream for a progress block, without the retention preamble lines of a huge file."""
-    kept = [ln for ln in output_text(path).splitlines()
-            if not ln.startswith(('[retained tail', 'UNKNOWN leading stream event truncated'))]
-    return '\n'.join(kept) or '[waiting for stream events]'
+    """What a running wake is doing, for a progress block: its latest words and its latest tool call.
+
+    Tool output is left out (it is the noise: timings, listings); the retention preamble of a huge file is dropped too."""
+    lines = [ln for ln in output_text(path).splitlines()
+             if not ln.startswith(('[retained tail', 'UNKNOWN leading stream event truncated'))]
+    said = [i for i, ln in enumerate(lines) if ln.startswith('[assistant] ')]
+    called = [ln for ln in lines if ln.startswith('[tool ') and not ln.startswith(('[tool output]', '[tool error]'))]
+    out = []
+    if said:
+        block = []
+        for ln in lines[said[-1]:]:
+            if ln.startswith('[') and not ln.startswith('[assistant] '):
+                break
+            block.append(ln)
+        out.append('\n'.join(block).replace('[assistant] ', 'says: ', 1)[:600])
+    if called:
+        out.append('last call: ' + called[-1][:200])
+    return '\n'.join(out) or '[waiting for stream events]'
 
 
 def final_answer(text: str) -> str:
@@ -139,6 +153,17 @@ def final_answer(text: str) -> str:
             break
         tail.append(ln)
     answer = '\n'.join(tail).replace('[assistant] ', '', 1)
+    if len(answer.strip()) < 120 and len(starts) > 1:
+        # A terse closing line ("Yielded verified.") says little: show what the mind said just before it too.
+        before = []
+        for i in starts[-3:-1]:
+            block = []
+            for ln in lines[i:]:
+                if ln.startswith('[') and not ln.startswith('[assistant] ') and block:
+                    break
+                block.append(ln)
+            before.append('\n'.join(block).replace('[assistant] ', '', 1))
+        answer = '\n'.join(before + [answer])
     return (f'({calls} tool calls)\n' if calls else '') + answer
 
 
