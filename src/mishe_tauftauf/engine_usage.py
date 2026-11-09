@@ -431,3 +431,5 @@ def register(sub):
     p = engine.add_parser('explain', help='Shadow admission decision for a role (no launcher change)')
     p.add_argument('role', nargs='?', default='default', help='role whose allowlist to evaluate')
     p.add_argument('--json', action='store_true'); p.set_defaults(func=cmd_explain)
+    from . import engine_router
+    engine_router.register(engine)

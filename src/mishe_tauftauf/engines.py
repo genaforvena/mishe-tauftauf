@@ -11,6 +11,10 @@ DEFAULT_CLAUDE_MODEL = "claude-haiku-5-5"
 
 
 def for_role(home, role: str):
+    from . import engine_router
+    routed = engine_router.for_role(home, role)
+    if routed is not None:
+        return routed
     config = read_json(Path(home) / "engines" / f"{role}.json") or {}
     kind = config.get("engine", "claude")
     env = config.get("env", {})
