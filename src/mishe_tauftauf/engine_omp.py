@@ -1,10 +1,10 @@
 """omp as a one-shot engine: ``omp --print --no-session`` reading the dossier file."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from . import engine_process
+from .router_text import stream_events
 from .wake import EngineRejected
 
 
@@ -25,22 +25,15 @@ def command(model: str | None, cwd: Path, prompt_file: Path, thinking: str | Non
 
 def refused_before_effect(stream: Path) -> str | None:
     """The model error that ended a stream with no tool call (so nothing ran), else None."""
-    if not stream.exists():
-        return None
     error = None
-    with stream.open(encoding="utf-8", errors="replace") as lines:
-        for line in lines:
-            try:
-                event = json.loads(line)
-            except ValueError:
-                continue
-            message = event.get("message") if isinstance(event, dict) else None
-            if not isinstance(message, dict):
-                continue
-            if any(isinstance(b, dict) and b.get("type") == "toolCall" for b in message.get("content") or []):
-                return None
-            if message.get("role") == "assistant" and message.get("stopReason") == "error":
-                error = str(message.get("errorMessage") or "model error")[:300]
+    for event in stream_events(stream):
+        message = event.get("message")
+        if not isinstance(message, dict):
+            continue
+        if any(isinstance(b, dict) and b.get("type") == "toolCall" for b in message.get("content") or []):
+            return None
+        if message.get("role") == "assistant" and message.get("stopReason") == "error":
+            error = str(message.get("errorMessage") or "model error")[:300]
     return error
 
 
