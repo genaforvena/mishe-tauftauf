@@ -174,6 +174,14 @@ def test_not_started_falls_through_within_same_wake(routed):
     assert events == ["select", "fallback", "select", "outcome"]
 
 
+def test_not_started_candidate_is_not_cooled(routed):
+    FakeEngine.script = {GO["model"]: "not-started", MINI["model"]: "yield"}
+    eng = router.for_role(routed, "health")
+    assert eng.run(routed / "p.md", env=_env(routed, "k8"), cwd=routed, timeout=5) == 0
+    state = routed / "engine" / router.STATE
+    assert not state.exists() or router.candidate_key(GO) not in json.loads(state.read_text())["cooling"]
+
+
 def test_timeout_cools_and_reraises(routed):
     FakeEngine.script = {GO["model"]: "timeout"}
     eng = router.for_role(routed, "health")

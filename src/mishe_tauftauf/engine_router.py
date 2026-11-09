@@ -303,9 +303,9 @@ class RoutedEngine:
                                   on_start=on_start)
             except EngineNotStarted as exc:
                 # The command never ran, so the wake has no effect: fall through to the next candidate now.
+                # No cool-off: an unavailable binary is not evidence the account is exhausted.
                 record(self.home, {"role": self.role, "event": "fallback", "wake": key_wake, "key": key,
                                    "reason": f"did not start: {exc}"}, now_ms=time.time() * 1000)
-                self._cool(cand, time.time() * 1000)
                 tried.add(key)
                 continue
             except EngineTimeout as exc:
