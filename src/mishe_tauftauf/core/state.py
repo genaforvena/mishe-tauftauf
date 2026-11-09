@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..router_text import load_json
 from .dispatch_record import decode_record
 from .dispatch_record import encode_record
 from .dispatch_record import read_record_fields
@@ -94,7 +95,7 @@ class DispatchStore:
         Absent, malformed or out of range reads as 1, the original one-at-a-time rule.
         """
         try:
-            value = json.loads((self.root.parent / "wake-concurrency.json").read_text(encoding="utf-8")).get("max", 1)
+            value = load_json(self.root.parent / "wake-concurrency.json").get("max", 1)
         except (OSError, ValueError, AttributeError):
             return 1
         return value if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 8 else 1

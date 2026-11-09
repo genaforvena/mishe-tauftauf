@@ -73,7 +73,8 @@
     "tools/household_view.py",
     "tools/inference_budget_aggregate.py",
     "tools/recovery-control.py",
-    "tools/unit_psi_attribution.py"
+    "tools/unit_psi_attribution.py",
+    "src/mishe_tauftauf/router_text.py"
   ],
   "legacy": {
     "src/mishe_tauftauf/access.py": {

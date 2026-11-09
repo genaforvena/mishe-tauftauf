@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import engine_policy as policy
+from .router_text import file_lines, load_json, split_cooling_key
 from . import signal_store
 from . import yielding
 from .wake import EngineNotStarted, EngineTimeout
@@ -73,7 +74,7 @@ def cooling_table(cooling: dict, now_ms: float, cool_off_s: float = DEFAULT_COOL
     for k, until in sorted(cooling.items()):
         if not isinstance(until, (int, float)) or until <= now_ms:
             continue
-        role, _, cand = k.partition("|") if "|" in k else (None, "", k)
+        role, cand = split_cooling_key(k)
         rows.append({"role": role or "all", "candidate": cand, "until": _iso(until),
                      "age_s": max(0, round(now_ms / 1000 - (until / 1000 - cool_off_s))),
                      "left_s": round((until - now_ms) / 1000)})
@@ -89,7 +90,7 @@ def load_routes(home) -> dict | None:
     path = _dir(home) / ROUTES
     if not path.is_file():
         return None
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value = load_json(path)
     if not isinstance(value, dict) or value.get("version") != 1 or not isinstance(value.get("roles"), dict):
         raise ValueError("invalid engine routes file")
     roles = {}
@@ -133,7 +134,7 @@ def _load_state(home) -> dict:
     path = _dir(home) / STATE
     if not path.is_file():
         return {"cooling": {}}
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value = load_json(path)
     cooling = value.get("cooling") if isinstance(value, dict) else None
     return {"cooling": cooling if isinstance(cooling, dict) else {}}
 
@@ -405,7 +406,7 @@ def cmd_cooling(args) -> int:
 
 def cmd_ledger(args) -> int:
     path = _dir(args.home) / LEDGER
-    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    lines = file_lines(path) if path.is_file() else []
     for line in lines[-args.lines:]:
         print(line)
     return 0
