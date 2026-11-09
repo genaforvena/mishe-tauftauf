@@ -73,6 +73,50 @@ class DispatchStore:
         """The lock that serializes dispatch across processes."""
         return self.root / ".dispatch.lock"
 
+    @property
+    def claim_lock_path(self) -> Path:
+        """Serializes the short check-and-claim; never held while a worker runs."""
+        return self.root / ".dispatch.claim"
+
+    def slot_lock_path(self, slot: int) -> Path:
+        """One lock per concurrent wake; a running wake holds one of them."""
+        return self.root / f".dispatch.slot-{int(slot)}"
+
+    def role_lock_path(self, role: str) -> Path:
+        """Held by the process running ``role``: a role never runs twice at once."""
+        if not valid_role(role):
+            raise DispatchStoreError(f"role {role!r} cannot name a dispatch lock")
+        return self.root / f".dispatch.run-{role}"
+
+    def max_concurrent(self) -> int:
+        """How many wakes may run at once: ``SITE/wake-concurrency.json`` ``{"max": N}``.
+
+        Absent, malformed or out of range reads as 1, the original one-at-a-time rule.
+        """
+        try:
+            value = json.loads((self.root.parent / "wake-concurrency.json").read_text(encoding="utf-8")).get("max", 1)
+        except (OSError, ValueError, AttributeError):
+            return 1
+        return value if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 8 else 1
+
+    def is_running(self, role: str) -> bool:
+        """Whether a live process holds ``role``'s run lock (a probe; never blocks)."""
+        import fcntl
+        path = self.role_lock_path(role)
+        if not path.exists():
+            return False
+        with path.open("a+") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+
+    def stale_open_records(self) -> list[DispatchRecord]:
+        """Open records whose role is not running: their effect is unknown until reconciled."""
+        return [record for record in self.open_records() if not self.is_running(record.role)]
+
     def path_for(self, role: str) -> Path:
         if not valid_role(role):
             raise DispatchStoreError(f"role {role!r} cannot name a dispatch record")

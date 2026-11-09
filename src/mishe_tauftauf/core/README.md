@@ -26,10 +26,16 @@ builds a dossier and runs an engine, and the supervisor records what came back.
 
 1. **Only a declared role is dispatched.** The site decides what "declared" means (a role
    is a charter that exists); the core refuses everything else.
-2. **One dispatch at a time, across all roles.** The check and the claim are under one file
-   lock held for the whole run, so two processes cannot both start a turn.
+2. **At most N dispatches at once, one per role.** N is `SITE/wake-concurrency.json`
+   `{"max": N}` and reads as 1 (the original one-at-a-time rule) when absent, malformed or
+   outside 1..8. The check and the claim are under a short claim lock, so two processes
+   cannot both start a turn for the same role. A running wake holds one slot lock and its
+   role's run lock for the whole run, and a shared hold on `.dispatch.lock`, which delivery,
+   activation and reconcile take exclusively: they wait for every running wake to end.
 3. **A dispatch whose outcome was not recorded stays open** (`started` or `unknown`) and
-   blocks the next attempt, because its effect may have happened.
+   blocks every other start, because its effect may have happened. The open record of a
+   role that is running right now is normal and blocks nobody; an open record of a role
+   that is not running is stale and is reconciled by that role's next wake.
 4. **An open dispatch is reconciled, never retried.** `reconcile` closes it only after
    something checked what it did, and refuses while the recorded worker is still alive.
 5. **A key names one piece of work, for the whole history of the role.** A used key cannot

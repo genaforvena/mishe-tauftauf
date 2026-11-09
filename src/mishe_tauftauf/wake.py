@@ -56,7 +56,7 @@ def default_mail_reader(home, role: str, after: int) -> list:
 def next_role(home, roles, *, now: float, exclude: str | None = None) -> str | None:
     """Reconcile open effects first; rotate owed work after the last settled role."""
     store = DispatchStore(Path(home) / "dispatch")
-    for record in store.open_records():
+    for record in store.stale_open_records():       # a running role's open record is not stale
         if record.role != exclude:
             return record.role
     ordered = list(roles)
@@ -78,7 +78,7 @@ def resume_owed(home, roles, *, now: float) -> list[str]:
     """
     store = DispatchStore(Path(home) / "dispatch")
     started: list[str] = []
-    for record in store.open_records():
+    for record in store.stale_open_records():
         if record.role not in started:
             started.append(record.role)
     for role in roles:
@@ -150,13 +150,14 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
                             worker=_Worker(home, engine, now, mail_reader, repo, timeout),
                             lock_timeout=lock_wait)
     try:
-        with supervisor.exclusive():      # a live wake holds this; its open record is not stale
-            pass
+        with supervisor.running(role) as release_claim:      # wait for this role's own live wake and a free slot
+            release_claim()
     except DispatchBusy:
         return WakeResult("busy", "another wake is running")
     # All contenders must choose the same head, including that head's own wake.
     # Excluding oneself first makes two unknown records defer to each other forever.
-    opened = store.open_records()
+    # Only a record whose role is not running blocks: a running wake's open record is normal.
+    opened = store.stale_open_records()
     if opened and opened[0].role != role:
         starter(opened[0].role)
         return WakeResult("blocked", f"{opened[0].role} has an open dispatch to reconcile first")
@@ -185,7 +186,8 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
 
 def _reconcile(home, role, record, supervisor, engine, now, mail_reader, repo, timeout) -> WakeResult:
     store = supervisor.store
-    with supervisor.exclusive():
+    with supervisor.running(role) as release_claim:
+        release_claim()
         if (Path(home) / "hold").exists() or delivery_requests.admission_path(home).exists():
             return WakeResult("held", "hold or delivery admission arrived while waiting")
         if record.pid is not None and process_alive(record.pid):

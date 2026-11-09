@@ -1,14 +1,15 @@
-"""The supervisor: one role at a time, one durable record each, no replay.
+"""The supervisor: at most N roles at once (default 1), one durable record each, no replay.
 
 The rules it enforces are the whole point:
 
 * only a declared role is dispatched;
-* one dispatch at a time across all roles, so two workers never share a wake;
-* a dispatch whose outcome was not recorded stays open and blocks the next
-  attempt, because its effect may have happened;
+* at most ``max_concurrent`` dispatches at once and never two for one role,
+  so two workers never share a wake;
+* a dispatch whose outcome was not recorded (and whose role is not running)
+  stays open and blocks the next attempt, because its effect may have happened;
 * an open dispatch is reconciled explicitly, never by retried.
 
-The "one at a time" rule is held by a lock that spans the whole
+The claim is held by a lock that spans the whole
 check-and-claim, so two processes cannot both decide that no dispatch is
 open and then each start one.
 """
@@ -72,18 +73,78 @@ class Supervisor:
         return open_records[0] if open_records else None
 
     @contextmanager
-    def _claim(self):
-        """Hold the dispatch lock across the whole check-and-claim.
+    def _running(self, role: str):
+        """Claim a slot for ``role`` and hold it for the whole run.
 
-        The lock is a file lock, so it is held across processes and not only
-        within one.  It is released when the block ends, including when the
-        block raises.
-
-        The wait is bounded by ``lock_timeout``: a caller that cannot get the
-        lock is refused rather than waiting forever, because a supervisor
-        that blocks here is a supervisor that stops observing.
+        Takes, in one all-or-nothing attempt that is retried until
+        ``lock_timeout``: the short claim lock (serializes check-and-claim),
+        a SHARED hold on the quiet lock (``.dispatch.lock``: delivery,
+        activation and hold take it exclusively, so they wait for every
+        running wake to end), the role's own run lock (a role never runs
+        twice at once) and one free slot (at most ``max_concurrent``
+        wakes at once).  Yields ``release_claim``: call it once the durable
+        record is written, so other starts are not held up by this wake's run.
         """
-        path = self.store.lock_path
+        store = self.store
+        store.root.mkdir(parents=True, exist_ok=True)
+        limit = store.max_concurrent()
+        deadline = time.monotonic() + self.lock_timeout
+        while True:
+            handles = []
+            why = ""
+            try:
+                for name, path, mode in (("claim", store.claim_lock_path, fcntl.LOCK_EX),
+                                         ("quiet", store.lock_path, fcntl.LOCK_SH),
+                                         ("role", store.role_lock_path(role), fcntl.LOCK_EX)):
+                    handle = path.open("a+")
+                    handles.append((name, handle))
+                    try:
+                        fcntl.flock(handle.fileno(), mode | fcntl.LOCK_NB)
+                    except OSError:
+                        why = {"claim": "another start is claiming",
+                               "quiet": "a delivery or activation holds the dispatch lock",
+                               "role": f"{role} is already running"}[name]
+                        break
+                else:
+                    for slot in range(limit):
+                        handle = store.slot_lock_path(slot).open("a+")
+                        try:
+                            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except OSError:
+                            handle.close()
+                            continue
+                        handles.append(("slot", handle))
+                        break
+                    else:
+                        why = f"all {limit} wake slot(s) are busy"
+                if not why:
+                    break
+            except BaseException:
+                for _, handle in handles:
+                    handle.close()
+                raise
+            for _, handle in handles:
+                handle.close()
+            if time.monotonic() >= deadline:
+                raise DispatchBusy(f"{why}; at most {limit} mind(s) run at a time")
+            time.sleep(0.02)
+        claim = dict(handles)["claim"]
+        released = []
+
+        def release_claim() -> None:
+            if not released:
+                released.append(True)
+                fcntl.flock(claim.fileno(), fcntl.LOCK_UN)
+        try:
+            yield release_claim
+        finally:
+            for _, handle in handles:
+                handle.close()    # closing drops the flock
+
+    @contextmanager
+    def _claim(self):
+        """The short claim lock alone, for reconciling a record."""
+        path = self.store.claim_lock_path
         path.parent.mkdir(parents=True, exist_ok=True)
         deadline = time.monotonic() + self.lock_timeout
         with path.open("a+") as handle:
@@ -93,18 +154,16 @@ class Supervisor:
                     break
                 except OSError as exc:
                     if time.monotonic() >= deadline:
-                        raise DispatchBusy(
-                            "another process holds the dispatch lock; one mind runs at a time"
-                        ) from exc
+                        raise DispatchBusy("another start holds the dispatch claim") from exc
                     time.sleep(0.02)
             try:
                 yield
             finally:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
-    def exclusive(self):
-        """Hold the dispatch lock for a caller that runs its own reconcile wake."""
-        return self._claim()
+    def running(self, role: str):
+        """Claim a slot for a caller that runs its own reconcile wake (see ``_running``)."""
+        return self._running(role)
 
     def dispatch(self, role: str, key: str, payload: dict | None = None, *,
                  discard_skipped_poll: bool = False) -> DispatchRecord:
@@ -123,14 +182,16 @@ class Supervisor:
             raise SupervisorError(f"role {role!r} is not declared for this supervisor")
         if not key:
             raise SupervisorError("a dispatch needs a durable key")
-        with self._claim():
-            # Every role's record is read, not just this role's: one active
-            # mind at a time is a plant-wide rule, so an open dispatch for
-            # another role blocks this one too.  The check and the claim are
-            # under one lock, so two processes cannot both see "nothing open"
-            # and each start a turn.
+        with self._running(role) as release_claim:
+            # Every role's record is read, not just this role's: an open
+            # dispatch whose role is NOT running (its worker died, effect
+            # unknown) blocks every other start until reconciled.  An open
+            # record of a role that is running right now is normal, and does
+            # not block (up to max_concurrent wakes run at once).  The check
+            # and the claim are under the claim lock, so two processes cannot
+            # both see "nothing open" and each start a turn for the same role.
             for record in self.store.records():
-                if record.state in {STARTED, UNKNOWN}:
+                if record.state in {STARTED, UNKNOWN} and (record.role == role or not self.store.is_running(record.role)):
                     raise SupervisorError(
                         f"dispatch {record.key!r} for role {record.role!r} is {record.state.name}; "
                         "reconcile it before dispatching")
@@ -147,6 +208,7 @@ class Supervisor:
             previous = path.read_bytes() if discard_skipped_poll and path.exists() else None
             record = DispatchRecord(role=role, key=key, state=STARTED, attempt=attempt)
             self.store.write(record)
+            release_claim()
             # The worker's pid is written into the record as soon as the
             # worker exists, so a successor that reads the record while the
             # worker runs can find it and refuse to sit beside it.
@@ -219,7 +281,7 @@ class Supervisor:
             if key is not None and key != record.key:
                 raise SupervisorError(
                     f"dispatch {record.key!r} is not the dispatch named {key!r}")
-            if record.pid is not None and _process_alive(record.pid):
+            if self.store.is_running(role) or (record.pid is not None and _process_alive(record.pid)):
                 # The worker is still running.  Closing the record now would
                 # let the next dispatch start a second worker beside it.
                 raise SupervisorError(
