@@ -4,14 +4,18 @@ Claude Code's native local command can report subscription limits without a
 model request:
 
 ```sh
-claude -p /usage --output-format json --no-session-persistence --tools '' --max-turns 1
+claude -p /usage --model claude-haiku-5-5 --tools '' --max-turns 1 \
+  --output-format json --no-session-persistence \
+  --setting-sources project,local --settings '{"disableAllHooks":true}'
 ```
 
-`python3 -m mishe_tauftauf.claude_quota_text --home "$MISHE_SEED_HOME"` acquires
-this report in UTC. It accepts only a successful `local_command: usage` result
+The producer in `src/mishe_tauftauf/claude_quota.py` runs this command with
+`TZ=UTC`, `LC_ALL=C.UTF-8`, `DISABLE_AUTOUPDATER=1` and a 45 second timeout.
+`python3 -m mishe_tauftauf.claude_quota_text --home "$MISHE_SEED_HOME"` parses
+the output in UTC. It accepts only a successful `local_command: usage` result
 with zero API time, turns, cost and token counts, and both subscription windows.
 Other output, malformed windows, invalid resets and timeouts become UNKNOWN.
-It disables hooks and automatic updates for this read. It reads no credentials.
+Hooks and automatic updates are disabled for this read. It reads no credentials.
 
 The result is `operator/budget/claude-native-quota.json`. Every attempt retains
 its original stdout/stderr and previous observation in `operator/budget/native-evidence/`.

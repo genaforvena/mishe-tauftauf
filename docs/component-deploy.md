@@ -1,6 +1,6 @@
 # Per-component deploy
 
-Status: design, approved in direction by the operator on 2026-11-08. No code, unit or pin change is made by this document. Implementation follows the ordinary path and needs fresh review because promotion touches the delivery mechanism.
+Status: design, approved in direction by the operator on 2026-11-08. This document makes no code, unit or pin change. `components.py` and the `mishe component` commands exist (see "Who promotes"); the duty detector and first promotion are not yet observed. Promotion touches the delivery mechanism and needs fresh review.
 
 ## Problem
 
@@ -31,11 +31,24 @@ SITE_HOME/components/NAME/
 
 ## Detector
 
-A component is RED when its `current` pointer and its files disagree: pointer missing, target missing, target's bytes not matching the recorded sha256 of `bin/NAME`, or a file for NAME still served from `runtime/current` after the pointer exists. The detector runs with the duty loop and reports through a `components` signal. Missing or stale detector output is UNKNOWN, never GREEN.
+A component is RED when its `current` pointer and its files disagree: pointer missing, target missing, target's bytes not matching the recorded sha256 of `bin/NAME`, or a file for NAME still served from `runtime/current` after the pointer exists. The intended detector runs with the duty loop and reports through a `components` signal. As of 2026-11-09 no `components` signal is registered in source and `mishe component verify` is the only check. Missing or stale detector output is UNKNOWN, never GREEN.
 
 ## Who promotes
 
-Genome owns the promotion command and runs the check. Authors (senses for `mishe-tape-facts`, and others) build their release dir in the layout above and ask genome to promote, or call `mishe component promote NAME SHA` once it exists. Authors do not write `current` by hand.
+Genome owns the promotion command and runs the check. The command exists in
+`src/mishe_tauftauf/components.py`:
+
+```
+mishe component promote NAME SHA --check-file FILE [--repo PATH]
+mishe component rollback NAME
+mishe component verify [NAME]
+```
+
+`promote` builds from the committed SHA (a full commit in the repository),
+checks the release and only then moves `current`. A failed build or check leaves
+`current` untouched. Authors (senses for `mishe-tape-facts`, and others) ask
+genome to promote, or run the command themselves. Authors do not write `current`
+by hand.
 
 ## Order of work
 
