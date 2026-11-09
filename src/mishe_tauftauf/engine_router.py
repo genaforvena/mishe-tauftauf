@@ -62,6 +62,24 @@ def candidate_key(c: dict) -> str:
     return f"{c['engine']}:{c['model']}:{c['account'] or '-'}"
 
 
+def role_key(role: str, key: str) -> str:
+    """Cool-off key for a (role, candidate) pair: a timeout belongs to the role's task, not the model."""
+    return f"{role}|{key}"
+
+
+def cooling_table(cooling: dict, now_ms: float, cool_off_s: float = DEFAULT_COOL_OFF_S) -> list:
+    """Active cool-offs: scope 'all' (provider evidence) or the role (timeouts), with age and time left."""
+    rows = []
+    for k, until in sorted(cooling.items()):
+        if not isinstance(until, (int, float)) or until <= now_ms:
+            continue
+        role, _, cand = k.partition("|") if "|" in k else (None, "", k)
+        rows.append({"role": role or "all", "candidate": cand, "until": _iso(until),
+                     "age_s": max(0, round(now_ms / 1000 - (until / 1000 - cool_off_s))),
+                     "left_s": round((until - now_ms) / 1000)})
+    return rows
+
+
 def _is_safety_net(c: dict) -> bool:
     return c["engine"] == "claude" and c["account"] is None
 
@@ -90,7 +108,12 @@ def load_routes(home) -> dict | None:
                 raise ValueError(f"'free' needs an omp candidate with no account for {role!r}: {c!r}")
             if thinking is not None and not isinstance(thinking, str):
                 raise ValueError(f"invalid thinking for {role!r}: {c!r}")
+            tmo = c.get("timeout_s")
+            if tmo is not None and (isinstance(tmo, bool) or not isinstance(tmo, (int, float)) or tmo <= 0):
+                raise ValueError(f"invalid timeout_s for {role!r}: {c!r}")
             entry = {"engine": c["engine"], "model": c["model"], "account": account}
+            if tmo is not None:
+                entry["timeout_s"] = tmo
             if free:
                 entry["free"] = True
             if thinking is not None:
@@ -163,8 +186,9 @@ def choose(role: str, candidates: list, status, cooling: dict, now_ms: float,
         if key in exclude:
             trail.append({"key": key, "verdict": "tried-this-wake"})
             continue
-        until = cooling.get(key)
-        if isinstance(until, (int, float)) and until > now_ms:
+        until = max((v for v in (cooling.get(key), cooling.get(role_key(role, key)))
+                     if isinstance(v, (int, float))), default=None)
+        if until is not None and until > now_ms:
             trail.append({"key": key, "verdict": "cooling", "until": _iso(until)})
             continue
         ok, reason = _eligible(role, c, status, now_ms)
@@ -220,6 +244,7 @@ def assess(routes: dict | None, status, cooling: dict, now_ms: float) -> dict:
     if status is None:
         return {"state": "UNKNOWN", "reason": "live account status unavailable", "roles": {}}
     roles, stale, dead = {}, [], []
+    cooled = cooling_table(cooling, now_ms, routes.get("cool_off_s", DEFAULT_COOL_OFF_S))
     for role, cands in routes["roles"].items():
         choice = choose(role, cands, status, cooling, now_ms)
         roles[role] = {"selected": choice["key"], "decision": choice["decision"], "trail": choice["trail"]}
@@ -230,10 +255,10 @@ def assess(routes: dict | None, status, cooling: dict, now_ms: float) -> dict:
             if isinstance(row, dict) and row.get("state") in STALE_STATES:
                 stale.append(f"{role}:{c['account']} {row.get('state')}")
     if dead:
-        return {"state": "RED", "reason": "no working candidate for " + ", ".join(sorted(dead)), "roles": roles}
+        return {"state": "RED", "reason": "no working candidate for " + ", ".join(sorted(dead)), "roles": roles, "cooled": cooled}
     if stale:
-        return {"state": "UNKNOWN", "reason": "stale or missing windows: " + "; ".join(stale), "roles": roles}
-    return {"state": "GREEN", "reason": "every role has an admitted candidate on fresh windows", "roles": roles}
+        return {"state": "UNKNOWN", "reason": "stale or missing windows: " + "; ".join(stale), "roles": roles, "cooled": cooled}
+    return {"state": "GREEN", "reason": "every role has an admitted candidate on fresh windows", "roles": roles, "cooled": cooled}
 
 
 def observe(home, result: dict, *, now: float) -> dict:
@@ -275,17 +300,19 @@ class RoutedEngine:
             return ClaudeEngine(cand["model"])
         return OmpEngine(cand["model"], thinking=cand.get("thinking"))
 
-    def _cool(self, cand: dict, now_ms: float) -> None:
+    def _cool(self, cand: dict, now_ms: float, *, role_only: bool = False) -> None:
         # The Claude safety net is never cooled: a cooled last candidate leaves the role with no engine.
         if _is_safety_net(cand):
             return
         state = _load_state(self.home)
-        state["cooling"][candidate_key(cand)] = now_ms + self.cool_off_ms
+        key = candidate_key(cand)
+        state["cooling"][role_key(self.role, key) if role_only else key] = now_ms + self.cool_off_ms
         _save_state(self.home, state)
 
     def _clear(self, key: str) -> None:
         state = _load_state(self.home)
-        if state["cooling"].pop(key, None) is not None:
+        hit = [state["cooling"].pop(k, None) for k in (key, role_key(self.role, key))]
+        if any(v is not None for v in hit):
             _save_state(self.home, state)
 
     def _observe(self, status, now_ms: float) -> None:
@@ -311,7 +338,8 @@ class RoutedEngine:
                                "tried": sorted(tried), "trail": choice["trail"]}, now_ms=now_ms)
             engine = self._build(cand)
             try:
-                code = engine.run(prompt_file, env=dict(env, **self.extra_env), cwd=cwd, timeout=timeout,
+                limit = min(timeout, cand["timeout_s"]) if cand.get("timeout_s") else timeout
+                code = engine.run(prompt_file, env=dict(env, **self.extra_env), cwd=cwd, timeout=limit,
                                   on_start=on_start)
             except EngineNotStarted as exc:
                 # The command never ran, so the wake has no effect: fall through to the next candidate now.
@@ -322,8 +350,8 @@ class RoutedEngine:
                 continue
             except EngineTimeout as exc:
                 record(self.home, {"role": self.role, "event": "outcome", "wake": key_wake, "key": key,
-                                   "outcome": "timeout", "reason": str(exc)}, now_ms=time.time() * 1000)
-                self._cool(cand, time.time() * 1000)
+                                   "outcome": "timeout", "scope": "role", "reason": str(exc)}, now_ms=time.time() * 1000)
+                self._cool(cand, time.time() * 1000, role_only=True)
                 self._observe(status, time.time() * 1000)
                 raise
             yielded = bool(key_wake) and yielding.receipt_path(self.home, key_wake).exists()
@@ -364,6 +392,17 @@ def cmd_choose(args) -> int:
     return 0 if choice["decision"] == "select" else 3
 
 
+def cmd_cooling(args) -> int:
+    routes = load_routes(args.home)
+    cool = routes["cool_off_s"] if routes else DEFAULT_COOL_OFF_S
+    rows = cooling_table(_load_state(args.home)["cooling"], time.time() * 1000, cool)
+    for r in rows:
+        print(f"{r['role']:<10} {r['candidate']}  age {r['age_s']}s  left {r['left_s']}s")
+    if not rows:
+        print("nothing cooling")
+    return 0
+
+
 def cmd_ledger(args) -> int:
     path = _dir(args.home) / LEDGER
     lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
@@ -379,5 +418,6 @@ def register(sub) -> None:
     p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_publish)
     p = router.add_parser("choose", help="Dry-run the choice for a role (no ledger, no cool-off change)")
     p.add_argument("role"); p.set_defaults(func=cmd_choose)
+    p = router.add_parser("cooling", help="Cooled (role, candidate) pairs with age"); p.set_defaults(func=cmd_cooling)
     p = router.add_parser("ledger", help="Last routing events")
     p.add_argument("--lines", type=int, default=40); p.set_defaults(func=cmd_ledger)

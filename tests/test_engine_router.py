@@ -187,7 +187,34 @@ def test_timeout_cools_and_reraises(routed):
     eng = router.for_role(routed, "health")
     with pytest.raises(EngineTimeout):
         eng.run(routed / "p.md", env=_env(routed, "k5"), cwd=routed, timeout=5)
-    assert router.candidate_key(GO) in json.loads((routed / "engine" / router.STATE).read_text())["cooling"]
+    cooling = json.loads((routed / "engine" / router.STATE).read_text())["cooling"]
+    assert router.role_key("health", router.candidate_key(GO)) in cooling
+    assert router.candidate_key(GO) not in cooling
+
+
+def test_timeout_cools_only_that_role(routed):
+    routes_file(routed, {"health": [GO, MINI, HAIKU], "senses": [GO, MINI, HAIKU]})
+    FakeEngine.script = {GO["model"]: "timeout"}
+    with pytest.raises(EngineTimeout):
+        router.for_role(routed, "health").run(routed / "p.md", env=_env(routed, "k9"), cwd=routed, timeout=5)
+    cooling = json.loads((routed / "engine" / router.STATE).read_text())["cooling"]
+    st = router.live_status(routed)
+    assert router.choose("health", [GO, MINI], st, cooling, NOW_MS)["key"] == router.candidate_key(MINI)
+    assert router.choose("senses", [GO, MINI], st, cooling, NOW_MS)["key"] == router.candidate_key(GO)
+    rows = router.cooling_table(cooling, NOW_MS)
+    assert rows[0]["role"] == "health" and rows[0]["candidate"] == router.candidate_key(GO)
+
+
+def test_candidate_timeout_s_caps_the_engine_timeout(routed):
+    seen = []
+    class Spy(FakeEngine):
+        def run(self, prompt_file, *, timeout, **kw):
+            seen.append(timeout); return super().run(prompt_file, timeout=timeout, **kw)
+    routes_file(routed, {"health": [dict(GO, timeout_s=900), HAIKU]})
+    router.RoutedEngine._build = lambda self, cand: Spy(cand["model"])
+    FakeEngine.script = {GO["model"]: "yield"}
+    router.for_role(routed, "health").run(routed / "p.md", env=_env(routed, "ka"), cwd=routed, timeout=1800)
+    assert seen == [900]
 
 
 def test_safety_net_is_never_cooled_so_role_keeps_an_engine(tmp_path, monkeypatch):
