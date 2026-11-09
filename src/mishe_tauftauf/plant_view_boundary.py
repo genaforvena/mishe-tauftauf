@@ -148,8 +148,11 @@ def final_answer(text: str) -> str:
         faults = [ln for ln in lines if ln.startswith(('[provider', '[assistant error', 'UNKNOWN'))]
         return (f'({calls} tool calls; the wake ended without a final message)\n' + '\n'.join(faults[-5:])).rstrip()
     tail = []
+    finished = any(ln.startswith('[agent_end]') for ln in lines[starts[-1]:])
     for ln in lines[starts[-1]:]:
-        if ln.startswith('[agent_end]'):
+        # The closing message ends at the next tool call, tool output or fault line: a wake killed mid-work
+        # (timeout) has no [agent_end], and everything after its last words is tool output, not an answer.
+        if ln.startswith(('[agent_end]', '[tool ', '[provider', '[assistant error')):
             break
         tail.append(ln)
     answer = '\n'.join(tail).replace('[assistant] ', '', 1)
@@ -164,7 +167,8 @@ def final_answer(text: str) -> str:
                 block.append(ln)
             before.append('\n'.join(block).replace('[assistant] ', '', 1))
         answer = '\n'.join(before + [answer])
-    return (f'({calls} tool calls)\n' if calls else '') + answer
+    note = '' if finished else '(the wake did not finish: no closing message; these are its last words)\n'
+    return (f'({calls} tool calls)\n' if calls else '') + note + answer
 
 
 def cut(text: object, limit: int = 150) -> str:

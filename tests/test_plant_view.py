@@ -767,3 +767,14 @@ def test_terse_closing_line_is_shown_with_what_came_before(tmp_path):
     out.write_text('\n'.join(json.dumps(e) for e in [msg("Found the stale probe and cleared it, evidence in the wall."), {"type": "tool_execution_start", "toolName": "bash", "args": {"command": "x"}}, msg("Yielded verified."), {"type": "agent_end"}]) + '\n')
     _, text = output_view(out, final=True)
     assert "Found the stale probe" in text and "Yielded verified." in text
+
+
+def test_a_timed_out_wake_shows_its_last_words_not_the_tool_output_after_them():
+    from mishe_tauftauf import plant_view_boundary as b
+    text = ("[assistant] I will check the unit.\n[tool bash] ls\n[tool output] file-a\nfile-b\n"
+            "[assistant] The pin is behind; deliver next.\n[tool bash] cat x\n[tool output] BIG\nDUMP\nDUMP\n")
+    out = b.final_answer(text)
+    assert "The pin is behind" in out and "BIG" not in out and "DUMP" not in out
+    assert "did not finish" in out
+    done = b.final_answer(text + "[agent_end]\n")
+    assert "did not finish" not in done and "DUMP" not in done
