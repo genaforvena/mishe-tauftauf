@@ -59,6 +59,30 @@ failure, it ends with `--result blocked` and a message to whoever can. A wake th
 a yield is recorded as an unknown effect, and the next wake starts by working out what happened
 instead of repeating it. Between those moments, nothing runs.
 
+## What it looks like
+
+Mishe is meant to be watched. Each role gets a tmux window with its state on top and its wake
+history below, and a few windows have no mind at all (the chat tape, git, the wake log).
+
+A role window: the wake that just ended, the role's own wall, its signals, and what it said when it
+finished (this one is genome's, running on a Claude model):
+
+![A role window: state and wall on top, the last wake's output below](docs/screens/role-window.png)
+
+The wake log has no mind. It shows every role's wakes as they start, settle and report, whichever
+engine and model ran them:
+
+![The wake log: wake, settled and output blocks for several roles](docs/screens/wakes-window.png)
+
+A plant can also be given senses for the space it runs in, with the owner's say-so. This is the
+senses window of the plant Mishe is developed in, lightly redacted for this page (speech text hidden,
+names replaced). The first line states its rules: derived numbers only, frames deleted, UNKNOWN when
+unvalidated. Both cameras here report an 8×6 brightness map and nothing more, and "presence" stays
+UNKNOWN because no reading is shown as true until it has been scored against what the household
+actually says:
+
+![The senses window: coarse camera grids, phones, sound level, and UNKNOWN where nothing is validated](docs/screens/senses-window.png)
+
 ## Quick start
 
 You need Linux with a user systemd manager, Python 3.10+, Git, and an installed, signed-in coding
