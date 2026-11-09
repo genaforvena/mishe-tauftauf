@@ -105,6 +105,7 @@
       "every": 900,
       "timeout": 900,
       "max_age": 2700,
+      "unknown_codes": [3],
       "resolver": "genome",
       "replaces": [
         "observer-checks",
