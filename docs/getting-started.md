@@ -39,6 +39,13 @@ charter).
 By default a role wakes on `claude` with `claude-haiku-5-5`. To change one, write
 `SITE_HOME/engines/ROLE.json` (for example `{"engine": "claude", "model": "claude-haiku-5-5"}` or `{"engine": "omp", "model": "..."}`; only these two engines exist).
 
+A site can instead list ordered candidates per role in
+`SITE_HOME/engine/routes.json`; each wake then picks the first eligible
+candidate and cools off one that times out or ends without a yield. Roles
+absent from that file keep using `engines/ROLE.json`. `mishe engine router
+choose ROLE` dry-runs the choice and `mishe engine router ledger` shows recent
+selections.
+
 ## 4. Install the triggers — held
 
 ```sh

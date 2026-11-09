@@ -93,8 +93,12 @@ keeps the release it started from. No mind moves the pin by hand.
 `wall_patch` checks and applies a patch against. It does not decide what the units
 run.
 
-A wake holds the dispatch lock throughout its engine execution, so direct
-promotion from inside that engine is refused. Queue the delivery while awake:
+Every running wake holds the dispatch lock for its whole run; the lock is
+shared, so a site may run several minds at once, up to `max` in
+`SITE_HOME/wake-concurrency.json` (default 1, at most 8), and one role never
+runs twice at once. Delivery and activation take the same lock exclusively, so
+they wait for every running wake; direct promotion from inside an engine is
+refused. Queue the delivery while awake:
 
 ```sh
 mishe release request --sha FULL_SHA --previous FULL_SHA \
