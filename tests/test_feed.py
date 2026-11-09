@@ -191,6 +191,56 @@ class FeedTests(unittest.TestCase):
             self.assertNotIn(str(feed.path), feed_module._ENTRIES_CACHE)
 
     @requires_tape_binary
+    def test_role_projection_persists_across_processes_and_never_outlives_its_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed.append("seed", "seed observation health sha256=" + "a" * 64)
+            for n in range(40):
+                feed.append("sensor/noise", "irrelevant " + str(n))
+            feed.append("operator", "[dm] to=health\nfirst")
+            first = feed.role_entries("health")
+            self.assertTrue(feed._role_cache_path("health").exists())
+
+            def fresh_read(note=None):
+                feed_module._ROLE_ENTRIES_CACHE.clear()
+                feed_module._ENTRIES_CACHE.clear()
+                read = []
+                original = feed_module._iter_streamed_feed
+
+                def measured(handle, **kwargs):
+                    read.append(kwargs.get("size") - kwargs.get("offset", 0))
+                    return original(handle, **kwargs)
+                with patch.object(feed_module, "_iter_streamed_feed", measured):
+                    return Feed(directory).role_entries("health"), read
+
+            same, read = fresh_read()
+            self.assertEqual(same, first)
+            self.assertEqual(read, [])  # an unchanged tape is answered without parsing it
+            feed.append("operator", "[dm] to=health\nsecond")
+            extended, read = fresh_read()
+            self.assertEqual(extended[-1].body, "[dm] to=health\nsecond")
+            self.assertLess(max(read), 1000)  # only the appended bytes were parsed
+            feed_module._ROLE_ENTRIES_CACHE.clear()
+            self.assertEqual(extended, Feed(directory).role_entries("health", _force_full=True))
+
+            # A damaged cache file is ignored, not trusted.
+            path = feed._role_cache_path("health")
+            path.write_bytes(path.read_bytes().replace(b"second", b"forged"))
+            repaired, read = fresh_read()
+            self.assertEqual(repaired, extended)
+            self.assertGreater(max(read), 1000)
+
+            # A rewritten tape that keeps the inode cannot reuse the old projection.
+            feed.role_entries("health")
+            old_bytes = feed.path.read_bytes()
+            with feed.path.open("r+b") as handle:
+                handle.write(b"x" * 64)
+            feed_module._ROLE_ENTRIES_CACHE.clear()
+            with self.assertRaises(Exception):
+                Feed(directory).role_entries("health")
+            feed.path.write_bytes(old_bytes)
+
+    @requires_tape_binary
     def test_role_view_verifies_discarded_records_and_refuses_corruption(self):
         with tempfile.TemporaryDirectory() as directory:
             feed = Feed(directory)

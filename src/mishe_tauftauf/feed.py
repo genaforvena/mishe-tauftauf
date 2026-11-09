@@ -393,6 +393,46 @@ def _role_fold(previous, entries, role):
     return row
 
 
+_TAIL_GUARD = 4096
+
+
+def _prefix_guard(handle, size: int) -> str:
+    """Digest of the bytes just before ``size``: a persisted projection must still sit on them."""
+    start = max(0, size - _TAIL_GUARD)
+    handle.seek(start)
+    return hashlib.sha256(handle.read(size - start)).hexdigest()
+
+
+def _projection_dump(projection) -> dict:
+    entries: dict[int, FeedEntry] = {}
+
+    def ref(entry):
+        entries[entry.sequence] = entry
+        return entry.sequence
+
+    out = {"control": [ref(e) for e in projection["control"]],
+           "inbox": [ref(e) for e in projection["inbox"]],
+           "recent": [ref(e) for e in projection["recent"]],
+           "sources": {name: ref(item[2]) for name, item in projection["sources"].items()},
+           "yield": ref(projection["yield"][2]) if projection["yield"] else None}
+    out["entries"] = [[e.sequence, e.timestamp, e.source, e.body] for e in entries.values()]
+    return out
+
+
+def _projection_load(data: dict, home: Path) -> dict:
+    by_seq = {seq: FeedEntry(seq, stamp, source, body, home) for seq, stamp, source, body in data["entries"]}
+
+    def candidate(entry):
+        stamp = entry_timestamp(entry)
+        return (stamp, f"chat.log {entry.sequence} {entry.source}", entry)
+
+    return {"control": [by_seq[n] for n in data["control"]],
+            "inbox": deque((by_seq[n] for n in data["inbox"]), maxlen=12),
+            "recent": deque((by_seq[n] for n in data["recent"]), maxlen=12),
+            "sources": {name: candidate(by_seq[n]) for name, n in data["sources"].items()},
+            "yield": candidate(by_seq[data["yield"]]) if data["yield"] is not None else None}
+
+
 def _role_view(row):
     selected = {e.sequence: e for e in (*row["control"], *row["inbox"], *row["recent"])}
     for item in row["sources"].values():
@@ -773,6 +813,42 @@ class Feed:
         handle.seek(first_offset)
         return ("range", handle.read(end_offset - first_offset), (first_seq, target))
 
+    def _role_cache_path(self, role: str) -> Path:
+        return self.home / "feed.role-cache" / f"{role}.json"
+
+    def _load_role_cache(self, handle, role: str, metadata):
+        """A projection another process persisted, if it still describes this tape's prefix."""
+        try:
+            wrapper = json.loads(self._role_cache_path(role).read_bytes())
+            payload = wrapper["payload"]
+            body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+            if wrapper["sha256"] != hashlib.sha256(body).hexdigest() or payload["version"] != 1:
+                return None
+            cached_meta = tuple(payload["metadata"])
+            if cached_meta[0] != metadata[0] or cached_meta[1] > metadata[1]:
+                return None
+            if payload["guard"] != _prefix_guard(handle, cached_meta[1]):
+                return None
+            return {"metadata": cached_meta, "tail": payload["tail"],
+                    "projection": _projection_load(payload["projection"], self.home), "view": None}
+        except (OSError, ValueError, KeyError, TypeError, IndexError):
+            return None  # unreadable or stale cache: fall back to the full verified fold
+
+    def _store_role_cache(self, role: str, metadata, tail: int, projection, guard: str) -> None:
+        payload = {"version": 1, "metadata": list(metadata), "tail": tail, "guard": guard,
+                   "projection": _projection_dump(projection)}
+        body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        wrapper = {"payload": payload, "sha256": hashlib.sha256(body).hexdigest()}
+        path = self._role_cache_path(role)
+        try:
+            path.parent.mkdir(exist_ok=True)
+            fd, temporary = tempfile.mkstemp(prefix=".role.", dir=path.parent)
+            with os.fdopen(fd, "wb") as output:
+                output.write(json.dumps(wrapper, sort_keys=True).encode())
+            os.replace(temporary, path)
+        except OSError:
+            pass  # the cache only saves work; failing to write it loses nothing
+
     def role_entries(self, role: str, *, _force_full=False):
         """Verified role control/view projection, without retaining the whole tape.
 
@@ -794,6 +870,12 @@ class Feed:
                 valid = checkpoint is not None and tuple(checkpoint["metadata"]) == metadata
                 with _ENTRIES_CACHE_LOCK:
                     cached = _ROLE_ENTRIES_CACHE.get(key) if not _force_full else None
+                    if cached is None and valid and not _force_full:
+                        cached = self._load_role_cache(handle, role, metadata)
+                        if cached is not None and cached["metadata"] == metadata:
+                            cached["view"] = tuple(_role_view(cached["projection"]))
+                            _ROLE_ENTRIES_CACHE[key] = cached
+                            return list(cached["view"])
                     if cached is not None and valid and cached["metadata"] == metadata:
                         _ROLE_ENTRIES_CACHE.move_to_end(key)
                         full = _ENTRIES_CACHE.get(str(self.path))
@@ -841,6 +923,8 @@ class Feed:
                 index = {"version": 1, "sequence": tail, "tail_offset": offsets[-1] if offsets else 0,
                          "checkpoints": [[n + 1, offsets[n]] for n in range(0, tail, INDEX_STRIDE)]}
                 self._publish_checkpoint(index, list(metadata))
+            if valid and tail == checkpoint["sequence"]:
+                self._store_role_cache(role, metadata, tail, projection, _prefix_guard(handle, metadata[1]))
         finally:
             handle.close()
         view = tuple(_role_view(projection))
