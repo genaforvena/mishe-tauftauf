@@ -91,9 +91,12 @@ Every entry before a fault is written before the fault is reported.
 
 - The version is the crate version in `Cargo.toml`. A change to the output
   format, exit meanings, or fault texts bumps the minor version and updates this file in the same commit.
-- A caller pins to a version through the release that ships the binary. A swap
-  is an atomic rename of one binary (proposed install path: `runtime/current/bin/mishe-tape`, not yet wired) with its own observation
-  and rollback (the previous binary is kept until observed).
+- A caller pins to a version through a hash-pinned install. The live install is
+  site-local at `$SITE/bin/mishe-tape`, checked on every resolution against
+  `$SITE/bin/mishe-tape.install.json` (sha256, source commit, contract revision);
+  a mismatch is `TapeUnknown`, never a Python fallback. A swap is an atomic
+  rename of that one binary with its own observation and rollback (the previous
+  binary is kept until observed).
 
 ## Golden differential test
 

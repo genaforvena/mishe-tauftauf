@@ -412,39 +412,38 @@ So a framing pass costs about 1.8 s of Python CPU today and about 0.95 s with th
 
 | State | Status |
 |---|---|
-| Implemented in the working tree | Yes: `rust/mishe-tape/`, `tests/test_mishe_tape_frames.py` |
-| Committed | `9f94ede6` (crate, test, plan) and `a8590afb` (absolute offsets, resume at byte offset, `--offsets`). Scoped to the new crate, its test, and this document. Not committed: other agents' edits (`duties.json`, `checks/rust-plan-progress.py`, `tests/test_rust_plan_progress.py`, `checks/work_balance.py`, `tests/test_work_balance.py`). |
-| Reviewed | **No.** Review requested from genome by DM (tape seq 298167), covering the boundary and the release-binary seam (build in a throwaway directory under the guard vs prebuilt). Feed reading is a protocol boundary (`parsing-policy.json`), so the cutover is a strong change. The author cannot review it. A fresh reviewer has not been assigned. |
-| Activated | **No.** No release request, no pin move, no `feed.py` cutover. The running consumers still use the pinned Python framer. |
-| Observed | **No.** Nothing observed on live consumers for the Rust path. |
-| Recovered | Not applicable: nothing activated. |
+| Implemented | Yes: `rust/mishe-tape/` and `tests/test_mishe_tape_frames.py` are committed, and `feed.py` frames through the binary. |
+| Committed | `9f94ede6` (crate, test, plan), `a8590afb` (absolute offsets, resume at byte offset, `--offsets`), `270fec06` (ASCII-only header digits) and `a995031a` (feed cutover; retires the Python framer). |
+| Reviewed | **Yes.** The `a995031a` moving-pin gate review was clear (`check-moving-pin-a995031a.out`, phase `reviewed`), and the `e90292ba` delivery that made the cutover stick reviewed the feed/framing path clear (`check-moving-pin-e90292ba.out`). Feed reading is a protocol boundary (`parsing-policy.json`), so the cutover is a strong change; the reviewer was not the author. |
+| Activated | **Yes.** The cutover has been carried by every pin since `e90292ba` (2026-11-08 11:14Z). The live pin is `7ce12523` (`runtime/current`), delivered 2026-11-09 18:01:38Z with `delivery_verified` true (`operator/plans/moving-pin-20261105/delivery/deliver-run-173429.log`). |
+| Observed | **Yes.** Live consumers after the pin move wrote fresh role projections through `feed.role_entries` -> `_iter_streamed_feed` -> `mishe-tape` (`$SITE/feed.role-cache/{genome,rust-plan,health}.json`, 18:29-18:32Z), and `mishe-producer-readings` completed under the pin at 18:07/18:17/18:27Z. A controlled `parse_feed` under the pin's source framed a fixture through the installed binary. |
+| Recovered | Not applicable: no failure of this slice required recovery. The `a995031a` moving-pin was reverted once at 2026-11-08 11:07Z because a consumer fence saw a live `mishe-producer-devto.service`; the same bytes were re-delivered by `e90292ba` at 11:14Z. |
 
-Trailers: this session is not inside a wake, so no `Mishe-Wake` or `Mishe-Role` trailer was added. The commit carries only the Claude coauthor line, as the session directs.
+Trailers: the crate commits were authored outside a wake and carry only the Claude coauthor line. The cutover and later slices were delivered through the plant's `deliver.sh` gate, not by a wake release request.
 
-### 8.4 Cutover steps not yet done (in order)
+### 8.4 Cutover steps (done)
 
-1. `feed.py` cutover: `_iter_text_lines` and `iter_feed_entries` are replaced by a subprocess reader of `mishe-tape frames`. This is the single framing authority; no Python fallback for the same responsibility after cutover.
-2. Retire the second framing implementation: `_frame_offsets` (`feed.py:187`) is replaced by `mishe-tape frames --offset N --offsets`. Done in `a8590afb` and checked on the live tape (whole and mid-tape resume equal the Python index). Still to do in the cutover: `feed.py` must pass the captured handle's inode via `/proc/self/fd/N`, so the bytes come from the inode the caller locked.
-3. Close the Unicode-digit divergence: the Rust header parser accepts ASCII digits only; Python's `\d` also accepts Unicode decimal digits in headers. The live tape has none (the live comparison is identical), but a tape with one would make Rust stop early. Either implement the Unicode digit class or add a tape check before cutover.
-4. Build provenance: the binary is built once in a throwaway directory under the 6.2 guard, placed as `releases/<sha>/bin/mishe-tape`, with a sha256 manifest. The pin must name that release. Consumers must resolve `mishe-tape` from the release, not from PATH.
-5. Fresh strong-change review by a non-author, then the activation, revert and reapply checks (5.1), then a release request from inside a wake (`mishe release request`, `wall_patch` record), then observation of real consumers (section 3.3's observation list).
-6. Rollback: a single pin revert to `releases/4a4b94ce…`, which is retained. The Python framer lives in that release, so the revert needs no rebuild.
+1. `feed.py` cutover: `_iter_text_lines` and `iter_feed_entries` are replaced by a subprocess reader of `mishe-tape frames`. Done in `a995031a`; no Python fallback remains.
+2. Retire the second framing implementation: `_frame_offsets` is replaced by `mishe-tape frames --offset N --offsets`. Done in `a8590afb`; `feed.py` passes the captured handle's inode via `/proc/self/fd/N` (`feed.py:200-208`), so the bytes come from the inode the caller locked.
+3. Unicode-digit divergence closed: the Rust header parser accepts ASCII digits only, and `feed.py`'s `HEADER_RE` was changed to match (`270fec06`).
+4. Build provenance: the binary is built from `rust/mishe-tape` with the pinned toolchain and installed site-locally at `$SITE/bin/mishe-tape`, hash-pinned by `$SITE/bin/mishe-tape.install.json` (`12dde4d2…ba710`, source `a8590afb`). It is not inside the release tree; the release carries only `bin/mishe`. The site-local install is a deviation from the original release-layout proposal, and it is what the live consumers resolve.
+5. Strong-change review and delivery: the moving-pin gate reviewed the cutover clear (`e90292ba`, 2026-11-08 11:14Z) and delivered it again with the current pin (`7ce12523`, 2026-11-09 18:01:38Z, `delivery_verified` true), with the activation/revert/reapply verify exercised.
+6. Rollback: a pin revert to a pre-cutover release restores the Python framer, which is retained (`releases/e5a3f4e4…`, `releases/4a4b94ce…`). The revert was exercised by the delivery's `revert`/`revert-observe` steps.
 
 ### 8.5 Go/no-go, updated
 
-- **GO, done:** build the framing core, test it in a throwaway directory, prove byte equality on the live tape, and commit the scoped crate and test.
-- **NO-GO for live delivery in the 24-hour target:** steps 1–6 need a fresh review and a release request from a wake. Neither is available from this session: the role `rust-plan` is not registered for wakes, and I cannot assign a reviewer. The 24-hour target is not met by this session. Nothing here is activated, and nothing waits on a disputed assumption.
-- **Flip to GO for cutover:** a reviewer accepts the framing boundary and its differential evidence (above), step 2 gives the same frame index on the live tape, and step 3 is closed.
+- **GO, done:** the framing core was built, tested in a throwaway directory, proved byte-equal on the live tape, committed, reviewed and delivered. The cutover is live and observed (8.3).
+- **24-hour target:** met for the framing slice. The crate was committed 2026-11-07/08 and the cutover has been live since 2026-11-08 11:14Z. The whole core was not migrated in that time, and no claim is made that it was.
+- **Next slice (verification, B):** needs the verified-path benchmark (8.6 item 2) and the offline `rusqlite` build cost under the headroom rule.
 
 ### 8.6 Remaining UNKNOWNs (updated)
 
 1. Verification's cost split after framing: the per-record share (sqlite lookups, path bookkeeping) is still measured only by the single profile (section 2.3), not by a benchmark.
 2. Serialization cost on the **verified** path: framing handoff is measured (0.5 s); the verified-entry path is not.
 3. Cold-cache timing (not measured; cache dropping is forbidden).
-4. Unicode-digit headers (step 3).
-5. Whether a reviewer will be available, and the review turnaround.
-6. The 2026-11-03 OOM cause (1.4).
-7. Live behaviour of the 5 commits between the pin and HEAD.
+4. The acceptance comparison named in 9.3 A — journal `Consumed` lines for `mishe-wake@genome`/`mishe-wake@senses` against a pre-cutover window, and a cold `wall show --owner genome` — has not been taken; the live observation is the role-cache and producer evidence in 8.3.
+5. The 2026-11-03 OOM cause (1.4).
+6. Whether the site-local `mishe-tape` install (8.4 step 4) is acceptable as the permanent provenance mechanism, or whether the binary should move into the release tree.
 
 ## 9. Executed plan and progress table (48 h, operator direction 2026-11-08)
 
@@ -456,9 +455,9 @@ Measured numbers are the ones in sections 2 and 8. Nothing here is a new speedup
 
 | Slice | State now | Evidence | Next step |
 |---|---|---|---|
-| **A. Tape framing** (`mishe-tape frames`) | Crate committed (`9f94ede6`, `a8590afb`), contract written (`rust/mishe-tape/CONTRACT.md`). Unicode-digit fix committed (`270fec06`) and live on the pin `e5a3f4e4` (delivery_verified 01:52:47Z). **No live consumer calls `mishe-tape` yet**, so the Rust framing is not live. Not reviewed, not observed. | Differential test 5/5 with the committed artifact (`MISHE_TAPE_BIN`). A fresh build from HEAD in a throwaway dir (1.97.0, `--locked`) has the same SHA-256 as the artifact (`12dde4d2…ba710`). Feed tests 46/46 pass with the mind's `MISHE_*_HOME` unset (an earlier 30-error run was my shell's home binding, not the code). | Write the `feed.py` cutover: `Feed` streamed read calls `mishe-tape frames` on `/proc/self/fd/N`, and `_iter_text_lines` / `iter_feed_entries` / `_frame_offsets` are retired in the same commit. This is a protocol-boundary change, so it needs a non-author strong review and activation, revert and reapply checks. Tell the operator in one DM before the apply. |
+| **A. Tape framing** (`mishe-tape frames`) | **Live and observed.** Cutover committed (`a995031a`), reviewed clear (`e90292ba` gate), delivered (`7ce12523`, delivery_verified 18:01:38Z). Every pin since `e90292ba` (2026-11-08 11:14Z) carries it. Live consumers wrote fresh role projections through the binary (`$SITE/feed.role-cache/{genome,rust-plan,health}.json`, 18:29-18:32Z) and `mishe-producer-readings` completed under the pin. | Differential test 5/5 with the committed artifact (`MISHE_TAPE_BIN`). A fresh build from HEAD in a throwaway dir (1.97.0, `--locked`) has the same SHA-256 as the artifact (`12dde4d2…ba710`). | Take the cold `wall show --owner genome` before/after comparison (9.3 A) if a direct end-to-end observation is wanted; the role-cache evidence already shows the live path. Next migration target is B (verification). |
 | **S0. Python hoist in `_verify_records`** | Not started. Python-first; not a boundary change. | Hypothesis from section 2.3: about 13% directory work and 9% path equality per record. | Measure before and after on a preserved tape copy. Sequence after A's cutover, since both edit `feed.py`. |
-| **B. Tape verify and verified-store lookup** (`mishe-tape verify`/`entries`) | Not started. Blocked on A observed live, on the S0 decision, and on a verified-path benchmark (section 8.6 item 2). | Verification is about two thirds of profiled `wall show` (2.3). | Benchmark the verified path on a preserved copy. Check the offline `rusqlite` graph and its build cost against the headroom budget. |
+| **B. Tape verify and verified-store lookup** (`mishe-tape verify`/`entries`) | Not started. A is now observed live, so B is blocked only on the S0 decision and a verified-path benchmark (section 8.6 item 2). | Verification is about two thirds of profiled `wall show` (2.3). | Benchmark the verified path on a preserved copy. Check the offline `rusqlite` graph and its build cost against the headroom budget. |
 | **C. Role projection** (`mishe-tape role`, cold-cache derived file) | Not started. Depends on B. | Cold `wall show` 15.2 s user; the cache is process-local (`feed.py:53`). | Decide after B's benchmark. Compare the output against `_force_full`. |
 | **Senses baseline** (measurement, not migration) | Not started. Needs its own declared duty, not an edit to `rust-plan-progress` (wall, section "Senses baseline"). | Source artifacts already exist under `artifacts/rust-plan-20261107/`. | Declare the duty with its own `max_age`. It reads UNKNOWN when evidence is missing or stale. |
 | Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4). `doctor` has 25 exit-1 runs, cause UNKNOWN. | Diagnose `doctor` (S3) before any move. Measure `readings` before a scheduler change (S2). |
@@ -472,7 +471,7 @@ is the template), with a differential test that runs without the Python runtime.
 
 | Slice | Independently replaceable? | Why |
 |---|---|---|
-| A. Tape framing | Yes, once its contract and standalone differential test exist | Input is bytes, output is entries or a fault. Its only Python coupling is the caller in `Feed`, which is the cutover. The standalone shell differential test is not written yet (gap). |
+| A. Tape framing | Yes, and live | Input is bytes, output is entries or a fault. Its only Python coupling is the caller in `Feed`, which is the cutover. The contract (`rust/mishe-tape/CONTRACT.md`) and the differential test (`tests/test_mishe_tape_frames.py`) exist; the cutover is delivered and observed (8.3). |
 | S0. Python hoist | No | Python code in `feed.py`, not a binary. |
 | B. Verify and verified store | No, initially | Reads and writes the verified-store format that Python also reads. It stays coupled to the Python `records` layer until the store contract is written. |
 | C. Role projection | Yes, after B | Derived file, can be replaced with a binary that takes the tape and role. Coupled to B's store until B lands. |
@@ -512,4 +511,4 @@ is the template), with a differential test that runs without the Python runtime.
 - A reviewer rejects the framing boundary. A cutover then stops until the boundary changes.
 - S0 meets its threshold. Then B must beat the combined S0 baseline by the 3.3 threshold, or be abandoned (section 5.2).
 - Non-ASCII header bytes appear on the live tape. The Unicode-digit fix then becomes a blocking item, not a cleanup.
-- The 48-hour target is not reachable without an independent reviewer. A is then reported as committed and waiting, not as live.
+- The 48-hour target was met for the framing slice: A is live and observed, not waiting. The remaining slices (B, C) are the open work.
