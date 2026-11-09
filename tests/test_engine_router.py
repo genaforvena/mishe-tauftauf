@@ -223,3 +223,23 @@ def test_live_status_refetches_only_stale_configured_accounts(tmp_path, monkeypa
     result = router.live_status(tmp_path)
     assert result["accounts"]["go-a"]["state"] == "FRESH"
     assert calls == [(["omp", "usage", "invalidate", "--provider", "opencode-go"], str(tmp_path / "omp/agent"))]
+
+
+def test_a_free_candidate_needs_no_account_and_keeps_its_thinking(tmp_path):
+    import json
+    from mishe_tauftauf import engine_router as er
+    (tmp_path / "engine").mkdir()
+    routes = {"version": 1, "roles": {"docs": [
+        {"engine": "omp", "model": "longcat-2.5-free", "account": None, "free": True, "thinking": "low"},
+        {"engine": "claude", "model": "claude-haiku-5-5", "account": None}]}}
+    (tmp_path / "engine" / "routes.json").write_text(json.dumps(routes))
+    loaded = er.load_routes(tmp_path)
+    first = loaded["roles"]["docs"][0]
+    assert first["free"] is True and first["thinking"] == "low"
+    chosen = er.choose("docs", loaded["roles"]["docs"], None, {}, 0.0)
+    assert chosen["key"] == "omp:longcat-2.5-free:-"
+    routes["roles"]["docs"][0]["account"] = "go-a"
+    (tmp_path / "engine" / "routes.json").write_text(json.dumps(routes))
+    import pytest
+    with pytest.raises(ValueError):
+        er.load_routes(tmp_path)

@@ -85,7 +85,17 @@ def load_routes(home) -> dict | None:
             account = c.get("account")
             if account is not None and not isinstance(account, str):
                 raise ValueError(f"invalid account for {role!r}: {c!r}")
-            clean.append({"engine": c["engine"], "model": c["model"], "account": account})
+            free, thinking = c.get("free", False), c.get("thinking")
+            if not isinstance(free, bool) or (free and (c["engine"] != "omp" or account is not None)):
+                raise ValueError(f"'free' needs an omp candidate with no account for {role!r}: {c!r}")
+            if thinking is not None and not isinstance(thinking, str):
+                raise ValueError(f"invalid thinking for {role!r}: {c!r}")
+            entry = {"engine": c["engine"], "model": c["model"], "account": account}
+            if free:
+                entry["free"] = True
+            if thinking is not None:
+                entry["thinking"] = thinking
+            clean.append(entry)
         roles[role] = clean
     env = value.get("env", {})
     if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
@@ -123,6 +133,8 @@ def record(home, event: dict, *, now_ms: float) -> None:
 
 
 def _eligible(role: str, cand: dict, status, now_ms) -> tuple[bool, str]:
+    if cand.get("free") is True:
+        return True, "free model (no account window to read; failures cool it off)"
     if _is_safety_net(cand):
         return True, "Claude subscription safety net (no account window read in the router)"
     alias = cand["account"]
