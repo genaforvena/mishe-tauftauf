@@ -109,7 +109,17 @@ def tape_lock(home, *, now: float, attempts: int = 5, pause: float = 1.0) -> str
     return "RED"
 
 
-BUILTIN = {"dispatch": dispatch, "ci": ci, "tape-lock": tape_lock}
+def delivery_requests(home, *, now: float) -> str:
+    """RED while a delivery admission outlives its owner or a request is UNKNOWN; GREEN otherwise.
+
+    Without this producer the consumer's heartbeat, which runs only at consume time, lets the
+    signal age to UNKNOWN between wakes and re-wakes its resolver on every expiry.
+    """
+    from . import delivery_requests as requests
+    return "RED" if requests.standing_problem(home, now) else "GREEN"
+
+
+BUILTIN = {"dispatch": dispatch, "ci": ci, "tape-lock": tape_lock, "delivery-requests": delivery_requests}
 
 
 def produce(home, name: str, *, now: float, **kw) -> str | None:

@@ -174,3 +174,20 @@ def test_cannot_tell_exit_journals_the_check_output(home, capsys):
     assert producers.run(home, "devto", [PY, "-c", "import sys; print('guard row X'); sys.exit(3)"],
                          now=NOW + 1, timeout=10) == 2
     assert "exit=3" in capsys.readouterr().err
+
+
+def test_delivery_requests_duty_is_green_idle_and_red_for_standing_faults(tmp_path):
+    import json
+    from mishe_tauftauf import delivery_requests as dr
+    assert producers.delivery_requests(tmp_path, now=NOW) == "GREEN"
+    rows = tmp_path / "work/delivery-requests"
+    rows.mkdir(parents=True)
+    (rows / "done.json").write_text(json.dumps({"state": "delivered", "error": ""}))
+    assert producers.delivery_requests(tmp_path, now=NOW) == "GREEN"
+    (rows / "stuck.json").write_text(json.dumps({"state": "UNKNOWN", "error": "effect unknown"}))
+    assert dr.standing_problem(tmp_path, NOW) == "effect unknown"
+    assert producers.delivery_requests(tmp_path, now=NOW) == "RED"
+    (rows / "stuck.json").unlink()
+    (tmp_path / "work/delivery-admission.json").write_text(json.dumps({"id": "x", "pid": 2**30, "at": NOW - 3600}))
+    assert "dead owner" in dr.standing_problem(tmp_path, NOW)
+    assert producers.delivery_requests(tmp_path, now=NOW) == "RED"

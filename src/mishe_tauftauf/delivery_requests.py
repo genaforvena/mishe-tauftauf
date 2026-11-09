@@ -156,6 +156,21 @@ def enqueue(home, repo, sha, *, previous, role, key, check=None, observe=None, p
     return row
 
 
+def standing_problem(home, now=None):
+    """RED text while delivery admission or any unreconciled request stands; None when healthy.
+
+    Read-only: the producer observes this between wakes, so it must not take the
+    consumer lock or consume anything.
+    """
+    problem = admission_problem(home, now)
+    if problem:
+        return problem
+    rows = [read_json(path) for path in (Path(home) / "work/delivery-requests").glob("*.json")]
+    if any(not isinstance(r, dict) for r in rows):
+        return "Malformed delivery request; preserve original evidence"
+    return next((r.get("error", "Unresolved delivery") for r in rows if r.get("state") == "UNKNOWN"), None)
+
+
 def heartbeat(home, problem=None):
     from . import signal_store
     if SIGNAL not in signal_store.registry(home):

@@ -183,6 +183,16 @@
       "covers": "memory/CPU/IO pressure and anon split, admission for optional work"
     },
     {
+      "name": "delivery-requests",
+      "builtin": true,
+      "every": 120,
+      "timeout": 30,
+      "max_age": 600,
+      "resolver": "genome",
+      "replaces": [],
+      "covers": "a delivery admission held by a dead owner, or a delivery request left UNKNOWN; observed between wakes, not only at consume"
+    },
+    {
       "name": "tape-lock",
       "builtin": true,
       "every": 120,
