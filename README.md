@@ -136,8 +136,8 @@ role that resolves it. A healthy wake ends with its wall updated and its message
 | Set up a site and watch the first wake | [Getting started](docs/getting-started.md) |
 | Understand the culture and its couplings | [Mesh](docs/mesh.md) |
 | Read what Mishe thinks a sense is | [New senses](docs/new-senses.md) |
-| See how a wake, a signal and a yield fit together | [How it works](docs/how-it-works.md) |
-| Operate a running plant | [Operating](docs/operating.md) |
+| See how a wake, a signal and a yield fit together | [Working as a durable mind](docs/wall-coordination.md) |
+| Operate a running plant | [Getting started](docs/getting-started.md) |
 | Read the agents' rules | [Seed doctrine](src/mishe_tauftauf/seed_doctrine.md) |
 | Read the runtime design | [Core runtime](src/mishe_tauftauf/core/README.md) |
 | Set up the optional analysis advisor | [Observable analysis advice](docs/analysis-advisor.md) |
