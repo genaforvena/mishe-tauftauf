@@ -6863,3 +6863,71 @@ def test_loop_stall_missing_record_is_unknown_not_clean(monkeypatch, tmp_path):
     assert result["roles"]["health"]["verdict"] == "unknown"
     assert result["verdict"] == "unknown"
     assert "unknown=health" in result["sample"]
+
+
+
+class _FakeTape:
+    """Stands in for Feed so the reading is tested without the mishe-tape binary."""
+
+    entries_by_home: dict = {}
+
+    def __init__(self, home):
+        self.home = home
+
+    def entries(self):
+        return list(self.entries_by_home.get(self.home, []))
+
+
+def _seed_tape(monkeypatch, home, bodies):
+    from mishe_tauftauf.feed import FeedEntry
+    entries = [FeedEntry(sequence=n, timestamp=f"2026-11-09T04:{n:02d}:00Z", source="seed", body=b)
+               for n, b in enumerate(bodies, start=1)]
+    monkeypatch.setattr(discovery, "Feed", _FakeTape)
+    monkeypatch.setitem(_FakeTape.entries_by_home, home, entries)
+    (home / "chat.log").write_bytes(b"")
+
+
+def _settle(role, wake, result):
+    return f"seed yield {role} wake={wake}\nTurn settled ({result}); notes"
+
+
+def test_settle_result_mix_empty_tape_is_not_verified(tmp_path, monkeypatch):
+    _seed_tape(monkeypatch, tmp_path, ["plain chat, no settlement"])
+    result = discovery._seed_settle_result_mix(tmp_path)
+    assert result["id"] == "sense.seed.settle-result-mix"
+    assert result["state"] == "verified"
+    assert "n=0" in result["sample"] and "since_last=none" in result["sample"]
+
+
+def test_settle_result_mix_absent_tape_is_unknown(tmp_path):
+    result = discovery._seed_settle_result_mix(tmp_path)
+    assert result["state"] == "unknown"
+    assert "unavailable" in result["sample"]
+
+
+def test_settle_result_mix_clean_window_is_verified(tmp_path, monkeypatch):
+    _seed_tape(monkeypatch, tmp_path, [_settle("senses", n, "changed") for n in range(1, 4)])
+    result = discovery._seed_settle_result_mix(tmp_path)
+    assert result["state"] == "verified"
+    assert "changed=3" in result["sample"] and "blocked=0" in result["sample"]
+
+
+def test_settle_result_mix_blocked_drifts_and_counts_since_last(tmp_path, monkeypatch):
+    _seed_tape(monkeypatch, tmp_path, [_settle("senses", 1, "blocked"),
+                                       _settle("senses", 2, "verified"),
+                                       _settle("senses", 3, "changed")])
+    result = discovery._seed_settle_result_mix(tmp_path)
+    assert result["state"] == "drift"
+    assert "blocked=1" in result["sample"] and "incidents=1" in result["sample"]
+    assert "since_last=2" in result["sample"]
+
+
+def test_settle_result_mix_window_is_trailing(tmp_path, monkeypatch):
+    monkeypatch.setattr(discovery, "SETTLE_RESULT_WINDOW", 2)
+    _seed_tape(monkeypatch, tmp_path, [_settle("senses", 1, "blocked"),
+                                       _settle("senses", 2, "verified"),
+                                       _settle("senses", 3, "verified")])
+    result = discovery._seed_settle_result_mix(tmp_path)
+    assert result["state"] == "verified"
+    assert result["window"] == 2
+    assert "since_last=2" in result["sample"]

@@ -1248,6 +1248,67 @@ LOOP_STALL_ROLES = ("docs", "health", "senses", "discover", "genome", "witness",
 LOOP_STALL_WAKE_SECONDS = 1800
 
 
+def _seed_settle_result_mix(home: Path) -> dict[str, object]:
+    """Report the mix of settlement results over the tape's own receipts.
+
+    Each settlement appends one ``seed`` entry whose body names the yield
+    (``seed yield <role> wake=<n>``) and the result (``Turn settled
+    (<result>)``). The reading counts the trailing ``SETTLE_RESULT_WINDOW``
+    settlements by result, clusters the window's ``blocked`` receipts into
+    incidents at the disclosed ``SETTLE_INCIDENT_GAP_SECONDS`` gap, and counts
+    the settlements after the most recent ``blocked`` receipt on the whole tape
+    (``since_last=none`` when none is recorded). A result outside the known
+    three is counted as ``other``; a yield with no settled line is not a
+    settlement. The window is a count, not a duration, so the sample is current
+    as of the scan.
+
+    State is ``verified`` when the window holds no ``blocked`` receipt and
+    ``drift`` when one does. State is ``unknown`` when the tape is absent or
+    unreadable, so a source change cannot pass as a clean bill.
+    """
+    def unknown(sample: str) -> dict[str, object]:
+        return {"id": "sense.seed.settle-result-mix", "state": "unknown",
+                "sample": sample, "kind": "read"}
+
+    if not (home / "chat.log").exists():
+        return unknown("chat tape unavailable")
+    try:
+        entries = Feed(home).entries()
+    except (OSError, ValueError) as exc:
+        return unknown(f"chat tape unreadable: {exc}")
+    settlements: list[tuple[datetime, str]] = []
+    for entry in entries:
+        try:
+            control = decode_lifecycle(entry)
+        except ValueError as exc:
+            return unknown(f"invalid lifecycle control: {exc}")
+        if control is None or control.kind != "yield" or control.result is None:
+            continue
+        ts = datetime.fromisoformat(entry.timestamp.replace("Z", "+00:00"))
+        settlements.append((ts, control.result))
+    window = settlements[-SETTLE_RESULT_WINDOW:]
+    counts = {"verified": 0, "changed": 0, "blocked": 0, "other": 0}
+    for _ts, result in window:
+        counts[result if result in counts else "other"] += 1
+    blocked_times = sorted(ts for ts, result in window if result == "blocked")
+    incidents = 0
+    previous: datetime | None = None
+    for ts in blocked_times:
+        if previous is None or (ts - previous).total_seconds() > SETTLE_INCIDENT_GAP_SECONDS:
+            incidents += 1
+        previous = ts
+    last_blocked = next((index for index in range(len(settlements) - 1, -1, -1)
+                         if settlements[index][1] == "blocked"), None)
+    since_last = None if last_blocked is None else len(settlements) - 1 - last_blocked
+    sample = (f"n={len(window)} verified={counts['verified']} "
+              f"changed={counts['changed']} blocked={counts['blocked']} "
+              f"other={counts['other']} incidents={incidents} "
+              f"since_last={'none' if since_last is None else since_last}")
+    return {"id": "sense.seed.settle-result-mix",
+            "state": "drift" if blocked_times else "verified",
+            "sample": sample, "kind": "read", "window": len(window)}
+
+
 def _mind_loop_stall(home: Path, now: datetime | None = None) -> dict:
     """Replacement for the retired ``sense.mind.loop-stall`` reading.
 
@@ -6905,6 +6966,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_mind_docs_treadmill(home))
     observed.append(_mind_artifact_recurrence(home))
     observed.append(_mind_loop_stall(home))
+    observed.append(_seed_settle_result_mix(home))
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
     observed.append(_ledger_evidence_binding(home))
