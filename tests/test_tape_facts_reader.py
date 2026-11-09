@@ -66,20 +66,29 @@ def test_missing_facts_binary_is_unknown(tmp_path):
                         facts_bin=str(tmp_path / "no-such-facts"))
 
 
-@needs_binaries
 def test_hung_facts_stage_times_out_as_unknown(tmp_path):
     # A facts stage that never finishes must become UNKNOWN, not a raw
-    # TimeoutExpired escaping the reader.
+    # TimeoutExpired escaping the reader, and neither stage may be left
+    # running. Both stubs `exec` sleep so the pid the stub runs under is the
+    # process that must die; the framer stub records its pid for the check.
+    import os
     import time
+    framer_pid_file = tmp_path / "framer.pid"
+    framer = tmp_path / "hung-framer"
+    framer.write_text(f"#!/bin/sh\necho $$ > {framer_pid_file}\nexec sleep 30\n")
+    framer.chmod(0o755)
     hung = tmp_path / "hung-facts"
-    hung.write_text("#!/bin/sh\nsleep 30\n")
+    hung.write_text("#!/bin/sh\nexec sleep 30\n")
     hung.chmod(0o755)
     tape = tmp_path / "chat.log"
     tape.write_bytes(_entry(1, b"[dm] to=rust-plan hello"))
     started = time.monotonic()
     with pytest.raises(TapeUnknown, match="timed out"):
-        read_tape_facts(str(tape), tape_bin=TAPE_BIN, facts_bin=str(hung), timeout=0.5)
+        read_tape_facts(str(tape), tape_bin=str(framer), facts_bin=str(hung), timeout=0.5)
     assert time.monotonic() - started < 20
+    framer_pid = int(framer_pid_file.read_text().strip())
+    with pytest.raises(ProcessLookupError):
+        os.kill(framer_pid, 0)  # reaped: no stray framer process remains
 
 
 def test_unknown_output_line_is_unknown():
