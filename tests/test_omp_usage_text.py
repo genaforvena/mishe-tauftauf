@@ -106,9 +106,12 @@ def test_a_boolean_is_not_a_number():
         usage_record(event)
 
 
-def test_decode_line_skips_a_line_that_is_not_json():
-    assert decode_line("not json at all") is None
-    assert decode_line("") is None
+def test_decode_line_raises_on_a_line_that_is_not_json():
+    # A usage-claiming line that does not parse is corrupt, not skippable.
+    with pytest.raises(Uncountable):
+        decode_line("not json at all")
+    with pytest.raises(Uncountable):
+        decode_line("")
 
 
 def test_decode_line_reads_a_record_from_a_json_line():

@@ -152,11 +152,13 @@ def usage_record(event):
 def decode_line(line):
     """Decode one JSON-lines record into a usage tuple, or None.
 
-    A line that is not JSON is not a record and is skipped. A record that
-    decodes but cannot be read raises :class:`Uncountable`.
+    The caller passes only lines that claim usage, so a line that is not JSON
+    is a corrupt usage record: it raises :class:`Uncountable`, and skipping it
+    would silently undercount the account. A record that decodes but is not a
+    usage turn returns None.
     """
     try:
         event = json.loads(line)
-    except ValueError:
-        return None
+    except ValueError as error:
+        raise Uncountable(f"usage line is not JSON: {error}") from error
     return usage_record(event)
