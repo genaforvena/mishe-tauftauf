@@ -62,7 +62,8 @@ def wakes_step(home, cursor):
             label = 'OUTPUT'
             outputs = sorted(root.glob(key + '.prompt.out.*'))
             settled = (root / (key + '.yield.json')).exists()
-            text = ('\n'.join(final_answer(output_text(p)) if settled and p.suffix == '.jsonl' else output_text(p) for p in outputs) if outputs
+            # A wake that ended without a yield (timeout, kill) is shown the same way: its last words, never its whole stream.
+            text = ('\n'.join(final_answer(output_text(p)) if p.suffix == '.jsonl' else output_text(p) for p in outputs) if outputs
                     else 'Output UNKNOWN: no retained engine output.')
             if not (root / (key + '.yield.json')).exists():
                 text = 'Settlement UNKNOWN: the engine ended without a yield receipt.\n' + text

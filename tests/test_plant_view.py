@@ -801,3 +801,19 @@ def test_a_running_wake_and_the_top_header_name_the_engine_the_router_selected(t
         json.dumps({"event": "select", "role": "docs", "key": "omp:longcat-2.5-free:-", "wake": "wake-docs-9"}) + "\n")
     assert plant_view._with_routed(tmp_path, None, "wake-docs-9", "docs", False)["models"] == ["longcat-2.5-free"]
     assert plant_view._with_routed(tmp_path, None, None, "docs", True)["models"] == ["longcat-2.5-free"]
+
+
+def test_wakes_tape_shows_an_unsettled_jsonl_output_as_its_last_words(tmp_path):
+    import json
+    from mishe_tauftauf import plant_tape
+    wakes = tmp_path / "wakes"
+    wakes.mkdir()
+    key = "wake-docs-1"
+    (wakes / f"{key}.work.json").write_text(json.dumps({"role": "docs"}))
+    events = [{"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "Checking the pin."}]}},
+              {"type": "tool_execution_start", "toolName": "bash", "args": {"command": "cat big"}},
+              {"type": "tool_execution_end", "toolName": "bash", "result": {"content": [{"type": "text", "text": "DUMP\n" * 300}]}}]
+    (wakes / f"{key}.prompt.out.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    _, text = plant_tape.wakes_step(tmp_path, None)
+    assert "Settlement UNKNOWN" in text
+    assert text.count("DUMP") < 5, text[:400]
