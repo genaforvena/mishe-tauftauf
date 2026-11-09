@@ -5,7 +5,7 @@ from pathlib import Path
 
 from . import engine_process
 from .router_text import stream_events
-from .wake import EngineRejected
+from .wake import EngineExhausted, EngineRejected
 
 
 # omp's own default thinking is high: a wake on longcat-2.5-free spent 19k thinking deltas against 165 of text
@@ -37,6 +37,17 @@ def refused_before_effect(stream: Path) -> str | None:
     return error
 
 
+# Provider text for an account that cannot pay for another call (MiniMax 402 "Token Plan usage limit ... insufficient_balance").
+QUOTA_MARKERS = ("insufficient_balance", "usage limit has been reached", "usage limit", "status 402", "402 ")
+
+
+def is_quota_error(error: str | None) -> bool:
+    if not error:
+        return False
+    low = error.lower()
+    return any(marker in low for marker in QUOTA_MARKERS)
+
+
 class OmpEngine:
     name = "omp"
 
@@ -50,6 +61,8 @@ class OmpEngine:
             command(self.model, Path(cwd), prompt_file, self.thinking), env=dict(env, **self.extra_env),
             cwd=Path(cwd), timeout=timeout, stdout_to=stream, on_start=on_start)
         error = refused_before_effect(stream) if code != 0 else None
+        if error is not None and is_quota_error(error):
+            raise EngineExhausted(f"account out of quota before any tool call: {error}")
         if error is not None:
             raise EngineRejected(f"model refused before any tool call: {error}")
         return code

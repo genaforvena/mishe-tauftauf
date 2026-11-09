@@ -33,6 +33,14 @@ class EngineRejected(EngineNotStarted):
     """The engine ran, but its model refused before any tool call: no effect, and the candidate is unusable now."""
 
 
+class EngineExhausted(EngineRejected):
+    """The account behind the candidate is out of quota (HTTP 402, insufficient balance, usage limit).
+
+    Not a per-model refusal: every role and model on that account fails the same way until its window resets,
+    so the router cools the account, not just the candidate for the role.
+    """
+
+
 class EngineTimeout(Exception):
     """The engine ran past its bound; its effect is unknown."""
 

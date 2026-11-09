@@ -5,7 +5,7 @@ import pytest
 
 from mishe_tauftauf import engine_router as router
 from mishe_tauftauf import signal_store, yielding
-from mishe_tauftauf.wake import EngineNotStarted, EngineRejected, EngineTimeout
+from mishe_tauftauf.wake import EngineExhausted, EngineNotStarted, EngineRejected, EngineTimeout
 
 NOW_MS = 1_792_712_432_000
 RESET = router._iso(NOW_MS + 3_600_000)
@@ -123,6 +123,8 @@ class FakeEngine:
             raise EngineTimeout("exceeded")
         if action == "refused":
             raise EngineRejected("model refused before any tool call")
+        if action == "exhausted":
+            raise EngineExhausted("account out of quota before any tool call")
         if action == "yield":
             path = yielding.receipt_path(env["MISHE_SEED_HOME"], env["MISHE_WAKE_KEY"])
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -300,3 +302,40 @@ def test_refused_before_effect_reads_error_only_without_tool_calls(tmp_path):
         '"stopReason":"error","errorMessage":"later failure"}}\n')
     assert engine_omp.refused_before_effect(acted) is None
     assert engine_omp.refused_before_effect(tmp_path / "missing.out.jsonl") is None
+
+
+def test_quota_exhausted_account_is_cooled_for_every_role_not_just_one(routed):
+    FakeEngine.script = {GO["model"]: "exhausted", MINI["model"]: "yield"}
+    eng = router.for_role(routed, "health")
+    assert eng.run(routed / "p.md", env=_env(routed, "k10"), cwd=routed, timeout=5) == 0
+    events = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()]
+    assert events[1]["event"] == "fallback" and events[1]["scope"] == "account"
+    assert events[1]["reason"].startswith("quota:")
+    state = json.loads((routed / "engine" / router.STATE).read_text())["cooling"]
+    go_until = state[router.candidate_key(GO)]
+    # the account key is shared by all roles, and holds for the account window (5400 s), not the 1800 s role default
+    assert go_until == NOW_MS + 5_400_000
+    assert router.role_key("health", router.candidate_key(GO)) not in state
+    other = router.choose("docs", [GO, HAIKU], status(**{"go-a": account()}), state, NOW_MS + 1_800_000)
+    assert other["key"] == router.candidate_key(HAIKU)
+
+
+def test_quota_error_text_is_distinguished_from_model_refusal(tmp_path):
+    from mishe_tauftauf import engine_omp
+    quota = tmp_path / "quota.out.jsonl"
+    quota.write_text(
+        '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error",'
+        '"errorMessage":"Token Plan usage limit has been reached (2067) (type=insufficient_balance_error)"}}\n')
+    error = engine_omp.refused_before_effect(quota)
+    assert engine_omp.is_quota_error(error)
+    assert not engine_omp.is_quota_error("400 This Go model is hosted outside Europe")
+    assert not engine_omp.is_quota_error(None)
+
+
+def test_routes_loader_reads_account_cool_off(tmp_path):
+    routes_file(tmp_path, {"health": [HAIKU]})
+    assert router.load_routes(tmp_path)["account_cool_off_s"] == router.DEFAULT_ACCOUNT_COOL_OFF_S
+    d = tmp_path / "engine" / "routes.json"
+    d.write_text(json.dumps({"version": 1, "cool_off_s": 1800, "account_cool_off_s": 600,
+                             "roles": {"health": [HAIKU]}}))
+    assert router.load_routes(tmp_path)["account_cool_off_s"] == 600

@@ -38,7 +38,7 @@ from . import engine_policy as policy
 from .router_text import file_lines, load_json, split_cooling_key
 from . import signal_store
 from . import yielding
-from .wake import EngineNotStarted, EngineRejected, EngineTimeout
+from .wake import EngineExhausted, EngineNotStarted, EngineRejected, EngineTimeout
 
 ROUTES = "routes.json"
 STATE = "routing-state.json"
@@ -46,6 +46,7 @@ LEDGER = "routing-ledger.jsonl"
 SIGNAL = "engine-routing"
 SIGNAL_MAX_AGE = 900.0
 DEFAULT_COOL_OFF_S = 1800
+DEFAULT_ACCOUNT_COOL_OFF_S = 5400  # a quota-exhausted account is out for a window, not a role retry
 INVALIDATE_BUDGET_S = 20.0  # total wall time for stale-window refetches per wake
 ENGINES = ("claude", "omp")
 STALE_STATES = ("STALE", "UNKNOWN", "UNATTRIBUTED")
@@ -127,7 +128,10 @@ def load_routes(home) -> dict | None:
     cool = value.get("cool_off_s", DEFAULT_COOL_OFF_S)
     if isinstance(cool, bool) or not isinstance(cool, (int, float)) or cool < 0:
         raise ValueError("invalid cool_off_s")
-    return {"roles": roles, "cool_off_s": cool, "env": env}
+    account_cool = value.get("account_cool_off_s", DEFAULT_ACCOUNT_COOL_OFF_S)
+    if isinstance(account_cool, bool) or not isinstance(account_cool, (int, float)) or account_cool < 0:
+        raise ValueError("invalid account_cool_off_s")
+    return {"roles": roles, "cool_off_s": cool, "account_cool_off_s": account_cool, "env": env}
 
 
 def _load_state(home) -> dict:
@@ -292,6 +296,7 @@ class RoutedEngine:
         self.candidates = routes["roles"][role]
         self.routes = routes
         self.cool_off_ms = routes["cool_off_s"] * 1000
+        self.account_cool_off_ms = routes["account_cool_off_s"] * 1000
         self.extra_env = routes.get("env", {})
 
     def _build(self, cand: dict):
@@ -301,13 +306,13 @@ class RoutedEngine:
             return ClaudeEngine(cand["model"])
         return OmpEngine(cand["model"], thinking=cand.get("thinking"))
 
-    def _cool(self, cand: dict, now_ms: float, *, role_only: bool = False) -> None:
+    def _cool(self, cand: dict, now_ms: float, *, role_only: bool = False, off_ms: float | None = None) -> None:
         # The Claude safety net is never cooled: a cooled last candidate leaves the role with no engine.
         if _is_safety_net(cand):
             return
         state = _load_state(self.home)
         key = candidate_key(cand)
-        state["cooling"][role_key(self.role, key) if role_only else key] = now_ms + self.cool_off_ms
+        state["cooling"][role_key(self.role, key) if role_only else key] = now_ms + (off_ms or self.cool_off_ms)
         _save_state(self.home, state)
 
     def _clear(self, key: str) -> None:
@@ -342,6 +347,14 @@ class RoutedEngine:
                 limit = min(timeout, cand["timeout_s"]) if cand.get("timeout_s") else timeout
                 code = engine.run(prompt_file, env=dict(env, **self.extra_env), cwd=cwd, timeout=limit,
                                   on_start=on_start)
+            except EngineExhausted as exc:
+                # The account is out of quota: no effect, and every role on that account would fail the same
+                # way, so cool the account key (shared by all roles) for a window rather than a role retry.
+                record(self.home, {"role": self.role, "event": "fallback", "wake": key_wake, "key": key,
+                                   "reason": f"quota: {exc}", "scope": "account"}, now_ms=time.time() * 1000)
+                self._cool(cand, time.time() * 1000, off_ms=self.account_cool_off_ms)
+                tried.add(key)
+                continue
             except EngineRejected as exc:
                 # The model refused before any tool call: no effect, so fall through now, and cool this
                 # candidate so the next wake does not pick it first again.
