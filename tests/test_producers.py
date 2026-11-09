@@ -100,6 +100,14 @@ def test_declared_unknown_code_succeeds_and_leaves_signal_to_age(home):
     assert store.read(home, "devto", now=NOW + 5000).state == "UNKNOWN"
 
 
+def test_declared_unknown_code_logs_its_reason_to_the_journal(home, capsys):
+    # A Mac-down camera exits 4 and writes its reason only to stdout; the journal must still carry it.
+    script = "print('{\"reason_code\": \"mac_unreachable\"}'); import sys; sys.exit(4)"
+    assert producers.run(home, "devto", [PY, "-c", script], now=NOW, timeout=10, unknown_codes=(4,)) == 0
+    err = capsys.readouterr().err
+    assert "devto: unknown=4 detail=" in err and "mac_unreachable" in err
+
+
 def test_undeclared_code_stays_a_failure_even_with_unknown_codes_set(home):
     assert producers.run(home, "devto", [PY, "-c", "import sys; sys.exit(1)"], now=NOW, timeout=10,
                          unknown_codes=(4,)) == 2

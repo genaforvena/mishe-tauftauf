@@ -41,14 +41,17 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
                                      reason=f"not run: {type(exc).__name__}")
         return 2
     os.replace(scratch, detail)
-    if code in unknown_codes:
-        return 0            # a declared "stale or missing input": not observed, so the signal ages to UNKNOWN
-    if code != 0 and code not in red_codes:
-        # The detail file is overwritten by the next run, so the journal carries the check's output for this failure.
+    if code in unknown_codes or (code != 0 and code not in red_codes):
+        # The detail file is overwritten by the next run, so the journal carries the check's output for every
+        # non-GREEN exit, including a declared unknown one whose reason would otherwise survive only in the detail file.
         output = detail.read_bytes()[:DETAIL_BYTES]
         # An empty capture is itself the evidence: the check exited without writing to stdout or stderr.
         shown = repr(output) if output else "(no output on stdout or stderr)"
-        print(f"mishe: {name}: exit={code} detail={shown}", file=sys.stderr)
+        label = "unknown" if code in unknown_codes else "exit"
+        print(f"mishe: {name}: {label}={code} detail={shown}", file=sys.stderr)
+    if code in unknown_codes:
+        return 0            # a declared "stale or missing input": not observed, so the signal ages to UNKNOWN
+    if code != 0 and code not in red_codes:
         # A crash or "cannot tell" (1, 3, 127, a signal) is not an observation, and the last GREEN must not stand for it.
         signal_store.observe_unknown(home, name, now=now, source=f"run:{command[0]}",
                                      reason=f"check exit {code}")
