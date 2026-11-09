@@ -6931,3 +6931,18 @@ def test_settle_result_mix_window_is_trailing(tmp_path, monkeypatch):
     assert result["state"] == "verified"
     assert result["window"] == 2
     assert "since_last=2" in result["sample"]
+
+
+def test_installed_site_units_skips_templates_and_keeps_timer_idle_producers(monkeypatch) -> None:
+    from mishe_tauftauf import discovery
+    import subprocess as sp
+
+    listing = ("mishe-producer-readings.service  enabled\n"
+               "mishe-wake@.service  static\n"
+               "mishe-containment.service  enabled\n"
+               "other.service  enabled\n")
+    monkeypatch.setattr(discovery.subprocess, "run",
+                        lambda *a, **k: sp.CompletedProcess(a, 0, stdout=listing, stderr=""))
+    units, failure = discovery._installed_site_units()
+    assert failure is None
+    assert units == ["mishe-producer-readings.service", "mishe-containment.service"]

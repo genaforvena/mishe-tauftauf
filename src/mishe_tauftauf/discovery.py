@@ -1780,6 +1780,35 @@ def _active_site_units() -> tuple[list[str], str | None]:
     return units, None
 
 
+def _installed_site_units() -> tuple[list[str], str | None]:
+    """Installed non-template ``mishe-*`` services, whether running or timer-idle.
+
+    Producers are oneshots started by timers, so ``list-units`` (running only)
+    misses them. A template unit such as ``mishe-wake@.service`` must be left out:
+    ``systemctl show`` rejects the whole batch when one name is a template.
+    """
+    environment = os.environ.copy()
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    try:
+        result = subprocess.run(["systemctl", "--user", "list-unit-files",
+                                 "--type=service", "--no-legend"],
+                                capture_output=True, text=True, timeout=5,
+                                env=environment)
+    except (OSError, subprocess.SubprocessError):
+        return [], "systemctl unavailable"
+    if result.returncode:
+        return [], "systemctl failed"
+    units: list[str] = []
+    for row in result.stdout.splitlines():
+        columns = row.split()
+        if not columns:
+            continue
+        unit = columns[0]
+        if unit.startswith(SITE_UNIT_PREFIX) and unit.endswith(".service") and "@" not in unit:
+            units.append(unit)
+    return units, None
+
+
 def _pinned_root(home: Path, default: str) -> tuple[str | None, str | None]:
     """The root the runtime pin names, or None with a reason it could not."""
     try:
@@ -7154,8 +7183,18 @@ def sample(home: Path) -> dict[str, object]:
                      "identity": thermal_identity, "kind": "read"})
     observed.extend(read_slice_throttle(home))
     observed.append(read_unit_psi(home / "operator" / "unit-psi.jsonl", now=time.time()))
-    roots, _coverage_failure = _service_import_roots(home)
-    observed.append(_sensor_coverage(home, roots))
+    # The manifest can name units that are no longer installed (health/services.json
+    # listed retired self-development units, so it yielded no roots at all), so the
+    # installed site units are read as well, and a failed read keeps its reason.
+    roots, coverage_failure = _service_import_roots(home)
+    installed_units, installed_failure = _installed_site_units()
+    for root in _unit_import_roots(installed_units).values():
+        if root not in roots:
+            roots.append(root)
+    coverage = _sensor_coverage(home, roots)
+    if not roots and (coverage_failure or installed_failure):
+        coverage["sample"] = f"no imported root to read ({coverage_failure or installed_failure})"
+    observed.append(coverage)
     observed.append(_repo_release_retention(home))
     observed.append(_repo_git_index_lock(home))
     observed.append(_repo_push_freshness(home))
