@@ -72,27 +72,17 @@ migration mind, `rust-plan`, carries the Rust runtime move alongside them rather
 an area.
 Each carries initiatives through checks, delivery and observation. Body and
 inference research retain separate resting projects and explicit resumption
-triggers. A window is a view of an area; opening it calls no model, and both panes are plain
-text for people, with no JSON or raw timestamps. The top pane shows the area's wake
-state, what the last wake changed in git, the wall's opening lines, signals, the next
-due item and unread mail. The bottom pane opens with the model that ran, then the wake's
-turns, duration, cost and git change in lines, followed by the mind's final text and the
-files it changed. A model that differs from the configured one is stated, and output that
-cannot be read is labelled UNKNOWN with its raw tail, never hidden. Walls and site notes
-are outside git and are not counted. The original event files remain on disk, and
-`view-readability` watches that the panes stay human-readable. `wakes-view-engines`
-renders the newest retained output of each model in use through both the checkout
-and live-pin wakes code, without replacing the caller's loaded package, and fails
-on leaked bookkeeping, duplicate tool output, raw JSON or a renderer exception;
-a configured model with no wake rendered yet is UNKNOWN until its first wake passes.
-Three single-pane windows follow history without repainting: `chat` follows the
-shared tape, `git` shows commit messages and file-change summaries, and `wakes`
-shows wake starts, settlements and retained engine output. They open with
-recent history (30 commits or 60 wake records), then append new entries every
-five seconds. Use inner `Ctrl-a w` to choose a window and `Ctrl-a [` to scroll
-its 3,000-line history. Git, `chat.log` and the retained `wakes/` files keep
-the full source history beyond that scrollback. A failed read stays visibly UNKNOWN;
-recovery resumes from the last successful read.
+triggers. An area's dashboard is rendered on demand by
+`mishe pain read ROLE --launcher dashboard`: it calls no model and prints plain text for
+people, with no JSON or raw timestamps. Its top part shows the role's wake state, what the
+last wake changed in git, the wall's opening lines, signals, the next due item and unread
+mail. Its bottom part shows the model that ran, the wake's turns, duration and git change,
+then the mind's final text. A model that differs from the configured one is stated, and
+output that cannot be read is labelled UNKNOWN with its raw tail, never hidden. Walls and
+site notes are outside git and are not counted. Nothing repaints: no resident process keeps
+panes or windows open, so a view is as current as the moment it was read. The tmux panes
+and `Ctrl-a` windows were removed with the pane runtime (`943276d9`). A failed read stays
+visibly UNKNOWN.
 Senses' readings renew independently every ten minutes. `mishe discover show`
 shows the acquisition freshness and each source's state; a new host scan cannot
 make an old phone sample current.
