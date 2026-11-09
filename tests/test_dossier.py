@@ -107,3 +107,48 @@ def test_salvage_skips_streaming_update_lines_without_decoding_them(tmp_path):
     text = salvage_text(stream)
     assert "the last words" in text
     assert "tool_execution_update" not in text
+
+
+def test_salvage_of_a_fault_without_error_text_still_reads(tmp_path):
+    """A provider fault with no error text must not take the reconciling wake down with it."""
+    from mishe_tauftauf.plant_view_boundary import salvage_text
+    stream = tmp_path / "wake.out.jsonl"
+    stream.write_text(json.dumps({"type": "auto_retry_end", "success": False}) + "\n")
+    text = salvage_text(stream)
+    assert "Provider faults it hit" in text
+    assert "provider retry failed" in text
+
+
+def test_reconcile_dossier_survives_a_fault_without_error_text(tmp_path):
+    (tmp_path / "wakes").mkdir()
+    stream = tmp_path / "wakes/wake-health-old.prompt.out.jsonl"
+    stream.write_text(json.dumps({"type": "auto_retry_end", "success": False}) + "\n")
+    out = dossier.build(tmp_path, "health", owed.Snapshot(), key="now", now=100, mail=[],
+                        reconcile_of=_record("wake-health-old"))
+    assert "### What that wake left behind" in out
+
+
+def test_salvage_neutralises_control_bytes_and_bidi_overrides(tmp_path):
+    """The salvaged prose reaches the next mind as prose: no escape sequence, no right-to-left spoof."""
+    from mishe_tauftauf.plant_view_boundary import salvage_text
+    stream = tmp_path / "wake.out.jsonl"
+    stream.write_text(json.dumps({"type": "message_end", "message": {"role": "assistant",
+                                 "stopReason": "end_turn",
+                                 "content": [{"type": "text",
+                                              "text": "before \x1b[31mRED\x1b[0m \u202espoof\u202c after"}]}}) + "\n")
+    text = salvage_text(stream)
+    assert "\x1b" not in text
+    assert "\u202e" not in text
+    assert "before" in text and "after" in text
+
+
+def test_salvage_survives_a_deeply_nested_stream_event(tmp_path):
+    """A stream line too deep for the JSON decoder is skipped, not raised into the reconciling wake."""
+    from mishe_tauftauf.plant_view_boundary import salvage_text
+    stream = tmp_path / "wake.out.jsonl"
+    stream.write_text('{"type":"auto_retry_end","success":false,"n":' + "[" * 60000 + "]" * 60000 + "}\n")
+    stream.write_text(json.dumps({"type": "message_end", "message": {"role": "assistant",
+                                 "stopReason": "end_turn",
+                                 "content": [{"type": "text", "text": "the last words"}]}}) + "\n")
+    text = salvage_text(stream)
+    assert "the last words" in text
