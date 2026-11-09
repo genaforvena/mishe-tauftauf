@@ -15,6 +15,7 @@ import shutil
 import subprocess
 
 from .argv_text import decode_argv
+from .git_base_text import committed_snapshot
 from .observations import validate_slug
 from .post_check import _save, _worker
 from .wall import settings
@@ -218,19 +219,8 @@ def base_snapshot(root, base, name):
     """Committed bytes of ``name`` at ``base``: the "before" of a patch whose
     working tree already equals HEAD. Without this, before == after and the
     review diff is empty for a committed change."""
-    if base.startswith("-"):
-        raise ValueError(f"invalid base ref: {base}")
     target(root, name)
-    listing = subprocess.run(["git", "-C", str(root), "ls-tree", base, "--", name], capture_output=True, text=True)
-    if listing.returncode:
-        raise ValueError(f"base ref not readable: {base}")
-    if not listing.stdout.strip():
-        return None
-    mode, kind, _ = listing.stdout.split(None, 2)
-    if kind != "blob":
-        raise ValueError(f"base path is not a file: {name}")
-    data = subprocess.run(["git", "-C", str(root), "show", f"{base}:{name}"], capture_output=True, check=True).stdout
-    return {"bytes": base64.b64encode(data).decode(), "mode": int(mode, 8) & 0o777}
+    return committed_snapshot(root, base, name)
 
 
 def prepare(home, identity, paths, base=None):
