@@ -463,6 +463,7 @@ Measured numbers are the ones in sections 2 and 8. Nothing here is a new speedup
 | **Senses baseline** (measurement, not migration) | Not started. Needs its own declared duty, not an edit to `rust-plan-progress` (wall, section "Senses baseline"). | Source artifacts already exist under `artifacts/rust-plan-20261107/`. | Declare the duty with its own `max_age`. It reads UNKNOWN when evidence is missing or stale. |
 | Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4); fresh systemd table at pin `7ce12523`: `readings` 890 CPU-s / 6 h (36 runs, ~24.5 CPU-s each), 870 MB peak. `doctor` has 25 exit-1 runs, cause UNKNOWN. | The `readings` cost is now profiled on the live plant and S2 is decided: see section 10. The slice is a Python slice (unused whole-tape reads, one snapshot per scan, cadence), not a Rust slice. |
 | **S2.1. Delete the tape reads that feed nothing** | Implemented (2026-11-10). `_mind_role_coverage` took an `entries` argument it never read; three readings read the whole tape to fill it and discarded the result. | AST-verified: `discovery.py:980` reads `home`, `role`, `now` and not `entries`. Fresh-process A/B of one live scan: 31.56 CPU-s before, 31.58 after, 74 observations both times. **A deletion, not a speedup** — an earlier 37% figure came from running both variants in one process and was wrong. | Committed with 4 regression tests that fail if a tape read returns to these readings. S2.2 (one physical tape read per scan) and S2.3 (cadence) remain. |
+| **S2.2. One physical tape read per scan** | Not started. The target named earlier (`_settle_outcome_join`) is dead code: no production caller in the current tree. | Measured 2026-11-10 10:05Z–10:24Z on the live plant at pin `323a87fe`, counting framer spawns rather than wrapper calls: **three** physical whole-tape reads per scan, 643,103,475 bytes, 16.98 CPU-s, 858.6 MB peak, 74 observations. Call sites: `_mind_artifact_recurrence` (the cold verified read), `_ledger_evidence_binding` (the census read), `_coord_dm_disposition_age` (the disposition read). See section 10.2a. | For each of the three reads, decide whether the reading's window and verification needs are met by a snapshot another reading already holds, then prove the answer with the physical-read count. |
 
 ### 9.1a Independent replaceability (operator vision addendum, DM 298227, 2026-11-08)
 
@@ -555,13 +556,60 @@ duty is the plant's largest consumer and the one closest to the guard.
 Total 31.69 CPU-s profiled, 850 MB peak. The five `Feed.entries()` calls cost
 **one** cold read (the first: 11.09 s; the other four: about 0.01 s each from
 the process-local `_ENTRIES_CACHE`). On top of that the tape is streamed
-physically **three** times per scan, 642 MB in total (61 GB/day):
+physically **three** times per scan, 642 MB in total (61 GB/day). The three
+rows below are the **wrapper calls** that make those reads; two of them are
+one read seen twice, and one names a caller the current tree does not have.
+Section 10.2a gives the physical-read count and the real call sites.
 
-| Physical read | Bytes | Call site |
+| Wrapper call | Bytes | Call site |
 |---|---|---|
 | `feed.parse_feed` | 214,119,574 | `_mind_treadmill` → `Feed.entries` → the cold read |
 | `feed.iter_feed_file` | 214,119,574 | `_ledger_evidence_binding` → `classify_outcomes`, which takes no snapshot |
 | `store_census.tape_entries` | 214,119,574 | `_ledger_evidence_binding`, collecting the named record digests |
+
+#### 10.2a Correction: the read table above counted wrappers, not reads
+
+The three rows above are three **wrapper calls**, not three physical reads, and
+two of them are one read seen twice. Counting the wrapper calls over-counted
+the tape traffic, and one row named a call site that does not exist in the
+current tree.
+
+Measured on the live plant at 10:05Z–10:24Z (pin `323a87fe`), counting
+`feed._spawn_frames` — the framer is the only thing that reads tape bytes, so
+counting its spawns counts physical reads exactly:
+
+| Physical read | Bytes | Call site |
+|---|---|---|
+| 1 | 214,367,825 | `_mind_artifact_recurrence` → `Feed.entries` → the cold read |
+| 2 | 214,367,825 | `_ledger_evidence_binding` → `classify_outcomes` → `store_census.tape_entries` → `iter_feed_file` |
+| 3 | 214,367,825 | `_coord_dm_disposition_age` → `iter_feed_file` |
+
+Three physical reads, 643,103,475 bytes, 16.98 CPU-s, 858.6 MB peak,
+74 observations. Probe: `artifacts/rust-plan-20261107/s2b-20261110/physical_reads.py`.
+
+Two corrections follow:
+
+- **Rows 2 and 3 of the old table are one read.** `store_census.tape_entries`
+  is a generator; `classify_outcomes` consumes it, so the same pass through
+  the tape appears under both wrappers. The old table counted it twice.
+- **The `classify_outcomes` row named a dead caller.** The old table
+  attributed the read to "the `_settle_outcome_join` call". In the current
+  tree `_settle_outcome_join` has **no production caller**: an AST walk of
+  `discovery.py` finds zero references to the name, and a repo-wide grep
+  finds only its definition, one test, and an old worktree copy
+  (`.claude/worktrees/budget-stale-window/`). The read it was credited with
+  is really taken by `_coord_dm_disposition_age`.
+
+The cold read's call site also moved with S2.1: it was `_mind_treadmill`
+before that commit and is `_mind_artifact_recurrence` after, because S2.1
+removed the three reads that fed the dead `_mind_role_coverage` parameter and
+the remaining cold read is the one a reading that needs it owns.
+
+The three physical reads are therefore: one cold verified read that a reading
+needs, one census read that collects the record digests the entries name, and
+one disposition read. S2.2's job is to name which of these can be served from
+one snapshot, and to prove it with the physical-read count rather than the
+wrapper count.
 
 ### 10.3 The cold/warm split, measured live (not on a copy)
 
@@ -639,10 +687,12 @@ Rust's:
 1. **One cold whole-tape read, shared.** The scan's five `Feed.entries()`
    calls cost **one** cold read: the first parses and verifies 299,179
    entries, the other four are served from the process-local `_ENTRIES_CACHE`
-   at about 0.01 s each (section 10.2). A second full-tape stream runs
-   separately through `store_census.tape_entries`, which does not use that
-   cache. So the redundancy is two physical reads, not five, and one of the
-   two is not the cache's to reuse.
+   at about 0.01 s each (section 10.2). The tape is then read physically
+   twice more, by the census read and the disposition read, neither of which
+   uses that cache. So the redundancy is three physical reads, not five, and
+   two of the three are not the cache's to reuse. The physical-read count and
+   the three call sites are in section 10.2a; an earlier count of three that
+   was really two is corrected there.
 2. **Record verification (67.7% of the cold read).** sqlite lookups and
    per-record path bookkeeping. Not byte-level, not Rust's, and the same cost
    that slice B (section 9.3) exists to attack. It needs its own benchmark
@@ -671,11 +721,18 @@ two parts, in measured cost order:
   is discarded, and the `FeedError` that a discarded read can raise into a
   swallowed `except (OSError, ValueError)`. It is a deletion, not a
   speedup.
-- **S2.2 — one physical tape read per scan.** `_ledger_evidence_binding`
-  streams the whole tape through `store_census.tape_entries` (214,133,186
-  bytes) and then again through `classify_outcomes`, which reads the tape
-  itself when it is given no snapshot (`discovery.py:5038`). This is the real
-  redundancy, and it is a snapshot change, not a windowing change.
+- **S2.2 — one physical tape read per scan.** A scan reads the tape
+  physically three times (section 10.2a): the cold verified read that
+  `_mind_artifact_recurrence` needs, the census read that
+  `_ledger_evidence_binding` takes to collect the record digests its entries
+  name, and the disposition read that `_coord_dm_disposition_age` takes.
+  Which of these can share one snapshot is a snapshot change, not a windowing
+  change. **The target of this slice is not yet decided by measurement**:
+  the earlier text named `_settle_outcome_join`, which is dead code in the
+  current tree and reads nothing. The next step is to name, for each of the
+  three reads, whether the reading's own window and verification needs are
+  met by a snapshot another reading already holds — and to prove the answer
+  with the physical-read count, not the wrapper count.
 - **S2.3 — schedule.** The duty reads 941 MB every 10 minutes to produce a
   reading whose inputs change slowly. The cadence is a scheduler change, so it
   takes the strong path: fresh review, deterministic activation, revert and
@@ -696,4 +753,10 @@ baseline B must beat rather than compete with it.
   then unsafe for that reading and the whole-tape read stands.
 - `classify_outcomes` is shown to need the whole tape for correctness: S2.2
   is then a snapshot change only, not a windowing change.
+- The disposition read is shown to need entries the census read cannot
+  supply, or the other way round: then the two reads stay separate and S2.2's
+  target is the cold read instead.
+- The dead `_settle_outcome_join` is shown to be reachable by a caller this
+  tree does not have: then it is live work, not dead code, and it must be
+  measured again before any slice is taken against it.
 
