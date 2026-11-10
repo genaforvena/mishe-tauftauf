@@ -6,10 +6,12 @@ phone streams from discovery/latest.json, appends derived samples to
 spatial/work/household/signatures.jsonl, and redraws a text/ASCII picture.
 Anything not measured or not validated is shown as UNKNOWN, never guessed as fact.
 """
+import hashlib
 import importlib.util
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -24,6 +26,16 @@ XTTS_DIR = Path.home() / ".local/share/tts/tts_models--multilingual--multi-datas
 XTTS_SIZE = 1867929118
 TRANSCRIPT_WINDOW_S = 600
 ROOMS_FILE = SITE / "spatial/work/household/rooms.json"
+REPO = Path(__file__).resolve().parent.parent
+OWN_FILES = (Path(__file__).resolve(),
+             Path(__file__).resolve().parent / "camera_signature.py",
+             Path(__file__).resolve().parent / "household_activity.py")
+OWN_GIT_PATHS = ("tools/household_view.py", "tools/camera_signature.py", "tools/household_activity.py")
+WINDOW_STATE = SITE / "spatial" / "work" / "household" / "window.json"
+STARTED = time.time()
+VERSION = "UNKNOWN"
+VERSION_AT = time.time()
+STAMP = None
 DRAW_EVERY = 10
 SHADES = " .:-=+*#%@"
 SPARK = "▁▂▃▄▅▆▇█"
@@ -54,6 +66,63 @@ def load_cameras():
 
 
 CAMERAS = load_cameras()
+
+
+def own_stamp():
+    try:
+        return tuple(p.stat().st_mtime_ns for p in OWN_FILES)
+    except OSError:
+        return None
+
+
+def code_fingerprint(paths=None):
+    h = hashlib.sha256()
+    for p in (paths or OWN_FILES):
+        try:
+            h.update(p.read_bytes())
+        except OSError:
+            h.update(b"<missing>")
+    return h.hexdigest()
+
+
+def code_version():
+    try:
+        r = subprocess.run(["git", "-C", str(REPO), "log", "-1", "--format=%h %ct", "--", *OWN_GIT_PATHS],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode != 0 or not r.stdout.strip():
+            return "UNKNOWN", None
+        sha, ct = r.stdout.split()
+        dirty = subprocess.run(["git", "-C", str(REPO), "diff", "--quiet", "HEAD", "--", *OWN_GIT_PATHS],
+                               capture_output=True, timeout=5)
+        if dirty.returncode != 0:
+            sha = sha + "+dirty"
+        return sha, int(ct)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return "UNKNOWN", None
+
+
+def report_window_state():
+    try:
+        WINDOW_STATE.parent.mkdir(parents=True, exist_ok=True)
+        WINDOW_STATE.write_text(json.dumps({"started": STARTED, "stamp": list(own_stamp() or ()),
+                                           "fingerprint": code_fingerprint(), "version": VERSION[0] if isinstance(VERSION, tuple) else VERSION}))
+    except OSError:
+        pass
+
+
+def maybe_reexec(stamp):
+    cur = own_stamp()
+    if cur is not None and stamp is not None and cur != stamp:
+        try:
+            os.execv(sys.executable, [sys.executable, str(OWN_FILES[0]), *sys.argv[1:]])
+        except OSError:
+            pass
+    return cur if cur is not None else stamp
+
+STAMP = own_stamp()
+VERSION = code_version()
+VERSION_AT = time.time()
+report_window_state()
 
 
 def refresh(room, cam):
@@ -316,11 +385,19 @@ def draw():
 
 
 def main():
+    global STAMP, VERSION, VERSION_AT
+    if "--once" in sys.argv:
+        print(draw())
+        return
+    report_window_state()
     while True:
+        STAMP = maybe_reexec(STAMP)
+        if time.time() - VERSION_AT > 60:
+            VERSION, VERSION_AT = code_version(), time.time()
         for room, cam in CAMERAS.items():
             try:
                 refresh(room, cam)
-            except Exception as exc:  # a failing read must show as UNKNOWN, not stop the view
+            except Exception as exc:
                 cam["reading"] = {"status": "unavailable", "reason": f"{type(exc).__name__}: {exc}"[:120]}
         draw()
         time.sleep(DRAW_EVERY)
