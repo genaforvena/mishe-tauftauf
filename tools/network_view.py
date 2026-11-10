@@ -54,6 +54,7 @@ def code_version():
 
 
 VERSION = code_version()
+VERSION_AT = time.time()
 STAMP = own_stamp()
 
 
@@ -250,6 +251,8 @@ if __name__ == "__main__":
         report_window_state()
         while True:
             STAMP = maybe_reexec(STAMP)
+            if time.time() - VERSION_AT > 60:  # commits and edits show in the header within a minute
+                VERSION, VERSION_AT = code_version(), time.time()
             sys.stdout.write("\x1b[H\x1b[2J" + draw() + "\n")
             sys.stdout.flush()
             time.sleep(10)
