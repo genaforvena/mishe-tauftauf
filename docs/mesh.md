@@ -96,6 +96,8 @@ in the session named in the site's `presentation.json`. The prefix is `Ctrl-a`, 
 `Ctrl-a [` scrolls. Attach through the `mishe` window of the outer `plants` session, or
 point `tmux -S` at the socket directly.
 
+This plant runs ten role windows — one for each of the eight durable areas plus `rust-plan` and `operator` — alongside the three shared windows below, for thirteen windows in total. A resting role still has its window; it simply shows no running wake.
+
 - **Role windows.** Each active or resting role has a window named after the role, with
   two panes stacked vertically. The top pane is the dashboard described above: it redraws
   when its text changes, checks every five seconds, and clears its scrollback on each
