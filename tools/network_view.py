@@ -33,6 +33,11 @@ def rows(limit=1440):
         return []
 
 
+def nb_speed_rows():
+    import network_speed
+    return network_speed.read_rows(SITE / "network" / network_speed.LOG_NAME)
+
+
 def age(row):
     return nb.row_age_seconds(row)
 
@@ -133,6 +138,22 @@ def web_line(label, name, data):
     return f"  {label:<22}{now:>10}  {spark(vals)}  failed in last {min(len(vals), 40)}: {failed}"
 
 
+def speed_line(speed_rows, now=None):
+    """SPEED in plain words: the last good download with its age, or UNKNOWN (never a calm old number)."""
+    now = time.time() if now is None else now
+    if not speed_rows:
+        return "UNKNOWN (no speed reading yet; one 5 MB download a night, 02-05 local)"
+    last = speed_rows[-1]
+    if not last.get("ok"):
+        return f"UNKNOWN (last try {int((now - last['ts']) // 60)} min ago failed: {last.get('error', '?')[:60]})"
+    good = [r for r in speed_rows if r.get("ok")]
+    best = good[-1]
+    hours = (now - best["ts"]) / 3600
+    if hours > 36:
+        return f"UNKNOWN (last reading is {hours:.0f} h old)"
+    return f"DOWN {best['down_mbps']:g} Mbps, measured {hours:.1f} h ago (5 MB download, night only, no upload yet)"
+
+
 def draw():
     data = rows()
     last = data[-1] if data else None
@@ -150,7 +171,7 @@ def draw():
     dns = [r.get("dns_ms") for r in data]
     out.append(f"  DNS lookup            {('%.0f ms' % dns[-1]) if dns and dns[-1] is not None else 'UNKNOWN':>10}  {spark(dns)}")
     out.append("")
-    out.append("  SPEED         UNKNOWN (no bounded speed test has been built yet)")
+    out.append("  SPEED         " + speed_line(nb_speed_rows()))
     wf, _weak = wifi_facts()
     out.append("  WI-FI         " + (wf or "UNKNOWN (router Wi-Fi listing could not be read)") + "   (read-only, clients counted, no devices named)")
     rf = router_facts()

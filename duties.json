@@ -488,6 +488,18 @@
       "replaces": []
     },
     {
+      "name": "network-speed",
+      "command": ["{python}", "{repo}/tools/network_speed.py", "--home", "{home}"],
+      "every": 60,
+      "timeout": 60,
+      "max_age": 150,
+      "red_codes": [2],
+      "unknown_codes": [3],
+      "resolver": "network",
+      "covers": "the bounded download speed reading (rows in network/speed.jsonl): one 5 MB download, only 02-05 local and at most every 12 h; UNKNOWN when the last attempt failed, RED when the duty itself cannot run",
+      "replaces": []
+    },
+    {
       "name": "network-window",
       "command": [
         "{python}",
