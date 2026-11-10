@@ -81,3 +81,37 @@ def test_once_writes_the_view_without_a_none_line(tmp_path, monkeypatch, capsys)
     out = capsys.readouterr().out
     assert "MISHE SENSES" in out
     assert "None" not in out.splitlines()
+
+def test_phones_render_note3_sampler_and_redmi10_history(tmp_path, monkeypatch):
+    import json
+    now = 1794342600.0
+    household = tmp_path / "spatial" / "work" / "household"
+    household.mkdir(parents=True)
+    monkeypatch.setattr(hv, "SITE", tmp_path)
+    samples = household / "note3_samples_run1.jsonl"
+    fresh = {"battery": {"level_pct": 100, "usb_powered": True, "ac_powered": False}, "wall_ts": now - 44}
+    stale = {"battery": {"level_pct": 42, "usb_powered": False, "ac_powered": False}, "wall_ts": now - 900}
+    samples.write_text(json.dumps(stale) + "\n" + json.dumps(fresh) + "\n")
+
+    def fake_time():
+        return now
+    hv.time.time = fake_time
+
+    latest = tmp_path / "latest.json"
+    latest.write_text(json.dumps({"observations": [{"id": "sense.body.redmi10.stream",
+        "history": {"battery": {"level": 1.0, "charging": False, "epoch": now - 23000}}}]}) + "\n")
+    monkeypatch.setattr(hv, "LATEST", latest)
+    bat, age = hv.note3_battery()
+    assert bat["level_pct"] == 100 and 40 <= age <= 50
+    hist = hv.redmi10_history()
+    assert hist is not None and hist[0]["level"] == 1.0 and now - hist[1] == 23000
+
+    # stale sampler row reads UNKNOWN, fresh reads battery
+    old = {"battery": fresh["battery"], "wall_ts": now - 400}
+    samples.write_text(json.dumps(old) + "\n")
+    bat, age = hv.note3_battery()
+    assert age > 300
+
+    # no stream history row -> None
+    latest.write_text(json.dumps({"observations": []}) + "\n")
+    assert hv.redmi10_history() is None

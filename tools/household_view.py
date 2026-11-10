@@ -166,6 +166,41 @@ def phones():
     return out
 
 
+def note3_battery():
+    """Newest battery block from the note3 sampler, with row age; None without a row."""
+    newest = None
+    for f in sorted(SITE.glob(NOTE3_GLOB)):
+        if 'supervised' in f.name:
+            continue
+        rows = read_rows(f, 2)
+        if rows:
+            newest = rows[-1]
+    if newest is None:
+        return None
+    t = newest.get("wall_ts")
+    age = time.time() - t if isinstance(t, (int, float)) else None
+    bat = newest.get("battery")
+    if not isinstance(bat, dict) or not isinstance(bat.get("level_pct"), (int, float)):
+        return None
+    return bat, (age if age is not None else 10 ** 9)
+
+
+def redmi10_history():
+    """Last known redmi10 battery from the discovery stream history; None without one."""
+    try:
+        data = json.loads(LATEST.read_text())
+    except (OSError, ValueError):
+        return None
+    for row in data.get("observations", []):
+        if str(row.get("id", "")) != "sense.body.redmi10.stream":
+            continue
+        hist = row.get("history") or {}
+        bat = hist.get("battery")
+        if isinstance(bat, dict) and isinstance(bat.get("epoch"), (int, float)):
+            return bat, bat["epoch"]
+    return None
+
+
 def read_rows(path, limit=400):
     try:
         lines = path.read_text().splitlines()[-limit:]
@@ -345,18 +380,26 @@ def draw():
     out.append("")
     ph = phones()
     out.append("PHONES")
-    for name in ("redmi10", "note3"):
-        item = ph.get(name)
-        if not item or not isinstance(item[0], dict):
-            out.append(f"  {name:8s} UNKNOWN (no stream row)")
-            continue
-        row, age = item
-        v = row.get("values", {})
-        lux = v.get("lux", {}).get("value")
-        bat = v.get("battery", {})
-        out.append(f"  {name:8s} {row.get('state', '?'):9s} row_age~{int((row.get('row_age_s') or 0) + age)}s  "
-                   f"light={lux}lux  battery={bat.get('level')} charging={bat.get('charging')}  "
-                   f"(from discover scan {int(age)}s old)")
+    note3 = note3_battery()
+    if note3 is None:
+        out.append("  note3    UNKNOWN (no sampler row)")
+    else:
+        bat, age = note3
+        if age > 300:
+            out.append(f"  note3    UNKNOWN (sampler row {age:.0f}s old)")
+        else:
+            out.append(f"  note3    battery={bat.get('level_pct')}%  "
+                       f"charging={'yes' if (bat.get('usb_powered') or bat.get('ac_powered')) else 'no'}  "
+                       f"(sampler row {age:.0f}s old)")
+    redmi = redmi10_history()
+    if redmi is None:
+        out.append("  redmi10  UNKNOWN (no stream history)")
+    else:
+        bat, epoch = redmi
+        age = time.time() - epoch
+        out.append(f"  redmi10  last known battery={bat.get('level'):.0f}%  charging="
+                   f"{'yes' if bat.get('charging') else 'no'}  ({age/3600:.1f}h ago, device offline; "
+                   f"history only, not current)")
     out.append("  position of phones: only as the household states it")
     out.append("")
     out.append("")
