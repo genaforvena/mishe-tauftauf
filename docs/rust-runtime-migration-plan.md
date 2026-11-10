@@ -499,7 +499,7 @@ is the template), with a differential test that runs without the Python runtime.
 
 **S0. Python hoist in `_verify_records`.** No predecessor is retired; this is an optimization that lowers the baseline B must beat. Acceptance: `wall show --owner genome` user time at or below 10 s, with identical output. Rollback: revert the commit. Build budget: none. It is sequenced after A because both touch `feed.py`.
 
-**B. Tape verify and verified store.** Retires `records.VerifiedStore`, `lookup`, `store`, `cached_payload`, `verified_store` and `feed._verify_records`. Consumers: all `entries` and `role_entries` callers, through A's wrapper. Acceptance: byte-identical output on the full tape; a kill during a write leaves the store consistent; the threshold in 3.3 (cold `wall show` at or below 1.5 s user and 70 MB peak RSS). Rollback: pin revert. The store format is unchanged, so Python reads it again. Build budget, now measured instead of estimated (section 10.13): six crates fetched (~5.4 MB), a 24-package lock, a single-core bundled-sqlite C build of 39.5 s wall and 378 MB peak RSS — all inside the headroom rule. The build is not reproducible offline from a bare checkout, so the release ships a prebuilt artifact recorded by sha256 (plan 4.3's "no build on the live host" is unchanged) or vendors the crate set.
+**B. Tape verify and verified store.** Retires `records.VerifiedStore`, `lookup`, `store`, `cached_payload`, `verified_store` and `feed._verify_records`. Consumers: all `entries` and `role_entries` callers, through A's wrapper. Acceptance: byte-identical output on the full tape; a kill during a write leaves the store consistent; the threshold in 3.3 (cold `wall show` at or below 1.5 s user and 70 MB peak RSS); and, measured 2026-11-10 (section 10.14), at least 2 CPU-s of the 2.53 CPU-s store lookup removed with identical output. The store contract is `rust/mishe-records/CONTRACT.md`. Rollback: pin revert. The store format is unchanged, so Python reads it again. Build budget, now measured instead of estimated (section 10.13): six crates fetched (~5.4 MB), a 24-package lock, a single-core bundled-sqlite C build of 39.5 s wall and 378 MB peak RSS — all inside the headroom rule. The build is not reproducible offline from a bare checkout, so the release ships a prebuilt artifact recorded by sha256 (plan 4.3's "no build on the live host" is unchanged) or vendors the crate set.
 
 **C. Role projection.** Retires `feed._role_fold` and `_ROLE_ENTRIES_CACHE`. Acceptance: output identical to `_force_full`; at least 10× faster cold. Rollback: delete the derived file. Depends on B.
 
@@ -1287,3 +1287,50 @@ belong to.
 
 Evidence: site-local `$SITE/artifacts/rust-plan-20261107/build-probe/`
 (`rusqlite-031-bundled.log`, `main.rs`, `interop.txt`), not committed.
+
+### 10.14 Slice B's target, measured part by part (2026-11-10)
+
+Section 9.3 asked what B must beat before the crate is written. The wall's
+batching A/B is re-run and split, so the target is a measured number rather
+than the earlier one-figure estimate.
+
+Method: fresh process per run, `systemd-run --user --scope -p MemoryMax=2G
+-p CPUQuota=100%` at `nice 19`, against the live 544 MB
+`records.verified.sqlite3` (171,976 rows, every row younger than the 6 h
+`VERIFIED_MAX_AGE`, all hits), one identity `lstat` per digest through the
+records-directory fd, `verify_only=True`. Median of three. Probe and raw output
+are site-local (`artifacts/rust-plan-20261107/s0b-lookup-target.py`,
+`s0b-lookup-target-20261110.txt`), not committed.
+
+| variant | CPU-s / 171,976 digests | scaled to 196,301 references |
+|---|---|---|
+| A live `VerifiedStore.lookup()` | 2.214 | **2.53** |
+| C batched `SELECT … IN (900)` + the same lstats | 1.256 | 1.43 |
+| S one `SELECT` per digest, no lstat | 1.519 | 1.73 |
+| L the identity `lstat` alone | 0.420 | 0.48 |
+
+The parts: the identity `lstat` is 0.48 CPU-s per cold read and cannot be
+avoided by any implementation; the sqlite read is 1.73 CPU-s one digest at a
+time and 0.84 batched (C − L), so **batching the SELECT alone is worth 0.68**
+and the rest of the Python `lookup()` wrapper (lock, call, `S_ISREG`, row
+tuple) is 0.28. A against C is 0.96, the whole per-digest sqlite round-trip
+that B exists to retire.
+
+**So B's prize is 2.53 CPU-s of the 4.43 CPU-s cold-read verification
+(10.9/10.11), plus the entry scanning, `splitlines`/regex, dict and flush
+bookkeeping that go with it; a Rust port can plausibly leave about 0.5.** The
+remaining ~1.9 CPU-s of that 4.43 is `cached_payload`'s own body, the
+`envelope()` miss path (sha256 and JSON of newly referenced records) and the
+pass loop, which B also inherits.
+
+**The contract now exists**: `rust/mishe-records/CONTRACT.md` fixes the
+invocation (`mishe-records verify --home SITE [--payloads] [--records-fd N]`,
+framed entries on stdin, the `mishe-tape frames` form), the per-entry decision
+lines (`V` hit, `N` newly verified, `F` fall back to the Python
+`records.payload` path), the exit and fault-text contract, the shared
+`verified` table, the identity and freshness rule, the batch bound and the
+directory-swap check, and the release rule (prebuilt sha256-recorded artifact,
+since the crate is not offline-buildable, 10.13). Scope was checked in the
+source: `cached_payload` and `verified_store` have no consumer in `src/`
+outside `feed.py:518,528`, so the seam is one call site.
+
