@@ -1082,5 +1082,19 @@ the pass *structure* is what remains.
    is one sqlite `execute` and one `lstat` per record, and B would have to beat
    *that*, not the 196,303 `execute` calls spread across 299,304 passes.
 
+**The live consumer's own numbers moved with the pin.** `mishe-producer-readings`
+is the authoritative consumer of this read path, and it runs every ten minutes.
+Across the pin move at 15:16:25Z its own journal numbers changed:
+
+| window | runs | CPU per run | peak memory |
+|---|---|---|---|
+| before the pin (`d3c0c57c`) | 20.42 / 20.46 / 21.63 / 20.97 / 21.92 / 22.07 / 22.24 | 20.4–22.2 s | 903–910 MB |
+| after the pin (`b06ae51b`) | 19.87 / 19.83 / 20.05 / 20.91 / 19.58 | 19.6–20.9 s | 852–854 MB |
+
+The producer's peak memory fell by about 55 MB, which is the RSS prize the
+same-tape A/B measured (611.9–612.2 MB → 556.7–556.9 MB) seen in the unit
+that does the reading. `mishe-doctor` ran under the same pin
+(15:58:16Z, 5.49 s CPU).
+
 Probes: `artifacts/rust-plan-20261107/s2d-20261110/s0_same_tape_ab.py`,
 `s0_cold_ab.py`, `s0b_profile.py`; profile output `s0b-profile.txt`.
