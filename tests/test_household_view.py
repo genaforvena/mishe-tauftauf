@@ -95,7 +95,9 @@ def test_phones_render_note3_sampler_and_redmi10_history(tmp_path, monkeypatch):
 
     def fake_time():
         return now
-    hv.time.time = fake_time
+    # Monkeypatched, not assigned: `hv.time` is the global time module, so a raw
+    # assignment leaks the frozen clock to every later test in the session.
+    monkeypatch.setattr(hv.time, "time", fake_time)
 
     latest = tmp_path / "latest.json"
     latest.write_text(json.dumps({"observations": [{"id": "sense.body.redmi10.stream",
