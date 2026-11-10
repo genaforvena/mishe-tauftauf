@@ -463,7 +463,7 @@ Measured numbers are the ones in sections 2 and 8. Nothing here is a new speedup
 | **Senses baseline** (measurement, not migration) | Not started. Needs its own declared duty, not an edit to `rust-plan-progress` (wall, section "Senses baseline"). | Source artifacts already exist under `artifacts/rust-plan-20261107/`. | Declare the duty with its own `max_age`. It reads UNKNOWN when evidence is missing or stale. |
 | Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4); fresh systemd table at pin `7ce12523`: `readings` 890 CPU-s / 6 h (36 runs, ~24.5 CPU-s each), 870 MB peak. `doctor` has 25 exit-1 runs, cause UNKNOWN. | The `readings` cost is now profiled on the live plant and S2 is decided: see section 10. The slice is a Python slice (unused whole-tape reads, one snapshot per scan, cadence), not a Rust slice. |
 | **S2.1. Delete the tape reads that feed nothing** | Implemented (2026-11-10). `_mind_role_coverage` took an `entries` argument it never read; three readings read the whole tape to fill it and discarded the result. | AST-verified: `discovery.py:980` reads `home`, `role`, `now` and not `entries`. Fresh-process A/B of one live scan: 31.56 CPU-s before, 31.58 after, 74 observations both times. **A deletion, not a speedup** — an earlier 37% figure came from running both variants in one process and was wrong. | Committed with 4 regression tests that fail if a tape read returns to these readings. S2.2 (one physical tape read per scan) and S2.3 (cadence) remain. |
-| **S2.2. One physical tape read per scan** | Not started. The target named earlier (`_settle_outcome_join`) is dead code: no production caller in the current tree. | Measured 2026-11-10 10:05Z–10:24Z on the live plant at pin `323a87fe`, counting framer spawns rather than wrapper calls: **three** physical whole-tape reads per scan, 643,103,475 bytes, 16.98 CPU-s, 858.6 MB peak, 74 observations. Call sites: `_mind_artifact_recurrence` (the cold verified read), `_ledger_evidence_binding` (the census read), `_coord_dm_disposition_age` (the disposition read). See section 10.2a. | For each of the three reads, decide whether the reading's window and verification needs are met by a snapshot another reading already holds, then prove the answer with the physical-read count. |
+| **S2.2. One physical tape read per scan** | **Target decided** (2026-11-10): all three reads can be served from one snapshot. This is a snapshot change, not a window change: `sample()` takes the cold verified read once and passes it to the three readers. | Measured 2026-11-10 10:05Z–10:24Z on the live plant at pin `323a87fe`, counting framer spawns rather than wrapper calls: **three** physical whole-tape reads per scan, 643,103,475 bytes, 16.98 CPU-s, 858.6 MB peak, 74 observations. Call sites: `_mind_artifact_recurrence` (the cold verified read), `_ledger_evidence_binding` (the census read), `_coord_dm_disposition_age` (the disposition read). See section 10.2a. | Implement the shared snapshot, with each reader keeping its own read as the fallback so a failed shared read changes no state word. Acceptance: the physical whole-tape read count drops to one and the three readings' outputs are unchanged. Section 10.2b. |
 
 ### 9.1a Independent replaceability (operator vision addendum, DM 298227, 2026-11-08)
 
@@ -611,6 +611,65 @@ one disposition read. S2.2's job is to name which of these can be served from
 one snapshot, and to prove it with the physical-read count rather than the
 wrapper count.
 
+### 10.2b S2.2 decided: one snapshot serves all three reads
+
+The three physical reads of section 10.2a are **not three responsibilities**.
+Two of them are the same entries read twice, and the third is a window of the
+same entries. Measured on the live plant on 2026-11-10 (pin `323a87fe`, tape
+214,398,317 bytes, 299,230 entries), one process, counting framer spawns:
+
+| Reader | Served from the snapshot | Its own read | Reading unchanged? |
+|---|---|---|---|
+| `_mind_artifact_recurrence` | 0 physical reads | 0 (it already reads the whole tape) | **yes** — every field identical |
+| `_coord_dm_disposition_age` | 0 physical reads | 1 | **yes** — every field identical, `dms=40 … stall=35` both ways |
+| `_ledger_evidence_binding` | 0 physical reads | 1 | the verdict is the same; the named-record set is the same |
+
+The snapshot is the cold verified read (`Feed(home).entries()`), 299,230
+entries at 6.36 CPU-s. It already exists; the three readers simply ask for
+it instead of making their own.
+
+**The census's named-record set is identical.** This was the one open risk,
+because the digests are collected from the entry bodies during the pass. A
+separate fresh-process probe compared the two sets entry by entry:
+
+    named_snapshot 171,962   named_live 171,962
+    named_only_in_live 0     named_only_in_snapshot 0
+    sequences only in one 0  sequences with differing content 0
+
+So the census needs no pass of its own: the digests a body names are a
+function of the body, and the snapshot's bodies are the live bodies.
+
+**The three readers' window and verification needs are met.**
+
+| Reader | What it needs | What the snapshot has |
+|---|---|---|
+| recurrence | the whole tape, verified | the whole tape, verified |
+| census | the entries, plus the digests their bodies name | the same entries; the digests are the same set |
+| disposition | a 6-hour window of entries, unverified | the same entries; the window is a subset it already selects |
+
+The disposition reading streams the tape to keep only the window, so it never
+holds the tape; the snapshot is already held by the cold read, so the
+disposition reading's window now costs no extra memory.
+
+**The change is a snapshot change, and each reader keeps its own read as the
+fallback.** The snapshot's read verifies records and raises on a damaged
+record reference; the census's `classify_outcomes` reports such an entry as a
+coverage gap instead of failing. So the shared snapshot must be an
+optimisation with a per-reader fallback, not a replacement: a shared read that
+fails leaves each reader on the read it makes today, and no state word
+changes.
+
+**One revision per scan, and the tape grows during a scan.** The snapshot is
+one revision of the tape taken at the scan's start; today each reader sees a
+revision from its own moment, so the readers already disagree when the tape
+grows between them. One revision makes the scan internally consistent. The
+measured delta in this probe was zero entries appended during the scan; the
+per-scan growth is bounded by what the plant writes in a scan's runtime
+(about 26 s), which the next probe must measure rather than assume.
+
+Probes: `artifacts/rust-plan-20261107/s2b-20261110/shared_snapshot.py` and
+`census_named_diff.py`.
+
 ### 10.3 The cold/warm split, measured live (not on a copy)
 
 The 43.5 CPU-s "cold verified read" recorded in the section 9.2 table was
@@ -726,13 +785,13 @@ two parts, in measured cost order:
   `_mind_artifact_recurrence` needs, the census read that
   `_ledger_evidence_binding` takes to collect the record digests its entries
   name, and the disposition read that `_coord_dm_disposition_age` takes.
-  Which of these can share one snapshot is a snapshot change, not a windowing
-  change. **The target of this slice is not yet decided by measurement**:
-  the earlier text named `_settle_outcome_join`, which is dead code in the
-  current tree and reads nothing. The next step is to name, for each of the
-  three reads, whether the reading's own window and verification needs are
-  met by a snapshot another reading already holds — and to prove the answer
-  with the physical-read count, not the wrapper count.
+  **The target is decided by measurement** (section 10.2b): all three can be
+  served from one snapshot, which is the cold verified read the scan already
+  makes. The census's named-record set is identical from the snapshot
+  (171,962 digests, no difference in either direction) and the disposition
+  reading's output is field-for-field identical, so this is a snapshot change,
+  not a windowing change. Each reader keeps its own read as the fallback, so
+  a shared read that fails changes no state word.
 - **S2.3 — schedule.** The duty reads 941 MB every 10 minutes to produce a
   reading whose inputs change slowly. The cadence is a scheduler change, so it
   takes the strong path: fresh review, deterministic activation, revert and
@@ -756,6 +815,8 @@ baseline B must beat rather than compete with it.
 - The disposition read is shown to need entries the census read cannot
   supply, or the other way round: then the two reads stay separate and S2.2's
   target is the cold read instead.
+- A shared snapshot is shown to change a reading's state word when the shared
+  read fails: then the fallback is wrong and the readers must not share.
 - The dead `_settle_outcome_join` is shown to be reachable by a caller this
   tree does not have: then it is live work, not dead code, and it must be
   measured again before any slice is taken against it.
