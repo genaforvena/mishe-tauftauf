@@ -100,6 +100,9 @@ INVENTORY = (
     # The containment guard probes /var/tmp, which moved to a second drive on 2026-10-31
     # after root-drive fsync stalls tripped the plant 11 times; this keeps the root visible.
     ("root-fs-stall.py", False, False, (), None),
+    # runtime/current must equal the release of the last verified delivery; only the
+    # delivery path writes it.  RED carries the restore command (incident 2026-11-10).
+    ("pin-integrity.py", False, True, (), None),
     # The wakes window renders each model's newest retained output through the live view code.
     # A renderer failure is DMed to genome (resolver) once per distinct failure by the check itself.
     ("wakes-view-engines.py", False, True, ("--route",), None),
