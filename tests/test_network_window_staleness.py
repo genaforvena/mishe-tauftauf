@@ -27,9 +27,10 @@ care = load(REPO / "checks" / "network-care.py", "network_care_under_test")
 view = load(REPO / "tools" / "network_view.py", "network_view_under_test")
 
 
-def write_state(home, started):
+def write_state(home, fingerprint):
     (home / "network").mkdir(parents=True, exist_ok=True)
-    (home / "network" / "window.json").write_text(json.dumps({"pid": 1, "started": started, "code": "x"}))
+    (home / "network" / "window.json").write_text(json.dumps({"pid": 1, "started": time.time(), "code": "x",
+                                                              "fingerprint": fingerprint}))
 
 
 def test_missing_state_is_stale(tmp_path, capsys):
@@ -37,15 +38,25 @@ def test_missing_state_is_stale(tmp_path, capsys):
     assert "window.json missing" in capsys.readouterr().err
 
 
-def test_copy_started_before_last_commit_is_stale(tmp_path, capsys):
-    write_state(tmp_path, 1000.0)  # 1970: older than any commit
+def test_copy_with_other_code_is_stale(tmp_path, capsys):
+    write_state(tmp_path, "0" * 64)
     assert care.window_copy_stale(tmp_path, REPO) == 2
-    assert "older than its last commit" in capsys.readouterr().err
+    assert "differs from the files on disk" in capsys.readouterr().err
 
 
-def test_copy_started_after_last_commit_is_current(tmp_path):
-    write_state(tmp_path, time.time())
+def test_copy_with_the_code_on_disk_is_current(tmp_path):
+    write_state(tmp_path, view.code_fingerprint(care_paths()))
     assert care.window_copy_stale(tmp_path, REPO) == 0
+
+
+def test_committing_unchanged_code_is_not_stale(tmp_path):
+    # the fingerprint is of content, not of commit time: a commit that changes nothing leaves the copy current
+    write_state(tmp_path, view.code_fingerprint(care_paths()))
+    assert care.window_copy_stale(tmp_path, REPO) == 0
+
+
+def care_paths():
+    return [REPO / "tools" / "network_view.py", REPO / "tools" / "network_boundary.py"]
 
 
 def test_window_state_is_written_by_the_view(tmp_path, monkeypatch):
@@ -53,6 +64,7 @@ def test_window_state_is_written_by_the_view(tmp_path, monkeypatch):
     view.report_window_state()
     state = json.loads((tmp_path / "network" / "window.json").read_text())
     assert state["pid"] > 0 and state["started"] <= time.time()
+    assert state["fingerprint"] == view.code_fingerprint()
 
 
 def test_unchanged_own_files_do_not_reexec(monkeypatch):

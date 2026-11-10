@@ -5,6 +5,7 @@ Reads the rows the `network-probe` duty appends to SITE/network/probe.jsonl and,
 a few facts from the router over ssh (never writes there).  Anything not measured, or too old,
 is shown as UNKNOWN.  The network mind improves this file.
 """
+import hashlib
 import json
 import os
 import subprocess
@@ -40,6 +41,14 @@ def own_stamp():
         return None
 
 
+def code_fingerprint(paths=None):
+    """Digest of this view's own code as it is on disk; a running copy whose digest differs is stale."""
+    digest = hashlib.sha256()
+    for p in (paths or OWN_FILES):
+        digest.update(Path(p).read_bytes())
+    return digest.hexdigest()
+
+
 def code_version():
     """(short sha, commit time) of the last commit touching this view's own files; UNKNOWN when git cannot say."""
     try:
@@ -63,7 +72,8 @@ def report_window_state():
     try:
         WINDOW_STATE.parent.mkdir(parents=True, exist_ok=True)
         tmp = WINDOW_STATE.with_name("window.json.tmp")
-        tmp.write_text(json.dumps({"pid": os.getpid(), "started": STARTED, "code": VERSION[0]}))
+        tmp.write_text(json.dumps({"pid": os.getpid(), "started": STARTED, "code": VERSION[0],
+                                   "fingerprint": code_fingerprint()}))
         tmp.replace(WINDOW_STATE)
     except OSError:
         pass

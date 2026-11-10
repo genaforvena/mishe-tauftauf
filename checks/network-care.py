@@ -8,6 +8,7 @@ Exit: 0 GREEN, 2 RED (the window is missing/wrong, or the mind has gone quiet), 
 (tmux or git cannot be read).  Nothing here holds a signal GREEN by hand.
 """
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -25,26 +26,26 @@ WINDOW_FILES = ("tools/network_view.py", "tools/network_boundary.py")
 
 
 def window_copy_stale(home, repo):
-    """0 when the view's running copy started after the last commit touching its files, 2 when it is older
-    or has not reported its code (a pre-fix copy never does), 3 when the history cannot be read."""
+    """0 when the view's running copy is the code on disk now, 2 when it differs (a copy from before the
+    last change, which the view itself should have reloaded) or it never reported its copy, 3 when the
+    files cannot be read.  Compared by content, so a commit of unchanged code is not a false RED."""
     try:
         state = json.loads((home / "network" / "window.json").read_text())
-        started = float(state["started"])
+        running = str(state["fingerprint"])
     except (OSError, ValueError, KeyError, TypeError):
-        print("network-care: the view has not reported its running copy (window.json missing)", file=sys.stderr)
+        print("network-care: the view has not reported its running copy (window.json missing or pre-fingerprint)",
+              file=sys.stderr)
         return 2
     try:
-        r = subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%ct", "--", *WINDOW_FILES],
-                           capture_output=True, text=True, timeout=30)
-        stamp = r.stdout.strip()
-        if r.returncode != 0 or not stamp.isdigit():
-            raise ValueError(r.stderr)
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        print(f"network-care: git history unreadable: {exc}", file=sys.stderr)
+        disk = hashlib.sha256()
+        for rel in WINDOW_FILES:
+            disk.update((repo / rel).read_bytes())
+    except OSError as exc:
+        print(f"network-care: view files unreadable: {exc}", file=sys.stderr)
         return 3
-    if started < int(stamp):
-        print(f"network-care: the window's copy of the view is older than its last commit "
-              f"({time.time() - started:.0f}s running, committed {(time.time() - int(stamp)) / 60:.0f} min ago)",
+    if running != disk.hexdigest():
+        print("network-care: the window runs a copy of the view that differs from the files on disk "
+              f"(running since {time.strftime('%H:%M:%SZ', time.gmtime(float(state.get('started', 0))))})",
               file=sys.stderr)
         return 2
     return 0
@@ -68,7 +69,7 @@ def window(session, home, repo):
         return 2
     stale = window_copy_stale(home, repo)
     if stale == 2:
-        print("network-care: respawn it with: " + RESPAWN.format(session=session, repo=repo), file=sys.stderr)
+        print("network-care: respawn it with: " + RESPAWN.format(session=session, repo=repo.resolve()), file=sys.stderr)
         return 2
     if stale == 3:
         return 3
