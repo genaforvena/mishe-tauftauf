@@ -323,6 +323,27 @@ def test_stream_tool_arguments_read_as_words_not_json(tmp_path):
     assert '[tool read] path: /a/b.md; limit: 5' in text and '{' not in text
 
 
+def test_repeated_identical_tool_errors_print_once_with_a_count(tmp_path):
+    from mishe_tauftauf.plant_view_boundary import stream_text
+    err = 'Validation failed for tool "bash":\n  - command: command must be a string (was missing)'
+    events = []
+    for i in range(3):
+        events.append({'type': 'tool_execution_start', 'toolName': 'bash', 'args': {}})
+        events.append({'type': 'tool_execution_end', 'toolName': 'bash', 'isError': True,
+                       'result': {'content': [{'type': 'text', 'text': err}]}})
+    events.append({'type': 'tool_execution_start', 'toolName': 'bash', 'args': {'command': 'ls'}})
+    events.append({'type': 'tool_execution_end', 'toolName': 'bash',
+                   'result': {'content': [{'type': 'text', 'text': 'ok'}]}})
+    text = stream_text('\n'.join(json.dumps(e) for e in events))
+    assert text.count('[tool error] Validation failed') == 1
+    assert '(repeated 3 times)' in text
+    assert text.count('[tool output] ok') == 1
+    # A different result between two identical ones starts a new count; the raw file keeps every record.
+    mixed = [events[1], {'type': 'tool_execution_end', 'toolName': 'bash', 'result': {'content': [{'type': 'text', 'text': 'x'}]}}, events[1]]
+    again = stream_text('\n'.join(json.dumps(e) for e in mixed))
+    assert again.count('[tool error] Validation failed') == 2 and '(repeated' not in again
+
+
 def test_unchanged_panes_print_identical_text_between_refreshes(tmp_path):
     # An identical text is not redrawn; a text that changed every 5 s once filled tmux scrollback until OOM.
     settled_wake(tmp_path)
