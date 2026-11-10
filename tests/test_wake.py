@@ -1,4 +1,5 @@
 """One-shot wakes with a fake engine: owed gating, crash safety, one at a time."""
+import json
 import os
 from pathlib import Path
 
@@ -295,3 +296,40 @@ def test_rotation_still_prioritizes_unknown_effects(home):
         owed.touch_inbox(home, role)
     DispatchStore(home / "dispatch").write(DispatchRecord(role="docs", key="old", state=UNKNOWN))
     assert wake.next_role(home, ["docs", "genome", "health", "steward"], now=NOW, exclude="health") == "docs"
+
+
+def test_a_wake_restores_its_memory_floor_and_records_the_reading(home, monkeypatch):
+    """The wake raises its own throttle when a protected host drop-in shadowed it.
+
+    The engine stalls at the host's 1 GiB throttle and the wake runs out its
+    budget instead of working (2026-11-10: five MiniMax wakes timed out at
+    1800 s), so the floor is restored before the engine starts.
+    """
+    from mishe_tauftauf import wake_memory
+    asked = []
+
+    class FakeMemory:
+        def own_unit_name(self, role, prefix="mishe"):
+            return f"mishe-wake@{role}.service"
+
+        def ensure_wake_memory_high(self, unit, *, floor=None):
+            asked.append(unit)
+            return {"unit": unit, "before": 1073741824, "after": 1610612736, "applied": True}
+
+        def memory_high_path(self, unit):
+            return None
+
+    monkeypatch.setattr(wake_memory, "own_unit_name", FakeMemory().own_unit_name)
+    monkeypatch.setattr(wake_memory, "ensure_wake_memory_high", FakeMemory().ensure_wake_memory_high)
+    monkeypatch.setattr(wake_memory, "memory_high_path", FakeMemory().memory_high_path)
+
+    owed.touch_inbox(home, "genome")
+    engine = FakeEngine(do_yield)
+    result = go(home, "genome", engine)
+    assert result.outcome == "completed"
+    assert asked == ["mishe-wake@genome.service"]
+    records = list((home / "wakes").glob("*.memory.json"))
+    assert len(records) == 1
+    record = json.loads(records[0].read_text())
+    assert record["applied"] is True and record["before"] == 1073741824
+

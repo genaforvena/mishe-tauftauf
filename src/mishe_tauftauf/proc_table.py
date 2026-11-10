@@ -592,6 +592,28 @@ def read_cgroup_path(pid: str) -> str | None:
     return None
 
 
+def cgroup_unit_name(pid: str) -> str | None:
+    """The systemd unit name of ``pid``'s cgroup, or None when it names no unit.
+
+    The last path element of a unit's cgroup is the unit's own name
+    (``.../mishe-wake@health.service``), so a scratch namespace with another
+    prefix is still named right.
+    """
+    path = read_cgroup_path(pid)
+    if not path:
+        return None
+    name = path.rsplit("/", 1)[-1]
+    return name if name.endswith(".service") else None
+
+
+def cgroup_dir(pid: str) -> Path | None:
+    """The cgroup v2 directory of ``pid``, or None when it cannot be located."""
+    path = read_cgroup_path(pid)
+    if not path:
+        return None
+    return CGROUP_ROOT / path.lstrip("/")
+
+
 def pane_field(raw: bytes | str) -> str:
     """Decode one tmux format-field value; empty is valid for absent fields."""
     if isinstance(raw, bytes):

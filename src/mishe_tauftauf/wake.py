@@ -101,11 +101,39 @@ def resume_owed(home, roles, *, now: float) -> list[str]:
     return started
 
 
+def _restore_memory_floor(home, role, key) -> dict:
+    """Restore this wake's own memory floor and record what the unit ran under.
+
+    A protected host drop-in shadows the generated unit's ``MemoryHigh`` with a
+    lower value, and at that throttle the engine stalls until it runs out its
+    budget (2026-11-10: five MiniMax wakes timed out at 1800 s; the steward
+    unit's cgroup read ``memory.events high 588``). The floor is applied to the
+    running unit from inside the wake, so the protected drop-in is not edited.
+
+    The reading is written next to the wake's other evidence so a later failure
+    can be told apart from a plain slow engine.
+    """
+    from . import wake_memory
+    unit = wake_memory.own_unit_name(role)
+    record = wake_memory.ensure_wake_memory_high(unit)
+    path = wake_memory.memory_high_path(unit)
+    throttle = None
+    if path is not None:
+        try:
+            throttle = (path / "memory.high").read_text(encoding="utf-8")
+        except OSError:
+            throttle = None
+    record["memory_high"] = throttle
+    write_json(Path(home) / "wakes" / f"{key}.memory.json", record)
+    return record
+
+
 def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, timeout, on_start=None):
     """Write the wake's files, run the engine, report whether it yielded."""
     snap.tape_seq = max([owed.tape_cursor(home, role)] + [seq for seq, _ in mail])
     yielding.wakes_dir(home).mkdir(parents=True, exist_ok=True)
     write_json(yielding.snapshot_path(home, key), {"role": role, "snapshot": snap.to_json()})
+    _restore_memory_floor(home, role, key)
     write_json(yielding.wakes_dir(home) / f"{key}.work-start.json",
                work_receipts.begin(repo, role=role, key=key, now=now, home=home))
     prompt = yielding.wakes_dir(home) / f"{key}.prompt.md"

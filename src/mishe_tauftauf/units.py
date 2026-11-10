@@ -18,6 +18,12 @@ from . import signal_store
 MARKER = "# mishe-generated: observation runtime (edit nothing here; run `mishe sync`)"
 WAKE_TIMEOUT = 1800
 SLACK = 300
+# The wake unit's own memory throttle. The generated unit declares it, and a wake that runs in the
+# unit restores it at runtime when a protected host drop-in shadows it with a lower value (see
+# ``ensure_wake_memory_high``): a wake pinned at its throttle makes no progress and runs out its
+# engine budget instead (2026-11-10: five MiniMax wakes timed out at 1800 s at the 1 GiB mark).
+WAKE_MEMORY_HIGH = "1536M"
+WAKE_MEMORY_HIGH_BYTES = 1536 * 1024 * 1024
 
 
 @dataclass
@@ -104,8 +110,9 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         # bounded lock wait. The engine retains its full configured budget.
         f"TimeoutStartSec={3 * WAKE_TIMEOUT + SLACK}\nTimeoutStopSec=20\nKillMode=control-group\n"
         # MemoryHigh throttles a wake before MemoryMax kills it: an engine plus a 760 MB tape scan
-        # otherwise sits at the 1G prefix default and stalls on memory pressure.
-        "MemoryAccounting=yes\nMemoryHigh=1536M\nMemoryMax=2G\nTasksMax=256\nCPUWeight=50\nIOWeight=50\n")
+        # otherwise sits at the 1G prefix default and stalls on memory pressure. A protected host
+        # drop-in can shadow this value; the wake restores its own floor at runtime (wake_memory).
+        f"MemoryAccounting=yes\nMemoryHigh={WAKE_MEMORY_HIGH}\nMemoryMax=2G\nTasksMax=256\nCPUWeight=50\nIOWeight=50\n")
     registry = signal_store.registry(cfg.home)
     for role in sorted(roles):
         slice_name = cfg.lifeline_slice if role in cfg.lifeline_roles else cfg.plants_slice

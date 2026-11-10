@@ -79,6 +79,58 @@ def failure_signal(name):
     return name.startswith("failed-")
 
 
+def unit_properties(unit, *names):
+    """systemd's values for ``names`` on ``unit``: a dict of the properties systemd answered.
+
+    External unit text is decoded at this boundary. A property systemd does not
+    answer for is absent from the dict; a systemctl that cannot say yields an
+    empty dict, so the caller keeps the reading unknown rather than inventing it.
+    """
+    try:
+        result = subprocess.run(["systemctl", "--user", "show", unit, "-p", ",".join(names)],
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if result.returncode:
+        return {}
+    values = {}
+    for line in result.stdout.splitlines():
+        name, separator, value = line.partition("=")
+        if separator and name.strip() in names:
+            values[name.strip()] = value.strip()
+    return values
+
+
+def unit_memory_bytes(unit, name):
+    """A memory property of ``unit`` as a byte count, or None when it is not a finite number.
+
+    systemd prints ``infinity`` for an unset throttle; that is not a byte count,
+    so there is no limit to raise and the caller must not treat it as one.
+    """
+    value = unit_properties(unit, name).get(name)
+    if value is None or not value.isdigit():
+        return None
+    return int(value)
+
+
+def set_unit_memory_high(unit, bytes_value):
+    """Set ``unit``'s runtime memory throttle; True when systemd reports it back at or above it.
+
+    The property is written to the unit's runtime drop-in, so it applies to the
+    running unit without a reload and without touching any installed unit file.
+    """
+    try:
+        result = subprocess.run(["systemctl", "--user", "set-property", "--runtime", unit,
+                                 f"MemoryHigh={bytes_value}"],
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode:
+        return False
+    applied = unit_memory_bytes(unit, "MemoryHigh")
+    return applied is not None and applied >= bytes_value
+
+
 def failure_signature(unit):
     """Only stable systemd failure classes, never timestamps or journal prose."""
     try:
