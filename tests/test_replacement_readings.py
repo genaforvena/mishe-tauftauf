@@ -108,6 +108,7 @@ def test_pinned_runtime_root_unreadable_or_unpinned_is_none(tmp_path):
 
 from mishe_tauftauf.replacement_readings import (  # noqa: E402
     SESSION_SENSE_ID, judge_session_stability, probe_session_stability,
+    resolve_declared_session,
 )
 
 
@@ -239,6 +240,39 @@ def test_probe_server_vanishing_between_probes_is_unknown_not_drift_or_verified(
     assert probe_session_stability("plant", SOCK, runner=gone_then_pids, shield_reader=contained)["state"] == "unknown"
 
 
+def test_resolve_declared_session_env_wins_over_listing():
+    assert resolve_declared_session("plant", ["other"]) == "plant"
+    assert resolve_declared_session(None, None) is None
+
+
+def test_resolve_declared_session_names_unique_plant_session():
+    assert resolve_declared_session(None, ["plant"]) == "plant"
+    assert resolve_declared_session(None, []) is None
+    assert resolve_declared_session(None, ["a", "b"]) is None
+
+
+def test_probe_stability_resolves_declared_from_unique_listing():
+    # The producer env carries no MISHE_SEED_SESSION; the plant's own
+    # site-namespaced socket names the session the reading judges.
+    def runner(socket, args):
+        if args[-1] == "#{session_name}":
+            return _done(0, "plant\n")
+        return _done(0, "123\n")
+    got = probe_session_stability(None, SOCK, runner=runner,
+                                  shield_reader=lambda pid: "contained:mishe-plants.slice")
+    assert got["state"] == "verified" and got["session"] == "plant"
+
+
+def test_probe_stability_multi_session_listing_stays_unknown():
+    def runner(socket, args):
+        if args[-1] == "#{session_name}":
+            return _done(0, "plant\nother\n")
+        return _done(0, "123\n")
+    got = probe_session_stability(None, SOCK, runner=runner,
+                                  shield_reader=lambda pid: "contained:mishe-plants.slice")
+    assert got["state"] == "unknown" and "declared session unreadable" in got["sample"]
+
+
 def test_role_render_all_render_is_verified():
     from mishe_tauftauf.replacement_readings import read_role_render_coverage
     got = read_role_render_coverage(["genome", "senses"], lambda role: f"# {role}\nbody\n")
@@ -286,6 +320,20 @@ def test_session_restarts_no_server_is_unknown_births_not_observable():
 def test_session_restarts_other_tmux_error_is_unknown():
     got = probe_session_restarts(SOCK, NOW, runner=lambda s, a: _done(1, err="Permission denied\n"))
     assert got["state"] == "unknown"
+
+
+def test_probe_restarts_resolves_declared_from_unique_listing():
+    def runner(socket, args):
+        return _done(0, f"plant\t{int(NOW - 60)}\n")
+    got = probe_session_restarts(SOCK, NOW, runner=runner)
+    assert got["state"] == "verified" and got["session"] == "plant"
+
+
+def test_probe_restarts_multi_session_listing_stays_unset():
+    def runner(socket, args):
+        return _done(0, f"a\t{int(NOW - 60)}\nb\t{int(NOW - 90)}\n")
+    got = probe_session_restarts(SOCK, NOW, runner=runner)
+    assert got["session"] == "unset"
 
 
 def test_session_restarts_malformed_or_empty_output_is_unknown():

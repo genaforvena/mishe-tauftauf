@@ -141,6 +141,24 @@ def read_role_render_coverage(roles: list[str] | None, render) -> dict[str, obje
 SESSION_SENSE_ID = "sense.host.session-stability"
 
 
+def resolve_declared_session(declared: str | None, live: list[str] | None) -> str | None:
+    """The session name this reading expects the plant's server to serve.
+
+    The env override wins: a caller that was told which session it serves knows
+    better than an enumeration (the historical ``_plant_session`` rule). With no
+    override, the plant's own inner socket is site-namespaced, so a listing that
+    names exactly one session names this home's session, and the reading can
+    judge it. Zero sessions, two or more, or an unreadable listing names no
+    single expectation, so the judge keeps its ``declared``-missing UNKNOWN
+    rather than guessing one name.
+    """
+    if declared:
+        return declared
+    if live is not None and len(live) == 1:
+        return live[0]
+    return None
+
+
 def judge_session_stability(declared: str | None, live: list[str] | None,
                             placements: dict[str, str | None] | None) -> dict[str, object]:
     """Judge the plant's tmux server from injected observations.
@@ -234,6 +252,9 @@ def probe_session_stability(declared: str | None, socket: str | None, *,
             placements = {str(pid): shield_reader(str(pid)) for pid in pids}
     elif owners is not None and "no server running" in (owners.stderr or ""):
         placements = {}
+    # The socket is site-namespaced, so its unique session is this plant's own;
+    # the declared expectation stays unset only when the listing cannot name one.
+    declared = resolve_declared_session(declared, live)
     return judge_session_stability(declared, live, placements)
 
 
@@ -286,7 +307,13 @@ def probe_session_restarts(socket: str | None, now: float, *, declared: str | No
             return {**judge_session_restarts(None, now, declared=declared),
                     "sample": "no tmux server; births not observable"}
         return judge_session_restarts(None, now, declared=declared)
-    return judge_session_restarts(parse_session_births(listed.stdout or ""), now, declared=declared)
+    # Same declaration rule as session-stability: the plant's own socket names
+    # its own session, so a unique listing answers "expected" without a caller's
+    # env. The judge's own declared-missing path stays for every other shape.
+    births = parse_session_births(listed.stdout or "")
+    declared = resolve_declared_session(declared,
+                                        [name for name, _ in births] if births is not None else None)
+    return judge_session_restarts(births, now, declared=declared)
 
 
 SERVER_SLICE_ID = "sense.host.server-slice"
