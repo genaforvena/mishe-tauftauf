@@ -324,8 +324,10 @@ def main() -> int:
     parser.add_argument("--home", type=Path, required=True, help="site home of the plant")
     parser.add_argument("--repo", type=Path, default=None,
                         help="reviewed repository (default: the checkout holding the home)")
-    parser.add_argument("--unit", default="substrate-watch",
-                        help="unit whose import root is checked (default: substrate-watch)")
+    parser.add_argument("--unit", default=None,
+                        help="unit whose import root is checked; with neither --unit nor "
+                             "--import-root the declared-root check runs (the substrate-watch "
+                             "unit this once defaulted to no longer exists in this plant)")
     parser.add_argument("--import-root", action="append", default=[],
                         help="check this import root instead of reading a unit")
     parser.add_argument("--declared", action="store_true",
@@ -339,7 +341,7 @@ def main() -> int:
         head = head_commit(repo)
         findings = []
         seen = set()
-        if args.declared:
+        if args.declared or (args.unit is None and not args.import_root):
             for unit, root, commit in declared_roots(home):
                 for directory in package_dirs(Path(root)):
                     key = str(directory)
