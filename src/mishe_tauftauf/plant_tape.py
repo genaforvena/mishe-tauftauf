@@ -97,7 +97,7 @@ def wakes_step(home, cursor):
         record = read_json(start)
         role = safe(record.get('role', '?')) if isinstance(record, dict) else '?'
         stamp = time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(now))
-        blocks.append(f'── {stamp} · RUNNING {role} {bucket * PROGRESS_SECONDS // 60}+ min · {ran(key)} · {key} · latest ──\n{tail}\n')
+        blocks.append(f'── {stamp} · RUNNING {role} {bucket * PROGRESS_SECONDS // 60}+ min · {ran(key, True)} · {key} · latest ──\n{tail}\n')
     # Retain seen names across deletion, so history is never silently replayed.
     return known | (names - deferred) | progress, '\n'.join(blocks)
 
