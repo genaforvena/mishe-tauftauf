@@ -75,6 +75,7 @@
     "tools/inference_budget_aggregate.py",
     "tools/recovery-control.py",
     "tools/unit_psi_attribution.py",
+    "tools/wake_cost_rows.py",
     "src/mishe_tauftauf/router_text.py",
     "tools/network_boundary.py"
   ],
