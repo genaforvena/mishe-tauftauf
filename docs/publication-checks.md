@@ -94,7 +94,10 @@ The boundary is read-only sandbox plus disabled execution capability, not a clai
 of an empty catalog. Capability evidence must bind the installed CLI hash and show
 a disposable feed sentinel unchanged after an actual attempted edit, with the
 execution-host denial observed. An unavailable sandbox must refuse; there is no
-bypass or alternate-provider fallback.
+bypass or alternate-provider fallback. The denial may be recorded on stderr (older
+releases) or as that one exact pre-turn initialization notice on stdout (0.166.0);
+a duplicate, late, different or post-turn error still refuses, and stderr carrying
+any other `ERROR` refuses the stdout form.
 
 The installed CLI may emit one known disabled-host initialization notice before
 `turn.started`, even for classification with no tool request; tolerate only that

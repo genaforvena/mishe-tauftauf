@@ -15,6 +15,8 @@ import subprocess
 import tempfile
 import time
 
+from .router_text import decode_events
+
 INITIALIZATION_NOTICE = 'Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`.'
 DISABLED_HOST_STDERR = b'ERROR codex_core::tools::router: error=code-mode host is disabled'
 MAX_INPUT_BYTES = 120_000
@@ -108,6 +110,30 @@ def _invoke(argv, encoded, timeout):
             proc.wait();proc.stdout.close();proc.stderr.close()
 
 
+def _probe_records_denial(probe):
+    """Observed execution-host denial, on either channel the CLI uses.
+
+    0.159.1 logged it to stderr. 0.166.0 emits the identical initialization
+    notice as one pre-turn protocol item on stdout and writes nothing to stderr.
+    Accept either, but only the exact notice, exactly once, before turn.started;
+    any other error or a failed turn still means the probe did not observe a
+    clean read-only boundary.
+    """
+    if 'code-mode host is disabled' in probe.get('stderr',''):return True
+    if 'ERROR' in probe.get('stderr',''):return False
+    events=decode_events(probe.get('stdout',''))
+    if events is None:return False
+    notice_count=0;started=False
+    for event in events:
+        if event.get('type')=='turn.started':started=True
+        if event.get('type') in {'error','turn.failed'}:return False
+        item=event.get('item')
+        if not isinstance(item,dict) or item.get('type')!='error':continue
+        if item.get('message')!=INITIALIZATION_NOTICE or started or notice_count:return False
+        notice_count+=1
+    return notice_count==1
+
+
 def _capability(probe_path, cli):
     if probe_path is None:raise ValueError('tool-free capability is unverified; checked read-only disabled-host probe required')
     probe=json.loads(Path(probe_path).read_text())
@@ -115,7 +141,7 @@ def _capability(probe_path, cli):
     if probe.get('cli_sha256')!=hashlib.sha256(executable.read_bytes()).hexdigest():raise ValueError('CLI changed since sandbox probe')
     if probe.get('returncode')!=0 or probe.get('sentinel_unchanged') is not True:
         raise ValueError('read-only sandbox probe failed')
-    if 'code-mode host is disabled' not in probe.get('stderr',''):
+    if not _probe_records_denial(probe):
         raise ValueError('probe lacks observed execution-host denial')
     original=probe.get('command',[])
     for flag in ['--sandbox','--ephemeral','--ignore-rules']:

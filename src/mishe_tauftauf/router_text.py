@@ -72,3 +72,27 @@ def iso_ms(value) -> float | None:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp() * 1000
     except (TypeError, ValueError):
         return None
+
+
+def decode_events(text: str):
+    """Decode a complete in-memory engine JSON-lines stream, oldest first.
+
+    Unlike ``stream_events`` this is strict: a blank line is ignored, but any
+    other line that is not a JSON object makes the whole stream undecodable
+    (None). Use it where a truncated or interleaved stream must not be read as
+    the events it happens to contain.
+    """
+    if not isinstance(text, str):
+        return None
+    events = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            return None
+        if not isinstance(event, dict):
+            return None
+        events.append(event)
+    return events

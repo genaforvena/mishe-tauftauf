@@ -73,6 +73,43 @@ def test_expected_disabled_host_stderr_requires_one_matching_notice(tmp_path):
             assert codex_review.review(request(),probe_path=probe,cli=str(cli))['results'][0]['verdict']==expected
 
 
+def test_probe_denial_may_be_the_one_preturn_stdout_notice(tmp_path):
+    import json
+    cli,probe=fake_probe(tmp_path)
+    base=json.loads(probe.read_text())
+    notice=json.dumps({'type':'item.completed','item':{'type':'error','message':codex_review.INITIALIZATION_NOTICE}})
+    base['stderr']='Reading prompt from stdin...\n'
+    base['stdout']='\n'.join([notice,json.dumps({'type':'turn.started'}),json.dumps({'type':'turn.completed'})])+'\n'
+    probe.write_text(json.dumps(base))
+    with patch.object(codex_review,'_invoke',return_value=(notice.encode()+b'\n'+clear_output(request()),b'')):
+        assert codex_review.review(request(),probe_path=probe,cli=str(cli))['results'][0]['verdict']=='clear'
+
+
+def test_probe_stdout_denial_is_refused_when_not_one_preturn_notice(tmp_path):
+    import json
+    cli,probe=fake_probe(tmp_path)
+    base=json.loads(probe.read_text())
+    notice=json.dumps({'type':'item.completed','item':{'type':'error','message':codex_review.INITIALIZATION_NOTICE}})
+    started=json.dumps({'type':'turn.started'})
+    failed=json.dumps({'type':'turn.failed','error':{'message':'quota exhausted'}})
+    other=json.dumps({'type':'item.completed','item':{'type':'error','message':'some other error'}})
+    base['stderr']='Reading prompt from stdin...\n'
+    probes=[
+        '\n'.join([started,notice])+'\n',
+        '\n'.join([notice,notice,started])+'\n',
+        '\n'.join([notice,started,failed])+'\n',
+        '\n'.join([other,started])+'\n',
+    ]
+    for stdout in probes:
+        base['stdout']=stdout
+        probe.write_text(json.dumps(base))
+        with patch('subprocess.Popen') as spawn:
+            result=codex_review.review(request(),probe_path=probe,cli=str(cli))
+        spawn.assert_not_called()
+        assert result['results'][0]['verdict']=='unknown'
+        assert 'denial' in result['results'][0]['reason']
+
+
 def test_unexpected_stderr_errors_refuse(tmp_path):
     cli,probe=fake_probe(tmp_path)
     stderr_values=[
