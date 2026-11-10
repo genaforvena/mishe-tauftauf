@@ -4,6 +4,7 @@ from dataclasses import asdict
 from mishe_tauftauf.feed import FeedEntry
 from mishe_tauftauf.task_state import TaskState
 from mishe_tauftauf.coordination_checks import anomalies, project, episode
+from tests.tape_binary import pin_tape_binary
 
 
 def state(seq, task, **kwargs):
@@ -191,6 +192,7 @@ def test_transaction_is_narrow_and_prepared_guards_are_not_effect_proofs(tmp_pat
     assert "transaction" not in episodes["R01"] and "admitted_handoff_text" not in episodes["P01"]
     assert result["proposed"]["transaction"] == transaction
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_shared_payload_map_equals_unshared_projection_on_a_mixed_tape(tmp_path):
     from mishe_tauftauf.feed import Feed
     feed = Feed(tmp_path)
@@ -203,6 +205,7 @@ def test_shared_payload_map_equals_unshared_projection_on_a_mixed_tape(tmp_path)
     assert project(entries, payloads=sink) == project(entries)
 
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_compact_anomaly_payloads_discard_large_snapshots_without_rereads(tmp_path, monkeypatch):
     from mishe_tauftauf.feed import Feed
     from mishe_tauftauf.coordination_checks import AnomalyPayloads
@@ -220,6 +223,7 @@ def test_compact_anomaly_payloads_discard_large_snapshots_without_rereads(tmp_pa
     assert anomalies(entries, payloads=sink) == expected
 
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_compact_projection_fallback_after_feed_cache_hit(tmp_path):
     from mishe_tauftauf.feed import Feed
     from mishe_tauftauf.coordination_checks import AnomalyPayloads
