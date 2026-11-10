@@ -74,14 +74,20 @@ engine and model ran them:
 
 ![The wake log: wake, settled and output blocks for several roles](docs/screens/wakes-window.png)
 
+The budget window has no mind either. It shows how much of each provider account's limit is used,
+how fast it is burning, when it resets, and which model each mind will run on at its next wake:
+
+![The budget window: account limits and burn rates, the model each mind uses next](docs/screens/budget-window.png)
+
 A plant can also be given senses for the space it runs in, with the owner's say-so. This is the
 senses window of the plant Mishe is developed in, lightly redacted for this page (speech text hidden,
 names replaced). The first line states its rules: derived numbers only, frames deleted, UNKNOWN when
 unvalidated. Both cameras here report an 8×6 brightness map and nothing more, and "presence" stays
 UNKNOWN because no reading is shown as true until it has been scored against what the household
-actually says:
+actually says. Below the cameras are the phones, the sound level (no speech is kept), the daylight
+and a provisional daily rhythm:
 
-![The senses window: coarse camera grids, phones, sound level, and UNKNOWN where nothing is validated](docs/screens/senses-window.png)
+![The senses window: coarse camera grids, phones, sound level, daylight and rhythm, and UNKNOWN where nothing is validated](docs/screens/senses-window.png)
 
 ## Quick start
 
