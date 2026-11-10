@@ -196,6 +196,14 @@ def user_timer_names(glob: str) -> list[str]:
     return [line.split()[0] for line in listed.splitlines() if line.strip()]
 
 
+def manager_error(result) -> str:
+    """A short manager error from a failed systemd-run/ctl call, decoded here."""
+    text = (result.stderr or result.stdout or b"")
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", "replace")
+    return text.strip() or f"rc={result.returncode}"
+
+
 def unit_file_service_names(listing: str, prefix: str) -> list[str]:
     """Installed non-template services under ``prefix`` from ``list-unit-files`` text.
 

@@ -11,7 +11,8 @@ class FakeRun:
         stdout = self.listed if argv[:4] == ["systemctl", "--user", "list-units", "--type=timer"] else ""
 
         class Done:
-            pass
+            returncode = 0
+            stderr = b""
 
         done = Done()
         done.stdout = stdout
@@ -106,3 +107,18 @@ def test_scheduled_return_uses_callers_source_pin_and_plant_slice(monkeypatch):
     call=next(c for c in fake.calls if c[0]=="systemd-run")
     assert "--setenv=PYTHONPATH="+str(Path(arm.__file__).resolve().parents[1]) in call
     assert "--slice=mishe-plants.slice" in call
+
+
+def test_a_refused_systemd_run_surfaces_the_manager_error(monkeypatch):
+    """DM 299366: the armer swallowed stderr, so a failed arm could not be diagnosed."""
+    class Refused:
+        returncode = 1
+        stderr = b"Failed to start transient unit: Unit is bound to an existing unit"
+        stdout = b""
+
+    monkeypatch.setattr(arm.subprocess, "run", lambda argv, **kwargs: Refused())
+    try:
+        arm.systemd_scheduler(2_000_000_000.0, command=["python", "due"])
+        raise AssertionError("a refused arm must raise, not pass silently")
+    except RuntimeError as exc:
+        assert "rc=1" in str(exc) and "bound to an existing unit" in str(exc), str(exc)

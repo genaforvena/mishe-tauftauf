@@ -46,12 +46,16 @@ def systemd_scheduler(epoch: float | None, *, command: list[str]) -> None:
     when = max(epoch, now + 1) if epoch > now else now + OVERDUE_RETRY_SECONDS
     moment = datetime.fromtimestamp(when, timezone.utc)
     unit = f"{TIMER_UNIT}-{uuid.uuid4().hex[:12]}"
-    subprocess.run(["systemd-run", "--user", f"--unit={unit}",
-                    "--slice=mishe-plants.slice",
-                    "--setenv=PYTHONPATH=" + str(Path(__file__).resolve().parents[1]),
-                    f"--on-calendar={moment:%Y-%m-%d %H:%M:%S} UTC",
-                    "--timer-property=AccuracySec=1s", "--collect", *command],
-                   check=True, capture_output=True)
+    result = subprocess.run(["systemd-run", "--user", f"--unit={unit}",
+                             "--slice=mishe-plants.slice",
+                             "--setenv=PYTHONPATH=" + str(Path(__file__).resolve().parent.parent),
+                             f"--on-calendar={moment:%Y-%m-%d %H:%M:%S} UTC",
+                             "--timer-property=AccuracySec=1s", "--collect", *command],
+                            capture_output=True)
+    # The manager error text is the only way to diagnose a refused arm (DM 299366):
+    # without it a failed arm looks like a generic producer failure.
+    if result.returncode != 0:
+        raise RuntimeError(f"systemd-run rc={result.returncode} unit={unit}: {units.manager_error(result)}")
 
 
 def arm(home, *, scheduler) -> float | None:
