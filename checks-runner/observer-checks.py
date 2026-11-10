@@ -70,6 +70,16 @@ SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 # does not is skipped rather than read as an undecidable problem.
 EVIDENCE_MARKER = "shared follow-through evidence"
 
+# The runtime verdict a published frame carries: "RUNTIME: <state> selection=...".
+# The states are the ones the runtime-source verdict prints, so a frame with no
+# such line has nothing for the pin-verdict check to read.  This name was used
+# by the ``pin-verdict`` applicability branch below but never defined, so that
+# branch raised NameError the moment a check asked for it (the gate's review
+# found this on 2026-11-10; the branch was unreachable while every INVENTORY
+# row carried no requirement, so nothing had exercised it).
+PIN_VERDICT_RE = re.compile(
+    r"^RUNTIME: (MATCH|DECLARED|DRIFT|UNKNOWN|NONE|UNPINNED)\b")
+
 # (name, per-slug, accepts --repo, extra argv, what the target must carry)
 INVENTORY = (
     ("outcome-channel-state.py", False, True, (), None),
