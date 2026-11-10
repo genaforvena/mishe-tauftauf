@@ -87,9 +87,9 @@ def _file(*sections: str) -> str:
     return MARKER + "\n" + "\n".join(sections) + "\n"
 
 
-def _is_wake_failure_signal(name: str) -> bool:
+def _is_wake_failure_signal(name: str, prefix: str) -> bool:
     """Failure notices written by a failed wake unit (OnFailure), which must not re-trigger wakes."""
-    return name.startswith(("failed-mishe-wake-", "failed-plant-mishe-wake-"))
+    return name.startswith(f"failed-{prefix}-wake-")
 
 
 def render(cfg: Config, roles, *, producers=()) -> dict:
@@ -116,7 +116,7 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         # re-fire each other (health <-> genome) and hit StartLimitBurst; the wake still reads them in its dossier.
         watched += [f"PathChanged={cfg.home}/signals/{name}.json"
                     for name, entry in sorted(registry.items())
-                    if role in entry.get("subscribers", []) and not _is_wake_failure_signal(name)]
+                    if role in entry.get("subscribers", []) and not _is_wake_failure_signal(name, p)]
         files[f"{p}-wake-{role}.path"] = _file(
             f"[Unit]\nDescription=Mishe wake triggers for {role}",
             "[Path]\n" + "\n".join(watched) + f"\nUnit={p}-wake@{role}.service",

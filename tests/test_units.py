@@ -363,3 +363,15 @@ def test_wake_failure_signals_do_not_retrigger_wakes(cfg):
     assert "failed-mishe-wake-health-service" not in genome
     assert "failed-mishe-producer-ci-service" in genome          # producer failures still trigger their subscribers
     assert f"PathChanged={cfg.home}/signals/ci.json" in genome   # ordinary subscriptions unaffected
+
+
+def test_wake_failure_filter_follows_configured_prefix(cfg):
+    # The filter must match the generated failure names for any prefix, not only the default one.
+    import dataclasses
+    scratch = dataclasses.replace(cfg, prefix="scratch")
+    store.register(cfg.home, "failed-scratch-wake-genome-service", max_age=604800, subscribers=["health"])
+    store.register(cfg.home, "failed-mishe-wake-genome-service", max_age=604800, subscribers=["health"])
+    files = units.render(scratch, ROLES)
+    health = files["scratch-wake-health.path"]
+    assert "failed-scratch-wake-genome-service" not in health
+    assert "failed-mishe-wake-genome-service" in health  # another prefix's signal is an ordinary subscription
