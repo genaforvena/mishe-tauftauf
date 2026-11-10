@@ -50,6 +50,8 @@ KNOWN_KINDS = frozenset({
 })
 BOOKKEEPING = re.compile(r'^(UNKNOWN event |\[)?(turn_start|turn_end|message_start|session|tool_stream_update|thinking_level_changed)\b')
 TOOL_LABELS = ('[tool output]', '[tool error]')
+# A renderer label is a bracketed word ([assistant], [tool bash], [agent_end]); a JSON array opener such as "[" or "[1," is content.
+LABEL = re.compile(r'^\[[A-Za-z_]')
 # Keys only an engine's event envelope carries; a rendered line that shows one is a leaked record.
 ENVELOPE_KEY = re.compile(r'"(assistantMessageEvent|partialResult|toolCallId|stopReason|modelUsage|'
                           r'tool_execution_\w+|message_(start|update|end)|turn_(start|end))"\s*:')
@@ -111,9 +113,9 @@ def lint(text: str) -> list[str]:
     lines = text.splitlines()
     in_tool = False  # tool output is what a command printed, e.g. source code quoting envelope keys: content, not a leak
     for line in lines:
-        if line.startswith(TOOL_LABELS):
-            in_tool = True
-        elif line.startswith('[') or line.startswith('UNKNOWN'):
+        if line.startswith(TOOL_LABELS) or line.startswith('[tool '):
+            in_tool = True  # a tool call's arguments can span lines (a script the mind ran) and are content too
+        elif LABEL.match(line) or line.startswith('UNKNOWN'):
             in_tool = False
         if line.startswith('UNKNOWN event '):
             kind = line[len('UNKNOWN event '):].split(';', 1)[0].strip()
@@ -142,7 +144,7 @@ def lint(text: str) -> list[str]:
         if line.startswith(TOOL_LABELS):
             current = [line]
             blocks.append(current)
-        elif line.startswith('[') or line.startswith('UNKNOWN'):
+        elif LABEL.match(line) or line.startswith('UNKNOWN'):
             current = None
         elif current is not None:
             current.append(line)

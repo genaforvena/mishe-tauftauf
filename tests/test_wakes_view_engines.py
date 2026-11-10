@@ -91,6 +91,19 @@ def test_raw_envelope_and_json_lines_fail_but_tool_content_does_not():
     assert check.lint(quoted) == []
 
 
+def test_json_array_opener_inside_tool_output_keeps_the_quote_and_real_leaks_still_fail():
+    envelope = '"modelUsage":{"claude-haiku-5-5":{"inputTokens":10}}'
+    # A JSON array opener such as "[" is tool content, not a renderer label: the quoted block stays open.
+    quoted = "[tool output]\n[\n  {\"x\": 1}\n]\n" + envelope + "\n"
+    assert check.lint(quoted) == []
+    # A real leaked envelope after an assistant label is still a leak, even right after a tool block.
+    leaked = "[tool output]\nprint(1)\n[assistant] said\n" + envelope + "\n"
+    assert any("raw event envelope key" in p for p in check.lint(leaked))
+    # Multi-line tool call arguments (a script the mind ran that prints envelope keys) are content, not a leak.
+    call = "[tool bash] python3 -c 'print(1)'\nprint('\"modelUsage\":{}')\n" + envelope + "\n"
+    assert check.lint(call) == []
+
+
 def test_renderer_exception_is_a_violation(tmp_path):
     def boom(path, limit=0, final=False):
         raise KeyError("missing field")
