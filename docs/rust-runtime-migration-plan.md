@@ -1219,9 +1219,9 @@ as a slice:
   overhead. The 2.2 M `startswith` calls belong to `wall_text` and the
   `[record]` scan, not framing.
 - **Direct A/B on the live tape** (299,381 entries, same spawned framer, same
-  materialized tuples, fresh process per run —
-  `artifacts/rust-plan-20261107/s0c_reader_ab.py`, result
-  `artifacts/s0c-reader-ab-20261110T2115Z.txt`): the live per-entry reader
+  materialized tuples, fresh process per run — site-local
+  `$SITE/artifacts/rust-plan-20261107/s0c_reader_ab.py` and result
+  `$SITE/artifacts/s0c-reader-ab-20261110T2115Z.txt`, not committed): the live per-entry reader
   (readline / read(nbytes) / read(1)) runs **0.59–0.78 CPU-s**; a chunked
   256 KiB in-memory variant of the same framing runs **0.88–1.02 CPU-s** with
   +180 MB peak RSS. The live reader is already the faster variant; there is no
