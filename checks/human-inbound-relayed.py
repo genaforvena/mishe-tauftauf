@@ -86,9 +86,17 @@ def voice_active():
     return out.stdout.strip() == "active"
 
 
+DM_TIMEOUT_S = 60
+
+
 def append_dm(text, mishe_bin):
     cmd = [mishe_bin, "wall", "dm", "--source", "operator", "--to", "operator", "--text", text]
-    res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=DM_TIMEOUT_S)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"mishe wall dm timed out after {DM_TIMEOUT_S} s") from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"mishe wall dm could not run: {exc}") from exc
     if res.returncode != 0:
         raise RuntimeError(f"mishe wall dm failed: {res.stderr.strip() or res.stdout.strip()}")
 
@@ -138,7 +146,7 @@ def main(argv=None, now=None, voice=voice_active, mishe_bin=None):
                 append_dm(f"[human {kind} {stamp}] {text}", mishe_bin)
                 write_cursor(cursor, end)
                 relayed += 1
-        except (RuntimeError, OSError) as exc:
+        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
             print(f"human-inbound-relayed: RED relay stopped after {relayed} of {len(new)}: {exc}; "
                   "cursor kept at the last relayed line", file=sys.stderr)
             return 2

@@ -86,6 +86,21 @@ class HumanInboundRelayedTests(unittest.TestCase):
         self.write_log([(stamp(self.now - 60), "TEXT", "x")])
         self.assertEqual(self.run_main(voice=False), 3)
 
+    def test_dm_timeout_is_red_and_keeps_cursor(self):
+        sleeper = self.tmp / "slow-mishe"
+        sleeper.write_text(f"#!{os.sys.executable}\nimport time\ntime.sleep(5)\n")
+        sleeper.chmod(0o755)
+        self.write_log([(stamp(self.now - 600), "TEXT", "slow")])
+        old = hir.DM_TIMEOUT_S
+        hir.DM_TIMEOUT_S = 0.2
+        try:
+            rc = hir.main(["--home", str(self.home), "--log", str(self.log), "--relay"],
+                          now=self.now, voice=lambda: True, mishe_bin=str(sleeper))
+        finally:
+            hir.DM_TIMEOUT_S = old
+        self.assertEqual(rc, 2)
+        self.assertFalse((self.home / "human-inbound" / "cursor.json").exists())
+
     def test_unreadable_log_is_unknown(self):
         self.assertEqual(hir.main(["--home", str(self.home), "--log", str(self.tmp / "missing.log")],
                                   now=self.now, voice=lambda: True, mishe_bin="x"), 3)
