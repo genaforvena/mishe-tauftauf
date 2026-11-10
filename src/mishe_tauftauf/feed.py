@@ -141,6 +141,23 @@ def entry_timestamp(entry: object) -> datetime | None:
         return None
 
 
+def _same_home(candidate, home) -> bool:
+    """Whether two site homes name the same path.
+
+    ``Path.__eq__`` compares a per-object cached ``_str_normcase``. A wrapper
+    built for the comparison never reuses another object's cache, so the string
+    is re-normalized every time. Comparing the two paths as they are keeps the
+    same test — ``Path(p)`` copies ``p``'s raw parts, so it compares equal to
+    ``p`` — while the pass's home is one object shared by every entry, so the
+    comparison reuses that object's cache instead of rebuilding it per record.
+    """
+    if candidate is None or home is None:
+        return False
+    if isinstance(candidate, Path):
+        return candidate == home
+    return Path(candidate) == home
+
+
 def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None = None) -> list[FeedEntry]:
     """Frame whole-tape bytes with mishe-tape.
 
@@ -240,6 +257,10 @@ def _iter_streamed_feed(handle, *, start_sequence: int = 1, home=None,
     """
     if size is None:
         size = os.fstat(handle.fileno()).st_size
+    # The pass's home is constant, so one wrapper serves every entry. Rebuilding
+    # it per entry allocated a Path (and re-normalized its string) 299,240 times
+    # on the live tape for a value that never changed.
+    entry_home = Path(home) if home is not None else None
     proc = _spawn_frames(handle, start_sequence=start_sequence, offset=offset, size=size)
     complete = False
     try:
@@ -267,8 +288,7 @@ def _iter_streamed_feed(handle, *, start_sequence: int = 1, home=None,
                 # The contract makes non-UTF-8 a framer fault (exit 2), so a body
                 # that reaches here is a contract violation: UNKNOWN.
                 raise TapeUnknown(f"mishe-tape body is not UTF-8: {exc}") from exc
-            yield FeedEntry(sequence, timestamp, source, text,
-                            Path(home) if home is not None else None)
+            yield FeedEntry(sequence, timestamp, source, text, entry_home)
         complete = True
     finally:
         _close_tape(proc, complete=complete)
@@ -711,12 +731,15 @@ class Feed:
                 if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
                     if store is None and entry.home is not None:
                         store = verified_store(entry.home)
-                        home = Path(entry.home)
+                        # The pass's home is the first entry's own Path, so every
+                        # later entry of a streamed pass compares against that
+                        # same object instead of a wrapper built per record.
+                        home = entry.home if isinstance(entry.home, Path) else Path(entry.home)
                         try:
                             passfd = records._directory(home)
                         except OSError:
                             passfd = None
-                    shared = passfd if passfd is not None and entry.home is not None and Path(entry.home) == home else None
+                    shared = passfd if passfd is not None and _same_home(entry.home, home) else None
                     data = cached_payload(entry, pending, store, verify_only=sink is None, directory=shared)
                     if sink is not None:
                         sink[entry.sequence] = data

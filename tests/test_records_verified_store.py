@@ -215,3 +215,60 @@ def test_pass_directory_fd_is_closed_after_success(tmp_path, monkeypatch):
     Feed._verify_records(entries)
     assert len(os.listdir("/proc/self/fd")) == before
     assert len(opened) <= 2
+
+
+def test_every_entry_carries_the_pass_home(tmp_path):
+    """The reader hands each entry the pass's site home, not a per-entry rebuild."""
+    _seed(tmp_path, 2)
+    entries = Feed(tmp_path).entries()
+    assert [entry.home for entry in entries] == [tmp_path, tmp_path]
+
+
+def test_a_record_under_another_home_is_verified_against_its_own_directory(tmp_path):
+    """A pass that meets a record from another site must not read it through this site's fd.
+
+    The shared directory fd is only valid for the site that opened it. An entry
+    whose home differs must open its own, or the wrong site's record file is
+    read and a digest that belongs to another site is reported as verified here.
+    """
+    _seed(tmp_path, 1)                       # this site has a records directory too
+    other = tmp_path / "other"
+    other.mkdir()
+    foreign = Feed(other)
+    foreign.append_record("witness", "Checked evidence from another site.", {"site": "other"})
+
+    entry = foreign.entries()[0]
+    # The entry names the other site, but the pass was opened for this site.
+    assert entry.home == other
+    shared_dir = records._directory(tmp_path)
+    try:
+        with pytest.raises((ValueError, OSError)):
+            records.cached_payload(entry, {}, records.verified_store(tmp_path),
+                                  directory=shared_dir)
+    finally:
+        os.close(shared_dir)
+
+
+def test_the_same_home_is_shared_and_a_different_home_is_not(tmp_path):
+    """The pass's directory fd is reused for its own home and withheld from another."""
+    other = tmp_path / "other"
+    other.mkdir()
+    mine = _seed(tmp_path, 1).entries()
+    theirs = Feed(other).append_record("witness", "Checked evidence elsewhere.", {"site": "other"})
+
+    seen = []
+    real_cached = feed_module.cached_payload
+
+    def watch(entry, pending, store=None, **kwargs):
+        seen.append((entry.home, kwargs.get("directory")))
+        return real_cached(entry, pending, store, **kwargs)
+
+    feed_module.cached_payload = watch
+    try:
+        Feed._verify_records(mine + [theirs])
+    finally:
+        feed_module.cached_payload = real_cached
+
+    mine_dir, theirs_dir = seen[0][1], seen[1][1]
+    assert mine_dir is not None      # this site's record reused the pass's fd
+    assert theirs_dir is None        # the other site's record opened its own
