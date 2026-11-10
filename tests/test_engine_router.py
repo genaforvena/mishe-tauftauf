@@ -133,6 +133,12 @@ class FakeEngine:
             raise EngineRejected("model refused before any tool call")
         if action == "rate-limited":
             raise EngineRateLimited("provider rate limit before any tool call: 429 Rate limit exceeded")
+        if action == "rate-limited-retry-after":
+            raise EngineRateLimited("provider rate limit before any tool call: 429 Rate limit exceeded"
+                                    ". retry-after-ms=21600000")
+        if action == "rate-limited-retry-after-capped":
+            raise EngineRateLimited("provider rate limit before any tool call: 429 Rate limit exceeded"
+                                    ". retry-after-ms=40000000")
         if action == "exhausted":
             raise EngineExhausted("account out of quota before any tool call")
         if action == "spent-after-effect":
@@ -421,6 +427,43 @@ def test_the_rate_limit_backoff_doubles_and_resets_after_a_success(routed):
     assert second == 2 * first
     eng._clear(key)
     assert eng.rate_limit_cool_off_ms("health", key) == first
+
+
+def test_a_provider_retry_after_replaces_the_backoff(routed):
+    FakeEngine.script = {GO["model"]: "rate-limited-retry-after", MINI["model"]: "yield"}
+    eng = router.for_role(routed, "health")
+    eng.run(routed / "p.md", env=_env(routed, "k30"), cwd=routed, timeout=5)
+    key = router.candidate_key(GO)
+    events = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()]
+    fallback = events[1]
+    assert fallback["event"] == "fallback" and fallback["scope"] == "role"
+    # The provider asked for 6 h; the cool-off honors it instead of the 300 s backoff.
+    assert fallback["cool_off_s"] == 21600.0
+    state = json.loads((routed / "engine" / router.STATE).read_text())["cooling"]
+    assert state[router.role_key("health", key)] == NOW_MS + 21600000
+
+
+def test_a_retry_after_above_eight_hours_is_capped(routed):
+    FakeEngine.script = {GO["model"]: "rate-limited-retry-after-capped", MINI["model"]: "yield"}
+    eng = router.for_role(routed, "health")
+    eng.run(routed / "p.md", env=_env(routed, "k30"), cwd=routed, timeout=5)
+    events = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()]
+    fallback = events[1]
+    assert fallback["event"] == "fallback" and fallback["scope"] == "role"
+    assert fallback["cool_off_s"] == router.MAX_RATE_LIMIT_COOL_OFF_S
+    state = json.loads((routed / "engine" / router.STATE).read_text())["cooling"]
+    assert state[router.role_key("health", router.candidate_key(GO))] == NOW_MS + router.MAX_RATE_LIMIT_COOL_OFF_S * 1000
+
+
+def test_a_retry_after_without_the_provider_marker_keeps_the_backoff(routed):
+    FakeEngine.script = {GO["model"]: "rate-limited", MINI["model"]: "yield"}
+    eng = router.for_role(routed, "health")
+    eng.run(routed / "p.md", env=_env(routed, "k30"), cwd=routed, timeout=5)
+    events = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()]
+    fallback = events[1]
+    assert fallback["event"] == "fallback" and fallback["scope"] == "role"
+    # No retry-after-ms in the refusal: the doubling backoff stays.
+    assert fallback["cool_off_s"] == router.DEFAULT_RATE_LIMIT_COOL_OFF_S
 
 
 def test_a_candidate_at_its_parallelism_cap_is_skipped_for_the_next_one():
