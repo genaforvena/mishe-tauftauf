@@ -5,6 +5,7 @@ Reads the rows the `network-probe` duty appends to SITE/network/probe.jsonl and,
 a few facts from the router over ssh (never writes there).  Anything not measured, or too old,
 is shown as UNKNOWN.  The network mind improves this file.
 """
+import json
 import os
 import subprocess
 import sys
@@ -24,6 +25,63 @@ SLOW_DNS_MS = 500
 _router = {"at": 0.0, "text": None}
 _wifi = {"at": 0.0, "text": None, "weak": False}
 WEAK_WIFI_DBM = -75
+REPO = Path(__file__).resolve().parent.parent
+OWN_FILES = (Path(__file__).resolve(), Path(__file__).resolve().parent / "network_boundary.py")
+OWN_GIT_PATHS = ("tools/network_view.py", "tools/network_boundary.py")
+WINDOW_STATE = SITE / "network" / "window.json"
+STARTED = time.time()
+
+
+def own_stamp():
+    """Modification stamps of this view's own code; a change means the running copy is stale."""
+    try:
+        return tuple(p.stat().st_mtime_ns for p in OWN_FILES)
+    except OSError:
+        return None
+
+
+def code_version():
+    """(short sha, commit time) of the last commit touching this view's own files; UNKNOWN when git cannot say."""
+    try:
+        r = subprocess.run(["git", "-C", str(REPO), "log", "-1", "--format=%h %ct", "--", *OWN_GIT_PATHS],
+                           capture_output=True, text=True, timeout=10)
+        sha, ct = r.stdout.split()
+        dirty = subprocess.run(["git", "-C", str(REPO), "diff", "--quiet", "HEAD", "--", *OWN_GIT_PATHS],
+                               capture_output=True, timeout=10).returncode != 0
+        return (sha + " + uncommitted edits" if dirty else sha), int(ct)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return "UNKNOWN", None
+
+
+VERSION = code_version()
+STAMP = own_stamp()
+
+
+def report_window_state():
+    """Record when this copy of the view started and which code it runs; the window duty reads it."""
+    try:
+        WINDOW_STATE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = WINDOW_STATE.with_name("window.json.tmp")
+        tmp.write_text(json.dumps({"pid": os.getpid(), "started": STARTED, "code": VERSION[0]}))
+        tmp.replace(WINDOW_STATE)
+    except OSError:
+        pass
+
+
+def maybe_reexec(stamp):
+    """Re-run this file in place when its own code changed on disk and the new copy compiles.
+
+    A copy that does not compile is left running, and the check is retried on the next redraw.
+    Returns the stamp to compare against next time."""
+    now = own_stamp()
+    if now is None or stamp is None or now == stamp:
+        return stamp
+    try:
+        compile(OWN_FILES[0].read_text(), str(OWN_FILES[0]), "exec")
+    except (OSError, SyntaxError):
+        return stamp
+    sys.stdout.flush()
+    os.execv(sys.executable, [sys.executable, str(OWN_FILES[0]), *sys.argv[1:]])
 
 
 def rows(limit=1440):
@@ -159,6 +217,9 @@ def draw():
     last = data[-1] if data else None
     a = age(last) if last else None
     out = [f"MISHE NETWORK  {time.strftime('%H:%M:%SZ', time.gmtime())}   derived numbers only; UNKNOWN when not measured", ""]
+    sha, committed = VERSION
+    committed_txt = f", committed {(time.time() - committed) / 3600:.1f} h ago" if committed else ""
+    out.append(f"  view code {sha}{committed_txt}; this copy loaded {time.time() - STARTED:.0f} s ago")
     out.append(f"  HOME INTERNET: {verdict(last, a)}")
     out.append(f"  last probe: {'%ds ago' % a if a is not None else 'never'}   (one probe a minute; sparklines = last {min(len(data), 40)} probes)")
     out.append("")
@@ -186,7 +247,9 @@ if __name__ == "__main__":
     if "--once" in sys.argv:
         print(draw())
     else:
+        report_window_state()
         while True:
+            STAMP = maybe_reexec(STAMP)
             sys.stdout.write("\x1b[H\x1b[2J" + draw() + "\n")
             sys.stdout.flush()
             time.sleep(10)

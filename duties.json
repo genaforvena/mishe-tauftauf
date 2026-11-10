@@ -520,7 +520,7 @@
         3
       ],
       "resolver": "network",
-      "covers": "the outer tmux window plants:network exists and runs tools/network_view.py; RED when missing or dead, UNKNOWN when tmux cannot be read",
+      "covers": "the outer tmux window plants:network exists and runs tools/network_view.py; RED when missing or dead, RED when the running copy of the view started before the last commit touching its files (or never reported its copy) with the exact respawn command, UNKNOWN when tmux or git cannot be read",
       "replaces": []
     },
     {
