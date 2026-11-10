@@ -1,6 +1,6 @@
 # Rust runtime migration plan
 
-Status: planning proposal, not an implementation. Written from `docs/rust-runtime-investigation-plan.md` (949feffe, with the owner clarification at 3555dec8). It authorizes no Rust, no Cargo files, no `src/` edits, no unit changes, no pin move and no activation. Raw samples live under `.mishe-tauftauf/artifacts/rust-plan-20261107/` (gitignored).
+Status: an executed plan, not a proposal. Written from `docs/rust-runtime-investigation-plan.md` (949feffe, with the owner clarification at 3555dec8) and now carrying the executed slices in sections 9 and 10. Slice A (Rust tape framing) and the S2.1/S2.2 Python slices are delivered and observed on the live plant; each cutover's evidence, rollback and reapply checks are in its own section. Raw samples live under `.mishe-tauftauf/artifacts/rust-plan-20261107/` (gitignored).
 
 ## Summary
 
@@ -457,8 +457,8 @@ Measured numbers are the ones in sections 2 and 8. Nothing here is a new speedup
 | Slice | State now | Evidence | Next step |
 |---|---|---|---|
 | **A. Tape framing** (`mishe-tape frames`) | **Live and observed.** Cutover committed (`a995031a`), reviewed clear (`e90292ba` gate), delivered (`7ce12523`, delivery_verified 18:01:38Z). Every pin since `e90292ba` (2026-11-08 11:14Z) carries it. Live consumers wrote fresh role projections through the binary (`$SITE/feed.role-cache/{genome,rust-plan,health}.json`, 18:29-18:32Z) and `mishe-producer-readings` completed under the pin. | Differential test 5/5 with the committed artifact (`MISHE_TAPE_BIN`). A fresh build from HEAD in a throwaway dir (1.97.0, `--locked`) has the same SHA-256 as the artifact (`12dde4d2…ba710`). | Take the cold `wall show --owner genome` before/after comparison (9.3 A) if a direct end-to-end observation is wanted; the role-cache evidence already shows the live path. Next migration target is B (verification). |
-| **S0. Python hoist in `_verify_records`** | Not started. Python-first; not a boundary change. | Hypothesis from section 2.3: about 13% directory work and 9% path equality per record. | Measure before and after on a preserved tape copy. Sequence after A's cutover, since both edit `feed.py`. |
-| **B. Tape verify and verified-store lookup** (`mishe-tape verify`/`entries`) | Not started. A is now observed live, so B is blocked only on the S0 decision and a verified-path benchmark (section 8.6 item 2). | Verification is about two thirds of profiled `wall show` (2.3). | Benchmark the verified path on a preserved copy. Check the offline `rusqlite` graph and its build cost against the headroom budget. |
+| **S0. Python hoist in `_verify_records`** | **Measured, not yet implemented** (2026-11-10). The hypothesis holds and is sized: the per-record cost is `pathlib` churn from two sites, not a verification rule. Python-first; not a boundary change. | On the live tape at the live pin, whole tape, three repetitions per side, one fresh process each: baseline 6.46 / 6.38 / 6.17 CPU-s, hoisted 4.70 / 4.98 / 4.77 CPU-s — a 1.4–1.8 CPU-s cut and 55 MB less peak RSS, with an identical digest of every entry and every verified payload. Section 10.9. | Implement it: one `Path` for the pass, and compare the entry's own `Path` against it without re-wrapping. Sequence after S2.2's delivery, which now owns `feed.py`'s reader path. |
+| **B. Tape verify and verified-store lookup** (`mishe-tape verify`/`entries`) | Not started. A is now observed live and S0 is measured, so B's remaining prize is known: after S0's pathlib cut, what is left of the verification cost is the sqlite work (196,303 `execute` calls per cold read). | Verification is about two thirds of profiled `wall show` (2.3). The cold read's split, measured live: 5.83 CPU-s with verification, 1.40 without, so 4.43 CPU-s is verification (section 10.9). | Take S0 first: it removes about 1.6 CPU-s of the 4.43 without Rust, so B's baseline is smaller and B's own work is only the sqlite lookup. Then check the offline `rusqlite` graph and its build cost against the headroom budget. |
 | **C. Role projection** (`mishe-tape role`, cold-cache derived file) | Not started. Depends on B. | Cold `wall show` 15.2 s user; the cache is process-local (`feed.py:53`). | Decide after B's benchmark. Compare the output against `_force_full`. |
 | **Senses baseline** (measurement, not migration) | Not started. Needs its own declared duty, not an edit to `rust-plan-progress` (wall, section "Senses baseline"). | Source artifacts already exist under `artifacts/rust-plan-20261107/`. | Declare the duty with its own `max_age`. It reads UNKNOWN when evidence is missing or stale. |
 | Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4); fresh systemd table at pin `7ce12523`: `readings` 890 CPU-s / 6 h (36 runs, ~24.5 CPU-s each), 870 MB peak. `doctor` has 25 exit-1 runs, cause UNKNOWN. | The `readings` cost is now profiled on the live plant and S2 is decided: see section 10. The slice is a Python slice (unused whole-tape reads, one snapshot per scan, cadence), not a Rust slice. |
@@ -728,15 +728,33 @@ is the same. The states are the same: recurrence `verified`, census `drift`,
 disposition `verified`.
 
 **The live consumer's own accounting.** `mishe-producer-readings.service` runs
-the scan every ten minutes, and the kernel accounts it. The first run on the
-new pin (11:28:28Z–11:28:59Z) consumed **21.932 CPU-s** against a
-pre-delivery baseline of 25 runs from 07:00Z to 11:18Z at min 23.14, median
-24.01, max 26.99 CPU-s — below every baseline run. Its live scan
-(`discovery/scan-20261110T112856Z-…json`) has 74 observations and reports the
-three readings with the same states and values.
+the scan every ten minutes, and the kernel accounts it. Three runs on the new
+pin against a pre-delivery baseline of 25 runs from 07:00Z to 11:18Z:
 
-The live scan's `read_at` stamp for the census is `11:28:39Z`; the probe's own
-was `11:29:20Z`. That is the scan's own clock, not a difference in the value.
+| | runs | CPU-s min | median | max | peak RSS median |
+|---|---|---|---|---|---|
+| before (pin `323a87fe`) | 25 | 23.14 | 24.01 | 26.99 | 904.2 MB |
+| after (pin `d3c0c57c`) | 3 | 20.760 | 21.107 | 21.932 | 901.5 MB |
+
+**Every post-delivery run is below every pre-delivery run.** The three runs
+after the delivery are 21.932 (11:28:59Z), 20.760 (11:38:52Z) and 21.107
+(11:48:55Z) CPU-s. The closest pre-delivery runs were 24.274 and 24.614
+CPU-s, and the tape grew throughout the comparison, so the baseline drifts
+upward; the nearest comparison is still favourable by about 3 CPU-s.
+
+That is larger than the 1.43 CPU-s the isolated probe predicted, and the reason
+is in the probe's own numbers: the probe measured `discovery.sample()` alone,
+while the producer also runs the signal wrapper, and the two removed passes
+(the census's and the disposition's) were over a tape that grew between them.
+The live unit's own accounting is the authoritative measurement; the probe is
+the attribution.
+
+The live scan (`discovery/scan-20261110T112856Z-…json`) has 74 observations
+and reports the three readings with the same states and values. Its `read_at`
+stamp for the census is `11:28:39Z`; the probe's own was `11:29:20Z`. That is
+the scan's own clock, not a difference in the value.
+
+Producer numbers: `artifacts/rust-plan-20261107/s2c-20261110/producer-cpu-after.json`.
 
 Probes: `artifacts/rust-plan-20261107/s2b-20261110/physical_reads.py`,
 `artifacts/rust-plan-20261107/s2c-20261110/readings_values.py`.
@@ -892,3 +910,81 @@ baseline B must beat rather than compete with it.
   tree does not have: then it is live work, not dead code, and it must be
   measured again before any slice is taken against it.
 
+### 10.9 S0 measured: the pathlib churn is real, and it is Python's, not Rust's
+
+Section 3.4's S0 ("hoist per-record work out of `_verify_records`") was a
+hypothesis. It is now measured on the live tape, on the live pin, in fresh
+processes.
+
+**The current split.** One cold verified read, unprofiled, one process each:
+
+| Read | CPU-s | peak RSS | entries |
+|---|---|---|---|
+| `Feed(home).entries()` with record verification | 5.83 | 610.7 MB | 299,240 |
+| the same read with `verify_records=False` | 1.40 | 608.1 MB | 299,240 |
+| **difference** | **4.43** | | |
+
+**Where the per-record cost sits.** A profiled run of the verified read
+(196,301 records verified) shows the cost is dominated by `pathlib` object
+churn, not by sqlite alone:
+
+| function | calls | tottime | cumtime |
+|---|---|---|---|
+| `sqlite3.Connection.execute` | 196,303 | 1.563 | 1.563 |
+| `pathlib.Path.__init__` | 495,559 | 0.794 | 0.905 |
+| `pathlib._str_normcase` | 392,602 | 0.308 | 1.815 |
+| `pathlib.__eq__` | 196,301 | 0.094 | 1.924 |
+| `records.cached_payload` | 196,301 | 0.692 | 5.002 |
+| `records.lookup` | 196,301 | 0.602 | 3.743 |
+
+The `pathlib` calls come from two sites, and neither is a verification rule:
+
+1. `feed._iter_streamed_feed` builds `Path(home)` **once per entry** (299,240
+   times), although `home` is constant for the whole pass.
+2. `feed._verify_records` compares `Path(entry.home) == home`, re-wrapping an
+   already-`Path` `entry.home` once per record (196,317 times).
+   `PurePath.__eq__` compares a cached `_str_normcase`, so a fresh wrapper
+   never reuses the cache — the comparison re-normalizes the string every
+   time.
+
+**The hoist, measured.** A probe patches exactly those two sites — one `Path`
+for the pass, and a direct `str(entry.home) == str(home)` comparison — and
+nothing else. No verification rule is touched. Three repetitions, one fresh
+process each, whole tape:
+
+| | CPU-s run 1 | run 2 | run 3 | median |
+|---|---|---|---|---|
+| baseline | 6.46 | 6.38 | 6.17 | 6.38 |
+| hoisted | 4.70 | 4.98 | 4.77 | 4.77 |
+| **difference** | **−1.76** | **−1.40** | **−1.40** | **−1.61** |
+
+Peak RSS also falls, 610.8 MB to 555.7 MB, because the 196,317 discarded
+`Path` objects are not allocated.
+
+**The hoist changes no value.** Every run, both modes, produced the same
+digest of the whole read — every entry's sequence, timestamp, source, body and
+home, plus every verified payload the pass resolved:
+
+    entry_digest    8c750f7d0bb38d99b02a951855f9cd00291ec44aa3c9eea44c052cab71d0816d
+    payload_digest  028390ec2ae778dde542c7b7528a536219a5a788f5fa40d9e6c1ed6ccbd9974b
+
+The payload digest was taken over a bounded window (20,000 entries, 13,755
+verified payloads): the sink decodes every verified record it is given, and
+decoding all 196,301 costs far more than the read being measured.
+
+**What this changes.** The plan said the cold read's 4.42 CPU-s of
+verification is "sqlite lookups plus per-record directory and path bookkeeping
+— not byte-level work", and that slice B is where a Rust prize sits. The
+measurement says the pathlib part of that is worth about 1.4–1.8 CPU-s **in
+Python, with no Rust and no protocol change**. The sqlite part (196,303
+`execute` calls, ~1.56 CPU-s profiled) is what is left, and it is what slice B
+would have to own.
+
+So S0 should land before slice B is scoped: it takes a quarter of the
+verification cost out with a two-line change and no boundary crossing, which
+lowers the baseline B must beat and removes work B would otherwise have
+reimplemented in Rust. The plan's ordering was already S0 before B; this
+measurement says S0's prize is real and sized.
+
+Probes: `artifacts/rust-plan-20261107/s2d-20261110/verified_clean.py`,
+`verified_profile.py`, `s0_probe.py`.
