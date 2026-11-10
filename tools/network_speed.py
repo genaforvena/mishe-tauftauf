@@ -17,6 +17,9 @@ import time
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import network_boundary as nb
+
 URL = "https://speed.cloudflare.com/__down?bytes=5000000"
 EXPECT_BYTES = 5_000_000
 TIMEOUT_S = 25
@@ -44,17 +47,12 @@ def last_attempt(rows):
 
 
 def read_rows(path):
+    """The decoded rows of the speed log, oldest first. A missing log is no rows."""
     try:
-        lines = Path(path).read_text().splitlines()
+        text = Path(path).read_text()
     except OSError:
         return []
-    out = []
-    for line in lines:
-        try:
-            out.append(json.loads(line))
-        except ValueError:
-            continue
-    return out
+    return nb.decode_json_lines(text)
 
 
 def measure(url=URL, timeout=TIMEOUT_S, opener=urllib.request.urlopen):
@@ -89,10 +87,10 @@ def _row(started, ok, got, seconds, down_mbps=None, error=None):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=nb.doc_summary(__doc__))
     ap.add_argument("--home", default=str(SITE))
     ap.add_argument("--check", action="store_true", help="print whether a measurement is due, and do nothing else")
-    args = ap.parse_args(argv)
+    args = nb.parse_argv(ap, argv)
     path = Path(args.home) / "network" / LOG_NAME
     rows = read_rows(path)
     last = last_attempt(rows)

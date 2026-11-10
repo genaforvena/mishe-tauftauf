@@ -1,6 +1,8 @@
 """Boundary for the network window: decodes probe rows, timestamps and the router's read-only output.
 
 All text interpretation for tools/network_view.py lives here; the view acts on decoded values.
+The speed reading's own log is decoded here too, so tools/network_speed.py reads decoded
+values and never parses text itself.
 """
 import json
 import time
@@ -16,6 +18,35 @@ def decode_rows(text, limit=1440):
         if isinstance(row, dict):
             out.append(row)
     return out
+
+
+def decode_json_lines(text, limit=None):
+    """Decoded rows of a JSON-lines log, oldest first. Malformed lines are skipped.
+
+    Same shape as :func:`decode_rows` without the age filter, for the speed log.
+    """
+    lines = text.splitlines()
+    if limit is not None:
+        lines = lines[-limit:]
+    out = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            out.append(row)
+    return out
+
+
+def doc_summary(doc):
+    """First line of a module docstring, used as the argparse description."""
+    return doc.splitlines()[0]
+
+
+def parse_argv(parser, argv):
+    """The parsed command-line arguments for a parser built by the caller."""
+    return parser.parse_args(argv)
 
 
 def row_age_seconds(row):
