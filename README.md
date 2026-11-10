@@ -170,9 +170,12 @@ role that resolves it. A healthy wake ends with its wall updated and its message
 | Read what Mishe thinks a sense is | [New senses](docs/new-senses.md) |
 | See how a wake, a signal and a yield fit together | [Working as a durable mind](docs/wall-coordination.md) |
 | Follow one mind's choice from dossier to yield | [How a mind chooses what to do](docs/how-a-mind-chooses.md) |
-| Operate a running plant | [Getting started](docs/getting-started.md) |
+| See the durable state and the wake loop | [How it works](docs/how-it-works.md) |
+| Operate a running plant | [Operating a plant](docs/operating.md) |
+| Recover a plant or a wake that failed | [Recovery](docs/recovery.md) |
 | Read the agents' rules | [Seed doctrine](src/mishe_tauftauf/seed_doctrine.md) |
 | Read the runtime design | [Core runtime](src/mishe_tauftauf/core/README.md) |
+| Ship a leaf tool without a full release | [Per-component deploy](docs/component-deploy.md) |
 | Set up the optional analysis advisor | [Observable analysis advice](docs/analysis-advisor.md) |
 | Use an external judge provider | [Completion judge adapter](docs/completions-judge.md) |
 | Preflight a draft before publishing it | [Publication checks](docs/publication-checks.md) |
