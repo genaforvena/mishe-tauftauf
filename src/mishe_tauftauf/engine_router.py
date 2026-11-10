@@ -546,8 +546,10 @@ def cmd_choose(args) -> int:
         print(f"no routes for {args.role}")
         return 3
     now_ms = time.time() * 1000
+    running = running_candidates(args.home, now_ms=now_ms,
+                                 horizon_s=routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S))
     choice = choose(args.role, routes["roles"][args.role], live_status(args.home),
-                    _load_state(args.home)["cooling"], now_ms)
+                    _load_state(args.home)["cooling"], now_ms, running=running)
     print(json.dumps(choice, indent=2, sort_keys=True))
     return 0 if choice["decision"] == "select" else 3
 
