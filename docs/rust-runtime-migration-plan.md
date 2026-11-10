@@ -461,7 +461,8 @@ Measured numbers are the ones in sections 2 and 8. Nothing here is a new speedup
 | **B. Tape verify and verified-store lookup** (`mishe-tape verify`/`entries`) | Not started. A is now observed live, so B is blocked only on the S0 decision and a verified-path benchmark (section 8.6 item 2). | Verification is about two thirds of profiled `wall show` (2.3). | Benchmark the verified path on a preserved copy. Check the offline `rusqlite` graph and its build cost against the headroom budget. |
 | **C. Role projection** (`mishe-tape role`, cold-cache derived file) | Not started. Depends on B. | Cold `wall show` 15.2 s user; the cache is process-local (`feed.py:53`). | Decide after B's benchmark. Compare the output against `_force_full`. |
 | **Senses baseline** (measurement, not migration) | Not started. Needs its own declared duty, not an edit to `rust-plan-progress` (wall, section "Senses baseline"). | Source artifacts already exist under `artifacts/rust-plan-20261107/`. | Declare the duty with its own `max_age`. It reads UNKNOWN when evidence is missing or stale. |
-| Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4); fresh systemd table at pin `7ce12523`: `readings` 890 CPU-s / 6 h (36 runs, ~24.5 CPU-s each), 870 MB peak. `doctor` has 25 exit-1 runs, cause UNKNOWN. | Diagnose `doctor` (S3) before any move. The `readings` scan cost driver was profiled 2026-11-09 (discovery row in section 9): one full verified tape read per process; S2 is the candidate. |
+| Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4); fresh systemd table at pin `7ce12523`: `readings` 890 CPU-s / 6 h (36 runs, ~24.5 CPU-s each), 870 MB peak. `doctor` has 25 exit-1 runs, cause UNKNOWN. | The `readings` cost is now profiled on the live plant and S2 is decided: see section 10. The slice is a Python slice (unused whole-tape reads, one snapshot per scan, cadence), not a Rust slice. |
+| **S2.1. Delete the tape reads that feed nothing** | Implemented (2026-11-10). `_mind_role_coverage` took an `entries` argument it never read; three readings read the whole tape to fill it and discarded the result. | AST-verified: `discovery.py:980` reads `home`, `role`, `now` and not `entries`. Fresh-process A/B of one live scan: 31.56 CPU-s before, 31.58 after, 74 observations both times. **A deletion, not a speedup** — an earlier 37% figure came from running both variants in one process and was wrong. | Committed with 4 regression tests that fail if a tape read returns to these readings. S2.2 (one physical tape read per scan) and S2.3 (cadence) remain. |
 
 ### 9.1a Independent replaceability (operator vision addendum, DM 298227, 2026-11-08)
 
@@ -488,7 +489,7 @@ is the template), with a differential test that runs without the Python runtime.
 | Cold role projection | 15.2 s user for cold `wall show` | `feed._ROLE_ENTRIES_CACHE` (process-local) | same | C |
 | Identity index | 23.5 MB sqlite, not timed | `feed.py:527-576` | malformed-count consumers | Kept, not scheduled |
 | `readings`, `doctor`, `observer-checks` producers | 5.9k, 2.9k, 2.5k CPU-s per day | `producers.py`, the producer scripts | systemd units | Deferred (S2, S3) |
-| `discovery.py` scanner | 890 CPU-s / 6 h, 870 MB peak, every 10 min (consumer-perf, pin `7ce12523`) | `discovery.py` (7,889 lines) | `mishe-producer-readings` | Candidate again (R2 falsified). Measured 2026-11-09 on a tape copy (298,870 entries, 213 MB, 2 GB cgroup cap): one `sample()` makes five `Feed.entries()` calls, but only the first does the verified read (6.2 CPU-s); the other four hit the process-local `_ENTRIES_CACHE` (about 0.01 s each). Unverified read: 1.5 CPU-s, 604 MB peak. Cold verified read measured 43.5 CPU-s, 609 MB peak, before an index checkpoint existed; first-read cost varies with index state. The live 24.5 CPU-s per run is not yet explained (UNKNOWN). Five-reader folds are not the multiplier; the full verified read is the candidate for S2 (window-limited work). |
+| `discovery.py` scanner | 890 CPU-s / 6 h, 870 MB peak, every 10 min (consumer-perf, pin `7ce12523`); 24.2 CPU-s and 941 MB peak per run at pin `b3d2cd85` (2026-11-10) | `discovery.py` (7,889 lines) | `mishe-producer-readings` | Candidate again (R2 falsified). Measured 2026-11-09 on a tape copy (298,870 entries, 213 MB, 2 GB cgroup cap): one `sample()` makes five `Feed.entries()` calls, but only the first does the verified read (6.2 CPU-s); the other four hit the process-local `_ENTRIES_CACHE` (about 0.01 s each). Unverified read: 1.5 CPU-s, 604 MB peak. The 43.5 CPU-s "cold verified read" from that copy is **retired**: it was measured without an index checkpoint. Against the live tape with a checkpoint the cold read is 6.08 CPU-s and a bounded indexed read is 0.01 CPU-s (section 10.3). The live per-run cost is now explained: 67.7% of the cold read is record verification, and the scan reads the whole tape twice. See section 10 for the S2 decision. |
 | Dispatch, host-capacity, budget | Cheap by design; no CPU sample; containment-adjacent | `producers.py`, `budget.sh` | units | Rejected (R4) |
 
 ### 9.3 Ordered slices, with acceptance, rollback and build budget
@@ -513,3 +514,186 @@ is the template), with a differential test that runs without the Python runtime.
 - S0 meets its threshold. Then B must beat the combined S0 baseline by the 3.3 threshold, or be abandoned (section 5.2).
 - Non-ASCII header bytes appear on the live tape. The Unicode-digit fix then becomes a blocking item, not a cleanup.
 - The 48-hour target was met for the framing slice: A is live and observed, not waiting. The remaining slices (B, C) are the open work.
+
+## 10. S2 decision: the `readings` duty, measured on the live plant (2026-11-10)
+
+Section 9.1 left S2 as "readings cadence or window-limited tape work", cause
+unprofiled. This section settles it with measurements taken against the live
+plant at pin `b3d2cd85` on 2026-11-10 07:28Z–07:40Z. Every number below was
+produced by a probe in `artifacts/rust-plan-20261107/s2-20261110/`, read-only
+against the live tape, run under `systemd-run --user --scope -p MemoryMax=2G
+-p CPUWeight=20` at `nice -n 19`.
+
+### 10.1 The duty's measured cost
+
+`mishe-producer-readings.timer` runs `discover scan` every 600 s
+(`OnUnitActiveSec=600`). The 07:28:15Z run:
+
+| Quantity | Value |
+|---|---|
+| `CPUUsageNSec` | 24,194,595,000 (24.2 CPU-s) |
+| `MemoryPeak` | 941,236,224 (941 MB) |
+| wall | 07:28:15Z → 07:28:41Z (26 s) |
+| `Result` | success |
+
+At 144 runs/day this is **~3.5k CPU-s/day** and **~135 GB of peak-RSS
+allocation per day** for one duty. Its 941 MB peak sits under the
+`MemoryHigh=1G` / `MemoryMax=2G` containment on `mishe-plants.slice`, so this
+duty is the plant's largest consumer and the one closest to the guard.
+
+### 10.2 Where the cost goes (one live `discovery.sample()`, cProfile)
+
+| Component | Profiled seconds | Share |
+|---|---|---|
+| `_ledger_evidence_binding` | 12.60 | 33% |
+| — of which the cold `Feed.entries()` read | 11.09 | 29% |
+| `_mind_treadmill` | 11.21 | 30% |
+| `classify_outcomes` (the `_settle_outcome_join` call) | 7.61 | 20% |
+| `_coord_dm_disposition_age` | 2.83 | 7% |
+| `_head_rewinds` | 2.21 | 6% |
+
+Total 31.69 CPU-s profiled, 850 MB peak. The five `Feed.entries()` calls cost
+**one** cold read (the first: 11.09 s; the other four: about 0.01 s each from
+the process-local `_ENTRIES_CACHE`). On top of that the tape is streamed
+physically **three** times per scan, 642 MB in total (61 GB/day):
+
+| Physical read | Bytes | Call site |
+|---|---|---|
+| `feed.parse_feed` | 214,119,574 | `_mind_treadmill` → `Feed.entries` → the cold read |
+| `feed.iter_feed_file` | 214,119,574 | `_ledger_evidence_binding` → `classify_outcomes`, which takes no snapshot |
+| `store_census.tape_entries` | 214,119,574 | `_ledger_evidence_binding`, collecting the named record digests |
+
+### 10.3 The cold/warm split, measured live (not on a copy)
+
+The 43.5 CPU-s "cold verified read" recorded in the section 9.2 table was
+measured on a tape **copy without an index checkpoint**. Against the live
+tape, which has a valid checkpoint, the same read is:
+
+| Read | CPU-s | Peak RSS |
+|---|---|---|
+| `Feed(home).entries()` cold | 6.08 | 613 MB |
+| `Feed(home).entries()` second call in the same process | 0.01 | — |
+| `Feed(home).view_entries(start=1, limit=200)` | 0.01 | — |
+
+**The 43.5 CPU-s figure is retired.** The live cold read is 6.08 CPU-s, and a
+bounded indexed read of the same tape is 0.01 CPU-s. The difference was the
+checkpoint's absence, not the tape's size.
+
+### 10.4 The cold read's own split: parse vs record verification
+
+Two fresh processes, same live tape, one with `verify_records=True` and one
+without:
+
+| Mode | Total CPU-s | Peak RSS |
+|---|---|---|
+| with record verification | 6.53 | 609 MB |
+| without record verification | 2.11 | 607 MB |
+| **difference** | **4.42** | |
+
+**Record verification is 67.7% of the cold read.** It is 196,318 sqlite
+lookups plus per-record directory and path bookkeeping — not byte-level work.
+A Rust port of the *byte* layer cannot touch it; only the sqlite and
+filesystem layer can.
+
+### 10.5 The Rust byte-level fact extractor, measured against the Python it mirrors
+
+`mishe-tape-facts` is built, contract-tested and installed. Measured against
+the live tape, with both sides charged for self **and** child CPU (the
+Python side spawns the Rust framer, so `process_time()` alone under-reports
+it by 4×):
+
+| Side | Facts | Total CPU-s | Peak RSS |
+|---|---|---|---|
+| Python (`iter_feed_file` + three regexes) | 254,158 | 1.75 | 368 MB |
+| Rust (`mishe-tape frames` → `mishe-tape-facts`) | 254,158 | 0.97 | 73 MB (children) |
+| whole consumer `_coord_dm_disposition_age` | — | 1.70 | — |
+
+**1.8× on total CPU, and 5× on peak RSS.** The facts agree: 252,750 identical
+facts, 0 disagreements. The 1,408 remaining pairs are exactly the contract's
+documented `!` deferral (an ASCII digit run touching a non-ASCII byte, where
+Python's `\d` matches Unicode digits and the caller must apply the Python
+rule). The crate is correct and fast, and it is **not** where the duty's cost
+is.
+
+### 10.6 What the cost scales with
+
+Reading frame-aligned prefixes of the live tape in fresh processes:
+
+| Fraction | Bytes | Entries | Total CPU-s | CPU-s per MB |
+|---|---|---|---|---|
+| 12.5% | 26.7 MB | 46,464 | 0.23 | 0.0086 |
+| 25% | 53.5 MB | 76,160 | 0.38 | 0.0071 |
+| 50% | 106.9 MB | 120,576 | 0.62 | 0.0058 |
+| 100% | 214.1 MB | 299,179 | 1.39 | 0.0065 |
+
+Framing is linear in tape size at about 0.0065 CPU-s/MB. The duty's cost is
+therefore **proportional to a tape that grows every minute**; the tape has
+reached 214 MB and grows with every wake, message and record on the plant.
+
+### 10.7 The decision
+
+S2 was framed as "readings cadence or window-limited tape work". The
+measurements split it into three separate problems, and only one of them is
+Rust's:
+
+1. **One cold whole-tape read, shared.** The scan's five `Feed.entries()`
+   calls cost **one** cold read: the first parses and verifies 299,179
+   entries, the other four are served from the process-local `_ENTRIES_CACHE`
+   at about 0.01 s each (section 10.2). A second full-tape stream runs
+   separately through `store_census.tape_entries`, which does not use that
+   cache. So the redundancy is two physical reads, not five, and one of the
+   two is not the cache's to reuse.
+2. **Record verification (67.7% of the cold read).** sqlite lookups and
+   per-record path bookkeeping. Not byte-level, not Rust's, and the same cost
+   that slice B (section 9.3) exists to attack. It needs its own benchmark
+   against S0's Python hoist before any Rust decision.
+3. **Byte-level extraction (0.97 CPU-s of a 24 CPU-s duty).** `mishe-tape-facts`
+   already does this, correctly, at 1.8× the Python's CPU and 5× less RSS.
+   Its share of the duty is under 5%. Migrating more byte-level work into
+   Rust cannot pay for itself here.
+
+**Decision: the S2 slice is not a Rust slice.** It is a Python slice with
+two parts, in measured cost order:
+
+- **S2.1 — delete the reads that feed nothing.** `_mind_role_coverage`
+  (`discovery.py:980`) takes an `entries` argument it never reads. Verified by
+  AST inspection of the function body: parameters `home`, `role`, `now` are
+  read; `entries` is not. Three readings (`_mind_treadmill`,
+  `_mind_loop_stall`, `_mind_watch_wait`) read the whole tape and pass the
+  result to it. **Measured effect: none on CPU.** A fresh-process A/B of one
+  live scan gives 31.56 CPU-s before the change and 31.58 CPU-s after, and
+  the whole-tape read count is 3 before and 3 after: the cold read was
+  already shared through `_ENTRIES_CACHE` with `_mind_artifact_recurrence`,
+  which needs it. An earlier in-process measurement of a 37% saving was
+  **wrong** — it ran both variants in one process, so the second variant
+  inherited a warm page cache and a populated entry cache. The change is
+  still worth keeping: it removes a dead parameter, three reads whose result
+  is discarded, and the `FeedError` that a discarded read can raise into a
+  swallowed `except (OSError, ValueError)`. It is a deletion, not a
+  speedup.
+- **S2.2 — one physical tape read per scan.** `_ledger_evidence_binding`
+  streams the whole tape through `store_census.tape_entries` (214,133,186
+  bytes) and then again through `classify_outcomes`, which reads the tape
+  itself when it is given no snapshot (`discovery.py:5038`). This is the real
+  redundancy, and it is a snapshot change, not a windowing change.
+- **S2.3 — schedule.** The duty reads 941 MB every 10 minutes to produce a
+  reading whose inputs change slowly. The cadence is a scheduler change, so it
+  takes the strong path: fresh review, deterministic activation, revert and
+  reapply.
+
+**Rust's place in the readings duty** is unchanged and still real: it is
+slice B, the verified-store lookup, where 4.42 of the 6.53 CPU-s cold read
+sits. That is a larger prize than anything S2 offers, and S2.1–S2.3 lower the
+baseline B must beat rather than compete with it.
+
+### 10.8 What would change this decision
+
+- `_mind_role_coverage` starts using `entries`: then the whole-tape read is
+  load-bearing and S2.1 must be re-scoped to a bounded read instead.
+- The `!`-deferred facts turn out to change a reading's verdict: the crate's
+  deferral is then a defect, not a contract.
+- A window-limited read is shown to change a reading's output: windowing is
+  then unsafe for that reading and the whole-tape read stands.
+- `classify_outcomes` is shown to need the whole tape for correctness: S2.2
+  is then a snapshot change only, not a windowing change.
+

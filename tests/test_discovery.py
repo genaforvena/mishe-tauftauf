@@ -5846,7 +5846,7 @@ def test_treadmill_sample_renders_pending_and_idle(monkeypatch, tmp_path):
     monkeypatch.setattr(discovery, "_treadmill_commits",
                         lambda checkout, role, limit=60: [])
     monkeypatch.setattr(discovery, "_mind_role_coverage",
-                        lambda home, role, now, entries: {
+                        lambda home, role, now: {
                             "wall_updated": None, "last_yield": None,
                             "idle_s": 7892, "pending": 61469})
     result = discovery._mind_treadmill(home)
@@ -6815,7 +6815,7 @@ def test_release_the_stable_runtime_pointer_resolves_to_counts_as_referenced(tmp
 
 def _loop_stall_coverage(overrides):
     """Coverage fixture: every role settled unless overridden."""
-    def fake(home, role, now, entries):
+    def fake(home, role, now):
         base = {"wall_updated": None, "last_yield": "k", "idle_s": 60, "pending": None}
         base.update(overrides.get(role, {}))
         return base
@@ -7071,3 +7071,85 @@ def test_installed_site_units_skips_templates_and_keeps_timer_idle_producers(mon
     units, failure = discovery._installed_site_units()
     assert failure is None
     assert units == ["mishe-producer-readings.service", "mishe-containment.service"]
+
+
+def test_role_coverage_reads_no_tape_entry(monkeypatch, tmp_path):
+    """The coverage reading must not consume the tape.
+
+    It used to take the whole tape's entries as an argument it never read, so
+    every caller paid a full verified read of a 214 MB tape for nothing. The
+    argument is gone; this test fails if a tape read comes back.
+    """
+    from mishe_tauftauf import discovery
+
+    class ExplodingTape:
+        def __init__(self, home):
+            self.home = home
+
+        def entries(self, *args, **kwargs):
+            raise AssertionError("the coverage reading must not read the tape")
+
+    monkeypatch.setattr(discovery, "Feed", ExplodingTape)
+    coverage = discovery._mind_role_coverage(tmp_path, "senses",
+                                              datetime.now(timezone.utc))
+    assert set(coverage) == {"wall_updated", "last_yield", "idle_s", "pending"}
+
+
+def test_treadmill_reads_no_tape_entry(monkeypatch, tmp_path):
+    """The treadmill reading must not read the tape.
+
+    Its verdict comes from the commit stream and the dispatch records, never
+    from tape entries, so the whole-tape read it used to make was pure cost.
+    """
+    from mishe_tauftauf import discovery
+
+    class ExplodingTape:
+        def __init__(self, home):
+            self.home = home
+
+        def entries(self, *args, **kwargs):
+            raise AssertionError("the treadmill reading must not read the tape")
+
+    class Head:
+        returncode = 0
+        stdout = "abc123\n"
+
+    monkeypatch.setattr(discovery, "Feed", ExplodingTape)
+    monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: Head())
+    monkeypatch.setattr(discovery, "_treadmill_commits",
+                        lambda checkout, role, limit=60: [])
+    result = discovery._mind_treadmill(tmp_path)
+    assert result["id"] == "sense.mind.treadmill"
+    assert result["state"] == "verified"
+
+
+def test_loop_stall_reads_no_tape_entry(monkeypatch, tmp_path):
+    """The loop-stall reading must not read the tape."""
+    from mishe_tauftauf import discovery
+
+    class ExplodingTape:
+        def __init__(self, home):
+            self.home = home
+
+        def entries(self, *args, **kwargs):
+            raise AssertionError("the loop-stall reading must not read the tape")
+
+    monkeypatch.setattr(discovery, "Feed", ExplodingTape)
+    result = discovery._mind_loop_stall(tmp_path)
+    assert result["id"] == "sense.mind.loop-stall"
+
+
+def test_watch_wait_reads_no_tape_entry(monkeypatch, tmp_path):
+    """The watch-wait reading must not read the tape."""
+    from mishe_tauftauf import discovery
+
+    class ExplodingTape:
+        def __init__(self, home):
+            self.home = home
+
+        def entries(self, *args, **kwargs):
+            raise AssertionError("the watch-wait reading must not read the tape")
+
+    monkeypatch.setattr(discovery, "Feed", ExplodingTape)
+    result = discovery._mind_watch_wait(tmp_path)
+    assert result["id"] == "sense.mind.watch-wait"

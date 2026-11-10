@@ -977,8 +977,7 @@ def _treadmill_previous_digests(home: Path) -> dict[str, str]:
     return digests
 
 
-def _mind_role_coverage(home: Path, role: str, now: datetime,
-                        entries: list | None) -> dict[str, object]:
+def _mind_role_coverage(home: Path, role: str, now: datetime) -> dict[str, object]:
     """Per-role temporal coverage: wall update, last completed wake, idle, open dispatch.
 
     The commit stream shows what landed; this shows whether the mind is
@@ -987,7 +986,14 @@ def _mind_role_coverage(home: Path, role: str, now: datetime,
     body-research DM 52299). The wall mtime and the seed receipt state are
     read directly; an unreadable source yields None fields, never a guessed
     value.
+
+    This reads no tape entry. It used to take the whole tape's entries as an
+    argument it never read, so three readings read the tape and discarded the
+    result. Removing it is a deletion, not a speedup: a fresh-process A/B of
+    one live scan gives the same CPU before and after, because the cold read
+    was already shared with the readings that need it (2026-11-10).
     """
+
     try:
         wall_mtime = (home / "walls" / f"{role}.md").stat().st_mtime
         wall_updated = datetime.fromtimestamp(
@@ -1065,11 +1071,6 @@ def _mind_treadmill(home: Path, now: datetime | None = None) -> dict:
     roles = ["inference-research", "body-research", "docs", "health", "senses",
              "discover", "genome", "witness", "research-methods", "operator-view"]
     previous = _treadmill_previous_digests(home)
-    entries: list | None = None
-    try:
-        entries = Feed(home).entries()
-    except (OSError, ValueError):
-        entries = None
     pairs: dict[str, dict] = {}
     unreadable = 0
     worst = "clean"
@@ -1086,7 +1087,7 @@ def _mind_treadmill(home: Path, now: datetime | None = None) -> dict:
                            "detail": "commit stream unreadable",
                            "handoff": _treadmill_handoff_digest(home, role),
                            "handoff_moved": None,
-                           **_mind_role_coverage(home, role, now, entries)}
+                           **_mind_role_coverage(home, role, now)}
             continue
         digest = _treadmill_handoff_digest(home, role)
         old = previous.get(role)
@@ -1097,7 +1098,7 @@ def _mind_treadmill(home: Path, now: datetime | None = None) -> dict:
             pairs[role] = {"stagnation": 0, "change": 0, "verdict": "unknown",
                            "detail": "no commits in window",
                            "handoff": digest, "handoff_moved": handoff_moved,
-                           **_mind_role_coverage(home, role, now, entries)}
+                           **_mind_role_coverage(home, role, now)}
             continue
         fold = _treadmill_fold(commits)
         verdict = ("watch-treadmill" if fold["stagnation"] >= TREADMILL_MIN_WAKES
@@ -1107,7 +1108,7 @@ def _mind_treadmill(home: Path, now: datetime | None = None) -> dict:
         pairs[role] = {**fold, "verdict": verdict,
                        "detail": f"leading record-only run over {len(commits)} commits",
                        "handoff": digest, "handoff_moved": handoff_moved,
-                       **_mind_role_coverage(home, role, now, entries)}
+                       **_mind_role_coverage(home, role, now)}
     sample = "treadmill=" + worst + " " + " ".join(
         f"{role}(stag={pairs[role]['stagnation']},change={pairs[role]['change']},"
         f"pending={pairs[role].get('pending')},idle={pairs[role].get('idle_s')})"
@@ -1341,14 +1342,10 @@ def _mind_loop_stall(home: Path, now: datetime | None = None) -> dict:
     """
     if now is None:
         now = datetime.now(timezone.utc)
-    try:
-        entries: list | None = Feed(home).entries()
-    except (OSError, ValueError):
-        entries = None
     pairs: dict[str, dict] = {}
     worst = "clean"
     for role in loop_stall_roles(home):
-        coverage = _mind_role_coverage(home, role, now, entries)
+        coverage = _mind_role_coverage(home, role, now)
         idle = coverage.get("idle_s")
         pending = coverage.get("pending")
         if idle is None:
@@ -1454,14 +1451,10 @@ def _mind_watch_wait(home: Path, now: datetime | None = None) -> dict:
     """
     if now is None:
         now = datetime.now(timezone.utc)
-    try:
-        entries: list | None = Feed(home).entries()
-    except (OSError, ValueError):
-        entries = None
     pairs: dict[str, dict] = {}
     worst = "clean"
     for role in loop_stall_roles(home):
-        coverage = _mind_role_coverage(home, role, now, entries)
+        coverage = _mind_role_coverage(home, role, now)
         pending = coverage.get("pending")
         pid = _open_wake_pid(home, role) if pending else None
         waits: list[tuple[int, int, str]] = []
