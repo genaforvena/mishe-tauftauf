@@ -348,6 +348,23 @@ _COMMAND_ATTEMPTS = 5
 
 _COMMAND_RETRY_SECONDS = 2.0
 
+_FAILED_CONCLUSIONS: Final[frozenset[str]] = frozenset(("failure", "timed_out", "cancelled", "action_required"))
+"""Conclusions that count as a CI failure (a cancelled or action-required run is not a pass)."""
+
+
+def _state_for(matches: list[dict], sha: str) -> dict[str, str]:
+    """One CI state for the newest run of every workflow registered for ``sha``."""
+    failed = [row for row in matches if row.get("status") == "completed" and
+              row.get("conclusion") in _FAILED_CONCLUSIONS]
+    pending = [row for row in matches if row.get("status") != "completed"]
+    row = max(failed or pending or matches, key=lambda item: int(item["databaseId"]))
+    conclusion = str(row.get("conclusion") or "")
+    status = str(row.get("status") or "")
+    state = "fail" if failed else "pending" if pending else (
+        "pass" if all(item.get("conclusion") == "success" for item in matches) else "unknown")
+    return {"state": state, "sha": sha, "run": str(row["databaseId"]),
+            "url": str(row["url"]), "detail": f"{status}/{conclusion or 'none'}"}
+
 
 def _command(*argv: str, cwd: Path | None = None) -> str:
     # A nonzero exit is how ``gh`` reports a transport failure (the EOF/TLS text
@@ -396,17 +413,48 @@ def read(home: Path, *, workspace: Path | None = None, sha: str | None = None,
         if missing:
             return {"state": "unknown", "sha": sha, "run": "none", "url": "none",
                     "detail": f"required push workflows missing: {','.join(sorted(missing))}"}
-        matches = list(current.values())
-        failed = [row for row in matches if row.get("status") == "completed" and
-                  row.get("conclusion") in {"failure", "timed_out", "cancelled", "action_required"}]
-        pending = [row for row in matches if row.get("status") != "completed"]
-        row = max(failed or pending or matches, key=lambda item: int(item["databaseId"]))
-        conclusion = str(row.get("conclusion") or "")
-        status = str(row.get("status") or "")
-        state = "fail" if failed else "pending" if pending else (
-            "pass" if all(item.get("conclusion") == "success" for item in matches) else "unknown")
-        return {"state": state, "sha": sha, "run": str(row["databaseId"]),
-                "url": str(row["url"]), "detail": f"{status}/{conclusion or 'none'}"}
+        return _state_for(list(current.values()), sha)
+    except (OSError, RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
+        return {"state": "unknown", "sha": "unknown", "run": "none", "url": "none", "detail": str(exc)[:200]}
+
+
+def read_completed(home: Path, *, workspace: Path | None = None,
+                   repository: str | None = None) -> dict[str, str]:
+    """Newest push commit on the default branch whose Actions runs have all finished.
+
+    ``read`` answers for one exact commit, which is what the promotion gate needs at a named SHA. A
+    monitor that must publish something while the newest commit's runs are still going needs the
+    newest *finished* result instead, so it can report the last thing CI said rather than repeat a
+    superseded standing value (an old RED outlives the green run that already answered it).
+    """
+    workspace = workspace or home.parent
+    try:
+        repository = json.loads(_command("gh", "repo", "view", *([repository] if repository else []),
+                                         "--json", "nameWithOwner,defaultBranchRef",
+                                         cwd=workspace))
+        default_branch = repository["defaultBranchRef"]["name"]
+        rows = json.loads(_command("gh", "run", "list", "--repo", repository["nameWithOwner"],
+            "--branch", default_branch, "--event", "push", "--limit", "100", "--json",
+            "headSha,databaseId,status,conclusion,url,workflowName,event,headBranch", cwd=workspace))
+        matches = [row for row in rows if row.get("event") == "push" and row.get("headBranch") == default_branch]
+        current: dict[tuple[str, str], dict] = {}
+        for row in matches:
+            key = (str(row["headSha"]), str(row.get("workflowName") or row["databaseId"]))
+            old = current.get(key)
+            if old is None or int(row["databaseId"]) > int(old["databaseId"]):
+                current[key] = row
+        commits: dict[str, list[dict]] = {}
+        for (commit_sha, _workflow), row in current.items():
+            commits.setdefault(commit_sha, []).append(row)
+        finished = [group for group in commits.values()
+                    if all(row.get("status") == "completed" for row in group)]
+        if not finished:
+            # Nothing on the branch has a complete result yet (a young branch, or every run still
+            # going): the caller keeps whatever it last observed.
+            return {"state": "pending", "sha": "none", "run": "none", "url": "none",
+                    "detail": f"no completed push run on {default_branch}"}
+        group = max(finished, key=lambda rows_: max(int(row["databaseId"]) for row in rows_))
+        return _state_for(group, str(group[0]["headSha"]))
     except (OSError, RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
         return {"state": "unknown", "sha": "unknown", "run": "none", "url": "none", "detail": str(exc)[:200]}
 

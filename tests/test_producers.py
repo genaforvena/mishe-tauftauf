@@ -128,13 +128,23 @@ def test_ci_producer_maps_actions_results(tmp_path):
         assert store.read(tmp_path, "ci", now=NOW).value == expect
 
 
-def test_ci_pending_refreshes_freshness_and_unknown_is_a_failure(tmp_path):
+def test_ci_pending_reports_the_newest_finished_run_and_falls_back_when_none_finished(tmp_path):
     store.register(tmp_path, "ci", max_age=900, subscribers=["genome"])
-    producers.produce(tmp_path, "ci", now=NOW, read=lambda h: {"state": "pass"})
-    assert producers.produce(tmp_path, "ci", now=NOW + 400, read=lambda h: {"state": "pending"}) is None
+    producers.produce(tmp_path, "ci", now=NOW, read=lambda h: {"state": "fail"})
+    assert store.read(tmp_path, "ci", now=NOW).value == "RED"
+    def pending(h):                      # the newest commit's run is still going
+        return {"state": "pending"}
+    # The failing commit is already answered by a newer green run: while the newest commit's run is
+    # still going the producer reports the finished result, not the superseded RED.
+    assert producers.produce(tmp_path, "ci", now=NOW + 400, read=pending,
+                             completed=lambda h: {"state": "pass"}) == "GREEN"
     assert store.read(tmp_path, "ci", now=NOW + 400).value == "GREEN"
-    producers.produce(tmp_path, "ci", now=NOW + 1200, read=lambda h: {"state": "pending"})
-    assert store.read(tmp_path, "ci", now=NOW + 1500).value == "GREEN"      # pending refreshed freshness: no expiry
+    assert producers.produce(tmp_path, "ci", now=NOW + 800, read=pending,
+                             completed=lambda h: {"state": "fail"}) == "RED"
+    # Nothing on the branch has finished yet: keep the standing value fresh instead of expiring it.
+    assert producers.produce(tmp_path, "ci", now=NOW + 1200, read=pending,
+                             completed=lambda h: {"state": "pending"}) is None
+    assert store.read(tmp_path, "ci", now=NOW + 1500).value == "RED"      # refreshed freshness: no expiry
     with pytest.raises(producers.ObservationFailed):
         producers.produce(tmp_path, "ci", now=NOW + 500, read=lambda h: {"state": "unknown"})
     assert store.read(tmp_path, "ci", now=NOW + 5000).state == "UNKNOWN"

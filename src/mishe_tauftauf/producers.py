@@ -74,15 +74,26 @@ class ObservationFailed(RuntimeError):
     """The source could not tell; the signal is left to age to UNKNOWN."""
 
 
-def ci(home, *, now: float, read=None) -> str | None:
-    """GitHub Actions for the current remote commit: pass GREEN, fail RED, pending keeps the last result fresh, unknown fails."""
+def ci(home, *, now: float, read=None, completed=None) -> str | None:
+    """GitHub Actions for the current remote commit: pass GREEN, fail RED, pending falls back to the newest finished run, unknown fails."""
     if read is None:
         from .ci_watch import read
+    if completed is None:
+        from .ci_watch import read_completed
     reading = read(home)
     state = reading["state"]
     if state == "pending":
-        # No run exists yet for the newest commit (a run takes ~11 min to finish, longer than max_age):
-        # the monitor read the world, so keep the standing result fresh instead of aging to a false UNKNOWN.
+        # The newest commit has no finished run yet — a run takes ~11 min and pushes land every
+        # ~2 min, so this is the normal reading. The monitor did read the world, so publishing the
+        # newest *finished* result on the branch beats keeping the standing value fresh: an older
+        # RED would otherwise outlive the green run that already superseded it.
+        finished = completed(home)
+        if finished["state"] == "pass":
+            return "GREEN"
+        if finished["state"] == "fail":
+            return "RED"
+        # Nothing on the branch has finished (a young branch), or GitHub could not be read: keep the
+        # standing result fresh instead of aging to a false UNKNOWN.
         signal_store.refresh(home, "ci", now=now)
         return None
     if state not in ("pass", "fail"):

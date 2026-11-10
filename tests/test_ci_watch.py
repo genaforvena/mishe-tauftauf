@@ -168,3 +168,61 @@ def test_read_still_reports_unknown_when_transport_stays_down(tmp_path, monkeypa
     result = ci_watch.read(tmp_path / "site")
     assert result["state"] == "unknown"
     assert result["detail"] == "network is unreachable"
+
+
+def _run(sha, workflow, database, status, conclusion, branch="main", event="push"):
+    return {"headSha": sha, "workflowName": workflow, "databaseId": database, "status": status,
+            "conclusion": conclusion, "url": f"https://example.test/{database}", "event": event,
+            "headBranch": branch}
+
+
+def test_read_completed_answers_for_the_newest_commit_whose_runs_all_finished(tmp_path):
+    metadata = json.dumps({"nameWithOwner": "o/r", "defaultBranchRef": {"name": "main"}})
+    rows = [
+        # newest commit: one workflow still going, one already green
+        _run("b" * 40, "CI", 20, "in_progress", None),
+        _run("b" * 40, "Security", 21, "completed", "success"),
+        # previous commit: finished, its newest CI attempt green after an older failure, Security red
+        _run("a" * 40, "CI", 9, "completed", "failure"),
+        _run("a" * 40, "CI", 10, "completed", "success"),
+        _run("a" * 40, "Security", 11, "completed", "failure"),
+    ]
+    with patch.object(ci_watch, "_command", side_effect=[metadata, json.dumps(rows)]) as command:
+        result = ci_watch.read_completed(tmp_path / "site")
+    assert result["state"] == "fail"
+    assert result["sha"] == "a" * 40
+    assert result["run"] == "11"
+    run_query = command.call_args_list[1].args
+    assert run_query[:3] == ("gh", "run", "list")
+    assert "--commit" not in run_query
+    assert run_query[run_query.index("--branch") + 1] == "main"
+    assert run_query[run_query.index("--event") + 1] == "push"
+    # The rows the reader keeps must be fields this query actually asks for.
+    assert "databaseId" in run_query[run_query.index("--json") + 1].split(",")
+
+    # Same rows with Security green: the newest finished commit is a pass.
+    rows[-1]["conclusion"] = "success"
+    with patch.object(ci_watch, "_command", side_effect=[metadata, json.dumps(rows)]):
+        assert ci_watch.read_completed(tmp_path / "site")["state"] == "pass"
+
+
+def test_read_completed_is_pending_while_every_run_on_the_branch_is_unfinished(tmp_path):
+    metadata = json.dumps({"nameWithOwner": "o/r", "defaultBranchRef": {"name": "main"}})
+    rows = [_run("b" * 40, "CI", 20, "in_progress", None), _run("b" * 40, "Security", 21, "queued", None)]
+    with patch.object(ci_watch, "_command", side_effect=[metadata, json.dumps(rows)]):
+        result = ci_watch.read_completed(tmp_path / "site")
+    assert result["state"] == "pending"
+    assert result["detail"] == "no completed push run on main"
+
+
+def test_read_completed_ignores_finished_runs_that_are_not_branch_pushes(tmp_path):
+    metadata = json.dumps({"nameWithOwner": "o/r", "defaultBranchRef": {"name": "main"}})
+    rows = [
+        _run("b" * 40, "CI", 20, "in_progress", None),
+        # a finished pull_request run on the branch is not the branch's push result
+        _run("b" * 40, "CI", 22, "completed", "failure", event="pull_request"),
+        # nor is a finished push run of another branch
+        _run("c" * 40, "CI", 30, "completed", "failure", branch="candidate"),
+    ]
+    with patch.object(ci_watch, "_command", side_effect=[metadata, json.dumps(rows)]):
+        assert ci_watch.read_completed(tmp_path / "site")["state"] == "pending"

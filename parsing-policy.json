@@ -4,6 +4,7 @@
     "src/mishe_tauftauf/body_perception.py",
     "src/mishe_tauftauf/boot_rearm.py",
     "src/mishe_tauftauf/chat_protocol.py",
+    "src/mishe_tauftauf/ci_watch.py",
     "src/mishe_tauftauf/claude_quota_text.py",
     "src/mishe_tauftauf/cli.py",
     "src/mishe_tauftauf/component_text.py",
@@ -101,15 +102,6 @@
       "8883c4b23427eec334cdde9ac67018be55a438e54aeabde6552aa83e65b71043": 1,
       "e4868884ddbe937b5b40b69b9da1c15334284d217d54fe83ee0126d409d192bf": 1,
       "f3aefad90f91e5fad0beac22f152e2f460904fc248c1b1983eae9a541dfac7a1": 1
-    },
-    "src/mishe_tauftauf/ci_watch.py": {
-      "65a7d6716aee2e691d13c02440371c6187641e2f1bb62d0a36ea25bb431f805f": 1,
-      "6cc5f109d51bbade502f68869ca91c608bf5f862f99bcedc450e253276264c1f": 1,
-      "a40bf3fd4fee5383541d7a1befba71d5d74f56f8939e4147fc0133477f6e26a2": 1,
-      "be7d5c224b97682aa255da81c5f40b6246f8f8470377c59968fffa0b92a8b465": 1,
-      "ce024400043a9ca0023eb18520b07e5917dcce5f0af6235f806a2e3706a89d63": 1,
-      "ed7f4001f679ade05801e1b896182ce286c345823b0beac82c8c3013e47e2089": 1,
-      "fbf81728b1ad33c7a7c8f5ece54f1ff1980887fa624568e73d41e0313bbb3221": 1
     },
     "src/mishe_tauftauf/codex_review.py": {
       "228c4b1a8f87613ff0a35d7e67bab27c819e3513ea4da6d73ec61d4ad5c5fa1d": 1,
