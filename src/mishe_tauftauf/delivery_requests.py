@@ -28,6 +28,8 @@ The owner's death is the only evidence it cannot finish; the request then become
 (evidence kept) instead of blocking every wake behind a resolver who cannot wake.
 """
 REVERT_PHASES = {"reverted", "reverted-activation-failed", "revert-failed"}
+# Patch phases that end before wall_patch writes any runtime byte (see wall_patch._apply).
+PRE_EFFECT_PATCH_PHASES = {"reviewed", "review-refused", "review-unavailable", "test-failed", "test-unavailable", "test-mutated-source"}
 
 
 def admission_path(home):
@@ -300,9 +302,13 @@ def consume(home):
                 # Validation failure before execution has no effect. After an
                 # attempt begins, only explicit recovered evidence is safe.
                 recovered = False
+                pre_effect = False
                 if row["state"] == "running" and row["spec"].get("patch"):
                     record = wall_patch.status(home, row["spec"]["patch"])
-                    if record.get("phase") in REVERT_PHASES and _runtime_restored(record):
+                    if record.get("phase") in PRE_EFFECT_PATCH_PHASES:
+                        # wall_patch refuses these before any runtime write (phase never reached applying).
+                        pre_effect = True
+                    elif record.get("phase") in REVERT_PHASES and _runtime_restored(record):
                         # A failed revert activation is still recoverable when
                         # every scoped byte is back. Restoring bytes alone is not
                         # functional recovery: observe the old caller with the
@@ -322,7 +328,7 @@ def consume(home):
                     # A preflight rejection (e.g. superseded previous pin) is
                     # a failed request, not an unknown live effect.
                     recovered = not any(r.get("activation_started_at") for r in attempts)
-                terminal = row["state"] != "running" or recovered
+                terminal = row["state"] != "running" or recovered or pre_effect
                 row.update(state="failed" if terminal else "UNKNOWN", error=str(exc))
             finally:
                 row["ended_at"] = time.time()

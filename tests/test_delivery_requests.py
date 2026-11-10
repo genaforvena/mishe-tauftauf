@@ -375,3 +375,23 @@ def test_live_owner_admission_is_never_released_by_consume(plant, monkeypatch):
     q.consume(home)
     assert q.admission_path(home).exists()
     assert read_json(q.location(home, row["id"]))["state"] == "UNKNOWN"
+
+
+def test_patch_drift_before_apply_fails_without_admission_or_runtime_write(plant, monkeypatch):
+    """Incident 2026-11-10: a reviewed patch whose files drifted raised before any write but ended UNKNOWN."""
+    from mishe_tauftauf import wall_patch
+    monkeypatch.setattr(q, "notify", lambda *a, **k: None)
+    # Simulate drift after the request-time check: only the apply-time check (wall_patch._apply) must catch it.
+    monkeypatch.setattr(q, "validate_source", lambda *a, **k: None)
+    home, *_ = plant; row, runtime = strong_request(plant, monkeypatch)
+    record = wall_patch.status(home, "strong")
+    assert record["phase"] == "reviewed"
+    name = next(iter(record["files"]))
+    record["files"][name]["after"] = "drifted-after-review"
+    write_json(wall_patch.location(home, "strong"), record)
+    before = (runtime / "docs/page.md").read_text()
+    result = q.consume(home)[0]
+    assert result["state"] == "failed" and "patch changed since review" in result["error"]
+    assert (runtime / "docs/page.md").read_text() == before
+    assert not q.admission_path(home).exists()
+    assert wall_patch.status(home, "strong")["phase"] == "reviewed"
