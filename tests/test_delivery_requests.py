@@ -1,5 +1,6 @@
 """Delivery runs after settlement, never under the engine parent lock."""
 import os
+import time
 import subprocess
 import sys
 from pathlib import Path
@@ -341,3 +342,36 @@ def test_recovery_observation_timeout_stays_unknown_without_replay(plant, monkey
     assert result["state"] == "UNKNOWN"
     assert result["recovery_observation"]["code"] is None
     assert q.admission_path(home).exists()
+
+
+def test_dead_owner_admission_is_released_by_next_consume_as_unknown(plant, monkeypatch):
+    monkeypatch.setattr(q, "notify", lambda *a, **k: None)
+    """Incident 2026-11-10: a dead owner's admission blocked every wake (held) with no release path."""
+    import subprocess as sp
+    home, *_ = plant; row = request(plant); settle(home, row["key"])
+    dead = sp.Popen([sys.executable, "-c", "pass"]); dead.wait()
+    stale = time.time() - q.ADMISSION_MAX_AGE_SECONDS - 60
+    write_json(q.location(home, row["id"]), dict(row, state="running", started_at=stale))
+    write_json(q.admission_path(home), dict(id=row["id"], token="t", pid=dead.pid, at=stale))
+    q.consume(home)
+    assert not q.admission_path(home).exists()
+    kept = read_json(q.location(home, row["id"]))
+    assert kept["state"] == "UNKNOWN" and "admission released" in kept["error"]
+    assert q.standing_problem(home) is not None  # UNKNOWN stays visible to the resolver
+    owed.touch_inbox(home, "docs")
+    class Engine:
+        def run(self, *a, **kw): return None
+    result = wake.run_wake(home, "docs", roles=["docs"], engine=Engine(), now=100, repo=plant[1],
+                           mail_reader=lambda *a, **k: [])
+    assert result.outcome != "held"
+
+
+def test_live_owner_admission_is_never_released_by_consume(plant, monkeypatch):
+    monkeypatch.setattr(q, "notify", lambda *a, **k: None)
+    home, *_ = plant; row = request(plant); settle(home, row["key"])
+    stale = time.time() - q.ADMISSION_MAX_AGE_SECONDS - 60
+    write_json(q.location(home, row["id"]), dict(row, state="running", started_at=stale))
+    write_json(q.admission_path(home), dict(id=row["id"], token="t", pid=os.getpid(), at=stale))
+    q.consume(home)
+    assert q.admission_path(home).exists()
+    assert read_json(q.location(home, row["id"]))["state"] == "UNKNOWN"

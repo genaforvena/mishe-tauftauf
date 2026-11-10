@@ -21,8 +21,12 @@ from .observations import validate_slug
 from .state_files import read_json, write_json
 
 SIGNAL = "delivery-requests"
-ADMISSION_MAX_AGE_SECONDS = 15 * 60
-"""Admission held longer than this by a dead owner is a RED detector, not a wait."""
+ADMISSION_MAX_AGE_SECONDS = 5 * 60
+"""Admission held longer than this by a dead owner is released by the next consume pass.
+
+The owner's death is the only evidence it cannot finish; the request then becomes UNKNOWN
+(evidence kept) instead of blocking every wake behind a resolver who cannot wake.
+"""
 REVERT_PHASES = {"reverted", "reverted-activation-failed", "revert-failed"}
 
 
@@ -42,11 +46,17 @@ def _alive(pid):
     return True
 
 
+def _dead_past_bound(marker, now=None):
+    """Owner dead and admission older than the bound: nothing else will ever release it."""
+    age = (time.time() if now is None else now) - float(marker.get("at", 0) or 0)
+    return not _alive(marker.get("pid")) and age >= ADMISSION_MAX_AGE_SECONDS
+
+
 def admission_problem(home, now=None):
     """RED text when admission outlives its owner; None when healthy or absent.
 
-    A live owner may legitimately hold admission for a long apply, so only a
-    dead owner past the bound is a problem: nothing else will ever release it.
+    A live owner may legitimately hold admission for a long apply. A dead owner past the
+    bound is released by ``consume`` on its next pass, so this RED is only visible until then.
     """
     path = admission_path(home)
     if not path.exists():
@@ -54,11 +64,11 @@ def admission_problem(home, now=None):
     marker = read_json(path)
     if not isinstance(marker, dict):
         return "Malformed delivery admission; resolver required"
-    age = (time.time() if now is None else now) - float(marker.get("at", 0) or 0)
-    if _alive(marker.get("pid")) or age < ADMISSION_MAX_AGE_SECONDS:
+    if not _dead_past_bound(marker, now):
         return None
+    age = (time.time() if now is None else now) - float(marker.get("at", 0) or 0)
     return (f"Delivery admission for {marker.get('id')} held {int(age // 60)} min by dead owner "
-            f"pid {marker.get('pid')}; resolver required")
+            f"pid {marker.get('pid')}; released by the next consume pass")
 
 
 def preflight(home, spec):
@@ -219,6 +229,11 @@ def consume(home):
                 row.update(state="UNKNOWN", error="Consumer interrupted; descendants and effects require reconciliation")
                 write_json(location(home, row["id"]), row)
                 notify(home, row, row["error"])
+            if _dead_past_bound(marker):
+                # Owner dead past the bound: release, keep the UNKNOWN evidence, and let wakes run.
+                row.update(error=row["error"] + "; owner dead, admission released, effect status UNKNOWN")
+                write_json(location(home, row["id"]), row)
+                admission_path(home).unlink()
             heartbeat(home, row["error"])
             return []
         if (home / "hold").exists():
