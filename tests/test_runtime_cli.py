@@ -149,6 +149,22 @@ def test_signal_run_and_produce_commands(site):
     assert store.read(site, "dispatch", now=now).value == "GREEN"
 
 
+def test_recording_an_unknown_signal_arms_the_next_due_timer(site, monkeypatch):
+    # Every command that writes signal state re-arms the timer to the next real due thing: observe,
+    # signal run and produce all do. Recording an UNKNOWN used to skip it, so the timer kept firing on
+    # the target computed before the reading changed (the finding that refused moving-pin-5c0a3e5c).
+    from mishe_tauftauf import arm as armmod
+    cli("signal", "register", "ci", "--max-age", "900")
+    armed = []
+    monkeypatch.setattr(armmod, "arm", lambda home, *, scheduler: armed.append(home))
+    assert cli("signal", "observe-unknown", "ci", "--reason", "no readable observation", "--source", "t") == 0
+    assert armed == [site]
+    now = __import__("time").time()
+    signal = store.read(site, "ci", now=now)
+    assert signal.state == "UNKNOWN"
+    assert signal.reason == "no readable observation"
+
+
 def test_sync_installs_declared_producers_and_doctor_agrees(site, tmp_path, monkeypatch):
     (site / "producers.json").write_text(
         '[{"name":"egress","command":["/bin/true"],"every":300,"signal":{"max_age":900,"subscribers":["genome"]}}]')

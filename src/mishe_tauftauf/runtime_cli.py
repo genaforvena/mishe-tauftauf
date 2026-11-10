@@ -248,6 +248,11 @@ def run(args) -> int:
             print("edge" if edge else "refreshed")
         elif args.signal_command == "observe-unknown":
             edge = signal_store.observe_unknown(home, args.name, now=now, reason=args.reason, source=args.source)
+            # A recorded UNKNOWN changes what is due: the signal no longer waits for its expiry, and the
+            # timer that would expire it must be re-armed to the next real due thing. Every other command
+            # that writes signal state arms (observe, signal run, produce); this one did not, so the timer
+            # kept firing on the old target after the reading had already been superseded.
+            armmod.arm(home, scheduler=scheduler(home))
             print("edge" if edge else "unchanged")
         elif args.signal_command == "run":
             from . import producers
