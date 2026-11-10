@@ -12,6 +12,8 @@ from .wake import EngineExhausted, EngineRejected
 # and ran out its 1800 s (pub, 2026-11-09). A wake is agentic work in small steps: think a little, act more.
 DEFAULT_THINKING = "low"
 THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max", "auto")
+FIRST_OUTPUT_S = 120.0
+"""How long a wake waits for the model's first assistant event before the run is cut (operator DM 299288)."""
 
 
 def command(model: str | None, cwd: Path, prompt_file: Path, thinking: str | None = None) -> list[str]:
@@ -35,6 +37,21 @@ def refused_before_effect(stream: Path) -> str | None:
         if message.get("role") == "assistant" and message.get("stopReason") == "error":
             error = str(message.get("errorMessage") or "model error")[:300]
     return error
+
+
+def saw_assistant_event(stream: Path) -> bool:
+    """True once the stream holds an assistant message_start: the model's first response.
+
+    The user turn's message_start comes first, so this marker means the model has actually
+    begun answering. A stalled provider can write a few bytes (a partial line) and then go
+    quiet; byte growth alone would not notice, so the first-output bound uses this event.
+    """
+    for event in stream_events(stream):
+        if event.get("type") == "message_start":
+            message = event.get("message")
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                return True
+    return False
 
 
 # Provider text for an account that cannot pay for another call (MiniMax 402 "Token Plan usage limit ... insufficient_balance").
@@ -85,7 +102,8 @@ class OmpEngine:
         stream = self.stream = prompt_file.with_suffix(".out.jsonl")
         code = engine_process.run_bounded(
             command(self.model, Path(cwd), prompt_file, self.thinking), env=dict(env, **self.extra_env),
-            cwd=Path(cwd), timeout=timeout, stdout_to=stream, on_start=on_start, hard_timeout=hard_timeout)
+            cwd=Path(cwd), timeout=timeout, stdout_to=stream, on_start=on_start, hard_timeout=hard_timeout,
+            first_output_s=FIRST_OUTPUT_S, first_event=lambda: saw_assistant_event(stream))
         error = refused_before_effect(stream) if code != 0 else None
         if error is not None and is_quota_error(error):
             raise EngineExhausted(f"account out of quota before any tool call: {error}")

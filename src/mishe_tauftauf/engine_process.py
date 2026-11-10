@@ -17,6 +17,7 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from . import proc_table
@@ -81,7 +82,8 @@ def _output_size(path: Path | None) -> int | None:
 
 def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
                 stdin_from: Path | None = None, stdout_to: Path | None = None, on_start=None,
-                hard_timeout: float | None = None, idle_gap: float = IDLE_GAP_S) -> int:
+                hard_timeout: float | None = None, idle_gap: float = IDLE_GAP_S,
+                first_output_s: float | None = None, first_event: Callable[[], bool] | None = None) -> int:
     """Run ``command`` under a deadline.
 
     ``timeout`` is the soft deadline. With ``hard_timeout`` (a total runtime cap) the run may
@@ -89,6 +91,14 @@ def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
     cut mid-work. The run ends as a timeout when the output has not grown for ``idle_gap``
     seconds, or when the hard cap is reached. Without ``hard_timeout`` the run is cut exactly
     at the soft deadline, as before.
+
+    ``first_output_s`` bounds the wait for the first output: an engine that has not produced it
+    by then is cut as a timeout, so a model that emits nothing cannot hold the wake for the whole
+    soft deadline. ``first_event`` is an optional predicate the caller supplies to recognise the
+    first meaningful event when byte growth alone is not enough (a stalled provider can write a
+    few bytes and then go quiet); without it, any output growth counts.
+    The bound is enforced on the progress path (with ``hard_timeout``), which is the wake path;
+    the plain fixed-deadline path is unchanged.
     """
     stdin = open(stdin_from, "rb") if stdin_from else subprocess.DEVNULL
     stdout = open(stdout_to, "wb") if stdout_to else subprocess.DEVNULL
@@ -107,7 +117,8 @@ def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
                 except subprocess.TimeoutExpired as exc:
                     raise EngineTimeout(f"exceeded {timeout:g}s") from exc
             return _run_with_progress(process, timeout=timeout, hard_timeout=hard_timeout,
-                                      watched=stdout_to, idle_gap=idle_gap)
+                                      watched=stdout_to, idle_gap=idle_gap,
+                                      first_output_s=first_output_s, first_event=first_event)
         except EngineTimeout:
             escaped = _descendants(process.pid)
             _kill_group(process)
@@ -122,13 +133,18 @@ def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
 
 
 def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeout: float,
-                       watched: Path | None, idle_gap: float) -> int:
+                       watched: Path | None, idle_gap: float,
+                       first_output_s: float | None = None, first_event: Callable[[], bool] | None = None) -> int:
     """Wait for the engine, extending the deadline while its output still grows.
 
     Before the soft deadline the engine runs exactly as it always did. After it, the
     engine may continue only while its output grows: it is cut when the output has not
     grown for ``idle_gap`` seconds, and never past ``hard_timeout``. An idle engine and
     the hard cap both end the run as a timeout.
+
+    With ``first_output_s`` the wait for the first output is bounded too: an engine that has
+    not produced it by then is cut as a timeout even before the soft deadline, so a model that
+    emits nothing cannot hold the wake for the whole soft timeout.
 
     The output is sampled every ``POLL_S`` so the last growth is known to within one
     sample, but each bound is enforced at its own moment rather than at the next sample:
@@ -139,8 +155,17 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
     start = time.monotonic()
     soft_at = start + timeout
     hard_at = start + hard_timeout
+    first_at = start + first_output_s if first_output_s is not None else None
+    first_seen = False
     last_size = _output_size(watched)
     last_growth = start
+
+    def saw_first(size: int | None) -> bool:
+        nonlocal first_seen
+        if not first_seen:
+            first_seen = first_event() if first_event is not None else (size is not None and size > 0)
+        return first_seen
+
     while True:
         now = time.monotonic()
         if now >= hard_at:
@@ -149,12 +174,16 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
         if size is not None and last_size is not None and size > last_size:
             last_size = size
             last_growth = now
+        if first_at is not None and now >= first_at and not saw_first(size):
+            raise EngineTimeout(f"no first output within {first_output_s:g}s")
         if now < soft_at:
             boundary = soft_at
         else:
             if size is None or now - last_growth >= idle_gap:
                 raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
             boundary = last_growth + idle_gap
+        if first_at is not None and not first_seen:
+            boundary = min(boundary, first_at)
         target = min(boundary, hard_at)
         # Wake at the earlier of the next boundary and the next sample, so growth is seen
         # promptly and no bound is passed unnoticed.
@@ -175,5 +204,7 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
             last_growth = now
         if now >= hard_at:
             raise EngineTimeout(f"exceeded {hard_timeout:g}s (hard cap)")
+        if first_at is not None and now >= first_at and not saw_first(size):
+            raise EngineTimeout(f"no first output within {first_output_s:g}s")
         if now >= soft_at and (size is None or now - last_growth >= idle_gap):
             raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
