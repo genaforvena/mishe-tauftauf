@@ -5,7 +5,8 @@ import pytest
 
 from mishe_tauftauf import engine_router as router
 from mishe_tauftauf import signal_store, yielding
-from mishe_tauftauf.wake import EngineExhausted, EngineNotStarted, EngineRejected, EngineTimeout
+from mishe_tauftauf.wake import (EngineExhausted, EngineNotStarted, EngineRateLimited, EngineRejected,
+                                EngineTimeout)
 
 NOW_MS = 1_792_712_432_000
 RESET = router._iso(NOW_MS + 3_600_000)
@@ -130,6 +131,8 @@ class FakeEngine:
             raise EngineTimeout("exceeded")
         if action == "refused":
             raise EngineRejected("model refused before any tool call")
+        if action == "rate-limited":
+            raise EngineRateLimited("provider rate limit before any tool call: 429 Rate limit exceeded")
         if action == "exhausted":
             raise EngineExhausted("account out of quota before any tool call")
         if action == "spent-after-effect":
@@ -381,3 +384,97 @@ def test_spent_quota_reads_structured_provider_errors_only(tmp_path):
     ok.write_text('{"type":"auto_retry_end","success":true,"attempt":1}\n')
     assert engine_omp.spent_quota_after_effect(ok) is None
     assert engine_omp.spent_quota_after_effect(tmp_path / "missing.out.jsonl") is None
+
+
+def test_a_rate_limit_is_distinguished_from_a_quota_exhaustion(tmp_path):
+    from mishe_tauftauf import engine_omp
+    limited = tmp_path / "limited.out.jsonl"
+    limited.write_text(
+        '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error",'
+        '"errorMessage":"429 Rate limit exceeded. Please try again later. retry-after-ms=29317000"}}\n')
+    error = engine_omp.refused_before_effect(limited)
+    assert engine_omp.is_rate_limit_error(error)
+    assert not engine_omp.is_quota_error(error)
+    assert not engine_omp.is_rate_limit_error("Token Plan usage limit has been reached")
+    assert not engine_omp.is_rate_limit_error(None)
+
+
+def test_a_rate_limited_candidate_falls_through_and_cools_the_role_only(routed):
+    FakeEngine.script = {GO["model"]: "rate-limited", MINI["model"]: "yield"}
+    eng = router.for_role(routed, "health")
+    assert eng.run(routed / "p.md", env=_env(routed, "k30"), cwd=routed, timeout=5) == 0
+    events = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()]
+    assert [e["event"] for e in events] == ["select", "fallback", "select", "outcome"]
+    assert events[1]["reason"].startswith("rate limited:") and events[1]["scope"] == "role"
+    state = json.loads((routed / "engine" / router.STATE).read_text())["cooling"]
+    key = router.candidate_key(GO)
+    # the cool-off belongs to the role that hit the limit, and it is short: not the 1800 s window
+    assert router.role_key("health", key) in state and key not in state
+    assert state[router.role_key("health", key)] == NOW_MS + router.DEFAULT_RATE_LIMIT_COOL_OFF_S * 1000
+
+
+def test_the_rate_limit_backoff_doubles_and_resets_after_a_success(routed):
+    eng = router.for_role(routed, "health")
+    key = router.candidate_key(GO)
+    first = eng.rate_limit_cool_off_ms("health", key)
+    second = eng.rate_limit_cool_off_ms("health", key)
+    assert second == 2 * first
+    eng._clear(key)
+    assert eng.rate_limit_cool_off_ms("health", key) == first
+
+
+def test_a_candidate_at_its_parallelism_cap_is_skipped_for_the_next_one():
+    limited = dict(GO, max_parallel=2)
+    st = status(**{"go-a": account()})
+    running = {router.candidate_key(GO): 2}
+    c = router.choose("health", [limited, HAIKU], st, {}, NOW_MS, running=running)
+    assert c["key"] == router.candidate_key(HAIKU)
+    assert c["trail"][0]["verdict"] == "at-capacity"
+    # below the cap the same candidate is still chosen
+    again = router.choose("health", [limited, HAIKU], st, {}, NOW_MS,
+                           running={router.candidate_key(GO): 1})
+    assert again["key"] == router.candidate_key(limited)
+
+
+def test_the_parallelism_cap_is_read_from_the_routes_file(tmp_path):
+    routes_file(tmp_path, {"health": [dict(GO, max_parallel=2)]})
+    loaded = router.load_routes(tmp_path)
+    assert loaded["roles"]["health"][0]["max_parallel"] == 2
+    d = tmp_path / "engine" / "routes.json"
+    d.write_text(json.dumps({"version": 1, "roles": {"health": [dict(GO, max_parallel=0)]}}))
+    import pytest
+    with pytest.raises(ValueError):
+        router.load_routes(tmp_path)
+
+
+def test_running_candidates_counts_open_selections_from_the_ledger(tmp_path):
+    d = tmp_path / "engine"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / router.LEDGER).write_text(
+        '{"at": "2026-11-10T10:00:00Z", "event": "select", "key": "omp:a:-", "wake": "w1"}\n'
+        '{"at": "2026-11-10T10:01:00Z", "event": "select", "key": "omp:a:-", "wake": "w2"}\n'
+        '{"at": "2026-11-10T10:02:00Z", "event": "outcome", "key": "omp:a:-", "wake": "w1"}\n'
+        '{"at": "2026-11-10T10:03:00Z", "event": "select", "key": "omp:b:-", "wake": "w3"}\n')
+    now = router._at_ms("2026-11-10T10:04:00Z")
+    counts = router.running_candidates(tmp_path, now_ms=now, horizon_s=3600)
+    assert counts == {"omp:a:-": 1, "omp:b:-": 1}
+    # an attempt with no outcome stops counting once it is older than the horizon
+    stale = router.running_candidates(tmp_path, now_ms=now + 7200_000, horizon_s=3600)
+    assert stale == {}
+
+
+def test_a_capped_candidate_makes_the_wake_take_the_next_one(routed):
+    """The site case: longcat at its cap, so the wake goes to the next candidate instead of failing."""
+    capped = dict(GO, max_parallel=2)
+    FakeEngine.script = {GO["model"]: "yield", MINI["model"]: "yield"}
+    (routed / "engine" / router.LEDGER).write_text(
+        '{"at": "2026-11-10T10:00:00Z", "event": "select", "key": "%s", "wake": "other-wake"}\n'
+        '{"at": "2026-11-10T10:00:01Z", "event": "select", "key": "%s", "wake": "other-wake-2"}\n'
+        % (router.candidate_key(GO), router.candidate_key(GO)))
+    routes = {"version": 1, "cool_off_s": 1800, "roles": {"health": [capped, MINI, HAIKU]}}
+    (routed / "engine" / "routes.json").write_text(json.dumps(routes))
+    eng = router.for_role(routed, "health")
+    assert eng.run(routed / "p.md", env=_env(routed, "k40"), cwd=routed, timeout=5) == 0
+    selects = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()
+               if json.loads(x)["event"] == "select"]
+    assert selects[-1]["key"] == router.candidate_key(MINI)

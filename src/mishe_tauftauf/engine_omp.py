@@ -5,7 +5,7 @@ from pathlib import Path
 
 from . import engine_process
 from .router_text import stream_events
-from .wake import EngineExhausted, EngineRejected
+from .wake import EngineExhausted, EngineRateLimited, EngineRejected
 
 
 # omp's own default thinking is high: a wake on longcat-2.5-free spent 19k thinking deltas against 165 of text
@@ -76,6 +76,22 @@ def is_quota_error(error: str | None) -> bool:
     return any(marker in low for marker in QUOTA_MARKERS)
 
 
+# A provider that answers "429 Rate limit exceeded" is not out of quota: the same request may
+# succeed minutes later. It is a refusal-class event (no tool call ran), so the router falls
+# through at once, but the cool-off it leaves is short and role-scoped, not a window for the
+# whole site (operator DM 299311).
+RATE_LIMIT_MARKERS = ("429 rate limit", "rate limit", "rate_limit_error", "too many requests",
+                      "status 429")
+
+
+def is_rate_limit_error(error: str | None) -> bool:
+    """True when the provider refused because of a rate limit rather than a quota exhaustion."""
+    if not error:
+        return False
+    low = error.lower()
+    return any(marker in low for marker in RATE_LIMIT_MARKERS)
+
+
 def spent_quota_after_effect(stream: Path) -> str | None:
     """The quota error the provider returned to the run's own retry or assistant turn, else None.
 
@@ -118,6 +134,8 @@ class OmpEngine:
         error = refused_before_effect(stream) if code != 0 else None
         if error is not None and is_quota_error(error):
             raise EngineExhausted(f"account out of quota before any tool call: {error}")
+        if error is not None and is_rate_limit_error(error):
+            raise EngineRateLimited(f"provider rate limit before any tool call: {error}")
         if error is not None:
             raise EngineRejected(f"model refused before any tool call: {error}")
         return code

@@ -46,6 +46,15 @@ absent from that file keep using `engines/ROLE.json`. `mishe engine router
 choose ROLE` dry-runs the choice and `mishe engine router ledger` shows recent
 selections.
 
+A candidate may carry `max_parallel`: the number of wakes that may use it at
+once. When the candidate is already at its cap the router skips it and the wake
+takes the next candidate, instead of sending another request to a provider that
+is rate-limiting. A provider that answers "429 rate limit" before any tool call
+is a refusal, not a quota exhaustion: the wake falls through at once and that
+role waits a few minutes (`rate_limit_cool_off_s`, doubling on repeats) while
+other roles keep using the candidate. `mishe engine router running` shows the
+candidates with a wake still running, against their cap.
+
 ## 4. Install the triggers — held
 
 ```sh

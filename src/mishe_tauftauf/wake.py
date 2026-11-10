@@ -41,6 +41,15 @@ class EngineExhausted(EngineRejected):
     """
 
 
+class EngineRateLimited(EngineRejected):
+    """The provider refused with a rate limit (HTTP 429) before any tool call.
+
+    No effect happened, so the wake falls through to the next candidate at once. The cool-off it
+    leaves is short and scoped to the role that hit the limit: the same provider may serve
+    another role minutes later, and a quota window would be the wrong remedy (operator DM 299311).
+    """
+
+
 class EngineTimeout(Exception):
     """The engine ran past its bound; its effect is unknown."""
 

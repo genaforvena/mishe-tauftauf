@@ -8,7 +8,11 @@ Site file ``engine/routes.json`` (one file, the only place candidates live)::
 
 A candidate is ``engine`` (``claude`` or ``omp``), ``model`` and ``account`` (a
 registry alias, or null for the Claude subscription safety net, which has no
-window reading in this router).
+window reading in this router). A candidate may also carry ``max_parallel``: the
+number of wakes that may use it at once. The router counts the candidate's
+running wakes from the routing ledger and skips a candidate that is at its cap,
+so the extra wake takes the next candidate instead of hitting the provider's
+rate limit (operator DM 299311).
 
 Choice is the first candidate in order that is not cooling off and is admitted
 by :mod:`engine_policy` on the live :mod:`engine_usage` status. Admission needs a
@@ -20,10 +24,14 @@ code alone. A candidate that does not start falls through to the next one within
 the same wake (no effect happened). A candidate whose wake times out, exits
 without a yield, or leaves no receipt cools off for ``cool_off_s``; the next wake
 of the role then starts on the next candidate, and the cooled candidate is probed
-again once its cool-off ends. Every selection, fallback and outcome is appended
-to ``engine/routing-ledger.jsonl``. The ``engine-routing`` signal is GREEN when
-every role has a working candidate and all account evidence is FRESH, UNKNOWN when
-evidence is stale or missing, and RED when some role has no working candidate.
+again once its cool-off ends. A provider rate limit (HTTP 429) before any tool
+call is refusal-class: the wake falls through at once and the candidate cools off
+for that role only, for ``rate_limit_cool_off_s`` (doubling on repeats), because
+a rate limit is a transient provider condition and not a quota window. Every
+selection, fallback and outcome is appended to ``engine/routing-ledger.jsonl``.
+The ``engine-routing`` signal is GREEN when every role has a working candidate
+and all account evidence is FRESH, UNKNOWN when evidence is stale or missing, and
+RED when some role has no working candidate.
 """
 from __future__ import annotations
 
@@ -35,10 +43,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import engine_policy as policy
-from .router_text import file_lines, load_json, split_cooling_key
+from .router_text import file_lines, iso_ms, ledger_events, load_json, split_cooling_key
 from . import signal_store
 from . import yielding
-from .wake import EngineExhausted, EngineNotStarted, EngineRejected, EngineTimeout
+from .wake import (EngineExhausted, EngineNotStarted, EngineRateLimited, EngineRejected, EngineTimeout)
 
 ROUTES = "routes.json"
 STATE = "routing-state.json"
@@ -48,6 +56,8 @@ SIGNAL_MAX_AGE = 900.0
 DEFAULT_COOL_OFF_S = 1800
 DEFAULT_ACCOUNT_COOL_OFF_S = 5400  # a quota-exhausted account is out for a window, not a role retry
 DEFAULT_HARD_TIMEOUT_S = 3600     # total runtime a wake may reach when it is still producing output
+DEFAULT_RATE_LIMIT_COOL_OFF_S = 300   # a rate limit waits minutes, not the site-wide window
+MAX_RATE_LIMIT_COOL_OFF_S = 1800
 INVALIDATE_BUDGET_S = 20.0  # total wall time for stale-window refetches per wake
 ENGINES = ("claude", "omp")
 STALE_STATES = ("STALE", "UNKNOWN", "UNATTRIBUTED")
@@ -117,11 +127,16 @@ def load_routes(home) -> dict | None:
             hard = c.get("hard_timeout_s")
             if hard is not None and (isinstance(hard, bool) or not isinstance(hard, (int, float)) or hard <= 0):
                 raise ValueError(f"invalid hard_timeout_s for {role!r}: {c!r}")
+            cap = c.get("max_parallel")
+            if cap is not None and (isinstance(cap, bool) or not isinstance(cap, int) or cap < 1):
+                raise ValueError(f"invalid max_parallel for {role!r}: {c!r}")
             entry = {"engine": c["engine"], "model": c["model"], "account": account}
             if tmo is not None:
                 entry["timeout_s"] = tmo
             if hard is not None:
                 entry["hard_timeout_s"] = hard
+            if cap is not None:
+                entry["max_parallel"] = cap
             if free:
                 entry["free"] = True
             if thinking is not None:
@@ -140,8 +155,15 @@ def load_routes(home) -> dict | None:
     hard = value.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S)
     if isinstance(hard, bool) or not isinstance(hard, (int, float)) or hard <= 0:
         raise ValueError("invalid hard_timeout_s")
+    rate_cool = value.get("rate_limit_cool_off_s", DEFAULT_RATE_LIMIT_COOL_OFF_S)
+    if isinstance(rate_cool, bool) or not isinstance(rate_cool, (int, float)) or rate_cool < 0:
+        raise ValueError("invalid rate_limit_cool_off_s")
+    max_rate_cool = value.get("max_rate_limit_cool_off_s", MAX_RATE_LIMIT_COOL_OFF_S)
+    if isinstance(max_rate_cool, bool) or not isinstance(max_rate_cool, (int, float)) or max_rate_cool < rate_cool:
+        raise ValueError("invalid max_rate_limit_cool_off_s")
     return {"roles": roles, "cool_off_s": cool, "account_cool_off_s": account_cool, "env": env,
-            "hard_timeout_s": hard}
+            "hard_timeout_s": hard, "rate_limit_cool_off_s": rate_cool,
+            "max_rate_limit_cool_off_s": max_rate_cool}
 
 
 def _load_state(home) -> dict:
@@ -150,7 +172,9 @@ def _load_state(home) -> dict:
         return {"cooling": {}}
     value = load_json(path)
     cooling = value.get("cooling") if isinstance(value, dict) else None
-    return {"cooling": cooling if isinstance(cooling, dict) else {}}
+    rate_limits = value.get("rate_limits") if isinstance(value, dict) else None
+    return {"cooling": cooling if isinstance(cooling, dict) else {},
+            "rate_limits": rate_limits if isinstance(rate_limits, dict) else {}}
 
 
 def _save_state(home, state: dict) -> None:
@@ -168,6 +192,40 @@ def record(home, event: dict, *, now_ms: float) -> None:
     line = dict(event, at=_iso(now_ms))
     with open(directory / LEDGER, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(line, sort_keys=True) + "\n")
+
+
+def _at_ms(value) -> float | None:
+    """A ledger timestamp as epoch milliseconds, or None when it cannot be read."""
+    return iso_ms(value)
+
+
+def running_candidates(home, *, now_ms: float, horizon_s: float) -> dict:
+    """Candidates with a wake still running, counted from the ledger's open selections.
+
+    A ``select`` opens an attempt on a candidate; the matching ``outcome`` or ``fallback``
+    closes it. An attempt whose wake never reported an outcome (an interrupted wake) stops
+    counting once it is older than the horizon, so a dead wake cannot hold a candidate at its
+    parallelism cap for ever.
+    """
+    counts: dict = {}
+    open_at: dict = {}
+    for event in ledger_events(_dir(home) / LEDGER):
+        key, wake = event.get("key"), event.get("wake")
+        if not key:
+            continue
+        at = _at_ms(event.get("at"))
+        if at is None:
+            continue
+        if event.get("event") == "select":
+            open_at[(wake, key)] = at
+        elif event.get("event") in ("outcome", "fallback"):
+            open_at.pop((wake, key), None)
+    horizon_ms = horizon_s * 1000
+    for (_wake, key), at in open_at.items():
+        if now_ms - at > horizon_ms:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def _eligible(role: str, cand: dict, status, now_ms) -> tuple[bool, str]:
@@ -193,7 +251,7 @@ def _eligible(role: str, cand: dict, status, now_ms) -> tuple[bool, str]:
 
 
 def choose(role: str, candidates: list, status, cooling: dict, now_ms: float,
-           exclude: frozenset = frozenset()) -> dict:
+           exclude: frozenset = frozenset(), running: dict | None = None) -> dict:
     """Pure choice: the first candidate that is not excluded, not cooling and admitted."""
     trail = []
     for c in candidates:
@@ -206,6 +264,13 @@ def choose(role: str, candidates: list, status, cooling: dict, now_ms: float,
         if until is not None and until > now_ms:
             trail.append({"key": key, "verdict": "cooling", "until": _iso(until)})
             continue
+        cap = c.get("max_parallel")
+        if cap is not None and running:
+            live = running.get(key, 0)
+            if live >= cap:
+                trail.append({"key": key, "verdict": "at-capacity",
+                             "reason": f"{live} running wake(s) reach the cap of {cap}"})
+                continue
         ok, reason = _eligible(role, c, status, now_ms)
         trail.append({"key": key, "verdict": "eligible" if ok else "skipped", "reason": reason})
         if ok:
@@ -252,7 +317,7 @@ def live_status(home):
         return None
 
 
-def assess(routes: dict | None, status, cooling: dict, now_ms: float) -> dict:
+def assess(routes: dict | None, status, cooling: dict, now_ms: float, running: dict | None = None) -> dict:
     """The engine-routing signal value and its reasons, from pure inputs."""
     if routes is None:
         return {"state": "UNKNOWN", "reason": "no engine/routes.json in this site", "roles": {}}
@@ -261,7 +326,7 @@ def assess(routes: dict | None, status, cooling: dict, now_ms: float) -> dict:
     roles, stale, dead = {}, [], []
     cooled = cooling_table(cooling, now_ms, routes.get("cool_off_s", DEFAULT_COOL_OFF_S))
     for role, cands in routes["roles"].items():
-        choice = choose(role, cands, status, cooling, now_ms)
+        choice = choose(role, cands, status, cooling, now_ms, running=running)
         roles[role] = {"selected": choice["key"], "decision": choice["decision"], "trail": choice["trail"]}
         if choice["decision"] == "none":
             dead.append(role)
@@ -296,7 +361,9 @@ def publish(home, *, now: float | None = None) -> dict:
     except ValueError as exc:
         result = {"state": "RED", "reason": f"routes file invalid: {exc}", "roles": {}}
     else:
-        result = assess(routes, live_status(home), _load_state(home)["cooling"], now * 1000)
+        running = running_candidates(home, now_ms=now * 1000,
+                                     horizon_s=routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S))
+        result = assess(routes, live_status(home), _load_state(home)["cooling"], now * 1000, running=running)
     return observe(home, result, now=now)
 
 
@@ -310,6 +377,8 @@ class RoutedEngine:
         self.routes = routes
         self.cool_off_ms = routes["cool_off_s"] * 1000
         self.account_cool_off_ms = routes["account_cool_off_s"] * 1000
+        self.rate_limit_cool_off_ms_base = routes.get("rate_limit_cool_off_s", DEFAULT_RATE_LIMIT_COOL_OFF_S) * 1000
+        self.rate_limit_cool_off_ms_max = routes.get("max_rate_limit_cool_off_s", MAX_RATE_LIMIT_COOL_OFF_S) * 1000
         self.extra_env = routes.get("env", {})
 
     def _build(self, cand: dict):
@@ -331,12 +400,32 @@ class RoutedEngine:
     def _clear(self, key: str) -> None:
         state = _load_state(self.home)
         hit = [state["cooling"].pop(k, None) for k in (key, role_key(self.role, key))]
-        if any(v is not None for v in hit):
+        # A candidate that worked resets the role's rate-limit backoff: the next refusal starts
+        # from the short cool-off again.
+        count = state.get("rate_limits", {}).pop(role_key(self.role, key), None)
+        if any(v is not None for v in hit) or count is not None:
             _save_state(self.home, state)
+
+    def rate_limit_cool_off_ms(self, role: str, key: str) -> float:
+        """The cool-off a rate-limited candidate gets for this role, doubling with each repeat.
+
+        The first rate limit waits a few minutes, the next waits twice as long: a provider that
+        keeps answering 429 for the same role is backing off, and a role that waits longer than
+        the site-wide window would idle for half an hour over one refusal.
+        """
+        state = _load_state(self.home)
+        past = state.get("rate_limits", {}).get(role_key(role, key), 0)
+        off = min(self.rate_limit_cool_off_ms_base * (2 ** past), self.rate_limit_cool_off_ms_max)
+        counts = state.setdefault("rate_limits", {})
+        counts[role_key(role, key)] = past + 1
+        _save_state(self.home, state)
+        return off
 
     def _observe(self, status, now_ms: float) -> None:
         """Re-assess the signal from the status read at selection, with the cool-offs as they now stand."""
-        result = assess(self.routes, status, _load_state(self.home)["cooling"], now_ms)
+        running = running_candidates(self.home, now_ms=now_ms,
+                                     horizon_s=self.routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S))
+        result = assess(self.routes, status, _load_state(self.home)["cooling"], now_ms, running=running)
         observe(self.home, result, now=now_ms / 1000)
 
     def hard_cap(self, limit: float, cand: dict) -> float | None:
@@ -360,7 +449,9 @@ class RoutedEngine:
             now_ms = time.time() * 1000
             status = live_status(self.home)
             cooling = _load_state(self.home)["cooling"]
-            choice = choose(self.role, self.candidates, status, cooling, now_ms, exclude=frozenset(tried))
+            running = running_candidates(self.home, now_ms=now_ms, horizon_s=self.routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S))
+            choice = choose(self.role, self.candidates, status, cooling, now_ms,
+                             exclude=frozenset(tried), running=running)
             if choice["candidate"] is None:
                 record(self.home, {"role": self.role, "event": "none", "wake": key_wake, "trail": choice["trail"]},
                        now_ms=now_ms)
@@ -380,6 +471,18 @@ class RoutedEngine:
                 record(self.home, {"role": self.role, "event": "fallback", "wake": key_wake, "key": key,
                                    "reason": f"quota: {exc}", "scope": "account"}, now_ms=time.time() * 1000)
                 self._cool(cand, time.time() * 1000, off_ms=self.account_cool_off_ms)
+                tried.add(key)
+                continue
+            except EngineRateLimited as exc:
+                # A rate limit is refusal-class: no tool call ran, so the wake falls through at once.
+                # The cool-off is short and role-scoped: the provider may serve another role minutes
+                # later, and a quota window on the shared key would idle every role for it.
+                now = time.time() * 1000
+                off = self.rate_limit_cool_off_ms(self.role, key)
+                record(self.home, {"role": self.role, "event": "fallback", "wake": key_wake, "key": key,
+                                   "reason": f"rate limited: {exc}", "scope": "role",
+                                   "cool_off_s": off / 1000}, now_ms=now)
+                self._cool(cand, now, role_only=True, off_ms=off)
                 tried.add(key)
                 continue
             except EngineRejected as exc:
@@ -460,6 +563,25 @@ def cmd_cooling(args) -> int:
     return 0
 
 
+def cmd_running(args) -> int:
+    routes = load_routes(args.home)
+    now_ms = time.time() * 1000
+    horizon = routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S) if routes else DEFAULT_HARD_TIMEOUT_S
+    counts = running_candidates(args.home, now_ms=now_ms, horizon_s=horizon)
+    caps = {}
+    if routes:
+        for cands in routes["roles"].values():
+            for c in cands:
+                if c.get("max_parallel") is not None:
+                    caps[candidate_key(c)] = c["max_parallel"]
+    for key in sorted(counts):
+        cap = caps.get(key)
+        print(f"{key}  running {counts[key]}" + (f" of {cap}" if cap else ""))
+    if not counts:
+        print("no candidate is running")
+    return 0
+
+
 def cmd_ledger(args) -> int:
     path = _dir(args.home) / LEDGER
     lines = file_lines(path) if path.is_file() else []
@@ -476,5 +598,7 @@ def register(sub) -> None:
     p = router.add_parser("choose", help="Dry-run the choice for a role (no ledger, no cool-off change)")
     p.add_argument("role"); p.set_defaults(func=cmd_choose)
     p = router.add_parser("cooling", help="Cooled (role, candidate) pairs with age"); p.set_defaults(func=cmd_cooling)
+    p = router.add_parser("running", help="Candidates with a wake still running, against their parallelism cap")
+    p.set_defaults(func=cmd_running)
     p = router.add_parser("ledger", help="Last routing events")
     p.add_argument("--lines", type=int, default=40); p.set_defaults(func=cmd_ledger)
