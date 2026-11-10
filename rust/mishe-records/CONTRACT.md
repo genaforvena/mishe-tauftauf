@@ -163,15 +163,24 @@ same release: `records.VerifiedStore`, `lookup`, `store`, `cached_payload`,
 `tests/test_mishe_records_verify.py` runs the binary when it resolves
 (`MISHE_RECORDS_BIN`, then the site install, sha256-checked against its install
 record) and skips with the reason otherwise. Checked against the live Python
-path on fixture sites (2026-11-10, 4 cases green):
+path on fixture sites (2026-11-10, 11 cases green):
 
 - identical decision lines (`V`/`N`/`S`) and byte-identical payloads for the
   same entries, cold and warm, including a digest repeated inside one pass;
 - a store written by the binary is served by `records.VerifiedStore` and by a
   full `feed._VerificationPass`, with the same payloads;
-- identical fault text and exit status for a missing record;
-- a record rewritten after it was stored is verified again, not served.
+- identical fault text and exit status for every structural fault, with the
+  earlier decisions still on stdout: a missing record, a `[record]` line that
+  does not fullmatch the pattern, a line the pass selects by `lstrip` but the
+  pattern rejects as written, two reference lines, two disagreeing digests, and
+  a legacy `{` line beside a reference (`mixed legacy JSON and immutable record
+  reference`; the other four as their own texts above);
+- a record rewritten after it was stored is verified again, not served;
+- the records directory replaced during a pass: exit 2 with
+  `records directory replaced during verification pass`, noticed at the flush
+  and after the decisions that preceded it, with nothing stored from the
+  replaced directory;
+- killed between two flushes: the store keeps exactly the flushed rows and stays
+  `PRAGMA integrity_check`-clean, and the next pass serves them (`V`) and
+  verifies the unflushed record again (`N`).
 
-Not yet checked, and required before the cutover: a `[record]` line that does
-not fullmatch (and the `mixed legacy`/`several references`/`unequal digests`
-texts), the records-directory swap before a flush, and a kill between flushes.

@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
+import sqlite3
 import subprocess
 import time
 from pathlib import Path
@@ -167,3 +169,182 @@ def test_rewritten_record_is_verified_again_not_served(tmp_path):
     with pytest.raises(ValueError) as raised:
         records.cached_payload(entry, {}, records.VerifiedStore(site), verify_only=True)
     assert str(raised.value) == "immutable record checksum mismatch"
+
+
+# --- the cases CONTRACT.md still listed as required before the cutover ---
+
+
+def plain_site(tmp_path: Path):
+    """A site with one record and one site-level reference, no Python twin needed."""
+    site = tmp_path / "site"
+    site.mkdir()
+    return site, records.prepare(site, PAYLOADS[0])
+
+
+def store_rows(site: Path) -> list[str]:
+    """The digests the shared store holds, or ``[]`` while it is not readable yet."""
+    path = site / records.VERIFIED_STORE
+    if not path.exists():
+        return []
+    try:
+        connection = sqlite3.connect(path)
+        try:
+            return [row[0] for row in connection.execute("SELECT digest FROM verified ORDER BY digest")]
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        return []
+
+
+def bytes_read(pid: int) -> int | None:
+    """``rchar`` from ``/proc/<pid>/io``: how many bytes the process has read."""
+    try:
+        with open(f"/proc/{pid}/io") as handle:
+            for line in handle:
+                if line.startswith("rchar:"):
+                    return int(line.split()[1])
+    except OSError:
+        return None
+    return None
+
+
+@pytest.mark.parametrize("kind", ["mixed-legacy", "invalid-reference", "two-references",
+                                  "unequal-digests", "indented-reference"])
+def test_structural_fault_text_matches_python_and_keeps_earlier_results(tmp_path, kind):
+    site, reference = plain_site(tmp_path)
+    digest = digest_of(reference)
+    other = digest_of(records.prepare(site, PAYLOADS[1]))
+    bodies = {
+        # A `[record]` line and a legacy JSON control line in the same entry.
+        "mixed-legacy": f'{reference}\n{{"text": "legacy"}}',
+        # A reference line that exists but does not fullmatch the pattern.
+        "invalid-reference": f"[record] records/{'0' * 63}.json sha256={'0' * 63}",
+        # Two agreeing references: the pattern matches one line, not the entry.
+        "two-references": f"{reference}\n{reference}",
+        # One well-formed reference whose two digests disagree.
+        "unequal-digests": f"[record] records/{digest}.json sha256={other}",
+        # A reference the pass selects (lstrip) that the pattern must reject as written.
+        "indented-reference": f" {reference}",
+    }
+    expected = {
+        "mixed-legacy": "mixed legacy JSON and immutable record reference",
+        "invalid-reference": "missing or invalid immutable record reference",
+        "two-references": "missing or invalid immutable record reference",
+        "unequal-digests": "record digest mismatch or missing site context",
+        "indented-reference": "missing or invalid immutable record reference",
+    }[kind]
+
+    stdout, status, stderr = run_verify(site, [(1, reference), (2, bodies[kind])])
+    assert status == 2
+    assert stderr == expected
+    assert decisions(stdout) == [(1, "N")], "the results before the fault are on stdout"
+
+    entry = feed.FeedEntry(2, STAMP, "test", bodies[kind], site)
+    with pytest.raises(ValueError) as raised:
+        records.cached_payload(entry, {}, records.VerifiedStore(site), verify_only=True)
+    assert str(raised.value) == expected, "the Python pass raises the same text"
+
+
+def test_records_directory_swap_before_a_flush_fails_closed(tmp_path, monkeypatch):
+    site, py_site, entries = fixtures(tmp_path)
+    reference = entries[0][1]
+
+    # The Python authority, with the batch bound lowered so one swap is observable
+    # within two entries: the pass notices at its flush, as the binary does at its own.
+    monkeypatch.setattr(feed, "VERIFIED_BATCH_ENTRIES", 2)
+    objects = [feed.FeedEntry(1, STAMP, "test", reference, py_site),
+               feed.FeedEntry(2, STAMP, "test", "plain", py_site)]
+
+    def swapping_stream():
+        yield objects[0]
+        (py_site / "records").rename(py_site / "records.moved")
+        (py_site / "records").mkdir()
+        yield objects[1]
+
+    verification = feed._VerificationPass()
+    with pytest.raises(ValueError) as raised:
+        try:
+            verification.verify(swapping_stream())
+            verification.commit()
+        finally:
+            verification.close()
+    authority = str(raised.value)
+    assert authority == "records directory replaced during verification pass"
+
+    # The binary: it holds the records descriptor the caller opened, the swap happens
+    # between two entries, and the last entry written is the one that reaches its flush.
+    directory = os.open(site / "records", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        probe = subprocess.Popen(
+            [RECORDS_BIN, "verify", "--home", str(site), "--records-fd", str(directory)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            pass_fds=(directory,))
+        probe.stdin.write(frame([(1, reference), (2, "plain"), (3, "plain")]))
+        probe.stdin.flush()
+        (site / "records").rename(site / "records.moved")
+        (site / "records").mkdir()
+        probe.stdin.write(frame([(n, "plain") for n in range(4, 501)]))
+        probe.stdin.close()
+        probe.stdin = None  # communicate() flushes stdin; it must not flush a closed file
+        stdout, stderr = probe.communicate(timeout=120)
+    finally:
+        os.close(directory)
+
+    assert probe.returncode == 2
+    assert stderr.decode("utf-8").strip() == authority
+    lines = stdout.decode("utf-8").splitlines()
+    assert lines[0] == "N 1", "the record read through the held descriptor still verified"
+    assert lines[-1] == "S 500", "the swap was noticed at the flush, after the last decision"
+    assert len(lines) == 500
+
+    assert store_rows(site) == [], "nothing from the replaced directory was stored"
+    connection = sqlite3.connect(site / records.VERIFIED_STORE)
+    try:
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        connection.close()
+
+
+def test_kill_between_flushes_keeps_the_store_consistent(tmp_path):
+    site, _, entries = fixtures(tmp_path)
+    first_reference, second_reference = entries[0][1], entries[1][1]
+    first_digest, second_digest = digest_of(first_reference), digest_of(second_reference)
+
+    probe = subprocess.Popen([RECORDS_BIN, "verify", "--home", str(site)],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Entry 500 is the pass's first flush: it stores what was verified before it.
+    written = frame([(1, first_reference), *((n, "plain") for n in range(2, 501))])
+    probe.stdin.write(written)
+    probe.stdin.flush()
+    deadline = time.time() + 60
+    while store_rows(site) != [first_digest] and time.time() < deadline:
+        time.sleep(0.01)
+    assert store_rows(site) == [first_digest], "the first flush stored the verified record"
+
+    # One more record, verified into the pending batch and not yet stored: the next flush
+    # is 500 entries away, so the kill lands between the two however fast the reader runs.
+    second = frame([(501, second_reference)])
+    probe.stdin.write(second)
+    probe.stdin.flush()
+    consumed = len(written) + len(second)
+    deadline = time.time() + 10
+    while (bytes_read(probe.pid) or 0) < consumed and time.time() < deadline:
+        time.sleep(0.01)
+    probe.kill()
+    probe.communicate(timeout=60)
+
+    assert probe.returncode == -signal.SIGKILL
+    assert store_rows(site) == [first_digest], "only the flushed row survived the kill"
+    connection = sqlite3.connect(site / records.VERIFIED_STORE)
+    try:
+        assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        connection.close()
+
+    # The next pass serves the flushed record and verifies the unflushed one again.
+    stdout, status, stderr = run_verify(site, [(1, first_reference), (501, second_reference)],
+                                       "--payloads")
+    assert status == 0, stderr
+    assert decisions(stdout) == [(1, "V"), (501, "N")]
+    assert emitted_payloads(stdout) == {1: PAYLOADS[0], 501: PAYLOADS[1]}
+    assert store_rows(site) == sorted([first_digest, second_digest])
