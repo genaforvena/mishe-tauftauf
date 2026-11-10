@@ -102,7 +102,7 @@ INVENTORY = (
     ("root-fs-stall.py", False, False, (), None),
     # runtime/current must equal the release of the last verified delivery; only the
     # delivery path writes it.  RED carries the restore command (incident 2026-11-10).
-    ("pin-integrity.py", False, True, (), None),
+    ("pin-integrity.py", False, False, (), None),
     # The wakes window renders each model's newest retained output through the live view code.
     # A renderer failure is DMed to genome (resolver) once per distinct failure by the check itself.
     ("wakes-view-engines.py", False, True, ("--route",), None),
