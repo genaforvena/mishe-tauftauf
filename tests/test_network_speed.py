@@ -99,3 +99,29 @@ def test_check_mode_writes_nothing(tmp_path, capsys):
     rc = ns.main(["--home", str(tmp_path), "--check"])
     assert rc == 0
     assert not (tmp_path / "network" / "speed.jsonl").exists()
+
+
+def _write_rows(home, rows):
+    import json
+    path = home / "network" / ns.LOG_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def test_not_due_with_no_reading_is_unknown_not_green(tmp_path, capsys):
+    # Outside off-peak and never measured: the duty must not report a calm GREEN exit.
+    rc = ns.main(["--home", str(tmp_path)])
+    assert rc == 3
+    assert "UNKNOWN" in capsys.readouterr().out
+
+
+def test_not_due_with_recent_good_reading_is_green(tmp_path, capsys):
+    import time
+    _write_rows(tmp_path, [{"ts": time.time() - 3600, "ok": True, "down_mbps": 80.0}])
+    assert ns.main(["--home", str(tmp_path)]) == 0
+
+
+def test_not_due_with_stale_good_reading_is_unknown(tmp_path, capsys):
+    import time
+    _write_rows(tmp_path, [{"ts": time.time() - 40 * 3600, "ok": True, "down_mbps": 80.0}])
+    assert ns.main(["--home", str(tmp_path)]) == 3

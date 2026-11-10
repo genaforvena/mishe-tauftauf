@@ -25,6 +25,7 @@ EXPECT_BYTES = 5_000_000
 TIMEOUT_S = 25
 OFF_PEAK_HOURS = (2, 5)  # local hours, inclusive start, exclusive end
 MIN_INTERVAL_S = 12 * 3600
+STALE_AFTER_S = 36 * 3600  # no good reading this old (or never) makes the duty UNKNOWN
 CHUNK = 64 * 1024
 
 SITE = Path(os.environ.get("MISHE_TAUFTAUF_HOME") or os.environ.get("MISHE_SEED_HOME") or ".mishe-tauftauf")
@@ -44,6 +45,12 @@ def due(now, last_ts, local_hour):
 def last_attempt(rows):
     """Most recent row (ok or failed), or None."""
     return rows[-1] if rows else None
+
+
+def last_good(rows):
+    """Most recent successful row, or None."""
+    good = [r for r in rows if r.get("ok") and isinstance(r.get("ts"), (int, float))]
+    return good[-1] if good else None
 
 
 def read_rows(path):
@@ -96,9 +103,17 @@ def main(argv=None):
     last = last_attempt(rows)
     now = time.time()
     ok, why = due(now, last["ts"] if last else None, time.localtime(now).tm_hour)
-    if args.check or not ok:
+    if args.check:
         print(("due: " if ok else "not due: ") + why)
         return 0
+    if not ok:
+        # Not measuring now is fine only while a good reading is recent; otherwise the signal must say UNKNOWN.
+        good = last_good(rows)
+        if good is not None and now - good["ts"] < STALE_AFTER_S:
+            print("not due: " + why)
+            return 0
+        print("not due: " + why + "; no good reading in the last 36 h, so UNKNOWN")
+        return 3  # 3 = UNKNOWN in the duty contract, not RED
     row = measure()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as fh:
