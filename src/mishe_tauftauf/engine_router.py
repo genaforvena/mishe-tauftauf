@@ -33,7 +33,6 @@ The ``engine-routing`` signal is GREEN when every role has a working candidate
 and all account evidence is FRESH, UNKNOWN when evidence is stale or missing, and
 RED when some role has no working candidate.
 """
-from __future__ import annotations
 
 import argparse
 import json
@@ -43,7 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import engine_policy as policy
-from .router_text import file_lines, iso_ms, ledger_events, load_json, split_cooling_key
+from .router_text import file_lines, iso_ms, ledger_events, load_json, retry_after_ms, split_cooling_key
 from . import signal_store
 from . import yielding
 from .wake import (EngineExhausted, EngineNotStarted, EngineRateLimited, EngineRejected, EngineTimeout)
@@ -57,7 +56,7 @@ DEFAULT_COOL_OFF_S = 1800
 DEFAULT_ACCOUNT_COOL_OFF_S = 5400  # a quota-exhausted account is out for a window, not a role retry
 DEFAULT_HARD_TIMEOUT_S = 3600     # total runtime a wake may reach when it is still producing output
 DEFAULT_RATE_LIMIT_COOL_OFF_S = 300   # a rate limit waits minutes, not the site-wide window
-MAX_RATE_LIMIT_COOL_OFF_S = 1800
+MAX_RATE_LIMIT_COOL_OFF_S = 28800     # cap for a provider-stated retry-after, 8 h
 INVALIDATE_BUDGET_S = 20.0  # total wall time for stale-window refetches per wake
 ENGINES = ("claude", "omp")
 STALE_STATES = ("STALE", "UNKNOWN", "UNATTRIBUTED")
@@ -478,7 +477,11 @@ class RoutedEngine:
                 # The cool-off is short and role-scoped: the provider may serve another role minutes
                 # later, and a quota window on the shared key would idle every role for it.
                 now = time.time() * 1000
-                off = self.rate_limit_cool_off_ms(self.role, key)
+                parsed = retry_after_ms(exc)
+                if parsed is not None:
+                    off = min(parsed, MAX_RATE_LIMIT_COOL_OFF_S * 1000)
+                else:
+                    off = self.rate_limit_cool_off_ms(self.role, key)
                 record(self.home, {"role": self.role, "event": "fallback", "wake": key_wake, "key": key,
                                    "reason": f"rate limited: {exc}", "scope": "role",
                                    "cool_off_s": off / 1000}, now_ms=now)

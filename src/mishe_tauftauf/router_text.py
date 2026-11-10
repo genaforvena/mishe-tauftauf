@@ -5,6 +5,20 @@ from __future__ import annotations
 from datetime import datetime
 import json
 from pathlib import Path
+import re
+
+
+RETRY_AFTER_MS = re.compile(r"retry-after-ms=(\d+)")
+
+
+def retry_after_ms(text) -> int | None:
+    """The provider's stated retry-after-ms in an error string, else None.
+
+    Only digits after the literal marker count; anything else returns None and
+    the caller falls back to its own cool-off policy.
+    """
+    m = RETRY_AFTER_MS.search(str(text))
+    return int(m.group(1)) if m else None
 
 
 def load_json(path: Path):
