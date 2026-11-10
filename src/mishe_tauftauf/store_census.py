@@ -48,6 +48,19 @@ def _add_named(body: str, named: set[str]) -> None:
         named.add(digest)
 
 
+def collect_named(entries, named: set[str]) -> set[str]:
+    """The store record digests a set of entries' bodies name.
+
+    The digests are a function of the bodies, so a caller that already holds
+    the entries can hand them over instead of making the census read the tape
+    again. The set is returned and also added to ``named``, so a caller that
+    passed its own set keeps it.
+    """
+    for entry in entries:
+        _add_named(entry.body, named)
+    return named
+
+
 def tape_entries(tape: Path, home: Path, named: set[str]):
     """The tape's entries, and the store record digests they name.
 

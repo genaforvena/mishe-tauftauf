@@ -1505,7 +1505,8 @@ def _entry_timestamp(entry: FeedEntry) -> datetime | None:
     """
     return _feed_entry_timestamp(entry)
 
-def _mind_artifact_recurrence(home: Path, now: datetime | None = None) -> dict:
+def _mind_artifact_recurrence(home: Path, now: datetime | None = None,
+                              entries=None) -> dict:
     """Detect artifact-only unchanged-frontier recurrence.
 
     Rule AR (artifact recurrence): a role whose last
@@ -1560,9 +1561,10 @@ def _mind_artifact_recurrence(home: Path, now: datetime | None = None) -> dict:
     sampled = head.stdout[:40]
     roles = ["inference-research", "body-research", "docs", "health", "senses",
              "discover", "genome", "witness", "research-methods", "operator-view"]
-    entries: list | None = None
+    entries = list(entries) if entries is not None else None
     try:
-        entries = Feed(home).entries()
+        if entries is None:
+            entries = Feed(home).entries()
     except (OSError, ValueError):
         entries = None
     if entries is None:
@@ -4795,7 +4797,8 @@ SETTLE_INCIDENT_GAP_SECONDS = 60 * 60
 """Blocked settlements closer than this belong to one incident."""
 
 
-def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[str, object]:
+def _coord_dm_disposition_age(home: Path, now: datetime | None = None,
+                              entries=None) -> dict[str, object]:
     """Measure how long addressed DMs wait for a disposition.
 
     A DM is dispositioned when the target replies by DM to the sender
@@ -4832,7 +4835,8 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None) -> dict[s
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
                 "sample": "chat tape unavailable", "kind": "read"}
     try:
-        entries = iter_feed_file(tape_path, home=home)
+        if entries is None:
+            entries = iter_feed_file(tape_path, home=home)
     except (OSError, ValueError, TapeUnknown) as exc:
         return {"id": "sense.coord.dm-disposition-age", "state": "unknown",
                 "sample": f"chat tape unreadable: {exc}", "kind": "read"}
@@ -5413,7 +5417,7 @@ def _rebind_links(events: list[dict], checked: list[tuple],
     return links, stats, byte_relations
 
 
-def _ledger_evidence_binding(home: Path) -> dict[str, object]:
+def _ledger_evidence_binding(home: Path, entries=None) -> dict[str, object]:
     """Check that post-clause wall outcomes bind write-once evidence.
 
     A ``wall-outcome`` record binds its per-outcome evidence file with
@@ -5577,11 +5581,17 @@ def _ledger_evidence_binding(home: Path) -> dict[str, object]:
     # The tape is read through the classifier's own seam, and the record
     # digests its entries name are collected as they stream past: the census
     # of the store then measures exactly the records this reading cannot see,
-    # and the tape is read once.
+    # and the tape is read once. A caller that already holds the entries (the
+    # scan's shared snapshot) hands them over, and the digests are the same
+    # set because a digest is a function of the body that names it.
     named_records: set[str] = set()
     tape = home / "chat.log"
-    entries = (store_census.tape_entries(tape, home, named_records)
-               if tape.exists() else None)
+    if entries is None:
+        entries = (store_census.tape_entries(tape, home, named_records)
+                   if tape.exists() else None)
+    else:
+        entries = list(entries)
+        store_census.collect_named(entries, named_records)
     coverage = classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME, entries=entries)
     read_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     incomplete = coverage["incomplete"]
@@ -7106,6 +7116,24 @@ def _host_radio_read() -> dict:
             "controllers": controllers, "wireless": interfaces}
 
 
+def _scan_snapshot(home: Path) -> list | None:
+    """The scan's one tape revision: the cold verified read, shared.
+
+    Three readings read the whole tape, and they read the same entries. The
+    scan takes one verified revision and hands it to them. Each reading keeps
+    its own read as the fallback, so a shared read that fails leaves every
+    reading on the read it makes today and no state word changes.
+
+    ``None`` means the shared read failed and the readers fall back. A framer
+    fault is caught too, so the fallback is the readers' own reads and each
+    one reports the fault the way it does today.
+    """
+    try:
+        return Feed(home).entries()
+    except (OSError, ValueError, TapeUnknown):
+        return None
+
+
 def sample(home: Path) -> dict[str, object]:
     """Take bounded reads; never open input event streams or record key content."""
     observed: list[dict[str, object]] = []
@@ -7117,15 +7145,20 @@ def sample(home: Path) -> dict[str, object]:
                      **_journal_error_window()})
     observed.append({"id": "sense.journal.unit-failure-count", "kind": "read",
                      **_journal_unit_failure_window(home)})
+    # One tape revision serves the readings that need the whole tape: the
+    # recurrence reading needs it verified, the census needs the record
+    # digests the entries name, and the disposition reading needs a window of
+    # it. The snapshot is taken here, once, before any of them runs.
+    snapshot = _scan_snapshot(home)
     observed.append(_mind_treadmill(home))
     observed.append(_mind_docs_treadmill(home))
-    observed.append(_mind_artifact_recurrence(home))
+    observed.append(_mind_artifact_recurrence(home, entries=snapshot))
     observed.append(_mind_loop_stall(home))
     observed.append(_mind_watch_wait(home))
     observed.append(_seed_settle_result_mix(home))
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
-    observed.append(_ledger_evidence_binding(home))
+    observed.append(_ledger_evidence_binding(home, entries=snapshot))
     observed.append(_head_rewinds(home))
     observed.append(_disk_trend(home))
     observed.append(_space_light_read(home))
@@ -7328,7 +7361,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_ghost_site_homes(home))
     # One tape parse serves both the disposition reading and the gate-latency
     # reading that ages its open set; reading the tape twice gave the same bytes.
-    disposition = _coord_dm_disposition_age(home)
+    disposition = _coord_dm_disposition_age(home, entries=snapshot)
     observed.append(disposition)
     observed.append(_coord_authorship_fog(home))
     observed.append(_repo_landing_block(home))

@@ -463,7 +463,7 @@ Measured numbers are the ones in sections 2 and 8. Nothing here is a new speedup
 | **Senses baseline** (measurement, not migration) | Not started. Needs its own declared duty, not an edit to `rust-plan-progress` (wall, section "Senses baseline"). | Source artifacts already exist under `artifacts/rust-plan-20261107/`. | Declare the duty with its own `max_age`. It reads UNKNOWN when evidence is missing or stale. |
 | Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4); fresh systemd table at pin `7ce12523`: `readings` 890 CPU-s / 6 h (36 runs, ~24.5 CPU-s each), 870 MB peak. `doctor` has 25 exit-1 runs, cause UNKNOWN. | The `readings` cost is now profiled on the live plant and S2 is decided: see section 10. The slice is a Python slice (unused whole-tape reads, one snapshot per scan, cadence), not a Rust slice. |
 | **S2.1. Delete the tape reads that feed nothing** | Implemented (2026-11-10). `_mind_role_coverage` took an `entries` argument it never read; three readings read the whole tape to fill it and discarded the result. | AST-verified: `discovery.py:980` reads `home`, `role`, `now` and not `entries`. Fresh-process A/B of one live scan: 31.56 CPU-s before, 31.58 after, 74 observations both times. **A deletion, not a speedup** — an earlier 37% figure came from running both variants in one process and was wrong. | Committed with 4 regression tests that fail if a tape read returns to these readings. S2.2 (one physical tape read per scan) and S2.3 (cadence) remain. |
-| **S2.2. One physical tape read per scan** | **Target decided** (2026-11-10): all three reads can be served from one snapshot. This is a snapshot change, not a window change: `sample()` takes the cold verified read once and passes it to the three readers. | Measured 2026-11-10 10:05Z–10:24Z on the live plant at pin `323a87fe`, counting framer spawns rather than wrapper calls: **three** physical whole-tape reads per scan, 643,103,475 bytes, 16.98 CPU-s, 858.6 MB peak, 74 observations. Call sites: `_mind_artifact_recurrence` (the cold verified read), `_ledger_evidence_binding` (the census read), `_coord_dm_disposition_age` (the disposition read). See section 10.2a. | Implement the shared snapshot, with each reader keeping its own read as the fallback so a failed shared read changes no state word. Acceptance: the physical whole-tape read count drops to one and the three readings' outputs are unchanged. Section 10.2b. |
+| **S2.2. One physical tape read per scan** | **Implemented** (2026-11-10), not yet activated. `sample()` takes the cold verified read once and passes it to the three readers; each reader keeps its own read as the fallback. This is a snapshot change, not a window change. | Measured 2026-11-10 10:05Z–10:24Z on the live plant at pin `323a87fe`, counting framer spawns rather than wrapper calls: **three** physical whole-tape reads per scan, 643,103,475 bytes, 16.98 CPU-s, 858.6 MB peak, 74 observations. Call sites: `_mind_artifact_recurrence` (the cold verified read), `_ledger_evidence_binding` (the census read), `_coord_dm_disposition_age` (the disposition read). See section 10.2a. | Acceptance met on the live plant: physical whole-tape reads 3 → 1 (643,235,364 → 214,411,788 bytes), same 74 observations, the three readings' values unchanged. Section 10.2b. Not yet activated: the change touches the readings scan's readers, so it goes through the ordinary delivery path with an observed live consumer. |
 
 ### 9.1a Independent replaceability (operator vision addendum, DM 298227, 2026-11-08)
 
@@ -611,7 +611,7 @@ one disposition read. S2.2's job is to name which of these can be served from
 one snapshot, and to prove it with the physical-read count rather than the
 wrapper count.
 
-### 10.2b S2.2 decided: one snapshot serves all three reads
+### 10.2b S2.2 implemented: one snapshot serves all three reads
 
 The three physical reads of section 10.2a are **not three responsibilities**.
 Two of them are the same entries read twice, and the third is a window of the
@@ -666,6 +666,25 @@ grows between them. One revision makes the scan internally consistent. The
 measured delta in this probe was zero entries appended during the scan; the
 per-scan growth is bounded by what the plant writes in a scan's runtime
 (about 26 s), which the next probe must measure rather than assume.
+
+**Implemented.** `sample()` takes the snapshot once (`_scan_snapshot`) and
+passes it to the three readers, each of which takes an optional `entries` and
+keeps its own read as the fallback. `store_census.collect_named` collects the
+digests from a supplied entry list.
+
+Measured on the live plant, one scan per process, same probe both ways
+(2026-11-10 10:52Z–10:53Z, tape 214,411,788 bytes):
+
+| | physical whole-tape reads | bytes read | CPU-s | observations | peak RSS |
+|---|---|---|---|---|---|
+| before | **3** | 643,235,364 | 16.90 | 74 | 858.2 MB |
+| after | **1** | 214,411,788 | 15.06 | 74 | 860.0 MB |
+
+The three readings report the same values either way: the recurrence reading
+`verified`, the census `drift` with `owed=75 all_bad=202 permanent_loss=123
+bound=4722`, and the disposition reading
+`dms=40 reply_edge=2 … stall=35 p50=27m p90=151m`. The census's `read_at`
+stamp differs because it stamps its own instant.
 
 Probes: `artifacts/rust-plan-20261107/s2b-20261110/shared_snapshot.py` and
 `census_named_diff.py`.
