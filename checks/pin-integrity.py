@@ -33,16 +33,21 @@ def _ts(text) -> float | None:
 
 
 def expected_release(home: Path) -> tuple[str, str]:
-    """Return (record id, release dir name) of the newest verified delivery."""
+    """Return (record id, release dir name) of the newest verified delivery.
+
+    A superseded record is still a verified delivery: preparing a newer patch
+    renames the previous record, and until the newer one is verified the previous
+    release is the one the pin must hold.  Skipping them named an older release
+    and printed a restore command that would have regressed the plant.
+    """
     best = None
     for path in (home / "patches").glob("moving-pin-*.json"):
-        if "superseded" in path.name:
-            continue
         data = json.loads(path.read_text())
         at = _ts(data.get("applied_at"))
         if data.get("delivery_verified") is True and data.get("phase") == "applied" and at:
+            sha = path.stem.removeprefix("moving-pin-").split(".", 1)[0]
             if best is None or at > best[0]:
-                best = (at, path.stem.removeprefix("moving-pin-"))
+                best = (at, sha)
     if best is None:
         raise ValueError("no verified moving-pin record")
     sha = best[1]

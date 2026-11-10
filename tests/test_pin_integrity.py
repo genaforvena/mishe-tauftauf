@@ -37,6 +37,16 @@ def test_old_pin_is_red_with_restore_command(tmp_path, capsys):
     assert code == 2 and "ln -sfn" in out and "bbbbbbbb" in out
 
 
+def test_superseded_verified_record_still_sets_the_pin(tmp_path, capsys):
+    # Preparing a newer patch renames the previous verified record; until the
+    # newer one is verified, the previous release is still the pin to hold.
+    home = site(tmp_path, "cccccccc")
+    (home / "releases" / ("cccccccc" + "0" * 32)).mkdir()
+    (home / "patches" / "moving-pin-cccccccc.superseded-125305.json").write_text(
+        json.dumps({"phase": "applied", "delivery_verified": True,
+                    "applied_at": "2026-11-10T12:00:00+00:00"}))
+    assert run(home, capsys)[0] == 0
+
 def test_delivery_in_progress_is_ok(tmp_path, capsys):
     import datetime
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
