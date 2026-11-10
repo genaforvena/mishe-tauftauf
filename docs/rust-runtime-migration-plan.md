@@ -1132,3 +1132,75 @@ that does the reading. `mishe-doctor` ran under the same pin
 Probes: `artifacts/rust-plan-20261107/s2d-20261110/s0_same_tape_ab.py`,
 `s0_cold_ab.py`, `s0b_profile.py`, `s0b_batch_prize.py`; profile output
 `s0b-profile.txt`.
+
+### 10.11 S0b implemented: one verification pass for the role read, measured
+
+S0b is committed (`00abc003`). The role read no longer runs a verification pass
+per entry: `_VerificationPass` is now the single implementation of record
+verification, and `entries()`, `view_entries()`, `access` and the role read all
+run their entries through a pass. The role read holds **one pass for the whole
+stream**.
+
+**Measured on the live tape.** Both sides cold (the role cache is moved aside
+before every run), same tape, separate processes, through the real path
+(`Feed.role_entries("genome", _force_full=True)`):
+
+| side | CPU-s | view entries | view digest |
+|---|---|---|---|
+| live (`b06ae51b`, a pass per entry) | 14.64 / 14.79 | 30,334 | `1ab098dc…86c596` |
+| new (`00abc003`, one pass) | 7.38 / 7.26 | 30,334 | `1ab098dc…86c596` |
+
+The view digest is identical on both sides, so the batching changes no output.
+**S0b is worth about 7.4 CPU-s on the cold role read** — close to the 9 CPU-s
+the profile predicted.
+
+**What changed, stated plainly.** This is a `feed.py` and `records.py` change,
+so it is a strong change (both are named in `parsing-policy.json`):
+
+- The records-directory swap check fires at each store flush and at every
+  `VERIFIED_BATCH_ENTRIES` (500) entries, instead of once per record. A swap is
+  therefore noticed up to 500 entries later. The pass still fails closed: it
+  raises, and it stores nothing from the replaced inode. The whole-tape reader
+  has always verified a whole tape under one pass, so this is the bound that
+  read already had — the role read now shares it rather than holding a
+  stricter one of its own.
+- The verified store is written in one transaction per batch instead of one
+  per record. Nothing verified is lost; only the write timing changes.
+- **A rule the batched design would otherwise have weakened.** Batching shares
+  the pending rows across a batch, so a repeated digest could be served from
+  the batch without re-checking the file. `records.cached_payload` now checks
+  the file's current identity against the identity recorded in the batch before
+  serving a pending row, so a record rewritten mid-batch is verified again,
+  not served. This mattered: the live tape has 196,304 references to 171,966
+  distinct digests, and 23,515 of the repeats fall inside a 500-entry window.
+
+**Tests.** `tests/test_records_verified_store.py` gains three tests, each red
+on the old code and green on the new:
+
+- `test_the_role_read_verifies_the_whole_tape_in_one_pass` — the old code
+  opened the records directory once per record (6 opens for 6 records); the new
+  code opens it once.
+- `test_a_batch_verifies_a_repeated_record_against_its_current_identity` — the
+  old code did not raise when a record was rewritten after its first
+  reference in the same batch.
+- `test_a_replaced_records_directory_is_noticed_within_the_batch_bound` — the
+  swap check fires within the batch bound and stores nothing from the old
+  inode.
+
+`tests/test_feed.py`, `tests/test_records_verified_store.py`,
+`tests/test_access.py`, `tests/test_wall.py`, `tests/test_wake.py` and
+`tests/core/test_wake_lock_preload.py` pass (154 tests).
+`python3 tools/check_parsing.py` reports "PASS — no new parsing outside
+boundaries; 561 existing legacy sites remain".
+
+**State: committed, not yet activated.** The plant's moving-pin driver
+(`deliver.sh` → `rerun.sh`) is the strong path for this range; it re-runs the
+check and the fresh review itself. At the time of writing it refused because
+the shared checkout carried another mind's uncommitted edits to
+`src/mishe_tauftauf/engine_omp.py`, `engine_router.py` and `wake.py`. Those
+edits are not mine and were left alone. The live status is therefore UNKNOWN
+until the driver delivers and the pin moves; `runtime/current` still names
+`b06ae51b`.
+
+Probes: `artifacts/rust-plan-20261107/s2d-20261110/s0b_live_ab.py`,
+`dup_rate.py`.
