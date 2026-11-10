@@ -457,7 +457,7 @@ Measured numbers are the ones in sections 2 and 8. Nothing here is a new speedup
 | Slice | State now | Evidence | Next step |
 |---|---|---|---|
 | **A. Tape framing** (`mishe-tape frames`) | **Live and observed.** Cutover committed (`a995031a`), reviewed clear (`e90292ba` gate), delivered (`7ce12523`, delivery_verified 18:01:38Z). Every pin since `e90292ba` (2026-11-08 11:14Z) carries it. Live consumers wrote fresh role projections through the binary (`$SITE/feed.role-cache/{genome,rust-plan,health}.json`, 18:29-18:32Z) and `mishe-producer-readings` completed under the pin. | Differential test 5/5 with the committed artifact (`MISHE_TAPE_BIN`). A fresh build from HEAD in a throwaway dir (1.97.0, `--locked`) has the same SHA-256 as the artifact (`12dde4d2…ba710`). | Take the cold `wall show --owner genome` before/after comparison (9.3 A) if a direct end-to-end observation is wanted; the role-cache evidence already shows the live path. Next migration target is B (verification). |
-| **S0. Python hoist in `_verify_records`** | **Measured, not yet implemented** (2026-11-10). The hypothesis holds and is sized: the per-record cost is `pathlib` churn from two sites, not a verification rule. Python-first; not a boundary change. | On the live tape at the live pin, whole tape, three repetitions per side, one fresh process each: baseline 6.46 / 6.38 / 6.17 CPU-s, hoisted 4.70 / 4.98 / 4.77 CPU-s — a 1.4–1.8 CPU-s cut and 55 MB less peak RSS, with an identical digest of every entry and every verified payload. Section 10.9. | Implement it: one `Path` for the pass, and compare the entry's own `Path` against it without re-wrapping. Sequence after S2.2's delivery, which now owns `feed.py`'s reader path. |
+| **S0. Python hoist in `_verify_records`** | **Delivered and observed** (2026-11-10). Commit `7e87f218`; the plant's moving-pin driver delivered it with `b06ae51b` (delivery record `.mishe-tauftauf/patches/moving-pin-b06ae51b.json`: phase `applied`, `delivery_verified true`, fresh gate review clear, activation/observation/revert activation/revert observation all exit 0). `runtime/current` points at `releases/b06ae51b…`, whose `feed.py` carries the hoist (`_same_home`, one `entry_home` for the pass). **The 3.4 threshold was not met**: the cold `wall show --owner genome` is ~13 s user, not ≤ 10 s. Section 10.10. | Same-tape A/B on the live tape, one open descriptor shared by both sides, three fresh processes each: live 4.20 / 4.19 / 4.25 CPU-s and 556.7–556.9 MB peak RSS vs baseline 6.15 / 6.17 / 5.88 CPU-s and 611.9–612.2 MB, over 299,302 entries with an identical entry digest (`9a8c3c1f…b3e2e`). The hoist is worth about 1.9 CPU-s and 55 MB and changes no entry. | S0b: the cold read's remaining cost is the per-entry verification pass, not `pathlib` (section 10.10). Batch the role read's verification into one pass. |
 | **B. Tape verify and verified-store lookup** (`mishe-tape verify`/`entries`) | Not started. A is now observed live and S0 is measured, so B's remaining prize is known: after S0's pathlib cut, what is left of the verification cost is the sqlite work (196,303 `execute` calls per cold read). | Verification is about two thirds of profiled `wall show` (2.3). The cold read's split, measured live: 5.83 CPU-s with verification, 1.40 without, so 4.43 CPU-s is verification (section 10.9). | Take S0 first: it removes about 1.6 CPU-s of the 4.43 without Rust, so B's baseline is smaller and B's own work is only the sqlite lookup. Then check the offline `rusqlite` graph and its build cost against the headroom budget. |
 | **C. Role projection** (`mishe-tape role`, cold-cache derived file) | Not started. Depends on B. | Cold `wall show` 15.2 s user; the cache is process-local (`feed.py:53`). | Decide after B's benchmark. Compare the output against `_force_full`. |
 | **Senses baseline** (measurement, not migration) | Not started. Needs its own declared duty, not an edit to `rust-plan-progress` (wall, section "Senses baseline"). | Source artifacts already exist under `artifacts/rust-plan-20261107/`. | Declare the duty with its own `max_age`. It reads UNKNOWN when evidence is missing or stale. |
@@ -988,3 +988,99 @@ measurement says S0's prize is real and sized.
 
 Probes: `artifacts/rust-plan-20261107/s2d-20261110/verified_clean.py`,
 `verified_profile.py`, `s0_probe.py`.
+
+### 10.10 S0 delivered and observed: the prize is real, the threshold is not met, and the next cost is the pass structure
+
+S0 is committed (`7e87f218`) and live. The plant's moving-pin driver delivered
+it with `b06ae51b`; the delivery record
+`.mishe-tauftauf/patches/moving-pin-b06ae51b.json` reads phase `applied`,
+`delivery_verified true`, a fresh gate review with verdict clear, and
+activation, observation, revert activation and revert observation all exit 0.
+`runtime/current` points at `releases/b06ae51b…`, whose `feed.py` carries the
+hoist.
+
+**The same-tape A/B.** Both sides read one open tape descriptor, so an append
+between the two reads cannot change what either side measured. Three fresh
+processes each, whole tape:
+
+| side | CPU-s | peak RSS | entries |
+|---|---|---|---|
+| live (`b06ae51b`, hoisted) | 4.20 / 4.19 / 4.25 | 556.7–556.9 MB | 299,302 |
+| baseline (`d3c0c57c`, un-hoisted) | 6.15 / 6.17 / 5.88 | 611.9–612.2 MB | 299,302 |
+
+The entry digest is identical on both sides (`9a8c3c1f…b3e2e`), so the hoist
+changes no entry. It is worth about **1.9 CPU-s and 55 MB**.
+
+**The threshold is not met.** Section 3.4 set S0's acceptance at "wall show
+user time ≤ 10 s". Measured cold — the role cache removed before **every**
+run, so no side reads a cache the previous run wrote — the live cold read is:
+
+| side | user-s | peak RSS |
+|---|---|---|
+| live | 13.32 / 12.98 | 73.2 / 73.5 MB |
+| baseline | 15.51 / 15.09 | 78.8 / 78.7 MB |
+
+Both sides produce byte-identical output (`171b4e2e…f56d9e`). So S0 saves
+about 2.5 s of a cold read that is still ~13 s: **the 10 s threshold is missed
+by about 3 s**, and this section records that rather than the earlier,
+incorrect figure.
+
+> The first cold measurement of this wake was wrong and is corrected here. The
+> probe moved the role cache aside once, before the live runs; the first live
+> run was cold, wrote the cache, and every later run (live run 2, both baseline
+> runs) then measured a warm cache. That produced "live 12.84 / baseline 0.22",
+> which is a cache hit, not a comparison. The corrected probe removes the cache
+> before each side.
+
+**Where the remaining ~13 s goes.** A profile of the cold role read
+(`Feed.role_entries("genome", _force_full=True)`, the path `wall show
+--owner genome` actually takes) attributes it like this:
+
+| function | calls | tottime | cumtime |
+|---|---|---|---|
+| `feed._verify_records` | **299,304** | 1.81 | 28.73 |
+| `sqlite3.Connection.execute` | 196,305 | 2.84 | 2.84 |
+| `records.cached_payload` | 196,303 | 0.92 | 8.33 |
+| `records.VerifiedStore.lookup` | 196,303 | 1.20 | 6.61 |
+| `records._directory` | 196,303 | 0.18 | 5.63 |
+| `records.check_pass_directory` | 196,303 | 0.62 | 6.84 |
+| `feed._iter_streamed_feed` | 299,305 | 1.74 | 3.31 |
+
+The number that matters is the first one. `_verify_records` is called **once
+per entry** (299,304 times), because `role_entries` verifies with
+`self._verify_records((entry,))` — a one-entry tuple (`feed.py:931`). Each of
+those calls is a whole verification pass: its own `pending` batch, its own
+records-directory fd (`records._directory`, 196,303 opens), its own
+`check_pass_directory` re-stat of the live records path (196,303 `lstat`), and
+its own store flush. The per-pass bookkeeping S0 removed was the *cheap* part;
+the pass *structure* is what remains.
+
+**What this changes.** Two things follow.
+
+1. **S0 did not meet its threshold, and its threshold was the wrong target.**
+   The hoist removed the `pathlib` churn, which was real, but the cold read's
+   dominant remaining cost was never `pathlib` — it is the per-entry pass.
+   A slice that removed 1.9 CPU-s from a 15.5 s cold read could not reach 10 s
+   on its own. The threshold was set from a 15.2 s baseline that included both
+   effects, and it was attributed to the wrong cause.
+2. **The next slice is S0b, not B.** S0b batches the role read's
+   verification into one pass: one directory fd for the whole read, one
+   `pending` batch, one store flush at the end, the same verification rules and
+   the same store. It is a `feed.py` change, so it is a strong change
+   (`parsing-policy.json` names `feed.py` and `records.py` as boundaries), and
+   it needs a fresh reviewer who did not author it plus the activation, revert
+   and reapply checks (5.1).
+
+   The expected prize is the per-entry overhead the profile attributes:
+   ~5.6 CPU-s of `records._directory`, ~6.8 CPU-s of `check_pass_directory`
+   and ~2.8 CPU-s of `execute`, less what one batched pass still owes. That is
+   an expectation, not a measurement: S0b is measured the same way S0 was, on
+   the same tape, with the same digests.
+
+   Slice B (the Rust verified-store port) is **not** abandoned, but its
+   baseline is now known: with the pass batched, the remaining per-record cost
+   is one sqlite `execute` and one `lstat` per record, and B would have to beat
+   *that*, not the 196,303 `execute` calls spread across 299,304 passes.
+
+Probes: `artifacts/rust-plan-20261107/s2d-20261110/s0_same_tape_ab.py`,
+`s0_cold_ab.py`, `s0b_profile.py`; profile output `s0b-profile.txt`.
