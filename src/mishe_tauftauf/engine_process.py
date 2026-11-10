@@ -125,29 +125,55 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
                        watched: Path | None, idle_gap: float) -> int:
     """Wait for the engine, extending the deadline while its output still grows.
 
-    The extension is granted one step at a time: at each step the run may continue only if
-    the output grew within the last ``idle_gap`` seconds, and never past ``hard_timeout``.
-    An idle engine and the hard cap both end the run as a timeout.
+    Before the soft deadline the engine runs exactly as it always did. After it, the
+    engine may continue only while its output grows: it is cut when the output has not
+    grown for ``idle_gap`` seconds, and never past ``hard_timeout``. An idle engine and
+    the hard cap both end the run as a timeout.
+
+    The output is sampled every ``POLL_S`` so the last growth is known to within one
+    sample, but each bound is enforced at its own moment rather than at the next sample:
+    the wait ends exactly at the hard cap, and an idle engine is cut exactly one idle gap
+    after its last output. A poll that only decides "still running" can no longer carry
+    the run past either bound.
     """
     start = time.monotonic()
-    deadline = start + timeout
+    soft_at = start + timeout
     hard_at = start + hard_timeout
     last_size = _output_size(watched)
     last_growth = start
     while True:
-        try:
-            return process.wait(timeout=POLL_S)
-        except subprocess.TimeoutExpired:
-            pass
+        now = time.monotonic()
+        if now >= hard_at:
+            raise EngineTimeout(f"exceeded {hard_timeout:g}s (hard cap)")
+        size = _output_size(watched)
+        if size is not None and last_size is not None and size > last_size:
+            last_size = size
+            last_growth = now
+        if now < soft_at:
+            boundary = soft_at
+        else:
+            if size is None or now - last_growth >= idle_gap:
+                raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
+            boundary = last_growth + idle_gap
+        target = min(boundary, hard_at)
+        # Wake at the earlier of the next boundary and the next sample, so growth is seen
+        # promptly and no bound is passed unnoticed.
+        wait = min(POLL_S, target - now)
+        if wait > 0:
+            try:
+                return process.wait(timeout=wait)
+            except subprocess.TimeoutExpired:
+                pass
+        else:
+            code = process.poll()
+            if code is not None:
+                return code
         now = time.monotonic()
         size = _output_size(watched)
         if size is not None and last_size is not None and size > last_size:
             last_size = size
             last_growth = now
-        if now < deadline:
-            continue
         if now >= hard_at:
             raise EngineTimeout(f"exceeded {hard_timeout:g}s (hard cap)")
-        if size is None or now - last_growth > idle_gap:
+        if now >= soft_at and (size is None or now - last_growth >= idle_gap):
             raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
-        deadline = now + idle_gap
