@@ -76,10 +76,52 @@ def test_the_event_predicate_is_checked_once(tmp_path: Path):
     assert len(calls) == 1, "the predicate was consulted more than once"
 
 
-def test_saw_assistant_event_marks_the_models_first_response(tmp_path: Path):
+def test_the_real_stall_signature_is_cut_at_the_bound(tmp_path: Path):
+    """A run that writes omp's optimistic turn and then goes quiet is cut at the bound.
+
+    This is the shape of the two stalled wake streams on record (2026-11-08, 2026-11-09):
+    ``message_start``/``message_end``/``turn_end`` for the assistant with empty content and
+    nothing after it.
+    """
     stream = tmp_path / "stream.jsonl"
-    stream.write_text('{"type":"message_start","message":{"role":"user"}}\n', encoding="utf-8")
-    assert engine_omp.saw_assistant_event(stream) is False
+    stream.write_text('{"type":"session"}\n'
+                      '{"type":"message_start","message":{"role":"user"}}\n'
+                      '{"type":"message_end","message":{"role":"user"}}\n'
+                      '{"type":"message_start","message":{"role":"assistant","content":[]}}\n'
+                      '{"type":"message_end","message":{"role":"assistant","content":[]}}\n',
+                      encoding="utf-8")
+    assert engine_omp.saw_provider_output(stream) is False
+
+
+def test_the_optimistic_assistant_start_is_not_a_provider_event(tmp_path: Path):
+    """``omp`` opens the assistant turn before the provider answers; that is not output.
+
+    A stalled run writes exactly this stream and then goes quiet, so treating the optimistic
+    ``message_start`` as the model's first response would make the bound a no-op exactly where
+    it is needed.
+    """
+    stream = tmp_path / "stream.jsonl"
     stream.write_text('{"type":"message_start","message":{"role":"user"}}\n'
-                      '{"type":"message_start","message":{"role":"assistant"}}\n', encoding="utf-8")
-    assert engine_omp.saw_assistant_event(stream) is True
+                      '{"type":"message_end","message":{"role":"user"}}\n'
+                      '{"type":"message_start","message":{"role":"assistant","content":[]}}\n',
+                      encoding="utf-8")
+    assert engine_omp.saw_provider_output(stream) is False
+
+
+def test_a_provider_event_marks_the_models_first_response(tmp_path: Path):
+    stream = tmp_path / "stream.jsonl"
+    stream.write_text('{"type":"message_start","message":{"role":"user"}}\n'
+                      '{"type":"message_start","message":{"role":"assistant","content":[]}}\n',
+                      encoding="utf-8")
+    assert engine_omp.saw_provider_output(stream) is False
+    stream.write_text('{"type":"message_update","assistantMessageEvent":{"type":"text_start"}}\n',
+                      encoding="utf-8")
+    assert engine_omp.saw_provider_output(stream) is True
+
+
+def test_a_thinking_or_tool_call_event_also_counts_as_output(tmp_path: Path):
+    for kind in ("thinking_start", "toolcall_start"):
+        stream = tmp_path / f"{kind}.jsonl"
+        stream.write_text('{"type":"message_update","assistantMessageEvent":{"type":"%s"}}\n' % kind,
+                          encoding="utf-8")
+        assert engine_omp.saw_provider_output(stream) is True, kind

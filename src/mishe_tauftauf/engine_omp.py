@@ -13,7 +13,10 @@ from .wake import EngineExhausted, EngineRejected
 DEFAULT_THINKING = "low"
 THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max", "auto")
 FIRST_OUTPUT_S = 120.0
-"""How long a wake waits for the model's first assistant event before the run is cut (operator DM 299288)."""
+"""How long a wake waits for the model's first provider event before the run is cut (operator DM 299288)."""
+
+PROVIDER_EVENT_TYPES = frozenset({"text_start", "thinking_start", "toolcall_start"})
+"""The ``assistantMessageEvent`` kinds that mean the provider is producing output."""
 
 
 def command(model: str | None, cwd: Path, prompt_file: Path, thinking: str | None = None) -> list[str]:
@@ -39,17 +42,25 @@ def refused_before_effect(stream: Path) -> str | None:
     return error
 
 
-def saw_assistant_event(stream: Path) -> bool:
-    """True once the stream holds an assistant message_start: the model's first response.
+def saw_provider_output(stream: Path) -> bool:
+    """True once the stream holds a provider event: the model has actually begun answering.
 
-    The user turn's message_start comes first, so this marker means the model has actually
-    begun answering. A stalled provider can write a few bytes (a partial line) and then go
-    quiet; byte growth alone would not notice, so the first-output bound uses this event.
+    ``omp`` opens the assistant turn optimistically: it writes ``message_start`` with an empty
+    ``content`` 40-110 ms after the user turn, before the provider has answered anything
+    (measured across 14 wake streams; 2.5M events show ``message_update`` never precedes it).
+    So the assistant ``message_start`` cannot tell a live provider from a stall: a stalled run
+    writes the same optimistic marker and then goes quiet, which is exactly the case the
+    first-output bound must catch.
+
+    The provider's own first event is a ``message_update`` carrying an ``assistantMessageEvent``
+    (``text_start``, ``thinking_start`` or ``toolcall_start``): that is the model producing
+    output. Byte growth cannot stand in for it, because a stall writes the optimistic
+    ``message_start`` and then nothing.
     """
     for event in stream_events(stream):
-        if event.get("type") == "message_start":
-            message = event.get("message")
-            if isinstance(message, dict) and message.get("role") == "assistant":
+        if event.get("type") == "message_update":
+            inner = event.get("assistantMessageEvent")
+            if isinstance(inner, dict) and inner.get("type") in PROVIDER_EVENT_TYPES:
                 return True
     return False
 
@@ -103,7 +114,7 @@ class OmpEngine:
         code = engine_process.run_bounded(
             command(self.model, Path(cwd), prompt_file, self.thinking), env=dict(env, **self.extra_env),
             cwd=Path(cwd), timeout=timeout, stdout_to=stream, on_start=on_start, hard_timeout=hard_timeout,
-            first_output_s=FIRST_OUTPUT_S, first_event=lambda: saw_assistant_event(stream))
+            first_output_s=FIRST_OUTPUT_S, first_event=lambda: saw_provider_output(stream))
         error = refused_before_effect(stream) if code != 0 else None
         if error is not None and is_quota_error(error):
             raise EngineExhausted(f"account out of quota before any tool call: {error}")
