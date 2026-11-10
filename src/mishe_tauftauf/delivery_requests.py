@@ -331,9 +331,14 @@ def consume(home):
                 terminal = row["state"] != "running" or recovered or pre_effect
                 row.update(state="failed" if terminal else "UNKNOWN", error=str(exc))
             finally:
-                row["ended_at"] = time.time()
+                # A BaseException (KeyboardInterrupt, SystemExit) before the
+                # effect began leaves the request queued: no effect, so release
+                # admission rather than leaving a consumer-interrupted UNKNOWN.
+                pre_effect_interrupt = row["state"] == "queued"
+                if not pre_effect_interrupt:
+                    row["ended_at"] = time.time()
                 write_json(location(home, row["id"]), row)
-                if terminal and read_json(admission_path(home)) == marker:
+                if (terminal or pre_effect_interrupt) and read_json(admission_path(home)) == marker:
                     admission_path(home).unlink()
             heartbeat(home, None if terminal else "Delivery effect UNKNOWN; admission retained")
             try:

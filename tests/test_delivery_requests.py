@@ -395,3 +395,16 @@ def test_patch_drift_before_apply_fails_without_admission_or_runtime_write(plant
     assert (runtime / "docs/page.md").read_text() == before
     assert not q.admission_path(home).exists()
     assert wall_patch.status(home, "strong")["phase"] == "reviewed"
+
+
+def test_interrupt_before_effect_releases_admission_and_keeps_request_queued(plant, monkeypatch):
+    """Operator follow-up 2026-11-10: an interrupt before any effect must not leave admission or UNKNOWN."""
+    monkeypatch.setattr(q, "notify", lambda *a, **k: None)
+    home, *_ = plant; row = request(plant); settle(home, row["key"])
+    def interrupt(*a, **kw):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(q, "validate_source", interrupt)
+    with pytest.raises(KeyboardInterrupt): q.consume(home)
+    assert not q.admission_path(home).exists()
+    kept = read_json(q.location(home, row["id"]))
+    assert kept["state"] == "queued" and "ended_at" not in kept
