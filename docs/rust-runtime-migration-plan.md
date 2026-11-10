@@ -1204,3 +1204,38 @@ until the driver delivers and the pin moves; `runtime/current` still names
 
 Probes: `artifacts/rust-plan-20261107/s2d-20261110/s0b_live_ab.py`,
 `dup_rate.py`.
+
+### 10.12 Framing-reader slice refuted by direct A/B (2026-11-10)
+
+The wall named the framing reader (the Python side of `_iter_streamed_feed`)
+as the next slice because the profile attributed ~10 of 30.1 profiled CPU-s to
+it (598,755 `BufferedReader.read` calls). Two probes refute that attribution
+as a slice:
+
+- **Call split, from the post-S0b profile** (`s0b-profile-head.txt`):
+  `_iter_streamed_feed` tottime 1.71 CPU-s, `read` 0.72 (598,639 calls),
+  `readline` 0.15, body `decode` 0.28 — the framing block is ~2.9 CPU-s
+  profiled, not 10. The profiled shares were inflated by cProfile's per-call
+  overhead. The 2.2 M `startswith` calls belong to `wall_text` and the
+  `[record]` scan, not framing.
+- **Direct A/B on the live tape** (299,381 entries, same spawned framer, same
+  materialized tuples, fresh process per run —
+  `artifacts/rust-plan-20261107/s0c_reader_ab.py`, result
+  `artifacts/s0c-reader-ab-20261110T2115Z.txt`): the live per-entry reader
+  (readline / read(nbytes) / read(1)) runs **0.59–0.78 CPU-s**; a chunked
+  256 KiB in-memory variant of the same framing runs **0.88–1.02 CPU-s** with
+  +180 MB peak RSS. The live reader is already the faster variant; there is no
+  seam prize in the reader loop.
+
+A third candidate — fast paths around the per-entry scans (`dm_recipient`'s
+whole-body `splitlines()`, `verify`'s per-line `[record]` genexpr) — measured
+7.36–7.93 vs 7.41–7.42 baseline CPU-s on the cold role read
+(`s0c_fastpath_ab.py`), within noise. The remaining cold-read cost sits in the
+per-digest verification work the profile names (sqlite `execute` 3.6,
+`cached_payload` 10.9 cumulative), which is slice B's target.
+
+**Decision: the framing-reader slice is closed, no code changed.** The next
+slice by measurement remains **B** (verified-store lookup batching/port),
+whose measured prize on the live store is ~0.65–0.75 CPU-s per cold read
+(slice-B re-measure, wall 2026-11-10 20:40Z), and whose structural prize is
+retiring 196k per-record sqlite round-trips into Rust.
