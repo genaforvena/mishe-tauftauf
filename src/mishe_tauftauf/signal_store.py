@@ -140,6 +140,25 @@ def observe(home, name: str, value, *, now: float, source: str) -> bool:
     return edge
 
 
+def refresh(home, name: str, *, now: float) -> bool:
+    """Advance the freshness stamp without recording a new value.
+
+    Some observations are answers that carry no new value: the CI run for the newest
+    commit has not started yet. The monitor is alive and read the world, so the signal
+    must not age into a false UNKNOWN that wakes a resolver for a fault that is not
+    there. The last recorded result still stands — a failure is never overwritten by a
+    pending window — and a real result later replaces it as an edge.
+
+    False when there is no reading to keep fresh: a never-observed signal still turns
+    UNKNOWN on its registration grace, because nothing has been established yet.
+    """
+    _entry(home, name)
+    if _load(home, name) is None:
+        return False
+    _touch_seen(home, name, now)
+    return True
+
+
 def observe_unknown(home, name: str, *, now: float, reason: str, source: str) -> bool:
     """Record a failed observation as UNKNOWN now, so a stale GREEN is never left standing.
 

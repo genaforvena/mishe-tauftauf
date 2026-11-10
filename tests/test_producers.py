@@ -128,11 +128,13 @@ def test_ci_producer_maps_actions_results(tmp_path):
         assert store.read(tmp_path, "ci", now=NOW).value == expect
 
 
-def test_ci_pending_is_no_observation_and_unknown_is_a_failure(tmp_path):
+def test_ci_pending_refreshes_freshness_and_unknown_is_a_failure(tmp_path):
     store.register(tmp_path, "ci", max_age=900, subscribers=["genome"])
     producers.produce(tmp_path, "ci", now=NOW, read=lambda h: {"state": "pass"})
     assert producers.produce(tmp_path, "ci", now=NOW + 400, read=lambda h: {"state": "pending"}) is None
-    assert store.read(tmp_path, "ci", now=NOW + 400).value == "GREEN"       # untouched, not refreshed
+    assert store.read(tmp_path, "ci", now=NOW + 400).value == "GREEN"
+    producers.produce(tmp_path, "ci", now=NOW + 1200, read=lambda h: {"state": "pending"})
+    assert store.read(tmp_path, "ci", now=NOW + 1500).value == "GREEN"      # pending refreshed freshness: no expiry
     with pytest.raises(producers.ObservationFailed):
         producers.produce(tmp_path, "ci", now=NOW + 500, read=lambda h: {"state": "unknown"})
     assert store.read(tmp_path, "ci", now=NOW + 5000).state == "UNKNOWN"

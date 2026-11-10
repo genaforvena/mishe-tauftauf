@@ -75,12 +75,15 @@ class ObservationFailed(RuntimeError):
 
 
 def ci(home, *, now: float, read=None) -> str | None:
-    """GitHub Actions for the current remote commit: pass GREEN, fail RED, pending/unknown no reading."""
+    """GitHub Actions for the current remote commit: pass GREEN, fail RED, pending keeps the last result fresh, unknown fails."""
     if read is None:
         from .ci_watch import read
     reading = read(home)
     state = reading["state"]
     if state == "pending":
+        # No run exists yet for the newest commit (a run takes ~11 min to finish, longer than max_age):
+        # the monitor read the world, so keep the standing result fresh instead of aging to a false UNKNOWN.
+        signal_store.refresh(home, "ci", now=now)
         return None
     if state not in ("pass", "fail"):
         # The reader's detail (gh/git error text, or the missing/unfinished run) is the only cause on record.
