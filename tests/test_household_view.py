@@ -82,7 +82,7 @@ def test_once_writes_the_view_without_a_none_line(tmp_path, monkeypatch, capsys)
     assert "MISHE SENSES" in out
     assert "None" not in out.splitlines()
 
-def test_phones_render_note3_sampler_and_redmi10_history(tmp_path, monkeypatch):
+def test_phones_render_note3_sampler_and_redmi10_battery(tmp_path, monkeypatch):
     import json
     now = 1794342600.0
     household = tmp_path / "spatial" / "work" / "household"
@@ -100,13 +100,25 @@ def test_phones_render_note3_sampler_and_redmi10_history(tmp_path, monkeypatch):
     monkeypatch.setattr(hv.time, "time", fake_time)
 
     latest = tmp_path / "latest.json"
-    latest.write_text(json.dumps({"observations": [{"id": "sense.body.redmi10.stream",
-        "history": {"battery": {"level": 1.0, "charging": False, "epoch": now - 23000}}}]}) + "\n")
     monkeypatch.setattr(hv, "LATEST", latest)
+
+    def stream_row(**body):
+        latest.write_text(json.dumps({"observations": [
+            {"id": "sense.body.redmi10.stream", **body}]}) + "\n")
+
+    # a streaming phone carries a live reading in `values`; fraction -> percent
+    stream_row(values={"battery": {"level": 0.92, "charging": True, "epoch": now - 5}})
     bat, age = hv.note3_battery()
     assert bat["level_pct"] == 100 and 40 <= age <= 50
-    hist = hv.redmi10_history()
-    assert hist is not None and hist[0]["level"] == 1.0 and now - hist[1] == 23000
+    cur = hv.redmi10_battery()
+    assert cur is not None and cur[0]["level"] == 0.92 and cur[2] is True
+    assert now - cur[1] == 5
+
+    # a stale stream keeps only labelled history, never current
+    stream_row(history={"battery": {"level": 0.4, "charging": False, "epoch": now - 23000}})
+    hist = hv.redmi10_battery()
+    assert hist is not None and hist[0]["level"] == 0.4 and hist[2] is False
+    assert now - hist[1] == 23000
 
     # stale sampler row reads UNKNOWN, fresh reads battery
     old = {"battery": fresh["battery"], "wall_ts": now - 400}
@@ -114,6 +126,12 @@ def test_phones_render_note3_sampler_and_redmi10_history(tmp_path, monkeypatch):
     bat, age = hv.note3_battery()
     assert age > 300
 
-    # no stream history row -> None
+    # no stream row -> None
     latest.write_text(json.dumps({"observations": []}) + "\n")
-    assert hv.redmi10_history() is None
+    assert hv.redmi10_battery() is None
+
+    # the drawn PHONES block: a streaming phone shows a live percent reading
+    stream_row(values={"battery": {"level": 0.92, "charging": True, "epoch": now - 5}})
+    lines = hv.draw().splitlines()
+    phones = [l for l in lines if l.startswith("  redmi10")]
+    assert phones == ["  redmi10  battery=92%  charging=yes  (row 5s old)"], phones

@@ -185,8 +185,15 @@ def note3_battery():
     return bat, (age if age is not None else 10 ** 9)
 
 
-def redmi10_history():
-    """Last known redmi10 battery from the discovery stream history; None without one."""
+def redmi10_battery():
+    """Redmi10 battery from the discovery stream row; None without one.
+
+    Returns (battery, epoch, current): `current` is True when the row carries the
+    value as a live reading (``values``), False when only the labelled last-known
+    value survives because the stream is stale (``history``). The row's own
+    per-quantity freshness decides, so a streaming phone never reads UNKNOWN and a
+    stale one is never shown as current.
+    """
     try:
         data = json.loads(LATEST.read_text())
     except (OSError, ValueError):
@@ -194,10 +201,10 @@ def redmi10_history():
     for row in data.get("observations", []):
         if str(row.get("id", "")) != "sense.body.redmi10.stream":
             continue
-        hist = row.get("history") or {}
-        bat = hist.get("battery")
-        if isinstance(bat, dict) and isinstance(bat.get("epoch"), (int, float)):
-            return bat, bat["epoch"]
+        for key, current in (("values", True), ("history", False)):
+            bat = (row.get(key) or {}).get("battery")
+            if isinstance(bat, dict) and isinstance(bat.get("epoch"), (int, float)):
+                return bat, bat["epoch"], current
     return None
 
 
@@ -391,15 +398,20 @@ def draw():
             out.append(f"  note3    battery={bat.get('level_pct')}%  "
                        f"charging={'yes' if (bat.get('usb_powered') or bat.get('ac_powered')) else 'no'}  "
                        f"(sampler row {age:.0f}s old)")
-    redmi = redmi10_history()
+    redmi = redmi10_battery()
     if redmi is None:
-        out.append("  redmi10  UNKNOWN (no stream history)")
+        out.append("  redmi10  UNKNOWN (no current or last-known battery)")
     else:
-        bat, epoch = redmi
+        bat, epoch, current = redmi
         age = time.time() - epoch
-        out.append(f"  redmi10  last known battery={bat.get('level'):.0f}%  charging="
-                   f"{'yes' if bat.get('charging') else 'no'}  ({age/3600:.1f}h ago, device offline; "
-                   f"history only, not current)")
+        level = bat.get("level")
+        pct = f"{level * 100:.0f}%" if isinstance(level, (int, float)) else "?"
+        charging = "yes" if bat.get("charging") else "no"
+        if current:
+            out.append(f"  redmi10  battery={pct}  charging={charging}  (row {age:.0f}s old)")
+        else:
+            out.append(f"  redmi10  last known battery={pct}  charging={charging}  "
+                       f"({age/3600:.1f}h ago, no current row; history only, not current)")
     out.append("  position of phones: only as the household states it")
     out.append("")
     out.append("")
