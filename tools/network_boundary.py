@@ -44,6 +44,12 @@ def doc_summary(doc):
     return doc.splitlines()[0]
 
 
+def decode_git_version(stdout):
+    """(short sha, commit time) from `git log --format='%h %ct'` output; ValueError when malformed."""
+    sha, ct = stdout.split()
+    return sha, int(ct)
+
+
 def parse_argv(parser, argv):
     """The parsed command-line arguments for a parser built by the caller."""
     return parser.parse_args(argv)

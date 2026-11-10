@@ -54,10 +54,10 @@ def code_version():
     try:
         r = subprocess.run(["git", "-C", str(REPO), "log", "-1", "--format=%h %ct", "--", *OWN_GIT_PATHS],
                            capture_output=True, text=True, timeout=10)
-        sha, ct = r.stdout.split()
+        sha, ct = nb.decode_git_version(r.stdout)
         dirty = subprocess.run(["git", "-C", str(REPO), "diff", "--quiet", "HEAD", "--", *OWN_GIT_PATHS],
                                capture_output=True, timeout=10).returncode != 0
-        return (sha + " + uncommitted edits" if dirty else sha), int(ct)
+        return (sha + " + uncommitted edits" if dirty else sha), ct
     except (OSError, ValueError, subprocess.SubprocessError):
         return "UNKNOWN", None
 
