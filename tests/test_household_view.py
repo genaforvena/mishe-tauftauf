@@ -72,3 +72,12 @@ def test_rhythm_line_comes_from_the_activity_summary(tmp_path, monkeypatch):
     lines = hv.rhythm_lines(activity.stat().st_mtime + 10)
     assert "RHYTHM (provisional): lights out 23:58Z; first living-room activity after that UNKNOWN" in lines[0]
     assert lines[1].startswith("  SOUND by UTC hour, living room")
+
+def test_once_writes_the_view_without_a_none_line(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(hv, "LOG", tmp_path / "signatures.jsonl")
+    monkeypatch.setattr(hv, "CAMERAS", {})
+    monkeypatch.setattr(sys, "argv", ["household_view.py", "--once"])
+    hv.main()
+    out = capsys.readouterr().out
+    assert "MISHE SENSES" in out
+    assert "None" not in out.splitlines()

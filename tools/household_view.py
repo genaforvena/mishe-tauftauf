@@ -380,14 +380,14 @@ def draw():
         out.append(f"  hint only: most recent motion in the {best[0]} camera (index {best[1]}), "
                    "which does not say who")
     out.append("PATTERNS: collecting (signatures.jsonl); none claimed yet.  BRUNO: no observation yet.")
-    sys.stdout.write("\x1b[2J\x1b[H" + "\n".join(out) + "\n")
-    sys.stdout.flush()
+    return "\n".join(out) + "\n"
 
 
 def main():
     global STAMP, VERSION, VERSION_AT
     if "--once" in sys.argv:
-        print(draw())
+        sys.stdout.write(draw())
+        sys.stdout.flush()
         return
     report_window_state()
     while True:
@@ -399,7 +399,8 @@ def main():
                 refresh(room, cam)
             except Exception as exc:
                 cam["reading"] = {"status": "unavailable", "reason": f"{type(exc).__name__}: {exc}"[:120]}
-        draw()
+        sys.stdout.write("\x1b[2J\x1b[H" + draw())
+        sys.stdout.flush()
         time.sleep(DRAW_EVERY)
 
 
