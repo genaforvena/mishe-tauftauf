@@ -725,7 +725,8 @@ def test_running_claude_wake_progress_says_running_not_unknown(tmp_path):
     old = time.time() - 3 * plant_tape.PROGRESS_SECONDS
     os.utime(root / "wake-x-2.work-start.json", (old, old))
     _, text = plant_tape.wakes_step(tmp_path, None)
-    assert "RUNNING x" in text and "UNKNOWN" not in text
+    # The running wake's output must not read UNKNOWN; the header's model field may: no select event yet.
+    assert "RUNNING x" in text and "Output UNKNOWN" not in text
 
 
 def test_stale_unsettled_wake_record_is_not_shown_as_running(tmp_path):
