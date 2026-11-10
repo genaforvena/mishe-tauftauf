@@ -490,9 +490,9 @@
     {
       "name": "network-speed",
       "command": ["{python}", "{repo}/tools/network_speed.py", "--home", "{home}"],
-      "every": 60,
+      "every": 180,
       "timeout": 60,
-      "max_age": 150,
+      "max_age": 300,
       "red_codes": [2],
       "unknown_codes": [3],
       "resolver": "network",
