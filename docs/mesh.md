@@ -83,12 +83,11 @@ Each carries initiatives through checks, delivery and observation. Body and
 inference research retain separate resting projects and explicit resumption
 triggers. An area's dashboard is rendered on demand by
 `mishe pain read ROLE --launcher dashboard`: it calls no model and prints plain text for
-people, with no JSON or raw timestamps. Its top part shows the role's wake state, what the
-last wake changed in git, the wall's opening lines, signals, the next due item and unread
-mail. Its bottom part shows the model that ran, the wake's turns, duration and git change,
-then the mind's final text. A model that differs from the configured one is stated, and
-output that cannot be read is labelled UNKNOWN with its raw tail, never hidden. Walls and
-site notes are outside git and are not counted. A failed read stays visibly UNKNOWN.
+people, with no JSON or raw timestamps. It shows the role's wake state, what the last wake
+changed in git, the wall's opening lines, signals, the next due item and unread mail. A
+model that differs from the configured one is stated, and output that cannot be read is
+labelled UNKNOWN with its raw tail, never hidden. Walls and site notes are outside git and
+are not counted. A failed read stays visibly UNKNOWN.
 
 The live tmux views show the same information on screen while the plant runs. They live
 in the inner tmux server, on the socket `/tmp/tmux-<uid>/mishe-tauftauf/tmux-<uid>/default`,
