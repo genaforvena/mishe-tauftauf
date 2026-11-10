@@ -1237,11 +1237,17 @@ def _mind_docs_treadmill(home: Path) -> dict:
 ARTIFACT_RECURRENCE_MIN_WAKES = 3
 ARTIFACT_RECURRENCE_WINDOW_WAKES = 5
 
-# Live roster only: duties.json retires ``operator-view`` and the role residents
-# ``body-research`` / ``inference-research`` (woken by trigger, no standing
-# dispatch). Listing them made the rollup permanently ``unknown``.
-LOOP_STALL_ROLES = ("docs", "health", "senses", "discover", "genome", "witness",
-                    "research-methods")
+# The roster is the site's own declared roles (the charters), not a fixed name
+# list: a hardcoded list named other sites' roles (``discover``, ``witness``,
+# ``research-methods``) that have no dispatch record here, so the rollup read
+# ``unknown`` forever, and it missed every role this site does seat
+# (``pub``, ``field-review``, ``steward``, ``operator``, ``rust-plan``,
+# ``network``), so a real stall in one of them was invisible. A role with no
+# charter is not seated here; a seated role whose dispatch record is missing is
+# UNKNOWN, never clean.
+def loop_stall_roles(home: Path) -> list[str]:
+    """The seated roles this rollup judges, from the site's own charters."""
+    return sorted(seated_roles(home))
 
 # An open wake older than this has outlived the engine's own bound: units.py
 # passes ``--timeout WAKE_TIMEOUT`` (1800 s) to every wake. Past it the wake is
@@ -1331,6 +1337,7 @@ def _mind_loop_stall(home: Path, now: datetime | None = None) -> dict:
     This sees only an open wake that outlived its bound. It does not observe
     in-process loops inside a live wake, and the treadmill reading covers
     commit stagnation separately. Consumer: health's mishe-wide rollup.
+    The roster is the site's own declared roles (``loop_stall_roles``).
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -1340,7 +1347,7 @@ def _mind_loop_stall(home: Path, now: datetime | None = None) -> dict:
         entries = None
     pairs: dict[str, dict] = {}
     worst = "clean"
-    for role in LOOP_STALL_ROLES:
+    for role in loop_stall_roles(home):
         coverage = _mind_role_coverage(home, role, now, entries)
         idle = coverage.get("idle_s")
         pending = coverage.get("pending")
@@ -1442,7 +1449,8 @@ def _mind_watch_wait(home: Path, now: datetime | None = None) -> dict:
 
     A descendant walk that cannot list processes reads ``unknown``. The
     reading sees only argv shapes, so a wait under an unrecognised tool
-    stays clean. Retired roles are excluded via ``LOOP_STALL_ROLES``.
+    stays clean. The roster is the site's own declared roles
+    (``loop_stall_roles``).
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -1452,7 +1460,7 @@ def _mind_watch_wait(home: Path, now: datetime | None = None) -> dict:
         entries = None
     pairs: dict[str, dict] = {}
     worst = "clean"
-    for role in LOOP_STALL_ROLES:
+    for role in loop_stall_roles(home):
         coverage = _mind_role_coverage(home, role, now, entries)
         pending = coverage.get("pending")
         pid = _open_wake_pid(home, role) if pending else None

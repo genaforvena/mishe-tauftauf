@@ -6822,15 +6822,43 @@ def _loop_stall_coverage(overrides):
     return fake
 
 
-def test_loop_stall_roles_exclude_retired_roles():
-    """Retired roles in the rollup list read unknown forever and mask real unknowns."""
-    for retired in ("operator-view", "body-research", "inference-research"):
-        assert retired not in discovery.LOOP_STALL_ROLES
-    assert "senses" in discovery.LOOP_STALL_ROLES
+def _seat_roles(home, *names):
+    """Seat roles at this site: a charter is what makes a role declared."""
+    (home / "charters").mkdir(exist_ok=True)
+    for name in names:
+        (home / "charters" / f"{name}.md").write_text("charter", encoding="utf-8")
+    return home
+
+
+def test_loop_stall_roles_are_the_seated_roster(tmp_path):
+    """The rollup judges the site's own charters, not a fixed name list.
+
+    A hardcoded list named other sites' roles (no charter, no dispatch record
+    here), so the rollup read ``unknown`` forever, and missed every role this
+    site does seat, so a real stall in one of them was invisible.
+    """
+    (tmp_path / "charters").mkdir()
+    for role in ("senses", "pub", "field-review", "steward"):
+        (tmp_path / "charters" / f"{role}.md").write_text("charter", encoding="utf-8")
+    roster = discovery.loop_stall_roles(tmp_path)
+    assert roster == ["field-review", "pub", "senses", "steward"]
+    for not_seated in ("discover", "witness", "research-methods", "body-research", "operator-view"):
+        assert not_seated not in roster
+
+
+def test_loop_stall_rollup_ignores_roles_this_site_does_not_seat(monkeypatch, tmp_path):
+    """A role with no charter is not judged, so the rollup is not permanently unknown."""
+    _seat_roles(tmp_path, "senses")
+    monkeypatch.setattr(discovery, "_mind_role_coverage", _loop_stall_coverage({}))
+    result = discovery._mind_loop_stall(tmp_path)
+    assert list(result["roles"]) == ["senses"]
+    assert result["verdict"] == "clean"
+    assert "unknown=" not in result["sample"]
 
 
 def test_loop_stall_watches_an_open_wake_past_its_bound(monkeypatch, tmp_path):
     """Stale open wake (age beyond the engine bound) reads watch-loop-stall."""
+    _seat_roles(tmp_path, "senses", "docs")
     monkeypatch.setattr(discovery, "_mind_role_coverage", _loop_stall_coverage(
         {"senses": {"pending": "wake-stale", "idle_s": discovery.LOOP_STALL_WAKE_SECONDS + 1}}))
     result = discovery._mind_loop_stall(tmp_path)
@@ -6844,6 +6872,7 @@ def test_loop_stall_watches_an_open_wake_past_its_bound(monkeypatch, tmp_path):
 
 def test_loop_stall_fresh_open_wake_and_settled_roles_are_clean(monkeypatch, tmp_path):
     """Fresh open wake inside the bound, and a settled role with old idle age, are not stalls."""
+    _seat_roles(tmp_path, "senses", "docs")
     monkeypatch.setattr(discovery, "_mind_role_coverage", _loop_stall_coverage(
         {"senses": {"pending": "wake-fresh", "idle_s": 30},
          "docs": {"pending": None, "idle_s": 999999}}))
@@ -6857,6 +6886,7 @@ def test_loop_stall_fresh_open_wake_and_settled_roles_are_clean(monkeypatch, tmp
 
 def test_loop_stall_missing_record_is_unknown_not_clean(monkeypatch, tmp_path):
     """No dispatch record (idle_s None) stays UNKNOWN for that role and the rollup."""
+    _seat_roles(tmp_path, "health")
     monkeypatch.setattr(discovery, "_mind_role_coverage", _loop_stall_coverage(
         {"health": {"pending": None, "idle_s": None, "last_yield": None}}))
     result = discovery._mind_loop_stall(tmp_path)
@@ -6887,6 +6917,7 @@ def test_watch_wait_argv_shapes_match_only_waits():
 
 def test_watch_wait_past_bound_reads_watch_wait(monkeypatch, tmp_path):
     """An open wake whose CI wait outlived the bound reads watch-wait and names the pid."""
+    _seat_roles(tmp_path, "senses", "docs")
     _watch_wait_fixture(monkeypatch,
                         {"senses": {"pending": "wake-x", "idle_s": 900}},
                         [(777, discovery.WATCH_WAIT_BOUND_SECONDS + 5, "gh run watch 1")])
@@ -6901,6 +6932,7 @@ def test_watch_wait_past_bound_reads_watch_wait(monkeypatch, tmp_path):
 
 def test_watch_wait_inside_bound_and_no_wait_are_clean(monkeypatch, tmp_path):
     """A fresh wait and an open wake with no wait-shaped child are not watch-waits."""
+    _seat_roles(tmp_path, "senses")
     _watch_wait_fixture(monkeypatch,
                         {"senses": {"pending": "wake-y", "idle_s": 10}},
                         [(778, 30, "sleep 30")])
@@ -6914,6 +6946,7 @@ def test_watch_wait_inside_bound_and_no_wait_are_clean(monkeypatch, tmp_path):
 
 def test_watch_wait_unreadable_tree_and_missing_record_are_unknown(monkeypatch, tmp_path):
     """A dead or unreadable wake pid and a missing dispatch record stay UNKNOWN, never clean."""
+    _seat_roles(tmp_path, "senses", "health")
     _watch_wait_fixture(monkeypatch,
                         {"senses": {"pending": "wake-z", "idle_s": 10},
                          "health": {"pending": None, "idle_s": None, "last_yield": None}},
