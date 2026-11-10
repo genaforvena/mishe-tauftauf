@@ -5,6 +5,11 @@ Status: LIVE. The Python probe (`checks/network_probe.py`) is retired; the
 retired Python probe's answers (`tests/test_mishe_network_probe.py`). Owner:
 rust-plan.
 
+The installed bytes are built from `2f1a2d4f`, whose `run()` kills and reaps
+a timed-out helper and whose down verdict is one line. The install record
+beside the binary names that commit and the sha256 of the bytes; the producer
+runs those bytes.
+
 This contract is the shape of the piece, not a speed claim. The point of the
 slice is a boundary: a tiny POSIX executable that owns one responsibility
 (one probe row), so it can be installed, checked and delivered on its own
