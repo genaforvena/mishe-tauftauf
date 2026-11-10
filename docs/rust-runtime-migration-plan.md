@@ -463,7 +463,7 @@ Measured numbers are the ones in sections 2 and 8. Nothing here is a new speedup
 | **Senses baseline** (measurement, not migration) | Not started. Needs its own declared duty, not an edit to `rust-plan-progress` (wall, section "Senses baseline"). | Source artifacts already exist under `artifacts/rust-plan-20261107/`. | Declare the duty with its own `max_age`. It reads UNKNOWN when evidence is missing or stale. |
 | Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4); fresh systemd table at pin `7ce12523`: `readings` 890 CPU-s / 6 h (36 runs, ~24.5 CPU-s each), 870 MB peak. `doctor` has 25 exit-1 runs, cause UNKNOWN. | The `readings` cost is now profiled on the live plant and S2 is decided: see section 10. The slice is a Python slice (unused whole-tape reads, one snapshot per scan, cadence), not a Rust slice. |
 | **S2.1. Delete the tape reads that feed nothing** | Implemented (2026-11-10). `_mind_role_coverage` took an `entries` argument it never read; three readings read the whole tape to fill it and discarded the result. | AST-verified: `discovery.py:980` reads `home`, `role`, `now` and not `entries`. Fresh-process A/B of one live scan: 31.56 CPU-s before, 31.58 after, 74 observations both times. **A deletion, not a speedup** — an earlier 37% figure came from running both variants in one process and was wrong. | Committed with 4 regression tests that fail if a tape read returns to these readings. S2.2 (one physical tape read per scan) and S2.3 (cadence) remain. |
-| **S2.2. One physical tape read per scan** | **Implemented** (2026-11-10), not yet activated. `sample()` takes the cold verified read once and passes it to the three readers; each reader keeps its own read as the fallback. This is a snapshot change, not a window change. | Measured 2026-11-10 10:05Z–10:24Z on the live plant at pin `323a87fe`, counting framer spawns rather than wrapper calls: **three** physical whole-tape reads per scan, 643,103,475 bytes, 16.98 CPU-s, 858.6 MB peak, 74 observations. Call sites: `_mind_artifact_recurrence` (the cold verified read), `_ledger_evidence_binding` (the census read), `_coord_dm_disposition_age` (the disposition read). See section 10.2a. | Acceptance met on the live plant: physical whole-tape reads 3 → 1 (643,235,364 → 214,411,788 bytes), same 74 observations, the three readings' values unchanged. Section 10.2b. Not yet activated: the change touches the readings scan's readers, so it goes through the ordinary delivery path with an observed live consumer. |
+| **S2.2. One physical tape read per scan** | **Delivered and observed** (2026-11-10). Commit `d3c0c57c` went through the strong gate (fresh gate review, verdict clear) and the delivery record `.mishe-tauftauf/patches/moving-pin-d3c0c57c.json` reads phase `applied`, `delivery_verified true`, with activation, observation, revert activation and revert observation all exit 0. `runtime/current` now points at `releases/d3c0c57c…`. `sample()` takes the cold verified read once and passes it to the three readers; each reader keeps its own read as the fallback. This is a snapshot change, not a window change. | Measured 2026-11-10 10:05Z–10:24Z on the live plant at pin `323a87fe`, counting framer spawns rather than wrapper calls: **three** physical whole-tape reads per scan, 643,103,475 bytes, 16.98 CPU-s, 858.6 MB peak, 74 observations. Call sites: `_mind_artifact_recurrence` (the cold verified read), `_ledger_evidence_binding` (the census read), `_coord_dm_disposition_age` (the disposition read). See section 10.2a. | Acceptance met on the live consumer: physical whole-tape reads 3 → 1 (643,325,541 → 214,457,060 bytes) on the delivered pin, same 74 observations, the three readings' values unchanged field for field, and the readings producer's own CPU below every pre-delivery run. Section 10.2c. S2.3 (cadence) remains. |
 
 ### 9.1a Independent replaceability (operator vision addendum, DM 298227, 2026-11-08)
 
@@ -490,7 +490,7 @@ is the template), with a differential test that runs without the Python runtime.
 | Cold role projection | 15.2 s user for cold `wall show` | `feed._ROLE_ENTRIES_CACHE` (process-local) | same | C |
 | Identity index | 23.5 MB sqlite, not timed | `feed.py:527-576` | malformed-count consumers | Kept, not scheduled |
 | `readings`, `doctor`, `observer-checks` producers | 5.9k, 2.9k, 2.5k CPU-s per day | `producers.py`, the producer scripts | systemd units | Deferred (S2, S3) |
-| `discovery.py` scanner | 890 CPU-s / 6 h, 870 MB peak, every 10 min (consumer-perf, pin `7ce12523`); 24.2 CPU-s and 941 MB peak per run at pin `b3d2cd85` (2026-11-10) | `discovery.py` (7,889 lines) | `mishe-producer-readings` | Candidate again (R2 falsified). Measured 2026-11-09 on a tape copy (298,870 entries, 213 MB, 2 GB cgroup cap): one `sample()` makes five `Feed.entries()` calls, but only the first does the verified read (6.2 CPU-s); the other four hit the process-local `_ENTRIES_CACHE` (about 0.01 s each). Unverified read: 1.5 CPU-s, 604 MB peak. The 43.5 CPU-s "cold verified read" from that copy is **retired**: it was measured without an index checkpoint. Against the live tape with a checkpoint the cold read is 6.08 CPU-s and a bounded indexed read is 0.01 CPU-s (section 10.3). The live per-run cost is now explained: 67.7% of the cold read is record verification, and the scan reads the whole tape twice. See section 10 for the S2 decision. |
+| `discovery.py` scanner | 890 CPU-s / 6 h, 870 MB peak, every 10 min (consumer-perf, pin `7ce12523`); 24.2 CPU-s and 941 MB peak per run at pin `b3d2cd85` (2026-11-10) | `discovery.py` (7,889 lines) | `mishe-producer-readings` | Candidate again (R2 falsified). Measured 2026-11-09 on a tape copy (298,870 entries, 213 MB, 2 GB cgroup cap): one `sample()` makes five `Feed.entries()` calls, but only the first does the verified read (6.2 CPU-s); the other four hit the process-local `_ENTRIES_CACHE` (about 0.01 s each). Unverified read: 1.5 CPU-s, 604 MB peak. The 43.5 CPU-s "cold verified read" from that copy is **retired**: it was measured without an index checkpoint. Against the live tape with a checkpoint the cold read is 6.08 CPU-s and a bounded indexed read is 0.01 CPU-s (section 10.3). The live per-run cost is now explained: 67.7% of the cold read is record verification, and the scan read the whole tape three times before S2.2 and reads it once now. See section 10 for the S2 decision. |
 | Dispatch, host-capacity, budget | Cheap by design; no CPU sample; containment-adjacent | `producers.py`, `budget.sh` | units | Rejected (R4) |
 
 ### 9.3 Ordered slices, with acceptance, rollback and build budget
@@ -688,6 +688,58 @@ stamp differs because it stamps its own instant.
 
 Probes: `artifacts/rust-plan-20261107/s2b-20261110/shared_snapshot.py` and
 `census_named_diff.py`.
+
+#### 10.2c S2.2 delivered and observed on the live consumer
+
+Commit `d3c0c57c` ("discovery: one tape revision serves the scan's three
+readers") went through the strong gate and is live. The delivery record is
+`.mishe-tauftauf/patches/moving-pin-d3c0c57c.json`: phase `applied`,
+`delivery_verified true`, activation code 0, observation code 0, revert
+activation code 0, revert observation code 0. The gate's own review was the
+fresh reviewer (not the author): "The scoped patch adds a shared verified tape
+snapshot for discovery readings with per-reader fallback … The supplied
+deterministic test run passed (905 passed, 13 subtests), and no concrete code
+defect is visible in the supplied bytes." — verdict clear.
+
+The delivery ran on the plant's own path, under a short activation hold:
+check at 11:14:11Z, apply at 11:23:55Z, verify at 11:27:55Z, hold released.
+`runtime/current` now points at `releases/d3c0c57c…`.
+
+**Observed on the live pin.** The same probe, run against the delivered pin's
+own `src` first on `PYTHONPATH`, one fresh process:
+
+| | physical whole-tape reads | bytes read | CPU-s | observations | peak RSS |
+|---|---|---|---|---|---|
+| before (pin `323a87fe`, 11:16Z) | **3** | 643,325,541 | 16.37 | 74 | 861.9 MB |
+| after (pin `d3c0c57c`, 11:28Z) | **1** | 214,457,060 | 14.57 | 74 | 863.1 MB |
+
+The single read site is the snapshot (`_scan_snapshot` → `Feed.entries`); the
+census read and the disposition read are gone from the tape traffic.
+
+**The readings' values are unchanged on the same tape.** A fresh-process A/B of
+the old pin and the delivered pin against the same tape (11:29Z–11:30Z),
+field for field: the recurrence reading is byte-identical (0 differences); the
+census differs only in its own `read_at`/`measured_at` stamps; the disposition
+reading differs only in `oldest_open` (`genome:5h36m` against `genome:5h35m`),
+which is the age of the same open DM a minute later. Every count
+(`dms=44 reply_edge=2 … dispositioned=3 open=41 stall=38 p50=27m p90=151m`)
+and every census figure (`owed=75 all_bad=202 permanent_loss=123 bound=4722`)
+is the same. The states are the same: recurrence `verified`, census `drift`,
+disposition `verified`.
+
+**The live consumer's own accounting.** `mishe-producer-readings.service` runs
+the scan every ten minutes, and the kernel accounts it. The first run on the
+new pin (11:28:28Z–11:28:59Z) consumed **21.932 CPU-s** against a
+pre-delivery baseline of 25 runs from 07:00Z to 11:18Z at min 23.14, median
+24.01, max 26.99 CPU-s — below every baseline run. Its live scan
+(`discovery/scan-20261110T112856Z-…json`) has 74 observations and reports the
+three readings with the same states and values.
+
+The live scan's `read_at` stamp for the census is `11:28:39Z`; the probe's own
+was `11:29:20Z`. That is the scan's own clock, not a difference in the value.
+
+Probes: `artifacts/rust-plan-20261107/s2b-20261110/physical_reads.py`,
+`artifacts/rust-plan-20261107/s2c-20261110/readings_values.py`.
 
 ### 10.3 The cold/warm split, measured live (not on a copy)
 
