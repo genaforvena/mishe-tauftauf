@@ -27,6 +27,16 @@ def resolver_for(home, unit: str) -> str:
     return DEFAULT_RESOLVER
 
 
+def resolver_role(home, unit: str) -> str:
+    """The role ``report`` announces to, mirroring its undeclared-role fallback so the re-offer it adds and the
+    re-offer ``clear_recovered`` removes are the same file."""
+    from . import roles
+    role = resolver_for(home, unit)
+    if role not in roles.declared(home) and roles.declared(home):
+        role = "steward" if "steward" in roles.declared(home) else FALLBACK_RESOLVER
+    return role
+
+
 def refusal(unit: str) -> str | None:
     """Why ``unit`` may not be recorded as a failure, or None. A signal name is not a unit: recording
     ``failed-mishe-doctor-service`` as a unit minted ``failed-failed-...`` signals and re-offers (2026-11-07)."""
@@ -42,6 +52,10 @@ def clear_recovered(home, *, now, last_exit=None) -> list[str]:
     A failure is a level, so the record must follow the unit: without this a unit that failed once stayed RED after
     its next run succeeded (2026-11-08: nine cleared by hand). Only the unit's latest exit decides; a unit that is still
     failing, or whose exit time is unreadable, stays RED. An incident written before ``unit`` was recorded is left alone.
+
+    Recovery also retires the pending ``reoffer-<name>`` intention: it was scheduled to return a still-standing fault,
+    and once the signal is GREEN it only fires a spurious wake (2026-11-10: a recovered pub service still woke Health).
+    A later failed run re-adds it, so removing it here cannot lose a live fault.
     """
     from . import work_boundary
     home = Path(home)
@@ -59,6 +73,7 @@ def clear_recovered(home, *, now, last_exit=None) -> list[str]:
         observed = reading.get("observed_at")
         if exit_ and exit_[1] and isinstance(observed, (int, float)) and exit_[0] > observed:
             signal_store.observe(home, name, "GREEN", now=now, source="failure-recovered")
+            intentions.remove(home, resolver_role(home, unit), f"reoffer-{name}")
             cleared.append(name)
     return cleared
 
@@ -70,10 +85,8 @@ def default_notify(home, role: str, text: str) -> None:
 
 def report(home, unit: str, *, now: float, notify=None, signature="unit-failed") -> str:
     home = Path(home)
-    name, role = units.signal_name(unit), resolver_for(home, unit)
-    from . import work_state, dispositions, roles
-    if role not in roles.declared(home) and roles.declared(home):
-        role = "steward" if "steward" in roles.declared(home) else FALLBACK_RESOLVER
+    name, role = units.signal_name(unit), resolver_role(home, unit)
+    from . import work_state, dispositions
     incident_path = home / "work/incidents" / f"{name}.json"
     accounting_error = None
     try:

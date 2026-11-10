@@ -31,6 +31,24 @@ def test_red_failure_is_reoffered_until_cleared(tmp_path):
     assert "reoffer-failed-mishe-wake-docs-service" in ids       # level, not just edge
 
 
+def test_clearing_a_recovered_failure_retires_its_reoffer(tmp_path):
+    # A recovered fault must not still fire its scheduled re-offer: that is a spurious wake for a signal that is GREEN.
+    from mishe_tauftauf import intentions
+    unit, name = "mishe-wake@docs.service", "failed-mishe-wake-docs-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    assert [i["id"] for i in intentions.list_(tmp_path, "health")] == [f"reoffer-{name}"]
+    assert failure.clear_recovered(tmp_path, now=NOW + 120, last_exit=lambda u: (NOW + 100, True)) == [name]
+    assert intentions.list_(tmp_path, "health") == []
+
+
+def test_a_still_failing_unit_keeps_its_reoffer(tmp_path):
+    from mishe_tauftauf import intentions
+    unit, name = "mishe-wake@docs.service", "failed-mishe-wake-docs-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    assert failure.clear_recovered(tmp_path, now=NOW + 60, last_exit=lambda u: (NOW + 50, False)) == []
+    assert [i["id"] for i in intentions.list_(tmp_path, "health")] == [f"reoffer-{name}"]
+
+
 def test_stale_failure_record_reads_unknown_not_green(tmp_path):
     failure.report(tmp_path, "mishe-wake@docs.service", now=NOW, notify=lambda *a: None)
     sig = store.read(tmp_path, "failed-mishe-wake-docs-service", now=NOW + 10 * 86400)
