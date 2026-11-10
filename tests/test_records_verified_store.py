@@ -272,3 +272,89 @@ def test_the_same_home_is_shared_and_a_different_home_is_not(tmp_path):
     mine_dir, theirs_dir = seen[0][1], seen[1][1]
     assert mine_dir is not None      # this site's record reused the pass's fd
     assert theirs_dir is None        # the other site's record opened its own
+
+
+def test_the_role_read_verifies_the_whole_tape_in_one_pass(tmp_path):
+    """The role read must not restart a verification pass for every entry.
+
+    A pass per entry meant a records-directory descriptor, an lstat of the
+    live records path and a store commit for each of the tape's entries: on
+    the live tape, 299,304 passes and 196,303 commits for one cold read. The
+    role read now runs one pass, so the descriptor is opened once.
+    """
+    feed = Feed(tmp_path)
+    for i in range(6):
+        feed.append_record("witness", f"Checked record {i} is available.", {"i": i})
+
+    opened = []
+    real_open = records._directory
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(records, "_directory", lambda home: opened.append(1) or real_open(home))
+        view = feed.role_entries("genome")
+    finally:
+        monkeypatch.undo()
+    assert view
+    assert len(opened) <= 2, "the role read must open the records directory once, not once per entry"
+
+
+def test_a_batch_verifies_a_repeated_record_against_its_current_identity(tmp_path):
+    """A digest already verified in a batch is verified against the file as it is now.
+
+    Batching shares the pending rows across the entries of a batch, so a
+    second reference to the same digest can be served from the batch. The
+    file's identity must still be checked before its payload is served: a
+    record rewritten after the first reference is verified again, not served
+    from the batch.
+    """
+    feed = Feed(tmp_path)
+    entry = feed.append_record("witness", "Checked evidence is available.", {"i": 0})
+    path, _ = _record_file(tmp_path, entry)
+
+    pending = {}
+    store = records.verified_store(tmp_path)
+    directory = records._directory(tmp_path)
+    try:
+        records.cached_payload(entry, pending, store, verify_only=True, directory=directory)
+        assert entry.sequence  # the digest is now pending in this batch
+        original = path.read_bytes()
+        path.chmod(0o600)
+        path.write_bytes(original.replace(b'"i":0', b'"i":9'))  # same size, new ctime
+        with pytest.raises(ValueError, match="checksum|record"):
+            records.cached_payload(entry, pending, store, verify_only=False, directory=directory)
+    finally:
+        os.close(directory)
+
+
+def test_a_replaced_records_directory_is_noticed_within_the_batch_bound(tmp_path, monkeypatch):
+    """The swap check fires at the batch bound, and the pass stores nothing from the old inode."""
+    feed = Feed(tmp_path)
+    for i in range(4):
+        feed.append_record("witness", f"Checked record {i} is available.", {"i": i})
+    entries = feed.entries()
+
+    store = records.verified_store(tmp_path)
+    stored = []
+    real_store = store.store
+    monkeypatch.setattr(store, "store", lambda rows: stored.append(rows) or real_store(rows))
+    # One flush for the whole batch: the swap happens after the first entry.
+    monkeypatch.setattr(feed_module, "VERIFIED_FLUSH_ROWS", 1000)
+    monkeypatch.setattr(feed_module, "VERIFIED_BATCH_ENTRIES", 2)
+
+    swapped = []
+    real_cached = feed_module.cached_payload
+
+    def swap_after_first(entry, pending, store=None, **kwargs):
+        result = real_cached(entry, pending, store, **kwargs)
+        if not swapped:
+            swapped.append(True)
+            live = tmp_path / "records"
+            moved = tmp_path / "records-old"
+            os.rename(live, moved)
+            live.symlink_to(moved, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(feed_module, "cached_payload", swap_after_first)
+    with pytest.raises(ValueError, match="replaced|unavailable"):
+        Feed._verify_records(entries)
+    assert stored == []  # nothing from the old inode is persisted

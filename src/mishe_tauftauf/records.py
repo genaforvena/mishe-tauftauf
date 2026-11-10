@@ -446,11 +446,6 @@ def cached_payload(entry, pending: dict, store: VerifiedStore | None = None, *,
     if match is None or match.group(1) != match.group(2):
         return payload(entry)
     digest = match.group(1)
-    if digest in pending:
-        # Same record referenced again in this pass: decode the blob already verified.
-        if verify_only:
-            return None
-        return json.loads(zlib.decompress(pending[digest][-1]))
     store = store or verified_store(entry.home)
     now = time.time()
     owned = directory is None
@@ -460,6 +455,19 @@ def cached_payload(entry, pending: dict, store: VerifiedStore | None = None, *,
         except OSError:
             return payload(entry)
     try:
+        held = pending.get(digest)
+        if held is not None:
+            # The same record referenced again in this pass. Its blob was
+            # verified already, but the file must still carry the identity it
+            # had then: a rewritten record is verified again, never served.
+            try:
+                current = store._identity(directory, digest + ".json")
+            except (OSError, ValueError):
+                current = None
+            if current is not None and current == tuple(held[1:5]):
+                if verify_only:
+                    return None
+                return json.loads(zlib.decompress(held[-1]))
         hit = store.lookup(digest, directory, now, verify_only=verify_only)
         if hit is not None:
             return None if verify_only else hit

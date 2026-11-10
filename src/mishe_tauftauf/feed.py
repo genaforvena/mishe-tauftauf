@@ -28,6 +28,15 @@ RECEIPT_RE = re.compile(r"wake (?:delivered|refused) top-pain [a-z0-9-]+ for ent
 INDEX_STRIDE = 128
 STREAM_CHUNK_BYTES = 1024 * 1024
 """The block a streaming reader holds at once, independent of the tape length."""
+VERIFIED_BATCH_ENTRIES = 500
+"""Entries a verification pass covers before it checks the live records path again.
+
+The check fires at this bound and at every store flush, so a replaced records
+directory is noticed within this many entries of the replacement. The whole-
+tape reader has always verified a whole tape under one pass, so this bound is
+the one that read already had; the role read now shares it instead of
+verifying one entry per pass.
+"""
 _FRAME_START_TAIL = 256
 """The bytes a frame start can straddle, kept between streaming chunks."""
 RESERVED_EXACT = {"mishe-tauftauf"}
@@ -453,6 +462,102 @@ def _projection_load(data: dict, home: Path) -> dict:
             "yield": candidate(by_seq[data["yield"]]) if data["yield"] is not None else None}
 
 
+class _VerificationPass:
+    """One verification pass over a sequence of entries.
+
+    This is the only implementation of record verification. ``entries()``,
+    ``view_entries()``, ``access`` and the role read all run their entries
+    through a pass, so the rules live in one place.
+
+    A pass holds the records-directory descriptor, the verified store and the
+    rows it has produced. A streamed read therefore pays for them once per
+    batch instead of once per entry: one descriptor for the pass, one lstat of
+    the live records path per flush and one store transaction per flush.
+
+    The rules are unchanged. Every entry that carries a record reference is
+    verified by ``records.cached_payload`` with the arguments it has always
+    been given: a hit is served only while the referenced file keeps its
+    verified identity, and a miss runs the full envelope verification and is
+    stored after the pass succeeds.
+
+    What a batched pass changes is the bound on one check:
+
+    - The records-directory swap check fires at each flush rather than at each
+      record, so a swap is noticed up to ``VERIFIED_BATCH_ENTRIES`` entries
+      later than a one-entry pass would notice it. The pass still fails
+      closed: it raises, and it stores nothing from the replaced directory.
+
+    A record's own identity is not weakened by batching: a digest referenced
+    again inside a pass is verified against the file's current identity before
+    its payload is served (``records.cached_payload``).
+    """
+
+    def __init__(self):
+        self._pending: dict = {}
+        self._store = None
+        self._home = None
+        self._fd = None
+        self._since_flush = 0
+
+    def _flush(self) -> None:
+        """Store what the pass verified and clear the pending rows."""
+        self._since_flush = 0
+        if self._store is None:
+            return
+        if self._fd is not None:
+            # The live records path must still name the directory this pass read.
+            records.check_pass_directory(self._fd, self._home)
+        self._store.store(list(self._pending.values()))
+        self._pending.clear()
+
+    def verify(self, entries, sink: dict | None = None) -> None:
+        """Verify every entry that carries a record reference."""
+        for entry in entries:
+            if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
+                if self._store is None and entry.home is not None:
+                    self._store = verified_store(entry.home)
+                    # The pass's home is the first entry's own Path, so every
+                    # later entry of a streamed pass compares against that
+                    # same object instead of a wrapper built per record.
+                    self._home = entry.home if isinstance(entry.home, Path) else Path(entry.home)
+                    try:
+                        self._fd = records._directory(self._home)
+                    except OSError:
+                        self._fd = None
+                shared = self._fd if self._fd is not None and _same_home(entry.home, self._home) else None
+                data = cached_payload(entry, self._pending, self._store,
+                                      verify_only=sink is None, directory=shared)
+                if sink is not None:
+                    sink[entry.sequence] = data
+                if self._store is not None and len(self._pending) >= VERIFIED_FLUSH_ROWS:
+                    # Flush as the pass goes: a render killed by its supervisor keeps
+                    # the verifications it finished, so the next render starts ahead.
+                    self._flush()
+            self._since_flush += 1
+            if self._since_flush >= VERIFIED_BATCH_ENTRIES:
+                # The row threshold alone would let a warm store postpone the
+                # swap check to the end of the read, so the check is also due
+                # after a bounded number of entries.
+                self._flush()
+
+    def commit(self) -> None:
+        """Store the verified rows of a pass that finished."""
+        self._flush()
+
+    def close(self) -> None:
+        """Release the pass's descriptor."""
+        if self._fd is not None:
+            os.close(self._fd)
+            self._fd = None
+
+
+def _verified_stream(entries, verification):
+    """Yield the entries of a stream, verifying each one as it arrives."""
+    for entry in entries:
+        verification.verify((entry,))
+        yield entry
+
+
 def _role_view(row):
     selected = {e.sequence: e for e in (*row["control"], *row["inbox"], *row["recent"])}
     for item in row["sources"].values():
@@ -722,41 +827,13 @@ class Feed:
         # directory is not reopened per entry. Entries under any other home open their own.
         # Every flush and the pass end check that the live path still names that directory;
         # a swapped records directory fails the pass instead of storing the old inode.
-        pending: dict = {}
-        store = None
-        home = None
-        passfd = None
+        # The rules live in _VerificationPass; this is the one-shot form of it.
+        verification = _VerificationPass()
         try:
-            for entry in entries:
-                if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
-                    if store is None and entry.home is not None:
-                        store = verified_store(entry.home)
-                        # The pass's home is the first entry's own Path, so every
-                        # later entry of a streamed pass compares against that
-                        # same object instead of a wrapper built per record.
-                        home = entry.home if isinstance(entry.home, Path) else Path(entry.home)
-                        try:
-                            passfd = records._directory(home)
-                        except OSError:
-                            passfd = None
-                    shared = passfd if passfd is not None and _same_home(entry.home, home) else None
-                    data = cached_payload(entry, pending, store, verify_only=sink is None, directory=shared)
-                    if sink is not None:
-                        sink[entry.sequence] = data
-                    if store is not None and len(pending) >= VERIFIED_FLUSH_ROWS:
-                        # Flush as the pass goes: a render killed by its supervisor keeps
-                        # the verifications it finished, so the next render starts ahead.
-                        if passfd is not None:
-                            records.check_pass_directory(passfd, home)
-                        store.store(list(pending.values()))
-                        pending.clear()
-            if store is not None:
-                if passfd is not None:
-                    records.check_pass_directory(passfd, home)
-                store.store(list(pending.values()))
+            verification.verify(entries, sink)
+            verification.commit()
         finally:
-            if passfd is not None:
-                os.close(passfd)
+            verification.close()
 
     @staticmethod
     def _store_entries(path: Path | str, metadata, entries: list, verified: bool) -> None:
@@ -928,15 +1005,31 @@ class Feed:
                 nonlocal tail
                 for entry in _iter_streamed_feed(handle, start_sequence=start, home=self.home,
                                                  offset=offset, size=size):
-                    self._verify_records((entry,))
                     tail = entry.sequence
                     yield entry
+            # One verification pass serves the whole read. A pass per entry
+            # meant a records-directory descriptor, an lstat of the live
+            # records path and a store commit for every entry (299,304 passes
+            # over the live tape), which the profile attributed to 9 CPU-s of
+            # the cold read. The rules are unchanged: every record reference
+            # is verified, and the pass fails closed on a replaced records
+            # directory.
+            verification = _VerificationPass()
+            retry = False
             try:
-                projection = _role_fold(cached["projection"] if extending else None, verified(), role)
-            except FeedError:
-                if extending:
-                    return self.role_entries(role, _force_full=True)
-                raise
+                try:
+                    projection = _role_fold(cached["projection"] if extending else None,
+                                            _verified_stream(verified(), verification), role)
+                except FeedError:
+                    if not extending:
+                        raise
+                    retry = True
+                else:
+                    verification.commit()
+            finally:
+                verification.close()
+            if retry:
+                return self.role_entries(role, _force_full=True)
             if valid and tail != checkpoint["sequence"]:
                 raise FeedError("role view disagrees with canonical checkpoint")
             if not valid:
