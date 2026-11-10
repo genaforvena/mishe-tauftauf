@@ -9,6 +9,7 @@ registry (``signals/registry.json``) declares max_age and subscribing roles.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 from .live_signal import OK, UNKNOWN, Signal
@@ -44,15 +45,30 @@ def registry(home) -> dict:
     return data
 
 
-def register(home, name: str, *, max_age: float, subscribers=(), reoffer: float | None = None) -> None:
+def register(home, name: str, *, max_age: float, subscribers=(), reoffer: float | None = None,
+             now: float | None = None) -> None:
     _check_name(name)
     if not max_age > 0:
         raise ValueError("max_age must be positive")
     data = registry(home)
-    data[name] = {"max_age": float(max_age), "subscribers": sorted(set(subscribers))}
+    previous = data.get(name) or {}
+    registered_at = previous.get("registered_at", time.time() if now is None else now)
+    data[name] = {"max_age": float(max_age), "subscribers": sorted(set(subscribers)),
+                  "registered_at": float(registered_at)}
     if reoffer is not None:
         data[name]["reoffer"] = float(reoffer)
     write_json(_dir(home) / "registry.json", data)
+
+
+def _never_observed(home, name: str) -> bool:
+    """No reading and no successful observation ever: a signal whose monitor is missing."""
+    return _load(home, name) is None and _seen(home, name) is None
+
+
+def _grace_deadline(home, name: str, entry: dict) -> float | None:
+    """When a never-observed signal must turn UNKNOWN on the bus; None if it cannot yet be dated."""
+    started = entry.get("registered_at")
+    return None if started is None else float(started) + entry["max_age"]
 
 
 def _entry(home, name: str) -> dict:
@@ -138,9 +154,22 @@ def read(home, name: str, *, now: float) -> Signal:
 
 
 def expire(home, *, now: float) -> list[str]:
-    """Turn every expired OK signal UNKNOWN on disk (an edge). Names changed."""
+    """Turn every expired OK signal UNKNOWN on disk (an edge), and a never-observed signal past its
+    grace (registration + max_age) too, so a missing monitor wakes its subscribers once. Names changed."""
     changed = []
-    for name, entry in sorted(registry(home).items()):
+    reg = registry(home)
+    stamped = False
+    for name, entry in sorted(reg.items()):
+        if _never_observed(home, name):
+            if entry.get("registered_at") is None:
+                entry["registered_at"] = float(now)      # legacy entry: the grace starts at this sweep
+                stamped = True
+                continue
+            if now >= _grace_deadline(home, name, entry):
+                _store(home, name, value=None, state=UNKNOWN, at=now, source=name,
+                       reason=f"never observed within {entry['max_age']:g}s of registration")
+                changed.append(name)
+            continue
         data = _load(home, name)
         seen = _seen(home, name)
         if data is None or seen is None or data.get("state") != OK:
@@ -149,15 +178,22 @@ def expire(home, *, now: float) -> list[str]:
             _store(home, name, value=None, state=UNKNOWN, at=now, source=data.get("source") or name,
                    reason=f"expired after {entry['max_age']:g}s without observation")
             changed.append(name)
+    if stamped:
+        write_json(_dir(home) / "registry.json", reg)
     return changed
 
 
 def next_expiry(home) -> float | None:
-    """Earliest ``seen + max_age`` among signals still OK, or None."""
+    """Earliest ``seen + max_age`` among signals still OK, or the grace deadline of a never-observed
+    signal that has not yet turned UNKNOWN, or None."""
     due = []
     for name, entry in registry(home).items():
         data = _load(home, name)
         seen = _seen(home, name)
         if data and data.get("state") == OK and seen is not None:
             due.append(seen + entry["max_age"])
+        elif _never_observed(home, name):
+            deadline = _grace_deadline(home, name, entry)
+            if deadline is not None:
+                due.append(deadline)
     return min(due) if due else None

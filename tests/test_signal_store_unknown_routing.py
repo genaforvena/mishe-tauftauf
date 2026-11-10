@@ -14,7 +14,7 @@ NOW = 1_800_000_000.0
 
 @pytest.fixture
 def home(tmp_path):
-    store.register(tmp_path, "probe-sig", max_age=30, subscribers=["health"])
+    store.register(tmp_path, "probe-sig", max_age=30, subscribers=["health"], now=NOW)
     return tmp_path
 
 
@@ -57,3 +57,38 @@ def test_failed_observation_is_unknown_now_and_does_not_refresh_freshness(home):
     assert reading.reason == "cannot run"
     # The failure did not extend freshness, so the old observation still expires on schedule.
     assert store.expire(home, now=NOW + 31) == []
+
+
+def test_never_observed_signal_routes_one_unknown_edge_after_its_grace(home):
+    # A missing monitor must wake its subscriber once, not stay silent forever.
+    assert store.expire(home, now=NOW + 29) == []
+    assert store.expire(home, now=NOW + 31) == ["probe-sig"]
+    recorded = store.recorded(home, "probe-sig")
+    assert recorded["state"] == UNKNOWN
+    assert recorded["reason"] == "never observed within 30s of registration"
+    assert store.expire(home, now=NOW + 60) == []
+
+
+def test_next_expiry_includes_the_grace_deadline_of_a_never_observed_signal(home):
+    assert store.next_expiry(home) == NOW + 30
+    store.expire(home, now=NOW + 31)
+    assert store.next_expiry(home) is None
+
+
+def test_observation_before_the_grace_deadline_keeps_the_signal_out_of_the_missing_path(home):
+    store.observe(home, "probe-sig", "alive", now=NOW + 20, source="unit")
+    assert store.expire(home, now=NOW + 31) == []                 # still fresh: no grace edge
+    assert store.read(home, "probe-sig", now=NOW + 31).state == OK
+    assert store.expire(home, now=NOW + 51) == ["probe-sig"]      # ordinary expiry, not the grace path
+    assert store.recorded(home, "probe-sig")["reason"] == "expired after 30s without observation"
+
+
+def test_legacy_registry_entry_without_registered_at_is_stamped_then_graced(tmp_path):
+    store.register(tmp_path, "legacy-sig", max_age=30, subscribers=["health"], now=NOW)
+    entries = store.registry(tmp_path)
+    del entries["legacy-sig"]["registered_at"]
+    from mishe_tauftauf.state_files import write_json
+    write_json(tmp_path / "signals" / "registry.json", entries)
+    assert store.expire(tmp_path, now=NOW + 100) == []          # stamps the grace start
+    assert store.registry(tmp_path)["legacy-sig"]["registered_at"] == NOW + 100
+    assert store.expire(tmp_path, now=NOW + 131) == ["legacy-sig"]
