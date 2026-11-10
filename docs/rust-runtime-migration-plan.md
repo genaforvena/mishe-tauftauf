@@ -458,7 +458,7 @@ Measured numbers are the ones in sections 2 and 8. Nothing here is a new speedup
 |---|---|---|---|
 | **A. Tape framing** (`mishe-tape frames`) | **Live and observed.** Cutover committed (`a995031a`), reviewed clear (`e90292ba` gate), delivered (`7ce12523`, delivery_verified 18:01:38Z). Every pin since `e90292ba` (2026-11-08 11:14Z) carries it. Live consumers wrote fresh role projections through the binary (`$SITE/feed.role-cache/{genome,rust-plan,health}.json`, 18:29-18:32Z) and `mishe-producer-readings` completed under the pin. | Differential test 5/5 with the committed artifact (`MISHE_TAPE_BIN`). A fresh build from HEAD in a throwaway dir (1.97.0, `--locked`) has the same SHA-256 as the artifact (`12dde4d2…ba710`). | Take the cold `wall show --owner genome` before/after comparison (9.3 A) if a direct end-to-end observation is wanted; the role-cache evidence already shows the live path. Next migration target is B (verification). |
 | **S0. Python hoist in `_verify_records`** | **Delivered and observed** (2026-11-10). Commit `7e87f218`; the plant's moving-pin driver delivered it with `b06ae51b` (delivery record `.mishe-tauftauf/patches/moving-pin-b06ae51b.json`: phase `applied`, `delivery_verified true`, fresh gate review clear, activation/observation/revert activation/revert observation all exit 0). `runtime/current` points at `releases/b06ae51b…`, whose `feed.py` carries the hoist (`_same_home`, one `entry_home` for the pass). **The 3.4 threshold was not met**: the cold `wall show --owner genome` is ~13 s user, not ≤ 10 s. Section 10.10. | Same-tape A/B on the live tape, one open descriptor shared by both sides, three fresh processes each: live 4.20 / 4.19 / 4.25 CPU-s and 556.7–556.9 MB peak RSS vs baseline 6.15 / 6.17 / 5.88 CPU-s and 611.9–612.2 MB, over 299,302 entries with an identical entry digest (`9a8c3c1f…b3e2e`). The hoist is worth about 1.9 CPU-s and 55 MB and changes no entry. | S0b: the cold read's remaining cost is the per-entry verification pass, not `pathlib` (section 10.10). Batch the role read's verification into one pass — **measured prize: 14.55 → 5.52 CPU-s, identical view digest**. |
-| **B. Tape verify and verified-store lookup** (`mishe-tape verify`/`entries`) | Not started. A is now observed live and S0 is measured, so B's remaining prize is known: after S0's pathlib cut, what is left of the verification cost is the sqlite work (196,303 `execute` calls per cold read). | Verification is about two thirds of profiled `wall show` (2.3). The cold read's split, measured live: 5.83 CPU-s with verification, 1.40 without, so 4.43 CPU-s is verification (section 10.9). | Take S0 first: it removes about 1.6 CPU-s of the 4.43 without Rust, so B's baseline is smaller and B's own work is only the sqlite lookup. Then check the offline `rusqlite` graph and its build cost against the headroom budget. |
+| **B. Tape verify and verified-store lookup** (`mishe-tape verify`/`entries`) | Not started. A is now observed live and S0 is measured, so B's remaining prize is known: after S0's pathlib cut, what is left of the verification cost is the sqlite work (196,303 `execute` calls per cold read). | Verification is about two thirds of profiled `wall show` (2.3). The cold read's split, measured live: 5.83 CPU-s with verification, 1.40 without, so 4.43 CPU-s is verification (section 10.9). | Take S0 first: it removes about 1.6 CPU-s of the 4.43 without Rust, so B's baseline is smaller and B's own work is only the sqlite lookup. The build graph was then checked (section 10.13): `cargo build --offline` cannot resolve `rusqlite` at all, but a fetched build costs 39.5 s single-core wall, 378 MB peak RSS and 24 lock packages, and the bundled store interops with Python's `sqlite3` in both directions. |
 | **C. Role projection** (`mishe-tape role`, cold-cache derived file) | Not started. Depends on B. | Cold `wall show` 15.2 s user; the cache is process-local (`feed.py:53`). | Decide after B's benchmark. Compare the output against `_force_full`. |
 | **Senses baseline** (measurement, not migration) | Not started. Needs its own declared duty, not an edit to `rust-plan-progress` (wall, section "Senses baseline"). | Source artifacts already exist under `artifacts/rust-plan-20261107/`. | Declare the duty with its own `max_age`. It reads UNKNOWN when evidence is missing or stale. |
 | Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4); fresh systemd table at pin `7ce12523`: `readings` 890 CPU-s / 6 h (36 runs, ~24.5 CPU-s each), 870 MB peak. `doctor` has 25 exit-1 runs, cause UNKNOWN. | The `readings` cost is now profiled on the live plant and S2 is decided: see section 10. The slice is a Python slice (unused whole-tape reads, one snapshot per scan, cadence), not a Rust slice. |
@@ -499,7 +499,7 @@ is the template), with a differential test that runs without the Python runtime.
 
 **S0. Python hoist in `_verify_records`.** No predecessor is retired; this is an optimization that lowers the baseline B must beat. Acceptance: `wall show --owner genome` user time at or below 10 s, with identical output. Rollback: revert the commit. Build budget: none. It is sequenced after A because both touch `feed.py`.
 
-**B. Tape verify and verified store.** Retires `records.VerifiedStore`, `lookup`, `store`, `cached_payload`, `verified_store` and `feed._verify_records`. Consumers: all `entries` and `role_entries` callers, through A's wrapper. Acceptance: byte-identical output on the full tape; a kill during a write leaves the store consistent; the threshold in 3.3 (cold `wall show` at or below 1.5 s user and 70 MB peak RSS). Rollback: pin revert. The store format is unchanged, so Python reads it again. Build budget: `rusqlite` with bundled sqlite is a C build. Check its size and time under the headroom rule before starting.
+**B. Tape verify and verified store.** Retires `records.VerifiedStore`, `lookup`, `store`, `cached_payload`, `verified_store` and `feed._verify_records`. Consumers: all `entries` and `role_entries` callers, through A's wrapper. Acceptance: byte-identical output on the full tape; a kill during a write leaves the store consistent; the threshold in 3.3 (cold `wall show` at or below 1.5 s user and 70 MB peak RSS). Rollback: pin revert. The store format is unchanged, so Python reads it again. Build budget, now measured instead of estimated (section 10.13): six crates fetched (~5.4 MB), a 24-package lock, a single-core bundled-sqlite C build of 39.5 s wall and 378 MB peak RSS — all inside the headroom rule. The build is not reproducible offline from a bare checkout, so the release ships a prebuilt artifact recorded by sha256 (plan 4.3's "no build on the live host" is unchanged) or vendors the crate set.
 
 **C. Role projection.** Retires `feed._role_fold` and `_ROLE_ENTRIES_CACHE`. Acceptance: output identical to `_force_full`; at least 10× faster cold. Rollback: delete the derived file. Depends on B.
 
@@ -1239,3 +1239,51 @@ slice by measurement remains **B** (verified-store lookup batching/port),
 whose measured prize on the live store is ~0.65–0.75 CPU-s per cold read
 (slice-B re-measure, wall 2026-11-10 20:40Z), and whose structural prize is
 retiring 196k per-record sqlite round-trips into Rust.
+
+### 10.13 Slice B's build graph: offline is impossible, the crates must be fetched (2026-11-10)
+
+Section 9.3 asked for slice B's build cost before starting it. Three facts were
+measured rather than assumed.
+
+- **The offline graph does not exist.** `~/.cargo/registry/cache` holds 1,054
+  crate files; neither `rusqlite` nor `libsqlite3-sys` is among them. Only their
+  sparse-index metadata is cached (versions to 0.40.1). A throwaway probe
+  (rusqlite 0.31, feature `bundled`) resolved its lock from that index and then
+  failed: `error: failed to download fallible-iterator v0.3.0` /
+  `attempting to make an HTTP request, but --offline was specified`. Slice A
+  builds offline because it has no dependencies; B cannot.
+- **The network is open**, so a fetched build works — `static.crates.io`
+  returned HTTP 200 in 0.36 s for a crate file, and the build below succeeded.
+
+| Quantity | Measured |
+|---|---|
+| crates fetched | 6 (`rusqlite`, `libsqlite3-sys`, `hashlink`, `fallible-iterator`, `fallible-streaming-iterator`, `vcpkg`) |
+| fetch size | 5,414,427 bytes |
+| resolved lock packages | 24 |
+| build wall time | 39.47 s |
+| CPU | 97 % of one core |
+| peak RSS | 378,656 kB |
+| build sandbox | `systemd-run --user --scope -p MemoryMax=2G -p MemoryHigh=1500M -p CPUQuota=100%`, `nice 19`, `-j2`, outside the checkout |
+
+- **The store format is shared, and it interops today.** `records.py:230-302`
+  keeps `verified(digest TEXT PRIMARY KEY, ino, size, ctime_ns, mtime_ns,
+  verified_at REAL, payload BLOB NOT NULL)` in WAL mode with zlib-compressed
+  JSON payloads. A probe created that store with CPython's `sqlite3`, read its
+  row from Rust through `rusqlite` (bundled sqlite 3.45.0; the library Python
+  links here is 3.45.1), inserted a row from Rust, and read that row back with
+  CPython. Both directions agree. The host has `libsqlite3.so.0` but no
+  `libsqlite3.so` dev symlink and no `sqlite3.h`, so the `bundled` feature —
+  which needs only `cc`, present — is the safer link.
+
+**What this changes.** B's build budget is not "seconds, no dependencies" as
+slice A's was: it is a fetched 24-package graph with a C sqlite compile, and it
+is not reproducible from a bare checkout offline. A release must therefore
+either ship a prebuilt artifact recorded by sha256, which leaves plan 4.3's "no
+build on the live host" unchanged, or vendor the crate set. The measured build
+is cheap enough (39.5 s, 378 MB) that host headroom is not the constraint; the
+provenance of the dependency set is. B's remaining open work is the store
+contract and the retrieval interface the 196,303 per-record `execute` calls
+belong to.
+
+Evidence: site-local `$SITE/artifacts/rust-plan-20261107/build-probe/`
+(`rusqlite-031-bundled.log`, `main.rs`, `interop.txt`), not committed.
