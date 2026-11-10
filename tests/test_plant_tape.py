@@ -114,3 +114,25 @@ def test_output_written_after_its_work_record_is_still_shown(tmp_path):
     cursor, text = plant_tape.wakes_step(tmp_path, cursor)
     assert 'OUTPUT health' in text and 'Output UNKNOWN' not in text
     assert key + '.work.json' in cursor
+
+
+def test_wake_blocks_show_the_model_that_ran_and_the_fall_through(tmp_path):
+    import json
+    root = tmp_path / 'wakes'
+    root.mkdir()
+    (tmp_path / 'engine').mkdir()
+    rows = [
+        {'event': 'select', 'key': 'omp:routerai/z-ai/glm-5.3-flash:-', 'role': 'genome', 'wake': 'wake-genome-1'},
+        {'event': 'fallback', 'key': 'omp:routerai/z-ai/glm-5.3-flash:-', 'role': 'genome', 'wake': 'wake-genome-1',
+         'reason': 'rate limited: provider rate limit before any tool call: 429'},
+        {'event': 'select', 'key': 'omp:minimax-code/MiniMax-M3.1-Flash:minimax-a', 'role': 'genome', 'wake': 'wake-genome-1'},
+    ]
+    (tmp_path / 'engine' / 'routing-ledger.jsonl').write_text('{cut\n' + '\n'.join(json.dumps(r) for r in rows) + '\n')
+    write_json(root / 'wake-genome-1.snapshot.json', {'role': 'genome', 'snapshot': {'reasons': ['inbox']}})
+    write_json(root / 'wake-genome-1.yield.json', {'role': 'genome', 'result': 'changed'})
+    write_json(root / 'wake-docs-2.snapshot.json', {'role': 'docs', 'snapshot': {'reasons': ['inbox']}})
+    write_json(root / 'wake-docs-3.yield.json', {'role': 'docs', 'result': 'changed'})
+    _, text = plant_tape.wakes_step(tmp_path, None)
+    assert 'SETTLED genome · omp minimax-code/MiniMax-M3.1-Flash (after: routerai/z-ai/glm-5.3-flash rate limited)' in text
+    assert 'WAKE docs · model: not selected yet' in text      # a wake just starting has no select yet
+    assert 'SETTLED docs · model UNKNOWN' in text             # never the configured model

@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from .state_files import read_json
-from .plant_view_boundary import git_tape, safe, tape_arguments, output_text, wake_key, last_lines, final_answer, progress_text
+from .plant_view_boundary import git_tape, safe, tape_arguments, output_text, wake_key, last_lines, final_answer, progress_text, wake_models
 
 
 def git_step(repo, cursor):
@@ -35,6 +35,10 @@ def wakes_step(home, cursor):
     selected = paths[-60:] if cursor is None else [(kind, p) for kind, p in paths if p.name not in known]
     blocks = []
     deferred = set()
+    models = wake_models(home)
+    def ran(key, pending=False):
+        # What actually ran, from the router's ledger. No select yet is 'not selected yet' for a wake just starting, else UNKNOWN.
+        return safe(models.get(key) or ('model: not selected yet' if pending else 'model UNKNOWN'))
     for kind, path in selected:
         if kind == 'output':
             # The work record can appear before the engine output is written: a block emitted now would say 'Output UNKNOWN' and the
@@ -67,7 +71,7 @@ def wakes_step(home, cursor):
                     else 'Output UNKNOWN: no retained engine output.')
             if not (root / (key + '.yield.json')).exists():
                 text = 'Settlement UNKNOWN: the engine ended without a yield receipt.\n' + text
-        blocks.append(f'══ {stamp} · {label} {role} · {key} ══\n{text}\n')
+        blocks.append(f'══ {stamp} · {label} {role} · {ran(key, label == "WAKE")} · {key} ══\n{text}\n')
     if cursor is None and not paths:
         blocks.append('Wake history empty; following new starts and settlements.')
     # A wake's output block appears only when it ends, so a long wake (slower omp models) showed nothing for minutes.
@@ -93,7 +97,7 @@ def wakes_step(home, cursor):
         record = read_json(start)
         role = safe(record.get('role', '?')) if isinstance(record, dict) else '?'
         stamp = time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(now))
-        blocks.append(f'── {stamp} · RUNNING {role} {bucket * PROGRESS_SECONDS // 60}+ min · {key} · latest ──\n{tail}\n')
+        blocks.append(f'── {stamp} · RUNNING {role} {bucket * PROGRESS_SECONDS // 60}+ min · {ran(key)} · {key} · latest ──\n{tail}\n')
     # Retain seen names across deletion, so history is never silently replayed.
     return known | (names - deferred) | progress, '\n'.join(blocks)
 

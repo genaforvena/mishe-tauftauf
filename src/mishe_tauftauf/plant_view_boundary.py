@@ -551,3 +551,45 @@ def salvage_text(path: Path, *, tools: int = 8, limit: int = 4000) -> str:
         out.append('Provider faults it hit:')
         out.extend('  ' + safe(f).replace('\n', ' ')[:200] for f in faults[-3:])
     return '\n'.join(out)[:limit]
+
+
+LEDGER_TAIL_BYTES = 400_000
+
+
+def wake_models(home) -> dict[str, str]:
+    """Per wake id, the model that actually ran, from the router's own ledger (never the configured model).
+
+    The text is ``engine model`` for the last candidate selected for the wake, plus ``after: <model> <why>`` for each
+    candidate it fell through. A wake with no select event is absent: the caller shows that as pending or UNKNOWN.
+    """
+    path = Path(home) / 'engine' / 'routing-ledger.jsonl'
+    try:
+        with path.open('rb') as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - LEDGER_TAIL_BYTES))
+            raw = handle.read().decode('utf-8', 'replace')
+    except OSError:
+        return {}
+    ran: dict[str, str] = {}
+    fell: dict[str, list[str]] = {}
+
+    def name(key: str) -> str:
+        engine, _, rest = key.partition(':')
+        model = rest.rsplit(':', 1)[0] if ':' in rest else rest
+        return f'{engine} {model}'
+
+    for line in raw.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue   # the first line of the tail can be cut; a malformed row is not shown
+        if not isinstance(event, dict) or not isinstance(event.get('wake'), str) or not isinstance(event.get('key'), str):
+            continue
+        wake = event['wake']
+        if event.get('event') == 'select':
+            ran[wake] = name(event['key'])
+        elif event.get('event') == 'fallback':
+            why = str(event.get('reason', '')).split(':', 1)[0].strip()[:40] or 'refused'
+            fell.setdefault(wake, []).append(f"{name(event['key']).split(' ', 1)[1]} {why}")
+    return {wake: text + ''.join(f' (after: {f})' for f in fell.get(wake, [])) for wake, text in ran.items()}
