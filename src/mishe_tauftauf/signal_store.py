@@ -12,10 +12,14 @@ import os
 import time
 from pathlib import Path
 
-from .live_signal import OK, UNKNOWN, Signal
+from .live_signal import OK, STALE, UNKNOWN, Signal
 from .state_files import read_json, write_json
 
 _NAME_OK = set("abcdefghijklmnopqrstuvwxyz0123456789-_")
+
+# A value that names a state is not a reading: it says the input was not readable. Storing one
+# as a successful observation lies about the state and refreshes the freshness stamp.
+_RESERVED_VALUES = frozenset({OK, UNKNOWN, STALE})
 
 
 def _dir(home) -> Path:
@@ -114,7 +118,19 @@ def _store(home, name: str, *, value, state: str, reason: str, at: float, source
 
 
 def observe(home, name: str, value, *, now: float, source: str) -> bool:
-    """Record a successful observation. True when it is an edge (json replaced)."""
+    """Record a successful observation. True when it is an edge (json replaced).
+
+    A value that names a state ("OK", "UNKNOWN", "STALE") is refused: it reports that the input
+    was not readable, which is ``observe_unknown``'s meaning, and ``observe`` would store it as
+    a fresh OK reading. That mistake is not cosmetic. Observing "UNKNOWN" makes an expired
+    signal fresh and OK, which re-arms its expiry; the expiry rewrites the very file the
+    subscriber's path unit watches, which starts the subscriber again. A health wake that
+    reconciled its own expired probe signals that way drove itself into systemd's start limit
+    (2026-11-10: 14 ``start-limit-hit`` refusals for ``mishe-wake@health.service``).
+    """
+    if isinstance(value, str) and value in _RESERVED_VALUES:
+        raise ValueError(
+            f"{value!r} is a state, not a reading: use observe_unknown to record an unreadable input")
     _entry(home, name)
     current = _load(home, name)
     edge = not (current and current.get("state") == OK and current.get("value") == value)

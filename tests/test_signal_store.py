@@ -78,3 +78,31 @@ def test_corrupt_signal_file_reads_unknown_and_is_preserved(home):
     (home / "signals" / "ci.seen").touch()
     assert store.read(home, "ci", now=1.0).state == UNKNOWN
     assert (home / "signals" / "ci.json").read_text() == "{not json"
+
+
+def test_observing_a_state_name_is_refused(home):
+    # "UNKNOWN" is a state, not a reading: storing it as a successful observation makes an
+    # expired signal fresh and OK, which re-arms its expiry and starts its subscriber again
+    # (2026-11-10: the health wake drove itself into systemd's start limit this way).
+    for reserved in ("OK", "UNKNOWN", "STALE"):
+        with pytest.raises(ValueError, match="not a reading"):
+            store.observe(home, "ci", reserved, now=1000.0, source="t")
+    assert not (home / "signals" / "ci.json").exists()      # nothing was written
+
+
+def test_a_refused_observation_leaves_an_expired_signal_expired(home):
+    store.observe(home, "ci", "GREEN", now=1000.0, source="t")
+    store.expire(home, now=1061.0)
+    with pytest.raises(ValueError):
+        store.observe(home, "ci", "UNKNOWN", now=1062.0, source="t")
+    assert store.read(home, "ci", now=1062.0).state == UNKNOWN   # still not fresh and OK
+
+
+def test_observe_unknown_records_the_failure_without_refreshing_freshness(home):
+    store.observe(home, "ci", "GREEN", now=1000.0, source="t")
+    seen = home / "signals" / "ci.seen"
+    before = seen.stat().st_mtime_ns
+    assert store.observe_unknown(home, "ci", now=1100.0, reason="no readable observation", source="t") is True
+    assert seen.stat().st_mtime_ns == before          # a failure is not evidence of freshness
+    sig = store.read(home, "ci", now=1100.0)
+    assert sig.state == UNKNOWN and sig.value is None

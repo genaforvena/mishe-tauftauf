@@ -134,6 +134,8 @@ def register(sub) -> None:
     p = sig.add_parser("register"); p.set_defaults(func=cmd_runtime); p.add_argument("name"); p.add_argument("--max-age", type=float, required=True)
     p.add_argument("--subscribers", default="")
     p = sig.add_parser("observe"); p.set_defaults(func=cmd_runtime); p.add_argument("name"); p.add_argument("value"); p.add_argument("--source", default="cli")
+    p = sig.add_parser("observe-unknown", help="record that NAME could not be read (state UNKNOWN); unlike observe, it does not refresh freshness")
+    p.set_defaults(func=cmd_runtime); p.add_argument("name"); p.add_argument("--reason", default="no readable observation"); p.add_argument("--source", default="cli")
     p = sig.add_parser("show"); p.set_defaults(func=cmd_runtime); p.add_argument("name")
     p = sig.add_parser("run", help="observe NAME by running CMD: exit 0 GREEN, non-zero RED, cannot-run leaves it to expire")
     p.add_argument("name"); p.add_argument("--timeout", type=float, default=120)
@@ -244,6 +246,9 @@ def run(args) -> int:
             edge = signal_store.observe(home, args.name, args.value, now=now, source=args.source)
             armmod.arm(home, scheduler=scheduler(home))
             print("edge" if edge else "refreshed")
+        elif args.signal_command == "observe-unknown":
+            edge = signal_store.observe_unknown(home, args.name, now=now, reason=args.reason, source=args.source)
+            print("edge" if edge else "unchanged")
         elif args.signal_command == "run":
             from . import producers
             command = args.cmd
