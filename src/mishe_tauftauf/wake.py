@@ -13,7 +13,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import delivery_requests, dossier, feed, owed, work_receipts, yielding
+from . import delivery_requests, dossier, feed, owed, wake_memory, work_receipts, yielding
 from .wall import addressed
 from .core.dispatch_record import process_alive
 from .core.interfaces import RECONCILED, STARTED, UNKNOWN, WorkerResult
@@ -113,7 +113,6 @@ def _restore_memory_floor(home, role, key) -> dict:
     The reading is written next to the wake's other evidence so a later failure
     can be told apart from a plain slow engine.
     """
-    from . import wake_memory
     unit = wake_memory.own_unit_name(role)
     record = wake_memory.ensure_wake_memory_high(unit)
     path = wake_memory.memory_high_path(unit)
