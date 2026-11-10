@@ -113,6 +113,7 @@ class FakeEngine:
     script = {}
 
     spent = None
+    hard_timeout = None
 
     def __init__(self, model):
         self.model = model
@@ -120,7 +121,8 @@ class FakeEngine:
     def spent_quota(self):
         return self.spent
 
-    def run(self, prompt_file, *, env, cwd, timeout, on_start=None):
+    def run(self, prompt_file, *, env, cwd, timeout, on_start=None, hard_timeout=None):
+        FakeEngine.hard_timeout = hard_timeout
         action = FakeEngine.script[self.model]
         if action == "not-started":
             raise EngineNotStarted("missing binary")

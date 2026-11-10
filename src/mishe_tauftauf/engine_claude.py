@@ -22,8 +22,9 @@ class ClaudeEngine:
     def __init__(self, model: str, env: dict | None = None, tools: tuple = ALLOW):
         self.model, self.extra_env, self.tools = model, env or {}, tuple(tools)
 
-    def run(self, prompt_file, *, env, cwd, timeout, on_start=None) -> int:
+    def run(self, prompt_file, *, env, cwd, timeout, on_start=None, hard_timeout=None) -> int:
         prompt_file = Path(prompt_file)
         return engine_process.run_bounded(
             command(self.model, self.tools), env=dict(env, **self.extra_env), cwd=Path(cwd), timeout=timeout,
-            stdin_from=prompt_file, stdout_to=prompt_file.with_suffix(".out.json"), on_start=on_start)
+            stdin_from=prompt_file, stdout_to=prompt_file.with_suffix(".out.json"), on_start=on_start,
+            hard_timeout=hard_timeout)

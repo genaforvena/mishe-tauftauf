@@ -47,6 +47,7 @@ SIGNAL = "engine-routing"
 SIGNAL_MAX_AGE = 900.0
 DEFAULT_COOL_OFF_S = 1800
 DEFAULT_ACCOUNT_COOL_OFF_S = 5400  # a quota-exhausted account is out for a window, not a role retry
+DEFAULT_HARD_TIMEOUT_S = 3600     # total runtime a wake may reach when it is still producing output
 INVALIDATE_BUDGET_S = 20.0  # total wall time for stale-window refetches per wake
 ENGINES = ("claude", "omp")
 STALE_STATES = ("STALE", "UNKNOWN", "UNATTRIBUTED")
@@ -113,9 +114,14 @@ def load_routes(home) -> dict | None:
             tmo = c.get("timeout_s")
             if tmo is not None and (isinstance(tmo, bool) or not isinstance(tmo, (int, float)) or tmo <= 0):
                 raise ValueError(f"invalid timeout_s for {role!r}: {c!r}")
+            hard = c.get("hard_timeout_s")
+            if hard is not None and (isinstance(hard, bool) or not isinstance(hard, (int, float)) or hard <= 0):
+                raise ValueError(f"invalid hard_timeout_s for {role!r}: {c!r}")
             entry = {"engine": c["engine"], "model": c["model"], "account": account}
             if tmo is not None:
                 entry["timeout_s"] = tmo
+            if hard is not None:
+                entry["hard_timeout_s"] = hard
             if free:
                 entry["free"] = True
             if thinking is not None:
@@ -131,7 +137,11 @@ def load_routes(home) -> dict | None:
     account_cool = value.get("account_cool_off_s", DEFAULT_ACCOUNT_COOL_OFF_S)
     if isinstance(account_cool, bool) or not isinstance(account_cool, (int, float)) or account_cool < 0:
         raise ValueError("invalid account_cool_off_s")
-    return {"roles": roles, "cool_off_s": cool, "account_cool_off_s": account_cool, "env": env}
+    hard = value.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S)
+    if isinstance(hard, bool) or not isinstance(hard, (int, float)) or hard <= 0:
+        raise ValueError("invalid hard_timeout_s")
+    return {"roles": roles, "cool_off_s": cool, "account_cool_off_s": account_cool, "env": env,
+            "hard_timeout_s": hard}
 
 
 def _load_state(home) -> dict:
@@ -326,6 +336,20 @@ class RoutedEngine:
         result = assess(self.routes, status, _load_state(self.home)["cooling"], now_ms)
         observe(self.home, result, now=now_ms / 1000)
 
+    def hard_cap(self, limit: float, cand: dict) -> float | None:
+        """The total runtime this candidate may reach, or None when the deadline is fixed.
+
+        The cap is the smaller of the site's global ``hard_timeout_s`` and the candidate's own, and
+        only applies when it is above the soft deadline: a wake that is still producing output may
+        run past the soft deadline, an idle one is cut on time (operator DM 298902).
+        """
+        caps = [value for value in (self.routes.get("hard_timeout_s"), cand.get("hard_timeout_s"))
+                if isinstance(value, (int, float))]
+        if not caps:
+            return None
+        cap = float(min(caps))
+        return cap if cap > limit else None
+
     def run(self, prompt_file, *, env, cwd, timeout, on_start=None) -> int:
         key_wake = env.get("MISHE_WAKE_KEY")
         tried: set = set()
@@ -346,7 +370,7 @@ class RoutedEngine:
             try:
                 limit = min(timeout, cand["timeout_s"]) if cand.get("timeout_s") else timeout
                 code = engine.run(prompt_file, env=dict(env, **self.extra_env), cwd=cwd, timeout=limit,
-                                  on_start=on_start)
+                                  on_start=on_start, hard_timeout=self.hard_cap(limit, cand))
             except EngineExhausted as exc:
                 # The account is out of quota: no effect, and every role on that account would fail the same
                 # way, so cool the account key (shared by all roles) for a window rather than a role retry.

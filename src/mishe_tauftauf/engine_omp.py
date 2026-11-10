@@ -80,12 +80,12 @@ class OmpEngine:
         """After a run: the quota error that ended it after acting, for the router to cool the account."""
         return spent_quota_after_effect(self.stream) if self.stream else None
 
-    def run(self, prompt_file, *, env, cwd, timeout, on_start=None) -> int:
+    def run(self, prompt_file, *, env, cwd, timeout, on_start=None, hard_timeout=None) -> int:
         prompt_file = Path(prompt_file)
         stream = self.stream = prompt_file.with_suffix(".out.jsonl")
         code = engine_process.run_bounded(
             command(self.model, Path(cwd), prompt_file, self.thinking), env=dict(env, **self.extra_env),
-            cwd=Path(cwd), timeout=timeout, stdout_to=stream, on_start=on_start)
+            cwd=Path(cwd), timeout=timeout, stdout_to=stream, on_start=on_start, hard_timeout=hard_timeout)
         error = refused_before_effect(stream) if code != 0 else None
         if error is not None and is_quota_error(error):
             raise EngineExhausted(f"account out of quota before any tool call: {error}")
