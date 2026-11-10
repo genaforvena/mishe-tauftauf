@@ -56,7 +56,8 @@ DEFAULT_COOL_OFF_S = 1800
 DEFAULT_ACCOUNT_COOL_OFF_S = 5400  # a quota-exhausted account is out for a window, not a role retry
 DEFAULT_HARD_TIMEOUT_S = 3600     # total runtime a wake may reach when it is still producing output
 DEFAULT_RATE_LIMIT_COOL_OFF_S = 300   # a rate limit waits minutes, not the site-wide window
-MAX_RATE_LIMIT_COOL_OFF_S = 28800     # cap for a provider-stated retry-after, 8 h
+MAX_RETRY_AFTER_COOL_OFF_S = 28800   # cap for a provider-stated retry-after, 8 h
+MAX_RATE_LIMIT_COOL_OFF_S = 1800    # ceiling of the self-computed doubling backoff, the site-wide window
 INVALIDATE_BUDGET_S = 20.0  # total wall time for stale-window refetches per wake
 ENGINES = ("claude", "omp")
 STALE_STATES = ("STALE", "UNKNOWN", "UNATTRIBUTED")
@@ -479,7 +480,7 @@ class RoutedEngine:
                 now = time.time() * 1000
                 parsed = retry_after_ms(exc)
                 if parsed is not None:
-                    off = min(parsed, MAX_RATE_LIMIT_COOL_OFF_S * 1000)
+                    off = min(parsed, MAX_RETRY_AFTER_COOL_OFF_S * 1000)
                 else:
                     off = self.rate_limit_cool_off_ms(self.role, key)
                 record(self.home, {"role": self.role, "event": "fallback", "wake": key_wake, "key": key,

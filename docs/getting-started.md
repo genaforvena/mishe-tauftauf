@@ -51,9 +51,10 @@ once. When the candidate is already at its cap the router skips it and the wake
 takes the next candidate, instead of sending another request to a provider that
 is rate-limiting. A provider that answers "429 rate limit" before any tool call
 is a refusal, not a quota exhaustion: the wake falls through at once and that
-role waits a few minutes (`rate_limit_cool_off_s`, doubling on repeats) while
-other roles keep using the candidate. `mishe engine router running` shows the
-candidates with a wake still running, against their cap.
+role waits a few minutes (`rate_limit_cool_off_s`, doubling on repeats, ceiling
+`max_rate_limit_cool_off_s`) while other roles keep using the candidate. A refusal
+that carries a provider `retry-after-ms` waits that interval instead, capped at 8 h.
+`mishe engine router running` shows the candidates with a wake still running, against their cap.
 
 ## 4. Install the triggers — held
 

@@ -425,6 +425,11 @@ def test_the_rate_limit_backoff_doubles_and_resets_after_a_success(routed):
     first = eng.rate_limit_cool_off_ms("health", key)
     second = eng.rate_limit_cool_off_ms("health", key)
     assert second == 2 * first
+    third = eng.rate_limit_cool_off_ms("health", key)
+    fourth = eng.rate_limit_cool_off_ms("health", key)
+    # The doubling ceiling is the site-wide window, not the 8 h retry-after cap: the
+    # self-computed backoff and a provider-stated interval are different policies.
+    assert third < fourth == router.MAX_RATE_LIMIT_COOL_OFF_S * 1000 == 1800 * 1000
     eng._clear(key)
     assert eng.rate_limit_cool_off_ms("health", key) == first
 
@@ -450,9 +455,20 @@ def test_a_retry_after_above_eight_hours_is_capped(routed):
     events = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()]
     fallback = events[1]
     assert fallback["event"] == "fallback" and fallback["scope"] == "role"
-    assert fallback["cool_off_s"] == router.MAX_RATE_LIMIT_COOL_OFF_S
+    assert fallback["cool_off_s"] == router.MAX_RETRY_AFTER_COOL_OFF_S
     state = json.loads((routed / "engine" / router.STATE).read_text())["cooling"]
-    assert state[router.role_key("health", router.candidate_key(GO))] == NOW_MS + router.MAX_RATE_LIMIT_COOL_OFF_S * 1000
+    assert state[router.role_key("health", router.candidate_key(GO))] == NOW_MS + router.MAX_RETRY_AFTER_COOL_OFF_S * 1000
+
+
+def test_a_retry_after_cap_is_separate_from_the_backoff_ceiling(tmp_path):
+    """The reviewer defect: the two caps returned to one constant."""
+    assert router.MAX_RETRY_AFTER_COOL_OFF_S == 28800
+    assert router.MAX_RATE_LIMIT_COOL_OFF_S == 1800
+    routes_file(tmp_path, {"health": [HAIKU]})
+    routes = router.load_routes(tmp_path)
+    assert routes["max_rate_limit_cool_off_s"] == router.MAX_RATE_LIMIT_COOL_OFF_S
+    eng = router.RoutedEngine(tmp_path, "health", routes)
+    assert eng.rate_limit_cool_off_ms_max == router.MAX_RATE_LIMIT_COOL_OFF_S * 1000
 
 
 def test_a_retry_after_without_the_provider_marker_keeps_the_backoff(routed):
