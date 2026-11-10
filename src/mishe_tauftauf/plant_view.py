@@ -288,7 +288,13 @@ def _mail_lines(home, role, cursor_start):
 
 def _header(home, role, now, configured, facts=None):
     held = (home / 'hold').exists()
-    title = f'{role} — {_model_text(facts, configured)} — view at {_clock(now)[:5]}Z'
+    if facts and facts.get('models'):
+        shown = _model_text(facts, configured)
+    else:
+        # engines/ROLE.json is only what is configured; the router's ledger says what the role's latest wake really ran on.
+        routed = routed_models(Path(home) / 'engine' / 'routing-ledger.jsonl')[1].get(role)
+        shown = f'model {safe(routed)} (router\'s latest pick for this role)' if routed else _model_text(facts, configured)
+    title = f'{role} — {shown} — view at {_clock(now)[:5]}Z'
     state = ('HELD — autonomous work stopped' if held
              else 'Not held (a hold stops new wakes; its absence does not show work is running)')
     return [title, state]

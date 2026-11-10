@@ -838,3 +838,16 @@ def test_wakes_tape_shows_an_unsettled_jsonl_output_as_its_last_words(tmp_path):
     _, text = plant_tape.wakes_step(tmp_path, None)
     assert "Settlement UNKNOWN" in text
     assert text.count("DUMP") < 5, text[:400]
+
+
+def test_header_says_what_the_router_ran_not_the_configured_model(tmp_path):
+    write_json(tmp_path / 'engines/genome.json', {'engine': 'claude', 'model': 'claude-haiku-5-5'})
+    write_json(tmp_path / 'dispatch/genome.json', dict(role='genome', key='wake-genome-9', state='completed', detail='engine exit 0'))
+    (tmp_path / 'engine').mkdir()
+    (tmp_path / 'engine/routing-ledger.jsonl').write_text(
+        json.dumps({'event': 'select', 'key': 'omp:routerai/z-ai/glm-5.3-flash:-', 'role': 'genome', 'wake': 'wake-genome-8'}) + '\n')
+    first = view.render(tmp_path, 'genome', now=T0, output=False).splitlines()[0]
+    assert 'model routerai/z-ai/glm-5.3-flash' in first and 'claude-haiku' not in first
+    (tmp_path / 'engine/routing-ledger.jsonl').write_text('')
+    first = view.render(tmp_path, 'genome', now=T0, output=False).splitlines()[0]
+    assert 'model claude-haiku-5-5 (configured' in first      # no ledger row: say it is only configured
