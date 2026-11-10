@@ -92,3 +92,13 @@ def decode_wifi(stdout):
     if not bands:
         raise ValueError("no radio in router output")
     return bands
+
+
+def utc_epoch(stamp):
+    """'2026-11-10T09:49:30Z' -> epoch seconds."""
+    import calendar
+    return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+
+
+def is_down(verdict_text):
+    return verdict_text.startswith("DOWN")

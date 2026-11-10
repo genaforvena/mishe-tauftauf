@@ -5,7 +5,6 @@ Reads the rows the `network-probe` duty appends to SITE/network/probe.jsonl and,
 a few facts from the router over ssh (never writes there).  Anything not measured, or too old,
 is shown as UNKNOWN.  The network mind improves this file.
 """
-import calendar
 import hashlib
 import json
 import os
@@ -153,7 +152,7 @@ def outage_episodes(data):
     for r in data:
         if "internet" not in r or not r.get("at"):
             continue
-        down = verdict(r, 0).startswith("DOWN")
+        down = nb.is_down(verdict(r, 0))
         if down and open_start is None:
             open_start = r["at"]
         elif not down and open_start is not None:
@@ -162,10 +161,6 @@ def outage_episodes(data):
     if open_start is not None:
         episodes.append((open_start, None))
     return episodes
-
-
-def _utc(stamp):
-    return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
 
 
 def outage_lines(data):
@@ -182,7 +177,7 @@ def outage_lines(data):
         if end is None:
             out.append(f"  DOWN since {start[11:16]}Z, still down at the last probe")
         else:
-            mins = (_utc(end) - _utc(start)) / 60
+            mins = (nb.utc_epoch(end) - nb.utc_epoch(start)) / 60
             out.append(f"  DOWN {start[11:16]}Z to {end[11:16]}Z ({mins:.0f} min)")
     return out + [f"  ({span})"]
 
