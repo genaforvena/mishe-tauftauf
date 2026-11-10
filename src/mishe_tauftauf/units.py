@@ -2,12 +2,15 @@
 
 ``render`` is pure and deterministic. ``sync`` writes exactly what render says
 and removes only stale files it generated (each carries MARKER), so units that
-belong to anything else are never touched. ``doctor`` compares expected and
-installed files and never reports GREEN on missing or unreadable evidence.
+belong to anything else are never touched. Each installed unit is written to a
+hidden sibling and renamed into place, so a concurrent reload or doctor read
+never sees a half-written file. ``doctor`` compares expected and installed files
+and never reports GREEN on missing or unreadable evidence.
 """
 from __future__ import annotations
 
 import ast
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -222,11 +225,30 @@ def unit_file_service_names(listing: str, prefix: str) -> list[str]:
     return units
 
 
+def _write_unit(path: Path, text: str) -> None:
+    """Install one unit file atomically, so no reader or reload sees a half-written unit.
+
+    A concurrent ``systemctl daemon-reload`` or ``doctor`` read once observed truncated
+    units while ``sync`` rewrote them (2026-11-10: two arm producers failed arming the
+    next-due timer in the same window as a reload storm). Write a hidden sibling — systemd
+    ignores hidden files and ``_installed`` skips them, so a leak from an interrupted run
+    is inert — then rename it into place.
+    """
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _installed(cfg: Config) -> dict:
     found = {}
     if not cfg.unit_dir.is_dir():
         return found
     for path in sorted(cfg.unit_dir.rglob("*")):
+        if path.name.startswith("."):                      # systemd ignores hidden files; so do we
+            continue
         if path.is_file() and not path.is_symlink() and not any(part.endswith(".wants") for part in path.parts):
             rel = str(path.relative_to(cfg.unit_dir))
             try:
@@ -258,7 +280,7 @@ def sync(cfg: Config, roles, *, producers=(), runner=None, uninstall: bool = Fal
         path = cfg.unit_dir / rel
         if not path.exists() or path.read_text(encoding="utf-8") != text:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8")
+            _write_unit(path, text)
             report.written.append(rel)
     stale = [rel for rel in _installed(cfg) if rel not in expected]
     if runner is not None:

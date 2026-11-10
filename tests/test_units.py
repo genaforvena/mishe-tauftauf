@@ -107,6 +107,32 @@ def test_sync_writes_and_is_idempotent_and_removes_stale_generated_only(cfg):
     assert second.written == [] and second.removed == []
 
 
+def test_a_failed_unit_write_leaves_the_installed_unit_intact(cfg, monkeypatch):
+    calls = []
+    units.sync(cfg, ROLES, runner=calls.append)
+    path = cfg.unit_dir / "mishe-wake-genome.path"
+    before = path.read_text(encoding="utf-8")
+    changed = dict(units.render(cfg, ROLES))                # a real render, so sync wants to rewrite
+    changed["mishe-wake-genome.path"] += "# changed\n"
+    monkeypatch.setattr(units, "render", lambda *a, **k: changed)
+
+    def refuse_replace(*_a, **_k):
+        raise OSError("read-only unit dir")
+
+    monkeypatch.setattr(units.os, "replace", refuse_replace)
+    with pytest.raises(OSError):
+        units.sync(cfg, ROLES, runner=calls.append)
+    assert path.read_text(encoding="utf-8") == before       # the old unit survives, whole
+    assert not [p for p in cfg.unit_dir.iterdir() if p.name.startswith(".")]
+
+
+def test_a_leaked_hidden_temp_file_is_not_read_as_an_installed_unit(cfg):
+    units.sync(cfg, ROLES, runner=lambda c: None)
+    assert units.doctor(cfg, ROLES).state == "GREEN"
+    (cfg.unit_dir / ".mishe-wake-genome.path.999.tmp").write_text(units.MARKER + "\n[Path]\n")
+    assert units.doctor(cfg, ROLES).problems == []          # a crash's leftover must not RED the site
+
+
 def test_doctor_green_when_units_match(cfg):
     units.sync(cfg, ROLES, runner=lambda c: None)
     report = units.doctor(cfg, ROLES)
