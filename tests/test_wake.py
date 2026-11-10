@@ -33,8 +33,9 @@ def do_yield(prompt, env, **kw):
 def home(tmp_path):
     (tmp_path / "walls").mkdir()
     (tmp_path / "walls" / "genome.md").write_text("MY WALL TEXT")
-    store.register(tmp_path, "ci", max_age=60, subscribers=["genome"])
-    store.register(tmp_path, "budget", max_age=600, subscribers=[])
+    # Registration is stamped with the test's own clock, so the grace deadline of a signal
+    # that was never observed is a fixed point here rather than the wall clock.
+    store.register(tmp_path, "ci", max_age=60, subscribers=["genome"], now=NOW)
     return tmp_path
 
 
@@ -192,6 +193,12 @@ def test_arm_targets_earliest_of_intention_due_and_signal_expiry(home):
 
 
 def test_arm_with_nothing_to_wait_for_clears_the_timer(home):
+    # A registered signal that was never observed is itself something to wait for: its grace
+    # deadline is when it turns UNKNOWN and wakes its subscribers. Once that has happened and
+    # nothing else is due, the timer is cleared.
+    seen = []
+    assert arm.arm(home, scheduler=seen.append) == NOW + 60
+    store.expire(home, now=NOW + 61)
     seen = []
     assert arm.arm(home, scheduler=seen.append) is None and seen == [None]
 
