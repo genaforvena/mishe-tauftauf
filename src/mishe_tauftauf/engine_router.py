@@ -281,7 +281,10 @@ def observe(home, result: dict, *, now: float) -> dict:
     home = Path(home)
     if SIGNAL not in signal_store.registry(home):
         signal_store.register(home, SIGNAL, max_age=SIGNAL_MAX_AGE, subscribers=[])
-    signal_store.observe(home, SIGNAL, result["state"], now=now, source="engine-router")
+    if result["state"] == "UNKNOWN":
+        signal_store.observe_unknown(home, SIGNAL, now=now, reason=result.get("reason", "unknown"), source="engine-router")
+    else:
+        signal_store.observe(home, SIGNAL, result["state"], now=now, source="engine-router")
     return result
 
 

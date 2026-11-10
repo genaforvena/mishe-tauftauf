@@ -39,4 +39,4 @@ def test_provider_signal_missing_stale_and_recovery(tmp_path):
     assert signal_store.read(tmp_path, "budget-claude", now=101).value == "GREEN"
     assert signal_store.read(tmp_path, "budget-claude", now=1001).state != "OK"
     assert budget.publish(tmp_path, [], now=1002)["state"] == "UNKNOWN"
-    assert signal_store.read(tmp_path, "budget-claude", now=1002).value == "UNKNOWN"
+    assert signal_store.read(tmp_path, "budget-claude", now=1002).state == "UNKNOWN"

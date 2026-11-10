@@ -41,5 +41,9 @@ def publish(home, rows, *, now):
     name = "budget-claude"
     if name not in signal_store.registry(Path(home)):
         signal_store.register(Path(home), name, max_age=900, subscribers=[])
-    signal_store.observe(Path(home), name, state, now=now, source="existing-budget-view:claude")
+    source = "existing-budget-view:claude"
+    if state == "UNKNOWN":
+        signal_store.observe_unknown(Path(home), name, now=now, reason=reason, source=source)
+    else:
+        signal_store.observe(Path(home), name, state, now=now, source=source)
     return dict(state=state, reason=reason)
