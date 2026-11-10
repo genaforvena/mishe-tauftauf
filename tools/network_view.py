@@ -5,6 +5,7 @@ Reads the rows the `network-probe` duty appends to SITE/network/probe.jsonl and,
 a few facts from the router over ssh (never writes there).  Anything not measured, or too old,
 is shown as UNKNOWN.  The network mind improves this file.
 """
+import calendar
 import hashlib
 import json
 import os
@@ -143,6 +144,49 @@ def verdict(row, a):
     return "OK"
 
 
+def outage_episodes(data):
+    """(start, end) of each run of DOWN probes, oldest first; end is None while still down.
+
+    A probe row without the secure-web section (from before that check) is skipped, not counted as calm.
+    """
+    episodes, open_start = [], None
+    for r in data:
+        if "internet" not in r or not r.get("at"):
+            continue
+        down = verdict(r, 0).startswith("DOWN")
+        if down and open_start is None:
+            open_start = r["at"]
+        elif not down and open_start is not None:
+            episodes.append((open_start, r["at"]))
+            open_start = None
+    if open_start is not None:
+        episodes.append((open_start, None))
+    return episodes
+
+
+def _utc(stamp):
+    return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+
+
+def outage_lines(data):
+    """The outage list for the window: when the home internet was DOWN in the probes we hold."""
+    seen = [r for r in data if "internet" in r and r.get("at")]
+    if not seen:
+        return ["  UNKNOWN (no secure-web probes to read outages from)"]
+    span = f"over {len(seen)} probes from {seen[0]['at'][11:16]}Z to {seen[-1]['at'][11:16]}Z"
+    episodes = outage_episodes(data)
+    if not episodes:
+        return [f"  none {span}"]
+    out = []
+    for start, end in episodes:
+        if end is None:
+            out.append(f"  DOWN since {start[11:16]}Z, still down at the last probe")
+        else:
+            mins = (_utc(end) - _utc(start)) / 60
+            out.append(f"  DOWN {start[11:16]}Z to {end[11:16]}Z ({mins:.0f} min)")
+    return out + [f"  ({span})"]
+
+
 def router_facts():
     if time.time() - _router["at"] < ROUTER_EVERY_S:
         return _router["text"]
@@ -244,6 +288,9 @@ def draw():
     out.append(f"  DNS lookup            {('%.0f ms' % dns[-1]) if dns and dns[-1] is not None else 'UNKNOWN':>10}  {spark(dns)}")
     out.append("")
     out.append("  SPEED         " + speed_line(nb_speed_rows()))
+    out.append("")
+    out.append("  OUTAGES (home internet DOWN, from the probes)")
+    out.extend(outage_lines(data))
     wf, _weak = wifi_facts()
     out.append("  WI-FI         " + (wf or "UNKNOWN (router Wi-Fi listing could not be read)") + "   (read-only, clients counted, no devices named)")
     rf = router_facts()

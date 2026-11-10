@@ -51,3 +51,31 @@ def test_wifi_decode_rejects_empty_listing():
     import pytest
     with pytest.raises(ValueError):
         view.nb.decode_wifi("")
+
+
+def _probe(at, down):
+    internet = {"gstatic": {"ok": not down, "total_ms": None if down else 300.0},
+                "cloudflare": {"ok": not down, "total_ms": None if down else 280.0}}
+    return {"at": at, "gateway": {"loss_pct": 0.0, "avg_ms": 0.4}, "internet": internet, "dns_ms": 50.0}
+
+
+def test_outage_episodes_list_start_and_end_and_still_down():
+    data = [_probe("2026-11-10T10:00:00Z", False), _probe("2026-11-10T10:01:00Z", True),
+            _probe("2026-11-10T10:02:00Z", True), _probe("2026-11-10T10:05:00Z", False),
+            _probe("2026-11-10T10:06:00Z", True)]
+    assert view.outage_episodes(data) == [("2026-11-10T10:01:00Z", "2026-11-10T10:05:00Z"),
+                                          ("2026-11-10T10:06:00Z", None)]
+    lines = view.outage_lines(data)
+    assert lines[0] == "  DOWN 10:01Z to 10:05Z (4 min)"
+    assert lines[1] == "  DOWN since 10:06Z, still down at the last probe"
+
+
+def test_outage_lines_say_none_when_all_probes_answer_and_unknown_without_rows():
+    data = [_probe("2026-11-10T10:00:00Z", False), _probe("2026-11-10T10:01:00Z", False)]
+    assert view.outage_lines(data)[0].startswith("  none over 2 probes")
+    assert view.outage_lines([])[0].startswith("  UNKNOWN")
+
+
+def test_outage_skips_rows_from_before_the_secure_web_check():
+    old = {"at": "2026-11-10T09:00:00Z", "gateway": {"loss_pct": 0.0, "avg_ms": 0.4}}
+    assert view.outage_episodes([old, _probe("2026-11-10T09:01:00Z", False)]) == []
