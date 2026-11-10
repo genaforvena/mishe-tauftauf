@@ -37,3 +37,17 @@ def test_view_verdict_unknown_for_old_format_and_stale_rows():
     fresh = {"at": now, "gateway": {"loss_pct": 0.0}, "internet": {"gstatic": {"ok": True, "total_ms": 300.0}}}
     assert view.verdict(fresh, 3600).startswith("UNKNOWN")  # stale probe is never a calm network
     assert view.verdict(fresh, 0) == "OK"
+
+
+def test_wifi_decode_counts_clients_per_band_and_drops_macs():
+    text = ("BAND 2.472\n7C:C3:A1:A5:20:D7  -28 dBm / unknown (SNR -28)  0 ms ago\n"
+            "3A:2D:71:4B:CC:FC  -80 dBm / unknown  0 ms ago\nBAND 5.200\n")
+    bands = view.nb.decode_wifi(text)
+    assert bands == {"2.472": [-28, -80], "5.200": []}
+    assert "7C:C3" not in repr(bands)
+
+
+def test_wifi_decode_rejects_empty_listing():
+    import pytest
+    with pytest.raises(ValueError):
+        view.nb.decode_wifi("")

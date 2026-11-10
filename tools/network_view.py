@@ -22,6 +22,8 @@ ROUTER_EVERY_S = 60
 SLOW_WEB_MS = 1500
 SLOW_DNS_MS = 500
 _router = {"at": 0.0, "text": None}
+_wifi = {"at": 0.0, "text": None, "weak": False}
+WEAK_WIFI_DBM = -75
 
 
 def rows(limit=1440):
@@ -83,6 +85,35 @@ def router_facts():
     return _router["text"]
 
 
+def wifi_facts():
+    """(text, weak) for the home Wi-Fi from a read-only router listing; (None, False) when it cannot be read."""
+    if time.time() - _wifi["at"] < ROUTER_EVERY_S:
+        return _wifi["text"], _wifi["weak"]
+    _wifi["at"] = time.time()
+    _wifi["text"], _wifi["weak"] = None, False
+    cmd = ("for d in $(iwinfo | awk '/ESSID: \"/{print $1}'); do "
+           "echo \"BAND $(iwinfo $d info | grep -o '[0-9.]* GHz' | head -1 | cut -d' ' -f1)\"; "
+           "iwinfo $d assoclist; done")
+    try:
+        r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "router", cmd],
+                           capture_output=True, text=True, timeout=12)
+        bands = nb.decode_wifi(r.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None, False
+    parts, weakest = [], None
+    for band in sorted(bands):
+        sig = bands[band]
+        parts.append(f"{band} GHz {len(sig)}")
+        if sig:
+            weakest = min(sig) if weakest is None else min(weakest, min(sig))
+    total = sum(len(v) for v in bands.values())
+    weak = weakest is not None and weakest < WEAK_WIFI_DBM
+    tail = f", weakest {weakest} dBm" if weakest is not None else ""
+    _wifi["text"] = f"{total} clients ({'; '.join(parts)}){tail}" + ("  WEAK SIGNAL" if weak else "")
+    _wifi["weak"] = weak
+    return _wifi["text"], weak
+
+
 def gateway_line(data):
     cur = (data[-1].get("gateway") if data else None) or {}
     vals = [((r.get("gateway") or {}).get("avg_ms")) for r in data]
@@ -120,7 +151,8 @@ def draw():
     out.append(f"  DNS lookup            {('%.0f ms' % dns[-1]) if dns and dns[-1] is not None else 'UNKNOWN':>10}  {spark(dns)}")
     out.append("")
     out.append("  SPEED         UNKNOWN (no bounded speed test has been built yet)")
-    out.append("  WI-FI         UNKNOWN (clients and signal not read yet)")
+    wf, _weak = wifi_facts()
+    out.append("  WI-FI         " + (wf or "UNKNOWN (router Wi-Fi listing could not be read)") + "   (read-only, clients counted, no devices named)")
     rf = router_facts()
     out.append("  ROUTER        " + (rf or "UNKNOWN (ssh read failed)") + "   (read-only)")
     out.append("")
