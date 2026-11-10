@@ -1367,3 +1367,79 @@ text for a missing record; a rewritten record verified again, not served.
 Still open before the cutover: the reference-shape fault texts, the records
 directory swap at a flush, and a kill between flushes.
 
+### 10.16 Slice B's cutover: the composition shape, fixed from evidence (2026-11-11)
+
+The binary is installed at `$SITE/bin/mishe-records` (sha256 `d2b2d519…38d5`,
+source `98dd7b5c`), differentially checked against the live Python path, and has
+run over the live tape and the live store. No caller runs it yet: Python
+`records.VerifiedStore` / `cached_payload` and the verification half of
+`feed._VerificationPass` remain the live path for `wall show`, `view_entries`
+and the role read. This section fixes the wiring for the cutover; the edit
+itself is the next bounded change.
+
+**The child cannot be driven turn by turn.** `rust/mishe-records/src/main.rs`
+writes every decision into one `BufWriter` (`serve`/`write_out`,
+main.rs:305-399) and flushes it only when it fills or at exit — there is no
+per-entry flush. Demonstrated: with one framed entry written and flushed and
+stdin left open, `select()` saw no output within 2 s; `S 1` appeared only after
+stdin closed and the child exited (`$SITE/artifacts/rust-plan-20261107/flush_probe_20261111.py`,
+`stdout ready within 2s = False` … `stdout = b'S 1\n' rc = 0`). A per-entry
+write-then-read loop therefore deadlocks: the caller must stream entries into
+the child's stdin while a **drain thread** reads its stdout.
+
+**Design.** (a) `_records_binary()` in `feed.py` mirrors `_tape_binary`
+(feed.py:200-223): `MISHE_RECORDS_BIN` override, else `$SITE/bin/mishe-records`
+sha256-checked against `mishe-records.install.json`; a mismatch is
+`RecordsUnknown`, never a Python fallback. (b) A `_RecordsChild` spawns
+`mishe-records verify --home HOME [--payloads]`, keeps stdin open and runs a
+daemon thread that drains stdout: it validates the `V`/`N`/`S <sequence>` lines
+and, with `--payloads`, reads the following `P <sequence> <n>\n<body>\n` and
+fills the caller's sink with `json.loads(body)`. (c)
+`_VerificationPass.verify(entries, sink=None)` writes the framed bytes
+(`E <sequence> <timestamp> <source> <n>\n<body>\n`, the framer's own form) of
+every entry that carries a `[record]` line — the entries the Python pass ignores
+are not sent, so the decisions and the payloads are unchanged — to the child for
+that entry's home. `commit()` closes stdin, joins the drain thread and maps the
+exit status: 0 done, 2 `ValueError(stderr)` (the Python fault text), 1/other
+`RecordsUnknown(stderr)`. `close()` reaps an abandoned child.
+
+**Seams and decisions.**
+- One child per distinct `entry.home`; in every live read there is exactly one
+  home. `--records-fd` is not needed: the child opens `HOME/records` itself at
+  its first record and runs `check_pass_directory` at each flush, as the Python
+  pass does.
+- The flush cadence changes only in *which entries count*: the child counts the
+  entries it receives (record-bearing ones), while Python counted every tape
+  entry toward `VERIFIED_BATCH_ENTRIES`. A records-directory swap is still
+  noticed at a flush and at pass end, so the pass still fails closed; the
+  detection bound becomes "record-bearing entries", which the contract must say.
+- An entry with a `[record]` line but no `home` is unreachable in every live read
+  (`parse_feed`/`_iter_streamed_feed` always set it); the cutover raises
+  `RecordsUnknown` there rather than guessing a site.
+
+**Retired in the same change:** `records.VerifiedStore`, `lookup`, `store`,
+`cached_payload`, `verified_store`, `VERIFIED_STORE`, `VERIFIED_MAX_AGE`,
+`VERIFIED_FLUSH_ROWS`, `_STORE_LOCK`, `_STORES`, `check_pass_directory` (the
+child owns that check), and the store import at feed.py:21. `records.envelope`,
+`payload`, `_directory`, `_read`, `prepare` and `KindIndex` stay —
+`outcome_events.py:157` still calls `records.envelope`. `_verified_stream` and
+`Feed._verify_records` stay; only the inside of `_VerificationPass` changes.
+
+**Test churn.** `tests/test_records_verified_store.py` (21 cases) tests the
+Python store internals being deleted; its feed-level cases move onto the wrapper
+or are already covered by the differential. `tests/test_mishe_records_verify.py`
+(7 cases) differentials the binary *against* `feed._VerificationPass`; after the
+cutover that authority is the wrapper itself, so the file becomes a contract
+test of the wrapper through `Feed.entries(payloads=…)` and `role_entries`, with
+the retired-path pins removed.
+
+**Boundary and review.** The record-envelope rules move from the Python boundary
+`records.py` into `rust/mishe-records`. `tools/check_parsing.py` must still pass
+after the change: it scans Python sites only, and this removes a Python site
+rather than adding one (the new parsing is in Rust, which the checker does not
+scan) — but the Rust binary is a new boundary path the change must name explicitly in
+`docs/protocol-boundaries.md`. Because this retires a live protocol boundary and
+its store reader, it takes the strong path: a fresh non-author review, plus
+deterministic activation, revert and reapply checks, before the role read runs
+it.
+
