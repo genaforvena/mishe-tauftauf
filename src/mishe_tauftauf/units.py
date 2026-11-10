@@ -87,6 +87,11 @@ def _file(*sections: str) -> str:
     return MARKER + "\n" + "\n".join(sections) + "\n"
 
 
+def _is_wake_failure_signal(name: str) -> bool:
+    """Failure notices written by a failed wake unit (OnFailure), which must not re-trigger wakes."""
+    return name.startswith(("failed-mishe-wake-", "failed-plant-mishe-wake-"))
+
+
 def render(cfg: Config, roles, *, producers=()) -> dict:
     p = cfg.prefix
     failed = f"OnFailure={p}-failed@%n.service"
@@ -107,8 +112,11 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         if slice_name:
             files[f"{p}-wake@{role}.service.d/10-slice.conf"] = _file(f"[Service]\nSlice={slice_name}")
         watched = [f"PathChanged={cfg.home}/inbox/{role}"]
+        # A failed wake writes its own failure signal through OnFailure. Triggering on those would let two roles
+        # re-fire each other (health <-> genome) and hit StartLimitBurst; the wake still reads them in its dossier.
         watched += [f"PathChanged={cfg.home}/signals/{name}.json"
-                    for name, entry in sorted(registry.items()) if role in entry.get("subscribers", [])]
+                    for name, entry in sorted(registry.items())
+                    if role in entry.get("subscribers", []) and not _is_wake_failure_signal(name)]
         files[f"{p}-wake-{role}.path"] = _file(
             f"[Unit]\nDescription=Mishe wake triggers for {role}",
             "[Path]\n" + "\n".join(watched) + f"\nUnit={p}-wake@{role}.service",

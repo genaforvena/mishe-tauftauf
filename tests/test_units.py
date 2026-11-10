@@ -349,3 +349,17 @@ def test_unit_file_service_names_keeps_site_services_and_drops_templates():
     assert units.unit_file_service_names(listing, "mishe-") == [
         "mishe-producer-host-capacity.service", "mishe-doctor.service"]
     assert units.unit_file_service_names("", "mishe-") == []
+
+
+def test_wake_failure_signals_do_not_retrigger_wakes(cfg):
+    # 2026-11-10: health and genome re-fired each other through failed-mishe-wake-*-service signals and hit StartLimitBurst.
+    store.register(cfg.home, "failed-mishe-wake-genome-service", max_age=604800, subscribers=["health"])
+    store.register(cfg.home, "failed-mishe-wake-health-service", max_age=604800, subscribers=["genome"])
+    store.register(cfg.home, "failed-mishe-producer-ci-service", max_age=604800, subscribers=["genome"])
+    files = units.render(cfg, ROLES)
+    health = files["mishe-wake-health.path"]
+    genome = files["mishe-wake-genome.path"]
+    assert "failed-mishe-wake-genome-service" not in health
+    assert "failed-mishe-wake-health-service" not in genome
+    assert "failed-mishe-producer-ci-service" in genome          # producer failures still trigger their subscribers
+    assert f"PathChanged={cfg.home}/signals/ci.json" in genome   # ordinary subscriptions unaffected
