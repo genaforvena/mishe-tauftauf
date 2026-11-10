@@ -13,6 +13,9 @@ from mishe_tauftauf.state_files import read_json, write_json
 from mishe_tauftauf.core.state import DispatchStore
 from mishe_tauftauf.core.interfaces import STARTED, UNKNOWN
 from mishe_tauftauf.core.state import DispatchRecord
+from tests.tape_binary import pin_tape_binary
+
+pytestmark = pytest.mark.usefixtures("pin_tape_binary")
 
 
 def git(repo, *args):
