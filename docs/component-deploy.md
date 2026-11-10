@@ -1,6 +1,6 @@
 # Per-component deploy
 
-Status: the mechanism works and has been exercised on the live site. `components.py` and the `mishe component` commands exist (see "Who promotes"), and two components have been promoted and verified there. What is still missing is the duty detector that keeps them watched: no `components` signal is registered, so a component that goes RED after a promotion is not reported to anyone. Promotion touches the delivery mechanism, so it keeps its separate fresh review.
+Status: the mechanism works and has been exercised on the live site. `components.py` and the `mishe component` commands exist (see "Who promotes"), and three components have been promoted and verified there. What is still missing is the duty detector that keeps them watched: no `components` signal is registered, so a component that goes RED after a promotion is not reported to anyone. Promotion touches the delivery mechanism, so it keeps its separate fresh review.
 
 ## Problem
 
@@ -37,12 +37,13 @@ The command itself is exercised. `mishe component verify` on the live site repor
 
 ## What has actually happened
 
-Both promotions below ran on the live site, in the site's `components/` tree, and the ledger under each component records them. They are the evidence that the mechanism works, not a plan.
+The promotions below ran on the live site, in the site's `components/` tree, and the ledger under each component records them. They are the evidence that the mechanism works, not a plan.
 
 - `mishe-tape-facts` was promoted at `034db9df`, then at `a2b7d182`, then rolled back to `034db9df`, then promoted again at `0c0d7e6e`. The rollback and the re-apply are in the ledger, so the revert path has been walked on real bytes rather than only in a test.
 - `mishe-tape` was promoted at `a2b7d182`.
+- `mishe-network-probe` was promoted at `6989d18f`, then at `2f1a2d4f`.
 
-`mishe component verify` reports both GREEN, and the bytes it checks are the bytes the site runs: the sha256 of `components/NAME/current/bin/NAME` equals the sha256 of the `$SITE/bin/NAME` install and the one recorded in that component's `manifest.json`.
+`mishe component verify` reports all three GREEN, and the bytes it checks are the bytes the site runs: the sha256 of `components/NAME/current/bin/NAME` equals the sha256 of the `$SITE/bin/NAME` install and the one recorded in that component's `manifest.json`.
 
 The promotion code was reviewed independently before that, in two passes. The first found one real defect: a promotion that came out RED when there was no previous release reported `rolled-back` even though nothing had been rolled back. That was repaired, and the second pass, again against real bytes in a temporary site, found the failure and rollback semantics correct as written — including that a release which verifies RED after the swap with no previous release known is reported as `unknown`, with the pointer left where it is rather than moved.
 
