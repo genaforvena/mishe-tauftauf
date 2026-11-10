@@ -1250,10 +1250,28 @@ def loop_stall_roles(home: Path) -> list[str]:
     """The seated roles this rollup judges, from the site's own charters."""
     return sorted(seated_roles(home))
 
-# An open wake older than this has outlived the engine's own bound: units.py
-# passes ``--timeout WAKE_TIMEOUT`` (1800 s) to every wake. Past it the wake is
-# a stall suspect, not a busy mind.
-LOOP_STALL_WAKE_SECONDS = 1800
+# A wake is a stall suspect only once it outlives the engine's own cut. The
+# engine cuts an idle wake at the soft deadline (units.py's ``--timeout``,
+# 1800 s) but extends a wake that is still producing output up to the hard cap
+# (``hard_timeout_s``, default 3600 s). A fixed 1800 s bound flagged every
+# productive 1800-3600 s wake (2026-11-10: senses 3189 s, genome 3168 s, pub
+# 3342 s all read watch-loop-stall). The bound is the hard cap plus teardown
+# slack, read from the site's routes; an unreadable routes file uses the engine
+# default, never the retired soft deadline.
+LOOP_STALL_SLACK_SECONDS = 300
+
+
+def _loop_stall_bound(home: Path) -> float:
+    """The longest a wake may legitimately run: the engine's hard cap plus teardown slack."""
+    from . import engine_router
+    try:
+        routes = engine_router.load_routes(home)
+    except (OSError, ValueError):
+        routes = None
+    hard = routes.get("hard_timeout_s") if isinstance(routes, dict) else None
+    if isinstance(hard, bool) or not isinstance(hard, (int, float)) or hard <= 0:
+        hard = engine_router.DEFAULT_HARD_TIMEOUT_S
+    return float(hard) + LOOP_STALL_SLACK_SECONDS
 
 
 def _seed_settle_result_mix(home: Path) -> dict[str, object]:
@@ -1330,18 +1348,19 @@ def _mind_loop_stall(home: Path, now: datetime | None = None) -> dict:
 
     - no readable dispatch record (missing, unreadable) → ``unknown`` for
       that role; absence is never a clean bill;
-    - an open wake (``pending``) whose record age exceeds
-      ``LOOP_STALL_WAKE_SECONDS`` → ``watch-loop-stall``;
+    - an open wake (``pending``) whose record age exceeds the engine's hard
+      cap plus teardown slack (``_loop_stall_bound``) → ``watch-loop-stall``;
     - an open wake inside the bound, or a settled role (no open wake) → ``clean``.
       A settled role's age is reported as ``idle_s`` and is not a stall.
 
-    This sees only an open wake that outlived its bound. It does not observe
+    This sees only an open wake that outlived the engine. It does not observe
     in-process loops inside a live wake, and the treadmill reading covers
     commit stagnation separately. Consumer: health's mishe-wide rollup.
     The roster is the site's own declared roles (``loop_stall_roles``).
     """
     if now is None:
         now = datetime.now(timezone.utc)
+    bound = _loop_stall_bound(home)
     pairs: dict[str, dict] = {}
     worst = "clean"
     for role in loop_stall_roles(home):
@@ -1352,9 +1371,9 @@ def _mind_loop_stall(home: Path, now: datetime | None = None) -> dict:
             verdict, detail = "unknown", "dispatch record missing or unreadable"
             if worst == "clean":
                 worst = "unknown"
-        elif pending and idle > LOOP_STALL_WAKE_SECONDS:
+        elif pending and idle > bound:
             verdict = "watch-loop-stall"
-            detail = f"open wake {pending} aged {idle}s past {LOOP_STALL_WAKE_SECONDS}s bound"
+            detail = f"open wake {pending} aged {idle}s past {bound:g}s bound"
             worst = "watch-loop-stall"
         else:
             verdict = "clean"
@@ -1370,7 +1389,7 @@ def _mind_loop_stall(home: Path, now: datetime | None = None) -> dict:
             "sample": sample, "roles": pairs, "verdict": worst, "kind": "read",
             "consumer": "health mishe-wide loop-stall rollup",
             "validity": {"now": now.isoformat(timespec="seconds"),
-                         "bound_seconds": LOOP_STALL_WAKE_SECONDS}}
+                         "bound_seconds": bound}}
 
 
 def _process_argv(pid: int) -> tuple[int, str] | None:

@@ -6860,7 +6860,7 @@ def test_loop_stall_watches_an_open_wake_past_its_bound(monkeypatch, tmp_path):
     """Stale open wake (age beyond the engine bound) reads watch-loop-stall."""
     _seat_roles(tmp_path, "senses", "docs")
     monkeypatch.setattr(discovery, "_mind_role_coverage", _loop_stall_coverage(
-        {"senses": {"pending": "wake-stale", "idle_s": discovery.LOOP_STALL_WAKE_SECONDS + 1}}))
+        {"senses": {"pending": "wake-stale", "idle_s": int(discovery._loop_stall_bound(tmp_path)) + 1}}))
     result = discovery._mind_loop_stall(tmp_path)
     assert result["id"] == "sense.mind.loop-stall"
     assert result["verdict"] == "watch-loop-stall"
@@ -6868,6 +6868,20 @@ def test_loop_stall_watches_an_open_wake_past_its_bound(monkeypatch, tmp_path):
     assert "wake-stale" in result["roles"]["senses"]["detail"]
     assert result["roles"]["docs"]["verdict"] == "clean"
     assert "loop-stall=watch-loop-stall" in result["sample"]
+
+
+def test_loop_stall_bound_tracks_the_engine_hard_cap_not_the_soft_deadline(monkeypatch, tmp_path):
+    """A productive wake may run past the 1800 s soft deadline up to the hard cap, so an open
+    wake aged beyond the old fixed 1800 s bound is still clean (2026-11-10: senses 3189 s,
+    genome 3168 s, pub 3342 s all read watch-loop-stall while producing output)."""
+    _seat_roles(tmp_path, "senses")
+    assert discovery._loop_stall_bound(tmp_path) > 3200       # the retired 1800 s bound would flag this
+    monkeypatch.setattr(discovery, "_mind_role_coverage", _loop_stall_coverage(
+        {"senses": {"pending": "wake-productive", "idle_s": 3200}}))
+    result = discovery._mind_loop_stall(tmp_path)
+    assert result["verdict"] == "clean"
+    assert result["roles"]["senses"]["detail"] == "open wake inside bound"
+    assert result["validity"]["bound_seconds"] == discovery._loop_stall_bound(tmp_path)
 
 
 def test_loop_stall_fresh_open_wake_and_settled_roles_are_clean(monkeypatch, tmp_path):
