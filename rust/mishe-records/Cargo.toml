@@ -1,0 +1,17 @@
+[package]
+name = "mishe-records"
+version = "0.1.0"
+edition = "2021"
+description = "Record verification and the verified store for Mishe: the byte-exact Rust counterpart of records.envelope/cached_payload/VerifiedStore"
+license = "CC0-1.0"
+
+[dependencies]
+# The store's schema is shared with Python's sqlite3; `bundled` links the C
+# library this host has no development files for (plan 10.13).
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde_json = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+libc = "0.2"
+
+[profile.release]
+debug = false

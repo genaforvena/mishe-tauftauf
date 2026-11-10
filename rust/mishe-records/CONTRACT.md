@@ -1,8 +1,16 @@
-# mishe-records contract (version 0.1, responsibility: record verification and the verified store)
+# mishe-records contract (version 0.2, responsibility: record verification and the verified store)
 
 Template: `rust/mishe-tape/CONTRACT.md`. The contract lives next to the code and
 is the thing a differential test checks. A caller depends on this file, not on
 the Rust source.
+
+Version 0.2 (2026-11-10, first implementation): the `F` decision became `S` plus
+an explicit fault, because reading `records.cached_payload` closely showed that
+every structural case the old `F` covered *raises* (`records.payload` reaches
+`records.envelope`, which raises the same `ValueError` the pass propagates); only
+"the entry carries no `[record]` line at all" is a case the Python pass ignores.
+The `V` row now also covers a digest already verified in the same pass, which is
+what `cached_payload`'s `pending` map serves without re-reading the record.
 
 ## Scope
 
@@ -28,7 +36,8 @@ mishe-records verify --home SITE [--payloads] [--records-fd N]
 
 - stdin: a framed entry stream in `mishe-tape frames` output form
   (`E <sequence> <timestamp> <source> <body-bytes>\n<body>\n`), in tape order.
-  Unknown lines are a protocol fault: exit 1, no guess.
+  Unknown lines are a protocol fault: exit 1, no guess. Every entry the caller
+  wants a decision for must appear in the stream.
 - `--home SITE`: the site root; the store is `SITE/records.verified.sqlite3`
   and the records directory is `SITE/records`.
 - `--records-fd N`: a descriptor the caller already holds on `SITE/records`,
@@ -45,9 +54,9 @@ One line per input entry, in input order:
 
 | Line | Meaning | Caller reading |
 |---|---|---|
-| `V <sequence>\n` | A store row matched the file's current identity and was younger than `VERIFIED_MAX_AGE`; verified without re-reading the record | verified |
-| `N <sequence>\n` | No usable row: the envelope was verified now and its payload will be stored | verified |
-| `F <sequence>\n` | The entry is not a well-formed single agreeing reference (no reference, several, digests unequal, or a legacy `{` control line) | run the Python `records.payload(entry)` path unchanged, including its error text |
+| `V <sequence>\n` | A store row, or a payload this pass verified earlier, matched the file's current identity (and, for a store row, was younger than `VERIFIED_MAX_AGE`); verified without re-reading the record | verified |
+| `N <sequence>\n` | Nothing usable was held: the envelope was verified now and its payload will be stored | verified |
+| `S <sequence>\n` | The entry carries no `[record]` line; `feed._VerificationPass.verify` ignores it and so does the caller | not verified, no fault |
 
 With `--payloads`, `V` and `N` are followed immediately by the payload body:
 
@@ -56,33 +65,46 @@ P <sequence> <payload-bytes>\n
 <the envelope's "payload" object, JSON, exactly `payload-bytes` long>\n
 ```
 
-The bytes are the object as `records.prepare` canonicalised it (`sort_keys=True`,
+The bytes are the canonical JSON of the payload (`sort_keys=True`,
 `separators=(",", ":")`), so the caller's `json.loads` sees the same dict it
-would have computed. `F` never carries a body.
+would have computed; `V` and `N` emit the same bytes for the same payload. `S`
+never carries a body.
 
 ## Exit status
 
 | Status | Meaning | Caller reading |
 |---|---|---|
 | 0 | Whole stream processed | Complete |
-| 2 | An entry that is a well-formed reference failed verification (missing, unreadable, checksum mismatch, invalid envelope); the fault text is on stderr, identical to the Python `ValueError` text, and the results before it are on stdout | Fail the pass as the Python verifier does today; store nothing from the replaced or unreadable directory |
+| 2 | The entry's `[record]` reference is not one well-formed agreeing reference, or verification failed (missing, unreadable, checksum mismatch, invalid envelope); the fault text is on stderr, identical to the Python `ValueError` text, and the results before it are on stdout | The Python pass raises the same `ValueError`; fail the pass, store nothing from the replaced or unreadable directory |
 | 1 | Usage, protocol, open, read, write or sqlite error | Not a verification result; UNKNOWN |
 | any other | Not part of the contract | UNKNOWN, never GREEN |
+
+The structural faults and their texts (`feed.py`/`records.py`):
+
+| Entry | Text |
+|---|---|
+| a legacy `{` control line *and* a `[record]` line | `mixed legacy JSON and immutable record reference` |
+| several `[record]` lines, or a line that does not fullmatch the reference pattern, or none (reached only with a reference line present) | `missing or invalid immutable record reference` |
+| the two digests in the reference disagree | `record digest mismatch or missing site context` |
 
 ## The store it writes (shared with Python today)
 
 - `SITE/records.verified.sqlite3`, `PRAGMA journal_mode=WAL`,
   `CREATE TABLE verified (digest TEXT PRIMARY KEY, ino INTEGER, size INTEGER,
   ctime_ns INTEGER, mtime_ns INTEGER, verified_at REAL, payload BLOB NOT NULL)`.
-- `payload` is `zlib.compress(json.dumps(payload, sort_keys=True,
-  separators=(",", ":")).encode(), 6)` — level 6, exactly as `records.py` writes
-  it, so a Python reader decompresses and parses it unchanged.
-- A row is a hit only while all four identity fields equal the record file's
-  current `(st_ino, st_size, st_ctime_ns, st_mtime_ns)` taken by
+- `payload` is the payload's canonical JSON, zlib-compressed at level 6, exactly
+  the bytes `records.py` writes. Byte-identity with C zlib's output is *not*
+  required and not claimed: the reader only decompresses, so interop is checked
+  as "Python's `json.loads` sees the same dict" in both directions.
+- A row is a hit only while all four identity fields are SQLite integers,
+  `verified_at` is a SQLite number, `payload` is a BLOB, the four equal the
+  record file's current `(st_ino, st_size, st_ctime_ns, st_mtime_ns)` taken by
   `lstat`/`fstatat` with no symlink follow through the records-directory fd, and
-  `0 <= now - verified_at < VERIFIED_MAX_AGE` (6 h).
-- A row that is missing, has a non-integer identity field, a non-numeric
-  `verified_at`, a non-`BLOB` or undecodable payload is a miss, never served.
+  `0 <= now - verified_at < VERIFIED_MAX_AGE` (6 h). Anything else is a miss,
+  never served.
+- The lookup applies those rules *before* decompressing, and a verify-only pass
+  never decompresses at all: a typed but corrupt blob is still a `V` there,
+  exactly as `VerifiedStore.lookup(..., verify_only=True)` returns `True`.
 - Writes are batched: new rows are inserted in one transaction per batch
   (`VERIFIED_FLUSH_ROWS = 500` rows) and one at the pass end. Before each
   flush, the descriptor for `SITE/records` must still be the directory the pass
@@ -93,7 +115,19 @@ would have computed. `F` never carries a body.
   current identity before its payload is served, so a record rewritten mid-pass
   is verified again, not served (`records.cached_payload`, the S0b rule).
 - A missing, unreadable or corrupt store disables the cache for the pass; it
-  never substitutes a stale payload. No caller-visible result changes.
+  never substitutes a stale payload. The directory swap check still runs.
+
+## Known differences from the Python path
+
+Both are unreachable through `records.prepare` (`allow_nan=False`, and its
+records are valid JSON), and both keep the exit status:
+
+- A record whose bytes hash to its digest but are not valid JSON: exit 2, with
+  `record is not JSON: <detail>` instead of CPython's `JSONDecodeError` text.
+- A record whose payload holds `NaN`/`Infinity` (Python's `json.loads` accepts
+  them by default; the Rust parser refuses) or an integer above `u64::MAX`
+  (the Rust parser reads it as a float). Everything up to `2^64-1` round-trips
+  exactly.
 
 ## Measured target (2026-11-10, live 544 MB store)
 
@@ -115,10 +149,9 @@ same release: `records.VerifiedStore`, `lookup`, `store`, `cached_payload`,
   version and updates this file in the same commit.
 - The store format is shared, so a format change needs both sides in one
   release. The Python reader accepts what this program writes and the other way
-  round; that interop is a test, not an assumption (checked 2026-11-10 for
-  `digest`, integer, REAL and BLOB columns in both directions).
+  round; that interop is a test, not an assumption.
 - The crate has a fetched dependency graph (`rusqlite` + bundled
-  `libsqlite3-sys`, 6 crates, 5.4 MB, 39.5 s, 378 MB peak; plan 10.13) and is
+  `libsqlite3-sys`, plus `libc`, `serde_json` and `flate2`; plan 10.13) and is
   **not** buildable offline from a bare checkout. The live install is therefore
   a prebuilt artifact at `$SITE/bin/mishe-records` recorded by sha256, source
   commit and contract revision in `$SITE/bin/mishe-records.install.json`; a
@@ -128,14 +161,17 @@ same release: `records.VerifiedStore`, `lookup`, `store`, `cached_payload`,
 ## Differential test
 
 `tests/test_mishe_records_verify.py` runs the binary when it resolves
-(`MISHE_RECORDS_BIN`, then the site install) and skips with the reason
-otherwise. It checks, against the live Python path on a fixture site:
+(`MISHE_RECORDS_BIN`, then the site install, sha256-checked against its install
+record) and skips with the reason otherwise. Checked against the live Python
+path on fixture sites (2026-11-10, 4 cases green):
 
-- byte-identical payloads for the whole fixture tape, hit and miss paths;
-- identical decision line per entry (`V`/`N`/`F`) and identical fault text and
-  exit status for each malformed case;
-- a store written by Python is read by the binary and a store written by the
-  binary is read by Python (`records.VerifiedStore`);
-- a record rewritten mid-pass is verified again, not served;
-- a records-directory swap before a flush stores nothing from the old inode;
-- a kill between flushes leaves a readable store with only older rows.
+- identical decision lines (`V`/`N`/`S`) and byte-identical payloads for the
+  same entries, cold and warm, including a digest repeated inside one pass;
+- a store written by the binary is served by `records.VerifiedStore` and by a
+  full `feed._VerificationPass`, with the same payloads;
+- identical fault text and exit status for a missing record;
+- a record rewritten after it was stored is verified again, not served.
+
+Not yet checked, and required before the cutover: a `[record]` line that does
+not fullmatch (and the `mixed legacy`/`several references`/`unequal digests`
+texts), the records-directory swap before a flush, and a kill between flushes.

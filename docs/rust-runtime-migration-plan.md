@@ -1334,3 +1334,36 @@ since the crate is not offline-buildable, 10.13). Scope was checked in the
 source: `cached_payload` and `verified_store` have no consumer in `src/`
 outside `feed.py:518,528`, so the seam is one call site.
 
+### 10.15 Slice B's crate written and differentially checked (2026-11-10)
+
+B's code now exists: `rust/mishe-records/` (a fetched graph — `rusqlite` with
+bundled sqlite, `libc`, `serde_json`, `flate2`; SHA-256 is written out in the
+crate rather than fetched). It builds in 1.6 s incremental under
+`systemd-run --user --scope -p MemoryMax=2G -p CPUQuota=100%` at `nice 19`,
+`-j2`, outside the checkout; the 6 deps plus `libc`/`serde_json`/`flate2` were
+downloaded once from `static.crates.io`. `Cargo.lock` is committed.
+
+What implementation changed in the contract, and why:
+
+- **`F` was the wrong decision and is gone.** Every case the committed v0.1
+  contract sent to "run the Python `records.payload` path" in fact *raises*:
+  `cached_payload` reaches `records.payload`, which reaches `records.envelope`,
+  which raises the same `ValueError` the pass propagates. Only an entry with no
+  `[record]` line at all is one the pass ignores. So the alphabet is now `V`,
+  `N` and `S` (no reference line: ignored, as today), and the structural cases
+  are exit-2 faults carrying the Python text. Contract version 0.2.
+- **`V` also covers a digest verified earlier in the same pass** (the `pending`
+  map), which `cached_payload` serves without re-reading the record. That is
+  what the differential test showed for a repeat reference: the binary said `V`
+  where the first draft of the test expected `N`.
+- The store blob is "canonical JSON, zlib level 6", not byte-identical to C
+  zlib's output; interop is checked as dict identity in both directions.
+
+Checked 2026-11-10 by `tests/test_mishe_records_verify.py` (4 cases green
+against a fresh build, sha256 `d2b2d519…8d5`): identical decision lines and
+payloads cold and warm; a store the binary wrote is served by
+`records.VerifiedStore` and by a whole `feed._VerificationPass`; identical fault
+text for a missing record; a rewritten record verified again, not served.
+Still open before the cutover: the reference-shape fault texts, the records
+directory swap at a flush, and a kill between flushes.
+
