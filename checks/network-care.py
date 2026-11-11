@@ -51,9 +51,44 @@ def window_copy_stale(home, repo):
     return 0
 
 
+def process_cmdline(pid):
+    """The command line of the process that is alive now with this pid (None when it cannot be read)."""
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+    except OSError:
+        return None
+
+
+def window_process(home, pane_pid, pane_cmd):
+    """0 when the process running in the pane right now is the recorded view, 2 when it is not (a pane
+    that was respawned, or a process other than the view, or a window state that names another pid),
+    3 when the process cannot be read.  pane_start_command alone is not enough: it names what the pane
+    was started with, not what runs in it now."""
+    if not pane_pid.isdigit():
+        print("network-care: tmux did not report the pane's process; cannot tell", file=sys.stderr)
+        return 3
+    cmdline = process_cmdline(pane_pid)
+    if cmdline is None:
+        print(f"network-care: pane process {pane_pid} is not readable; cannot tell", file=sys.stderr)
+        return 3
+    if "network_view.py" not in cmdline:
+        print(f"network-care: pane process {pane_pid} runs {cmdline.strip()!r}, not the network view", file=sys.stderr)
+        return 2
+    try:
+        recorded = str(json.loads((home / "network" / "window.json").read_text())["pid"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return 0  # no state yet: window_copy_stale reports that case
+    if recorded != pane_pid:
+        print(f"network-care: the pane runs pid {pane_pid} but the view recorded pid {recorded} "
+              "(its fingerprint describes another process)", file=sys.stderr)
+        return 2
+    return 0
+
+
 def window(session, home, repo):
     try:
-        r = subprocess.run(["tmux", "list-panes", "-t", f"{session}:network", "-F", "#{pane_dead} #{pane_start_command}"],
+        r = subprocess.run(["tmux", "list-panes", "-t", f"{session}:network", "-F",
+                            "#{pane_dead} #{pane_pid} #{pane_start_command}"],
                            capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"network-care: tmux unreadable: {exc}", file=sys.stderr)
@@ -64,9 +99,13 @@ def window(session, home, repo):
             return 3
         print(f"network-care: no window {session}:network", file=sys.stderr)
         return 2
-    if "network_view.py" not in r.stdout or r.stdout.startswith("1 "):
+    fields = r.stdout.split(maxsplit=2)
+    if len(fields) < 3 or "network_view.py" not in fields[2] or fields[0] != "0":
         print("network-care: window exists but is dead or not running network_view.py", file=sys.stderr)
         return 2
+    identity = window_process(home, fields[1], fields[2])
+    if identity != 0:
+        return identity
     stale = window_copy_stale(home, repo)
     if stale == 2:
         print("network-care: respawn it with: " + RESPAWN.format(session=session, repo=repo.resolve()), file=sys.stderr)
