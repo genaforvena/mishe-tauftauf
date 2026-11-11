@@ -25,6 +25,55 @@ def classification(paths):
     return boundary.release_classification(paths)
 
 
+def advance_candidates(repo, pin, head=None):
+    """Commits on the default branch after ``pin``, oldest first."""
+    return boundary.commits_after(repo, pin, head)
+
+
+def ordinary_prefix(repo, pin, commits):
+    """Newest commit whose whole ``pin..sha`` diff is ordinary, and where the walk stopped.
+
+    Returns ``(sha, paths, stopped_by)``: ``sha`` is the newest ordinary commit
+    reachable from ``pin`` (``pin`` itself when the first commit is strong),
+    ``paths`` the cumulative changed paths from ``pin`` to ``sha``, and
+    ``stopped_by`` the first strong-class commit sha, or ``None`` when the whole
+    range is ordinary. A strong commit is never stepped over: the ordinary
+    commits before it advance, and it waits for its own fresh review instead of
+    blocking them (plan pin-flow-20261108 item 1).
+    """
+    previous, paths = pin, []
+    for commit in commits:
+        changed = boundary.changed_paths(repo, previous, commit)
+        if classification(changed) == "strong":
+            return previous, paths, commit
+        paths.extend(changed)
+        previous = commit
+    return previous, paths, None
+
+
+def advance_target(repo, pin, *, ci_state, commits=None, head=None):
+    """The commit ``mishe release advance`` may point the pin at, and why nothing newer.
+
+    Walks the ordinary prefix newest-first and returns the newest commit whose
+    exact-SHA CI passed; earlier ordinary commits ride along in one atomic point.
+    ``ci_state(sha)`` is ``"pass"``/``"fail"``/``"pending"``/``"unknown"`` and
+    anything but ``"pass"`` is ineligible, so UNKNOWN CI never advances a commit.
+    Returns ``(sha, reason)`` with ``sha`` ``None`` when nothing may advance and
+    ``reason`` naming the first blocker for a reader.
+    """
+    commits = advance_candidates(repo, pin, head) if commits is None else list(commits)
+    target, _paths, stopped = ordinary_prefix(repo, pin, commits)
+    if target == pin:
+        return None, ("blocked-by-strong:" + stopped) if stopped else "pin-is-head"
+    prefix = commits[:commits.index(target) + 1]
+    for commit in reversed(prefix):
+        if ci_state(commit) == "pass":
+            if stopped:
+                return commit, "advance-stops-before-strong:" + stopped
+            return commit, (None if commit == target else "newest-ordinary-commit-ci-not-passing")
+    return None, "no-ordinary-commit-with-passing-ci"
+
+
 def current_link(home):
     """The one stable runtime path: every generated unit, the wrapper and plant units name this, never a sha."""
     return Path(home) / "runtime" / "current"

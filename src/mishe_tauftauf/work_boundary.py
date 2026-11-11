@@ -233,6 +233,11 @@ def changed_paths(repo, before, after):
     return [p for p in git(repo, "diff", "--name-only", "-z", before, after).split("\0") if p]
 
 
+def commits_after(repo, before, after=None):
+    """Commit SHAs after ``before`` up to ``after`` (default HEAD), oldest first."""
+    return [c for c in git(repo, "rev-list", "--reverse", f"{before}..{after or 'HEAD'}").splitlines() if c]
+
+
 def argv_file(path):
     from .state_files import read_json
     value = read_json(path)

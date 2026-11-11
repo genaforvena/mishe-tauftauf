@@ -526,3 +526,53 @@ def test_running_probe_without_installed_unit_is_left_alone(tmp_path, monkeypatc
     calls = _systemctl_recorder(monkeypatch, [dict(ActiveState="active")])
     assert _REAL_ENSURE_DUAL_PROBE(tmp_path, unit_dir) == "transient"
     assert calls == []
+
+
+def _advance_tree(tmp_path):
+    repo = tmp_path / "arepo"; repo.mkdir()
+    git(repo, "init", "-q"); git(repo, "config", "user.name", "t"); git(repo, "config", "user.email", "t@e.org")
+    (repo / "docs").mkdir(); (repo / "docs/a.md").write_text("a")
+    git(repo, "add", "."); git(repo, "commit", "-qm", "base"); pin = git(repo, "rev-parse", "HEAD")
+    (repo / "docs/b.md").write_text("b"); git(repo, "add", "."); git(repo, "commit", "-qm", "docs2"); c1 = git(repo, "rev-parse", "HEAD")
+    (repo / "tests").mkdir(); (repo / "tests/t_x.py").write_text("x"); git(repo, "add", "."); git(repo, "commit", "-qm", "tests"); c2 = git(repo, "rev-parse", "HEAD")
+    return repo, pin, c1, c2
+
+
+def test_advance_target_takes_newest_ordinary_commit_with_passing_ci(tmp_path):
+    repo, pin, c1, c2 = _advance_tree(tmp_path)
+    assert p.advance_candidates(repo, pin) == [c1, c2]
+    assert p.advance_target(repo, pin, ci_state=lambda s: "pass") == (c2, None)
+
+
+def test_advance_target_falls_back_when_newest_ordinary_ci_is_pending(tmp_path):
+    repo, pin, c1, c2 = _advance_tree(tmp_path)
+    target, reason = p.advance_target(repo, pin, ci_state=lambda s: "pass" if s == c1 else "pending")
+    assert (target, reason) == (c1, "newest-ordinary-commit-ci-not-passing")
+
+
+def test_advance_target_never_advances_without_a_passing_ci(tmp_path):
+    repo, pin, _c1, _c2 = _advance_tree(tmp_path)
+    assert p.advance_target(repo, pin, ci_state=lambda s: "unknown") == (None, "no-ordinary-commit-with-passing-ci")
+
+
+def test_advance_target_is_pin_when_pin_is_head(tmp_path):
+    repo, _pin, _c1, c2 = _advance_tree(tmp_path)
+    assert p.advance_target(repo, c2, ci_state=lambda s: "pass") == (None, "pin-is-head")
+
+
+def test_advance_target_stops_before_a_strong_commit(tmp_path):
+    repo, pin, c1, c2 = _advance_tree(tmp_path)
+    (repo / "duties.json").write_text("{}"); git(repo, "add", "."); git(repo, "commit", "-qm", "strong")
+    strong = git(repo, "rev-parse", "HEAD")
+    target, reason = p.advance_target(repo, pin, ci_state=lambda s: "pass")
+    assert target == c2
+    assert reason == "advance-stops-before-strong:" + strong
+
+
+def test_advance_target_blocked_when_the_first_commit_is_strong(tmp_path):
+    repo = tmp_path / "r2"; repo.mkdir()
+    git(repo, "init", "-q"); git(repo, "config", "user.name", "t"); git(repo, "config", "user.email", "t@e.org")
+    (repo / "README.md").write_text("x"); git(repo, "add", "."); git(repo, "commit", "-qm", "base"); pin = git(repo, "rev-parse", "HEAD")
+    (repo / "duties.json").write_text("{}"); git(repo, "add", "."); git(repo, "commit", "-qm", "strong")
+    strong = git(repo, "rev-parse", "HEAD")
+    assert p.advance_target(repo, pin, ci_state=lambda s: "pass") == (None, "blocked-by-strong:" + strong)

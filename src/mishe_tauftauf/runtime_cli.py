@@ -110,6 +110,11 @@ def register(sub) -> None:
     p.add_argument("--check-file", type=Path); p.add_argument("--observe-file", type=Path)
     p.add_argument("--patch", help="Fresh reviewed strong patch with activation/recovery plan")
     p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO"))
+    p = release.add_parser("advance"); p.set_defaults(func=cmd_runtime)
+    p.add_argument("--check-file", type=Path); p.add_argument("--observe-file", type=Path)
+    p.add_argument("--sha", help="explicit commit to consider as head (default: repository HEAD)")
+    p.add_argument("--plan", action="store_true", help="print the advance target and stop, with no effect")
+    p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO"))
     p = release.add_parser("consume"); p.set_defaults(func=cmd_runtime)
     for action in ("revert", "review"):
         p = release.add_parser(action); p.set_defaults(func=cmd_runtime); p.add_argument("--id", required=True)
@@ -187,6 +192,26 @@ def run(args) -> int:
             wake.resume_owed(home, declared_roles(home), now=now)
             print(json.dumps(result, indent=2))
             return 0
+        if args.release_command == "advance":
+            from . import ci_watch
+            if args.repo is None:
+                raise ValueError("release advance needs --repo")
+            pin = promotion.current_link(home).resolve().name
+            if len(pin) != 40 or any(c not in "0123456789abcdef" for c in pin):
+                raise ValueError("release advance: runtime/current does not name a release")
+            def ci_state(sha):
+                return ci_watch.read(home, workspace=args.repo, sha=sha, branch="main")["state"]
+            target, reason = promotion.advance_target(args.repo, pin, ci_state=ci_state, head=args.sha)
+            if args.plan or target is None:
+                print(json.dumps(dict(pin=pin, target=target, reason=reason), indent=2))
+                return 0
+            if args.check_file is None or args.observe_file is None:
+                raise ValueError("release advance needs --check-file and --observe-file to advance")
+            result = promotion.promote(home, args.repo, target,
+                check=work_boundary.argv_file(args.check_file), observe=work_boundary.argv_file(args.observe_file),
+                previous=pin)
+            print(json.dumps(result, indent=2))
+            return 0 if result.get("phase") == "delivered" else 3
         if args.release_command == "promote":
             result = promotion.promote(home, args.repo, args.sha,
                 check=work_boundary.argv_file(args.check_file), observe=work_boundary.argv_file(args.observe_file),
