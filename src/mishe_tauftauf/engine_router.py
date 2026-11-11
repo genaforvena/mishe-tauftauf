@@ -327,23 +327,37 @@ def _is_num(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _budget_windows(windows) -> list:
+def _budget_windows(windows, now) -> list:
     """The budget.json windows of one account in the window shape :mod:`engine_policy` reads.
 
     The file keys its windows by label (``5h``, ``7d``) and stores ``remaining`` and an
     epoch ``reset_at``; the policy iterates window rows with ``remaining_fraction`` and an
-    ISO ``reset_at``. This is that format mapping, and nothing else: no value is computed
-    and a window missing either number is left out rather than guessed at.
+    ISO ``reset_at``. A window missing either number is left out rather than guessed at.
+    A window the file labels FRESH is re-aged here against ``now``: the producer's label is
+    only true at production time, so a window that has since outlived MAX_AGE_S or reset is STALE.
     """
+    from . import budget_producer
     rows = []
     for name, w in (windows if isinstance(windows, dict) else {}).items():
         if not isinstance(w, dict):
             continue
         remaining, reset_at = w.get("remaining"), w.get("reset_at")
         if _is_num(remaining) and _is_num(reset_at):
+            state = w.get("state")
+            if state == "FRESH" and not budget_producer.window_fresh_at(w.get("observed_at"), reset_at, now):
+                state = "STALE"
             rows.append({"window": name, "limit": name, "remaining_fraction": float(remaining),
-                         "reset_at": _iso(reset_at * 1000), "provider_status": None, "state": w.get("state")})
+                         "reset_at": _iso(reset_at * 1000), "provider_status": None, "state": state})
     return rows
+
+
+def _row_state(state, windows: list):
+    """An account's state at decision time: a non-FRESH label stands; a FRESH one needs every window still FRESH."""
+    if state != "FRESH":
+        return state
+    if not windows:
+        return "UNREADABLE"
+    return "FRESH" if all(w["state"] == "FRESH" for w in windows) else "STALE"
 
 
 def live_status(home):
@@ -367,15 +381,23 @@ def live_status(home):
     return status_from_payload(data)
 
 
-def status_from_payload(data: dict) -> dict | None:
-    """The router's status shape from a schema-1 budget payload (shared by live_status and the producer)."""
+def status_from_payload(data: dict, now: float | None = None) -> dict | None:
+    """The router's status shape from a schema-1 budget payload (shared by live_status and the producer).
+
+    Re-aged at ``now`` (epoch seconds, default the current time): admission never trusts a FRESH label
+    the producer wrote earlier."""
     accounts = data.get("accounts")
     if not isinstance(accounts, dict):
         return None
-    return {"state": "FRESH", "unknowns": data.get("unknowns") or [],
-            "accounts": {alias: {"provider": row.get("provider"), "state": row.get("state"),
-                                 "reason": row.get("reason"), "windows": _budget_windows(row.get("windows"))}
-                         for alias, row in accounts.items() if isinstance(row, dict)}}
+    now = time.time() if now is None else now
+    out = {}
+    for alias, row in accounts.items():
+        if not isinstance(row, dict):
+            continue
+        windows = _budget_windows(row.get("windows"), now)
+        out[alias] = {"provider": row.get("provider"), "state": _row_state(row.get("state"), windows),
+                      "reason": row.get("reason"), "windows": windows}
+    return {"state": "FRESH", "unknowns": data.get("unknowns") or [], "accounts": out}
 
 
 def _windowed(routes: dict) -> bool:

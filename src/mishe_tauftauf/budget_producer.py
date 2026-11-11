@@ -22,25 +22,33 @@ SCHEMA = 1
 MAX_AGE_S = 900.0
 PRODUCER = "src/mishe_tauftauf/budget_producer.py"
 WINDOW_TAP_KEYS = {"5h": "five_hour", "7d": "seven_day"}
+SOURCE_STATES = ("FRESH", "STALE", "UNKNOWN", "UNATTRIBUTED", "UNREADABLE")
 
 
 def _num(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def _state(observed_at, reset_at, now) -> str:
-    fresh = now - MAX_AGE_S <= observed_at <= now + 5 and reset_at > now
-    return "FRESH" if fresh else "STALE"
+def window_fresh_at(observed_at, reset_at, now) -> bool:
+    """The one freshness rule: observed within MAX_AGE_S of `now` (not from the future) and reset still ahead.
+    The router re-applies this at decision time, so a label written earlier cannot outlive its window."""
+    return _num(observed_at) and _num(reset_at) and now - MAX_AGE_S <= observed_at <= now + 5 and reset_at > now
 
 
-def _window(used, reset_at, observed_at, source, now) -> dict:
+def _state(observed_at, reset_at, now, source_state="FRESH") -> str:
+    if source_state != "FRESH":
+        return source_state
+    return "FRESH" if window_fresh_at(observed_at, reset_at, now) else "STALE"
+
+
+def _window(used, reset_at, observed_at, source, now, source_state="FRESH") -> dict:
     return {
         "used": used,
         "remaining": 1 - used,
         "reset_at": reset_at,
         "source": source,
         "observed_at": observed_at,
-        "state": _state(observed_at, reset_at, now),
+        "state": _state(observed_at, reset_at, now, source_state),
     }
 
 
@@ -61,22 +69,31 @@ def native_claude_windows(tap, now) -> dict:
     return windows
 
 
-def engine_windows(account_row, now, status_at=None) -> dict:
-    """Windows from one engine status account row: {windows: {w: {remaining, reset_at, observed_at?}}}.
+def _source_state(value) -> str:
+    """The engine's own state label, or UNKNOWN when it is absent or not a label the engine reports."""
+    return value if value in SOURCE_STATES else "UNKNOWN"
 
-    The collector's quota.json carries the observation time once, at the top level (`at`), not per
-    window; `status_at` is that fallback so a live engine reading is not dropped as UNREADABLE."""
+
+def engine_windows(account_row, now) -> dict:
+    """Windows from one engine status account row: {state, observed_at?, windows: {w: {remaining, reset_at, state?}}}.
+
+    Provenance is the engine's own observation time: a window's `observed_at`, else the account's
+    (the collector writes the engine's fetched_at there). A row with no observation time is dropped, never
+    stamped with the collection time. A window is FRESH only when the engine labels it FRESH (and its
+    account too); any other label, or a missing label, is carried as that non-FRESH state."""
     windows = {}
     if not isinstance(account_row, dict):
         return windows
+    account_state = _source_state(account_row.get("state"))
     for window, v in (account_row.get("windows") or {}).items():
         if not isinstance(v, dict):
             continue
         remaining, reset_at = v.get("remaining"), v.get("reset_at")
-        observed_at = v.get("observed_at", account_row.get("observed_at", status_at))
+        observed_at = v.get("observed_at", account_row.get("observed_at"))
         if not all(_num(x) for x in (remaining, reset_at, observed_at)):
             continue
-        windows[window] = _window(1 - remaining, reset_at, observed_at, "engine-usage", now)
+        source = _source_state(v.get("state")) if account_state == "FRESH" else account_state
+        windows[window] = _window(1 - remaining, reset_at, observed_at, "engine-usage", now, source)
     return windows
 
 
@@ -84,11 +101,10 @@ def build_accounts(status: dict | None, tap, now: float) -> dict:
     """Accounts section. `status` is the engine status dict (or None if unreadable)."""
     accounts = {}
     engine = (status or {}).get("accounts") if isinstance(status, dict) else None
-    status_at = (status or {}).get("at") if isinstance(status, dict) else None
     for name, row in (engine or {}).items():
         if not isinstance(row, dict):
             continue
-        windows = engine_windows(row, now, status_at)
+        windows = engine_windows(row, now)
         accounts[name] = {"provider": row.get("provider"), "windows": windows}
     claude = native_claude_windows(tap, now)
     accounts["claude"] = {"provider": "claude-code", "windows": claude}
@@ -124,7 +140,7 @@ def build_routing(home: Path, payload: dict, now: float) -> dict:
     if routes is not None:
         running = er.running_candidates(home, now_ms=now * 1000,
                                         horizon_s=routes.get("hard_timeout_s", er.DEFAULT_HARD_TIMEOUT_S))
-    return er.assess(routes, er.status_from_payload(payload), state["cooling"], now * 1000, running=running)
+    return er.assess(routes, er.status_from_payload(payload, now), state["cooling"], now * 1000, running=running)
 
 
 def write_atomic(path: Path, payload: dict) -> None:
