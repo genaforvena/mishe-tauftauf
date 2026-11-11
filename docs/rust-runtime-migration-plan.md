@@ -2250,3 +2250,51 @@ page cache; `process_time` only, so the framer's own fact cost and the records
 child's kind column are not charged here — they are the port's implementation
 cost, measured after it is built. The 0.521 survivor decode is a floor on what
 stays; a ported consumer may load the survivors differently.
+
+### 10.30 Shape B piece 1 built and differential-exact: `mishe-tape frames --facts` (2026-11-11)
+
+The framer now emits the byte-level eligibility facts §10.27's Shape B needs, in
+the pass it already runs. CLI `--facts` is additive: without it the stream is
+byte-identical to 0.2's predecessor, proven by comparing the SHA-256 of both
+binaries' default output over the live tape (`ecefae72…`, one digest, no
+`--facts`). The fact line, contract version 0.2
+(`rust/mishe-tape/CONTRACT.md`):
+
+```text
+F <sequence> <reserved> <reference-lines> <sole-final> <single-line> <digest>
+```
+
+It carries exactly the predicates the classifier and the child filter use to
+discard an entry without decoding it — `has_outcome_prefix(first_significant_line)`,
+`len(reference_lines)`, `sole_final_reference`, `len(lines) == 1` and
+`reference_digest(refs[0])` (`outcome_events.py:130-170`, `feed.py:674`) — so the
+consumer never computes them twice. The predicates are CPython `str` rules
+(`splitlines`, `lstrip` including the `\x1c`-`\x1f` extension, `REFERENCE_RE`
+fullmatch); `rust/mishe-tape/src/facts.rs` mirrors
+`rust/mishe-records/src/pytxt.rs` (copied, not imported; the framer has no
+dependencies). Because the framer holds the body as valid UTF-8 and applies the
+same rules to the same characters, there is **no deferral arm** — the facts are
+exact, unlike `mishe-tape-facts`' ASCII-only DEFER discipline.
+
+**Evidence.** `tests/test_mishe_tape_frames_facts.py` compares each `F` field with
+the Python predicate for 15 crafted bodies (indented reference, NBSP and US
+`lstrip`, reserved header after blank lines, two references, reference not last,
+CRLF) and pins the additive promise and the `--offsets --facts` usage error.
+One pass over the live tape frames 299,640 entries with 0 mismatches
+(`artifacts/rust-plan-20261107/facts-live-differential-20261111.py`): 4,774
+reserved, 196,351 reference lines (each entry exactly one, always final),
+1,260 single-line bodies. The golden framing suite is unchanged.
+
+**Not yet delivered.** This is only the carrier. The `F` line has no consumer
+until Shape B's pieces 2 and 3 exist (`mishe-records verify`'s kind column;
+`classify_outcomes` consuming the facts), and those take the strong gate because
+they touch `outcome_publication.py` and a store schema. The framer's own release
+is still pending: promote via `mishe component promote mishe-tape <SHA>` with a
+check file and re-point `$SITE/bin/mishe-tape` + its `install.json`, then observe
+one live read. Build outside the checkout:
+`CARGO_TARGET_DIR=$SITE/artifacts/rust-plan-20261107/target-tape systemd-run --user
+--scope -q -p MemoryMax=1G nice -n 19 ~/.cargo/bin/cargo build --release --locked`.
+
+Limits: the fact cost itself is not yet measured against §10.29's 1.44-CPU-s
+budget — the live differential pass is a correctness check, not a timed A/B; that
+measurement belongs with piece 3, where the payoff is observable.

@@ -1,4 +1,4 @@
-# mishe-tape contract (version 0.1, responsibility: tape framing)
+# mishe-tape contract (version 0.2, responsibility: tape framing)
 
 Template for every Rust slice: the contract lives next to the code, and it is
 the thing a differential test checks. A caller depends on this file, not on
@@ -14,7 +14,7 @@ Python until their own slices (see `docs/rust-runtime-migration-plan.md`, sectio
 ## Invocation
 
 ```text
-mishe-tape frames PATH [--start N] [--offset N] [--size N] [--offsets]
+mishe-tape frames PATH [--start N] [--offset N] [--size N] [--offsets] [--facts]
 ```
 
 - `PATH`: a tape file, or `/proc/self/fd/N` when the caller holds an open handle
@@ -25,6 +25,10 @@ mishe-tape frames PATH [--start N] [--offset N] [--size N] [--offsets]
 - `--size N`: absolute end offset in bytes. Reading stops there.
 - `--offsets`: print frame offsets (`O <sequence> <offset>` per line) instead of
   entry bodies. Used to rebuild the checkpoint frame index.
+- `--facts`: after each entry, append one eligibility-fact line (below). Output
+  is otherwise unchanged, and without the flag the stream is byte-identical to
+  version 0.1. `--offsets` and `--facts` both select the output shape and cannot
+  be combined (usage error).
 - stdin is not read. Nothing is written to a file.
 
 Unknown flags or missing values are a usage error (exit 1).
@@ -46,6 +50,35 @@ E <sequence> <timestamp> <source> <body-bytes>\n
   offset of the header line.
 
 Every entry before a fault is written before the fault is reported.
+
+## Facts (stdout, only with `--facts`)
+
+After each entry's body and its terminating newline, one line:
+
+```text
+F <sequence> <reserved> <reference-lines> <sole-final> <single-line> <digest>
+```
+
+- `reserved`: `1` when the entry's first content line, after `str.lstrip`, opens
+  with `Wall outcome ` (`outcome_publication.has_outcome_prefix` over
+  `first_significant_line`), else `0`.
+- `reference-lines`: the count of lines whose `str.lstrip` opens with `[record]`
+  (`outcome_publication.reference_lines`).
+- `sole-final`: `1` when there is exactly one such line and it is the body's last
+  line (`sole_final_reference`), else `0`.
+- `single-line`: `1` when the body is a single line, else `0`.
+- `digest`: the digest of the first reference line under
+  `REFERENCE_RE.fullmatch` (`reference_digest`), or `-` when there is no
+  reference line or it is not a full match (an indented reference, say).
+
+The facts are exact, not approximate: the framer holds the body as valid UTF-8
+and applies CPython's `str` rules (`splitlines`, `lstrip`, the `\x1c`-`\x1f`
+whitespace extension) on the same characters Python sees, so there is no deferral
+arm. They are computed for the disposal decisions in `outcome_events`
+(`outcome_publication.REFERENCE_LINE_PREFIX` / `OUTCOME_PREFIX`) only; record
+verification and the kind of a cited record stay in `mishe-records`.
+Differential evidence: `tests/test_mishe_tape_frames_facts.py`, plus one pass over
+the live tape (299,640 entries, 0 mismatches, 2026-11-11).
 
 ## Exit status
 
@@ -91,6 +124,9 @@ Every entry before a fault is written before the fault is reported.
 
 - The version is the crate version in `Cargo.toml`. A change to the output
   format, exit meanings, or fault texts bumps the minor version and updates this file in the same commit.
+- Version 0.2 (2026-11-11): `--facts` added. `reference-lines`/`sole-final`/`single-line` carry the byte-level
+  eligibility facts Shape B needs; without `--facts` the stream is byte-identical to 0.1, verified by comparing
+  the SHA-256 of both binaries' default output over the live tape.
 - A caller pins to a version through a hash-pinned install. The live install is
   site-local at `$SITE/bin/mishe-tape`, checked on every resolution against
   `$SITE/bin/mishe-tape.install.json` (sha256, source commit, contract revision);

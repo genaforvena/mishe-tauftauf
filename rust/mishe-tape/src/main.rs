@@ -1,4 +1,4 @@
-//! `mishe-tape frames PATH [--size N] [--start N]`
+//! `mishe-tape frames PATH [--size N] [--start N] [--offset N] [--offsets] [--facts]`
 //!
 //! `--size N` is an absolute end offset in bytes; `--offset N` starts there.
 //! Frames the chat tape and writes each entry to stdout as:
@@ -8,18 +8,23 @@
 //! <body bytes, exactly body-bytes long>\n
 //! ```
 //!
+//! `--facts` appends one eligibility-fact line after each entry (see `facts.rs`
+//! and `CONTRACT.md`); without it the output is unchanged. `--offsets` prints
+//! frame offsets instead, and cannot be combined with `--facts`.
+//!
 //! Entries are written in tape order, and every entry before a fault is written.
 //! Exit status: 0 when the whole range frames, 2 on a framing fault (the Python
 //! `FeedError` text is written to stderr after the entries), 1 on a usage or
 //! I/O error. Any other status is unobserved to a caller.
 
+mod facts;
 mod frames;
 
 use std::io::{self, BufWriter, Read, Write};
 use std::process::ExitCode;
 
 fn usage() -> ExitCode {
-    eprintln!("usage: mishe-tape frames PATH [--size N] [--start N]");
+    eprintln!("usage: mishe-tape frames PATH [--size N] [--start N] [--offset N] [--offsets] [--facts]");
     ExitCode::from(1)
 }
 
@@ -37,6 +42,7 @@ fn main() -> ExitCode {
     let mut start: u128 = 1;
     let mut base_offset: u64 = 0;
     let mut offsets_only = false;
+    let mut facts_only = false;
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
@@ -65,8 +71,16 @@ fn main() -> ExitCode {
                 offsets_only = true;
                 i += 1;
             }
+            "--facts" => {
+                facts_only = true;
+                i += 1;
+            }
             _ => return usage(),
         }
+    }
+    // Both select the output shape; combining them has no meaning.
+    if offsets_only && facts_only {
+        return usage();
     }
 
     // Reading through the path is for the CLI. A caller that holds an open
@@ -105,7 +119,21 @@ fn main() -> ExitCode {
             entry.body.len()
         )?;
         out.write_all(entry.body.as_bytes())?;
-        out.write_all(b"\n")
+        out.write_all(b"\n")?;
+        if facts_only {
+            let f = facts::facts(&entry.body);
+            writeln!(
+                out,
+                "F {} {} {} {} {} {}",
+                entry.sequence,
+                u8::from(f.reserved),
+                f.references,
+                u8::from(f.sole_final),
+                u8::from(f.single_line),
+                f.digest.as_deref().unwrap_or("-")
+            )?;
+        }
+        Ok(())
     });
     let flushed = out.flush();
     match result {

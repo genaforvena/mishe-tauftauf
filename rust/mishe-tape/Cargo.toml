@@ -1,6 +1,6 @@
 [package]
 name = "mishe-tape"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Tape framing core for Mishe: the byte-exact Rust counterpart of feed.iter_feed_entries"
 license = "CC0-1.0"
