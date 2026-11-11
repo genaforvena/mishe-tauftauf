@@ -113,3 +113,10 @@ def test_cli_dry_run_reads_real_shaped_files(tmp_path: Path, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["schema"] == 1
     assert "5h" not in out["accounts"]["claude"]["windows"]
+
+
+def test_routing_without_routes_file_is_unknown_not_green(tmp_path: Path):
+    payload = bp.build_budget(None, tap(), NOW)
+    routing = bp.build_routing(tmp_path, payload, NOW)
+    assert routing["state"] == "UNKNOWN"
+    assert "routes.json" in routing["reason"]

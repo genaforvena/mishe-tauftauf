@@ -320,6 +320,11 @@ def live_status(home):
     produced_at = data.get("produced_at")
     if not _is_num(produced_at) or time.time() - produced_at > budget_producer.MAX_AGE_S:
         return None
+    return status_from_payload(data)
+
+
+def status_from_payload(data: dict) -> dict | None:
+    """The router's status shape from a schema-1 budget payload (shared by live_status and the producer)."""
     accounts = data.get("accounts")
     if not isinstance(accounts, dict):
         return None
