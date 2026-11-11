@@ -56,7 +56,7 @@ from .units import unit_file_service_names
 from .unit_cpu import read_unit_cpu
 from .unit_psi_reading import read_unit_psi
 from .roles import declared as seated_roles
-from .feed import (Feed, FeedEntry, TapeUnknown, entry_timestamp as _feed_entry_timestamp,
+from .feed import (Feed, FeedEntry, RecordsUnknown, TapeUnknown, entry_timestamp as _feed_entry_timestamp,
                   iter_feed_file, publication_lock, read_scan_acquisitions, read_scan_series,
                   read_text_tail)
 from .chat_protocol import decode_lifecycle, ProtocolError
@@ -1300,7 +1300,7 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
         return unknown("chat tape unavailable")
     try:
         entries = Feed(home).entries()
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecordsUnknown) as exc:
         return unknown(f"chat tape unreadable: {exc}")
     settlements: list[tuple[datetime, str]] = []
     for entry in entries:
@@ -1584,7 +1584,7 @@ def _mind_artifact_recurrence(home: Path, now: datetime | None = None,
     try:
         if entries is None:
             entries = Feed(home).entries()
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecordsUnknown):
         entries = None
     if entries is None:
         return {"id": "sense.mind.artifact-recurrence", "state": "unknown",
@@ -7149,7 +7149,7 @@ def _scan_snapshot(home: Path) -> list | None:
     """
     try:
         return Feed(home).entries()
-    except (OSError, ValueError, TapeUnknown):
+    except (OSError, ValueError, RecordsUnknown, TapeUnknown):
         return None
 
 

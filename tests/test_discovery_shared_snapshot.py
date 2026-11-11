@@ -13,12 +13,14 @@ word when the shared read fails.
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from mishe_tauftauf import discovery, feed as feedmod, store_census
+from tests.tape_binary import pin_tape_binary
 
 
 def _tape_entry(sequence: int, timestamp: str, source: str, body: str) -> bytes:
@@ -154,3 +156,34 @@ def test_a_failed_shared_read_leaves_each_reading_on_its_own_read(monkeypatch, t
     served = discovery._coord_dm_disposition_age(home, entries=entries)
     assert served["state"] == "verified"
     assert served["dms"] == 0
+
+
+def test_a_missing_verifier_degrades_the_readings_not_the_scan(
+        monkeypatch, tmp_path, pin_tape_binary):
+    """A verifier fault is UNKNOWN, not a failed scan.
+
+    ``RecordsUnknown`` is the verifier's sibling of ``TapeUnknown``: a reading
+    that degrades a framer fault to UNKNOWN must degrade a verifier fault the
+    same way. A missing or sha-mismatched ``mishe-records`` (the
+    activation-order case) must not turn one broken binary into a failed scan.
+    """
+    home = _site(tmp_path, [
+        (1, "2026-10-06T12:30:00Z", "health",
+         "[record] records/" + "a" * 64 + ".json sha256=" + "a" * 64 + "\n"),
+    ])
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t",
+                    "commit", "--allow-empty", "-qm", "baseline"], cwd=tmp_path, check=True)
+    # The site has no usable verifier: the override names no executable file.
+    monkeypatch.setenv("MISHE_RECORDS_BIN", str(tmp_path / "missing-records"))
+
+    assert discovery._scan_snapshot(home) is None
+
+    # Each reading falls back to its own read and reports the fault as UNKNOWN
+    # rather than letting RecordsUnknown escape the scan.
+    mix = discovery._seed_settle_result_mix(home)
+    assert mix["state"] == "unknown"
+    assert "MISHE_RECORDS_BIN names no executable file" in mix["sample"]
+    recurrence = discovery._mind_artifact_recurrence(home)
+    assert recurrence["state"] == "unknown"
+    assert recurrence["sample"] == "feed unreadable"

@@ -1524,3 +1524,48 @@ row. Probe and raw output are site-local
 (`artifacts/rust-plan-20261107/sliceB_wrapper_ab.py`,
 `sliceB-wrapper-ab-20261111T0048Z.txt`), not committed.
 
+### 10.19 The review's one defect: a verifier fault now degrades to UNKNOWN like a framer fault (2026-11-11)
+
+The non-author review of the cutover (genome, DM 299473; evidence
+`artifacts/genome-records-diff-20261111/FINDINGS.md`) found the composition
+correct on live bytes — 240/240 record-bearing entries byte-identical to the
+retired Python verifier, five fault cases with identical `ValueError` texts
+(including the errno wording), 240/240 store hits against the live 544 MB
+Python-written store, no dangling reference to a retired name — with one
+defect: `RecordsUnknown` was caught nowhere, while the `ValueError` it replaced
+was, and its sibling `TapeUnknown` is.
+
+Three handlers wrap a record-verifying read and fell back on failure —
+`discovery.py:1302` (`sense.seed.settle-result-mix`) and `:1586`
+(`sense.mind.artifact-recurrence`) name `(OSError, ValueError)`, `:7151`
+(`_scan_snapshot`) adds `TapeUnknown`. An independent AST audit
+(`artifacts/rust-plan-20261107/audit_catch_sites.py`, site-local) of every
+`try` block that directly calls `entries()`/`role_entries()`/`view_entries()`
+names exactly those three sites and no others. `discovery.py:4859/4886` read
+through `iter_feed_file`, which does not verify records, so they cannot see it.
+
+Effect and trigger: a missing or sha-mismatched `$SITE/bin/mishe-records` — the
+activation-order case where the pin moves before the binary is installed —
+propagated out of `_scan_snapshot` and failed the whole scan (`scan()` re-raises
+after `status=failed`) instead of one reading reporting UNKNOWN. Fail-closed
+RED, so not a soundness bug: a fail-soft regression against the framer fault,
+which all three handlers already degrade.
+
+Fix (this commit, four lines): `from .feed import RecordsUnknown` and the name
+added to the three tuples. Reproduced before it and confirmed after with
+`MISHE_TAPE_BIN` at the live framer and no records binary: `_scan_snapshot`
+propagated `RecordsUnknown : mishe-records unavailable` before, returns `None`
+after, and the fallback readers report UNKNOWN. The regression test is
+`tests/test_discovery_shared_snapshot.py::test_a_missing_verifier_degrades_the_readings_not_the_scan`
+(RED on the pre-fix source with `RecordsUnknown: MISHE_RECORDS_BIN names no
+executable file`, GREEN after).
+
+Checks: the cutover's set plus that file — 101 passed, 13 subtests passed, the
+same four pre-existing environment failures in it as before the commit;
+`tests/test_discovery.py` is 48 failed / 351 passed with a byte-identical
+failure list on both sides of the fix
+(`artifacts/rust-plan-20261107/discovery-{before,after}.txt`); `tools/check_parsing.py`
+PASS. Activation still takes the strong path: the fixed bytes confirmed by the
+non-author reviewer, then the deterministic activation, revert and reapply
+checks, then a live cold `wall show --owner genome` on the new pin.
+
