@@ -12,6 +12,19 @@ every structural case the old `F` covered *raises* (`records.payload` reaches
 The `V` row now also covers a digest already verified in the same pass, which is
 what `cached_payload`'s `pending` map serves without re-reading the record.
 
+Version 0.3 (2026-11-11, cutover): the feed reader runs this program instead of a
+Python verifier, through `feed._VerificationPass`/`feed._RecordsChild`. The caller
+streams entries while a thread drains the decisions, and it sends only the entries
+that carry a `[record]` line (the entries Python's pass ignored), so:
+- the caller's sink and the Python store both go away; this program owns
+  verification and `SITE/records.verified.sqlite3` outright;
+- the swap-check bound counts *record-bearing* entries, because those are the
+  entries this program sees. A replaced records directory is still noticed at a
+  flush (≤ `VERIFIED_FLUSH_ROWS` rows, and at least every `VERIFIED_BATCH_ENTRIES`
+  inputs) and the pass fails closed;
+- an entry with a `[record]` line but no site home is a `RecordsUnknown` at the
+  caller, never a guessed site (unreachable in a live read).
+
 ## Scope
 
 `mishe-records` owns two things and nothing else:

@@ -1,9 +1,11 @@
-"""Differential checks for the ``mishe-records`` binary.
+"""Contract checks for the ``mishe-records`` binary and the feed reader that calls it.
 
-While the Python path is live it is the authority: ``feed._VerificationPass`` and
-``records.cached_payload`` must reach the same decisions, the same payloads and the same
-fault text as the binary. The contract is ``rust/mishe-records/CONTRACT.md``. Runs when a
-binary resolves (``MISHE_RECORDS_BIN``, then the site install), else skips with the reason.
+Record verification and the verified store live in ``rust/mishe-records`` (the
+artefact the feed reader composes); the contract is ``rust/mishe-records/CONTRACT.md``.
+Since the cutover there is no Python authority left to differential against, so these
+cases drive the binary directly *and* through ``Feed._verify_records``/``Feed.entries``,
+which is the caller. Runs when a binary resolves (``MISHE_RECORDS_BIN``, then the site
+install), else skips with the reason.
 """
 from __future__ import annotations
 
@@ -19,12 +21,15 @@ from pathlib import Path
 import pytest
 
 from mishe_tauftauf import feed, records
-from tests.records_binary import RECORDS_BIN, RECORDS_SKIP_REASON
+from tests.records_binary import RECORDS_BIN, RECORDS_SKIP_REASON, pin_records_binary
 
-pytestmark = pytest.mark.skipif(RECORDS_BIN is None, reason=RECORDS_SKIP_REASON)
+pytestmark = [pytest.mark.skipif(RECORDS_BIN is None, reason=RECORDS_SKIP_REASON),
+              pytest.mark.usefixtures("pin_records_binary")]
 
 STAMP = "2026-11-10T00:00:00Z"
 PAYLOADS = ({"text": "one", "n": 1}, {"text": "two", "n": 2})
+#: The store file name the binary and the contract share.
+STORE_NAME = "records.verified.sqlite3"
 
 
 def frame(entries: list[tuple[int, str]]) -> bytes:
@@ -68,7 +73,7 @@ def emitted_payloads(stdout: str) -> dict[int, dict]:
 
 
 def fixtures(tmp_path: Path):
-    """A site for the binary and an identical one for the Python authority.
+    """A site for the binary and an identical one for the wrapper.
 
     The record content is a pure function of the payload, so both sites hold the same
     digests and the same entries.
@@ -83,50 +88,47 @@ def fixtures(tmp_path: Path):
     return tmp_path / "site", tmp_path / "py-site", entries
 
 
-def python_sink(site: Path, entries: list[tuple[int, str]]) -> dict[int, dict]:
-    """What the Python pass yields for the same entries: the authority, run in full."""
-    objects = [feed.FeedEntry(sequence, STAMP, "test", body, site) for sequence, body in entries]
-    verification = feed._VerificationPass()
+def objects(site: Path, entries: list[tuple[int, str]]) -> list[feed.FeedEntry]:
+    return [feed.FeedEntry(sequence, STAMP, "test", body, site) for sequence, body in entries]
+
+
+def wrapper_sink(site: Path, entries: list[tuple[int, str]]) -> dict[int, dict]:
+    """What the feed reader yields for the same entries: the caller, run in full."""
     sink: dict[int, dict] = {}
-    try:
-        verification.verify(objects, sink)
-        verification.commit()
-    finally:
-        verification.close()
+    feed.Feed._verify_records(objects(site, entries), sink)
     return sink
+
+
+def wrapper_fault(site: Path, bodies: list[str]) -> str:
+    """The text ``Feed._verify_records`` raises for a pass that faults, and nothing else."""
+    with pytest.raises(ValueError) as raised:
+        feed.Feed._verify_records([feed.FeedEntry(n, STAMP, "test", body, site)
+                                    for n, body in enumerate(bodies, 1)])
+    return str(raised.value)
 
 
 def digest_of(reference: str) -> str:
     return reference.split("/", 1)[1].split(".", 1)[0]
 
 
-def test_cold_pass_matches_python_and_leaves_a_store_python_serves(tmp_path):
+def test_cold_pass_decides_and_leaves_a_store_the_wrapper_serves(tmp_path):
     site, py_site, entries = fixtures(tmp_path)
-    expected = python_sink(py_site, entries)
+    expected = wrapper_sink(py_site, entries)
     assert set(expected) == {1, 2, 3}
 
     stdout, status, stderr = run_verify(site, entries, "--payloads")
     assert status == 0, stderr
     assert decisions(stdout) == [(1, "N"), (2, "N"), (3, "V"), (4, "S"), (5, "S")]
     assert emitted_payloads(stdout) == expected
+    assert store_rows(site) == sorted(digest_of(dict(entries)[n]) for n in (1, 2))
 
-    # The store the binary wrote is one Python's own reader serves from.
-    store = records.VerifiedStore(site)
-    directory = records._directory(site)
-    try:
-        now = time.time()
-        for sequence in (1, 2):
-            digest = digest_of(dict(entries)[sequence])
-            assert store.lookup(digest, directory, now, verify_only=True) is True
-    finally:
-        os.close(directory)
-    records._STORES.clear()
-    assert python_sink(site, entries) == expected
+    # A second wrapper pass reads the store the binary wrote and serves it.
+    assert wrapper_sink(site, entries) == expected
 
 
 def test_warm_store_is_served_again(tmp_path):
     site, py_site, entries = fixtures(tmp_path)
-    expected = python_sink(py_site, entries)
+    expected = wrapper_sink(py_site, entries)
 
     assert run_verify(site, entries, "--payloads")[1] == 0
     stdout, status, stderr = run_verify(site, entries, "--payloads")
@@ -135,7 +137,7 @@ def test_warm_store_is_served_again(tmp_path):
     assert emitted_payloads(stdout) == expected
 
 
-def test_missing_record_fault_text_matches_python(tmp_path):
+def test_missing_record_fault_text(tmp_path):
     site, _, _ = fixtures(tmp_path)
     digest = hashlib.sha256(b"never written").hexdigest()
     body = records.reference(digest)
@@ -143,11 +145,7 @@ def test_missing_record_fault_text_matches_python(tmp_path):
     stdout, status, stderr = run_verify(site, [(7, body)])
     assert status == 2
     assert stdout == ""
-
-    entry = feed.FeedEntry(7, STAMP, "test", body, site)
-    with pytest.raises(ValueError) as raised:
-        records.cached_payload(entry, {}, records.VerifiedStore(site), verify_only=True)
-    assert stderr == str(raised.value)
+    assert wrapper_fault(site, [body]) == stderr
 
 
 def test_rewritten_record_is_verified_again_not_served(tmp_path):
@@ -164,18 +162,14 @@ def test_rewritten_record_is_verified_again_not_served(tmp_path):
     assert status == 2
     assert stdout == "", "a rewritten record must not be served from the store"
     assert stderr == "immutable record checksum mismatch"
-
-    entry = feed.FeedEntry(1, STAMP, "test", body, site)
-    with pytest.raises(ValueError) as raised:
-        records.cached_payload(entry, {}, records.VerifiedStore(site), verify_only=True)
-    assert str(raised.value) == "immutable record checksum mismatch"
+    assert wrapper_fault(site, [body]) == "immutable record checksum mismatch"
 
 
-# --- the cases CONTRACT.md still listed as required before the cutover ---
+# --- the structural faults of CONTRACT.md ---
 
 
 def plain_site(tmp_path: Path):
-    """A site with one record and one site-level reference, no Python twin needed."""
+    """A site with one record and one site-level reference, no twin needed."""
     site = tmp_path / "site"
     site.mkdir()
     return site, records.prepare(site, PAYLOADS[0])
@@ -183,7 +177,7 @@ def plain_site(tmp_path: Path):
 
 def store_rows(site: Path) -> list[str]:
     """The digests the shared store holds, or ``[]`` while it is not readable yet."""
-    path = site / records.VERIFIED_STORE
+    path = site / STORE_NAME
     if not path.exists():
         return []
     try:
@@ -210,7 +204,7 @@ def bytes_read(pid: int) -> int | None:
 
 @pytest.mark.parametrize("kind", ["mixed-legacy", "invalid-reference", "two-references",
                                   "unequal-digests", "indented-reference"])
-def test_structural_fault_text_matches_python_and_keeps_earlier_results(tmp_path, kind):
+def test_structural_fault_text_and_earlier_results(tmp_path, kind):
     site, reference = plain_site(tmp_path)
     digest = digest_of(reference)
     other = digest_of(records.prepare(site, PAYLOADS[1]))
@@ -238,41 +232,87 @@ def test_structural_fault_text_matches_python_and_keeps_earlier_results(tmp_path
     assert status == 2
     assert stderr == expected
     assert decisions(stdout) == [(1, "N")], "the results before the fault are on stdout"
-
-    entry = feed.FeedEntry(2, STAMP, "test", bodies[kind], site)
-    with pytest.raises(ValueError) as raised:
-        records.cached_payload(entry, {}, records.VerifiedStore(site), verify_only=True)
-    assert str(raised.value) == expected, "the Python pass raises the same text"
+    assert wrapper_fault(site, [reference, bodies[kind]]) == expected
 
 
-def test_records_directory_swap_before_a_flush_fails_closed(tmp_path, monkeypatch):
-    site, py_site, entries = fixtures(tmp_path)
+def test_a_corrupt_store_still_verifies_the_pass(tmp_path):
+    site, _, entries = fixtures(tmp_path)
+    expected = wrapper_sink(site, entries)
+    (site / STORE_NAME).write_bytes(b"not a database" * 100)  # a corrupt store is a miss
+
+    # The cache is disabled for the pass; the pass verifies every record again.
+    assert wrapper_sink(site, entries) == expected
+
+
+def test_two_homes_in_one_pass_each_verify(tmp_path):
+    mine, theirs = tmp_path / "mine", tmp_path / "theirs"
+    mine.mkdir()
+    theirs.mkdir()
+    payloads = {"mine": {"site": "mine"}, "theirs": {"site": "theirs"}}
+    references = {"mine": records.prepare(mine, payloads["mine"]),
+                  "theirs": records.prepare(theirs, payloads["theirs"])}
+    entries = [feed.FeedEntry(1, STAMP, "test", references["mine"], mine),
+               feed.FeedEntry(2, STAMP, "test", references["theirs"], theirs)]
+    sink: dict[int, dict] = {}
+
+    feed.Feed._verify_records(entries, sink)
+
+    assert sink == {1: payloads["mine"], 2: payloads["theirs"]}
+    for key, site in (("mine", mine), ("theirs", theirs)):
+        assert store_rows(site) == [digest_of(references[key])], "each home has its own child and store"
+
+
+def test_missing_records_directory_fails_the_pass_closed(tmp_path):
+    site, reference = plain_site(tmp_path)
+    (site / "records").rename(site / "records.moved")
+
+    with pytest.raises(ValueError, match="record unavailable"):
+        feed.Feed._verify_records(objects(site, [(1, reference)]))
+
+
+def test_a_stale_store_row_is_not_served(tmp_path):
+    site, _, entries = fixtures(tmp_path)
+    assert run_verify(site, entries)[1] == 0  # cold: everything verified and stored
+    connection = sqlite3.connect(site / STORE_NAME)
+    try:
+        with connection:
+            connection.execute("UPDATE verified SET verified_at = 0")  # older than the 6 h bound
+    finally:
+        connection.close()
+
+    stdout, status, stderr = run_verify(site, entries)
+    assert status == 0, stderr
+    assert decisions(stdout) == [(1, "N"), (2, "N"), (3, "V"), (4, "S"), (5, "S")]
+
+
+def test_a_typed_but_corrupt_blob_is_served_only_without_payloads(tmp_path):
+    site, _, entries = fixtures(tmp_path)
+    assert run_verify(site, entries)[1] == 0
+    connection = sqlite3.connect(site / STORE_NAME)
+    try:
+        with connection:
+            connection.execute("UPDATE verified SET payload = ?", (b"not zlib",))
+    finally:
+        connection.close()
+
+    # A verify-only caller trusts the identity and never decompresses the blob.
+    stdout, status, stderr = run_verify(site, entries)
+    assert status == 0, stderr
+    assert decisions(stdout)[:3] == [(1, "V"), (2, "V"), (3, "V")]
+
+    # A payload reader cannot decode it, so it is a miss: verify again and emit the payload.
+    stdout, status, stderr = run_verify(site, entries, "--payloads")
+    assert status == 0, stderr
+    assert decisions(stdout)[:3] == [(1, "N"), (2, "N"), (3, "V")], "entry 3 reuses entry 1's digest"
+    assert emitted_payloads(stdout) == {1: PAYLOADS[0], 2: PAYLOADS[1], 3: PAYLOADS[0]}
+
+
+def test_records_directory_swap_before_a_flush_fails_closed(tmp_path):
+    site, _, entries = fixtures(tmp_path)
     reference = entries[0][1]
 
-    # The Python authority, with the batch bound lowered so one swap is observable
-    # within two entries: the pass notices at its flush, as the binary does at its own.
-    monkeypatch.setattr(feed, "VERIFIED_BATCH_ENTRIES", 2)
-    objects = [feed.FeedEntry(1, STAMP, "test", reference, py_site),
-               feed.FeedEntry(2, STAMP, "test", "plain", py_site)]
-
-    def swapping_stream():
-        yield objects[0]
-        (py_site / "records").rename(py_site / "records.moved")
-        (py_site / "records").mkdir()
-        yield objects[1]
-
-    verification = feed._VerificationPass()
-    with pytest.raises(ValueError) as raised:
-        try:
-            verification.verify(swapping_stream())
-            verification.commit()
-        finally:
-            verification.close()
-    authority = str(raised.value)
-    assert authority == "records directory replaced during verification pass"
-
-    # The binary: it holds the records descriptor the caller opened, the swap happens
-    # between two entries, and the last entry written is the one that reaches its flush.
+    # The binary holds the records descriptor the caller opened, so a record read through
+    # it still verifies; the swap is noticed at the flush, after the last decision.
     directory = os.open(site / "records", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         probe = subprocess.Popen(
@@ -291,14 +331,14 @@ def test_records_directory_swap_before_a_flush_fails_closed(tmp_path, monkeypatc
         os.close(directory)
 
     assert probe.returncode == 2
-    assert stderr.decode("utf-8").strip() == authority
+    assert stderr.decode("utf-8").strip() == "records directory replaced during verification pass"
     lines = stdout.decode("utf-8").splitlines()
     assert lines[0] == "N 1", "the record read through the held descriptor still verified"
     assert lines[-1] == "S 500", "the swap was noticed at the flush, after the last decision"
     assert len(lines) == 500
 
     assert store_rows(site) == [], "nothing from the replaced directory was stored"
-    connection = sqlite3.connect(site / records.VERIFIED_STORE)
+    connection = sqlite3.connect(site / STORE_NAME)
     try:
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
@@ -335,7 +375,7 @@ def test_kill_between_flushes_keeps_the_store_consistent(tmp_path):
 
     assert probe.returncode == -signal.SIGKILL
     assert store_rows(site) == [first_digest], "only the flushed row survived the kill"
-    connection = sqlite3.connect(site / records.VERIFIED_STORE)
+    connection = sqlite3.connect(site / STORE_NAME)
     try:
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:

@@ -2,9 +2,10 @@ import json
 from dataclasses import replace
 import pytest
 from mishe_tauftauf.feed import Feed, FeedEntry, parse_feed
+from tests.records_binary import pin_records_binary
 from tests.tape_binary import pin_tape_binary
 
-pytestmark = pytest.mark.usefixtures("pin_tape_binary")
+pytestmark = pytest.mark.usefixtures("pin_tape_binary", "pin_records_binary")
 
 
 def test_record_is_readable_and_replays(tmp_path):
@@ -154,24 +155,13 @@ def test_entries_sink_still_fails_closed_on_a_corrupt_record(tmp_path):
         feed.entries(payloads={})
 
 
-def test_entries_sink_stays_empty_on_a_cache_hit(tmp_path, monkeypatch):
-    from mishe_tauftauf import records
+def test_entries_sink_stays_empty_on_a_cache_hit(tmp_path):
     feed = Feed(tmp_path)
     feed.append_record('witness', 'Checked evidence.', {'checked': True})
-    calls = []
-    real_payload = records.payload
-
-    def counting(entry):
-        calls.append(entry.sequence)
-        return real_payload(entry)
-
-    monkeypatch.setattr(records, 'payload', counting)
     first_sink = {}
     first = feed.entries(payloads=first_sink)
     assert first_sink == {1: {'checked': True}}
-    calls.clear()
     second_sink = {}
     second = feed.entries(payloads=second_sink)
     assert second == first
-    assert second_sink == {}
-    assert calls == []
+    assert second_sink == {}, "a read served from the entries cache verifies nothing"

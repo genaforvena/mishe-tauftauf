@@ -17,8 +17,6 @@ from pathlib import Path
 
 from .chat_protocol import OBS_RE, decode_lifecycle, receipt_line
 from .feed_errors import FeedError
-from . import records
-from .records import VERIFIED_FLUSH_ROWS, cached_payload, verified_store
 from .slugs import validate_slug
 from .wall_text import addressed
 
@@ -28,15 +26,6 @@ RECEIPT_RE = re.compile(r"wake (?:delivered|refused) top-pain [a-z0-9-]+ for ent
 INDEX_STRIDE = 128
 STREAM_CHUNK_BYTES = 1024 * 1024
 """The block a streaming reader holds at once, independent of the tape length."""
-VERIFIED_BATCH_ENTRIES = 500
-"""Entries a verification pass covers before it checks the live records path again.
-
-The check fires at this bound and at every store flush, so a replaced records
-directory is noticed within this many entries of the replacement. The whole-
-tape reader has always verified a whole tape under one pass, so this bound is
-the one that read already had; the role read now shares it instead of
-verifying one entry per pass.
-"""
 _FRAME_START_TAIL = 256
 """The bytes a frame start can straddle, kept between streaming chunks."""
 RESERVED_EXACT = {"mishe-tauftauf"}
@@ -197,6 +186,14 @@ class TapeUnknown(RuntimeError):
     """
 
 
+class RecordsUnknown(RuntimeError):
+    """mishe-records gave a result outside its contract, or no verified binary exists.
+
+    UNKNOWN, never GREEN: a reader that sees this must not fold any entries from
+    the read that raised it.
+    """
+
+
 def _tape_binary() -> str:
     """Resolve the mishe-tape framer. Fails closed; never falls back to Python.
 
@@ -220,6 +217,32 @@ def _tape_binary() -> str:
         raise TapeUnknown(f"mishe-tape install missing or unreadable: {exc}") from exc
     if not os.access(binary, os.X_OK) or record.get("sha256") != digest:
         raise TapeUnknown("mishe-tape install is not executable or does not match its recorded sha256")
+    return str(binary)
+
+
+def _records_binary() -> str:
+    """Resolve the mishe-records verifier. Fails closed; never falls back to Python.
+
+    ``MISHE_RECORDS_BIN`` is an explicit override (tests, scratch builds). Otherwise
+    the site-local install ``$SITE/bin/mishe-records`` is used, and it must match the
+    sha256 recorded beside it in ``mishe-records.install.json``.
+    """
+    override = os.environ.get("MISHE_RECORDS_BIN")
+    if override:
+        if not os.path.isfile(override) or not os.access(override, os.X_OK):
+            raise RecordsUnknown("MISHE_RECORDS_BIN names no executable file")
+        return override
+    home = os.environ.get("MISHE_SEED_HOME") or os.environ.get("MISHE_TAUFTAUF_HOME")
+    if not home:
+        raise RecordsUnknown("mishe-records unavailable: no site home and no MISHE_RECORDS_BIN")
+    binary = Path(home) / "bin" / "mishe-records"
+    try:
+        record = json.loads((binary.parent / "mishe-records.install.json").read_text(encoding="utf-8"))
+        digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    except (OSError, ValueError) as exc:
+        raise RecordsUnknown(f"mishe-records install missing or unreadable: {exc}") from exc
+    if not os.access(binary, os.X_OK) or record.get("sha256") != digest:
+        raise RecordsUnknown("mishe-records install is not executable or does not match its recorded sha256")
     return str(binary)
 
 
@@ -462,93 +485,212 @@ def _projection_load(data: dict, home: Path) -> dict:
             "yield": candidate(by_seq[data["yield"]]) if data["yield"] is not None else None}
 
 
+class _RecordsChild:
+    """One ``mishe-records verify`` child, driven as a stream.
+
+    Record verification and the verified store live in ``rust/mishe-records``
+    (contract: ``rust/mishe-records/CONTRACT.md``). The pass composes it the way
+    ``_iter_streamed_feed`` composes the framer: the child reads framed entries
+    on stdin and writes one decision line per entry on stdout.
+
+    The child buffers its decisions and flushes them only when its buffer fills
+    or at exit (``serve``/``write_out`` in the Rust source), so a per-entry
+    write-then-read loop deadlocks. The caller therefore writes every entry
+    while a drain thread reads the child's stdout: it validates the ``V``/``N``/
+    ``S`` decisions and, when the caller wants payloads, the ``P`` bodies that
+    follow them, filling the caller's sink. ``commit`` closes stdin, joins the
+    drain and maps the exit status; ``close`` reaps an abandoned child.
+    """
+
+    def __init__(self, home: Path, *, payloads: bool, sink: dict | None):
+        argv = [_records_binary(), "verify", "--home", str(home)]
+        if payloads:
+            argv.append("--payloads")
+        self._payloads = payloads
+        self._sink = sink
+        self._error: Exception | None = None
+        self._broken = False
+        self._committed = False
+        self._proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, close_fds=True)
+        self._thread = threading.Thread(target=self._drain, name="mishe-records-drain", daemon=True)
+        self._thread.start()
+
+    def _drain(self) -> None:
+        """Read the child's decisions. A failure here stops the child so the writer unblocks."""
+        try:
+            stdout = self._proc.stdout
+            while True:
+                line = stdout.readline()
+                if not line:
+                    return
+                if not line.endswith(b"\n"):
+                    raise RecordsUnknown("mishe-records output truncated mid-decision")
+                head, _, rest = line[:-1].decode("ascii", "replace").partition(" ")
+                if head not in ("V", "N", "S"):
+                    raise RecordsUnknown(f"mishe-records emitted a non-contract decision: {line!r}")
+                try:
+                    sequence = int(rest)
+                except ValueError as exc:
+                    raise RecordsUnknown(f"mishe-records decision sequence invalid: {exc}") from exc
+                if self._payloads and head in ("V", "N"):
+                    header = stdout.readline()
+                    if not header.endswith(b"\n"):
+                        raise RecordsUnknown("mishe-records payload header truncated")
+                    parts = header[:-1].split(b" ")
+                    if len(parts) != 3 or parts[0] != b"P":
+                        raise RecordsUnknown("mishe-records emitted a non-contract payload header")
+                    try:
+                        declared, count = int(parts[1]), int(parts[2])
+                    except ValueError as exc:
+                        raise RecordsUnknown(f"mishe-records payload header invalid: {exc}") from exc
+                    if declared != sequence:
+                        raise RecordsUnknown("mishe-records payload sequence disagrees with its decision")
+                    body = stdout.read(count)
+                    if len(body) != count or stdout.read(1) != b"\n":
+                        raise RecordsUnknown("mishe-records payload length disagrees with its header")
+                    if self._sink is not None:
+                        try:
+                            self._sink[sequence] = json.loads(body)
+                        except ValueError as exc:
+                            raise RecordsUnknown(f"mishe-records payload is not JSON: {exc}") from exc
+        except Exception as exc:  # a thread cannot raise into the writing thread
+            self._error = exc
+            try:
+                self._proc.kill()
+            except OSError:
+                pass
+
+    def write(self, entry) -> None:
+        """Send one framed entry, in the framer's own ``E`` form."""
+        if self._broken:
+            return
+        body = entry.body.encode("utf-8")
+        header = f"E {entry.sequence} {entry.timestamp} {entry.source} {len(body)}\n".encode("utf-8")
+        try:
+            stdin = self._proc.stdin
+            stdin.write(header)
+            stdin.write(body)
+            stdin.write(b"\n")
+        except (BrokenPipeError, OSError):
+            # The child stopped on a fault of its own: its status is read at commit.
+            self._broken = True
+
+    def commit(self) -> None:
+        """Finish the pass and map the child's exit status."""
+        if self._committed:
+            return
+        self._committed = True
+        try:
+            if self._proc.stdin is not None:
+                self._proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+        self._thread.join()
+        self._proc.stdout.close()
+        rc = self._proc.wait()
+        err = self._proc.stderr.read().decode("utf-8", "replace").strip()
+        self._proc.stderr.close()
+        if self._error is not None:
+            raise self._error
+        if rc == 0:
+            return
+        if rc == 2:
+            # A verification result: the Python fault text the pass used to raise.
+            raise ValueError(err)
+        raise RecordsUnknown(f"mishe-records exit {rc}: {err}")
+
+    def close(self) -> None:
+        """Reap a child the pass abandoned before committing."""
+        if self._committed:
+            return
+        self._committed = True
+        try:
+            self._proc.kill()
+        except OSError:
+            pass
+        try:
+            if self._proc.stdin is not None:
+                self._proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+        self._proc.wait()
+        self._thread.join()
+        self._proc.stdout.close()
+        self._proc.stderr.close()
+
+
 class _VerificationPass:
     """One verification pass over a sequence of entries.
 
     This is the only implementation of record verification. ``entries()``,
     ``view_entries()``, ``access`` and the role read all run their entries
-    through a pass, so the rules live in one place.
+    through a pass, so the rules live in one place — now ``mishe-records``.
 
-    A pass holds the records-directory descriptor, the verified store and the
-    rows it has produced. A streamed read therefore pays for them once per
-    batch instead of once per entry: one descriptor for the pass, one lstat of
-    the live records path per flush and one store transaction per flush.
+    A pass holds one ``mishe-records`` child per distinct site home and the
+    decisions it has produced, so a streamed read pays for the child once
+    instead of once per entry.
 
     The rules are unchanged. Every entry that carries a record reference is
-    verified by ``records.cached_payload`` with the arguments it has always
-    been given: a hit is served only while the referenced file keeps its
-    verified identity, and a miss runs the full envelope verification and is
-    stored after the pass succeeds.
-
-    What a batched pass changes is the bound on one check:
-
-    - The records-directory swap check fires at each flush rather than at each
-      record, so a swap is noticed up to ``VERIFIED_BATCH_ENTRIES`` entries
-      later than a one-entry pass would notice it. The pass still fails
-      closed: it raises, and it stores nothing from the replaced directory.
-
-    A record's own identity is not weakened by batching: a digest referenced
-    again inside a pass is verified against the file's current identity before
-    its payload is served (``records.cached_payload``).
+    sent to the child, which serves a hit only while the referenced file keeps
+    its verified identity and otherwise runs the full envelope verification
+    and stores it. The swap check that binds it is the child's: it flushes
+    every 500 pending rows and checks the live records path at least every 500
+    records, so a replaced records directory is noticed up to that many
+    record-bearing entries later than a one-entry pass, and the pass still
+    fails closed.
     """
 
     def __init__(self):
-        self._pending: dict = {}
-        self._store = None
-        self._home = None
-        self._fd = None
-        self._since_flush = 0
+        self._children: dict[str, _RecordsChild] = {}
+        self._home: Path | None = None
+        self._child: _RecordsChild | None = None
+        self._sink: dict | None = None
 
-    def _flush(self) -> None:
-        """Store what the pass verified and clear the pending rows."""
-        self._since_flush = 0
-        if self._store is None:
-            return
-        if self._fd is not None:
-            # The live records path must still name the directory this pass read.
-            records.check_pass_directory(self._fd, self._home)
-        self._store.store(list(self._pending.values()))
-        self._pending.clear()
+    def _child_for(self, entry) -> _RecordsChild:
+        home = entry.home
+        if home is None:
+            # Unreachable in a live read: the framer always sets a home.
+            raise RecordsUnknown("record reference without a site home")
+        if self._child is not None and _same_home(home, self._home):
+            return self._child
+        path = home if isinstance(home, Path) else Path(home)
+        key = str(path)
+        child = self._children.get(key)
+        if child is None:
+            child = self._children[key] = _RecordsChild(path, payloads=self._sink is not None,
+                                                        sink=self._sink)
+            if self._child is None:
+                self._home, self._child = path, child
+        return child
 
     def verify(self, entries, sink: dict | None = None) -> None:
         """Verify every entry that carries a record reference."""
+        if sink is not None:
+            if self._sink is not None and self._sink is not sink:
+                raise RecordsUnknown("verification pass used with two payload sinks")
+            self._sink = sink
         for entry in entries:
             if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
-                if self._store is None and entry.home is not None:
-                    self._store = verified_store(entry.home)
-                    # The pass's home is the first entry's own Path, so every
-                    # later entry of a streamed pass compares against that
-                    # same object instead of a wrapper built per record.
-                    self._home = entry.home if isinstance(entry.home, Path) else Path(entry.home)
-                    try:
-                        self._fd = records._directory(self._home)
-                    except OSError:
-                        self._fd = None
-                shared = self._fd if self._fd is not None and _same_home(entry.home, self._home) else None
-                data = cached_payload(entry, self._pending, self._store,
-                                      verify_only=sink is None, directory=shared)
-                if sink is not None:
-                    sink[entry.sequence] = data
-                if self._store is not None and len(self._pending) >= VERIFIED_FLUSH_ROWS:
-                    # Flush as the pass goes: a render killed by its supervisor keeps
-                    # the verifications it finished, so the next render starts ahead.
-                    self._flush()
-            self._since_flush += 1
-            if self._since_flush >= VERIFIED_BATCH_ENTRIES:
-                # The row threshold alone would let a warm store postpone the
-                # swap check to the end of the read, so the check is also due
-                # after a bounded number of entries.
-                self._flush()
+                self._child_for(entry).write(entry)
 
     def commit(self) -> None:
-        """Store the verified rows of a pass that finished."""
-        self._flush()
+        """Store the verified rows of every child and report the first fault."""
+        first: Exception | None = None
+        for child in self._children.values():
+            try:
+                child.commit()
+            except Exception as exc:  # ValueError (a fault) or RecordsUnknown
+                if first is None:
+                    first = exc
+        if first is not None:
+            raise first
 
     def close(self) -> None:
-        """Release the pass's descriptor."""
-        if self._fd is not None:
-            os.close(self._fd)
-            self._fd = None
+        """Reap any child the pass abandoned before committing."""
+        for child in self._children.values():
+            child.close()
+        self._children.clear()
 
 
 def _verified_stream(entries, verification):
@@ -820,13 +962,11 @@ class Feed:
 
     @staticmethod
     def _verify_records(entries, sink: dict | None = None) -> None:
-        # Verified payloads persist per site (records.VerifiedStore). A hit is served
-        # only while the referenced file keeps its verified identity; a miss runs the
-        # full envelope verification and is stored after the whole pass succeeds.
-        # One record-directory fd serves the whole pass for the first entry's home, so the
-        # directory is not reopened per entry. Entries under any other home open their own.
-        # Every flush and the pass end check that the live path still names that directory;
-        # a swapped records directory fails the pass instead of storing the old inode.
+        # Record verification and the verified store live in mishe-records. A hit is
+        # served only while the referenced file keeps its verified identity; a miss runs
+        # the full envelope verification and is stored after the whole pass succeeds.
+        # One child serves the whole pass, so the records directory and the store are
+        # not reopened per entry; entries under any other home get their own child.
         # The rules live in _VerificationPass; this is the one-shot form of it.
         verification = _VerificationPass()
         try:

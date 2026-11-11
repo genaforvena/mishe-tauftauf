@@ -9,10 +9,15 @@ missing.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
+import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 
 def resolve_records_binary() -> tuple[str | None, str]:
@@ -39,3 +44,30 @@ def resolve_records_binary() -> tuple[str | None, str]:
 
 
 RECORDS_BIN, RECORDS_SKIP_REASON = resolve_records_binary()
+
+
+def requires_records_binary(test):
+    """Skip the test when no verifier resolves; otherwise run it with MISHE_RECORDS_BIN pinned."""
+    if RECORDS_BIN is None:
+        return unittest.skip(RECORDS_SKIP_REASON)(test)
+
+    @functools.wraps(test)
+    def run(self, *args, **kwargs):
+        with patch.dict(os.environ, {"MISHE_RECORDS_BIN": RECORDS_BIN}):
+            return test(self, *args, **kwargs)
+
+    return run
+
+
+@pytest.fixture
+def pin_records_binary(monkeypatch):
+    """Pin ``MISHE_RECORDS_BIN`` for a test that drives record verification.
+
+    The feed reader resolves the verifier through the product rule (an explicit
+    override, then the site install), and the suite runs hermetically without a
+    site binding, so a test that verifies a record must name the binary itself.
+    Skips with the reason when no binary resolves.
+    """
+    if RECORDS_BIN is None:
+        pytest.skip(RECORDS_SKIP_REASON)
+    monkeypatch.setenv("MISHE_RECORDS_BIN", RECORDS_BIN)

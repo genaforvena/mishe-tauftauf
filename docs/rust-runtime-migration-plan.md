@@ -1443,3 +1443,52 @@ its store reader, it takes the strong path: a fresh non-author review, plus
 deterministic activation, revert and reapply checks, before the role read runs
 it.
 
+### 10.17 Slice B cutover: the Python verifier is gone (2026-11-11)
+
+The change §10.16 fixed is written. `feed._VerificationPass` no longer calls
+`records.*`; it holds one `_RecordsChild` per site home and streams into it.
+Layout of the edit:
+
+- `feed._records_binary()` mirrors `_tape_binary`: `MISHE_RECORDS_BIN`, else
+  `$SITE/bin/mishe-records` sha256-checked against `mishe-records.install.json`;
+  a mismatch is `RecordsUnknown`, never a Python fallback.
+- `feed._RecordsChild` spawns `mishe-records verify --home HOME [--payloads]`,
+  writes `E <sequence> <timestamp> <source> <n>\n<body>\n` for each entry and runs
+  a daemon drain thread over stdout. The thread validates `V`/`N`/`S <sequence>`
+  and, with `--payloads`, reads `P <sequence> <n>\n<body>\n` into the caller's
+  sink. `commit()` closes stdin, joins the drain and maps 0 / 2 (`ValueError`,
+  the old fault text) / 1+other (`RecordsUnknown`); `close()` reaps an abandoned
+  child. The writer tolerates `EPIPE` (the child stopped on its own fault) and
+  reports the exit status at commit.
+- The pass sends only entries that carry a `[record]` line. That changes the
+  bound on one check and only that: the binary counts *record-bearing* entries,
+  so a replaced records directory is noticed up to `VERIFIED_BATCH_ENTRIES`
+  record-bearing entries later. `rust/mishe-records/CONTRACT.md` is now version
+  0.3 and says so.
+- An entry with a `[record]` line but no `home` raises `RecordsUnknown` instead
+  of guessing a site (unreachable in a live read).
+
+Retired in the same change: `records.VerifiedStore`, `lookup`, `store`,
+`cached_payload`, `verified_store`, `check_pass_directory`, `VERIFIED_STORE`,
+`VERIFIED_MAX_AGE`, `VERIFIED_FLUSH_ROWS`, `_STORE_LOCK`, `_STORES`, the
+`records` imports at the top of `feed.py`, and `feed.VERIFIED_BATCH_ENTRIES`
+(the bound is the child's). `records.envelope`, `payload`, `_directory`, `_read`,
+`prepare`, `reference`, `KindIndex`, `record_*` stay — `outcome_events.py` and
+`store_census.py` still call them.
+
+Tests: `tests/test_records_verified_store.py` (the Python store's own 21 cases)
+is deleted; its wrapper-level cases are re-expressed in
+`tests/test_mishe_records_verify.py`, which is now a contract test of the binary
+*and* the caller — there is no Python authority left to differential against. New
+`tests/records_binary.py::pin_records_binary` pins `MISHE_RECORDS_BIN` for tests
+that verify a record, as `pin_tape_binary` does for the framer. `pytest
+tests/test_feed_records.py tests/test_mishe_records_verify.py -q` → 36 passed;
+`tools/check_parsing.py` → PASS (the retired Python parse site is not replaced).
+`docs/protocol-boundaries.md` names both Rust binaries, which the Python checker
+cannot scan.
+
+Not yet delivered: the commit, the fresh non-author review, the deterministic
+activation, revert and reapply checks, and the live observation of a cold
+`wall show --owner genome` with the drain-thread wrapper's measured cost against
+the ~2 CPU-s the boundary removes (§5.2 abandonment condition).
+

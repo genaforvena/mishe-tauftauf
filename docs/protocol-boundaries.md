@@ -30,6 +30,20 @@ Git, unit and shell protocols have explicit adapters such as `work_boundary`,
 UNKNOWN or RED. Preserve the original bytes; do not silently replace evidence
 with a successful default.
 
+Two readers are Rust binaries, so `tools/check_parsing.py` does not scan them;
+each names its own protocol contract and the Python caller that composes it:
+
+- `rust/mishe-tape` (`mishe-tape`, contract `rust/mishe-tape/CONTRACT.md`) frames
+  the chat tape; `feed._iter_streamed_feed`/`parse_feed` parse its output.
+- `rust/mishe-records` (`mishe-records`, contract `rust/mishe-records/CONTRACT.md`)
+  verifies record envelopes and owns `SITE/records.verified.sqlite3`;
+  `feed._VerificationPass`/`feed._RecordsChild` compose it, reading its `V`/`N`/`S`
+  decisions and `P` payload bodies.
+
+A change to either binary's input, output, exit statuses or fault text is a change
+to a protocol boundary: update its `CONTRACT.md` in the same commit and run its
+contract test (`tests/test_mishe_tape_frames.py`, `tests/test_mishe_records_verify.py`).
+
 Delivery requests use structured values for the exact commit, originating wake,
 author role, the file list, the runtime and test arguments, the review record and
 the reviewed delivery plan. A strong request also needs the `activate`, `observe` and

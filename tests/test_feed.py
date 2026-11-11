@@ -14,6 +14,7 @@ from pathlib import Path
 
 from mishe_tauftauf import feed as feed_module
 from mishe_tauftauf.feed import Feed, FeedError, parse_feed
+from tests.records_binary import requires_records_binary
 from tests.tape_binary import TAPE_BIN, TAPE_SKIP_REASON, requires_tape_binary
 
 
@@ -29,6 +30,7 @@ class FeedTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Every test here reads the tape through mishe-tape; without a framer they skip.
+        # A test that also verifies a record adds requires_records_binary.
         if TAPE_BIN is None:
             raise unittest.SkipTest(TAPE_SKIP_REASON)
         cls._env = patch.dict(os.environ, {"MISHE_TAPE_BIN": TAPE_BIN})
@@ -241,6 +243,7 @@ class FeedTests(unittest.TestCase):
             feed.path.write_bytes(old_bytes)
 
     @requires_tape_binary
+    @requires_records_binary
     def test_role_view_verifies_discarded_records_and_refuses_corruption(self):
         with tempfile.TemporaryDirectory() as directory:
             feed = Feed(directory)
@@ -251,6 +254,7 @@ class FeedTests(unittest.TestCase):
                 feed.role_entries("health")
 
     @requires_tape_binary
+    @requires_records_binary
     def test_role_view_rejects_a_bad_appended_unrelated_record(self):
         with tempfile.TemporaryDirectory() as directory:
             feed = Feed(directory)
