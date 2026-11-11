@@ -21,10 +21,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import network_boundary as nb
 
 URL = "https://speed.cloudflare.com/__down?bytes=5000000"
+# Cloudflare answers the default "Python-urllib" User-Agent with HTTP 403 (seen 02:01Z, 11 November);
+# a named client agent gets the file. Name it, do not impersonate a browser.
+USER_AGENT = "mishe-network-speed/1.0"
 EXPECT_BYTES = 5_000_000
 TIMEOUT_S = 25
 OFF_PEAK_HOURS = (2, 5)  # local hours, inclusive start, exclusive end
-MIN_INTERVAL_S = 12 * 3600
+MIN_INTERVAL_S = 12 * 3600  # between good readings
+FAILED_RETRY_S = 30 * 60  # after a failed try, retry inside the window no sooner than this
 STALE_AFTER_S = 36 * 3600  # no good reading this old (or never) makes the duty UNKNOWN
 CHUNK = 64 * 1024
 
@@ -67,7 +71,8 @@ def measure(url=URL, timeout=TIMEOUT_S, opener=urllib.request.urlopen):
     started = time.time()
     got = 0
     try:
-        with opener(url, timeout=timeout) as resp:
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with opener(req, timeout=timeout) as resp:
             while got < EXPECT_BYTES:
                 chunk = resp.read(min(CHUNK, EXPECT_BYTES - got))
                 if not chunk:
@@ -101,14 +106,16 @@ def main(argv=None):
     path = Path(args.home) / "network" / LOG_NAME
     rows = read_rows(path)
     last = last_attempt(rows)
+    good = last_good(rows)
     now = time.time()
-    ok, why = due(now, last["ts"] if last else None, time.localtime(now).tm_hour)
+    ok, why = due(now, good["ts"] if good else None, time.localtime(now).tm_hour)
+    if ok and last is not None and not last.get("ok") and now - last["ts"] < FAILED_RETRY_S:
+        ok, why = False, "last try failed; retry not before 30 min"
     if args.check:
         print(("due: " if ok else "not due: ") + why)
         return 0
     if not ok:
         # Not measuring now is fine only while a good reading is recent; otherwise the signal must say UNKNOWN.
-        good = last_good(rows)
         if good is not None and now - good["ts"] < STALE_AFTER_S:
             print("not due: " + why)
             return 0

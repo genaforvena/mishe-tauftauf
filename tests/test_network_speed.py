@@ -108,20 +108,68 @@ def _write_rows(home, rows):
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
 
-def test_not_due_with_no_reading_is_unknown_not_green(tmp_path, capsys):
+def _pin_outside_offpeak(monkeypatch):
+    """The clock decides off-peak; these tests need 12:00 local so they never reach a live download."""
+    real_due = ns.due
+    monkeypatch.setattr(ns, "due", lambda now, last, hour: real_due(now, last, 12))
+
+
+def test_not_due_with_no_reading_is_unknown_not_green(tmp_path, capsys, monkeypatch):
     # Outside off-peak and never measured: the duty must not report a calm GREEN exit.
+    _pin_outside_offpeak(monkeypatch)
     rc = ns.main(["--home", str(tmp_path)])
     assert rc == 3
     assert "UNKNOWN" in capsys.readouterr().out
 
 
-def test_not_due_with_recent_good_reading_is_green(tmp_path, capsys):
+def test_not_due_with_recent_good_reading_is_green(tmp_path, capsys, monkeypatch):
     import time
+    _pin_outside_offpeak(monkeypatch)
     _write_rows(tmp_path, [{"ts": time.time() - 3600, "ok": True, "down_mbps": 80.0}])
     assert ns.main(["--home", str(tmp_path)]) == 0
 
 
-def test_not_due_with_stale_good_reading_is_unknown(tmp_path, capsys):
+def test_not_due_with_stale_good_reading_is_unknown(tmp_path, capsys, monkeypatch):
     import time
+    _pin_outside_offpeak(monkeypatch)
     _write_rows(tmp_path, [{"ts": time.time() - 40 * 3600, "ok": True, "down_mbps": 80.0}])
     assert ns.main(["--home", str(tmp_path)]) == 3
+
+
+def test_measure_sends_named_user_agent_not_urllib_default():
+    # Cloudflare returns 403 to the default Python-urllib agent; the reading must name its client.
+    seen = {}
+
+    def opener(req, timeout):
+        seen["ua"] = req.get_header("User-agent")
+        return _Resp(b"x" * ns.EXPECT_BYTES)
+
+    row = ns.measure(opener=opener)
+    assert row["ok"] is True
+    assert seen["ua"] == ns.USER_AGENT
+    assert "Python-urllib" not in seen["ua"]
+
+
+def test_failed_try_is_retried_in_window_after_30_min_not_next_day(tmp_path, capsys, monkeypatch):
+    # A 403 at 02:01 must not block the rest of the night: failures retry after 30 min, successes wait 12 h.
+    import time
+    real_due = ns.due
+    monkeypatch.setattr(ns, "due", lambda now, last, hour: real_due(now, last, 3))
+    _write_rows(tmp_path, [{"ts": time.time() - 60, "ok": False, "error": "HTTPError: 403"}])
+    assert ns.main(["--home", str(tmp_path), "--check"]) == 0
+    assert "retry not before" in capsys.readouterr().out
+    _write_rows(tmp_path, [{"ts": time.time() - 31 * 60, "ok": False, "error": "HTTPError: 403"}])
+    assert ns.main(["--home", str(tmp_path), "--check"]) == 0
+    assert capsys.readouterr().out.startswith("due:")
+
+
+def test_good_reading_throttle_ignores_later_failures(tmp_path, capsys, monkeypatch):
+    import time
+    real_due = ns.due
+    monkeypatch.setattr(ns, "due", lambda now, last, hour: real_due(now, last, 3))
+    _write_rows(tmp_path, [
+        {"ts": time.time() - 2 * 3600, "ok": True, "down_mbps": 80.0},
+        {"ts": time.time() - 40 * 60, "ok": False, "error": "x"},
+    ])
+    assert ns.main(["--home", str(tmp_path), "--check"]) == 0
+    assert capsys.readouterr().out.startswith("not due: measured recently")
