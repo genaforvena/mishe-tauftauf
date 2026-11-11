@@ -624,3 +624,108 @@ def test_wedge_foreign_records_counted_and_no_cause_is_not_suspect():
     got = judge_mind_wedge_suspects(PANES, WEDGE_NOW, chain_of=lambda p: _chain(foreign=2, chain=0))
     assert got["suspects"] == [] and got["foreign"] == 4 and got["state"] == "verified"
     assert got["sample"].startswith("suspects=0 panes=2 with_log=2 foreign=4")
+
+
+# --- omp continue-chain probe -------------------------------------------------
+import json as _json
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+from mishe_tauftauf.replacement_readings import (
+    WEDGE_SUSPECT_ID, argv_model, omp_chain_from_text, omp_log_path,
+    parse_pane_list, probe_mind_wedge_suspects, same_model,
+)
+
+_NOW = _dt(2026, 11, 11, 12, 0, tzinfo=_tz.utc)
+
+
+def _rec(minutes_ago, message, **extra):
+    ts = (_NOW - _td(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return _json.dumps({"timestamp": ts, "message": message, **extra})
+
+
+def test_chain_counts_continues_since_last_completed_turn():
+    text = "\n".join([
+        _rec(60, "agent.continue scheduled", source="retry"),
+        _rec(50, "agent_end maintenance routing", stopReason="stop"),
+        _rec(30, "agent.continue scheduled", source="retry"),
+        _rec(20, "agent.continue scheduled", source="stream"),
+        _rec(10, "agent.continue scheduled", source="retry"),
+    ])
+    got = omp_chain_from_text(text, _NOW)
+    assert got["chain"] == 3 and got["span_minutes"] == 30.0
+    assert got["sources"] == {"retry": 2, "stream": 1}
+    assert got["cause"] == "none" and got["last_error"] is None
+
+
+def test_provider_error_class_and_last_error_are_read():
+    text = "\n".join([
+        _rec(20, "agent turn ended with provider error", errorStatus=403),
+        _rec(10, "agent turn ended with provider error", errorMessage="upstream [500] down"),
+    ])
+    got = omp_chain_from_text(text, _NOW)
+    assert got["cause"] == "provider-error:403"  # tie on count: lowest class name wins
+    assert got["error_count"] == 2 and got["chain"] == 0
+    assert got["last_error"] == _NOW - _td(minutes=10)
+
+
+def test_foreign_model_errors_are_excluded_and_counted():
+    text = "\n".join([
+        _rec(20, "agent turn ended with provider error", model="title/haiku", errorStatus=500),
+        _rec(10, "agent turn ended with provider error", model="opencode-go/mind-x", errorStatus=429),
+        _rec(5, "agent turn ended with provider error", errorStatus=503),
+    ])
+    got = omp_chain_from_text(text, _NOW, mind_model="mind-x")
+    assert got["foreign"] == 1 and got["error_count"] == 2
+    assert got["cause"] == "provider-error:429"  # tie on count: lowest class name wins
+
+
+def test_unparseable_lines_are_skipped_not_counted():
+    text = "not json\n[1,2]\n" + _rec(5, "agent.continue scheduled", source="x")
+    assert omp_chain_from_text(text, _NOW)["chain"] == 1
+
+
+def test_model_decoder_handles_both_spellings_and_bad_values():
+    assert argv_model(["omp", "--model", "a/b"]) == "a/b"
+    assert argv_model(["omp", "--model=a/b"]) == "a/b"
+    assert argv_model(["omp", "--model"]) is None
+    assert argv_model(["omp", "--model="]) is None
+    assert argv_model(["omp", "--model", "--thinking"]) is None
+    assert same_model("opencode-go/x-1", "x-1") and not same_model("x-1", "x-2")
+
+
+def test_pane_list_parses_or_reads_malformed():
+    assert parse_pane_list("plants\tbody\t42\n") == [{"session": "plants", "window": "body", "pid": 42}]
+    assert parse_pane_list("") == []
+    assert parse_pane_list("plants\tbody\tNaN\n") is None
+
+
+def test_probe_without_socket_or_pane_list_is_unknown():
+    assert probe_mind_wedge_suspects(None, _NOW)["state"] == "unknown"
+    got = probe_mind_wedge_suspects("/s", _NOW, runner=lambda s, a: None)
+    assert got["state"] == "unknown" and got["suspects"] == []
+
+
+def test_probe_reads_logs_and_flags_chain_wedge(tmp_path):
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "omp.2026-11-11.700.log").write_text("\n".join([
+        _rec(40, "agent.continue scheduled", source="retry"),
+        _rec(30, "agent.continue scheduled", source="retry"),
+        _rec(20, "agent.continue scheduled", source="retry"),
+    ]))
+    runner = lambda s, a: subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="plants\tbody\t700\nplants\tbrain\t701\n", stderr="")
+    got = probe_mind_wedge_suspects("/s", _NOW, runner=runner, logs_dir=logs,
+                                    model_of=lambda pid: None)
+    assert got["state"] == "verified" and got["with_log"] == 1 and got["panes"] == 2
+    assert [s["rule"] for s in got["suspects"]] == ["chain-wedge"]
+    assert got["suspects"][0]["pid"] == 700
+
+
+def test_probe_pane_without_log_is_not_calm_when_no_log_at_all(tmp_path):
+    runner = lambda s, a: subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="plants\tbody\t9\n", stderr="")
+    got = probe_mind_wedge_suspects("/s", _NOW, runner=runner, logs_dir=tmp_path,
+                                    model_of=lambda pid: None)
+    assert got["state"] == "unknown" and "UNKNOWN, not calm" in got["sample"]
+    assert omp_log_path(9, tmp_path) is None
