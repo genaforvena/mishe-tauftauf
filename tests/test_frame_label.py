@@ -67,3 +67,8 @@ def test_sweep(tmp_path):
     fl.reserve(tmp_path, cand("d1", frame=str(f)), 10.0)
     assert fl.sweep(tmp_path, 10.0 + 3600) == 0 and f.exists()
     assert fl.sweep(tmp_path, 10.0 + fl.RETENTION_S) == 1 and not f.exists()
+
+
+def test_parse_nobody_outranks_explaining_name():
+    t = "тут никого нет, это илья только что ушел со стула, но на фото нет никого"
+    assert fl.parse_reply(t) == "nobody"
