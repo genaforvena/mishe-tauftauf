@@ -5,10 +5,15 @@ section from the engine status and the native Claude tap (`mishe budget-produce 
 `checks/budget-consistency.py` judges it. The router migration (step 4) has shipped:
 `engine_router.live_status()` reads the accounts section and the router no longer reads
 `engine_usage.status` or refetches stale readings. Still open: the ledger sections, the
-render-only budget view (step 3) and deleting the old writers (step 5). The producer is not
-yet run by a duty, so the file ages out at `MAX_AGE_S` (900 s) and a role whose candidate
-reads an account window then routes on no evidence (UNKNOWN). Roles whose candidates are all
-free models or the Claude safety net read no window and are unaffected.
+render-only budget view (step 3) and deleting the old writers (step 5). The `budget` duty
+now runs the producer (step 2): the site-local `producers/budget.sh` calls
+`mishe budget-produce` before the old collector, observed on the timer 2026-11-11
+(`produced_at` 05:18:05Z → 05:28:06Z, next fire 05:38:04Z). With a 600 s period inside the
+900 s `MAX_AGE_S`, the file stays fresh with ~300 s of margin, so a role whose candidate
+reads an account window no longer routes on no evidence. Still open for the judge: no
+scheduler runs `checks/budget-consistency.py`, so a silent aging-out would go unreported
+(see that duty below). Roles whose candidates are all free models or the Claude safety net
+read no window and are unaffected.
 Owner of the model/account mapping: `engine/routes.json`. Owner of this contract: steward.
 
 ## Problem
@@ -141,6 +146,12 @@ Resolver: **steward**. Command: `{python} {repo}/checks/budget-consistency.py --
 Exit codes: 0 GREEN, 2 RED, 3 cannot decide (ages to UNKNOWN). `every`: 300, `timeout`: 60,
 `max_age`: 900.
 
+Not yet registered: `checks/budget-consistency.py` is in no systemd timer, CI job or
+observer-check inventory. Measured 2026-11-11 with `checks/check-scheduler-coverage.py`, the
+check is `unobserved`, so its verdict is manual only and a file that silently ages past
+`MAX_AGE_S` produces no reading. Registering this duty is a scheduler change and needs fresh
+review.
+
 RED when any of:
 
 1. A model with a ledger `select` in the last hour has no row in `engine/budget.json`.
@@ -157,8 +168,11 @@ RED when any of:
 1. Ship `src/mishe_tauftauf/budget_producer.py` + `checks/budget-consistency.py` + this
    contract as one independent delivery, with its own install record. **Done.**
 2. Run the producer; verify `budget-consistency` GREEN against the live sources. **Done
-   once by hand; not yet periodic.** The file ages out at `MAX_AGE_S` until a duty runs the
-   producer (the `budget` duty is the natural home: `every` 600 s, `max_age` 1800 s).
+   periodically.** The `budget` duty (`every` 600 s, `max_age` 1800 s, resolver senses) runs
+   the producer from its site-local `producers/budget.sh`; observed on the timer 2026-11-11
+   05:28:04Z, `produced_at` 05:28:06Z, GREEN, next fire 05:38:04Z. That script is not
+   git-tracked, so re-installing it loses the line; the durable home is a tracked duty entry
+   (scheduler change, fresh review).
 3. Switch `budget_view.py` to render-only from `engine/budget.json`; delete its `MAP`,
    `rows()`, `models()`, `window_models()` computations. **Open.**
 4. Switch `engine_router.assess()`/`live_status()` to read account windows from
