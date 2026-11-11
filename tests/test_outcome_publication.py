@@ -16,6 +16,7 @@ import pytest
 from mishe_tauftauf.outcome_publication import (
     OUTCOME_KINDS,
     body_lines,
+    body_may_carry_publication,
     decode_evidence,
     decode_excerpt,
     decode_publication_body,
@@ -85,6 +86,29 @@ def test_reference_lines_recognize_independent_of_indent():
     # reference exactly as the record reader does.
     assert reference_lines(body_lines(f'prose\n  {reference_for()}\n')) == [f'  {reference_for()}']
     assert reference_lines(body_lines('prose only\n')) == []
+
+
+def test_body_may_carry_publication_rejects_nothing_a_line_test_would_accept():
+    # The whole-tape scan skips a body only when this pre-filter says no, so
+    # "no" must itself mean "no reserved header and no reference line". The
+    # converse is intentionally loose: a body merely mentioning the reserved
+    # words is still inspected, because the line tests are what decide.
+    bodies = [
+        '',
+        'plain prose\nwith no markers at all',
+        publication(),
+        '  Wall outcome accepted by discover',        # indented candidate
+        'prose\n  ' + reference_for() + '\n',         # indented reference
+        'prose mentioning Wall outcome accepted by discover inline',
+        'prose ending on [record] but not on a line of its own',
+        'wall outcome accepted by discover',          # reserved case only
+    ]
+    for body in bodies:
+        lines = body_lines(body)
+        if body_may_carry_publication(body):
+            continue
+        assert not has_outcome_prefix(first_significant_line(lines))
+        assert reference_lines(lines) == []
 
 
 def test_sole_final_reference_requires_one_reference_and_nothing_after_it():

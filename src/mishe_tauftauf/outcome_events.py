@@ -8,6 +8,7 @@ from . import records
 from .feed import iter_feed_file
 from .outcome_publication import (
     body_lines,
+    body_may_carry_publication,
     decode_evidence,
     decode_supersedes,
     decode_text,
@@ -126,7 +127,14 @@ def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dic
                 # abandoned whole, exactly as the whole-tape read abandoned it
                 # before it had classified anything.
                 return {'events': [], 'incomplete': [], 'unavailable': f'chat tape unreadable: {exc}'}
-            lines = body_lines(entry.body)
+            body = entry.body
+            if not body_may_carry_publication(body):
+                # Exact short-circuit: the line tests below can only fail on a
+                # body carrying neither the reserved prefix nor a reference
+                # opener, so skipping its splitlines() and the three scans
+                # changes no reading, only the cost of the whole-tape scan.
+                continue
+            lines = body_lines(body)
             first = first_significant_line(lines)
             reserved = has_outcome_prefix(first)
             refs = reference_lines(lines)

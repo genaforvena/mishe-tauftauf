@@ -2127,3 +2127,51 @@ negative arm.
 Next: implement (1)–(3) plus the differential test, then the strong gate — a
 fresh non-author reviewer, deterministic activation, revert and reapply — and
 observe the authoritative readings consumer on the delivered pin.
+
+### 10.28 The pre-filter is measured: 0.184 CPU-s, exact, and it takes the strong path (2026-11-11)
+
+§10.27 left one bounded repair to measure before the port: skip a whole-tape
+entry whose raw body carries neither `[record]` nor `Wall outcome ` anywhere
+before splitting it into lines. The A/B now runs both arms in one process over
+one materialised snapshot, so the live tape's growth cannot differ between them
+(`artifacts/rust-plan-20261107/prefix-filter-ab-20261111.py`, `.out`; interleaved
+off/on/off/on under `systemd-run --user --scope -q -p MemoryMax=1G nice -n 19`
+from `/tmp`).
+
+**Result: 0.184 CPU-s saved and the reading is byte-identical.** 299,593 entries,
+clause `2026-10-06T16:22:11+00:00`, read 0.781 CPU-s. `classify_outcomes` with the
+pre-filter patched to accept every body: 1.857, 1.912 CPU-s; with the shipped
+pre-filter: 1.672, 1.729 — 0.184 CPU-s best-vs-best (≈10% of the classifier,
+≈1.2% of the 15.39-CPU-s run). Both arms report 4,764 events, 1 incomplete and
+digest `b9dfb7ed…`, the digest §10.26 and the predicate probe recorded: that
+digest, not the similar counts, is what makes the two arms one reading.
+
+**Shape: one exact predicate in the boundary module.** `body_may_carry_publication`
+(`outcome_publication.py`) is True when the body contains `OUTCOME_PREFIX` or a
+new `REFERENCE_LINE_PREFIX` constant that `reference_lines` now shares; the
+classifier skips before `body_lines` when it is False. Keep the two protocol
+literals in the boundary file: both candidate tests the scan performs are
+line-leading `startswith` checks on one of those literals, so a body carrying
+neither can produce neither a reference line nor a reserved header. False is
+therefore exact and True only means "not yet excluded". The invariant is pinned
+by `tests/test_outcome_publication.py::test_body_may_carry_publication_rejects_nothing_a_line_test_would_accept`.
+
+**Classification: strong, not ordinary.** §10.27 called this an ordinary
+reversible change with no protocol boundary. By §wall-coordination's path rule
+the diff is strong anyway: `outcome_publication.py` is a named protocol boundary
+in `parsing-policy.json` and `outcome_events.py` is an unknown path, so the
+change takes its own patch record with the System 1 review, activation, revert
+and reapply the strong gate requires.
+
+**The port's target shrinks by this much and no more.** The pre-filter removes
+only the *classifier's* copy of the body scan. The duplicate scan inside
+`_scan_snapshot`'s child filter (`feed.py:674`) is untouched, and on the snapshot
+path the framer's facts would zero the classifier scan outright, so this 0.184 is
+an interim win the port partly subsumes. It stays live on the unverified fallback
+path — the writer's own `classify_outcomes` from `wall.outcome` — which never has
+framer facts.
+
+Limits: one tape (299,593 entries, seven more than §10.26's), one machine, warm
+page cache; `process_time` on the classifier only, with the predicate patched
+rather than the module reloaded, so the one Python call per entry the patch adds
+is charged to both arms and cancels.

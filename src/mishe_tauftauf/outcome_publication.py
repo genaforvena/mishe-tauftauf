@@ -92,6 +92,8 @@ OUTCOME_KINDS: Final[tuple[str, ...]] = ('accepted', 'blocker-resolved', 'blocke
 _HEADER = re.compile(r'Wall outcome (' + '|'.join(OUTCOME_KINDS) + r') by ([a-z0-9-]+)\Z')
 _DIGEST = re.compile(r'[0-9a-f]{64}\Z')
 OUTCOME_PREFIX: Final[str] = 'Wall outcome '
+REFERENCE_LINE_PREFIX: Final[str] = '[record]'
+"""The opener a publication's record-reference line carries."""
 WORK_CHANNEL_PREFIX: Final[str] = '[work] channel=witness '
 HANDOFF_MARKER: Final[str] = 'HANDOFF:\n'
 
@@ -425,7 +427,19 @@ def reference_lines(lines: list[str]) -> list[str]:
     check ``records.py`` performs, so an indented reference is not invisible
     to one consumer and visible to the other.
     """
-    return [line for line in lines if line.lstrip().startswith('[record]')]
+    return [line for line in lines if line.lstrip().startswith(REFERENCE_LINE_PREFIX)]
+
+
+def body_may_carry_publication(body: str) -> bool:
+    """Whether a raw body can still contain a reserved header or a reference.
+
+    A conservative pre-filter for a whole-tape scan: both candidate predicates
+    are line-leading tests on a literal that the line must therefore contain,
+    so a body carrying neither literal anywhere cannot produce a reserved
+    header or a reference line. False is exact — such a body has no candidate
+    and no reference — while True only means "not yet excluded".
+    """
+    return OUTCOME_PREFIX in body or REFERENCE_LINE_PREFIX in body
 
 
 def sole_final_reference(lines: list[str]) -> str | None:
