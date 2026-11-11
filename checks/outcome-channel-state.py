@@ -325,13 +325,21 @@ def main() -> int:
     try:
         running_root = (args.release_src.resolve() if args.release_src
                         else pin_root(home))
-        reference_root = (args.reference_src.resolve() if args.reference_src
-                          else export_head(repo, workdir))
         cache = workdir / "classify-cache.json"
         running = run_child(running_root, home, workdir, cache,
                             measurement_key(running_root, home))
-        reference = run_child(reference_root, home, workdir, cache,
-                              measurement_key(reference_root, home))
+        if running.get("channel") == "closed" and running.get("denial") not in {
+                "no-refusal", "error"}:
+            # The reference only explains a closed channel; an open one needs no
+            # second full classification of the tape.
+            reference_root = (args.reference_src.resolve() if args.reference_src
+                              else export_head(repo, workdir))
+            reference = run_child(reference_root, home, workdir, cache,
+                                  measurement_key(reference_root, home))
+        else:
+            reference_root = None
+            reference = {"channel": "not measured", "denial": "not measured",
+                         "classify": "skipped", "rows": []}
     except Undecidable as exc:
         print("UNKNOWN — " + str(exc))
         return 4
@@ -340,7 +348,7 @@ def main() -> int:
 
     print("home       :", home)
     print("running    :", running_root)
-    print("reference  :", reference_root)
+    print("reference  :", reference_root or "not needed while the running channel is open")
     print("events     :", running.get("events"), "outcome publications read from the tape")
     print("running gaps :", ", ".join(
         "%s(%s)" % (row.get("sequence"), row.get("binding")) for row in running.get("rows", []))

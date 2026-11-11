@@ -99,6 +99,14 @@ def test_a_damaged_row_without_a_reference_does_not_close_the_channel(tmp_path):
     assert "OPEN" in result.stdout
 
 
+def test_an_open_channel_does_not_measure_the_reference_tree(tmp_path):
+    """The reference only explains a closed channel: an unusable one is not read when open."""
+    home = write_home(tmp_path / "site", UNBOUND_BODY)
+    result = run_check(home, reference=tmp_path / "no-such-root")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "not needed while the running channel is open" in result.stdout
+
+
 def test_the_row_that_decides_the_channel_is_named(tmp_path):
     """The finding names the tape row, so the cause is not a mystery."""
     home = write_home(tmp_path / "site", BLOCKING_BODY)
