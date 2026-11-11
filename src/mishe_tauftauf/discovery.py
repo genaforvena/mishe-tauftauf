@@ -3798,11 +3798,11 @@ def _coord_gate_latency(home: Path, now: datetime | None = None, *,
                         disposition: dict[str, object] | None = None) -> dict[str, object]:
     """Age the oldest unanswered resolver routing, so stalls wake their owner.
 
-    Reads the dm-disposition open set and reports the oldest open DM per
-    target role with its age: a resolver whose queue head is older than the
-    maturity bound is the bottleneck, named explicitly. State is drift when
-    any open DM is mature, verified when the queue is empty or all young,
-    unknown when the tape is unreadable.
+    Reads the dm-disposition open set and reports the single oldest open DM
+    with its target role and age: a resolver whose queue head is older than
+    the maturity bound is the bottleneck, named explicitly. State is drift
+    when any open DM is mature, verified when the queue is empty or all
+    young, unknown when the tape is unreadable.
 
     ``disposition`` is an already-taken ``_coord_dm_disposition_age`` reading
     on the same tape. A scan passes it so the tape is parsed once for both
@@ -4837,15 +4837,19 @@ def _coord_dm_disposition_age(home: Path, now: datetime | None = None,
     they can never reply or record a wall outcome, so their DMs would
     permanently inflate stall/open without naming a real resolver wait.
     The excluded count is reported as ``broadcast_excluded`` for visibility.
-    Targets with no mind at this site — a watcher, feed or the human shell
-    (``ci``, ``operator-view``, ``session-watch``, ``silence-watch``,
-    ``operator``) — are excluded the same way and reported as
-    ``nonmind_excluded``: they have no reply edge to give and no wall outcome
-    to record, so their DMs would otherwise hold the stall count above zero
-    for the rest of the window while every real mind-to-mind request was
-    answered. Seated means the role set the site supervises
-    (``activity.roles``), so a renamed role reads excluded until it is seated
-    here again.
+    Targets with no charter at this site — a watcher or feed shell such as
+    ``ci``, ``operator-view``, ``session-watch`` or ``silence-watch`` — are
+    excluded the same way and reported as ``nonmind_excluded``: they have no
+    reply edge to give and no wall outcome to record, so their DMs would
+    otherwise hold the stall count above zero for the rest of the window
+    while every real mind-to-mind request was answered. Seated means the
+    charter set the site declares (``roles.declared``: one
+    ``charters/<role>.md`` per role), so a renamed role reads excluded until a
+    charter is declared here again. Seating is per site: at this site the
+    operator shell holds a charter and answers DMs — it sends addressed
+    replies and records wall outcomes — so an operator DM is a real resolver
+    wait, not a one-way note; on a site with no operator charter the same DM
+    would read as nonmind-excluded.
     """
     if now is None:
         now = datetime.now(timezone.utc)
