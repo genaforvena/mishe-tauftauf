@@ -40,15 +40,21 @@ What is not in place yet (UNKNOWN until it is):
 
 - No timer runs the restorer. It is run by hand.
 - `senses-map` is marked `restore: true` and its viewer now loops every 30 s instead of
-  exiting after one render, so a periodic restore would not flap it. What still has no
-  schedule is the renderer behind it: nothing runs `tools/map_render.py` on a timer, so
-  the map state ages until the next senses wake refreshes it. The viewer flags a render
-  older than 30 minutes as stale.
+  exiting after one render, so a periodic restore would not flap it. The renderer
+  behind it has a schedule in the committed tree: the `map-render` duty in
+  `duties.json` runs `tools/map_render.py` every 180 s, and the generated unit
+  `mishe-producer-map-render.timer` fires that service. Producer units are rendered
+  from the served release's own `duties.json`, so the timer starts when a release
+  carrying the duty is promoted. Observed 2026-11-11 at 18:11Z, the served release
+  (`35748377`) predates the duty, no such unit is installed, and the pane reads
+  "rendered 16:26Z, 105 min ago: STALE" — the viewer flags a render older than
+  30 minutes as stale.
 - Many inner `mind-view` windows are `pending-decision`; they are not restored until someone
   classifies them as per-duty or drops them.
 - The registry's `budget` window runs `operator/budget/budget_pane.sh`, while the table above
-  points at `budget_view.py`. The registry asks to confirm which one the window runs before
-  either is retired.
+  points at `budget_view.py`. Those are the same view, not two: the pane script is a loop
+  that runs `budget_view.py` every 20 s and clears the screen between frames. Observed
+  2026-11-11 at 18:31Z, the live pane's text is that view's output, timestamp apart.
 
 ## Crash drill (not implemented)
 
