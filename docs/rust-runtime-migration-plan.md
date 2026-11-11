@@ -2128,7 +2128,7 @@ Next: implement (1)–(3) plus the differential test, then the strong gate — a
 fresh non-author reviewer, deterministic activation, revert and reapply — and
 observe the authoritative readings consumer on the delivered pin.
 
-### 10.28 The pre-filter is measured: 0.184 CPU-s, exact, and it takes the strong path (2026-11-11)
+### 10.28 The pre-filter saves 0.184 CPU-s pre-delivery, 0.111 on the pin, exact, and it takes the strong path (2026-11-11)
 
 §10.27 left one bounded repair to measure before the port: skip a whole-tape
 entry whose raw body carries neither `[record]` nor `Wall outcome ` anywhere
@@ -2166,12 +2166,38 @@ and reapply the strong gate requires.
 **The port's target shrinks by this much and no more.** The pre-filter removes
 only the *classifier's* copy of the body scan. The duplicate scan inside
 `_scan_snapshot`'s child filter (`feed.py:674`) is untouched, and on the snapshot
-path the framer's facts would zero the classifier scan outright, so this 0.184 is
-an interim win the port partly subsumes. It stays live on the unverified fallback
-path — the writer's own `classify_outcomes` from `wall.outcome` — which never has
-framer facts.
+path the framer's facts would zero the classifier scan outright, so this
+~0.1–0.18 CPU-s is an interim win the port partly subsumes. It stays live on the
+unverified fallback path — the writer's own `classify_outcomes` from
+`wall.outcome` — which never has framer facts.
 
 Limits: one tape (299,593 entries, seven more than §10.26's), one machine, warm
 page cache; `process_time` on the classifier only, with the predicate patched
 rather than the module reloaded, so the one Python call per entry the patch adds
 is charged to both arms and cancels.
+
+**Delivered and re-measured on the pin (2026-11-11 ~05:10Z).** Batch
+`moving-pin-6077b07f` applied at 04:58:18Z with `delivery_verified True`, so
+`runtime/current -> releases/6077b07f8eb1fba884788af87a816c493bfa361f` and the
+shipped `src/mishe_tauftauf/outcome_events.py` is sha256 `b721a1e5…`,
+byte-identical to the checkout and to `git show 6077b07f:`. Six interleaved pairs
+re-measured against the release — four in
+`artifacts/rust-plan-20261107/prefix-filter-ab-reps-delivered-20261111.out`, two
+in `prefix-filter-ab-delivered-20261111.out`, both under
+`systemd-run --user --scope -q -p MemoryMax=1G nice -n 19` from `/tmp` — give
+paired deltas 0.096/0.175/0.093/0.143 and 0.114/0.041 CPU-s over 299,607 entries:
+**every pair positive, mean 0.11, best-vs-best 0.111**, all runs one digest
+`1974ce4e…`. Kept, because the reading never moves and no paired sample went the
+other way.
+
+The delivered saving is thinner than the pre-delivery 0.184 for a reason worth
+recording: between the two runs the *off* arm's floor fell 1.857 → 1.781 CPU-s
+while the *on* arm's moved 1.672 → 1.670, so the pre-change cost base moved, not
+the pre-filter. Treat ~0.1 CPU-s as the figure the port must recover on the
+fallback path.
+
+The live consumer is the writer's own `classify_outcomes`: `mishe` resolves
+through `SITE/bin/mishe`, which puts `runtime/current/src` first on `PYTHONPATH`,
+and `_publish_outcome` calls `_bound_evidence_paths` → `classify_outcomes` before
+it appends anything. So the A/B's `classify_outcomes` call is the delivered bytes
+on the pinned path, exercised by every `mishe wall outcome` in the plant.
