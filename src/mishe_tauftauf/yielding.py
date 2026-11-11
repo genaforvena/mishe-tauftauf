@@ -18,7 +18,42 @@ DEFAULT_IDLE_SECONDS = 2 * 3600  # idle-initiative pace; was 6h (Ilya DM 299699:
 # A continue yield must not be due at once: a due-now continue re-arms the next wake in the same
 # minute, and the restart storm trips the unit's start limit (2026-11-11 health wall).
 CONTINUE_FLOOR_SECONDS = 120
+OPEN_LANE_SECONDS = 30 * 60  # a role with a ready lane and spare budget returns in 30 min (Ilya DM 300036)
+BUDGET_MAX_AGE = 3600
+SPARE_5H, SPARE_7D = 0.30, 0.30
 RESULTS = ("changed", "verified", "blocked")
+
+
+def spare_budget(home, now) -> bool:
+    """True only on fresh evidence: some account has both 5h and 7d windows FRESH, recent and above the spare floor.
+    Missing, stale or unreadable evidence is UNKNOWN and reads as False."""
+    data = read_json(Path(home) / "engine" / "budget.json")
+    if not isinstance(data, dict) or not isinstance(data.get("accounts"), dict):
+        return False
+    for acct in data["accounts"].values():
+        try:
+            w = acct["windows"]
+            ok = acct.get("state") == "FRESH"
+            for name, floor in (("5h", SPARE_5H), ("7d", SPARE_7D)):
+                x = w[name]
+                ok = ok and x.get("state") == "FRESH" and now - float(x["observed_at"]) <= BUDGET_MAX_AGE and float(x["remaining"]) >= floor
+            if ok:
+                return True
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+    return False
+
+
+def open_lane(home, role) -> bool:
+    from . import work_state
+    record = work_state.load(home, role)
+    return bool(record and record.get("state") != "UNKNOWN" and any(t.get("state") == "ready" for t in record.get("tasks", [])))
+
+
+def idle_delay(home, role, now, idle_seconds) -> float:
+    if idle_seconds == DEFAULT_IDLE_SECONDS and open_lane(home, role) and spare_budget(home, now):
+        return OPEN_LANE_SECONDS
+    return idle_seconds
 
 
 def wakes_dir(home) -> Path:
@@ -81,7 +116,7 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
             else:                                             # clear again: the re-offer is residue, not a standing fault
                 intentions.remove(home, role, f"reoffer-{name}")
     intentions.add(home, role, IDLE_ID, note="idle initiative: look for useful work",
-                   due=now + idle_seconds, spontaneous=True)
+                   due=now + idle_delay(home, role, now, idle_seconds), spontaneous=True)
     from . import work_state
     work_state.settle_waits(home, role, now=now)
     write_json(receipt_path(home, key), {"role": role, "key": key, "result": result,
