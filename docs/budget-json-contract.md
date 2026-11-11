@@ -145,8 +145,8 @@ RED when any of:
 
 ## Migration checklist
 
-1. Ship `engine/budget_producer.py` + `checks/budget-consistency.py` + this contract as
-   one independent delivery, with its own install record.
+1. Ship `src/mishe_tauftauf/budget_producer.py` + `checks/budget-consistency.py` + this
+   contract as one independent delivery, with its own install record.
 2. Run the producer; verify `budget-consistency` GREEN against the live sources.
 3. Switch `budget_view.py` to render-only from `engine/budget.json`; delete its `MAP`,
    `rows()`, `models()`, `window_models()` computations.
