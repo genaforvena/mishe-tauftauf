@@ -2455,3 +2455,62 @@ cargo build run outside a wake with at least 8 GB free.
 uses it, so the kind stops being read and dropped. Its acceptance is the same
 A/B §10.32 names.
 
+### 10.34 The framer's own fact cost, measured live before the port: +0.27 CPU-s, digest-exact (2026-11-11)
+
+§10.30 measured the facts' *correctness* and left their *cost* open — "the live
+differential pass is a correctness check, not a timed A/B; that measurement
+belongs with piece 3, where the payoff is observable". It is measured here, on
+the delivered framer and the live tape, before any piece-3 code exists.
+
+**Method.** Interleaved `off on on off off on` over one tape, `--size` frozen at
+start (216,458,797 bytes, 299,665 entries) so both arms frame identical bytes;
+`$SITE/bin/mishe-tape` (the 0.2 install), one process from `/tmp` under
+`systemd-run --user --scope -q -p MemoryMax=1G nice -n 19`; the child's CPU is
+`os.wait4`'s `ru_utime + ru_stime`. Script and raw output:
+`artifacts/rust-plan-20261107/facts-cost-ab-20261111.py` / `.out`.
+
+| arm | CPU-s (best of 3) |
+|---|---|
+| `frames` | 0.5841 |
+| `frames --facts` | 0.8586 |
+| **fact cost** | **+0.2745 (×1.447)** |
+
+**Exactness re-proved at the whole-tape level, not field by field.** The parent
+hashed each arm's `E` headers, bodies and terminators while *excluding* the `F`
+lines; both arms produce one digest, `4e5322e4…`, over the same 299,665 entries.
+The facts arm emitted 299,665 `F` lines — one per entry — and every one carried
+its own entry's sequence (0 mismatches). So `--facts` adds bytes and nothing
+else, independently of §10.30's 15-crafted-body differential.
+
+**Decision: GO stands, now priced on the carrier side.** §10.29's target is
+1.441 CPU-s of Python deleted (0.283 child filter + 1.158 classify scan/peek);
+this carrier costs 0.274, so **net ≈ 1.17 CPU-s, ≈7.6% of the 15.39-CPU-s
+`readings` run**. No abandonment condition is met. Both carriers are already live
+(§10.31 framer, §10.32/§10.33 records), so the remaining work is consumer-side
+only.
+
+**The other side of the same ledger — the parser arm — measured before the port.**
+Same tape, same machine: capture the 299,665 `F` lines with a buffered reader
+(child exit 0, 299,665 entries, 0 sequence mismatches; the first is
+`F 1 0 1 1 0 9b808fa8…`), then time the parser shape `_iter_streamed_feed` would
+use — `readline`, `split(b" ", 6)`, five `int()` — best of 4: **0.1893 CPU-s over
+the whole tape, 0.63 µs/entry**
+(`artifacts/rust-plan-20261107/facts-parse-cost-20261111.py` / `.out`). The
+`b"".join`/`BytesIO` charged inside those arms accounts for 0.0045 CPU-s and the
+live reader pays none of it. So the port's net on this tape is
+**1.441 − 0.274 − 0.189 ≈ 0.98 CPU-s, ≈6.4% of the 15.39-CPU-s run** — the
+consumer-side deletion is what remains to be observed against this.
+
+**One constraint this measurement fixes for piece 3.** The fact flag costs 47%
+of the framer's own frame pass, so `--facts` must be requested only by the read
+that consumes the facts — the classifying snapshot read — never by every
+`Feed.entries()`; a default-on fact line would add 0.27 CPU-s to every role read
+and tab command to pay for one consumer.
+
+Limits: one tape, one machine, warm page cache; `--size`-bounded, so appends
+after the snapshot are excluded by construction and the two arms are one
+reading. The framer's process is the timed one in the first table and the
+parser arm is a probe over a captured line stream, not the live reader in place;
+the classify consumer's own deletion is still unobserved, which is what piece 3's
+delivered A/B must show.
+
