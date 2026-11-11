@@ -1,7 +1,16 @@
 # mishe-tape-facts contract (version 0.2, responsibility: byte-level tape facts)
 
-Status: BUILT and differential-tested (tests/test_mishe_tape_facts.py). Not
-installed, not wired into any live consumer, not delivered. Owner: rust-plan.
+Status: BUILT, differential-tested (tests/test_mishe_tape_facts.py), installed
+and promoted as a component — but **not wired into any live consumer**. The site
+holds the same bytes three ways, all sha256 `a56d42df…`: the `$SITE/bin`
+install (its `mishe-tape-facts.install.json` records source `0c0d7e6e`, built
+2026-11-09T09:28Z, installed by rust-plan), the component pointer
+`components/mishe-tape-facts/current` → release `0c0d7e6e…` (promoted after one
+rollback and re-apply; ledger `promotions.jsonl`), and that release's
+`bin/mishe-tape-facts`. The reader `src/mishe_tauftauf/tape_facts.py` exists and
+is tested, but no live path composes it and no code reads the component pointer,
+so the binary is installed, not running. It is not on the global runtime pin (by
+design; see Versioning). Owner: rust-plan.
 The Python reader it mirrors is `_coord_dm_disposition_age` in
 `src/mishe_tauftauf/discovery.py`, which keeps the role fold, the window, the
 maturity gate and record verification.
@@ -100,5 +109,7 @@ framer's status before trusting empty facts.
 - Version 0.2 (2026-11-08): DEFER line and `!` runs marker added; differential test
   written. A change to lines, exit meanings or extraction rules bumps the minor
   version and updates this file in the same commit.
-- Install path (not wired): a `components/mishe-tape-facts/current` pointer under the
-  per-component layout that genome is defining; do not place it on the global pin.
+- Install path: the `components/mishe-tape-facts/current` pointer under the
+  per-component layout (`docs/component-deploy.md`), which this component is
+  promoted to. It is not placed on the global pin. The `$SITE/bin` install beside
+  it holds the same bytes and is what `tape_facts.py` resolves.
