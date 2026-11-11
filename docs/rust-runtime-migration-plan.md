@@ -2631,3 +2631,40 @@ Measured by summing `systemd` `Consumed … CPU time` lines per unit over 24 h (
 Reading: the readings producer already halved; the next measured POSIX binary is whatever remains inside it (the ledger lane, §10.25) and `observer-checks` after a cProfile of one run (UNKNOWN until sampled). Nothing else Mishe owns costs enough to justify a port. A tape-read port is complete (§10.22).
 
 **`mishe-records` registered:** `mishe component promote mishe-records cc071b62…` ran under `systemd-run --slice=mishe.slice` (MemoryMax 3G, CPUQuota 100%, jobs=1; 50 s, 683 MiB peak); verify GREEN. Closes the "still owed" ledger entry. Consumers still read `$SITE/bin/` (component-deploy step 3 open).
+
+### 10.38 observer-checks profile (2026-11-11): 75% of it is one check's two full-tape passes
+
+Question left open by 10.37: observer-checks costs ~1,625 CPU-s/day (17.7
+CPU-s per 15-minute run, from the unit's `CPUUsageNSec`). Is it Python glue
+worth porting?
+
+Measured (capped scope, outside any wake; raw files under
+`artifacts/rust-plan-20261107/observer-checks*.txt|prof`):
+
+- The runner itself is orchestration only: cProfile shows 18.6 s wall, 18.56 s
+  of it in `poll` waiting on 17 child processes; its own Python is ~0.03 s.
+  Nothing to port there.
+- Per-child CPU (same argv the runner uses): `outcome-channel-state` 13.81 s,
+  `field-review-contract` 2.23, `shipped-book-vs-served-release` 1.32,
+  `pin-integrity` 0.52, `wakes-view-engines` 0.35, `cli-wrapper-cwd` 0.24, the
+  rest under 0.1. That is 75% of the run in one check.
+- Inside that check: `strace` shows four `mishe-tape frames` calls (a
+  classify pass and a bound-evidence pass under each of two roots, running
+  bytes and HEAD export). The Rust framer is not the cost: `mishe-tape frames
+  chat.log` over the 217 MB, ~300k-entry tape is 0.53 s wall. In-process
+  `classify_outcomes` profiled at 6.4 s: `_iter_streamed_feed` 2.1 s
+  cumulative, `os.stat` in `records.kind` 196k calls, `reference_lines` 393k
+  calls, plus the loop body. It is a Python per-entry fold.
+
+Decision: no port. A Rust classifier would be the "role fold / record
+verification" work the owner scoped out (byte-level only), and the real defect
+is repetition, not language: the tape is append-only, yet the cache key
+includes tape identity, so every 15-minute run recomputes the whole tape twice
+(two roots with different code bytes). The cheaper lever is an
+append-only-incremental classification (resume from the previous run's last
+sequence/offset) or sharing one framing pass across both roots. Both are
+Python edits to `checks/outcome-channel-state.py`, owned by whoever authored
+that detector; ranked next candidate, not started.
+
+Next POSIX binary candidate stays unchanged (records verification is already
+`mishe-records`); the remaining ledger lane is the readings fold (10.25).
