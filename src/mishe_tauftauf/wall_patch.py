@@ -327,9 +327,15 @@ def check(home, identity, command, *, activate=None, observe=None, revert_observ
             record.pop("review", None)
             _save(location(home, identity), record)
             raise ValueError("deterministic patch check failed")
-        if any(snapshot(target(home.parent, name)) != values["after"] for name, values in record["files"].items()):
+        changed = [name for name, values in record["files"].items()
+                   if snapshot(target(home.parent, name)) != values["after"]]
+        if changed:
             # Bytes changed under the check; any earlier verdict was on those bytes.
-            record.update(phase="test-mutated-source")
+            # Name the files: a bare phase cannot tell a peer's commit to a shared
+            # checkout from a test that wrote to a tracked file, and that difference
+            # picks the fix. Every sibling failure phase already records `failure`.
+            record.update(phase="test-mutated-source",
+                          failure="source changed during deterministic check: " + ", ".join(sorted(changed)))
             record.pop("review", None)
             _save(location(home, identity), record)
             raise ValueError("source changed during deterministic check; recheck exact bytes")

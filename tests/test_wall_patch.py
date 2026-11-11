@@ -62,7 +62,9 @@ def test_check_that_mutates_source_is_not_reviewed(tmp_path, monkeypatch):
     monkeypatch.setattr(wall_patch, "review", lambda *a: pytest.fail("must not review untested bytes"))
     with pytest.raises(ValueError, match="changed during"):
         wall_patch.check(home, "change", [sys.executable, "-c", f"from pathlib import Path; Path({str(source)!r}).write_text('mutated')"])
-    assert wall_patch.status(home, "change")["phase"] == "test-mutated-source"
+    failed = wall_patch.status(home, "change")
+    assert failed["phase"] == "test-mutated-source"
+    assert "src/mishe_tauftauf/example.py" in failed["failure"], "the failure must name the mutated file"
 
 
 def test_rollback_timeout_is_saved_as_visible_failure(tmp_path, monkeypatch):
