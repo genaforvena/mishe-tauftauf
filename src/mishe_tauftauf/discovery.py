@@ -7152,7 +7152,7 @@ def _scan_snapshot(home: Path) -> list | None:
     one reports the fault the way it does today.
     """
     try:
-        return Feed(home).entries()
+        return Feed(home).entries(facts=True)
     except (OSError, ValueError, RecordsUnknown, TapeUnknown):
         return None
 

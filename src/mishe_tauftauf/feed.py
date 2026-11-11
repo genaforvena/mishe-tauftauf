@@ -95,6 +95,41 @@ def _reject_record_tag_lines(body: str) -> None:
                 f"the feed appends the immutable reference itself: {line.strip()!r}")
 
 
+class Facts:
+    """The eligibility facts a framed entry carries, plus its cited record's kind.
+
+    ``mishe-tape frames --facts`` computes the byte-level predicates an outcome
+    classification would otherwise re-derive from every body (reserved header,
+    reference lines, sole final reference, single line, first reference digest).
+    ``kind`` is not the framer's: record verification writes it from the
+    ``mishe-records`` child's decision line, so it stays ``None`` on a read that
+    did not verify (the writer's own classification, a cached read) and on an
+    entry no record is cited from. A consumer that sees ``kind is None`` must
+    resolve the kind itself rather than read the entry as un-cited.
+
+    The fields are written once: the framer's five by the framing reader, then
+    ``kind`` by the verification pass on the entry's own value. A copy to keep
+    the value frozen cost ~0.9 CPU-s over a whole-tape read (two allocations per
+    referencing entry) against a ~1.3 CPU-s classifier win, so the value is a
+    plain object and the write is the entry's own, never shared between reads.
+    """
+    __slots__ = ("reserved", "reference_lines", "sole_final", "single_line", "digest", "kind")
+
+    def __init__(self, reserved: bool, reference_lines: int, sole_final: bool,
+                 single_line: bool, digest: str | None, kind: str | None = None) -> None:
+        self.reserved = reserved
+        self.reference_lines = reference_lines
+        self.sole_final = sole_final
+        self.single_line = single_line
+        self.digest = digest
+        self.kind = kind
+
+    def __repr__(self) -> str:
+        return (f"Facts(reserved={self.reserved!r}, reference_lines={self.reference_lines!r}, "
+                f"sole_final={self.sole_final!r}, single_line={self.single_line!r}, "
+                f"digest={self.digest!r}, kind={self.kind!r})")
+
+
 @dataclass(frozen=True)
 class FeedEntry:
     sequence: int
@@ -102,6 +137,7 @@ class FeedEntry:
     source: str
     body: str
     home: Path | None = field(default=None, compare=False, repr=False)
+    facts: Facts | None = field(default=None, compare=False, repr=False)
 
 
 def utc_now() -> str:
@@ -156,14 +192,16 @@ def _same_home(candidate, home) -> bool:
     return Path(candidate) == home
 
 
-def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None = None) -> list[FeedEntry]:
+def parse_feed(data: bytes, *, start_sequence: int = 1, home: Path | str | None = None,
+               facts: bool = False) -> list[FeedEntry]:
     """Frame whole-tape bytes with mishe-tape.
 
     The bytes ride an anonymous memfd, so the framer reads them through the same
     ``/proc/self/fd`` path as a tape file and no temporary file is written.
     """
     with _tape_memfd(data) as handle:
-        return list(_iter_streamed_feed(handle, start_sequence=start_sequence, home=home, size=len(data)))
+        return list(_iter_streamed_feed(handle, start_sequence=start_sequence, home=home,
+                                        size=len(data), facts=facts))
 
 
 @contextmanager
@@ -277,7 +315,7 @@ def _close_tape(proc, *, complete: bool) -> None:
 
 
 def _iter_streamed_feed(handle, *, start_sequence: int = 1, home=None,
-                        offset: int = 0, size: int | None = None):
+                        offset: int = 0, size: int | None = None, facts: bool = False):
     """Yield the tape's entries from a byte range, framed by mishe-tape.
 
     The framing responsibility lives in ``rust/mishe-tape`` (contract:
@@ -286,6 +324,12 @@ def _iter_streamed_feed(handle, *, start_sequence: int = 1, home=None,
     and a newline. The range ends at ``size`` as observed under the tape's
     shared lock, and the bytes come from the caller's open handle, so the inode
     the caller captured is the one framed.
+
+    ``facts`` asks the framer for one eligibility-fact line after each entry
+    (``F <sequence> <reserved> <reference-lines> <sole-final> <single-line>
+    <digest>``) and attaches it to the entry. The flag costs the framer about
+    47% of its own frame pass, so only a reader that consumes the facts (the
+    classifying snapshot read) asks for them.
     """
     if size is None:
         size = os.fstat(handle.fileno()).st_size
@@ -293,7 +337,8 @@ def _iter_streamed_feed(handle, *, start_sequence: int = 1, home=None,
     # it per entry allocated a Path (and re-normalized its string) 299,240 times
     # on the live tape for a value that never changed.
     entry_home = Path(home) if home is not None else None
-    proc = _spawn_frames(handle, start_sequence=start_sequence, offset=offset, size=size)
+    extra = ("--facts",) if facts else ()
+    proc = _spawn_frames(handle, start_sequence=start_sequence, offset=offset, size=size, extra=extra)
     complete = False
     try:
         stdout = proc.stdout
@@ -320,10 +365,47 @@ def _iter_streamed_feed(handle, *, start_sequence: int = 1, home=None,
                 # The contract makes non-UTF-8 a framer fault (exit 2), so a body
                 # that reaches here is a contract violation: UNKNOWN.
                 raise TapeUnknown(f"mishe-tape body is not UTF-8: {exc}") from exc
-            yield FeedEntry(sequence, timestamp, source, text, entry_home)
+            entry_facts = _read_facts(stdout, sequence) if facts else None
+            yield FeedEntry(sequence, timestamp, source, text, entry_home, entry_facts)
         complete = True
     finally:
         _close_tape(proc, complete=complete)
+
+
+_FACT_HEX = b"0123456789abcdef"
+_FACT_FLAGS = (b"0", b"1")
+
+
+def _read_facts(stream, sequence: int) -> Facts:
+    """Parse one ``F`` line for ``sequence``; a non-contract line is UNKNOWN.
+
+    Field checks run inline: this is per-tape-entry work, and three helper calls
+    plus a hex scan per entry measured ~0.8 CPU-s of a whole-tape read.
+    """
+    line = stream.readline()
+    if not line.endswith(b"\n"):
+        raise TapeUnknown("mishe-tape fact line truncated")
+    parts = line[:-1].split(b" ")
+    if (len(parts) != 7 or parts[0] != b"F"
+            or parts[2] not in _FACT_FLAGS or parts[4] not in _FACT_FLAGS
+            or parts[5] not in _FACT_FLAGS):
+        raise TapeUnknown("mishe-tape emitted a non-contract fact line")
+    try:
+        reported, reference_lines = int(parts[1]), int(parts[3])
+    except ValueError as exc:
+        raise TapeUnknown(f"mishe-tape fact line field invalid: {exc}") from exc
+    if reported != sequence:
+        raise TapeUnknown("mishe-tape fact line names another entry")
+    if reference_lines < 0:
+        raise TapeUnknown("mishe-tape fact line reference count is negative")
+    digest = parts[6]
+    if digest == b"-":
+        digest = None
+    elif len(digest) == 64 and not digest.translate(None, _FACT_HEX):
+        digest = digest.decode("ascii")
+    else:
+        raise TapeUnknown("mishe-tape fact line digest is not a digest")
+    return Facts(parts[2] == b"1", reference_lines, parts[4] == b"1", parts[5] == b"1", digest)
 
 
 def _frame_offsets(handle, offset: int, size: int, *, start_sequence: int = 1) -> list[int]:
@@ -508,6 +590,7 @@ class _RecordsChild:
             argv.append("--payloads")
         self._payloads = payloads
         self._sink = sink
+        self._kinds: dict[int, str] = {}
         self._error: Exception | None = None
         self._broken = False
         self._committed = False
@@ -531,13 +614,16 @@ class _RecordsChild:
                     raise RecordsUnknown(f"mishe-records emitted a non-contract decision: {line!r}")
                 # `<sequence>`, then — contract 0.4 and later — the cited record's kind.
                 # `S` never carries one and a 0.3 binary emits none, so the field is
-                # optional here. It is read and dropped for now: the consumer arrives with
-                # Shape B's piece 3 (`FeedEntry` carries it, `classify_outcomes` uses it).
-                sequence_field, _, _kind = rest.partition(" ")
+                # optional here. It is kept per sequence: after `commit` joins this
+                # drain, `kinds()` is the whole pass's answer and the classifying
+                # read attaches it to the entry it was given for.
+                sequence_field, _, kind = rest.partition(" ")
                 try:
                     sequence = int(sequence_field)
                 except ValueError as exc:
                     raise RecordsUnknown(f"mishe-records decision sequence invalid: {exc}") from exc
+                if kind and head in ("V", "N"):
+                    self._kinds[sequence] = kind
                 if self._payloads and head in ("V", "N"):
                     header = stdout.readline()
                     if not header.endswith(b"\n"):
@@ -604,6 +690,10 @@ class _RecordsChild:
             # A verification result: the Python fault text the pass used to raise.
             raise ValueError(err)
         raise RecordsUnknown(f"mishe-records exit {rc}: {err}")
+
+    def kind_map(self) -> dict[int, str]:
+        """The cited kind per sequence, valid after ``commit`` joined the drain."""
+        return dict(self._kinds)
 
     def close(self) -> None:
         """Reap a child the pass abandoned before committing."""
@@ -676,6 +766,14 @@ class _VerificationPass:
                 raise RecordsUnknown("verification pass used with two payload sinks")
             self._sink = sink
         for entry in entries:
+            facts = entry.facts
+            if facts is not None:
+                # The framer already counted this body's reference lines with
+                # the same lstrip test, so a facts read does not split every
+                # body again to find the entries the child verifies.
+                if facts.reference_lines:
+                    self._child_for(entry).write(entry)
+                continue
             if any(line.lstrip().startswith("[record]") for line in entry.body.splitlines()):
                 self._child_for(entry).write(entry)
 
@@ -691,6 +789,16 @@ class _VerificationPass:
         if first is not None:
             raise first
 
+    def kinds(self) -> dict[str, dict[int, str]]:
+        """The cited kind per entry, keyed by the home's path, after ``commit``.
+
+        A pass over one tape has one home and one child, so this is the kind of
+        every entry that cited a record. A caller that asked for the framer's
+        facts attaches the kind by that path and sequence; a caller that did
+        not ignores this answer.
+        """
+        return {key: child.kind_map() for key, child in self._children.items()}
+
     def close(self) -> None:
         """Reap any child the pass abandoned before committing."""
         for child in self._children.values():
@@ -703,6 +811,27 @@ def _verified_stream(entries, verification):
     for entry in entries:
         verification.verify((entry,))
         yield entry
+
+
+def _attach_kinds(entries, kinds: dict[str, dict[int, str]]) -> None:
+    """Write each entry's cited kind onto the facts value it already carries.
+
+    A pass's answer is keyed by the home's path and the entry's sequence, so an
+    entry under any other home is untouched, and an entry with no facts (a
+    cached or unverified read) is left exactly as it was. An entry whose kind
+    the pass did not report — a 0.3 child, or one that cites no record — keeps
+    ``facts.kind`` None, which tells the consumer to resolve it itself. The
+    write is in place: rebuilding a frozen copy cost ~0.9 CPU-s of the read.
+    """
+    for entry in entries:
+        facts = entry.facts
+        if facts is None or facts.kind is not None:
+            continue
+        home_kinds = kinds.get(str(entry.home)) if entry.home is not None else None
+        if home_kinds:
+            kind = home_kinds.get(entry.sequence)
+            if kind is not None:
+                facts.kind = kind
 
 
 def _role_view(row):
@@ -966,17 +1095,20 @@ class Feed:
             self._save_index(handle, index, metadata)
 
     @staticmethod
-    def _verify_records(entries, sink: dict | None = None) -> None:
+    def _verify_records(entries, sink: dict | None = None) -> dict[str, dict[int, str]]:
         # Record verification and the verified store live in mishe-records. A hit is
         # served only while the referenced file keeps its verified identity; a miss runs
         # the full envelope verification and is stored after the whole pass succeeds.
         # One child serves the whole pass, so the records directory and the store are
         # not reopened per entry; entries under any other home get their own child.
-        # The rules live in _VerificationPass; this is the one-shot form of it.
+        # The rules live in _VerificationPass; this is the one-shot form of it. The
+        # answer is the cited kind per entry, which a facts reader attaches and every
+        # other caller ignores.
         verification = _VerificationPass()
         try:
             verification.verify(entries, sink)
             verification.commit()
+            return verification.kinds()
         finally:
             verification.close()
 
@@ -1016,7 +1148,7 @@ class Feed:
         return entries + parsed
 
     def _capture(self, handle, start: int, limit: int | None, allow_extend: bool = True,
-                 verified: bool = True):
+                 verified: bool = True, facts: bool = False):
         """Capture the bytes a reader will parse, under the tape's shared lock.
 
         The tape is append-only and the writer's exclusive lock excludes every
@@ -1040,7 +1172,10 @@ class Feed:
         if start > index["sequence"]:
             return ("empty", b"", (1, index["sequence"]))
         cached = None
-        if start == 1 and limit is None:
+        if start == 1 and limit is None and not facts:
+            # A facts read parses its own revision: the shared cache holds
+            # entries framed without facts, and serving one would silently drop
+            # the facts the caller asked for.
             with _ENTRIES_CACHE_LOCK:
                 cached = _ENTRIES_CACHE.get(str(self.path))
             # An unverified revision cannot serve a reader that requires verification.
@@ -1230,10 +1365,18 @@ class Feed:
         return entries
 
     def entries(self, *, start: int = 1, limit: int | None = None,
-                payloads: dict | None = None, verify_records: bool = True) -> list[FeedEntry]:
+                payloads: dict | None = None, verify_records: bool = True,
+                facts: bool = False) -> list[FeedEntry]:
         """Parse the tape. verify_records=False skips record payload verification
         for a caller that reads only plain-text entries and verifies any record it
-        consumes itself; the parse and tape-level checks still run."""
+        consumes itself; the parse and tape-level checks still run.
+
+        facts asks the framer for its per-entry eligibility facts and attaches
+        the cited record's verified kind to each entry that carries one, so a
+        classifier can decide from the read instead of re-deriving both from
+        every body. Only the classifying snapshot read asks for them: the flag
+        costs the framer about half again its own frame pass, so a default-on
+        fact line would tax every role read and tab command for one consumer."""
         if start < 1 or limit is not None and limit < 0:
             raise ValueError("start must be positive and limit nonnegative")
         if not self.path.exists():
@@ -1250,7 +1393,8 @@ class Feed:
                 # the capture: parsing and verification follow after it is
                 # released, so a cold full-tape read does not starve the writer.
                 fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
-                mode, data, span = self._capture(handle, start, limit, allow_extend, verify_records)
+                mode, data, span = self._capture(handle, start, limit, allow_extend,
+                                                 verify_records, facts)
                 metadata = tuple(self._metadata(handle))
             if mode == "cached":
                 return list(span[1])
@@ -1266,7 +1410,7 @@ class Feed:
                 allow_extend = False
                 continue
             if mode == "rebuild":
-                entries = parse_feed(data, home=self.home)
+                entries = parse_feed(data, home=self.home, facts=facts)
                 offsets = [match.start() for match in FRAME_START_RE.finditer(data)]
                 if len(offsets) != len(entries):
                     raise FeedError("feed frame index disagrees with canonical parser")
@@ -1278,13 +1422,15 @@ class Feed:
                 result = [entry for entry in entries if start <= entry.sequence <= target]
             else:
                 first_seq, target = span
-                selected = parse_feed(data, start_sequence=first_seq, home=self.home)
+                selected = parse_feed(data, start_sequence=first_seq, home=self.home, facts=facts)
                 result = [entry for entry in selected if start <= entry.sequence <= target]
             # Fill the sink only on a full verify pass; a cache hit leaves it
             # empty so the caller's projection falls back to per-entry
             # resolution, exactly as before.
             if verify_records:
-                self._verify_records(result, payloads)
+                kinds = self._verify_records(result, payloads)
+                if facts:
+                    _attach_kinds(result, kinds)
             if start == 1 and limit is None:
                 self._store_entries(self.path, metadata, list(result), verify_records)
             return result

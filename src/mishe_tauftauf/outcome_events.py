@@ -128,18 +128,32 @@ def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dic
                 # before it had classified anything.
                 return {'events': [], 'incomplete': [], 'unavailable': f'chat tape unreadable: {exc}'}
             body = entry.body
-            if not body_may_carry_publication(body):
-                # Exact short-circuit: the line tests below can only fail on a
-                # body carrying neither the reserved prefix nor a reference
-                # opener, so skipping its splitlines() and the three scans
-                # changes no reading, only the cost of the whole-tape scan.
-                continue
-            lines = body_lines(body)
-            first = first_significant_line(lines)
-            reserved = has_outcome_prefix(first)
-            refs = reference_lines(lines)
-            if not reserved and not refs:
-                continue
+            facts = getattr(entry, 'facts', None)
+            if facts is None:
+                if not body_may_carry_publication(body):
+                    # Exact short-circuit: the line tests below can only fail on a
+                    # body carrying neither the reserved prefix nor a reference
+                    # opener, so skipping its splitlines() and the three scans
+                    # changes no reading, only the cost of the whole-tape scan.
+                    continue
+                lines = body_lines(body)
+                reserved = has_outcome_prefix(first_significant_line(lines))
+                refs = reference_lines(lines)
+                if not reserved and not refs:
+                    continue
+                ref_count = len(refs)
+            else:
+                # The framer ran those line tests over this body in the pass it
+                # already made, and the verification pass reported the cited
+                # record's kind, so the same discards cost one attribute read.
+                # Both fields are exact, so a body with no reserved header and no
+                # reference line has neither a candidate nor a gap.
+                if not facts.reserved and facts.reference_lines == 0:
+                    continue
+                reserved = facts.reserved
+                ref_count = facts.reference_lines
+                refs = None
+                lines = None
             try:
                 timestamp = decode_timestamp(entry.timestamp)
                 if timestamp < clause_time:
@@ -148,27 +162,55 @@ def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dic
                 incomplete.append({'sequence': entry.sequence, 'reason': f'invalid event time: {exc}',
                                    'binding': 'unknown'})
                 continue
-            binding = binding_relevance(lines)
+            if ref_count:
+                # A reference line marks a publication attempt as far as the
+                # binding goes, so binding_relevance's answer is 'unknown'
+                # without building the lines.
+                binding = 'unknown'
+            else:
+                # A reserved header with no reference line at all: the binding
+                # turns on whether its first significant line is a full header,
+                # which only the lines answer.
+                if lines is None:
+                    lines = body_lines(body)
+                binding = binding_relevance(lines)
             try:
-                if len(refs) != 1 or sole_final_reference(lines) is None:
+                sole_final = (facts.sole_final if facts is not None
+                              else sole_final_reference(lines) is not None)
+                if ref_count != 1 or not sole_final:
                     raise ValueError('publication requires one standalone final record reference')
-                # Bounded fast-path: the record is written with sorted keys so the
-                # kind is the first field. Peek the head (64 bytes) to discard
-                # non-outcome citations without reading the whole record.
-                # A head that cannot be read or that names no kind falls through
-                # to the full envelope verification so the gap stays UNKNOWN with
-                # the correct binding, exactly as before.
-                digest = reference_digest(refs[0])
-                kind = kinds.kind(directory, digest)
+                if facts is not None and facts.digest is not None:
+                    # The cited kind the verification pass already resolved. A
+                    # reference the framer could not digest (an indented one)
+                    # falls through to the direct peek, exactly as before: on a
+                    # snapshot read such an entry cannot exist, because the
+                    # records child refuses the whole pass first.
+                    digest, kind = facts.digest, facts.kind
+                else:
+                    # Bounded fast-path: the record is written with sorted keys so the
+                    # kind is the first field. Peek the head (64 bytes) to discard
+                    # non-outcome citations without reading the whole record.
+                    # A head that cannot be read or that names no kind falls through
+                    # to the full envelope verification so the gap stays UNKNOWN with
+                    # the correct binding, exactly as before.
+                    if refs is None:
+                        if lines is None:
+                            lines = body_lines(body)
+                        refs = reference_lines(lines)
+                    digest = reference_digest(refs[0])
+                    kind = kinds.kind(directory, digest)
                 if kind is not None and not reserved and kind != 'wall-outcome':
                     continue
                 envelope = records.envelope(entry)
                 if kind is None and not reserved and envelope['kind'] != 'wall-outcome':
                     continue
-                if not reserved and len(lines) == 1:
+                single_line = facts.single_line if facts is not None else len(lines) == 1
+                if not reserved and single_line:
                     continue
                 if envelope['kind'] != 'wall-outcome':
                     raise ValueError('reserved publication has wrong envelope kind')
+                if lines is None:
+                    lines = body_lines(body)
                 header = parse_header(lines[0])
                 if header is None:
                     raise ValueError('malformed, displaced or replaced outcome header')
@@ -187,7 +229,10 @@ def classify_outcomes(home: Path, clause_time: datetime, *, entries=None) -> dic
             except (OSError, ValueError, TypeError) as exc:
                 incomplete.append({'sequence': entry.sequence, 'reason': str(exc), 'binding': binding})
                 continue
-            digest = reference_digest(refs[0])
+            if refs is None:
+                digest = facts.digest
+            else:
+                digest = reference_digest(refs[0])
             events.append({'site': str(home), 'sequence': entry.sequence,
                            'timestamp': entry.timestamp, 'record_sha256': digest,
                            'role': payload['role'], 'kind': payload['kind'], 'evidence': evidence,

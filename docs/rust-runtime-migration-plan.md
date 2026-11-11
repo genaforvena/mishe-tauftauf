@@ -2494,8 +2494,8 @@ Same tape, same machine: capture the 299,665 `F` lines with a buffered reader
 (child exit 0, 299,665 entries, 0 sequence mismatches; the first is
 `F 1 0 1 1 0 9b808fa8…`), then time the parser shape `_iter_streamed_feed` would
 use — `readline`, `split(b" ", 6)`, five `int()` — best of 4: **0.1893 CPU-s over
-the whole tape, 0.63 µs/entry**
-(`artifacts/rust-plan-20261107/facts-parse-cost-20261111.py` / `.out`). The
+the whole tape, 0.63 µs/entry**. Raw sample: `artifacts/rust-plan-20261107/facts-parse-cost-20261111.py`
+and `.out`. The
 `b"".join`/`BytesIO` charged inside those arms accounts for 0.0045 CPU-s and the
 live reader pays none of it. So the port's net on this tape is
 **1.441 − 0.274 − 0.189 ≈ 0.98 CPU-s, ≈6.4% of the 15.39-CPU-s run** — the
@@ -2514,3 +2514,82 @@ parser arm is a probe over a captured line stream, not the live reader in place;
 the classify consumer's own deletion is still unobserved, which is what piece 3's
 delivered A/B must show.
 
+
+### 10.35 Shape B piece 3 implemented and differential-exact on the live tape: ~0.50 CPU-s net, half of §10.34's estimate (2026-11-11)
+
+Shape B's consumer side now exists on the checkout source and is measured on the
+live tape before any delivery: `FeedEntry` carries the framer's fact line and the
+`mishe-records` decision line's kind, `Feed.entries(facts=True)` asks for both,
+and `classify_outcomes` consumes them. The reading does not move; the payoff is
+smaller than the pre-port ledger said.
+
+**Shape.**
+- `feed.py`: a `Facts` value (reserved, reference-lines, sole-final, single-line,
+  digest) attached to `FeedEntry.facts` by `_iter_streamed_feed`, whose new
+  `facts` flag adds `--facts` to `_spawn_frames` and parses one `F` line per entry
+  (`_read_facts`).
+- `feed.py`: `_RecordsChild._drain` keeps the 0.4 decision line's kind per
+  sequence; `_VerificationPass.kinds()` returns it keyed by home after `commit`,
+  and `_attach_kinds` writes it in place onto the entry's own `Facts.kind`.
+  `_VerificationPass.verify` uses the framer's reference count instead of
+  splitting every body when the entry carries facts — that is §10.29's 0.283
+  child-filter scan deleted.
+- `Feed.entries(..., facts=False)`: a facts read parses rather than serving the
+  shared entries cache (which holds entries framed without facts) and still
+  stores its result, so the later `_seed_settle_result_mix` read in the same scan
+  stays a cache hit. Only `discovery._scan_snapshot` asks for facts.
+- `outcome_events.classify_outcomes`: with facts present the discards use
+  `facts.reference_lines`/`facts.reserved`, the sole-final and single-line tests use
+  the framer's flags, and the kind comes from `facts.kind` (so no `KindIndex` load
+  and no 64-byte peek); the decode tail is unchanged. Without facts — the cached
+  read, the writer's own `wall.outcome` call — the previous path runs exactly,
+  `body_may_carry_publication` pre-filter and peek included. A `facts.digest` of
+  `None` (an indented reference, which the records child would refuse first) falls
+  back to the peek so the gap stays the old one.
+
+**Differential, one process, one tape revision** (216,491,693 bytes, 299,674
+entries). Raw sample: `artifacts/rust-plan-20261107/piece3-facts-differential-20261111.py`
+and `.out`. The legacy arm runs first, so the shared entries cache is empty;
+the other arm then frames with `--facts`. Both ran under
+`systemd-run --user --scope -q -p MemoryMax=2G nice -n 19` from `/tmp`:
+- **0 fact mismatches** against `outcome_publication`'s own predicates, 0 entries
+  without facts, and **0 of 196,356 record-naming entries without a kind**
+  (`observation` 191,575, `wall-outcome` 4,778, `task-close` 3).
+- `classify_outcomes` **1.71 → 0.42 CPU-s**, both arms 4,778 events and 1
+  incomplete, coverage digest `08452042a75b17f0…f647` **identical**.
+- Read (`Feed.entries()`, parent `os.times()`): **1.81 → 2.33 CPU-s**.
+
+**The corrected ledger.** Parent-side net = (1.81+1.71) − (2.33+0.42) = 0.77
+CPU-s; the framer's own `--facts` pass adds §10.34's 0.274 outside the parent's
+clock, so **net ≈ 0.50 CPU-s (≈3.2% of the 15.39-CPU-s `readings` run)**, not
+0.98. §10.34's parser arm (0.189 for `readline`+`split`+`int`) was measured over a
+captured `F`-line stream. The live reader pays 0.720 for the same work plus an
+extra `readline()` per entry on the child's pipe and the `Facts` value. Raw
+sample: `artifacts/rust-plan-20261107/piece3-facts-parse-attribution-20261111.py`
+(`parse_delta` 0.720, `_attach_kinds` 0.045, best of 3). Two shapes were replaced
+on measurement: the per-entry hex scan (frozenset `all(...)` 0.596 CPU-s per 300k facts →
+`bytes.translate` 0.104) and a frozen `Facts` dataclass (0.185 → 0.056 as a plain
+`__slots__` object); a frozen-copy kind attachment measured 0.94 CPU-s, which is
+why `Facts.kind` is written in place on the entry's own value. §10.29's 1.158
+classify target is confirmed and slightly beaten (1.29 saved, the `KindIndex`
+load and peek gone entirely); the framer's fact cost and the live-reader parse
+are what the pre-port ledger under-counted.
+
+**Decision: keep, and take the strong gate.** The change is a protocol-boundary
+consumer (`outcome_events.py`) over `parsing-policy.json`'s `feed.py`, so it needs
+a fresh non-author reviewer, deterministic activation, revert and reapply. The
+delivered A/B on the pin is the acceptance and predicts ≈0.50 CPU-s with the
+reading digest unchanged.
+
+Checks on the checkout source: `tests/test_feed.py`, `test_feed_records.py`,
+`test_mishe_records_verify.py`, `test_mishe_tape_frames_facts.py`, `test_wall.py`,
+`test_outcome_coverage_block.py`, `test_outcome_publication.py`,
+`test_discovery_shared_snapshot.py`, `test_records_kind_index.py` → **188 passed,
+28 subtests**; `tools/check_parsing.py` PASS with no new legacy sites.
+
+Limits: one tape (299,674 entries), one machine, warm page cache; `process_time`
+and `os.times()` parent CPU only, with the framer's child cost taken from §10.34.
+The classifier's 0.42 still holds the ≈0.521 survivor decode; §10.30's `--facts`
+contract and 0.4's kind line are the carriers this consumer now depends on. The
+remaining step §10.33 named — a `mishe-records` component so the hand-installed
+binary has a ledger and a drift detector — is untouched.
