@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 import pytest
@@ -47,6 +48,29 @@ def test_rewind_and_missing_git_are_unknown(repo):
     git(repo, "reset", "--hard", base)
     assert w.finish(start, repo=repo, now=2)["evidence_state"] == "UNKNOWN"
     assert w.begin(None, role="docs", key="k", now=1)["evidence_state"] == "UNKNOWN"
+
+
+def test_rewritten_start_commit_still_observes_and_attributes_the_wakes_commit(repo):
+    """A shared tip amended under the wake leaves head_start a sibling of head_end.
+
+    Live 2026-11-11: rust-plan amended its own just-pushed commit, then genome
+    reset to origin/main; two Health wakes started and ended on sibling commits
+    and were recorded as spurious UNKNOWN. The commit made during the wake is still
+    reachable from head_end, so it is observed and attributed, not discarded.
+    """
+    own = commit(repo, "own\n\nMishe-Wake: k\nMishe-Role: docs")
+    start = w.begin(repo, role="docs", key="k", now=1)
+    # Same tree and message; only the committer time differs, so the amend produces
+    # a sibling commit exactly as the live case did.
+    subprocess.check_output(["git", "-C", str(repo), "commit", "--amend", "-qm",
+                             "own\n\nMishe-Wake: k\nMishe-Role: docs"],
+                            text=True, env={**os.environ, "GIT_COMMITTER_DATE": "2026-11-11T00:55:35+00:00"})
+    amended = git(repo, "rev-parse", "HEAD")
+    assert amended != own
+    result = w.finish(start, repo=repo, now=2, claimed_result="changed")
+    assert result["evidence_state"] == "KNOWN"
+    assert result["commits_observed"] == [amended]
+    assert result["commits_attributed"] == [amended]
 
 
 def test_artifacts_are_confined_and_changed_binding_is_rejected(tmp_path):

@@ -180,8 +180,26 @@ def index_entries(repo):
     return entries
 
 
+def is_ancestor(repo, ancestor, descendant):
+    """True when ``ancestor`` is reachable from ``descendant``. Exit 1 is the
+    honest "no", not a failure; only a real Git error (unknown revision, ...) raises."""
+    out = subprocess.run(["git", "-C", str(repo), "merge-base", "--is-ancestor", ancestor, descendant],
+                         capture_output=True, text=True, timeout=30)
+    if out.returncode not in (0, 1):
+        raise ValueError(f"git merge-base exit {out.returncode}: {out.stderr[:300]}")
+    return out.returncode == 0
+
+
 def new_commits(repo, before, after, role, key):
-    git(repo, "merge-base", "--is-ancestor", before, after)
+    # A rewind -- ``after`` reachable from ``before`` -- removed the commits made
+    # during the wake, so there is no honest range and the caller must record
+    # UNKNOWN. A rewrite -- ``after`` a sibling of ``before`` because the shared tip
+    # was amended or reset under the wake (observed 2026-11-11 00:55Z and 01:06Z) --
+    # still has its new commits reachable from ``after`` alone, so enumerate them;
+    # ``before..after`` is that set. Requiring ``before`` to be an ancestor threw the
+    # work away as a spurious UNKNOWN.
+    if before != after and is_ancestor(repo, after, before):
+        raise ValueError(f"head rewound during the wake: {after} is an ancestor of {before}")
     commits = git(repo, "rev-list", "--reverse", f"{before}..{after}").splitlines()
     own = []
     for sha in commits:
