@@ -167,6 +167,26 @@ def test_fresh_redmi_heartbeat_without_values_is_unknown(tmp_path):
     assert out["status"] == "unknown" and "no current" in out["reason"]
 
 
+def test_missing_redmi_stream_log_is_unavailable_not_a_crash(tmp_path):
+    # the production exit-4 contract: an absent or unreadable log is a row, never an exception
+    out = hc.redmi_summary(str(tmp_path), time.time(), log_path=str(tmp_path / "absent.log"))
+    assert out["status"] == "unavailable" and "stream log unreadable" in out["reason"]
+
+
+def test_production_redmi_call_uses_the_reader_default_path(tmp_path, monkeypatch):
+    # log_path=None (the production call from cmd_phones) must pass no override, so the reader's own default applies
+    from mishe_tauftauf import redmi10_stream
+    seen = {}
+
+    def fake(**kwargs):
+        seen.update(kwargs)
+        return {"state": "unknown", "sample": "fake"}
+
+    monkeypatch.setattr(redmi10_stream, "read_redmi10_stream", fake)
+    out = hc.redmi_summary(str(tmp_path), time.time())
+    assert set(seen) == {"now"} and out["status"] == "unavailable"
+
+
 def test_redmi_snapshot_lag_no_longer_hides_fresh_samples(tmp_path):
     # a discovery snapshot written 5 min ago must not matter: the live row is 3 s old
     now = time.time()
