@@ -2599,3 +2599,17 @@ The classifier's 0.38 still holds the ≈0.521 survivor decode; §10.30's `--fac
 contract and 0.4's kind line are the carriers this consumer now depends on. The
 remaining step §10.33 named — a `mishe-records` component so the hand-installed
 binary has a ledger and a drift detector — is untouched.
+
+### 10.36 Piece 3 is live: pin fd3cb605 carries it, and the delivered A/B reproduces §10.35 (2026-11-11)
+
+The feed change (`625853d7`) reached the running pin through the ordinary delivery
+of `fd3cb605` (`runtime/current` → `releases/fd3cb605…`; the pin's `discovery.py`
+asks `entries(facts=True)` and its `feed.py` has `_attach_kinds`). The same
+differential script run against the pin's source, over the live tape (4,779
+outcome events): 0 fact mismatches, 0 entries without facts, 0 of 196,357
+record-naming entries without a kind, `classify_outcomes` 1.69 → 0.39 CPU-s, and one
+identical coverage digest from both arms (`5f394049…5a15775`; it differs from
+§10.35's only because the tape grew). So the ≈1.3 CPU-s classifier saving holds on
+the delivered bytes, and ≈0.5 CPU-s net after the read and framer cost stands.
+`b004e823` (household) was refused by the gate review and is independent of this.
+Still owed: a `mishe-records` component ledger entry (needs a build outside a wake).
