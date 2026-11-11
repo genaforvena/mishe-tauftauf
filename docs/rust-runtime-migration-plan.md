@@ -2613,3 +2613,21 @@ identical coverage digest from both arms (`5f394049…5a15775`; it differs from
 the delivered bytes, and ≈0.5 CPU-s net after the read and framer cost stands.
 `b004e823` (household) was refused by the gate review and is independent of this.
 Still owed: a `mishe-records` component ledger entry (needs a build outside a wake).
+
+### 10.37 Plant-wide CPU ranking (journal "Consumed" lines, last 24 h, 2026-11-11) and `mishe-records` registered
+
+Measured by summing `systemd` `Consumed … CPU time` lines per unit over 24 h (journal, not a profile; wake units include the model-driver CLI, which is not Python Mishe code).
+
+| CPU-s/24 h | runs | unit | Rust candidate? |
+|---|---|---|---|
+| 4,330 | 96 | `mishe-wake@genome` | no: model-driver (node) work |
+| 2,886 | 134 | `mishe-producer-readings` | **yes, the only large Mishe-code consumer**; was ≈5.9k before slices B/S0b and the classifier work |
+| 2,735 | 72 | `mishe-wake@health` | no: model driver |
+| 1,808 / 1,559 / 1,005 | 49/68/42 | wakes rust-plan, steward, senses | no |
+| 1,625 | 90 | `mishe-producer-observer-checks` | maybe: unprofiled, next profile target |
+| 1,350 | 268 | `mishe-doctor` | no: many cheap runs, diagnosis not port |
+| 592 / 536 | 134 | `producer-budget` / `household-daylight` | no: operator-side scripts, not Mishe core |
+
+Reading: the readings producer already halved; the next measured POSIX binary is whatever remains inside it (the ledger lane, §10.25) and `observer-checks` after a cProfile of one run (UNKNOWN until sampled). Nothing else Mishe owns costs enough to justify a port. A tape-read port is complete (§10.22).
+
+**`mishe-records` registered:** `mishe component promote mishe-records cc071b62…` ran under `systemd-run --slice=mishe.slice` (MemoryMax 3G, CPUQuota 100%, jobs=1; 50 s, 683 MiB peak); verify GREEN. Closes the "still owed" ledger entry. Consumers still read `$SITE/bin/` (component-deploy step 3 open).
