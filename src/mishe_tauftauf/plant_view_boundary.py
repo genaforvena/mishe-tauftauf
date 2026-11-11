@@ -41,6 +41,38 @@ def _tool_args(args) -> str:
     return str(args)[:400] if args is not None else '(no arguments)'
 
 
+def _block_token(line: str) -> str:
+    """The renderer token that opens a block: '[tool output]' in '[tool output] {..}'."""
+    close = line.find(']')
+    space = line.find(' ', close + 1) if close >= 0 else -1
+    return line if space < 0 else line[:space]
+
+
+def stream_tail(text: str, limit: int) -> str:
+    """The last `limit` characters of a rendered stream, always headed by that block's own label.
+
+    `stream_text` emits blocks that each open with a renderer line ('[tool output] ',
+    '[assistant] ', ...). A raw character cut can land inside a block and drop that line, so
+    the block's content reads as the renderer's own prose — a tool that dumped a JSON record
+    becomes a pane full of machine syntax. So the bound is taken just past the line the cut
+    lands in: that block's opening token (e.g. '[tool output]') and then the lines after the
+    cut. A cut that lands exactly on a block boundary keeps whole blocks instead.
+    """
+    cut = len(text) - limit
+    offset, token = 0, None
+    for line in text.splitlines(keepends=True):
+        if line.startswith(RENDERER_LINES):
+            if offset >= cut and len(text) - offset <= limit:
+                return text[offset:]          # the cut landed on a block boundary: keep whole blocks
+            token = _block_token(line.rstrip('\n'))
+        offset += len(line)
+        if offset > cut:
+            break
+    if token is None:
+        return text[cut:]                     # no renderer line at all: nothing labels the fragment
+    return token + '\n' + text[offset:]
+
+
 def stream_text(text: str) -> str:
     """Decode OMP JSON-lines at the literal output boundary, never as actions."""
     out, pending = [], ''
@@ -338,7 +370,7 @@ def output_view(path: Path, limit: int = 16000, final: bool = False) -> tuple[di
         if final:
             text = final_answer(text)   # a settled OMP wake reads like a Claude wake: its last message
         if len(text) > limit:
-            text = '[rendered tail]\n' + text[-limit:]
+            text = '[rendered tail]\n' + stream_tail(text, limit)
     elif path.suffix == '.json':
         try:
             value = json.loads(text)

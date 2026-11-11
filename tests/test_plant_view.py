@@ -193,6 +193,31 @@ def settled_wake(home, role='genome', key='wake-genome-1', *, body=None, start=T
                {'role': role, 'key': key, 'result': 'blocked', 'continue': False, 'settled_at': end})
 
 
+def test_stream_tail_keeps_the_label_of_the_block_that_holds_the_cut():
+    # A live pane cut a tool output's JSON dump at a character offset; the '[tool output]' line fell
+    # above the cut, so the dumped record read as the renderer's prose (25 machine-syntax lines in
+    # the live view-readability signal, 2026-11-11). The bound now takes the block's own label with it.
+    from mishe_tauftauf.plant_view_boundary import stream_tail
+    stream = ('[tool output] {\n' + '\n'.join(f'  {{"id": "e{n}", "state": "OK"}},' for n in range(600))
+              + '\n}\n[assistant] read 600 entries; all OK')
+    pane = lambda body: '── final output of the newest wake (out) ──\n' + body
+    assert len(machine_syntax(pane('[rendered tail]\n' + stream[-4000:]))) > 1   # the cut this replaced
+    kept = stream_tail(stream, 4000)
+    assert kept.startswith('[tool output]') and 'e599' in kept and len(kept) <= 4000 + len('[tool output]')
+    assert machine_syntax(pane('[rendered tail]\n' + kept)) == []
+
+
+def test_bottom_pane_does_not_read_a_truncated_dump_as_prose(tmp_path):
+    dump = '\n'.join(f'  {{"id": "e{n}", "state": "OK"}},' for n in range(600))
+    events = [{"type": "tool_execution_end", "result": {"content": [{"type": "text", "text": '{"entries": [\n' + dump + '\n]}'}]}},
+              {"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "read 600 entries; all OK"}]}}]
+    (tmp_path / 'wakes').mkdir()
+    (tmp_path / 'wakes/wake-genome-1.prompt.out.jsonl').write_text('\n'.join(json.dumps(e) for e in events) + '\n')
+    text = view.render(tmp_path, 'genome', now=T0, output=True)
+    assert 'read 600 entries; all OK' in text and '[rendered tail]' in text
+    assert machine_syntax(text) == [], [line for line in machine_syntax(text)]
+
+
 def test_bottom_leads_with_model_and_summary_and_shows_the_result_as_text(tmp_path):
     settled_wake(tmp_path)
     text = view.render(tmp_path, 'genome', now=T0 + 60, output=True)
