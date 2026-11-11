@@ -23,3 +23,19 @@ def test_heartbeat_publishes_expiry_and_routes_owed_role_despite_legacy_overdue_
     owed.touch_inbox(tmp_path,"docs")
     runtime_cli.scheduler(tmp_path)(1)
     assert started==["docs"]
+
+
+def test_parse_when_reads_a_state_word_as_the_state_condition(tmp_path):
+    # A state word is never a reading (signal_store.observe refuses to store one), so `=UNKNOWN`
+    # can only mean the state.  Before this, it became {equals: UNKNOWN}, a subscription that
+    # could never be met even while the signal was UNKNOWN.
+    assert runtime_cli.parse_when("signal:egress=UNKNOWN")=={"signal":"egress","state":"UNKNOWN"}
+    assert runtime_cli.parse_when("signal:egress@UNKNOWN")=={"signal":"egress","state":"UNKNOWN"}
+    assert runtime_cli.parse_when("signal:doctor=RED")=={"signal":"doctor","equals":"RED"}
+    signal_store.register(tmp_path,"egress",max_age=900,subscribers=["health"])
+    signal_store.observe_unknown(tmp_path,"egress",now=10,reason="no route",source="test")
+    owed.advance(tmp_path,"health",owed.check(tmp_path,"health",now=1))
+    intentions.add(tmp_path,"health","when-egress",note="woken on the state",
+                   when=runtime_cli.parse_when("signal:egress=UNKNOWN"))
+    snap=owed.check(tmp_path,"health",now=20)
+    assert "when-egress" in snap.consumed      # the subscription is live, not dead

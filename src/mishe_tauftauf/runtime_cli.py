@@ -81,6 +81,13 @@ def parse_when(text: str) -> dict:
     body = text[len("signal:"):]
     if "=" in body:
         name, value = body.split("=", 1)
+        # A state word ("OK"/"STALE"/"UNKNOWN") is not a reading: ``signal_store.observe`` refuses
+        # to store one, so ``{equals: "UNKNOWN"}`` can never be met even while the signal is
+        # UNKNOWN — the mind asks to be woken on the state and silently gets a dead subscription.
+        # Map a state word onto the state condition; every other value stays a value comparison.
+        from .live_signal import OK, STALE, UNKNOWN
+        if value in (OK, STALE, UNKNOWN):
+            return {"signal": name, "state": value}
         return {"signal": name, "equals": value}
     if "@" in body:
         name, state = body.split("@", 1)
