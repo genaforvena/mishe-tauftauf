@@ -16,6 +16,15 @@ The `budget` window runs `operator/budget/budget_pane.sh`, a loop that calls
 `budget_view.py` every 20 s and clears the screen between frames, so the registry's
 command and the table's tool name the same view.
 
+The `senses-map` window has a renderer behind it: the `map-render` duty in
+`duties.json` runs `tools/map_render.py` every 180 s as the
+`mishe-producer-map-render.timer` producer unit, and the `map-render` signal
+carries the verdict (resolver: senses). Producer units are rendered from the
+served release's own `duties.json`, so the timer appears when a release carrying
+the duty is promoted — it was not present under release `35748377`. The viewer
+flags a render older than 30 minutes as stale, so a fresh render keeps the pane
+from reading STALE.
+
 Create a window: `tmux new-window -t plants -d -n NAME 'env MISHE_TAUFTAUF_HOME=... python3 tools/X_view.py'`.
 Never type into another plant's panes. Keep this table current when a window is added or retired.
 
@@ -43,16 +52,6 @@ the planner consumes decoded values.
 What is not in place yet (UNKNOWN until it is):
 
 - No timer runs the restorer. It is run by hand.
-- `senses-map` is marked `restore: true` and its viewer now loops every 30 s instead of
-  exiting after one render, so a periodic restore would not flap it. The renderer
-  behind it has a schedule in the committed tree — the `map-render` duty in
-  `duties.json` runs `tools/map_render.py` every 180 s and renders
-  `mishe-producer-map-render.timer` — but producer units come from the served
-  release's own `duties.json`, and that release (`35748377`, observed 2026-11-11 at
-  18:11Z) predates the duty, so no timer is installed and the pane reads
-  "rendered 16:26Z, 105 min ago: STALE". The viewer flags a render older than
-  30 minutes as stale. The timer appears when a release carrying the duty is
-  promoted.
 - Many inner `mind-view` windows are `pending-decision`; they are not restored until someone
   classifies them as per-duty or drops them.
 
