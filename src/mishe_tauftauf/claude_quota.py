@@ -36,7 +36,9 @@ def collect(home, *, now=None, runner=subprocess.run):
             if completed.returncode:
                 raise ValueError("native usage command failed")
             result = read_usage(completed.stdout, now=at)
-            append_history(root / "claude-rate-history.jsonl", result)
+            if result["state"] == "FRESH":
+                # An UNKNOWN sample (window just reset) has no five_hour value to log.
+                append_history(root / "claude-rate-history.jsonl", result)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             if isinstance(exc, subprocess.TimeoutExpired):
                 evidence["stdout"] = str(exc.output or "")

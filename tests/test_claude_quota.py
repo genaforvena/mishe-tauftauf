@@ -79,3 +79,44 @@ def test_timeout_is_unknown(tmp_path):
     import subprocess
     def timeout(*args, **kwargs): raise subprocess.TimeoutExpired(args[0], 45, output=b"partial")
     assert collect(tmp_path, now=NOW, runner=timeout)["state"] == "UNKNOWN"
+
+
+# Fixture: the /usage text captured at the 5 h reset instant, 02:20Z 2026-11-11
+# (operator/budget/native-evidence/1794363599532186770-340232cf31e54e25bf0ce512b87f3c75.json).
+RESET_INSTANT_NOW = 1794363599.5321822
+RESET_INSTANT_TEXT = ("You are currently using your subscription to power your Claude Code usage\n\n"
+                      "Current session: 0% used\n"
+                      "Current week (all models): 99% used · resets Nov 11, 2:59am (UTC)\n"
+                      "Current week (Fable): 0% used · resets Nov 11, 3am (UTC)\n\n"
+                      "What's contributing to your usage?\n")
+
+
+def reset_instant_report(text=RESET_INSTANT_TEXT):
+    row = report()
+    row["result"] = text
+    return row
+
+
+def test_reset_instant_without_session_reset_is_unknown_and_never_zero():
+    from mishe_tauftauf.claude_quota_text import read_usage
+    result = read_usage(json.dumps(reset_instant_report()), now=RESET_INSTANT_NOW)
+    assert result["state"] == "UNKNOWN"
+    assert "five_hour" not in result
+    assert result["seven_day"]["used_percentage"] == 99
+    assert result["seven_day"]["resets_at"] == datetime(2026, 11, 11, 2, 59, tzinfo=timezone.utc).timestamp()
+
+
+def test_reset_instant_collect_is_unknown_and_writes_no_rate_history(tmp_path):
+    from mishe_tauftauf.claude_quota import collect
+    import subprocess
+    def runner(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 0, json.dumps(reset_instant_report()), "")
+    assert collect(tmp_path, now=RESET_INSTANT_NOW, runner=runner)["state"] == "UNKNOWN"
+    assert not (tmp_path / "operator/budget/claude-rate-history.jsonl").exists()
+
+
+def test_session_without_reset_is_rejected_unless_zero_percent():
+    from mishe_tauftauf.claude_quota_text import read_usage
+    bad = RESET_INSTANT_TEXT.replace("Current session: 0% used", "Current session: 20% used")
+    with pytest.raises(ValueError):
+        read_usage(json.dumps(reset_instant_report(bad)), now=RESET_INSTANT_NOW)

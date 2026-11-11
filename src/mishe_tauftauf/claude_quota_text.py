@@ -14,9 +14,10 @@ WINDOWS = {"Current session": ("five_hour", 5 * 3600),
 MONTHS = {m: i for i, m in enumerate(
     ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"), 1)}
 LINE = re.compile(r"(?P<label>Current session|Current week \(all models\)): "
-                  r"(?P<used>\d{1,3})% used · resets (?P<month>[A-Z][a-z]{2}) "
+                  r"(?P<used>\d{1,3})% used"
+                  r"(?: · resets (?P<month>[A-Z][a-z]{2}) "
                   r"(?P<day>\d{1,2}), (?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?"
-                  r"(?P<period>am|pm) \(UTC\)")
+                  r"(?P<period>am|pm) \(UTC\))?")
 
 
 def read_usage(raw, *, now):
@@ -37,6 +38,7 @@ def read_usage(raw, *, now):
     result = dict(state="FRESH", source="claude-native-usage", observed_at=now,
                   reset_precision_seconds=60, usage_precision_percentage_points=1)
     year = datetime.fromtimestamp(now, timezone.utc).year
+    pending = set()
     for line in row["result"].splitlines():
         if not any(line.startswith(label + ":") for label in WINDOWS):
             continue
@@ -44,7 +46,17 @@ def read_usage(raw, *, now):
         if not match:
             raise ValueError("unsupported native quota window format")
         v = match.groupdict(); key, duration = WINDOWS[v["label"]]
-        if key in result or int(v["used"]) > 100 or v["month"] not in MONTHS:
+        if key in result or int(v["used"]) > 100:
+            raise ValueError("duplicate or malformed quota window")
+        if v["month"] is None:
+            # Right after a window resets, /usage prints "0% used" with no reset
+            # clause. That sample proves neither the new reset time nor a usage
+            # value, so it is UNKNOWN: never publish it as 0%.
+            if key != "five_hour" or int(v["used"]) != 0:
+                raise ValueError("quota reset time missing for a non-reset sample")
+            pending.add(key)
+            continue
+        if v["month"] not in MONTHS:
             raise ValueError("duplicate or malformed quota window")
         hour, minute = int(v["hour"]), int(v["minute"] or 0)
         if not 1 <= hour <= 12 or not 0 <= minute < 60:
@@ -62,8 +74,11 @@ def read_usage(raw, *, now):
         if len(candidates) != 1:
             raise ValueError("quota reset is expired or outside its window")
         result[key] = dict(used_percentage=int(v["used"]), resets_at=candidates[0], observed_at=now)
-    if any(key not in result for key, _ in WINDOWS.values()):
+    if any(key not in result and key not in pending for key, _ in WINDOWS.values()):
         raise ValueError("both native quota windows are required")
+    if pending:
+        # Keep the valid window from this sample, publish no five_hour value.
+        result.update(state="UNKNOWN", error="five_hour reset not yet reported; sample not trusted")
     return result
 
 
