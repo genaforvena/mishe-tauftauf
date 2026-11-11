@@ -90,17 +90,35 @@ def render(now=None):
     rows.append(f"VERDICT: {verdict}")
     rows.append(f"  Why: {why}")
     rows.append(f"  Pass: {head or 'tending pass'}")
+    # Blocks in display order: (title, lines, protected). WAKES is the pulse of the plant:
+    # every mind gets its line and nothing else is allowed to push it out of the window.
+    blocks = []
     attention = secs.get("verdict", [])[1:]
     if attention:
-        rows.append("")
-        rows.append("NEEDS YOU OR STEWARD")
-        rows.extend("  " + l for l in attention[:4])
+        blocks.append(("NEEDS YOU OR STEWARD", ["  " + l for l in attention[:4]], False))
     for name in ("guard, hold, views", "units", "wakes", "signals", "delivery", "resources"):
         if name in secs:
+            protected = name == "wakes"
+            body = secs[name] if protected else secs[name][:5]
+            blocks.append((name.upper(), ["  " + l for l in body], protected))
+    budget = WINDOW_ROWS - len(rows)
+    budget -= sum(2 + len(body) for _, body, protected in blocks if protected)
+    keep = {}
+    for i, (title, body, protected) in enumerate(blocks):
+        if protected:
+            keep[i] = body
+            continue
+        need = 2 + len(body)                       # blank line, heading, body
+        if need <= budget:
+            keep[i], budget = body, budget - need
+        elif budget > 2:                           # trim this block to what still fits
+            keep[i], budget = body[: budget - 2], 0
+    for i, (title, _, _) in enumerate(blocks):
+        if i in keep:
             rows.append("")
-            rows.append(name.upper())
-            rows.extend("  " + l for l in secs[name][:5])
-    return [fit(r) for r in rows[:WINDOW_ROWS]]
+            rows.append(title)
+            rows.extend(keep[i])
+    return [fit(r) for r in rows]
 
 
 def main():
