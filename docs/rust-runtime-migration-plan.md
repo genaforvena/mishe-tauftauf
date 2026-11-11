@@ -2515,7 +2515,7 @@ the classify consumer's own deletion is still unobserved, which is what piece 3'
 delivered A/B must show.
 
 
-### 10.35 Shape B piece 3 implemented and differential-exact on the live tape: ~0.50 CPU-s net, half of §10.34's estimate (2026-11-11)
+### 10.35 Shape B piece 3 implemented and differential-exact on the live tape: ~0.5 CPU-s net, half of §10.34's estimate (2026-11-11)
 
 Shape B's consumer side now exists on the checkout source and is measured on the
 live tape before any delivery: `FeedEntry` carries the framer's fact line and the
@@ -2547,26 +2547,31 @@ smaller than the pre-port ledger said.
   `None` (an indented reference, which the records child would refuse first) falls
   back to the peek so the gap stays the old one.
 
-**Differential, one process, one tape revision** (216,491,693 bytes, 299,674
-entries). Raw sample: `artifacts/rust-plan-20261107/piece3-facts-differential-20261111.py`
+**Differential, one process, one tape revision** (the saved sample is 216,496,499
+bytes, 299,681 entries; an earlier run at 299,674 entries gave the same reading).
+Raw sample: `artifacts/rust-plan-20261107/piece3-facts-differential-20261111.py`
 and `.out`. The legacy arm runs first, so the shared entries cache is empty;
 the other arm then frames with `--facts`. Both ran under
 `systemd-run --user --scope -q -p MemoryMax=2G nice -n 19` from `/tmp`:
 - **0 fact mismatches** against `outcome_publication`'s own predicates, 0 entries
   without facts, and **0 of 196,356 record-naming entries without a kind**
   (`observation` 191,575, `wall-outcome` 4,778, `task-close` 3).
-- `classify_outcomes` **1.71 → 0.42 CPU-s**, both arms 4,778 events and 1
-  incomplete, coverage digest `08452042a75b17f0…f647` **identical**.
-- Read (`Feed.entries()`, parent `os.times()`): **1.81 → 2.33 CPU-s**.
+- `classify_outcomes` **1.66 → 0.38 CPU-s**, both arms 4,778 events and 1
+  incomplete, coverage digest `08452042a75b17f0…f647` **identical** (the earlier
+  run: 1.71 → 0.42, same digest and counts).
+- Read (`Feed.entries()`, parent `os.times()`): **1.85 → 2.40 CPU-s** (earlier
+  1.81 → 2.33).
 
-**The corrected ledger.** Parent-side net = (1.81+1.71) − (2.33+0.42) = 0.77
-CPU-s; the framer's own `--facts` pass adds §10.34's 0.274 outside the parent's
-clock, so **net ≈ 0.50 CPU-s (≈3.2% of the 15.39-CPU-s `readings` run)**, not
+**The corrected ledger.** Parent-side net = (1.85+1.66) − (2.40+0.38) = 0.73
+CPU-s (the earlier run: 0.77); the framer's own `--facts` pass adds §10.34's 0.274
+outside the parent's clock, so **net ≈ 0.5 CPU-s (≈3% of the 15.39-CPU-s
+`readings` run)**, not
 0.98. §10.34's parser arm (0.189 for `readline`+`split`+`int`) was measured over a
-captured `F`-line stream. The live reader pays 0.720 for the same work plus an
-extra `readline()` per entry on the child's pipe and the `Facts` value. Raw
+captured `F`-line stream. The live reader pays 0.577-0.720 for the same work plus
+an extra `readline()` per entry on the child's pipe and the `Facts` value. Raw
 sample: `artifacts/rust-plan-20261107/piece3-facts-parse-attribution-20261111.py`
-(`parse_delta` 0.720, `_attach_kinds` 0.045, best of 3). Two shapes were replaced
+(`parse_delta` 0.577 on the saved run, 0.720 on the first; `_attach_kinds` 0.045,
+best of 3). Two shapes were replaced
 on measurement: the per-entry hex scan (frozenset `all(...)` 0.596 CPU-s per 300k facts →
 `bytes.translate` 0.104) and a frozen `Facts` dataclass (0.185 → 0.056 as a plain
 `__slots__` object); a frozen-copy kind attachment measured 0.94 CPU-s, which is
@@ -2578,7 +2583,7 @@ are what the pre-port ledger under-counted.
 **Decision: keep, and take the strong gate.** The change is a protocol-boundary
 consumer (`outcome_events.py`) over `parsing-policy.json`'s `feed.py`, so it needs
 a fresh non-author reviewer, deterministic activation, revert and reapply. The
-delivered A/B on the pin is the acceptance and predicts ≈0.50 CPU-s with the
+delivered A/B on the pin is the acceptance and predicts ≈0.5 CPU-s with the
 reading digest unchanged.
 
 Checks on the checkout source: `tests/test_feed.py`, `test_feed_records.py`,
@@ -2587,9 +2592,10 @@ Checks on the checkout source: `tests/test_feed.py`, `test_feed_records.py`,
 `test_discovery_shared_snapshot.py`, `test_records_kind_index.py` → **188 passed,
 28 subtests**; `tools/check_parsing.py` PASS with no new legacy sites.
 
-Limits: one tape (299,674 entries), one machine, warm page cache; `process_time`
+Limits: one tape (299,681 entries on the saved run), one machine, warm page cache;
+`process_time`
 and `os.times()` parent CPU only, with the framer's child cost taken from §10.34.
-The classifier's 0.42 still holds the ≈0.521 survivor decode; §10.30's `--facts`
+The classifier's 0.38 still holds the ≈0.521 survivor decode; §10.30's `--facts`
 contract and 0.4's kind line are the carriers this consumer now depends on. The
 remaining step §10.33 named — a `mishe-records` component so the hand-installed
 binary has a ledger and a drift detector — is untouched.
