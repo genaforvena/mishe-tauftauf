@@ -15,9 +15,11 @@ so the extra wake takes the next candidate instead of hitting the provider's
 rate limit (operator DM 299311).
 
 Choice is the first candidate in order that is not cooling off and is admitted
-by :mod:`engine_policy` on the live :mod:`engine_usage` status. Admission needs a
-FRESH account; UNKNOWN, STALE and UNATTRIBUTED accounts are never evidence of
-capacity and are skipped.
+by :mod:`engine_policy` on the account windows in ``engine/budget.json`` (the
+budget producer's one-source file; :func:`live_status` reads it). Admission needs
+a FRESH account; UNKNOWN, STALE and UNREADABLE accounts are never evidence of
+capacity and are skipped. A candidate with no account (a free model or the Claude
+safety net) reads no window, so a missing file does not stop it.
 
 Outcomes are judged from the wake's own yield receipt, not from the engine exit
 code alone. A candidate that does not start falls through to the next one within
@@ -58,9 +60,8 @@ DEFAULT_HARD_TIMEOUT_S = 3600     # total runtime a wake may reach when it is st
 DEFAULT_RATE_LIMIT_COOL_OFF_S = 300   # a rate limit waits minutes, not the site-wide window
 MAX_RETRY_AFTER_COOL_OFF_S = 28800   # cap for a provider-stated retry-after, 8 h
 MAX_RATE_LIMIT_COOL_OFF_S = 1800    # ceiling of the self-computed doubling backoff, the site-wide window
-INVALIDATE_BUDGET_S = 20.0  # total wall time for stale-window refetches per wake
 ENGINES = ("claude", "omp")
-STALE_STATES = ("STALE", "UNKNOWN", "UNATTRIBUTED")
+STALE_STATES = ("STALE", "UNKNOWN", "UNATTRIBUTED", "UNREADABLE")
 
 
 def _dir(home) -> Path:
@@ -278,51 +279,68 @@ def choose(role: str, candidates: list, status, cooling: dict, now_ms: float,
     return {"decision": "none", "candidate": None, "key": None, "trail": trail}
 
 
-def _invalidate_stale(home, status: dict) -> bool:
-    """Ask OMP to refetch provider usage for each configured account whose reading is stale.
+def _is_num(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
-    ``omp usage`` serves its cached provider report, so a reading older than the TTL
-    stays STALE until the cache is invalidated; a refetch is one usage call, not inference.
-    Returns True when at least one provider was invalidated.
+
+def _budget_windows(windows) -> list:
+    """The budget.json windows of one account in the window shape :mod:`engine_policy` reads.
+
+    The file keys its windows by label (``5h``, ``7d``) and stores ``remaining`` and an
+    epoch ``reset_at``; the policy iterates window rows with ``remaining_fraction`` and an
+    ISO ``reset_at``. This is that format mapping, and nothing else: no value is computed
+    and a window missing either number is left out rather than guessed at.
     """
-    import subprocess
-    from . import engine_usage
-    touched = False
-    deadline = time.monotonic() + INVALIDATE_BUDGET_S
-    for row in (status.get("accounts") or {}).values():
-        if row.get("state") != "STALE" or row.get("registry_state") != "configured":
+    rows = []
+    for name, w in (windows if isinstance(windows, dict) else {}).items():
+        if not isinstance(w, dict):
             continue
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        env = dict(os.environ, PI_CODING_AGENT_DIR=str(Path(home) / row["store"]))
-        try:
-            subprocess.run(["omp", "usage", "invalidate", "--provider", row["provider"]], env=env,
-                           capture_output=True, timeout=remaining, check=False)
-            touched = True
-        except (OSError, subprocess.SubprocessError):
-            continue
-    return touched
+        remaining, reset_at = w.get("remaining"), w.get("reset_at")
+        if _is_num(remaining) and _is_num(reset_at):
+            rows.append({"window": name, "limit": name, "remaining_fraction": float(remaining),
+                         "reset_at": _iso(reset_at * 1000), "provider_status": None, "state": w.get("state")})
+    return rows
 
 
 def live_status(home):
-    """Live account windows from engine_usage, refetched once when stale, or None when unreadable."""
-    from . import engine_usage
+    """Account windows from ``engine/budget.json``, or None when it is unreadable or too old.
+
+    One source: the budget producer writes the file and its duty owns refetching stale
+    provider readings, so the router reads and never computes. A missing, malformed,
+    wrong-schema or older-than-``MAX_AGE_S`` file is None (UNKNOWN downstream), never an
+    empty reading.
+    """
+    from . import budget_producer
     try:
-        status = engine_usage.status(Path(home))
-        if _invalidate_stale(home, status):
-            status = engine_usage.status(Path(home))
-        return status
-    except Exception:
+        data = load_json(_dir(home) / "budget.json")
+    except (OSError, ValueError):
         return None
+    if not isinstance(data, dict) or data.get("schema") != budget_producer.SCHEMA:
+        return None
+    produced_at = data.get("produced_at")
+    if not _is_num(produced_at) or time.time() - produced_at > budget_producer.MAX_AGE_S:
+        return None
+    accounts = data.get("accounts")
+    if not isinstance(accounts, dict):
+        return None
+    return {"state": "FRESH", "unknowns": data.get("unknowns") or [],
+            "accounts": {alias: {"provider": row.get("provider"), "state": row.get("state"),
+                                 "reason": row.get("reason"), "windows": _budget_windows(row.get("windows"))}
+                         for alias, row in accounts.items() if isinstance(row, dict)}}
+
+
+def _windowed(routes: dict) -> bool:
+    """True when some candidate reads an account window, so account status is required."""
+    return any(c.get("account") for cands in (routes.get("roles") or {}).values() for c in cands)
 
 
 def assess(routes: dict | None, status, cooling: dict, now_ms: float, running: dict | None = None) -> dict:
     """The engine-routing signal value and its reasons, from pure inputs."""
     if routes is None:
         return {"state": "UNKNOWN", "reason": "no engine/routes.json in this site", "roles": {}}
-    if status is None:
+    if status is None and _windowed(routes):
         return {"state": "UNKNOWN", "reason": "live account status unavailable", "roles": {}}
+    accounts = (status or {}).get("accounts") or {}
     roles, stale, dead = {}, [], []
     cooled = cooling_table(cooling, now_ms, routes.get("cool_off_s", DEFAULT_COOL_OFF_S))
     for role, cands in routes["roles"].items():
@@ -331,13 +349,15 @@ def assess(routes: dict | None, status, cooling: dict, now_ms: float, running: d
         if choice["decision"] == "none":
             dead.append(role)
         for c in cands:
-            row = (status.get("accounts") or {}).get(c["account"]) if c["account"] else None
+            row = accounts.get(c["account"]) if c["account"] else None
             if isinstance(row, dict) and row.get("state") in STALE_STATES:
                 stale.append(f"{role}:{c['account']} {row.get('state')}")
     if dead:
         return {"state": "RED", "reason": "no working candidate for " + ", ".join(sorted(dead)), "roles": roles, "cooled": cooled}
     if stale:
         return {"state": "UNKNOWN", "reason": "stale or missing windows: " + "; ".join(stale), "roles": roles, "cooled": cooled}
+    if status is None:
+        return {"state": "GREEN", "reason": "no candidate reads an account window", "roles": roles, "cooled": cooled}
     return {"state": "GREEN", "reason": "every role has an admitted candidate on fresh windows", "roles": roles, "cooled": cooled}
 
 

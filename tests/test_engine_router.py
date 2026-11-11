@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,20 @@ def routes_file(home, roles, cool_off_s=1800):
     d = Path(home) / "engine"
     d.mkdir(parents=True, exist_ok=True)
     (d / "routes.json").write_text(json.dumps({"version": 1, "cool_off_s": cool_off_s, "roles": roles}))
+
+
+def budget_window(remaining=0.8, reset_in_s=3600.0, state="FRESH"):
+    return {"used": 1 - remaining, "remaining": remaining, "reset_at": time.time() + reset_in_s,
+            "source": "engine-usage", "observed_at": time.time(), "state": state}
+
+
+def budget_file(home, accounts, *, produced_at=None, schema=1):
+    d = Path(home) / "engine"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "budget.json").write_text(json.dumps({
+        "schema": schema, "producer": "src/mishe_tauftauf/budget_producer.py",
+        "produced_at": time.time() if produced_at is None else produced_at,
+        "accounts": accounts, "unknowns": []}))
 
 
 def test_first_fresh_admitted_candidate_is_selected():
@@ -91,9 +106,22 @@ def test_assess_red_when_a_role_has_no_working_candidate():
     assert result["state"] == "RED" and "genome" in result["reason"]
 
 
-def test_assess_unknown_without_status_or_routes():
-    assert router.assess({"roles": {}, "cool_off_s": 1}, None, {}, NOW_MS)["state"] == "UNKNOWN"
+def test_assess_unknown_without_status_for_a_windowed_route_or_without_routes():
+    assert router.assess({"roles": {"health": [GO]}, "cool_off_s": 1}, None, {}, NOW_MS)["state"] == "UNKNOWN"
     assert router.assess(None, status(), {}, NOW_MS)["state"] == "UNKNOWN"
+
+
+def test_assess_green_without_account_status_when_no_candidate_reads_a_window():
+    free = {"engine": "omp", "model": "longcat-2.5-free", "account": None, "free": True}
+    routes = {"roles": {"genome": [free, HAIKU]}, "cool_off_s": 1800}
+    result = router.assess(routes, None, {}, NOW_MS)
+    assert result["state"] == "GREEN" and result["roles"]["genome"]["decision"] == "select"
+
+
+def test_assess_unknown_when_a_windowed_candidates_account_is_unreadable():
+    routes = {"roles": {"health": [GO, HAIKU]}, "cool_off_s": 1800}
+    result = router.assess(routes, status(**{"go-a": account(state="UNREADABLE")}), {}, NOW_MS)
+    assert result["state"] == "UNKNOWN" and "UNREADABLE" in result["reason"]
 
 
 def test_load_routes_rejects_bad_engine_and_missing_file(tmp_path):
@@ -261,18 +289,31 @@ def test_publish_observes_engine_routing_signal(routed):
     assert router.SIGNAL in signal_store.registry(routed)
 
 
-def test_live_status_refetches_only_stale_configured_accounts(tmp_path, monkeypatch):
-    import subprocess
-    from mishe_tauftauf import engine_usage
-    stale = {"state": "STALE", "registry_state": "configured", "provider": "opencode-go", "store": "omp/agent"}
-    fresh = {"state": "FRESH", "registry_state": "configured", "provider": "minimax-code", "store": "omp/agent"}
-    readings = iter([{"accounts": {"go-a": stale, "minimax-a": fresh}}, {"accounts": {"go-a": fresh, "minimax-a": fresh}}])
-    monkeypatch.setattr(engine_usage, "status", lambda home: next(readings))
-    calls = []
-    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append((cmd, kw["env"]["PI_CODING_AGENT_DIR"])))
-    result = router.live_status(tmp_path)
-    assert result["accounts"]["go-a"]["state"] == "FRESH"
-    assert calls == [(["omp", "usage", "invalidate", "--provider", "opencode-go"], str(tmp_path / "omp/agent"))]
+def test_live_status_reads_the_budget_file_into_policy_rows(tmp_path):
+    budget_file(tmp_path, {"go-a": {"provider": "opencode-go", "state": "FRESH",
+                                    "windows": {"5h": budget_window(), "7d": budget_window(0.5)}},
+                           "minimax-a": {"provider": "minimax-code", "state": "UNREADABLE", "windows": {}}})
+    st = router.live_status(tmp_path)
+    assert set(st["accounts"]) == {"go-a", "minimax-a"}
+    go = st["accounts"]["go-a"]
+    assert go["state"] == "FRESH" and go["provider"] == "opencode-go"
+    assert [w["window"] for w in go["windows"]] == ["5h", "7d"]
+    assert go["windows"][0]["remaining_fraction"] == 0.8
+    assert router.choose("health", [GO, MINI], st, {}, NOW_MS)["key"] == router.candidate_key(GO)
+    assert router.choose("health", [MINI], st, {}, NOW_MS)["decision"] == "none"
+
+
+def test_live_status_is_none_when_absent_stale_wrong_schema_or_unreadable(tmp_path):
+    row = {"provider": "opencode-go", "state": "FRESH", "windows": {"5h": budget_window()}}
+    assert router.live_status(tmp_path) is None                       # absent
+    budget_file(tmp_path, {"go-a": row}, schema=2)
+    assert router.live_status(tmp_path) is None                       # wrong schema
+    budget_file(tmp_path, {"go-a": row}, produced_at=time.time() - 1000.0)
+    assert router.live_status(tmp_path) is None                       # older than MAX_AGE_S
+    budget_file(tmp_path, {"go-a": row}, produced_at=time.time() + 5.0)
+    assert router.live_status(tmp_path) is not None                   # small future skew is readable
+    (tmp_path / "engine" / "budget.json").write_text("{not json")
+    assert router.live_status(tmp_path) is None
 
 
 def test_a_free_candidate_needs_no_account_and_keeps_its_thinking(tmp_path):

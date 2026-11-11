@@ -1,9 +1,14 @@
 # `engine/budget.json` contract
 
-Status: **proposed**. Step 1 has started: `src/mishe_tauftauf/budget_producer.py` produces the
-`accounts` section from the engine status and the native Claude tap, dry-run unless `--out` is
-given (`mishe budget-produce`). The ledger sections, `checks/budget-consistency.py` and every
-consumer migration are not shipped yet.
+Status: **active, partial**. `src/mishe_tauftauf/budget_producer.py` produces the `accounts`
+section from the engine status and the native Claude tap (`mishe budget-produce --out …`);
+`checks/budget-consistency.py` judges it. The router migration (step 4) has shipped:
+`engine_router.live_status()` reads the accounts section and the router no longer reads
+`engine_usage.status` or refetches stale readings. Still open: the ledger sections, the
+render-only budget view (step 3) and deleting the old writers (step 5). The producer is not
+yet run by a duty, so the file ages out at `MAX_AGE_S` (900 s) and a role whose candidate
+reads an account window then routes on no evidence (UNKNOWN). Roles whose candidates are all
+free models or the Claude safety net read no window and are unaffected.
 Owner of the model/account mapping: `engine/routes.json`. Owner of this contract: steward.
 
 ## Problem
@@ -41,6 +46,10 @@ only that file and computes nothing itself.
   assessment), `budget_view.py` (render only), the steward, and the `budget-consistency`
   duty. None of them reads `state.json`, `quota.json` or `claude-native-quota.json`
   directly after migration, and none carries a model/account MAP.
+  `live_status()` reads the `accounts` section and maps each window (`remaining`,
+  `reset_at`, `state`) into the row shape :mod:`engine_policy` admits on; the router adds
+  `UNREADABLE` to its non-admitting states. A missing, malformed, wrong-schema or
+  older-than-`MAX_AGE_S` file reads as no status (UNKNOWN), never as an empty reading.
 - **Migration**: the producer and `budget_view.py` render-only ship as one independent
   delivery. The old writers and the viewer's MAP/computations are deleted in the same
   delivery, or the delivery is not activated. No two sources at any activated state.
@@ -146,12 +155,18 @@ RED when any of:
 ## Migration checklist
 
 1. Ship `src/mishe_tauftauf/budget_producer.py` + `checks/budget-consistency.py` + this
-   contract as one independent delivery, with its own install record.
-2. Run the producer; verify `budget-consistency` GREEN against the live sources.
+   contract as one independent delivery, with its own install record. **Done.**
+2. Run the producer; verify `budget-consistency` GREEN against the live sources. **Done
+   once by hand; not yet periodic.** The file ages out at `MAX_AGE_S` until a duty runs the
+   producer (the `budget` duty is the natural home: `every` 600 s, `max_age` 1800 s).
 3. Switch `budget_view.py` to render-only from `engine/budget.json`; delete its `MAP`,
-   `rows()`, `models()`, `window_models()` computations.
+   `rows()`, `models()`, `window_models()` computations. **Open.**
 4. Switch `engine_router.assess()`/`live_status()` to read account windows from
    `engine/budget.json`; delete the direct `engine_usage.status` read from the router.
+   **Done** (`live_status()` maps the accounts windows into the policy row shape; the
+   `omp usage invalidate` refetch is deleted, the producer's duty owns refetching; `assess()`
+   no longer reports UNKNOWN when no candidate reads a window, so a missing file does not
+   stop free-model and safety-net routes).
 5. Delete `operator/budget/collector.py`, `quota.json`, `state.json`,
    `claude-native-quota.json`, `claude_ratelimit_tap.py` and the old budget signal
    producer once the new path is observed live and GREEN.
