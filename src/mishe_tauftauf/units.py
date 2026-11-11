@@ -463,7 +463,7 @@ def doctor(cfg: Config, roles, *, producers=()) -> DoctorReport:
         if rel not in installed:
             problems.append(f"{rel}: missing")
         elif installed[rel] != text:
-            problems.append(f"{rel}: drift from generated content")
+            problems.append(f"{rel}: drift from generated content (run `mishe sync` to regenerate)")
     for rel in installed:
         if rel not in expected:
             problems.append(f"{rel}: stale generated unit")
