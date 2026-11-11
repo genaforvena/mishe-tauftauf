@@ -279,6 +279,37 @@ def choose(role: str, candidates: list, status, cooling: dict, now_ms: float,
     return {"decision": "none", "candidate": None, "key": None, "trail": trail}
 
 
+def outcome_tally(rows) -> dict:
+    """Pure: {candidate key: {"yielded": n, "failed": n}} from routing-ledger rows."""
+    tally = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("event") != "outcome":
+            continue
+        key = row.get("key")
+        if not isinstance(key, str):
+            continue
+        slot = tally.setdefault(key, {"yielded": 0, "failed": 0})
+        slot["yielded" if row.get("outcome") == "yielded" else "failed"] += 1
+    return tally
+
+
+def rank_candidates(candidates: list, tally: dict) -> list:
+    """Pure: reorder by tier (lower first), then measured yield rate (higher first), then roster order.
+
+    The rate is Laplace-smoothed, (yielded + 1) / (attempts + 2), so a candidate with no
+    outcomes scores 0.5. With no outcomes at all the roster order is returned unchanged.
+    The input list and its dicts are not modified.
+    """
+    def score(item):
+        index, c = item
+        slot = tally.get(candidate_key(c), {})
+        yielded = int(slot.get("yielded", 0))
+        failed = int(slot.get("failed", 0))
+        rate = (yielded + 1.0) / (yielded + failed + 2.0)
+        return (c.get("tier", 0), -rate, index)
+    return [c for _, c in sorted(enumerate(candidates), key=score)]
+
+
 def _is_num(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 

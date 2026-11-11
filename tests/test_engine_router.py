@@ -578,3 +578,47 @@ def test_a_capped_candidate_makes_the_wake_take_the_next_one(routed):
     selects = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()
                if json.loads(x)["event"] == "select"]
     assert selects[-1]["key"] == router.candidate_key(MINI)
+
+
+def _cand(model, tier=None):
+    c = {"engine": "omp", "model": model, "account": None}
+    if tier is not None:
+        c["tier"] = tier
+    return c
+
+
+def test_ranking_without_outcomes_keeps_roster_order():
+    roster = [_cand("a"), _cand("b"), _cand("c")]
+    assert [c["model"] for c in router.rank_candidates(roster, {})] == ["a", "b", "c"]
+
+
+def test_higher_measured_yield_rate_moves_earlier():
+    roster = [_cand("slow"), _cand("good")]
+    tally = {"omp:slow:-": {"yielded": 2, "failed": 18}, "omp:good:-": {"yielded": 18, "failed": 2}}
+    assert [c["model"] for c in router.rank_candidates(roster, tally)] == ["good", "slow"]
+
+
+def test_tier_outranks_measured_rate():
+    roster = [_cand("backup", tier=1), _cand("primary", tier=0)]
+    tally = {"omp:backup:-": {"yielded": 30, "failed": 0}, "omp:primary:-": {"yielded": 1, "failed": 9}}
+    assert [c["model"] for c in router.rank_candidates(roster, tally)] == ["primary", "backup"]
+
+
+def test_equal_rates_keep_roster_order_and_inputs_are_not_mutated():
+    roster = [_cand("x"), _cand("y")]
+    before = [dict(c) for c in roster]
+    tally = {"omp:x:-": {"yielded": 5, "failed": 5}, "omp:y:-": {"yielded": 5, "failed": 5}}
+    assert [c["model"] for c in router.rank_candidates(roster, tally)] == ["x", "y"]
+    assert roster == before
+
+
+def test_outcome_tally_counts_only_outcome_rows_by_key():
+    rows = [
+        {"event": "select", "key": "omp:m:-"},
+        {"event": "outcome", "key": "omp:m:-", "outcome": "yielded"},
+        {"event": "outcome", "key": "omp:m:-", "outcome": "timeout"},
+        {"event": "outcome", "key": "omp:m:-", "outcome": "no yield (exit 1)"},
+        {"event": "outcome", "outcome": "yielded"},
+        "not a row",
+    ]
+    assert router.outcome_tally(rows) == {"omp:m:-": {"yielded": 1, "failed": 2}}
