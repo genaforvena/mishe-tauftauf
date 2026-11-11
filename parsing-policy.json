@@ -73,6 +73,8 @@
     "tools/household_collector.py",
     "tools/household_text.py",
     "tools/household_view.py",
+    "tools/household_patterns.py",
+    "tools/map_render.py",
     "tools/inference_budget_aggregate.py",
     "tools/recovery-control.py",
     "tools/unit_psi_attribution.py",
