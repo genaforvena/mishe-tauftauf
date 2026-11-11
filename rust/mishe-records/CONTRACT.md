@@ -1,4 +1,4 @@
-# mishe-records contract (version 0.2, responsibility: record verification and the verified store)
+# mishe-records contract (version 0.4, responsibility: record verification and the verified store)
 
 Template: `rust/mishe-tape/CONTRACT.md`. The contract lives next to the code and
 is the thing a differential test checks. A caller depends on this file, not on
@@ -24,6 +24,14 @@ that carry a `[record]` line (the entries Python's pass ignored), so:
   inputs) and the pass fails closed;
 - an entry with a `[record]` line but no site home is a `RecordsUnknown` at the
   caller, never a guessed site (unreachable in a live read).
+
+Version 0.4 (2026-11-11, Shape B piece 2): `V`/`N` carry the cited record's
+`kind` as a second field, and the store gains a `kind` column so a repeat
+reference answers it without re-reading the record. The field is additive: a
+caller that ignores it keeps working, and `S` still carries only its sequence.
+An older store row has no kind and is treated as a miss — it is re-verified once
+and rewritten — so no kind is ever guessed. **Order matters at activation**: the
+caller's parser must accept the extra field before this program emits it.
 
 ## Scope
 
@@ -67,9 +75,14 @@ One line per input entry, in input order:
 
 | Line | Meaning | Caller reading |
 |---|---|---|
-| `V <sequence>\n` | A store row, or a payload this pass verified earlier, matched the file's current identity (and, for a store row, was younger than `VERIFIED_MAX_AGE`); verified without re-reading the record | verified |
-| `N <sequence>\n` | Nothing usable was held: the envelope was verified now and its payload will be stored | verified |
+| `V <sequence> <kind>\n` | A store row, or a payload this pass verified earlier, matched the file's current identity (and, for a store row, was younger than `VERIFIED_MAX_AGE`); verified without re-reading the record | verified |
+| `N <sequence> <kind>\n` | Nothing usable was held: the envelope was verified now and its payload will be stored | verified |
 | `S <sequence>\n` | The entry carries no `[record]` line; `feed._VerificationPass.verify` ignores it and so does the caller | not verified, no fault |
+
+`<kind>` is the value of the verified envelope's `kind` field, written verbatim
+after the sequence and separated from it by one space; it is the same string the
+record carries. `S` carries no kind (no record was read). A kind is expected to
+be a single whitespace-free token, which every kind this plant writes is.
 
 With `--payloads`, `V` and `N` are followed immediately by the payload body:
 
@@ -104,7 +117,14 @@ The structural faults and their texts (`feed.py`/`records.py`):
 
 - `SITE/records.verified.sqlite3`, `PRAGMA journal_mode=WAL`,
   `CREATE TABLE verified (digest TEXT PRIMARY KEY, ino INTEGER, size INTEGER,
-  ctime_ns INTEGER, mtime_ns INTEGER, verified_at REAL, payload BLOB NOT NULL)`.
+  ctime_ns INTEGER, mtime_ns INTEGER, verified_at REAL, payload BLOB NOT NULL,
+  kind TEXT)`.
+- `kind` is the verified envelope's kind, written with the row so a repeat
+  reference answers without re-reading the record. An existing store gains the
+  column with `ALTER TABLE ... ADD COLUMN kind TEXT`; a row written before it
+  existed has `kind` NULL and **is a miss**, so the record is verified again and
+  the row rewritten. A store written earlier keeps working and heals itself; no
+  kind is ever guessed from a missing one.
 - `payload` is the payload's canonical JSON, zlib-compressed at level 6, exactly
   the bytes `records.py` writes. Byte-identity with C zlib's output is *not*
   required and not claimed: the reader only decompresses, so interop is checked
@@ -189,6 +209,9 @@ path on fixture sites (2026-11-10, 11 cases green):
   a legacy `{` line beside a reference (`mixed legacy JSON and immutable record
   reference`; the other four as their own texts above);
 - a record rewritten after it was stored is verified again, not served;
+- the `V`/`N` decision line names the verified record's kind, and a store row
+  written without a kind (the 0.3 shape) is a miss that is rewritten with its
+  kind — `tests/test_mishe_records_verify.py`;
 - the records directory replaced during a pass: exit 2 with
   `records directory replaced during verification pass`, noticed at the flush
   and after the decisions that preceded it, with nothing stored from the

@@ -52,8 +52,21 @@ def decisions(stdout: str) -> list[tuple[int, str]]:
     for line in stdout.splitlines():
         head, _, rest = line.partition(" ")
         if head in ("V", "N", "S", "F"):
-            out.append((int(rest), head))
+            # `V`/`N` carry the cited kind after the sequence (contract 0.4); the
+            # sequence is the first token either way.
+            out.append((int(rest.partition(" ")[0]), head))
     return out
+
+
+def decision_rows(stdout: str) -> list[tuple[str, int, str | None]]:
+    """The decision rows with their kind field: `(head, sequence, kind or None)`."""
+    rows = []
+    for line in stdout.splitlines():
+        head, _, rest = line.partition(" ")
+        if head in ("V", "N", "S"):
+            sequence, _, kind = rest.partition(" ")
+            rows.append((head, int(sequence), kind or None))
+    return rows
 
 
 def emitted_payloads(stdout: str) -> dict[int, dict]:
@@ -307,6 +320,45 @@ def test_a_typed_but_corrupt_blob_is_served_only_without_payloads(tmp_path):
     assert emitted_payloads(stdout) == {1: PAYLOADS[0], 2: PAYLOADS[1], 3: PAYLOADS[0]}
 
 
+def test_the_decision_line_carries_the_cited_kind_and_a_kindless_row_is_a_miss(tmp_path):
+    site = tmp_path / "site"
+    site.mkdir()
+    reference = records.prepare(site, {"text": "one"}, kind="wall-outcome")
+    entries = [(1, reference)]
+
+    stdout, status, stderr = run_verify(site, entries)
+    assert status == 0, stderr
+    assert decision_rows(stdout) == [("N", 1, "wall-outcome")], "the verified record's kind is reported"
+
+    stdout, status, stderr = run_verify(site, entries)
+    assert status == 0, stderr
+    assert decision_rows(stdout) == [("V", 1, "wall-outcome")], "a store hit answers the kind without rereading"
+
+    # A store written before the kind column existed holds no kind, so its row is a
+    # miss: the record is verified again and the row rewritten. No kind is guessed.
+    connection = sqlite3.connect(site / STORE_NAME)
+    try:
+        stored = connection.execute(
+            "SELECT digest, ino, size, ctime_ns, mtime_ns, verified_at, payload FROM verified").fetchone()
+        assert stored is not None, "the cold pass stored the row"
+        with connection:
+            connection.execute("DROP TABLE verified")
+            connection.execute("CREATE TABLE verified (digest TEXT PRIMARY KEY, ino INTEGER, "
+                               "size INTEGER, ctime_ns INTEGER, mtime_ns INTEGER, verified_at REAL, "
+                               "payload BLOB NOT NULL)")
+            connection.execute("INSERT INTO verified VALUES (?, ?, ?, ?, ?, ?, ?)", stored)
+    finally:
+        connection.close()
+
+    stdout, status, stderr = run_verify(site, entries)
+    assert status == 0, stderr
+    assert decision_rows(stdout) == [("N", 1, "wall-outcome")], "a row without a kind is a miss"
+
+    stdout, status, stderr = run_verify(site, entries)
+    assert status == 0, stderr
+    assert decision_rows(stdout) == [("V", 1, "wall-outcome")], "the rewritten row heals"
+
+
 def test_records_directory_swap_before_a_flush_fails_closed(tmp_path):
     site, _, entries = fixtures(tmp_path)
     reference = entries[0][1]
@@ -333,7 +385,7 @@ def test_records_directory_swap_before_a_flush_fails_closed(tmp_path):
     assert probe.returncode == 2
     assert stderr.decode("utf-8").strip() == "records directory replaced during verification pass"
     lines = stdout.decode("utf-8").splitlines()
-    assert lines[0] == "N 1", "the record read through the held descriptor still verified"
+    assert lines[0] == "N 1 event", "the record read through the held descriptor still verified"
     assert lines[-1] == "S 500", "the swap was noticed at the flush, after the last decision"
     assert len(lines) == 500
 

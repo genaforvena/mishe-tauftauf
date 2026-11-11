@@ -57,6 +57,7 @@ struct Held {
     identity: (i64, i64, i64, i64),
     verified_at: f64,
     payload: Vec<u8>,
+    kind: String,
 }
 
 struct Pass {
@@ -259,7 +260,7 @@ impl Pass {
         if let Some(held) = self.pending.get(digest) {
             if identity == Some(held.identity) {
                 let payload = want_payload.then(|| held.payload.as_slice());
-                self.serve(entry.sequence, payload, out)?;
+                self.serve(entry.sequence, &held.kind, payload, out)?;
                 return self.advance();
             }
         }
@@ -268,13 +269,13 @@ impl Pass {
             let age = now - hit.verified_at;
             if age >= 0.0 && age < VERIFIED_MAX_AGE && identity == Some(hit.identity) {
                 if !want_payload {
-                    return self.serve(entry.sequence, None, out);
+                    return self.serve(entry.sequence, &hit.kind, None, out);
                 }
                 // A payload reader decodes the blob and reverifies on damage; a blob that
                 // is not an object is a miss, exactly as `lookup` returns None.
                 if let Some(blob) = &hit.payload {
                     if let Some(payload) = decode_payload(blob) {
-                        self.serve(entry.sequence, Some(&payload), out)?;
+                        self.serve(entry.sequence, &hit.kind, Some(&payload), out)?;
                         return self.advance();
                     }
                 }
@@ -283,18 +284,18 @@ impl Pass {
 
         // The miss path: capture the identity before the read, so a record rewritten
         // mid-read is never recorded with a newer identity.
-        let payload = envelope::verify(dirfd, digest, expected)?;
+        let (kind, payload) = envelope::verify(dirfd, digest, expected)?;
         let payload = serde_json::to_vec(&payload)
             .map_err(|error| Fault::Unknown(format!("mishe-records payload serialisation failed: {error}")))?;
         if self.payloads {
-            write_payload(out, entry.sequence, 'N', &payload)?;
+            write_payload(out, entry.sequence, 'N', &kind, &payload)?;
         } else {
-            write_out(out, &format!("N {}\n", entry.sequence))?;
+            write_out(out, &format!("N {} {kind}\n", entry.sequence))?;
         }
         if let Some(before) = identity {
             self.pending.insert(
                 digest.to_string(),
-                Held { identity: before, verified_at: now, payload },
+                Held { identity: before, verified_at: now, payload, kind },
             );
         }
         self.advance()
@@ -302,11 +303,11 @@ impl Pass {
 
     /// Report a verified entry: `V` (served without re-reading the record), with the
     /// payload body when the caller asked for one.
-    fn serve(&self, sequence: u64, payload: Option<&[u8]>, out: &mut impl Write) -> Result<(), Fault> {
+    fn serve(&self, sequence: u64, kind: &str, payload: Option<&[u8]>, out: &mut impl Write) -> Result<(), Fault> {
         if self.payloads {
-            write_payload(out, sequence, 'V', payload.unwrap_or_default())?;
+            write_payload(out, sequence, 'V', kind, payload.unwrap_or_default())?;
         } else {
-            write_out(out, &format!("V {sequence}\n"))?;
+            write_out(out, &format!("V {sequence} {kind}\n"))?;
         }
         Ok(())
     }
@@ -363,6 +364,7 @@ impl Pass {
                 identity: held.identity,
                 verified_at: held.verified_at,
                 payload: zlib_compress(&held.payload),
+                kind: held.kind,
             })
             .collect();
         if let Some(store) = self.store.as_mut() {
@@ -389,9 +391,10 @@ fn write_out(out: &mut impl Write, text: &str) -> Result<(), Fault> {
     out.write_all(text.as_bytes()).map_err(|error| Fault::io("mishe-records output error", error))
 }
 
-/// `P <sequence> <payload-bytes>\n<payload bytes>\n`.
-fn write_payload(out: &mut impl Write, sequence: u64, decision: char, payload: &[u8]) -> Result<(), Fault> {
-    let header = format!("{decision} {sequence}\nP {sequence} {}\n", payload.len());
+/// `P <sequence> <payload-bytes>\n<payload bytes>\n`, after the `<decision> <sequence> <kind>\n`
+/// line that introduces it.
+fn write_payload(out: &mut impl Write, sequence: u64, decision: char, kind: &str, payload: &[u8]) -> Result<(), Fault> {
+    let header = format!("{decision} {sequence} {kind}\nP {sequence} {}\n", payload.len());
     out.write_all(header.as_bytes())
         .and_then(|()| out.write_all(payload))
         .and_then(|()| out.write_all(b"\n"))

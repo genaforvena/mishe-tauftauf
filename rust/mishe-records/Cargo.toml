@@ -1,6 +1,6 @@
 [package]
 name = "mishe-records"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2021"
 description = "Record verification and the verified store for Mishe: the byte-exact Rust counterpart of records.envelope/cached_payload/VerifiedStore"
 license = "CC0-1.0"

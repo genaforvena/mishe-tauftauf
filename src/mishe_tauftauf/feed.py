@@ -529,8 +529,13 @@ class _RecordsChild:
                 head, _, rest = line[:-1].decode("ascii", "replace").partition(" ")
                 if head not in ("V", "N", "S"):
                     raise RecordsUnknown(f"mishe-records emitted a non-contract decision: {line!r}")
+                # `<sequence>`, then — contract 0.4 and later — the cited record's kind.
+                # `S` never carries one and a 0.3 binary emits none, so the field is
+                # optional here. It is read and dropped for now: the consumer arrives with
+                # Shape B's piece 3 (`FeedEntry` carries it, `classify_outcomes` uses it).
+                sequence_field, _, _kind = rest.partition(" ")
                 try:
-                    sequence = int(rest)
+                    sequence = int(sequence_field)
                 except ValueError as exc:
                     raise RecordsUnknown(f"mishe-records decision sequence invalid: {exc}") from exc
                 if self._payloads and head in ("V", "N"):

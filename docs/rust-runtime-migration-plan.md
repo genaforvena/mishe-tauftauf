@@ -2347,3 +2347,54 @@ settle it before the contract repeats the claim.
 
 Limits: one tape, one machine, warm page cache; the facts cost and the Shape B
 payoff are still unmeasured — piece 3's acceptance measures both.
+
+### 10.32 Shape B piece 2 built and differential-green: `mishe-records verify` reports the cited kind (2026-11-11)
+
+§10.27's piece 2 is the second carrier: `mishe-records verify` puts the cited
+record's kind on its `V`/`N` decision line, so the paid read never loads
+`KindIndex` or peeks a cited record's head (§10.29: ≈0.70 CPU-s of the 1.44-CPU-s
+target, of which the peek is load-bearing for observation and must not be
+dropped — §10.27 ¶1).
+
+**Shape (contract `rust/mishe-records/CONTRACT.md` 0.4).**
+- `V <sequence> <kind>` / `N <sequence> <kind>`; `S <sequence>` unchanged; the
+  `P <sequence> <bytes>` payload header unchanged. The kind is the verified
+  envelope's `kind`, written verbatim.
+- The store gains `kind TEXT`. An existing store gets it with
+  `ALTER TABLE ... ADD COLUMN kind TEXT`, and a row whose kind is NULL (written by
+  the 0.3 binary) is **a miss**: the record is verified again and the row
+  rewritten. Self-healing, and no kind is ever guessed — which is also why the
+  hit path can answer the kind without re-reading the file.
+- The hit path was the reason the column is needed: `verified` held identity,
+  `verified_at` and the compressed *payload*, and the payload object does not
+  carry the envelope kind, so §10.27's "the flush already has it" was true only
+  at the moment of the miss.
+
+**Order-safety at activation, proven at the caller.** The pinned drain
+(`feed.py::_RecordsChild._drain`) did `int(rest)`, so re-pointing the binary
+before the pin carried a tolerant parser would break every live read. The drain
+now takes the sequence from the first token and ignores the rest. Driven with a
+stub binary emitting `V 1`, `N 2 wall-outcome`, `S 3` in one stream, the drain
+accepted the whole stream (`_error is None`). Deployment order is therefore:
+pin (tolerant drain) → `$SITE/bin/mishe-records` re-point. Both are activations
+and both take the strong gate.
+
+**Evidence.** `cargo build --release --offline` and the same with `--locked`
+(lock regenerated with the crate's own version bump 0.1.0 → 0.4.0, the defect
+that failed genome's CI run 42976870198 at 0.2.0) both succeed in
+`crate-build/target` under `systemd-run --user --scope -p MemoryMax=2G nice -n
+19`. `tests/test_mishe_records_verify.py` + `tests/test_feed_records.py`: **37
+passed** against the new bytes (`MISHE_RECORDS_BIN` override); `tests/test_feed.py`
+44 passed; `tools/check_parsing.py` PASS with no new legacy sites. The new test
+`test_the_decision_line_carries_the_cited_kind_and_a_kindless_row_is_a_miss`
+pins `N 1 wall-outcome` cold, `V 1 wall-outcome` warm, then rebuilds the store in
+the 0.3 shape and pins miss-then-heal. Limits: the kind is a whitespace-free slug
+in this plant; a kind containing a space or newline is not representable on the
+line and is a documented contract limitation.
+
+**Not delivered.** The source is committed but not activated: no promotion, no
+pin move, and no live observation, so the payoff is not yet observed. Next:
+strong gate (fresh non-author reviewer; deterministic activation, revert,
+reapply in the order above), then piece 3, whose acceptance is the A/B that
+measures both the payoff and the framer's own fact cost.
+

@@ -15,6 +15,8 @@ pub struct InsertRow {
     pub identity: (i64, i64, i64, i64),
     pub verified_at: f64,
     pub payload: Vec<u8>,
+    /// The envelope's `kind`, carried so a repeat reference never re-reads the file.
+    pub kind: String,
 }
 
 pub struct Hit {
@@ -23,6 +25,9 @@ pub struct Hit {
     pub verified_at: f64,
     /// The stored blob, read only in `--payloads` mode.
     pub payload: Option<Vec<u8>>,
+    /// The envelope's `kind` as stored. A row written before the column existed has
+    /// none, and is a miss: the caller then re-verifies and rewrites the row.
+    pub kind: String,
 }
 
 pub struct Store {
@@ -34,6 +39,7 @@ struct Raw {
     identity: (Option<i64>, Option<i64>, Option<i64>, Option<i64>),
     verified_at: Option<f64>,
     blob: Option<Vec<u8>>,
+    kind: Option<String>,
 }
 
 impl Store {
@@ -44,9 +50,14 @@ impl Store {
                 "PRAGMA journal_mode=WAL;\n\
                  CREATE TABLE IF NOT EXISTS verified (digest TEXT PRIMARY KEY, ino INTEGER, \
                  size INTEGER, ctime_ns INTEGER, mtime_ns INTEGER, verified_at REAL, \
-                 payload BLOB NOT NULL);",
+                 payload BLOB NOT NULL, kind TEXT);",
             )
             .ok()?;
+            // A store written before the kind column existed keeps serving its rows; they
+            // read as kind NULL, which `lookup` treats as a miss.
+            if c.prepare("SELECT kind FROM verified LIMIT 0").is_err() {
+                c.execute("ALTER TABLE verified ADD COLUMN kind TEXT", []).ok()?;
+            }
             Some(c)
         });
         Store { connection }
@@ -55,9 +66,9 @@ impl Store {
     pub fn lookup(&mut self, digest: &str, want_payload: bool) -> Option<Hit> {
         let connection = self.connection.as_mut()?;
         let sql = if want_payload {
-            "SELECT ino, size, ctime_ns, mtime_ns, verified_at, payload FROM verified WHERE digest=?1"
+            "SELECT ino, size, ctime_ns, mtime_ns, verified_at, payload, kind FROM verified WHERE digest=?1"
         } else {
-            "SELECT ino, size, ctime_ns, mtime_ns, verified_at, typeof(payload)='blob' \
+            "SELECT ino, size, ctime_ns, mtime_ns, verified_at, typeof(payload)='blob', kind \
              FROM verified WHERE digest=?1"
         };
         let mut statement = connection.prepare_cached(sql).ok()?;
@@ -79,6 +90,10 @@ impl Store {
                     ValueRef::Blob(_) => Some(Vec::new()),
                     _ => None,
                 },
+                kind: match row.get_ref(6)? {
+                    ValueRef::Text(bytes) => std::str::from_utf8(bytes).ok().map(str::to_string),
+                    _ => None,
+                },
             })
         });
         let row = match row {
@@ -88,7 +103,8 @@ impl Store {
         };
         let identity = (row.identity.0?, row.identity.1?, row.identity.2?, row.identity.3?);
         let verified_at = row.verified_at?;
-        Some(Hit { identity, verified_at, payload: row.blob })
+        let kind = row.kind?;
+        Some(Hit { identity, verified_at, payload: row.blob, kind })
     }
 
     /// `records.VerifiedStore.store`: one transaction per batch, `INSERT OR REPLACE`.
@@ -103,7 +119,9 @@ impl Store {
             let transaction = connection.transaction()?;
             {
                 let mut statement = transaction.prepare_cached(
-                    "INSERT OR REPLACE INTO verified VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    "INSERT OR REPLACE INTO verified \
+                     (digest, ino, size, ctime_ns, mtime_ns, verified_at, payload, kind) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 )?;
                 for row in rows {
                     statement.execute(rusqlite::params![
@@ -114,6 +132,7 @@ impl Store {
                         row.identity.3,
                         row.verified_at,
                         row.payload,
+                        row.kind,
                     ])?;
                 }
             }

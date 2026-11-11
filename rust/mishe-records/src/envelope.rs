@@ -12,11 +12,12 @@ use crate::{fdops, sha256, Fault};
 /// `records.MAX_BYTES`.
 const MAX_BYTES: usize = 1024 * 1024;
 
-/// Verify `SITE/records/<digest>.json` and return the envelope's `payload` object.
+/// Verify `SITE/records/<digest>.json` and return its `kind` and the envelope's
+/// `payload` object.
 ///
 /// `expected` is the digest the entry's reference names; the caller has already
 /// established that it equals `digest`.
-pub fn verify(dirfd: RawFd, digest: &str, expected: &str) -> Result<Value, Fault> {
+pub fn verify(dirfd: RawFd, digest: &str, expected: &str) -> Result<(String, Value), Fault> {
     if digest != expected {
         return Err(Fault::Verify("record digest mismatch or missing site context".to_string()));
     }
@@ -37,12 +38,17 @@ pub fn verify(dirfd: RawFd, digest: &str, expected: &str) -> Result<Value, Fault
     // `record.get("version") != 1`: Python's `1.0` and `True` both equal `1`.
     let version_ok = matches!(fields.get("version"), Some(Value::Number(n)) if n.as_f64() == Some(1.0))
         || matches!(fields.get("version"), Some(Value::Bool(true)));
-    let kind_ok = matches!(fields.get("kind"), Some(Value::String(kind)) if !kind.is_empty());
-    if !version_ok || !kind_ok {
+    // `kind_ok`: a non-empty string. The kind is kept — the caller reports it on the
+    // decision line, so a repeat reference never re-reads the record to learn it.
+    let kind = match fields.get("kind") {
+        Some(Value::String(kind)) if !kind.is_empty() => kind.clone(),
+        _ => return Err(Fault::Verify("invalid immutable record envelope".to_string())),
+    };
+    if !version_ok {
         return Err(Fault::Verify("invalid immutable record envelope".to_string()));
     }
     match fields.remove("payload") {
-        Some(payload @ Value::Object(_)) => Ok(payload),
+        Some(payload @ Value::Object(_)) => Ok((kind, payload)),
         _ => Err(Fault::Verify("invalid immutable record envelope".to_string())),
     }
 }
