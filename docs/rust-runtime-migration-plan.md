@@ -1649,8 +1649,9 @@ is precisely the path the cache exists to avoid; the section-10.20/10.21 live
 measurement shows live readers do not pay it.
 
 Probe and raw output are site-local
-(`artifacts/rust-plan-20261107/role_cache_ab.py`, run 2026-11-11T03:0xZ), not
-committed.
+(`artifacts/rust-plan-20261107/role_cache_ab.py`; `role_cache_ab.out` holds a
+re-run at a grown tape state, hit 0.215/0.280 vs build 5.664/5.759 CPU-s, both
+paths again digest-identical), not committed.
 
 **The `doctor` exit-1 RED cause is named.** Section 2.4 recorded "25 exit status
 1" runs and "the cause of the RED lines is UNKNOWN". Reading the journal for the

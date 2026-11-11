@@ -1,6 +1,9 @@
 # `engine/budget.json` contract
 
-Status: **proposed** (contract first; no producer or consumer migration yet).
+Status: **proposed**. Step 1 has started: `src/mishe_tauftauf/budget_producer.py` produces the
+`accounts` section from the engine status and the native Claude tap, dry-run unless `--out` is
+given (`mishe budget-produce`). The ledger sections, `checks/budget-consistency.py` and every
+consumer migration are not shipped yet.
 Owner of the model/account mapping: `engine/routes.json`. Owner of this contract: steward.
 
 ## Problem
@@ -29,10 +32,11 @@ Consequences observed 2026-11-10:
 One producer writes one file, `engine/budget.json`, atomically. Every other consumer reads
 only that file and computes nothing itself.
 
-- **Producer**: `engine/budget_producer.py` (new). Reads `routes.json` (mapping owner),
-  `engine/routing-ledger.jsonl`, `engine/routing-state.json`, `state.json`, `quota.json`,
-  `claude-native-quota.json`, and `engine_router.live_status()` for the live account
-  windows. Writes `engine/budget.json` with `produced_at` and its own id.
+- **Producer**: `src/mishe_tauftauf/budget_producer.py`. Writes `engine/budget.json` atomically
+  with `produced_at` and its own id. The shipped slice builds only the `accounts` section, from
+  `quota.json` and `claude-native-quota.json`; the ledger sections will also read `routes.json`
+  (mapping owner), `engine/routing-ledger.jsonl`, `engine/routing-state.json`, `state.json` and
+  `engine_router.live_status()` for the live account windows.
 - **Consumers**: `engine_router.assess()`/`live_status()` (account windows and routing
   assessment), `budget_view.py` (render only), the steward, and the `budget-consistency`
   duty. None of them reads `state.json`, `quota.json` or `claude-native-quota.json`
@@ -47,7 +51,7 @@ only that file and computes nothing itself.
 {
   "schema": 1,
   "produced_at": 1794321600.0,
-  "producer": "engine/budget_producer.py",
+  "producer": "src/mishe_tauftauf/budget_producer.py",
   "routes_version": 1,
   "accounts": {
     "claude": {
