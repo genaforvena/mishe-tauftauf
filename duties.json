@@ -404,6 +404,21 @@
       "replaces": []
     },
     {
+      "name": "frame-label-tick",
+      "command": [
+        "{python}",
+        "{repo}/tools/frame_label_tick.py",
+        "--site",
+        "{home}"
+      ],
+      "every": 300,
+      "timeout": 600,
+      "max_age": 1500,
+      "resolver": "senses",
+      "covers": "calibration photos to Ilya's own chat: sweeps frames older than 24 h, applies his reply-to labels, and on a noticeable camera change sends at most 3 photos per 8 h (cap persisted before send); sends nothing otherwise",
+      "replaces": []
+    },
+    {
       "name": "household-phones",
       "command": [
         "{python}",

@@ -75,6 +75,7 @@
     "tools/household_view.py",
     "tools/household_patterns.py",
     "tools/frame_label.py",
+    "tools/frame_label_tick.py",
     "tools/map_render.py",
     "tools/inference_budget_aggregate.py",
     "tools/recovery-control.py",
