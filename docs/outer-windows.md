@@ -12,6 +12,10 @@ Each must stay dependency-free so Mishe still works with the window closed, and 
 | network | tools/network_view.py | network | home network and connection |
 | budget | operator/budget/budget_view.py | budget | provider quota and spend |
 
+The `budget` window runs `operator/budget/budget_pane.sh`, a loop that calls
+`budget_view.py` every 20 s and clears the screen between frames, so the registry's
+command and the table's tool name the same view.
+
 Create a window: `tmux new-window -t plants -d -n NAME 'env MISHE_TAUFTAUF_HOME=... python3 tools/X_view.py'`.
 Never type into another plant's panes. Keep this table current when a window is added or retired.
 
@@ -41,20 +45,16 @@ What is not in place yet (UNKNOWN until it is):
 - No timer runs the restorer. It is run by hand.
 - `senses-map` is marked `restore: true` and its viewer now loops every 30 s instead of
   exiting after one render, so a periodic restore would not flap it. The renderer
-  behind it has a schedule in the committed tree: the `map-render` duty in
-  `duties.json` runs `tools/map_render.py` every 180 s, and the generated unit
-  `mishe-producer-map-render.timer` fires that service. Producer units are rendered
-  from the served release's own `duties.json`, so the timer starts when a release
-  carrying the duty is promoted. Observed 2026-11-11 at 18:11Z, the served release
-  (`35748377`) predates the duty, no such unit is installed, and the pane reads
-  "rendered 16:26Z, 105 min ago: STALE" — the viewer flags a render older than
-  30 minutes as stale.
+  behind it has a schedule in the committed tree — the `map-render` duty in
+  `duties.json` runs `tools/map_render.py` every 180 s and renders
+  `mishe-producer-map-render.timer` — but producer units come from the served
+  release's own `duties.json`, and that release (`35748377`, observed 2026-11-11 at
+  18:11Z) predates the duty, so no timer is installed and the pane reads
+  "rendered 16:26Z, 105 min ago: STALE". The viewer flags a render older than
+  30 minutes as stale. The timer appears when a release carrying the duty is
+  promoted.
 - Many inner `mind-view` windows are `pending-decision`; they are not restored until someone
   classifies them as per-duty or drops them.
-- The registry's `budget` window runs `operator/budget/budget_pane.sh`, while the table above
-  points at `budget_view.py`. Those are the same view, not two: the pane script is a loop
-  that runs `budget_view.py` every 20 s and clears the screen between frames. Observed
-  2026-11-11 at 18:31Z, the live pane's text is that view's output, timestamp apart.
 
 ## Crash drill (not implemented)
 
