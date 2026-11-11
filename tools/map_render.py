@@ -62,13 +62,21 @@ ROOMS = {
     "bedroom":     (8, 0, 5, 4),
     "balcony":     (0, 4, 4, 2),
     "wardrobe":    (8, 4, 2, 2),
+    "kitchen_stall": (0, 0, 2, 2),   # inside the living room, left, outside camera view
 }
+# Camera sits in the hallway/wardrobe and looks west into the living room (Ilya, 2026-11-11):
+# it sees the near/ground part and the open balcony edge, not the left part or the kitchen stall.
+CAMERA_ORIGIN = (6, 2)
+CAMERA_CONE = [(6, 2), (2.2, 0.2), (2.2, 5.8)]      # seen region, schematic
+BLIND_CAP = 0.3                                      # a blind-spot room is never seen, only inferred
+BLIND_SPOT = (0, 0, 2.2, 4)                          # living room left part: cannot see
 ROOM_LABEL = {
     "living_room": "living room",
     "hallway": "hallway",
     "bedroom": "bedroom",
     "balcony": "balcony (no sensor)",
     "wardrobe": "wardrobe",
+    "kitchen_stall": "kitchen stall (cannot see)",
 }
 PEOPLE = ["ilya", "rozalia", "bruno"]
 KEY_VALUE = re.compile(r"(\w+)=([^\t\s]+)")
@@ -304,6 +312,9 @@ def add_guesses(rows, activity):
                 NIGHT_UTC[0], NIGHT_UTC[1], base_why)
         if person == "ilya":
             why = "%s; %s" % (why, home_note)
+        if best_room == "kitchen_stall" and best_conf > BLIND_CAP:
+            best_conf = BLIND_CAP
+            why += " [blind spot: inference only, cannot see]"
         if best_room is None:
             r["guess"] = {"room": None, "confidence": 0.0,
                           "evidence": "%s; %s" % (why, cam)}
@@ -335,6 +346,14 @@ def svg(rows, activity):
             note = "activity UNKNOWN"
         out.append('<text x="%d" y="%d" fill="#7f8aa3" font-size="10">%s</text>' %
                    (pad + x * scale + 6, pad + y * scale + h * scale - 8, note))
+    bx, by, bw, bh = BLIND_SPOT
+    out.append('<rect x="%d" y="%d" width="%d" height="%d" fill="#000" fill-opacity="0.45" '
+               'stroke="#c0504d" stroke-dasharray="4 3"/>' % (pad + bx * scale, pad + by * scale, bw * scale, bh * scale))
+    out.append('<text x="%d" y="%d" fill="#e08a87" font-size="10">BLIND SPOT: camera cannot see</text>' %
+               (pad + bx * scale + 4, pad + (by + bh) * scale - 26))
+    out.append('<polygon points="%s" fill="#f2c14e" fill-opacity="0.12" stroke="#f2c14e" stroke-opacity="0.5"/>' %
+               " ".join("%d,%d" % (pad + px * scale, pad + py * scale) for px, py in CAMERA_CONE))
+    out.append('<circle cx="%d" cy="%d" r="4" fill="#f2c14e"/>' % (pad + CAMERA_ORIGIN[0] * scale, pad + CAMERA_ORIGIN[1] * scale))
     colours = {"ilya": "#f2c14e", "rozalia": "#e8788c", "bruno": "#7ec8e3"}
     slot = {}
     for person in PEOPLE:
@@ -368,6 +387,7 @@ def ascii_map(rows):
              "|  living room    | hall |        bedroom          |",
              "|                 |      |                          |",
              "|  (sensor: cam)  |      |   (sensor: cam)          |",
+             "|  [left + kitchen stall = BLIND SPOT, camera cannot see] |",
              "+-----------------+      +--------------------------+",
              "|  balcony (no sensor)   | wardrobe |               |",
              "+------------------------+----------+---------------+"]
