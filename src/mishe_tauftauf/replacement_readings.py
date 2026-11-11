@@ -17,6 +17,7 @@ from __future__ import annotations
 import ast
 import os
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 TMUX_SENSE_ID = "sense.tmux.windows"
@@ -543,3 +544,67 @@ def read_drift_across_sites(site: str | None, *, proc_root: Path = Path("/proc")
         else:
             row["declared"] = unit_properties.declared_site_homes(text)
     return judge_drift_across_sites(units, site)
+
+
+WEDGE_SUSPECT_ID = "sense.mind.wedge-suspect"
+WEDGE_CHAIN_THRESHOLD = 3
+WEDGE_SPAN_THRESHOLD_MINUTES = 15.0
+WEDGE_ERROR_STALE_MINUTES = 5.0
+
+
+def judge_mind_wedge_suspects(panes: list[dict] | None, now: datetime, *,
+                              chain_of=lambda pane: None) -> dict[str, object]:
+    """Pure judge of pane omp logs for wedged minds (replaces legacy wedge-suspect).
+
+    ``panes`` is one record per live pane (``session``, ``window``, ``pid``), or
+    None when pane enumeration failed. ``chain_of(pane)`` is the injected log
+    reader: it returns None when the pane has no readable omp log, else a dict
+    with ``chain`` (open continue-chain length), ``span_minutes``, ``cause``,
+    ``last_error`` (datetime or None), ``foreign`` (count of other-model records).
+
+    Rules, from the legacy check:
+    - R (chain-wedge): chain >= 3 and span >= 15 min.
+    - R2 (provider-error): chain == 0, a cause, and last error >= 5 min old.
+    - chain-stall: 1 <= chain < 3, a cause, span >= 15 min, last error >= 5 min old.
+
+    Validity: no pane list, or no pane with a readable log, is UNKNOWN, never
+    calm. A pane whose log cannot be read is counted as a pane but not as covered.
+    """
+    base = {"id": WEDGE_SUSPECT_ID, "kind": "read"}
+    if panes is None:
+        return {**base, "state": "unknown", "sample": "tmux pane enumeration failed",
+                "suspects": [], "panes": 0, "with_log": 0, "foreign": 0}
+    suspects: list[dict] = []
+    with_log = 0
+    foreign = 0
+    for pane in panes:
+        chain = chain_of(pane)
+        if chain is None:
+            continue
+        with_log += 1
+        foreign += int(chain.get("foreign") or 0)
+        row = {"window": pane["window"], "pid": pane["pid"], "session": pane["session"], **chain}
+        n, span, cause = chain["chain"], chain["span_minutes"], chain["cause"]
+        if n >= WEDGE_CHAIN_THRESHOLD and span >= WEDGE_SPAN_THRESHOLD_MINUTES:
+            suspects.append({**row, "rule": "chain-wedge"})
+            continue
+        last_error = chain.get("last_error")
+        if last_error is None or cause == "none":
+            continue
+        age = (now - last_error).total_seconds() / 60.0
+        if age < WEDGE_ERROR_STALE_MINUTES:
+            continue
+        if n == 0:
+            suspects.append({**row, "rule": "provider-error", "error_age_minutes": round(age, 1)})
+        elif n < WEDGE_CHAIN_THRESHOLD and span >= WEDGE_SPAN_THRESHOLD_MINUTES:
+            suspects.append({**row, "rule": "chain-stall", "error_age_minutes": round(age, 1)})
+    parts = [f"{s['window']}(pid={s['pid']},session={s['session']},rule={s['rule']},"
+             f"chain={s['chain']},span={s['span_minutes']}min,cause={s['cause']})"
+             for s in suspects]
+    sample = ("suspects=" + " ".join(parts) if parts else "suspects=0")
+    sample += f" panes={len(panes)} with_log={with_log} foreign={foreign}"
+    state = "verified" if with_log else "unknown"
+    if not with_log:
+        sample += " (no readable omp log: UNKNOWN, not calm)"
+    return {**base, "state": state, "sample": sample, "suspects": suspects,
+            "panes": len(panes), "with_log": with_log, "foreign": foreign}
