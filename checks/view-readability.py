@@ -5,8 +5,9 @@ The panes are what a person watches. They must carry words, clock times and
 counts, never JSON, dict reprs, escaped newlines, raw epoch numbers or the
 interpreter's private path. This renders each role's two panes from the live
 site with the code under --repo and lints them with the same function the unit
-tests use (`plant_view_boundary.machine_syntax`). Lines marked UNKNOWN and the
-delimited raw block are deliberate failure evidence and are exempt.
+tests use (`plant_view_boundary.machine_syntax`). Lines marked UNKNOWN, the
+delimited raw block and what a tool call carried (its own arguments and its
+printed output) are deliberate evidence and are exempt.
 
 Exit status:
   0  every role's top and bottom pane is human-readable

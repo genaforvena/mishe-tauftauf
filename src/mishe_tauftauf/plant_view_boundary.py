@@ -248,14 +248,20 @@ RAW_OPEN, RAW_CLOSE = '[raw unreadable bytes follow]', '[end of raw bytes]'
 # legitimately print JSON, dicts, paths or epochs. The block runs from its label to the next renderer line,
 # and a command may print a line that looks like one, so the end is a known renderer line, not any bracket.
 TOOL_LABELS = ('[tool output]', '[tool error]')
+# Every tool line opens a block of content the mind produced: the call's own arguments (a command as typed,
+# an edit's bytes — both can span lines) and the output that call printed. A pane's machine-syntax reading is
+# about the renderer's own chrome, so these blocks are held together and only a known renderer line closes one.
+# checks/wakes-view-engines.py states the same rule for the same bytes.
+TOOL_CONTENT_OPENS = ('[tool ',)
 RENDERER_LINES = ('[assistant', '[tool ', '[provider ', '[agent_', '[rendered tail]', '[retained tail;',
                   '[raw unreadable bytes follow]', '[end of raw bytes]', '[waiting for stream events',
                   '[final text truncated', '[output truncated', '[the mind returned no final text')
 
 # Machine syntax a person should never have to read in a pane: JSON/dict keys, a
 # line that opens or closes a structure, escaped newlines, epoch numbers and the
-# interpreter's private path. Lines marked UNKNOWN and the delimited raw block are
-# deliberate failure evidence and are exempt.
+# interpreter's private path. Lines marked UNKNOWN, the delimited raw block and
+# what a tool call carried (its own arguments and its printed output,
+# TOOL_CONTENT_OPENS) are deliberate evidence and are exempt.
 _MACHINE = (
     (re.compile(r'^\s*[\[{]\s*($|["\'{\[])|^\s*[\]}],?\s*$'), 'a line that opens or closes a JSON structure'),
     (re.compile(r'"[A-Za-z_][\w-]*"\s*:|\'[A-Za-z_][\w-]*\'\s*:\s'), 'a quoted key (JSON or dict)'),
@@ -285,7 +291,7 @@ def machine_syntax(text: str) -> list[str]:
         if raw or line.startswith('UNKNOWN'):
             raw = raw and line.strip() != RAW_CLOSE
             continue
-        if line.startswith(TOOL_LABELS):
+        if line.startswith(TOOL_CONTENT_OPENS):
             tool = True
         elif line.startswith(RENDERER_LINES):
             tool = False

@@ -218,6 +218,44 @@ def test_bottom_pane_does_not_read_a_truncated_dump_as_prose(tmp_path):
     assert machine_syntax(text) == [], [line for line in machine_syntax(text)]
 
 
+def test_a_tool_calls_own_arguments_read_as_content_in_the_pane(tmp_path):
+    """A call is printed as typed; an edit's bytes or a heredoc body are content, not renderer chrome.
+
+    2026-11-11, live: the pane linter read a multi-line `[tool edit]` of a Rust file as 'a line that opens or
+    closes a JSON structure' (a `}` on its own line) and the view-readability signal flapped RED while that
+    window was in view, minting a spurious re-offer wake. checks/wakes-view-engines.py already treats a tool
+    call's arguments as content; these pin the same rule on the pane linter.
+    """
+    edit = {"type": "tool_execution_start", "toolName": "edit",
+            "args": {"path": "/repo/src/main.rs",
+                     "old_string": '            "--offsets" => {\n                offsets_only = true;\n            }',
+                     "new_string": '            "--offsets" => {\n                offsets_only = true;\n            }\n            _ => return usage(),'}}
+    result = {"type": "tool_execution_end", "toolName": "edit",
+              "result": {"content": [{"type": "text", "text": "Edited /repo/src/main.rs"}]}}
+    done = {"type": "message_end",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "Offsets flag added."}]}}
+    (tmp_path / 'wakes').mkdir()
+    (tmp_path / 'wakes/wake-genome-1.prompt.out.jsonl').write_text(
+        '\n'.join(json.dumps(e) for e in (edit, result, done)) + '\n')
+    text = view.render(tmp_path, 'genome', now=T0, output=True)
+    assert '[tool edit] path: /repo/src/main.rs; old_string:' in text     # the call is still shown as typed
+    assert 'Offsets flag added.' in text
+    assert machine_syntax(text) == [], [line for line in machine_syntax(text)]
+
+
+def test_a_dumped_record_after_a_tool_block_is_still_flagged(tmp_path):
+    """The exemption ends at the call: a record the renderer prints afterwards is still machine syntax."""
+    from mishe_tauftauf.plant_view_boundary import machine_syntax as lints
+    call = {"type": "tool_execution_start", "toolName": "bash", "args": {"command": "ls -l"}}
+    leak = {"type": "message_end",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": 'Saved.\n{\n  "state": "OK",\n  "epoch": 1794380411\n}'}]}}
+    (tmp_path / 'wakes').mkdir()
+    (tmp_path / 'wakes/wake-genome-1.prompt.out.jsonl').write_text(
+        '\n'.join(json.dumps(e) for e in (call, leak)) + '\n')
+    text = view.render(tmp_path, 'genome', now=T0, output=True)
+    assert lints(text) != []
+
+
 def test_bottom_leads_with_model_and_summary_and_shows_the_result_as_text(tmp_path):
     settled_wake(tmp_path)
     text = view.render(tmp_path, 'genome', now=T0 + 60, output=True)
