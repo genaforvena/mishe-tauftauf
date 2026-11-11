@@ -462,8 +462,8 @@ Measured numbers are the ones in sections 2 and 8. Nothing here is a new speedup
 | **C. Role projection** (`mishe-tape role`, cold-cache derived file) | **Abandoned on measurement** (2026-11-11, §10.21). The derived-file benefit C was to introduce already exists: `367e3775` (2026-11-09, in the live pin) persists the verified projection to `$SITE/feed.role-cache/<role>.json`. Paired A/B at one tape state: the live cache path is 0.218–0.281 CPU-s, the forced rebuild 5.685–5.703, same digest `542b02a0…`. No prize left to win, and a second projection owner would break single authority. | Cold `wall show` 15.2 s user and "the cache is process-local (`feed.py:53`)" were the pre-`367e3775` premise; both are stale (§10.21). | Do not build. §9.2's "Cold role projection 15.2 s user" row is retired by the same measurement. |
 | **Senses baseline** (measurement, not migration) | Not started. Needs its own declared duty, not an edit to `rust-plan-progress` (wall, section "Senses baseline"). | Source artifacts already exist under `artifacts/rust-plan-20261107/`. | Declare the duty with its own `max_age`. It reads UNKNOWN when evidence is missing or stale. |
 | Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4); fresh systemd table at pin `7ce12523`: `readings` 890 CPU-s / 6 h (36 runs, ~24.5 CPU-s each), 870 MB peak. `doctor` has 25 exit-1 runs, cause now named as transient unit-file drift (30 RED in ~576 runs over 48 h, dominated by `mishe-wake-<role>.path`, §10.21). | The `readings` cost is now profiled on the live plant and S2 is decided: see section 10. The slice is a Python slice (unused whole-tape reads, one snapshot per scan, cadence), not a Rust slice. |
-| **S2.1. Delete the tape reads that feed nothing** | Implemented (2026-11-10). `_mind_role_coverage` took an `entries` argument it never read; three readings read the whole tape to fill it and discarded the result. | AST-verified: `discovery.py:980` reads `home`, `role`, `now` and not `entries`. Fresh-process A/B of one live scan: 31.56 CPU-s before, 31.58 after, 74 observations both times. **A deletion, not a speedup** — an earlier 37% figure came from running both variants in one process and was wrong. | Committed with 4 regression tests that fail if a tape read returns to these readings. S2.2 (one physical tape read per scan) and S2.3 (cadence) remain. |
-| **S2.2. One physical tape read per scan** | **Delivered and observed** (2026-11-10). Commit `d3c0c57c` went through the strong gate (fresh gate review, verdict clear) and the delivery record `.mishe-tauftauf/patches/moving-pin-d3c0c57c.json` reads phase `applied`, `delivery_verified true`, with activation, observation, revert activation and revert observation all exit 0. `runtime/current` now points at `releases/d3c0c57c…`. `sample()` takes the cold verified read once and passes it to the three readers; each reader keeps its own read as the fallback. This is a snapshot change, not a window change. | Measured 2026-11-10 10:05Z–10:24Z on the live plant at pin `323a87fe`, counting framer spawns rather than wrapper calls: **three** physical whole-tape reads per scan, 643,103,475 bytes, 16.98 CPU-s, 858.6 MB peak, 74 observations. Call sites: `_mind_artifact_recurrence` (the cold verified read), `_ledger_evidence_binding` (the census read), `_coord_dm_disposition_age` (the disposition read). See section 10.2a. | Acceptance met on the live consumer: physical whole-tape reads 3 → 1 (643,325,541 → 214,457,060 bytes) on the delivered pin, same 74 observations, the three readings' values unchanged field for field, and the readings producer's own CPU below every pre-delivery run. Section 10.2c. S2.3 (cadence) remains. |
+| **S2.1. Delete the tape reads that feed nothing** | Implemented (2026-11-10). `_mind_role_coverage` took an `entries` argument it never read; three readings read the whole tape to fill it and discarded the result. | AST-verified: `discovery.py:980` reads `home`, `role`, `now` and not `entries`. Fresh-process A/B of one live scan: 31.56 CPU-s before, 31.58 after, 74 observations both times. **A deletion, not a speedup** — an earlier 37% figure came from running both variants in one process and was wrong. | Committed with 4 regression tests that fail if a tape read returns to these readings. S2.2 (one physical tape read per scan) delivered; S2.3 (cadence) refuted by measurement 2026-11-11 (§10.23). |
+| **S2.2. One physical tape read per scan** | **Delivered and observed** (2026-11-10). Commit `d3c0c57c` went through the strong gate (fresh gate review, verdict clear) and the delivery record `.mishe-tauftauf/patches/moving-pin-d3c0c57c.json` reads phase `applied`, `delivery_verified true`, with activation, observation, revert activation and revert observation all exit 0. `runtime/current` now points at `releases/d3c0c57c…`. `sample()` takes the cold verified read once and passes it to the three readers; each reader keeps its own read as the fallback. This is a snapshot change, not a window change. | Measured 2026-11-10 10:05Z–10:24Z on the live plant at pin `323a87fe`, counting framer spawns rather than wrapper calls: **three** physical whole-tape reads per scan, 643,103,475 bytes, 16.98 CPU-s, 858.6 MB peak, 74 observations. Call sites: `_mind_artifact_recurrence` (the cold verified read), `_ledger_evidence_binding` (the census read), `_coord_dm_disposition_age` (the disposition read). See section 10.2a. | Acceptance met on the live consumer: physical whole-tape reads 3 → 1 (643,325,541 → 214,457,060 bytes) on the delivered pin, same 74 observations, the three readings' values unchanged field for field, and the readings producer's own CPU below every pre-delivery run. Section 10.2c. S2.3 (cadence) refuted by measurement 2026-11-11 (§10.23). |
 
 ### 9.1a Independent replaceability (operator vision addendum, DM 298227, 2026-11-08)
 
@@ -881,10 +881,12 @@ two parts, in measured cost order:
   reading's output is field-for-field identical, so this is a snapshot change,
   not a windowing change. Each reader keeps its own read as the fallback, so
   a shared read that fails changes no state word.
-- **S2.3 — schedule.** The duty reads 941 MB every 10 minutes to produce a
-  reading whose inputs change slowly. The cadence is a scheduler change, so it
-  takes the strong path: fresh review, deterministic activation, revert and
-  reapply.
+- **S2.3 — schedule. Refuted by measurement 2026-11-11 (§10.23).** The duty
+  reads 941 MB every 10 minutes, but the stored receipts show the reading is
+  *not* slow-changing: 0 of 143 consecutive 10-minute pairs carry an identical
+  observation set, and sampling the same series every 1200 s drops a distinct
+  verdict word for 15 of 74 readings, three of them tape-derived. The cadence
+  is not a free lever; no change was made.
 
 **Rust's place in the readings duty** is unchanged and still real: it is
 slice B, the verified-store lookup, where 4.42 of the 6.53 CPU-s cold read
@@ -1740,4 +1742,65 @@ subscribers may treat as fresh.
 "Not yet consumed by a live caller". It was written at install time
 (2026-11-10T23:37Z), before the 02:47:28Z cutover; the binary is live now, as
 above. It is an untracked install record, not a claim this plan relies on.
+
+### 10.23 S2.3 refuted from the stored receipts: the reading is not slow-changing (2026-11-11)
+
+Read at 03:2xZ on 2026-11-11 from all 144 stored scan receipts in
+`$SITE/discovery/scan-*.json` (2026-11-10T02:17Z..2026-11-11T03:20Z, one per
+10 minutes; `latest.json` is the 03:20:21Z receipt, 270,680 bytes, 74
+observations). **No live scan was run** — this is stored evidence, not a new
+sample.
+
+- **25 of 74 readings are byte-stable across all 143 consecutive pairs, 49
+  change at least once, and 15 change in every single pair** (`sense.disk.free`,
+  `sense.disk.inodes-available`, `sense.proc.loadavg`, `sense.proc.cpu-pressure`,
+  `sense.proc.io-pressure`, `sense.proc.memory-available`, `sense.proc.unit-cpu`,
+  `sense.proc.top-cpu`, `sense.thermal.hwmon`, `sense.host.boot`,
+  `sense.coord.dm-disposition-age`, `sense.cgroup.mishe-plants.throttle`,
+  `sense.body.redmi10.peer-delivery`, `sense.mind.treadmill`,
+  `sense.mind.loop-stall`). The stable set is the 15 `command.*` declarations
+  plus `sense.mind.artifact-recurrence`, `sense.runtime.renderer-coverage`,
+  `sense.tmux.windows`, `sense.repo.git-index-lock` and eight more.
+- **19 of 74 readings changed state** in the 24 h, with 60 excursions that were
+  back at their previous state within one 10-minute step (`A→B→A`).
+- **Coarser sampling drops verdict words.** Comparing the normalized verdicts
+  seen at 600 s with those seen at 1200 s in the same series — a conservative
+  proxy for 900 s, since the stored series was written at 600 s and cannot be
+  sampled more finely — 15 of 74 readings lose at least one distinct verdict.
+  Three are tape-derived: `sense.mind.loop-stall` (loses
+  `genome(watch-loop-stall)`), `sense.mind.treadmill`, and `sense.mind.watch-wait`
+  (loses `watch-wait=unknown`, the one `unknown=senses` excursion). The others
+  include `sense.coord.dm-disposition-age`, `sense.coord.gate-latency`,
+  `sense.coord.authorship-fog`, `sense.proc.unit-cpu`, `sense.proc.unit-psi`,
+  `sense.proc.top-cpu`, `sense.journal.unit-failure-count`,
+  `sense.repo.push-freshness`, `sense.body.redmi10[.light]`,
+  `sense.body.multibody.coverage` and `sense.runtime.sensor-coverage`.
+
+The 941 MB read exists to serve the tape-derived readings, and those are among
+the readings a coarser sample blurs. **S2.3 abandoned; no `duties.json` or unit
+change was made.** Limits: 1200 s bounds the loss from above (900 s loses less);
+the test counts any word ever seen, so a lost word can be a single
+low-consequence 10-minute excursion; the series is 24 h, so how often the
+excursions occur is not settled by it. Separately the registration has no slack —
+`every + timeout = 600 + 300` equals `max_age` 900 exactly — so any larger
+`every` must either raise `max_age`, widening what `readings` subscribers may
+treat as fresh, or open a periodic UNKNOWN window one run long.
+
+**The next Rust candidate, and the measurement it needs first.** The scan's
+framing and per-record verification are already Rust (§10.20, §10.22). What
+remains Python over the tape is the per-reading fold: `sample()`
+(`discovery.py:7156-7175`) takes one shared verified snapshot and hands it to
+`_mind_artifact_recurrence` and `_ledger_evidence_binding`, while
+`_mind_treadmill`, `_mind_docs_treadmill`, `_mind_loop_stall` and
+`_mind_watch_wait` read the tape through the same process cache, and
+`_coord_dm_disposition_age` reads it separately. That is an R2-class port of one
+reading, not a small POSIX command. **Its share of the 18.57–22.45 CPU-s run is
+UNKNOWN**: measuring it needs a fresh-process run against the 941 MB tape, which
+is a heavy step, so this wake recorded the gap rather than load the host. Safe
+trigger for collecting it: free memory ≥ 8 GB and memory pressure near zero
+(checked 03:29Z: 23 GB available, PSI some `avg10=0.00 avg60=0.00`), run outside
+a wake and outside the checkout under a cgroup cap
+(`artifacts/rust-plan-20261107/cargo-capped.sh` is the existing capped-run
+helper), one reading per process so a fold's cost is separable from the shared
+snapshot's.
 
