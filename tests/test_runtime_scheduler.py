@@ -39,3 +39,17 @@ def test_parse_when_reads_a_state_word_as_the_state_condition(tmp_path):
                    when=runtime_cli.parse_when("signal:egress=UNKNOWN"))
     snap=owed.check(tmp_path,"health",now=20)
     assert "when-egress" in snap.consumed      # the subscription is live, not dead
+
+
+def test_resume_owed_spaces_starts_of_one_role(tmp_path, monkeypatch):
+    # Each arm (every producer finish) calls resume_owed. Unspaced, a refused genome start was
+    # retried on each finish and tripped the protected host start limit (2026-11-11 genome loop).
+    started = []
+    monkeypatch.setattr(wake, "systemd_starter", started.append)
+    monkeypatch.setattr(owed, "check", lambda home, role, now: type("S", (), {"reasons": ["owed"]})())
+    wake.resume_owed(tmp_path, ["genome"], now=1000)
+    wake.resume_owed(tmp_path, ["genome"], now=1100)     # inside the spacing: skipped
+    wake.resume_owed(tmp_path, ["genome"], now=1100.5)   # still inside: skipped
+    assert started == ["genome"]
+    wake.resume_owed(tmp_path, ["genome"], now=1000 + wake.START_SPACING_SECONDS)
+    assert started == ["genome", "genome"]

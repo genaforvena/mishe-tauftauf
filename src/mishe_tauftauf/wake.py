@@ -23,6 +23,10 @@ from .core.supervisor import DispatchBusy, Supervisor, SupervisorError
 from .state_files import read_json, write_json
 
 DEFAULT_TIMEOUT = 1800.0
+# Minimum gap between two starts of the same role from resume_owed. 150 s keeps two starts in any
+# 300 s window, under the protected host StartLimitBurst of 3, with one start of headroom for path units.
+START_SPACING_SECONDS = 150.0
+START_LEDGER = "wake-start-ledger.json"
 
 
 class EngineNotStarted(Exception):
@@ -105,8 +109,19 @@ def resume_owed(home, roles, *, now: float) -> list[str]:
     for role in roles:
         if role not in started and owed.check(home, role, now=now).reasons:
             started.append(role)
+    # Every arm calls this, and a producer finishing arms; without spacing one owed role is started
+    # on each finish and the host start limit (3 per 300 s, protected) refuses the rest, leaving the
+    # wake failed and the role owed again (2026-11-11 genome loop). A throttled role is retried by the
+    # next arm after the spacing, so a start is delayed, never dropped while the role stays owed.
+    path = Path(home) / START_LEDGER
+    ledger = read_json(path) or {}
     for role in started:
+        last = ledger.get(role)
+        if last is not None and now - float(last) < START_SPACING_SECONDS:
+            continue
         systemd_starter(role)
+        ledger[role] = now
+    write_json(path, ledger)
     return started
 
 
