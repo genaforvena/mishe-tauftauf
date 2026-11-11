@@ -622,3 +622,34 @@ def test_outcome_tally_counts_only_outcome_rows_by_key():
         "not a row",
     ]
     assert router.outcome_tally(rows) == {"omp:m:-": {"yielded": 1, "failed": 2}}
+
+
+def test_the_tier_is_read_from_the_routes_file_and_must_be_a_non_negative_int(tmp_path):
+    routes_file(tmp_path, {"steward": [dict(GO, tier=1), dict(MINI, tier=0)]})
+    cands = router.load_routes(tmp_path)["roles"]["steward"]
+    assert [c["tier"] for c in cands] == [1, 0]
+    for bad in (-1, True, "1", 1.5):
+        d = tmp_path / "engine" / "routes.json"
+        d.write_text(json.dumps({"version": 1, "roles": {"steward": [dict(GO, tier=bad)]}}))
+        with pytest.raises(ValueError):
+            router.load_routes(tmp_path)
+
+
+def test_a_tier_mapped_candidate_ranks_after_a_tier_zero_one_even_with_stale_failures(tmp_path):
+    roster = [_cand("backup", tier=1), _cand("primary", tier=0)]
+    tally = {"omp:primary:-": {"yielded": 0, "failed": 30}, "omp:backup:-": {"yielded": 1, "failed": 0}}
+    assert [c["model"] for c in router.rank_candidates(roster, tally)] == ["primary", "backup"]
+
+
+def test_outcome_tally_window_drops_old_failures_and_keeps_recent_ones():
+    now = time.time() * 1000
+    old = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now / 1000 - 3 * 86400))
+    new = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now / 1000 - 3600))
+    rows = [
+        {"event": "outcome", "key": "omp:m:-", "outcome": "no yield (exit 1)", "at": old},
+        {"event": "outcome", "key": "omp:m:-", "outcome": "yielded", "at": new},
+        {"event": "outcome", "key": "omp:m:-", "outcome": "timeout"},
+    ]
+    assert router.outcome_tally(rows) == {"omp:m:-": {"yielded": 1, "failed": 2}}
+    since = now - 24 * 3600 * 1000
+    assert router.outcome_tally(rows, since_ms=since) == {"omp:m:-": {"yielded": 1, "failed": 0}}

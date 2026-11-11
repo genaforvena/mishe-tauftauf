@@ -142,6 +142,11 @@ def load_routes(home) -> dict | None:
                 entry["free"] = True
             if thinking is not None:
                 entry["thinking"] = thinking
+            tier = c.get("tier")
+            if tier is not None:
+                if isinstance(tier, bool) or not isinstance(tier, int) or tier < 0:
+                    raise ValueError(f"invalid tier for {role!r}: {c!r}")
+                entry["tier"] = tier
             clean.append(entry)
         roles[role] = clean
     env = value.get("env", {})
@@ -279,8 +284,12 @@ def choose(role: str, candidates: list, status, cooling: dict, now_ms: float,
     return {"decision": "none", "candidate": None, "key": None, "trail": trail}
 
 
-def outcome_tally(rows) -> dict:
-    """Pure: {candidate key: {"yielded": n, "failed": n}} from routing-ledger rows."""
+def outcome_tally(rows, *, since_ms: float | None = None) -> dict:
+    """Pure: {candidate key: {"yielded": n, "failed": n}} from routing-ledger rows.
+
+    With since_ms, only outcome rows stamped at or after that epoch-millisecond time count,
+    so an old failure burst stops weighing on the rate once it leaves the window.
+    """
     tally = {}
     for row in rows:
         if not isinstance(row, dict) or row.get("event") != "outcome":
@@ -288,6 +297,10 @@ def outcome_tally(rows) -> dict:
         key = row.get("key")
         if not isinstance(key, str):
             continue
+        if since_ms is not None:
+            at = _at_ms(row.get("at"))
+            if at is None or at < since_ms:
+                continue
         slot = tally.setdefault(key, {"yielded": 0, "failed": 0})
         slot["yielded" if row.get("outcome") == "yielded" else "failed"] += 1
     return tally
