@@ -61,8 +61,11 @@ def native_claude_windows(tap, now) -> dict:
     return windows
 
 
-def engine_windows(account_row, now) -> dict:
-    """Windows from one engine status account row: {windows: {w: {remaining, reset_at, observed_at?}}}."""
+def engine_windows(account_row, now, status_at=None) -> dict:
+    """Windows from one engine status account row: {windows: {w: {remaining, reset_at, observed_at?}}}.
+
+    The collector's quota.json carries the observation time once, at the top level (`at`), not per
+    window; `status_at` is that fallback so a live engine reading is not dropped as UNREADABLE."""
     windows = {}
     if not isinstance(account_row, dict):
         return windows
@@ -70,7 +73,7 @@ def engine_windows(account_row, now) -> dict:
         if not isinstance(v, dict):
             continue
         remaining, reset_at = v.get("remaining"), v.get("reset_at")
-        observed_at = v.get("observed_at", account_row.get("observed_at"))
+        observed_at = v.get("observed_at", account_row.get("observed_at", status_at))
         if not all(_num(x) for x in (remaining, reset_at, observed_at)):
             continue
         windows[window] = _window(1 - remaining, reset_at, observed_at, "engine-usage", now)
@@ -81,10 +84,11 @@ def build_accounts(status: dict | None, tap, now: float) -> dict:
     """Accounts section. `status` is the engine status dict (or None if unreadable)."""
     accounts = {}
     engine = (status or {}).get("accounts") if isinstance(status, dict) else None
+    status_at = (status or {}).get("at") if isinstance(status, dict) else None
     for name, row in (engine or {}).items():
         if not isinstance(row, dict):
             continue
-        windows = engine_windows(row, now)
+        windows = engine_windows(row, now, status_at)
         accounts[name] = {"provider": row.get("provider"), "windows": windows}
     claude = native_claude_windows(tap, now)
     accounts["claude"] = {"provider": "claude-code", "windows": claude}

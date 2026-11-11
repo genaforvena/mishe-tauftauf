@@ -82,6 +82,19 @@ def test_engine_account_uses_remaining_and_keeps_its_own_provider():
     assert accounts["go-a"]["state"] == "FRESH"
 
 
+def test_engine_windows_take_the_status_observation_time_when_absent():
+    # the live quota.json has no per-window observed_at: the top-level `at` is the reading time
+    s = {"at": NOW - 5, "accounts": {"go-a": {"provider": "opencode-go", "windows": {"7d": {"remaining": 0.25, "reset_at": NOW + 600, "state": "FRESH"}}}}}
+    accounts = bp.build_accounts(s, tap(), NOW)
+    assert accounts["go-a"]["state"] == "FRESH"
+    assert accounts["go-a"]["windows"]["7d"]["used"] == pytest.approx(0.75)
+
+
+def test_engine_window_with_no_observation_time_is_still_dropped():
+    s = {"accounts": {"go-a": {"provider": "opencode-go", "windows": {"7d": {"remaining": 0.25, "reset_at": NOW + 600}}}}}
+    assert bp.build_accounts(s, tap(), NOW)["go-a"]["state"] == "UNREADABLE"
+
+
 def test_engine_account_without_windows_is_unreadable():
     s = {"accounts": {"codex-a": {"provider": "openai-codex", "state": "UNKNOWN", "windows": {}}}}
     assert bp.build_accounts(s, tap(), NOW)["codex-a"]["state"] == "UNREADABLE"
