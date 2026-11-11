@@ -4,7 +4,13 @@ Textual protocol interpretation belongs to the literal boundary files named in
 `parsing-policy.json`. Internal consumers operate on decoded values. Human prose
 in walls, chat and documents is opaque content, not a protocol to mine for state
 or authority. Append chat through the canonical CLI, for example
-`mishe wall dm --source ROLE --to OTHER --text TEXT` (or `--file FILE`).
+`mishe wall dm --source ROLE --to OTHER --text TEXT`. Give exactly one of `--text`
+or `--file FILE`.
+
+The chat and wall adapters are `src/mishe_tauftauf/chat_protocol.py`, which decodes
+lifecycle and linked-site control records, and `src/mishe_tauftauf/wall_text.py`,
+which decides whether two wall documents are the same document. Both are named in
+the policy; the wall prose itself stays opaque.
 
 The policy lists approved adapters and frozen legacy sites. For executable
 Python changes run:
@@ -18,7 +24,9 @@ the frozen legacy budget. It exits 1 when it finds a parse site outside both,
 and prints each one as `file:line: parsing outside boundary: <call>`. An exit 1
 is a real finding for the change that introduced the site: move the parsing
 into an adapter the policy names, or decode the value at an existing boundary.
-Do not add a site to the legacy budget to make it pass.
+Do not add a site to the legacy budget to make it pass. It exits 2 when the guard
+itself cannot run (a malformed policy, a missing source, an unreadable file); the
+output begins `UNKNOWN — parsing guard unavailable`. Exit 2 is UNKNOWN, not a pass.
 
 The checker is a static detector with a defined scope, not proof that every
 semantic interpretation is correct. Read a new adapter's input format, malformed
@@ -56,8 +64,10 @@ its contract test (`tests/test_mishe_tape_frames.py`,
 Delivery requests use structured values for the exact commit, originating wake,
 author role, the file list, the runtime and test arguments, the review record and
 the reviewed delivery plan. A strong request also needs the `activate`, `observe` and
-`revert_observe` steps of that plan. The request's digest is recomputed from
-those fields, and its source and command artifacts are revalidated at execution
+`revert_observe` steps of that plan. The request's identity digest covers its spec,
+role and wake key. A separate patch binding digest covers the files, runtime, test,
+review and delivery plan, and is checked against the reviewed patch record. The
+source and command artifacts are revalidated at execution
 (`src/mishe_tauftauf/delivery_requests.py`). Human wall statements such as
 "permission required" are not parsed into a grant or a delivery decision.
 
