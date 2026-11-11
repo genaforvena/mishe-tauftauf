@@ -251,6 +251,63 @@ def wake_key(path: Path) -> str:
     return path.name.partition('.')[0]
 
 
+#: The retained record names the wakes pane reads, and the kind each one is.
+#: A record's name is a machine-written file name, so deciding what a name
+#: means is an interpretation of external text and belongs at this boundary.
+RECORD_KINDS = (
+    ('.snapshot.json', 'wake'),
+    ('.yield.json', 'settled'),
+    ('.work.json', 'output'),
+)
+
+#: The name a started-but-unfinished wake leaves behind.
+START_SUFFIX = '.work-start.json'
+
+
+def record_kind(name: str) -> str | None:
+    """The kind of retained record this file name names, or None."""
+    for suffix, kind in RECORD_KINDS:
+        if name.endswith(suffix):
+            return kind
+    return None
+
+
+def record_names(names: list[str]) -> list[tuple[str, str]]:
+    """The (kind, name) pairs of the retained records among these file names.
+
+    Names that name no retained record are skipped: the pane reads records, not
+    every file the wakes directory happens to hold.
+    """
+    found = []
+    for name in names:
+        kind = record_kind(name)
+        if kind is not None:
+            found.append((kind, name))
+    return found
+
+
+def start_names(names: list[str]) -> list[str]:
+    """The names of the wakes that have started and not yet finished."""
+    return [name for name in names if name.endswith(START_SUFFIX)]
+
+
+def read_records(names: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
+    """The retained records and the started wakes among these file names.
+
+    One pass over the names: the pane polls this every few seconds over a
+    directory of thousands of retained files.
+    """
+    records = []
+    starts = []
+    for name in names:
+        kind = record_kind(name)
+        if kind is not None:
+            records.append((kind, name))
+        elif name.endswith(START_SUFFIX):
+            starts.append(name)
+    return records, starts
+
+
 RAW_OPEN, RAW_CLOSE = '[raw unreadable bytes follow]', '[end of raw bytes]'
 
 # A command's output is content the mind asked for and read, not chrome the renderer printed: a tool may

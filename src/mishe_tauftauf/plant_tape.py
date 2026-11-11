@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from .state_files import read_json
-from .plant_view_boundary import git_tape, safe, tape_arguments, output_text, wake_key, last_lines, final_answer, progress_text, wake_models
+from .plant_view_boundary import git_tape, safe, tape_arguments, output_text, wake_key, last_lines, final_answer, progress_text, wake_models, read_records
 
 
 def git_step(repo, cursor):
@@ -28,10 +28,10 @@ def wakes_step(home, cursor):
     if not root.is_dir():
         raise ValueError(f'wake history missing: {root}')
     known = set() if cursor is None else set(cursor)
-    kinds = (('.snapshot.json', 'wake'), ('.yield.json', 'settled'), ('.work.json', 'output'))
     # One directory pass; with a cursor, only names not seen before need a stat for ordering (the directory holds
-    # thousands of retained records and this runs every few seconds).
-    listing = [(kind, e.name) for e in os.scandir(root) for suffix, kind in kinds if e.name.endswith(suffix)]
+    # thousands of retained records and this runs every few seconds). Which name is which record is the
+    # boundary's reading; this module only orders and renders what it is told.
+    listing, starts = read_records([e.name for e in os.scandir(root)])
     names = {name for _, name in listing}
     fresh = listing if cursor is None else [(kind, name) for kind, name in listing if name not in known]
     paths = sorted(((kind, root / name) for kind, name in fresh), key=lambda row: (row[1].stat().st_mtime_ns,
@@ -82,7 +82,7 @@ def wakes_step(home, cursor):
     # While a wake runs, add one short progress block per PROGRESS_SECONDS bucket: the last lines of its stream so far.
     progress = set()
     now = time.time()
-    for start in (root / e.name for e in os.scandir(root) if e.name.endswith('.work-start.json')):
+    for start in (root / name for name in starts):
         key = wake_key(start)
         # `names` was listed before this loop; a record that lands in between is caught by the exists() recheck below.
         if key + '.work.json' in names or key + '.yield.json' in names:
