@@ -10,6 +10,7 @@ Exit: 0 GREEN, 2 RED (the window is missing/wrong, or the mind has gone quiet), 
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -51,36 +52,85 @@ def window_copy_stale(home, repo):
     return 0
 
 
-def process_cmdline(pid):
-    """The command line of the process that is alive now with this pid (None when it cannot be read)."""
+START_SLACK_S = 5          # clock-tick rounding between process start and the view's own timestamp
+MAX_START_LAG_S = 600      # the view stamps "started" during its own startup, well within this
+
+
+def process_argv(pid):
+    """The argument vector of the live process with this pid, as a list (None when unreadable)."""
     try:
-        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
     except OSError:
+        return None
+    return [a.decode(errors="replace") for a in raw.split(b"\0") if a]
+
+
+def is_view_argv(argv):
+    """True only when the process is an interpreter running tools/network_view.py as its script: the
+    first argument that is not an interpreter option must be the script itself, not -c/-m code, and a
+    script merely mentioning network_view.py later in argv does not count."""
+    if not argv or not Path(argv[0]).name.startswith("python"):
+        return False
+    for arg in argv[1:]:
+        if arg in ("-c", "-m"):
+            return False
+        if arg.startswith("-"):
+            continue
+        return Path(arg).name == "network_view.py"
+    return False
+
+
+def process_start(pid):
+    """Epoch seconds at which the live process with this pid started (None when unreadable).  Used to
+    tell the recorded view from a later process that reused its pid."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        fields = stat.rsplit(")", 1)[1].split()
+        ticks = int(fields[19])  # field 22 (starttime), counted after the parenthesised command name
+        btime = next(int(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines()
+                     if line.startswith("btime "))
+        return btime + ticks / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError, StopIteration):
         return None
 
 
 def window_process(home, pane_pid, pane_cmd):
     """0 when the process running in the pane right now is the recorded view, 2 when it is not (a pane
-    that was respawned, or a process other than the view, or a window state that names another pid),
-    3 when the process cannot be read.  pane_start_command alone is not enough: it names what the pane
-    was started with, not what runs in it now."""
+    that was respawned, a process other than the view, a window state that names another pid, or a
+    pid that was reused after the view started), 3 when the process cannot be read.  pane_start_command
+    alone is not enough: it names what the pane was started with, not what runs in it now."""
     if not pane_pid.isdigit():
         print("network-care: tmux did not report the pane's process; cannot tell", file=sys.stderr)
         return 3
-    cmdline = process_cmdline(pane_pid)
-    if cmdline is None:
+    argv = process_argv(pane_pid)
+    if argv is None:
         print(f"network-care: pane process {pane_pid} is not readable; cannot tell", file=sys.stderr)
         return 3
-    if "network_view.py" not in cmdline:
-        print(f"network-care: pane process {pane_pid} runs {cmdline.strip()!r}, not the network view", file=sys.stderr)
+    if not is_view_argv(argv):
+        print(f"network-care: pane process {pane_pid} runs {' '.join(argv)!r}, not the network view", file=sys.stderr)
         return 2
     try:
-        recorded = str(json.loads((home / "network" / "window.json").read_text())["pid"])
+        state = json.loads((home / "network" / "window.json").read_text())
+        recorded = str(state["pid"])
     except (OSError, ValueError, KeyError, TypeError):
         return 0  # no state yet: window_copy_stale reports that case
     if recorded != pane_pid:
         print(f"network-care: the pane runs pid {pane_pid} but the view recorded pid {recorded} "
               "(its fingerprint describes another process)", file=sys.stderr)
+        return 2
+    started = process_start(pane_pid)
+    try:
+        recorded_start = float(state["started"])
+    except (KeyError, ValueError, TypeError):
+        print("network-care: the view recorded no start time; cannot tell whether its pid was reused", file=sys.stderr)
+        return 3
+    if started is None:
+        print(f"network-care: pane process {pane_pid} start time is not readable; cannot tell", file=sys.stderr)
+        return 3
+    lag = recorded_start - started
+    if not (-START_SLACK_S <= lag <= MAX_START_LAG_S):
+        print(f"network-care: pid {pane_pid} started {lag:+.0f}s from the view's recorded start; "
+              "the pid was reused or the state is stale", file=sys.stderr)
         return 2
     return 0
 
