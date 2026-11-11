@@ -384,3 +384,33 @@ def test_doctor_stays_red_on_corrupt_tape_without_full_pass(site, tmp_path, monk
     monkeypatch.setattr(feed_mod.Feed, "entries", boom)
     assert cli("doctor", "--unit-dir", str(units_dir)) == 1
     assert store.read(site, "doctor", now=__import__("time").time()).value == "RED"
+
+
+def test_doctor_feed_cycle_retains_coverage_while_tape_grows(site, tmp_path, monkeypatch):
+    """Every sequence is verified at least once per cycle even as the tape grows:
+    an entry appended after a completed cycle is still covered by the next one,
+    never starved by the cursor restarting at the head."""
+    from types import SimpleNamespace
+    from mishe_tauftauf import feed as feed_mod, runtime_cli as rc
+    units_dir, _ = _doctor_feed_calls(site, tmp_path, monkeypatch)
+    monkeypatch.setattr(rc, "FEED_VERIFY_SLICE", 2)
+    tape = {"length": 3}
+    verified = set()
+
+    def fake(self, *a, **kw):
+        if kw.get("verify_records", True) is False:
+            return []
+        start = kw.get("start", 1)
+        end = min(start + kw["limit"] - 1, tape["length"])
+        verified.update(range(start, end + 1))
+        return [SimpleNamespace(sequence=s) for s in range(start, end + 1)]
+
+    monkeypatch.setattr(feed_mod.Feed, "entries", fake)
+    for _ in range(2):                                       # ceil(3/2) runs cover [1..3]
+        assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+    assert verified == {1, 2, 3}
+    tape["length"] = 5                                       # two entries appended after the cycle
+    verified.clear()
+    for _ in range(3):                                       # ceil(5/2) runs cover [1..5]
+        assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+    assert verified == {1, 2, 3, 4, 5}
