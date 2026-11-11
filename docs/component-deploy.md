@@ -1,6 +1,6 @@
 # Per-component deploy
 
-Status: the mechanism works and has been exercised on the live site. `components.py` and the `mishe component` commands exist (see "Who promotes"), and three components have been promoted and verified there. What is still missing is the duty detector that keeps them watched: no `components` signal is registered, so a component that goes RED after a promotion is not reported to anyone. Promotion touches the delivery mechanism, so it keeps its separate fresh review.
+Status: the mechanism works and has been exercised on the live site. `components.py` and the `mishe component` commands exist (see "Who promotes"), and four components have been promoted and verified there. What is still missing is the duty detector that keeps them watched: no `components` signal is registered, so a component that goes RED after a promotion is not reported to anyone. Promotion touches the delivery mechanism, so it keeps its separate fresh review.
 
 ## Problem
 
@@ -33,17 +33,18 @@ SITE_HOME/components/NAME/
 
 A component is RED when its `current` pointer and its files disagree: pointer missing, target missing, target's bytes not matching the recorded sha256 of `bin/NAME`, or a file for NAME still served from `runtime/current` after the pointer exists. The intended detector runs with the duty loop and reports through a `components` signal. That signal is still not registered: `mishe component verify` is the only check, and nobody runs it on a schedule, so a component that goes RED after its promotion stays RED until a reader looks. Missing or stale detector output is UNKNOWN, never GREEN.
 
-The command itself is exercised. `mishe component verify` on the live site reports both promoted components GREEN, and it fails closed: with no components it exits 3, and any component that is not GREEN also exits 3.
+The command itself is exercised. `mishe component verify` on the live site reports all four promoted components GREEN, and it fails closed: with no components it exits 3, and any component that is not GREEN also exits 3.
 
 ## What has actually happened
 
 The promotions below ran on the live site, in the site's `components/` tree, and the ledger under each component records them. They are the evidence that the mechanism works, not a plan.
 
 - `mishe-tape-facts` was promoted at `034db9df`, then at `a2b7d182`, then rolled back to `034db9df`, then promoted again at `0c0d7e6e`. The rollback and the re-apply are in the ledger, so the revert path has been walked on real bytes rather than only in a test.
-- `mishe-tape` was promoted at `a2b7d182`.
+- `mishe-tape` was promoted at `a2b7d182`, then at `2b5d7ea1`.
 - `mishe-network-probe` was promoted at `6989d18f`, then at `2f1a2d4f`.
+- `mishe-records` was promoted at `cc071b62`.
 
-`mishe component verify` reports all three GREEN, and the bytes it checks are the bytes the site runs: the sha256 of `components/NAME/current/bin/NAME` equals the sha256 of the `$SITE/bin/NAME` install and the one recorded in that component's `manifest.json`.
+`mishe component verify` reports all four GREEN, and the bytes it checks are the bytes the site runs: the sha256 of `components/NAME/current/bin/NAME` equals the sha256 of the `$SITE/bin/NAME` install and the one recorded in that component's `manifest.json`.
 
 The promotion code was reviewed independently before that, in two passes. The first found one real defect: a promotion that came out RED when there was no previous release reported `rolled-back` even though nothing had been rolled back. That was repaired, and the second pass, again against real bytes in a temporary site, found the failure and rollback semantics correct as written — including that a release which verifies RED after the swap with no previous release known is reported as `unknown`, with the pointer left where it is rather than moved.
 
