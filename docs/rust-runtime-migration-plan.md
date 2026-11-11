@@ -458,10 +458,10 @@ Measured numbers are the ones in sections 2 and 8. Nothing here is a new speedup
 |---|---|---|---|
 | **A. Tape framing** (`mishe-tape frames`) | **Live and observed.** Cutover committed (`a995031a`), reviewed clear (`e90292ba` gate), delivered (`7ce12523`, delivery_verified 18:01:38Z). Every pin since `e90292ba` (2026-11-08 11:14Z) carries it. Live consumers wrote fresh role projections through the binary (`$SITE/feed.role-cache/{genome,rust-plan,health}.json`, 18:29-18:32Z) and `mishe-producer-readings` completed under the pin. | Differential test 5/5 with the committed artifact (`MISHE_TAPE_BIN`). A fresh build from HEAD in a throwaway dir (1.97.0, `--locked`) has the same SHA-256 as the artifact (`12dde4d2…ba710`). | Take the cold `wall show --owner genome` before/after comparison (9.3 A) if a direct end-to-end observation is wanted; the role-cache evidence already shows the live path. Next migration target is B (verification). |
 | **S0. Python hoist in `_verify_records`** | **Delivered and observed** (2026-11-10). Commit `7e87f218`; the plant's moving-pin driver delivered it with `b06ae51b` (delivery record `.mishe-tauftauf/patches/moving-pin-b06ae51b.json`: phase `applied`, `delivery_verified true`, fresh gate review clear, activation/observation/revert activation/revert observation all exit 0). `runtime/current` points at `releases/b06ae51b…`, whose `feed.py` carries the hoist (`_same_home`, one `entry_home` for the pass). **The 3.4 threshold was not met**: the cold `wall show --owner genome` is ~13 s user, not ≤ 10 s. Section 10.10. | Same-tape A/B on the live tape, one open descriptor shared by both sides, three fresh processes each: live 4.20 / 4.19 / 4.25 CPU-s and 556.7–556.9 MB peak RSS vs baseline 6.15 / 6.17 / 5.88 CPU-s and 611.9–612.2 MB, over 299,302 entries with an identical entry digest (`9a8c3c1f…b3e2e`). The hoist is worth about 1.9 CPU-s and 55 MB and changes no entry. | S0b: the cold read's remaining cost is the per-entry verification pass, not `pathlib` (section 10.10). Batch the role read's verification into one pass — **measured prize: 14.55 → 5.52 CPU-s, identical view digest**. |
-| **B. Tape verify and verified-store lookup** (`mishe-tape verify`/`entries`) | Not started. A is now observed live and S0 is measured, so B's remaining prize is known: after S0's pathlib cut, what is left of the verification cost is the sqlite work (196,303 `execute` calls per cold read). | Verification is about two thirds of profiled `wall show` (2.3). The cold read's split, measured live: 5.83 CPU-s with verification, 1.40 without, so 4.43 CPU-s is verification (section 10.9). | Take S0 first: it removes about 1.6 CPU-s of the 4.43 without Rust, so B's baseline is smaller and B's own work is only the sqlite lookup. The build graph was then checked (section 10.13): `cargo build --offline` cannot resolve `rusqlite` at all, but a fetched build costs 39.5 s single-core wall, 378 MB peak RSS and 24 lock packages, and the bundled store interops with Python's `sqlite3` in both directions. |
-| **C. Role projection** (`mishe-tape role`, cold-cache derived file) | Not started. Depends on B. | Cold `wall show` 15.2 s user; the cache is process-local (`feed.py:53`). | Decide after B's benchmark. Compare the output against `_force_full`. |
+| **B. Tape verify and verified-store lookup** (`mishe-tape verify`/`entries`) | **Live and observed** (2026-11-11). The cutover streams record-bearing entries into one `mishe-records verify` child per site home; `patches/moving-pin-6114caf4.json` is `phase=applied` with `delivery_verified`, and the delivered pin is `releases/6114caf4…` (`feed.py` sha256 `f5b556a4…`). Paired live A/B: identical view digest at one tape state, 2.03–2.11 CPU-s (25–26%) removed from the cold role read. Sections 10.18–10.20. Original note, now superseded: A is observed live and S0 is measured, so B's remaining prize was known: after S0's pathlib cut, what is left of the verification cost is the sqlite work (196,303 `execute` calls per cold read). | Verification is about two thirds of profiled `wall show` (2.3). The cold read's split, measured live: 5.83 CPU-s with verification, 1.40 without, so 4.43 CPU-s is verification (section 10.9). | Take S0 first: it removes about 1.6 CPU-s of the 4.43 without Rust, so B's baseline is smaller and B's own work is only the sqlite lookup. The build graph was then checked (section 10.13): `cargo build --offline` cannot resolve `rusqlite` at all, but a fetched build costs 39.5 s single-core wall, 378 MB peak RSS and 24 lock packages, and the bundled store interops with Python's `sqlite3` in both directions. |
+| **C. Role projection** (`mishe-tape role`, cold-cache derived file) | **Abandoned on measurement** (2026-11-11, §10.21). The derived-file benefit C was to introduce already exists: `367e3775` (2026-11-09, in the live pin) persists the verified projection to `$SITE/feed.role-cache/<role>.json`. Paired A/B at one tape state: the live cache path is 0.218–0.281 CPU-s, the forced rebuild 5.685–5.703, same digest `542b02a0…`. No prize left to win, and a second projection owner would break single authority. | Cold `wall show` 15.2 s user and "the cache is process-local (`feed.py:53`)" were the pre-`367e3775` premise; both are stale (§10.21). | Do not build. §9.2's "Cold role projection 15.2 s user" row is retired by the same measurement. |
 | **Senses baseline** (measurement, not migration) | Not started. Needs its own declared duty, not an edit to `rust-plan-progress` (wall, section "Senses baseline"). | Source artifacts already exist under `artifacts/rust-plan-20261107/`. | Declare the duty with its own `max_age`. It reads UNKNOWN when evidence is missing or stale. |
-| Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4); fresh systemd table at pin `7ce12523`: `readings` 890 CPU-s / 6 h (36 runs, ~24.5 CPU-s each), 870 MB peak. `doctor` has 25 exit-1 runs, cause UNKNOWN. | The `readings` cost is now profiled on the live plant and S2 is decided: see section 10. The slice is a Python slice (unused whole-tape reads, one snapshot per scan, cadence), not a Rust slice. |
+| Producers (`readings`, `doctor`, `observer-checks`) | Not scheduled for migration. Diagnosis first. | 5.9k, 2.9k and 2.5k CPU-s per day (2.4); fresh systemd table at pin `7ce12523`: `readings` 890 CPU-s / 6 h (36 runs, ~24.5 CPU-s each), 870 MB peak. `doctor` has 25 exit-1 runs, cause now named as transient unit-file drift (30 RED in ~576 runs over 48 h, dominated by `mishe-wake-<role>.path`, §10.21). | The `readings` cost is now profiled on the live plant and S2 is decided: see section 10. The slice is a Python slice (unused whole-tape reads, one snapshot per scan, cadence), not a Rust slice. |
 | **S2.1. Delete the tape reads that feed nothing** | Implemented (2026-11-10). `_mind_role_coverage` took an `entries` argument it never read; three readings read the whole tape to fill it and discarded the result. | AST-verified: `discovery.py:980` reads `home`, `role`, `now` and not `entries`. Fresh-process A/B of one live scan: 31.56 CPU-s before, 31.58 after, 74 observations both times. **A deletion, not a speedup** — an earlier 37% figure came from running both variants in one process and was wrong. | Committed with 4 regression tests that fail if a tape read returns to these readings. S2.2 (one physical tape read per scan) and S2.3 (cadence) remain. |
 | **S2.2. One physical tape read per scan** | **Delivered and observed** (2026-11-10). Commit `d3c0c57c` went through the strong gate (fresh gate review, verdict clear) and the delivery record `.mishe-tauftauf/patches/moving-pin-d3c0c57c.json` reads phase `applied`, `delivery_verified true`, with activation, observation, revert activation and revert observation all exit 0. `runtime/current` now points at `releases/d3c0c57c…`. `sample()` takes the cold verified read once and passes it to the three readers; each reader keeps its own read as the fallback. This is a snapshot change, not a window change. | Measured 2026-11-10 10:05Z–10:24Z on the live plant at pin `323a87fe`, counting framer spawns rather than wrapper calls: **three** physical whole-tape reads per scan, 643,103,475 bytes, 16.98 CPU-s, 858.6 MB peak, 74 observations. Call sites: `_mind_artifact_recurrence` (the cold verified read), `_ledger_evidence_binding` (the census read), `_coord_dm_disposition_age` (the disposition read). See section 10.2a. | Acceptance met on the live consumer: physical whole-tape reads 3 → 1 (643,325,541 → 214,457,060 bytes) on the delivered pin, same 74 observations, the three readings' values unchanged field for field, and the readings producer's own CPU below every pre-delivery run. Section 10.2c. S2.3 (cadence) remains. |
 
@@ -487,7 +487,7 @@ is the template), with a differential test that runs without the Python runtime.
 | Tape framing | 1.8 s user, 34 MB per full pass. Rust 0.46 s, 2.4 MB. | `feed._iter_streamed_feed`, `_iter_text_lines`, `iter_feed_entries`, `_frame_offsets` | `Feed.entries` (44 callers), `Feed.role_entries` (4 callers) | A |
 | Tape verification and verified store | About 66% of profiled `wall show`. Not separately timed in Python. | `feed._verify_records`, `records.VerifiedStore`, `records.lookup` | same as above | S0, then B |
 | Role fold | About 2% | `feed._role_fold` | `role_entries` (`wall.py`, `wake.py`, `migrate.py`) | C |
-| Cold role projection | 15.2 s user for cold `wall show` | `feed._ROLE_ENTRIES_CACHE` (process-local) | same | C |
+| Cold role projection | 0.218–0.281 CPU-s live (persisted cache), 5.685–5.703 rebuild (§10.21). The 15.2 s user figure was the pre-`367e3775` rebuild. | `feed._ROLE_ENTRIES_CACHE` (process-local) + `feed.role-cache/<role>.json` (cross-process, `367e3775`) | same | C — abandoned (§10.21) |
 | Identity index | 23.5 MB sqlite, not timed | `feed.py:527-576` | malformed-count consumers | Kept, not scheduled |
 | `readings`, `doctor`, `observer-checks` producers | 5.9k, 2.9k, 2.5k CPU-s per day | `producers.py`, the producer scripts | systemd units | Deferred (S2, S3) |
 | `discovery.py` scanner | 890 CPU-s / 6 h, 870 MB peak, every 10 min (consumer-perf, pin `7ce12523`); 24.2 CPU-s and 941 MB peak per run at pin `b3d2cd85` (2026-11-10) | `discovery.py` (7,889 lines) | `mishe-producer-readings` | Candidate again (R2 falsified). Measured 2026-11-09 on a tape copy (298,870 entries, 213 MB, 2 GB cgroup cap): one `sample()` makes five `Feed.entries()` calls, but only the first does the verified read (6.2 CPU-s); the other four hit the process-local `_ENTRIES_CACHE` (about 0.01 s each). Unverified read: 1.5 CPU-s, 604 MB peak. The 43.5 CPU-s "cold verified read" from that copy is **retired**: it was measured without an index checkpoint. Against the live tape with a checkpoint the cold read is 6.08 CPU-s and a bounded indexed read is 0.01 CPU-s (section 10.3). The live per-run cost is now explained: 67.7% of the cold read is record verification, and the scan read the whole tape three times before S2.2 and reads it once now. See section 10 for the S2 decision. |
@@ -501,7 +501,7 @@ is the template), with a differential test that runs without the Python runtime.
 
 **B. Tape verify and verified store.** Retires `records.VerifiedStore`, `lookup`, `store`, `cached_payload`, `verified_store` and `feed._verify_records`. Consumers: all `entries` and `role_entries` callers, through A's wrapper. Acceptance: byte-identical output on the full tape; a kill during a write leaves the store consistent; the threshold in 3.3 (cold `wall show` at or below 1.5 s user and 70 MB peak RSS); and, measured 2026-11-10 (section 10.14), at least 2 CPU-s of the 2.53 CPU-s store lookup removed with identical output. The store contract is `rust/mishe-records/CONTRACT.md`. Rollback: pin revert. The store format is unchanged, so Python reads it again. Build budget, now measured instead of estimated (section 10.13): six crates fetched (~5.4 MB), a 24-package lock, a single-core bundled-sqlite C build of 39.5 s wall and 378 MB peak RSS — all inside the headroom rule. The build is not reproducible offline from a bare checkout, so the release ships a prebuilt artifact recorded by sha256 (plan 4.3's "no build on the live host" is unchanged) or vendors the crate set.
 
-**C. Role projection.** Retires `feed._role_fold` and `_ROLE_ENTRIES_CACHE`. Acceptance: output identical to `_force_full`; at least 10× faster cold. Rollback: delete the derived file. Depends on B.
+**C. Role projection.** Retires `feed._role_fold` and `_ROLE_ENTRIES_CACHE`. Acceptance: output identical to `_force_full`; at least 10× faster cold. Rollback: delete the derived file. Depends on B. **Abandoned on measurement 2026-11-11 (§10.21):** the derived file already exists (`367e3775`, live) and a live read is 0.22 CPU-s, 26× below the rebuild this slice would attack, so there is no cold-read prize left to win.
 
 ### 9.4 Gates for every apply
 
@@ -1604,4 +1604,87 @@ paired rather than compared to a stored value.
 The real CLI path agrees: `mishe wall show --owner genome` (the wrapper pins
 `runtime/current/src`) exits 0 in 0.33 CPU-s and 86 KB of output with empty
 stderr. Probe and outputs are site-local, not committed.
+
+### 10.21 Slice C abandoned on measurement, and the doctor RED cause named (2026-11-11)
+
+Two open rows in section 9 were stale claims, and both are now settled by
+measurement on the delivered pin rather than by argument.
+
+**Slice C ("Rust role projection with a cold-cache derived file") is
+superseded, not started.** Its premise in 9.1 and 9.2 — "Cold `wall show` 15.2 s
+user; the cache is process-local (`feed.py:53`)" — stopped being true on
+2026-11-09, when `367e3775` ("feed: persist the verified role projection so each
+wake stops re-verifying the whole tape") began persisting the projection to
+`$SITE/feed.role-cache/<role>.json` with a metadata/prefix-guard/sha256 wrapper
+and an append-extension path. That commit is an ancestor of the live pin, so the
+derived file C was meant to introduce already exists and is already read by every
+wake.
+
+Paired A/B at one tape state on the delivered pin, fresh process per run,
+interleaved, both modes the release bytes and neither setting
+`MISHE_RECORDS_BIN`/`MISHE_TAPE_BIN` (so both resolve `$SITE/bin` through the
+sha-checked fallback a live consumer uses), outside the checkout under
+`systemd-run --user --scope -p MemoryMax=2G -p CPUQuota=100% nice -n 19`:
+
+| side | total CPU-s (3 runs) | self | child | view entries | view digest |
+|---|---|---|---|---|---|
+| `role_entries` — the live cache path | 0.218 / 0.221 / 0.281 | 0.218–0.281 | 0.000–0.002 | 30,334 | `542b02a0…` |
+| `role_entries(_force_full=True)` — rebuild | 5.685 / 5.701 / 5.703 | 3.015–3.060 | 2.643–2.670 | 30,334 | `542b02a0…` |
+
+All six runs produced the **same digest**, so the persisted projection and the
+full rebuild agree — the cross-process cache is correct as well as cheap. The
+live path is **~26× (5.5 CPU-s) below the rebuild**, and the rebuilt cost
+(5.69–5.70) reproduces §10.20's cache-missing sides (5.865/5.893), which is what
+those sides were: the A/B moved the cache aside, so it measured the rebuild a
+wake pays only when the cache is absent or its guard fails.
+
+**Decision: C is abandoned (§5.2), not deferred.** C's acceptance is "at least
+10× faster cold" against a 15.2 s cold read. The live cold read is already 0.22
+CPU-s; a Rust `mishe-tape role` would have to beat that while spawning a child
+the framer and verifier already cost ~2.7 CPU-s for. There is no prize left for
+C to win, and it would introduce a second owner of a projection the persisted
+cache already owns — the opposite of the single-authority rule. The remaining
+Python cost in this path is the ~3.0 self CPU-s of the *rebuild*, and the rebuild
+is precisely the path the cache exists to avoid; the section-10.20/10.21 live
+measurement shows live readers do not pay it.
+
+Probe and raw output are site-local
+(`artifacts/rust-plan-20261107/role_cache_ab.py`, run 2026-11-11T03:0xZ), not
+committed.
+
+**The `doctor` exit-1 RED cause is named.** Section 2.4 recorded "25 exit status
+1" runs and "the cause of the RED lines is UNKNOWN". Reading the journal for the
+last 48 h (`journalctl --user -u mishe-doctor.service --since -48h -o short-iso`)
+shows 30 RED runs in about 576 scheduled runs (5%), all of the same family — a
+unit file differing from what the generator would write, which the next
+regeneration repairs:
+
+- 22 of 30: `mishe-wake-<role>.path: drift from generated content` (health ×11,
+  network ×5, steward ×3, genome ×2, senses ×1);
+- 3: `mishe-wake@network.service.d/10-slice.conf: missing`;
+- 1: `mishe-producer-guard-bytes.service: drift from generated content`;
+- 4: `root-fs probe: mishe-dual-probe.service` either `ActiveState=inactive` or a
+  sample older than its 300 s limit.
+
+The most recent RED (2026-11-11T01:50:30Z) is exactly
+`mishe-wake-senses.path: drift from generated content`, and the runs before and
+after it are `GREEN` (~4.5 CPU-s), so this is a transient reconciliation, not a
+standing fault. It is not a Rust candidate and is not a migration row; §3.2's S3
+is therefore a *named, self-clearing* drift rather than an anonymous failure. The
+unit generator is not this slice's code and the repair is unit regeneration,
+which is scheduler-adjacent and takes the strong path.
+
+**What this changes.** Section 9's remaining Rust rows are exhausted: A is live
+and observed (§9.1), B is live and observed (§10.20), and C is now abandoned by
+measurement rather than pending. The next Rust candidate must come from a new
+measurement, not from 9.2's list — the only measured whole-tape cost left in
+Python is the `entries()` cold verified read that the `readings` duty takes once
+per scan (§9.2: 6.08 CPU-s of a ~24 CPU-s run), and §10.7 already found that duty
+scanner-dominated rather than tape-dominated.
+
+**Would change this.** A live sample in which the cache guard fails on most reads
+(not just after `367e3775`-era regeneration), which would make the 5.7 CPU-s
+rebuild the common case and restore C's prize. Or a measured `entries()` consumer
+whose tape read is a large share of its own run, which would make a Rust
+whole-tape verified dump worth pricing.
 
