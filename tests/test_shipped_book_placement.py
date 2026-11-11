@@ -128,6 +128,26 @@ def test_a_real_placement_named_with_the_phrase_noun_is_still_caught(tmp_path):
     assert "STALE PLACEMENT RULE" in result.stdout
 
 
+# The adjective "live" is not the verb "lives".  A paragraph that says "the
+# live plant" or "a live consumer" and also records where a harness ran
+# ("from outside the checkout") states no placement; the gate must not read
+# the adjective as its placement verb (rust-plan §10.24 tripped this on
+# 2026-11-11, failing CI's gate on a correct page).
+ADJECTIVE_LIVE_PAGE = """# Bench
+
+One cold `discovery.sample($SITE)` run on the live plant from outside the
+checkout.
+"""
+
+
+def test_the_adjective_live_is_not_read_as_a_placement_verb(tmp_path):
+    """Only the verb "lives" names a placement; "live" is an adjective."""
+    tree = make_tree(tmp_path, {"docs/bench.md": ADJECTIVE_LIVE_PAGE})
+    result = run_check(tree)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "statements=0" in result.stdout, result.stdout
+
+
 def test_the_gate_observes_the_tree_rather_than_asserting_a_result(tmp_path):
     """The observed outcome is read from the tree and reported."""
     tree = make_tree(tmp_path, {"docs/mesh.md": CURRENT_PAGE})

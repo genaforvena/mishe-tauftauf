@@ -131,9 +131,13 @@ PLACEMENT_SUBJECT = re.compile(
 
 # A sentence that says where the site is, rather than what it holds.
 # The boundaries matter: "sits?" must not match the "sit" inside "site", or
-# every sentence naming a site reads as a placement claim.
+# every sentence naming a site reads as a placement claim.  "lives" is the
+# verb, not the adjective "live": `\blives?\b` matched "the live plant" and
+# "a live consumer", so a harness sentence ("run ... from outside the
+# checkout") in a paragraph that also said "live" was read as a placement
+# claim the page never made (rust-plan §10.24, 2026-11-11).
 PLACEMENT_PREDICATE = re.compile(
-    r"(\bkeeps?\b|\blives?\b|\bsits?\b|\blies?\b|\bbelongs?\b|"
+    r"(\bkeeps?\b|\blives\b|\bsits?\b|\blies?\b|\bbelongs?\b|"
     r"\bis (placed|planted|created|located)\b|"
     r"\bare (placed|planted|created|located)\b|"
     r"\bmust sit\b|\bhas to sit\b)", re.I)
