@@ -43,3 +43,14 @@ def test_failed_send_releases_slot(tmp_path, monkeypatch):
     monkeypatch.setattr(t, "REPLIES", tmp_path / "none.jsonl")
     t.tick(site, now=2000.0)
     assert fl.reserved(fl.read_ledger(site), 2001.0) == []
+
+
+def test_reply_receipts(tmp_path, monkeypatch):
+    site = _site(tmp_path, 0)
+    monkeypatch.setattr(t, "REPLIES", tmp_path / "gone.jsonl")
+    assert t.apply_replies(site, 1.0) == 0
+    monkeypatch.setattr(t, "REPLIES", tmp_path / "r.jsonl")
+    (tmp_path / "r.jsonl").write_text('not json\n' + json.dumps({"reply_to": 5, "message_id": 9, "text": "x"}) + "\n")
+    t.apply_replies(site, 2.0)
+    rows = [json.loads(l) for l in (fl._dir(site) / "replies-consumed.jsonl").read_text().splitlines()]
+    assert [r["result"] for r in rows] == ["input_missing", "malformed", "unmatched"]

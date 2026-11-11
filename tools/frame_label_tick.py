@@ -56,7 +56,17 @@ def newest_change(site: Path, room: str):
     return b["captured_at_epoch_s"], ch
 
 
-def apply_replies(site: Path) -> int:
+def _receipt(site: Path, row: dict) -> None:
+    d = fl._dir(site)
+    d.mkdir(parents=True, exist_ok=True)
+    with open(d / "replies-consumed.jsonl", "a") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def apply_replies(site: Path, now: float | None = None) -> int:
+    """Apply new reply rows; one durable receipt per row (applied/unmatched/malformed), plus
+    an input_missing receipt when the replies file cannot be read."""
+    now = time.time() if now is None else now
     off_f = fl._dir(site) / "replies.offset"
     try:
         off = int(off_f.read_text())
@@ -64,16 +74,21 @@ def apply_replies(site: Path) -> int:
         off = 0
     try:
         data = REPLIES.read_bytes()
-    except OSError:
+    except OSError as e:
+        _receipt(site, {"t": now, "result": "input_missing", "err": str(e)[:120]})
         return 0
     n = 0
     for ln in data[off:].decode("utf-8", "replace").splitlines():
         try:
             r = json.loads(ln)
-        except ValueError:
+            mid, text = r["reply_to"], r.get("text", "")
+        except (ValueError, KeyError, TypeError):
+            _receipt(site, {"t": now, "result": "malformed", "line": ln[:120]})
             continue
-        if fl.apply_reply(site, r["reply_to"], r.get("text", "")):
-            n += 1
+        ok = fl.apply_reply(site, mid, text)
+        n += bool(ok)
+        _receipt(site, {"t": now, "result": "applied" if ok else "unmatched",
+                        "reply_to": mid, "message_id": r.get("message_id")})
     fl._dir(site).mkdir(parents=True, exist_ok=True)
     off_f.write_text(str(len(data)))
     return n
@@ -100,7 +115,8 @@ def send_photo(path: Path, caption: str) -> tuple[int | None, str]:
 
 def tick(site: Path, dry: bool = False, now: float | None = None) -> dict:
     now = time.time() if now is None else now
-    out = {"swept": fl.sweep(site, now), "labels": apply_replies(site), "sent": None, "skipped": {}}
+    out = {"swept": fl.sweep(site, now), "labels": apply_replies(site, now), "sent": None, "skipped": {}}
+    out["stale_labels"] = [r["det"] for r in fl.stale_labels(fl.read_ledger(site))]
     fdir = fl._dir(site) / "frames"
     fdir.mkdir(parents=True, exist_ok=True)
     os.chmod(fdir, 0o700)
