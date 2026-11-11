@@ -1888,3 +1888,80 @@ Next: split the ledger lane with a cProfile of `_ledger_evidence_binding` and
 `classify_outcomes` on a primed snapshot, capped and outside the checkout, and
 choose the port shape from that.
 
+### 10.25 The ledger lane, split: it is diffuse Python, and the whole-tape outcome scan is the biggest single seam (2026-11-11)
+
+§10.24 left the ledger lane's seam UNKNOWN. Two clean probes on the live plant
+now split it. Both run one `_ledger_evidence_binding(HOME, entries=snapshot)`
+after priming `_scan_snapshot(HOME)`, each direct child wrapped in
+`time.process_time`, under `systemd-run --user --scope -q -p MemoryMax=1G nice
+-n 19` from `/tmp` (outside the checkout), now at a heavier tape than §10.2's
+(`all_bad=202`, `bound=4763`, `299,582` entries). Raw output:
+`artifacts/rust-plan-20261107/ledger-split-clean-{1,2}.out`,
+`classify-split-20261111.out`.
+
+**The lane is 4.62–4.67 CPU-s (\(n{=}2\), within 1%) and it is diffuse — no
+single function is the prize.**
+
+| child of `_ledger_evidence_binding` | CPU-s | calls | share |
+|---|---|---|---|
+| `classify_outcomes` (outcome_events) | 1.83 | 1 | 40% |
+| residual (band/gate Python) | 0.97 | — | 21% |
+| `store_census.store_census` | 0.60 | 1 | 13% |
+| `eligible_evidence_path` | 0.58 | 4763 | 13% |
+| `store_census.collect_named` | 0.22 | 1 | 5% |
+| `_classify_amendment` | 0.22 | 123 | 5% |
+| `_file_digest` | 0.20 | 4750 | 4% |
+
+Hashing inside the lane is **0.743 CPU-s total** (§10.24), so about **3.9
+CPU-s is Python**, spread across the whole-tape scan, the 4,763-row file loop
+and the band classification. The per-file digest work — the "about 80 chunked
+reads per file" §10.24 guessed at — is only **0.20 CPU-s** (`_file_digest`,
+4,750 calls) and 0.22 more for the 123 amendment searches; `_classify_amendment`
+is **not** the prize.
+
+**Measurement lesson, recorded because it nearly misled this pass.** A first
+run that also intercepted `hashlib.sha256` charged `_classify_amendment` 1.69
+CPU-s — 7.6× its clean cost (0.22). The wrapper adds one Python call per
+`update`, and that function does one `update` and one `digest()` per byte, so
+its 779,092 update calls paid the wrapper's own overhead. The clean variant
+(`WRAP_HASH` unset) is the one to trust; never wrap `hashlib` when timing a
+per-byte loop, and re-run without the wrapper before believing a child's cost.
+
+**The biggest single child is the whole-tape outcome scan.** A second probe
+wraps `classify_outcomes`'s own stage helpers. The wrapper inflates its child
+totals (it makes one Python call per stage call, ~2.6 M of them) so only the
+**call counts** are decisive here:
+
+| stage | calls |
+|---|---|
+| `body_lines` / `first_significant_line` / `has_outcome_prefix` | 299,582 (one per tape entry) |
+| `reference_lines` / `sole_final_reference` / `decode_timestamp` | 196,341–495,924 |
+| `records.KindIndex.kind` (a record-head peek) | 196,341 |
+| `records.envelope` | 4,763 |
+| `publication_prose` / `parse_header` / `decode_*` | 4,763 each |
+
+So `classify_outcomes` scans **all 299,582 entries** in Python, peeks **196,341
+record heads** (`KindIndex.kind`), and decodes only **4,763** real outcomes. Its
+1.83 CPU-s is the scan and the peeks, not the decode: the payload decode
+(`parse_header`, `decode_evidence`, `decode_text`, `decode_supersedes`,
+`publication_prose`) is ~0.04 CPU-s in total.
+
+**Decision: the next slice is the whole-tape outcome scan**, shaped as a small
+POSIX command (working name `mishe-outcome-events`) that reads the tape through
+the already-Rust reader and emits the outcome candidates/events the reading
+consumes, deleting the Python scan over 299 k entries and the 196 k record-head
+peeks. It is **not** the per-file digest loop, and **not** `_classify_amendment`.
+Two caveats keep it honest: (a) it moves the outcome-eligibility decode across
+the parsing boundary, so it is a protocol change and takes the **strong path** —
+a fresh reviewer who did not author it, plus deterministic activation, revert
+and reapply checks — a slice for its own wake, not this one; (b) `eligible_evidence_path`
+(0.58 CPU-s over 4,763 calls, ~122 µs each) is mostly filesystem resolve work,
+so a Rust path check saves less than its share; it stays a lower-value alternate.
+The exact payoff of the scan slice is measured only after it is built (predicted
+≈1.5 CPU-s of the 15.39-CPU-s run; unverified).
+
+Limits: `classify_outcomes`'s clean 1.83 CPU-s is the run-to-run-stable figure
+from the ledger probe; the stage probe's child totals are inflated by its own
+per-call wrapper and are used here for their call counts only. One machine, warm
+page cache, so the record-head peeks charge no cold I/O.
+
