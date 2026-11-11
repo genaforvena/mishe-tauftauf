@@ -62,6 +62,15 @@ def _descendants(root: int) -> set[int]:
     return found
 
 
+def _awaiting_tools(process: subprocess.Popen) -> bool:
+    """True while the engine has a live child, e.g. a background shell job it is waiting on.
+
+    A mind that waits for a tool it started prints nothing meanwhile; that silence is not a
+    stall. The hard cap still bounds such a wait, so this only defers the idle cut.
+    """
+    return bool(_descendants(process.pid))
+
+
 def _kill_pids(pids: set[int]) -> None:
     for pid in pids:
         try:
@@ -180,7 +189,9 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
             boundary = soft_at
         else:
             if size is None or now - last_growth >= idle_gap:
-                raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
+                if size is None or not _awaiting_tools(process):
+                    raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
+                last_growth = now
             boundary = last_growth + idle_gap
         if first_at is not None and not first_seen:
             boundary = min(boundary, first_at)
@@ -207,4 +218,6 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
         if first_at is not None and now >= first_at and not saw_first(size):
             raise EngineTimeout(f"no first output within {first_output_s:g}s")
         if now >= soft_at and (size is None or now - last_growth >= idle_gap):
-            raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
+            if size is None or not _awaiting_tools(process):
+                raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
+            last_growth = now

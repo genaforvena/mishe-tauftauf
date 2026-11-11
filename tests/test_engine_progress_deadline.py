@@ -104,3 +104,25 @@ def test_a_cap_below_the_idle_gap_still_ends_the_run(tmp_path: Path):
     elapsed = time.monotonic() - started
     assert "hard cap" in str(caught.value)
     assert 2.0 <= elapsed < 2.5, f"the run ended {elapsed:.2f}s after the start, not at the 2s cap"
+
+
+WAITS_ON_CHILD = ("import subprocess,sys\n"
+                  "subprocess.run([sys.executable,'-c','import time; time.sleep(4)'])\n")
+
+
+def test_an_engine_waiting_on_a_live_child_is_not_idle(tmp_path: Path):
+    """Pub wake 19:02Z: the mind waited silently on a background job and was cut as idle."""
+    out = tmp_path / "stream"
+    started = time.monotonic()
+    code = proc.run_bounded([sys.executable, "-c", WAITS_ON_CHILD], env=dict(os.environ), cwd=tmp_path,
+                            timeout=1, stdout_to=out, hard_timeout=20, idle_gap=1.0)
+    assert code == 0
+    assert time.monotonic() - started >= 4.0, "the engine waiting on its child was cut as idle"
+
+
+def test_a_child_does_not_extend_the_hard_cap(tmp_path: Path):
+    out = tmp_path / "stream"
+    with pytest.raises(EngineTimeout, match="hard cap"):
+        proc.run_bounded([sys.executable, "-c", WAITS_ON_CHILD.replace("4)", "60)")],
+                         env=dict(os.environ), cwd=tmp_path, timeout=1, stdout_to=out,
+                         hard_timeout=3, idle_gap=1.0)
