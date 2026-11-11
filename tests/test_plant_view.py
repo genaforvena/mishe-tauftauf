@@ -915,3 +915,14 @@ def test_header_says_what_the_router_ran_not_the_configured_model(tmp_path):
     (tmp_path / 'engine/routing-ledger.jsonl').write_text('')
     first = view.render(tmp_path, 'genome', now=T0, output=False).splitlines()[0]
     assert 'model claude-haiku-5-5 (configured' in first      # no ledger row: say it is only configured
+
+
+def test_operator_top_pane_shows_both_conversations_and_how_to_write(tmp_path, monkeypatch):
+    mesh = tmp_path / 'mesh'
+    mesh.mkdir()
+    (mesh / 'voice-in.log').write_text('t1  TEXT  hello from ilya\n', encoding='utf-8')
+    monkeypatch.setenv('MISHE_HUMAN_DIALOGUE_DIR', str(mesh))
+    lines = view._dialogue_block(tmp_path)
+    text = '\n'.join(lines)
+    assert 'hello from ilya' in text
+    assert 'mesh-tg-roz' in text and 'roz-in.log not readable' in text   # missing log is UNKNOWN

@@ -233,6 +233,15 @@ def last_lines(text: str, count: int) -> str:
     return '\n'.join(text.splitlines()[-count:])
 
 
+def file_tail_lines(path, count: int, tail_bytes: int) -> list[str]:
+    """The last `count` non-empty lines of a conversation log other programs write (opaque human text)."""
+    with open(path, 'rb') as handle:
+        handle.seek(0, 2)
+        handle.seek(max(0, handle.tell() - tail_bytes))
+        text = handle.read().decode('utf-8', 'replace')
+    return [row for row in text.splitlines() if row.strip()][-count:]
+
+
 def wake_key(path: Path) -> str:
     """The wake key of a retained file named KEY.prompt.out.EXT (keys contain no dot).
 

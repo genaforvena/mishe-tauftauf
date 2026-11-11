@@ -9,6 +9,7 @@ UNKNOWN rather than hidden.
 from __future__ import annotations
 
 import math
+import os
 import time
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from . import intentions, owed, signal_store, yielding
 from .core.dispatch_record import read_record_fields, valid_role
 from .engines import DEFAULT_CLAUDE_MODEL
 from .feed import Feed
-from .plant_view_boundary import (arguments, brief, cut, last_lines, output_view, routed_models, safe, uncommitted, wake_commits,
+from .plant_view_boundary import (arguments, brief, cut, file_tail_lines, last_lines, output_view, routed_models, safe, uncommitted, wake_commits,
                                   wake_key, wall_lines, would_cut)
 from .state_files import read_json, write_json
 from .wall import addressed
@@ -495,6 +496,33 @@ def log_step(home, role: str, now: float, *, replay: bool = False) -> list[str]:
         return []
     return chunks + new
 
+DIALOGUE_LINES = 4
+DIALOGUE_TAIL_BYTES = 6000
+
+
+def _dialogue_tail(path) -> list[str]:
+    """The last few lines of a conversation log, raw and shortened; the log is canonical."""
+    return [cut(row) for row in file_tail_lines(path, DIALOGUE_LINES, DIALOGUE_TAIL_BYTES)]
+
+
+def _dialogue_block(home) -> list[str]:
+    """Operator's top pane: both household conversations and how to write, so no one concludes
+    'no contact' from a wall that was not rewritten. Missing log is UNKNOWN, never empty."""
+    base = Path(os.environ.get('MISHE_HUMAN_DIALOGUE_DIR') or Path.home() / '.mesh')
+    out = ['Conversations (raw tails; the logs are canonical):']
+    for who, name, how in (
+            ('Ilya', 'voice-in.log', 'mesh-tg "text"   (also --file PATH for a photo)'),
+            ('Rozalia', 'roz-in.log', 'mesh-tg-roz "текст"   (Russian; her name is Rozalia/Розалия)')):
+        out.append(f'  {who}: write with {how}')
+        try:
+            rows = _dialogue_tail(base / name)
+        except (OSError, ValueError):
+            out.append(f'    UNKNOWN: {name} not readable')
+            continue
+        out += [f'    {row}' for row in rows] or ['    (nothing logged)']
+    out.append('  Her replies reach roz-in.log only through mesh-roz-channel; if its cursor lags tg-strangers.log, that is the gap, not "no reply".')
+    return out
+
 
 def render(home, role: str, *, now: float, output=False) -> str:
     home = Path(home)
@@ -505,6 +533,8 @@ def render(home, role: str, *, now: float, output=False) -> str:
     configured = _configured(home, role)
     out = _header(home, role, now, configured, _with_routed(home, None, None, role, True))
     lines, key, running = _dispatch(home, role, now)
+    if role == 'operator':
+        out += _dialogue_block(home)
     out += lines
     if key is not None:
         out.append(cut(_changes_summary(_changes(home, _wake_span(home, key, now, running=running)))))
