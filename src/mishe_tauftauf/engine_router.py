@@ -420,8 +420,13 @@ def assess(routes: dict | None, status, cooling: dict, now_ms: float, running: d
         if choice["decision"] == "none":
             dead.append(role)
         for c in cands:
-            row = accounts.get(c["account"]) if c["account"] else None
-            if isinstance(row, dict) and row.get("state") in STALE_STATES:
+            if not c["account"]:
+                continue
+            # a windowed candidate whose account row is absent (no collector output) is missing evidence, not a skip
+            row = accounts.get(c["account"])
+            if not isinstance(row, dict):
+                stale.append(f"{role}:{c['account']} missing")
+            elif row.get("state") in STALE_STATES:
                 stale.append(f"{role}:{c['account']} {row.get('state')}")
     if dead:
         return {"state": "RED", "reason": "no working candidate for " + ", ".join(sorted(dead)), "roles": roles, "cooled": cooled}

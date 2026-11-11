@@ -32,7 +32,11 @@ import time
 from pathlib import Path
 
 GREEN, RED, UNKNOWN = 0, 2, 3
-WINDOW_STATES = {"FRESH", "STALE"}
+# A window carries the producer's full state set (budget_producer.SOURCE_STATES plus FRESH/STALE):
+# the engine's own label is carried through, so UNKNOWN/UNATTRIBUTED/UNREADABLE are legitimate
+# non-admitting states, never malformed. Only FRESH is judged against the age and reset rules.
+WINDOW_STATES = {"FRESH", "STALE", "UNKNOWN", "UNATTRIBUTED", "UNREADABLE"}
+# Account rows are produced as FRESH, STALE or UNREADABLE only (budget_producer.build_accounts).
 ACCOUNT_STATES = {"FRESH", "STALE", "UNREADABLE"}
 NOT_CHECKED = ["ledger select rows (rule 1)", "cooling/routing exhaustion (rules 2-3)"]
 
@@ -52,7 +56,7 @@ def check_window(account: str, name: str, w, now: float, max_age: float, problem
         return None
     shown = w.get("state")
     if shown not in WINDOW_STATES:
-        problems.append(f"{account}.{name}: state {shown!r} is not FRESH or STALE")
+        problems.append(f"{account}.{name}: state {shown!r} is not a window state the producer writes")
         return None
     observed_at, reset_at = w["observed_at"], w["reset_at"]
     really_fresh = now - max_age <= observed_at <= now + 5 and reset_at > now

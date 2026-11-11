@@ -99,6 +99,14 @@ def test_assess_unknown_when_windows_stale_but_role_still_routed():
     assert result["state"] == "UNKNOWN" and "go-a" in result["reason"]
 
 
+def test_assess_unknown_when_a_windowed_candidate_has_no_account_row():
+    # no collector output: the payload has the Claude tap row only, so go-a is absent. The safety net
+    # still admits the role, but the missing window must not read as a GREEN routing state.
+    routes = {"roles": {"health": [GO, HAIKU]}, "cool_off_s": 1800}
+    result = router.assess(routes, status(), {}, NOW_MS)
+    assert result["state"] == "UNKNOWN" and "go-a missing" in result["reason"]
+
+
 def test_assess_red_when_a_role_has_no_working_candidate():
     routes = {"roles": {"genome": [HAIKU], "health": [GO]}, "cool_off_s": 1800}
     cooling = {router.candidate_key(HAIKU): NOW_MS + 60_000}

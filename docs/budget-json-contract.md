@@ -120,9 +120,17 @@ only that file and computes nothing itself.
 - **Keys** are the router candidate key `engine:model:account` (`account` is `-` when
   null), exactly as in `routing-ledger.jsonl` and `routes.json`.
 - **`accounts`** come from the engine status windows (`quota.json` shape) plus the native
-  Claude tap. `used` is `1 - remaining`; `state` is `FRESH` only when
-  `now - observed_at <= max_age` and `reset_at > now`, otherwise `STALE`. A missing or
-  unreadable account is `UNREADABLE`, never OK.
+  Claude tap. `used` is `1 - remaining`. A window's `state` is the engine's own label carried
+  through: `FRESH`, `STALE`, `UNKNOWN`, `UNATTRIBUTED` or `UNREADABLE`. Only a window the engine
+  labels `FRESH` can be `FRESH`, and the producer re-ages it at its own `now` (observed within
+  `MAX_AGE_S`, not from the future, reset still ahead), otherwise `STALE`. Every non-`FRESH`
+  window state is a legitimate non-admitting state, never a malformed file. An account is
+  `FRESH` only when every window is `FRESH`, `UNREADABLE` with no windows, otherwise `STALE`.
+  Provenance is the engine's own `observed_at` (window, else account); a window with no
+  observation time is dropped, never stamped with the collection time. A missing or unreadable
+  account is `UNREADABLE`, never OK. `routing.state` is `UNKNOWN` when a windowed candidate's
+  account row is missing or non-`FRESH` (the Claude safety net reads no window and is not
+  counted), so missing collector output cannot read as GREEN.
 - **`free_models`** are the `routes.json` candidates with `free: true` / `account: null`.
   They get their own rows and MUST NOT be summed into any paid account window. Their
   verdict is `FREE` with `no limit known`, plus turns/h and last outcome.
