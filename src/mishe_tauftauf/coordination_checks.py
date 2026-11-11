@@ -248,7 +248,8 @@ def episode(home, source, body, context=None, identity=None):
     context = dict(context or {})
     feed = Feed(Path(home))
     entries = feed.entries()
-    view = project(entries, EpisodePayloads())
+    payloads = EpisodePayloads()
+    view = project(entries, payloads)
     identity = identity or context.get('task') or context.get('identity')
     if not identity:
         match = re.match(r'\[(?:task|taking|done|dropped|task-state|task-claim|task-close|task-add|task-reopen)\]\s+(\S+)', body)
@@ -404,7 +405,7 @@ def episode(home, source, body, context=None, identity=None):
     for key in ('P08', 'P17', 'P18', 'P23', 'P24', 'P26', 'P27'):
         question_episodes[key]['recent_attempts'] = recent
         question_episodes[key]['history_scope'] = {'total_receipts': len(semantic_receipts), 'included_receipts': len(recent), 'purpose': 'last three task attempts, with no clipping of their content'}
-    findings = anomalies(entries)
+    findings = anomalies(entries, payloads)
     for key in ('P01','P04','P05','P06','P21'):
         question_episodes[key]['deterministic_findings'] = [f for f in findings if f['task'] == identity]
     children = [_semantic(s) for s in view['tasks'].values() if s.get('parent') == identity] if identity else []
