@@ -2201,3 +2201,52 @@ through `SITE/bin/mishe`, which puts `runtime/current/src` first on `PYTHONPATH`
 and `_publish_outcome` calls `_bound_evidence_paths` → `classify_outcomes` before
 it appends anything. So the A/B's `classify_outcomes` call is the delivered bytes
 on the pinned path, exercised by every `mishe wall outcome` in the plant.
+
+### 10.29 Shape B's port target, measured on the pin before any port: 1.44 CPU-s, digest-exact — GO (2026-11-11)
+
+§10.27 predicted a 1.4–1.9 CPU-s payoff for Shape B and left it "measured only
+after the port is built". It can be measured before the port, because the port
+only *deletes* Python the pin already runs; one probe on the delivered pin now
+prices each piece. Script and raw output:
+`artifacts/rust-plan-20261107/port-target-decomp-20261111.py` / `.out`; one
+materialised snapshot of 299,621 entries, interleaved arms in one process under
+`systemd-run --user --scope -q -p MemoryMax=1G nice -n 19` from `/tmp`.
+
+| deleted by Shape B | where it runs now | CPU-s (best of 2) |
+|---|---|---|
+| child-filter body scan over every entry | `feed.py:674` inside the paid `Feed.entries()` verification pass | 0.283 (196,348 hits) |
+| classify scan + 191,578 record-head kind peeks | `classify_outcomes`, `entries` = all 299,621 | 1.158 |
+| — of which the peek alone | `records.KindIndex.kind` | ≈0.74 (peek 1.20–1.38 vs no-peek 0.63) |
+| stays: decode+load of the retained candidates | `classify_outcomes`, 4,771 survivors | 0.521 |
+
+**Port target = 0.283 + 1.158 = 1.441 CPU-s (≈9% of §10.2's 15.39-CPU-s
+`readings` run)**, and the arm relation is exact: `classify_outcomes` over all
+entries and over the 4,771 survivors return the same digest `e7ad3e01…`, 4,770
+events and 1 incomplete. The counts also re-confirm §10.26's predicate on this
+tape: 103,272 entries carry no reference at all, 191,578 are single-reference
+non-reserved bodies whose cited kind is not `wall-outcome`, and **every survivor
+is reserved-prefixed** (`ref_kept_kind_none` and `ref_kept_outcome` are both 0).
+So the port's target is worthwhile and §10.27's prediction stands; no
+abandonment condition is met.
+
+Two details this measurement adds. First, the child-filter scan is a *third*,
+previously unpriced piece of the payoff (0.283 CPU-s) — §10.27 mentioned it
+deleting the scan `classify_outcomes` repeats but never timed it, and it is real
+Python deleted from the paid read, not just from the classifier. Second, the
+delivered pre-filter of §10.28 does not shrink the classifier's share of this
+target much: `classify(all)` here is 1.679–1.688, so SCAN+PEEK+decode is 1.679
+against §10.26's pre-delivery 1.777 — the pre-filter removed ~0.1 of the 0.68
+scan, exactly as §10.28 said, and the port subsumes that remainder anyway.
+
+Decision: **GO — implement §10.27's Shape B** (framer `--facts`; kind on the
+`mishe-records verify` decision line; `FeedEntry` facts; `classify_outcomes`
+consumes them), with the differential test against the boundary predicates and
+the peek-arm negative test (10.27), then the strong gate. Acceptance is measured
+the same way this baseline was: the delivered readings run drops by ≈1.4 CPU-s
+with an unchanged reading digest on the pin.
+
+Limits: one tape (299,621 entries, 14 more than §10.28's), one machine, warm
+page cache; `process_time` only, so the framer's own fact cost and the records
+child's kind column are not charged here — they are the port's implementation
+cost, measured after it is built. The 0.521 survivor decode is a floor on what
+stays; a ported consumer may load the survivors differently.
