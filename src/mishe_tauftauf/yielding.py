@@ -15,6 +15,9 @@ from .state_files import read_json, write_json
 
 IDLE_ID = "idle-initiative"
 DEFAULT_IDLE_SECONDS = 2 * 3600  # idle-initiative pace; was 6h (Ilya DM 299699: ~2h for roles with open plates)
+# A continue yield must not be due at once: a due-now continue re-arms the next wake in the same
+# minute, and the restart storm trips the unit's start limit (2026-11-11 health wall).
+CONTINUE_FLOOR_SECONDS = 120
 RESULTS = ("changed", "verified", "blocked")
 
 
@@ -56,7 +59,7 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
     wall_writer(Path(home), role, text)
     owed.advance(home, role, snap)
     if continue_:
-        intentions.add(home, role, "continue", note="continue the work started in the previous wake", due=now)
+        intentions.add(home, role, "continue", note="continue the work started in the previous wake", due=now + CONTINUE_FLOOR_SECONDS)
     # The fallback timer and the signal condition of one yield share a pair: whichever fires first retires the other.
     pair = key if (again is not None and when is not None) else None
     if again is not None:

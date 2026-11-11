@@ -21,6 +21,17 @@ def _ids(home, role):
     return {e["id"] for e in intentions.list_(home, role)}
 
 
+def test_continue_yield_is_due_after_a_floor_not_at_once(tmp_path):
+    # A due-now continue re-armed the next wake immediately (restart storm, 2026-11-11).
+    home = tmp_path / "site"; home.mkdir()
+    _open(home, "health", "wake-h-1")
+    yielding.settle(home, "health", "wake-h-1", text="Work", result="changed", now=100,
+                    continue_=True, wall_writer=lambda *a: None)
+    due = {e["id"]: e["due"] for e in intentions.list_(home, "health") if "due" in e}
+    assert due["continue"] == 100 + yielding.CONTINUE_FLOOR_SECONDS
+    assert intentions.next_due(home) > 100
+
+
 def test_settle_retires_the_reoffer_once_the_signal_is_clear(tmp_path):
     home = tmp_path / "site"; home.mkdir()
     signal_store.register(home, "view-readability", max_age=900, subscribers=["genome"], reoffer=3600, now=10)
