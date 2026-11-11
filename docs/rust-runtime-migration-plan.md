@@ -1965,3 +1965,66 @@ from the ledger probe; the stage probe's child totals are inflated by its own
 per-call wrapper and are used here for their call counts only. One machine, warm
 page cache, so the record-head peeks charge no cold I/O.
 
+
+### 10.26 The outcome scan is separable but thin: the predicate is proven exact, the framing is 0.48 CPU-s, so §10.25's ≈1.5 CPU-s estimate revises down to ≈0.6–0.9 (2026-11-11)
+
+§10.25 chose the whole-tape outcome scan as the next slice and left its payoff
+"unverified until built". Before writing Rust at a protocol boundary, two live
+probes now pin the predicate and the cost split. Scripts and raw output:
+`artifacts/rust-plan-20261107/outcome-filter-predicate-20261111.py` and
+`.out`, `outcome-filter-nopeek-20261111.out`; the framer probe is
+`mishe-tape frames $SITE/chat.log` under
+`systemd-run --user --scope -q -p MemoryMax=1G nice -n 19` from `/tmp`.
+
+**1. The conservative predicate reproduces `classify_outcomes` byte-identically.**
+The tape was materialised once through the real reader (`iter_feed_file`,
+299,586 entries, clause `2026-10-06T16:22:11+00:00`), then
+`classify_outcomes(HOME, T, entries=all)` was compared with
+`classify_outcomes(HOME, T, entries=<survivors>)`. Both give **4,764 events and
+1 incomplete**, same digest `b9dfb7ed…`. The predicate drops an entry only
+where Python's own code provably `continue`s past it:
+
+- not reserved-prefixed **and** no `[record]` line → drop (103,243 entries);
+- not reserved, exactly one final reference, and the record-head kind is a known
+  string other than `wall-outcome` → drop (191,578 entries);
+- everything else survives, including damage that must stay a gap.
+
+Survivors were **4,765, all of them reserved-prefixed** (`Wall outcome ` on the
+first significant line). The predicate's two damage arms kept **0** entries and
+its kind-peek arm kept **0**: on this tape every candidate is reserved, and the
+191,578 head peeks never changed the answer. The peek is still required for
+exactness (a non-reserved body citing a `wall-outcome` record becomes a gap, and
+dropping it would narrow observation), but it earns nothing on the live tape.
+
+**2. The Python cost splits scan 0.68 / peek 0.70 / decode+load 0.40 = 1.777
+CPU-s.** Same run: the predicate pass with the peek is 1.376 CPU-s; with the
+peek switched off (`SKIP_PEEK=1`) it is 0.678, so the 191,578 `KindIndex.kind`
+peeks are ≈0.70 CPU-s and the splitlines/first-significant-line/reference scan
+over 299,586 entries is ≈0.68. `classify_outcomes` on all entries is 1.777
+(matching §10.25's 1.83) and on the 4,765 survivors 0.519. The residual ~0.40 is
+the 4,765-row decode plus `records.KindIndex` loading its whole store table.
+
+**3. Framing the whole tape costs 0.48 CPU-s, not 2.23.** `mishe-tape frames
+$SITE/chat.log` alone is `user 0.44 + sys 0.04`, 0.48 s wall, 2.5 MB RSS. So
+§10.24's "Rust child 2.23" inside `_scan_snapshot` is dominated by the
+`mishe-records` verification pass, **not** by framing. This corrects a model
+§10.25 inherited.
+
+**Decision: the slice is separable and exact, but thin — re-shape it before
+building.** A standalone `mishe-outcome-events` that frames the tape itself pays
+0.48 CPU-s of framing to delete 1.777 of Python, so its measured-shaped payoff
+is ≈0.6–0.9 CPU-s (4–6% of the 15.39-CPU-s run), not the ≈1.5 §10.25 guessed.
+Two shapes amortise the re-framing instead: the whole ledger lane
+(`_ledger_evidence_binding`'s own 2.69 CPU-s beside `classify_outcomes`), or a
+candidate/fact line emitted by the read that is *already* paid for — the shared
+snapshot or the `mishe-records` child that already touches every record-bearing
+entry. A standalone scan command over the outcome reading alone is **not**
+justified at 0.48 CPU-s of re-framing for ~0.9 saved.
+
+Limits: one tape (299,586 entries), one machine, warm page cache; `process_time`
+on direct children only; the 0.68 scan split is a Python re-implementation of
+the predicate, so it is an upper bound on the scan and a lower bound on what
+Rust would save by deleting it. Whether the "survivors = exactly the reserved
+set" fact still holds on a tape whose store holds a non-reserved `wall-outcome`
+publication is UNKNOWN and must be re-checked by the differential test before
+any cutover.
