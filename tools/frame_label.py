@@ -63,6 +63,36 @@ def parse_reply(text: str) -> str:
     return hits.pop() if len(hits) == 1 else "unknown"
 
 
+def effective_labels(rows: list[dict]) -> list[dict]:
+    """Label events with the newest append-only 'label_correction' per det applied; originals stay in the ledger."""
+    fix = {r["det"]: r for r in rows if r.get("ev") == "label_correction"}
+    out = []
+    for r in rows:
+        if r.get("ev") != "label":
+            continue
+        c = fix.get(r["det"])
+        if c:
+            guess = r.get("guess")
+            r = dict(r, label=c["label"], corrected_from=r.get("label"),
+                     guess_correct=None if c["label"] == "unknown" or guess is None else guess == c["label"])
+        out.append(r)
+    return out
+
+
+def stale_labels(rows: list[dict]) -> list[dict]:
+    """Recurrence detector: labels whose stored reply text re-parses differently now and are not yet corrected."""
+    fixed = {r["det"] for r in rows if r.get("ev") == "label_correction"}
+    return [r for r in rows if r.get("ev") == "label" and r.get("text") is not None
+            and r["det"] not in fixed and parse_reply(r["text"]) != r["label"]]
+
+
+def correct_label(site, det: str, label: str, why: str, now: float | None = None) -> dict:
+    ev = {"ev": "label_correction", "t": time.time() if now is None else now, "det": det,
+          "label": label, "why": why[:200]}
+    _append(site, ev)
+    return ev
+
+
 def _dir(site) -> Path:
     return Path(site) / "spatial/work/household/frame_labels"
 
@@ -121,7 +151,7 @@ def ambiguity(c: dict, rows: list[dict]) -> float:
     p = sorted((c.get("probs") or {}).values(), reverse=True)
     margin = (p[0] - p[1]) if len(p) >= 2 else 1.0
     s = 1.0 - margin
-    labelled_rooms = {r["room"] for r in rows if r.get("ev") == "label" and r.get("label") != "unknown"}
+    labelled_rooms = {r["room"] for r in effective_labels(rows) if r.get("label") != "unknown"}
     if c["room"] not in labelled_rooms:
         s += 0.5
     if c.get("hypotheses_disagree"):
@@ -187,7 +217,7 @@ def apply_reply(site, reply_to_msg: int, text: str, now: float | None = None) ->
     probs = res.get("probs") or {}
     guess = max(probs, key=probs.get) if probs else None
     ev = {"ev": "label", "t": now, "det": sent["det"], "room": res["room"], "camera": res.get("camera"),
-          "label": label, "guess": guess, "probs": probs,
+          "label": label, "guess": guess, "probs": probs, "text": text[:300],
           "guess_correct": None if label == "unknown" or guess is None else guess == label}
     _append(site, ev)
     if res.get("frame"):
@@ -211,5 +241,5 @@ def sweep(site, now: float | None = None) -> int:
 
 
 def accuracy(site) -> dict:
-    ls = [r for r in read_ledger(site) if r.get("ev") == "label" and r.get("guess_correct") is not None]
+    ls = [r for r in effective_labels(read_ledger(site)) if r.get("guess_correct") is not None]
     return {"labels": len(ls), "correct": sum(1 for r in ls if r["guess_correct"])}

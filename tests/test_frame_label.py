@@ -72,3 +72,16 @@ def test_sweep(tmp_path):
 def test_parse_nobody_outranks_explaining_name():
     t = "тут никого нет, это илья только что ушел со стула, но на фото нет никого"
     assert fl.parse_reply(t) == "nobody"
+
+
+def test_label_correction_is_append_only_and_stale_detected(tmp_path):
+    fl._append(tmp_path, {"ev": "label", "room": fl.BEDROOM, "label": "unknown", "det": "o", "t": 1,
+                          "text": "никого нет, Илья только ушёл", "guess": "ilya"})
+    rows = fl.read_ledger(tmp_path)
+    assert [r["det"] for r in fl.stale_labels(rows)] == ["o"]
+    fl.correct_label(tmp_path, "o", "nobody", "parse_reply fix 87a3e090", 2.0)
+    rows = fl.read_ledger(tmp_path)
+    assert fl.stale_labels(rows) == []
+    assert sum(r["ev"] == "label" and r["label"] == "unknown" for r in rows) == 1
+    e = fl.effective_labels(rows)[0]
+    assert e["label"] == "nobody" and e["corrected_from"] == "unknown" and e["guess_correct"] is False
