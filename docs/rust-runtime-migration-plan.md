@@ -2028,3 +2028,102 @@ Rust would save by deleting it. Whether the "survivors = exactly the reserved
 set" fact still holds on a tape whose store holds a non-reserved `wall-outcome`
 publication is UNKNOWN and must be re-checked by the differential test before
 any cutover.
+
+### 10.27 §10.26's re-shape decided: the facts must ride reads already paid for; the peek arm is settled by a new differential test (2026-11-11)
+
+§10.26 left the choice between the whole ledger lane and a "candidate/fact line"
+from a read already paid for. The composition of the paid read decides it, and
+one arm §10.26 called UNKNOWN is now settled by a tracked test.
+
+**1. The peek arm is settled, and the peek is load-bearing for observation.**
+New test `tests/test_outcome_coverage_block.py::test_reference_bearing_message_citing_an_outcome_record_still_blocks`
+builds a non-reserved multi-line body whose last line is a real `wall-outcome`
+record's `[record]` reference and asserts `classify_outcomes` reports it as a
+gap (one `incomplete` row, `binding` `unknown`) and not as an event. So a body
+that is not reserved *and cites an outcome record* is a gap, not a citation: a
+filter that ignored the cited record's kind and dropped such entries would
+narrow observation. The single-line variant (no gap, no event) is already
+covered by `tests/test_wall.py::test_wall_outcome_does_not_bind_an_inline_historical_citation`.
+Both run under `PYTHONPATH=src MISHE_TAPE_BIN=$SITE/bin/mishe-tape
+MISHE_RECORDS_BIN=$SITE/bin/mishe-records .venv/bin/pytest -q …` (a bare
+`pytest` tests the pinned release, not HEAD; the two binaries must be pinned
+because the suite's autouse fixture removes `MISHE_SEED_HOME`).
+
+**2. The two facts the scan and the peek compute are already held by the paid
+read.** `_scan_snapshot` is `Feed(home).entries()`, which streams entries
+through the `mishe-records` child and *verifies every referenced record*:
+
+- The cited record's kind is parsed and validated inside the child
+  (`rust/mishe-records/src/envelope.rs:40` requires a non-empty string kind)
+  and then discarded. On a full-verify miss the child holds the whole record;
+  on a store hit the row holds the payload. Either way the kind of every cited
+  record is in hand, so `classify_outcomes`' 196,341 `KindIndex.kind` peeks
+  (0.70 CPU-s, §10.26) plus the whole-table `KindIndex` load duplicate a fact
+  the paid read already had.
+- The child is fed only entries whose body Python pre-filters with
+  `any(line.lstrip().startswith("[record]") for line in entry.body.splitlines())`
+  (`src/mishe_tauftauf/feed.py:674`) — a `splitlines()` of the body of all
+  299,586 entries, charged to `_scan_snapshot`'s 1.66 CPU-s Python glue, and
+  the same body scan `classify_outcomes` then repeats.
+- The snapshot path can only *succeed* when every `[record]`-bearing entry has
+  exactly one valid, verifiable reference: the child returns `Fault::Verify`
+  otherwise and `entries()` raises, so `_scan_snapshot` returns `None` and
+  every reader falls back to its own unverified read. On the snapshot path the
+  `kind is None` and envelope-failure arms of `classify_outcomes` are therefore
+  unreachable, and the child's kind is sufficient; the unverified fallback (and
+  the writer's own `classify_outcomes`, e.g. from `wall.outcome`) keeps
+  `KindIndex` unchanged.
+- A *second* Rust pass is still not a shape: `mishe-tape frames | mishe-tape-facts`
+  measured 1.37 CPU-s (s0c, outcome 299376). Facts only pay if the framer
+  emits them in the pass it already runs.
+
+**Decision: Shape B — additive fact output on the two Rust processes the paid
+read already runs.**
+
+1. `mishe-tape frames --facts`: after each entry's body terminator, one
+   `F <seq> <facts>` line carrying the entry's byte-level eligibility facts
+   (reserved-prefix flag, the record-reference digests and whether one is the
+   last line). The default output stays byte-identical, so no existing
+   consumer, and no re-frame, is touched; the facts cost one extra scan of
+   bytes the framer already holds. This deletes `classify_outcomes`' 0.68
+   CPU-s scan and the child-filter scan inside `_scan_snapshot`'s glue.
+2. `mishe-records verify` reports the cited record's kind on each `V`/`N`
+   decision line, from the envelope it already validates (miss path) or from a
+   new `kind` column the store flush already has in hand (hit path). This
+   deletes the 0.70 peek and the `KindIndex` load on the snapshot path.
+3. `FeedEntry` carries the facts the verified read produced, and
+   `classify_outcomes` consumes them when they are present.
+
+**Predicted payoff ≈ 1.4–1.9 CPU-s (9–12% of the 15.39-CPU-s run), re-shape
+cost ≈ 0**, against §10.26's refuted standalone (0.48 CPU-s of re-framing for
+0.6–0.9) and the whole-lane port, which is now a *later* slice of ≈2.8 CPU-s
+(band/gate 0.97 + census 0.82 + path policy 0.58 + digests 0.42) that is only
+worth paying once the outcome dialect and band policy are ported.
+
+**One bounded ordinary repair found on the way, to measure before the port.**
+The `kind is None`/`continue` arms aside, every drop in `classify_outcomes`
+happens after `body_lines(entry.body)` for *all* 299,586 entries, but 103,243 of
+them contain neither `"[record]"` nor `"Wall outcome "` anywhere in the body, and
+their line tests can only fail. A conservative pre-filter on the raw body
+(`if "[record]" not in body and "Wall outcome " not in body: continue`) is
+exact — `reference_lines` needs a line to *start* with `[record]`, and
+`has_outcome_prefix` needs the first significant line to start with the reserved
+prefix — and costs one substring pass instead of a `splitlines()` allocation.
+Predicted save is bounded by the 103,243 entries' share of the 0.68; it is a
+candidate for an ordinary reversible change (no protocol boundary), measured
+A/B on the live tape before the port so the port's target is the *remaining*
+cost, not the pre-filter's cost.
+
+Limits: the composition claims are read from the pinned source
+(`src/mishe_tauftauf/feed.py:674`, `rust/mishe-records/src/envelope.rs:40`) and
+the costs are §10.24–§10.26's, one tape, warm page cache. The framer's fact cost
+and the 1.4–1.9 payoff are predictions, not measurements; they are measured only
+after the port is built. Exactness of the framer's facts is acceptance-gated by
+the differential test against `outcome_publication`'s own line/prefix/reference
+predicates, with `mishe-tape-facts`' DEFER discipline for non-ASCII bodies
+(`rust/mishe-tape-facts/CONTRACT.md`), and by the new peek-arm test as the
+negative arm.
+
+Next: implement (1)–(3) plus the differential test, then the strong gate — a
+fresh non-author reviewer, deterministic activation, revert and reapply — and
+observe the authoritative readings consumer on the delivered pin.

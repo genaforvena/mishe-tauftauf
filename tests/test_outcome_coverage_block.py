@@ -86,6 +86,25 @@ def test_reference_bearing_damaged_publication_still_blocks(tmp_path):
                      _evidence(home, "third.txt"))
 
 
+def test_reference_bearing_message_citing_an_outcome_record_still_blocks(tmp_path):
+    """A non-reserved body ending on an outcome record's reference is a gap.
+
+    The classifier peeks the cited record's head (``KindIndex.kind``) to tell a
+    bare citation of a non-outcome record from a damaged outcome publication.
+    This body is not reserved and cites an outcome record, so it is reported as
+    a gap that may hide a binding rather than dropped: the peek is load-bearing
+    and a filter that ignored the kind would narrow observation.
+    """
+    home = _site(tmp_path)
+    first = _evidence(home, "first.txt")
+    wall.outcome(home, "research-methods", "accepted", "First contribution.", first)
+    reference = Feed(home).entries()[-1].body.splitlines()[-1]
+    entry = Feed(home).append("health", "Notes about the earlier record:\n" + reference + "\n")
+    coverage = classify_outcomes(home, CLAUSE)
+    assert [row["sequence"] for row in coverage["incomplete"]] == [entry.sequence]
+    assert coverage["incomplete"][0]["binding"] == "unknown"
+
+
 def test_the_same_evidence_path_is_still_refused_after_the_narrowing(tmp_path):
     """The write-once rule survives: one file, one outcome."""
     home = _site(tmp_path)
