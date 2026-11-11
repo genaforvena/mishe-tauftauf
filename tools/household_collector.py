@@ -7,8 +7,8 @@
       and appends one row to spatial/work/household/signatures.jsonl.
 
   phones --site SITE
-      Reads the newest Note3 sensor sample and the Redmi10 stream from the
-      discovery snapshot, appends one row to spatial/work/household/phones.jsonl.
+      Reads the newest Note3 sensor sample and the live Redmi10 stream log,
+      appends one row to spatial/work/household/phones.jsonl.
 
 Exit codes follow the duty runner: 0 = fresh and valid (GREEN), 2 = observed blind
 camera (RED), 1 = cannot tell (a crash or failed local capture; the runner fails the
@@ -202,38 +202,34 @@ def note3_summary(site: str, now: float) -> dict:
     return out
 
 
-def redmi_summary(site: str, now: float) -> dict:
-    try:
-        path = site_path(site, "discovery/latest.json")
-        data = json.loads(path.read_text())
-        file_age = now - path.stat().st_mtime
-    except (OSError, ValueError) as exc:
-        return {"status": "unavailable", "reason": f"discovery snapshot: {type(exc).__name__}"}
-    for row in data.get("observations", []):
-        rid = str(row.get("id", ""))
-        if rid.endswith(".stream") and "redmi10" in rid:
-            v = row.get("values") or {}
-            # age the row by its own newest sample time; the snapshot file's mtime says
-            # only when the scan ran, not when the phone last delivered anything
-            last = row.get("last_row_epoch")
-            if isinstance(last, (int, float)):
-                age = now - float(last)
-            else:
-                age = file_age + float(row.get("row_age_s") or 0)
-            out = {"age_s": round(age, 1),
-                   "lux": (v.get("lux") or {}).get("value"),
-                   "battery_raw": (v.get("battery") or {}).get("level")}
-            if age > REDMI_MAX_AGE_S or age < -REDMI_MAX_AGE_S:
-                out["status"] = "stale"
-                out["reason"] = f"Redmi10 stream row {age:.0f}s old (limit {REDMI_MAX_AGE_S:.0f}s)"
-            elif not v:
-                # a snapshot row with no values is a heartbeat, not a sensor reading
-                out["status"] = "unknown"
-                out["reason"] = "Redmi10 stream row carries no sensor values"
-            else:
-                out["status"] = "ok"
-            return out
-    return {"status": "unavailable", "reason": "no Redmi10 stream row"}
+def redmi_summary(site: str, now: float, log_path: str | None = None) -> dict:
+    """Newest Redmi10 sample, read live from the phone's stream log.
+
+    The discovery snapshot is rewritten only every ~10 min, and its Redmi10 row is
+    judged at scan time, so a phone sample read from it is minutes old and usually
+    valueless. The live reader gives the row's own age and its current values.
+    """
+    from mishe_tauftauf.redmi10_stream import read_redmi10_stream
+    kwargs = {} if log_path is None else {"path": log_path}
+    row = read_redmi10_stream(now=now, **kwargs)
+    last = row.get("last_row_epoch")
+    if not isinstance(last, (int, float)):
+        return {"status": "unavailable", "reason": str(row.get("sample", "no Redmi10 stream row"))}
+    age = now - float(last)
+    v = row.get("values") or {}
+    out = {"age_s": round(age, 1),
+           "lux": (v.get("lux") or {}).get("value"),
+           "battery_raw": (v.get("battery") or {}).get("level")}
+    if age > REDMI_MAX_AGE_S or age < -REDMI_MAX_AGE_S:
+        out["status"] = "stale"
+        out["reason"] = f"Redmi10 stream row {age:.0f}s old (limit {REDMI_MAX_AGE_S:.0f}s)"
+    elif row.get("state") != "verified" or not v:
+        # a fresh heartbeat (or a row older than the reader's own 120 s rule) is not a reading
+        out["status"] = "unknown"
+        out["reason"] = str(row.get("sample", "Redmi10 stream row carries no sensor values"))
+    else:
+        out["status"] = "ok"
+    return out
 
 
 PHONES_UNKNOWN_EXIT = 4   # a stale, missing or valueless phone: declared unknown_codes in duties.json, not a crash

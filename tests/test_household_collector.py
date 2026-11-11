@@ -137,35 +137,45 @@ def test_fresh_note3_reports_raw_light(tmp_path):
     assert "not verified" in out["light_note"]
 
 
-def _redmi_site(tmp_path, row):
-    f = tmp_path / "discovery/latest.json"
-    f.parent.mkdir(parents=True)
-    f.write_text(json.dumps({"observations": [dict(id="sense.body.redmi10.stream", **row)]}))
-    return str(tmp_path)
+def _redmi_log(tmp_path, rows):
+    # rows: (epoch, text) pairs in the stream format "<seq> <epoch> <kind> <fields>"
+    f = tmp_path / "redmi10.observations.log"
+    f.write_text("".join(f"{i} {int(e)} {text}\n" for i, (e, text) in enumerate(rows, 1)))
+    return str(f)
 
 
 def test_stale_redmi_stream_row_is_not_ok(tmp_path):
-    # the snapshot file is fresh (scan just ran) but the phone's newest row is 1032 s old,
-    # with no values: this must not read as a GREEN Redmi10
+    # the newest phone row is 1032 s old: the live log must not read as a GREEN Redmi10
     now = time.time()
-    site = _redmi_site(tmp_path, {"last_row_epoch": now - 1032, "values": None})
-    out = hc.redmi_summary(site, now)
+    log = _redmi_log(tmp_path, [(now - 1032, "light lux=4.0 accuracy=3")])
+    out = hc.redmi_summary(str(tmp_path), now, log_path=log)
     assert out["status"] == "stale"
 
 
 def test_fresh_redmi_stream_row_with_values_is_ok(tmp_path):
     now = time.time()
-    site = _redmi_site(tmp_path, {"last_row_epoch": now - 3,
-                                  "values": {"lux": {"value": 4.0}, "battery": {"level": 0.84}}})
-    out = hc.redmi_summary(site, now)
+    log = _redmi_log(tmp_path, [(now - 4, "battery level=0.84 charging=false"),
+                                (now - 3, "light lux=4.0 accuracy=3")])
+    out = hc.redmi_summary(str(tmp_path), now, log_path=log)
     assert out["status"] == "ok" and out["lux"] == 4.0 and out["battery_raw"] == 0.84
 
 
 def test_fresh_redmi_heartbeat_without_values_is_unknown(tmp_path):
     now = time.time()
-    site = _redmi_site(tmp_path, {"last_row_epoch": now - 2, "values": None})
-    out = hc.redmi_summary(site, now)
-    assert out["status"] == "unknown" and "no sensor values" in out["reason"]
+    log = _redmi_log(tmp_path, [(now - 2, "ble_status source=androidbody_bluetooth_api api=33")])
+    out = hc.redmi_summary(str(tmp_path), now, log_path=log)
+    assert out["status"] == "unknown" and "no current" in out["reason"]
+
+
+def test_redmi_snapshot_lag_no_longer_hides_fresh_samples(tmp_path):
+    # a discovery snapshot written 5 min ago must not matter: the live row is 3 s old
+    now = time.time()
+    (tmp_path / "discovery").mkdir()
+    (tmp_path / "discovery/latest.json").write_text(json.dumps({"observations": [
+        {"id": "sense.body.redmi10.stream", "last_row_epoch": now - 300, "values": None}]}))
+    log = _redmi_log(tmp_path, [(now - 3, "light lux=7.0 accuracy=3")])
+    out = hc.redmi_summary(str(tmp_path), now, log_path=log)
+    assert out["status"] == "ok" and out["lux"] == 7.0
 
 
 class _FakeCamsig:
