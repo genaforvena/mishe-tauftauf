@@ -79,7 +79,7 @@ def ci(home, *, now: float, read=None, completed=None) -> str | None:
     if read is None:
         from .ci_watch import read
     if completed is None:
-        from .ci_watch import read_completed
+        from .ci_watch import read_completed as completed
     reading = read(home)
     state = reading["state"]
     if state == "pending":

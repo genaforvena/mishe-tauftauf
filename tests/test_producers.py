@@ -150,6 +150,16 @@ def test_ci_pending_reports_the_newest_finished_run_and_falls_back_when_none_fin
     assert store.read(tmp_path, "ci", now=NOW + 5000).state == "UNKNOWN"
 
 
+def test_ci_pending_binds_the_real_reader_when_none_is_injected(tmp_path, monkeypatch):
+    """The default must name ci_watch.read_completed; every other test injects one, which hid a
+    TypeError('NoneType' object is not callable) on the live pending path (producer crashed 02:25Z)."""
+    store.register(tmp_path, "ci", max_age=900, subscribers=["genome"])
+    from mishe_tauftauf import ci_watch
+    monkeypatch.setattr(ci_watch, "read_completed", lambda home: {"state": "pass"})
+    assert producers.produce(tmp_path, "ci", now=NOW, read=lambda h: {"state": "pending"}) == "GREEN"
+    assert store.read(tmp_path, "ci", now=NOW).value == "GREEN"
+
+
 def test_ci_unknown_failure_carries_the_reader_detail(tmp_path):
     store.register(tmp_path, "ci", max_age=900, subscribers=["genome"])
     with pytest.raises(producers.ObservationFailed, match="CI state 'unknown': gh: rate limited"):
