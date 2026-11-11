@@ -71,9 +71,12 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
             known = dispositions.active(home, name, now=now)
             if known and known["kind"] == "known":
                 intentions.add(home, role, f"disposition-{name}", due=known["recheck_at"], note="Known incident disposition expires; choose action")
-            if (sig.state != "OK" or sig.value == "RED") and not acknowledged and not (known and known["kind"] == "known"):       # level: a standing fault returns
-                intentions.add(home, role, f"reoffer-{name}", due=now + entry["reoffer"],
-                               note=f"signal {name} is still not clear; investigate or disposition it")
+            if sig.state != "OK" or sig.value == "RED":       # level: a standing fault returns
+                if not acknowledged and not (known and known["kind"] == "known"):
+                    intentions.add(home, role, f"reoffer-{name}", due=now + entry["reoffer"],
+                                   note=f"signal {name} is still not clear; investigate or disposition it")
+            else:                                             # clear again: the re-offer is residue, not a standing fault
+                intentions.remove(home, role, f"reoffer-{name}")
     intentions.add(home, role, IDLE_ID, note="idle initiative: look for useful work",
                    due=now + idle_seconds, spontaneous=True)
     from . import work_state
