@@ -14,3 +14,38 @@ Each must stay dependency-free so Mishe still works with the window closed, and 
 
 Create a window: `tmux new-window -t plants -d -n NAME 'env MISHE_TAUFTAUF_HOME=... python3 tools/X_view.py'`.
 Never type into another plant's panes. Keep this table current when a window is added or retired.
+
+## Restoring missing windows
+
+`tools/tmux_restore.py` brings back outer and inner windows that are gone or whose panes died.
+It reads the registry at `$MISHE_SEED_HOME/operator/window-registry.json` (site-local, not tracked):
+each window names its session, its command and a `restore` flag.
+
+- Dry run is the default. It prints the `DRY` actions it would take. `--apply` acts.
+- Only entries with `"restore": true` and a command are touched. Entries marked
+  `pending-decision`, `observed-only`, or `empty-shell` are skipped, and so are windows
+  the registry does not list.
+- A missing window is created; a dead pane (remain-on-exit) of a restorable window is respawned.
+  It never types into a pane and never touches wake, hold or guard windows.
+- A run with nothing to do prints `nothing to restore`. A run right after a successful apply
+  should act on nothing, unless a restorable pane has died again (`senses-map` may, see below).
+
+What is not in place yet (UNKNOWN until it is):
+
+- No timer runs the restorer. It is run by hand.
+- `senses-map` is marked `restore: true`, but its renderer exits after one render, so a
+  periodic restore would flap it. The genome wall records this and asks for the command
+  to follow or the flag to go to `false` before any timer exists.
+- Many inner `mind-view` windows are `pending-decision`; they are not restored until someone
+  classifies them as per-duty or drops them.
+- The registry's `budget` window runs `operator/budget/budget_pane.sh`, while the table above
+  points at `budget_view.py`. The registry asks to confirm which one the window runs before
+  either is retired.
+
+## Crash drill (not implemented)
+
+A periodic crash-only drill (stop or crash the plant, confirm nothing continues on its own,
+then confirm recovery resumes, including the tmux windows coming back) was proposed on
+2026-10-31. As of 2026-11-11 there is no drill code in the repository and no timer for one.
+Until a drill runs through the real detectors and recovery path, nothing shows that crash
+recovery works end to end. The restorer above is a manual tool, not a drill.

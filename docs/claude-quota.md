@@ -38,3 +38,18 @@ The budget view uses the independent native report after its reviewed activation
 References: [native commands](https://code.claude.com/docs/en/commands),
 [status line data](https://code.claude.com/docs/en/statusline). Observed native
 contract: Claude Code 2.1.319 on 2026-11-06; unsupported future formats fail closed.
+
+## Spending policy (decided, not yet enforced in code)
+
+Operator decision of 2026-11-11, recorded in the operator notes:
+
+- Subscription windows may be spent freely up to 50% of their weekly limit.
+- Above 50% weekly use, Mishe counts and cares about pace. Mishe still decides; the
+  decision does not route to the human owner.
+- RouterAI is the backup when the subscription providers fail, not a primary route.
+- Alerts about budget do not ask the human for anything.
+
+Status: the code does not yet encode the 50% threshold. `provider_budget.py` reports GREEN
+against "the existing budget policy", and the router's ranking has no weekly-percentage
+rule that I could find on 2026-11-11. Treat the threshold as a stated decision with
+UNKNOWN enforcement until a check or router rule reads the weekly figure.
