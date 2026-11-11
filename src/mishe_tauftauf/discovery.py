@@ -1068,8 +1068,7 @@ def _mind_treadmill(home: Path, now: datetime | None = None) -> dict:
         return {"id": "sense.mind.treadmill", "state": "unknown",
                 "sample": "not a git checkout", "roles": {}, "kind": "read"}
     sampled = head.stdout[:40]
-    roles = ["inference-research", "body-research", "docs", "health", "senses",
-             "discover", "genome", "witness", "research-methods", "operator-view"]
+    roles = loop_stall_roles(home)
     previous = _treadmill_previous_digests(home)
     pairs: dict[str, dict] = {}
     unreadable = 0
@@ -1196,8 +1195,7 @@ def _mind_docs_treadmill(home: Path) -> dict:
         return {"id": "sense.mind.docs-treadmill", "state": "unknown",
                 "sample": "not a git checkout", "roles": {}, "kind": "read"}
     sampled = head.stdout[:40]
-    roles = ["inference-research", "body-research", "docs", "health", "senses",
-             "discover", "genome", "witness", "research-methods", "operator-view"]
+    roles = loop_stall_roles(home)
     pairs: dict[str, dict] = {}
     unreadable = 0
     worst = "clean"
@@ -1578,8 +1576,7 @@ def _mind_artifact_recurrence(home: Path, now: datetime | None = None,
         return {"id": "sense.mind.artifact-recurrence", "state": "unknown",
                 "sample": "not a git checkout", "roles": {}, "kind": "read"}
     sampled = head.stdout[:40]
-    roles = ["inference-research", "body-research", "docs", "health", "senses",
-             "discover", "genome", "witness", "research-methods", "operator-view"]
+    roles = loop_stall_roles(home)
     entries = list(entries) if entries is not None else None
     try:
         if entries is None:

@@ -5467,6 +5467,7 @@ def test_docs_treadmill_rollup_positive_and_clean(monkeypatch, tmp_path):
     in the run ``clean``. Without it, a wiring defect could emit a
     ``verified`` rollup that routes nothing while the fold tests still pass.
     """
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     commits = {"docs": [_docs_refresh_commit() for _ in range(6)],
                "health": [_impl_commit()]}
 
@@ -5504,6 +5505,7 @@ class _MockFeed:
 
 def test_artifact_recurrence_positive_same_observation_no_commits(monkeypatch, tmp_path):
     """Three wakes sharing one observation with no new commits fires."""
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     entries = [_wake_entry(i, "docs", 43288) for i in range(1, 6)]
     monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
@@ -5522,6 +5524,7 @@ def test_artifact_recurrence_positive_same_observation_no_commits(monkeypatch, t
 
 def test_artifact_recurrence_negative_control_new_commits(monkeypatch, tmp_path):
     """Same observation but new commits means legitimate progress — clean."""
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     entries = [_wake_entry(i, "docs", 43288) for i in range(1, 6)]
     monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
@@ -5536,6 +5539,7 @@ def test_artifact_recurrence_negative_control_new_commits(monkeypatch, tmp_path)
 
 def test_artifact_recurrence_negative_control_different_observations(monkeypatch, tmp_path):
     """Different observations mean the frontier moved — clean."""
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     entries = [_wake_entry(i, "docs", 43288 + i) for i in range(1, 6)]
     monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
@@ -5548,6 +5552,7 @@ def test_artifact_recurrence_negative_control_different_observations(monkeypatch
 
 def test_artifact_recurrence_short_run_below_threshold(monkeypatch, tmp_path):
     """Fewer than 3 wakes is not enough evidence — clean."""
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     entries = [_wake_entry(i, "docs", 43288) for i in range(1, 3)]
     monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
@@ -5582,6 +5587,7 @@ def test_artifact_recurrence_unknown_when_feed_unreadable(monkeypatch, tmp_path)
 
 def test_artifact_recurrence_rollup_wiring(monkeypatch, tmp_path):
     """The rollup names a firing role and leaves a progressing role clean."""
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     entries = ([_wake_entry(i, "docs", 43288) for i in range(1, 6)]
                + [_wake_entry(i, "health", 100 + i) for i in range(10, 15)])
     monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
@@ -5603,6 +5609,7 @@ def test_artifact_recurrence_tail_slice_mixed_history(monkeypatch, tmp_path):
     the recurrence; slicing its tail reads the run. The unique count and
     the detail are tail-based for the same reason.
     """
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     entries = ([_wake_entry(i, "docs", 1000 + i) for i in range(1, 4)]
                + [_wake_entry(i, "docs", 43288) for i in range(4, 7)])
     monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
@@ -5623,6 +5630,7 @@ def test_artifact_recurrence_tail_slice_mixed_history(monkeypatch, tmp_path):
 
 def test_artifact_recurrence_commit_inside_interval_clears(monkeypatch, tmp_path):
     """A commit inside the recent wakes' interval is progress — clean."""
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     entries = [_wake_entry(i, "docs", 43288) for i in range(1, 6)]
     monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
@@ -5648,6 +5656,7 @@ def test_artifact_recurrence_commit_before_interval_still_fires(monkeypatch, tmp
     held a commit, so a same-observation tail read clean even though the mind
     made no commit inside the interval it keeps re-waking in.
     """
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     entries = [_wake_entry(i, "docs", 43288) for i in range(1, 6)]
     monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
@@ -5682,6 +5691,7 @@ def test_artifact_recurrence_unreadable_commits_is_unknown(monkeypatch, tmp_path
     the top-level verdict clean, so an unreadable git stream read as a clean
     bill for the role that was recurring.
     """
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     entries = [_wake_entry(i, "docs", 43288) for i in range(1, 6)]
     monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
@@ -5703,6 +5713,7 @@ def test_artifact_recurrence_unboundable_interval_is_unknown(monkeypatch, tmp_pa
     the whole window the interval, so a commit predating every wake cleared the
     role. The detector must not make that read at all.
     """
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     entries = [_unstamped_wake_entry(i, "docs", 43288) for i in range(1, 6)]
     monkeypatch.setattr(discovery, "Feed", lambda home: _MockFeed(entries))
     monkeypatch.setattr(discovery.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "abc123\n"})())
@@ -5725,6 +5736,7 @@ def test_artifact_recurrence_unboundable_interval_is_unknown(monkeypatch, tmp_pa
 
 def test_treadmill_unreadable_stream_keeps_role_in_the_rollup(monkeypatch, tmp_path):
     """The main treadmill lane keeps an unreadable role visible as unknown."""
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     class Head:
         returncode = 0
         stdout = "abc123\n"
@@ -5741,6 +5753,7 @@ def test_treadmill_unreadable_stream_keeps_role_in_the_rollup(monkeypatch, tmp_p
 
 def test_docs_treadmill_unreadable_stream_keeps_role_in_the_rollup(monkeypatch, tmp_path):
     """The docs lane keeps an unreadable role visible as unknown."""
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     class Head:
         returncode = 0
         stdout = "abc123\n"
@@ -5770,6 +5783,7 @@ def test_treadmill_handoff_digest_is_stable_and_absent_is_none(tmp_path):
 
 
 def test_treadmill_handoff_stagnant_when_bytes_identical(monkeypatch, tmp_path):
+    _seat_roles(tmp_path / "site", *_TREADMILL_ROSTER)
     import json
 
     home = _treadmill_home_with_handoff(tmp_path, "same words")
@@ -5793,6 +5807,7 @@ def test_treadmill_handoff_stagnant_when_bytes_identical(monkeypatch, tmp_path):
 
 
 def test_treadmill_handoff_changed_clears_nothing_but_names_movement(monkeypatch, tmp_path):
+    _seat_roles(tmp_path / "site", *_TREADMILL_ROSTER)
     import json
 
     home = _treadmill_home_with_handoff(tmp_path, "new words this wake")
@@ -5822,6 +5837,7 @@ def test_treadmill_handoff_changed_clears_nothing_but_names_movement(monkeypatch
 
 
 def test_treadmill_handoff_unknown_without_previous_receipt(monkeypatch, tmp_path):
+    _seat_roles(tmp_path / "site", *_TREADMILL_ROSTER)
     home = _treadmill_home_with_handoff(tmp_path)
 
     class Head:
@@ -5835,8 +5851,9 @@ def test_treadmill_handoff_unknown_without_previous_receipt(monkeypatch, tmp_pat
     assert result["roles"]["senses"]["handoff_moved"] is None
 
 def test_treadmill_sample_renders_pending_and_idle(monkeypatch, tmp_path):
+    _seat_roles(tmp_path / "site", *_TREADMILL_ROSTER)
     home = tmp_path / "site"
-    home.mkdir()
+    home.mkdir(exist_ok=True)
 
     class Head:
         returncode = 0
@@ -5879,6 +5896,7 @@ def test_treadmill_git_failure_is_unknown(monkeypatch, tmp_path):
 
 
 def test_treadmill_mind_reading_names_pairs_and_head(monkeypatch, tmp_path):
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     commits = {"inference-research": [_record_commit() for _ in range(6)],
                "body-research": [_impl_commit()]}
 
@@ -6822,9 +6840,13 @@ def _loop_stall_coverage(overrides):
     return fake
 
 
+_TREADMILL_ROSTER = ("inference-research", "body-research", "docs", "health", "senses",
+                    "discover", "genome", "witness", "research-methods", "operator-view")
+
+
 def _seat_roles(home, *names):
     """Seat roles at this site: a charter is what makes a role declared."""
-    (home / "charters").mkdir(exist_ok=True)
+    (home / "charters").mkdir(parents=True, exist_ok=True)
     for name in names:
         (home / "charters" / f"{name}.md").write_text("charter", encoding="utf-8")
     return home
@@ -7115,6 +7137,7 @@ def test_treadmill_reads_no_tape_entry(monkeypatch, tmp_path):
     Its verdict comes from the commit stream and the dispatch records, never
     from tape entries, so the whole-tape read it used to make was pure cost.
     """
+    _seat_roles(tmp_path, *_TREADMILL_ROSTER)
     from mishe_tauftauf import discovery
 
     class ExplodingTape:
