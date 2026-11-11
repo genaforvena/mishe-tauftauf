@@ -5,13 +5,12 @@ truth for which minds exist. A mind with no dispatch record is shown as UNKNOWN,
 Pure: reads dispatch records and yield files, writes nothing.
 """
 import glob
-import json
 import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from mishe_tauftauf import roles  # noqa: E402
+from mishe_tauftauf import roles, state_files  # noqa: E402
 
 STUCK_AFTER_S = 2400
 
@@ -29,10 +28,11 @@ def wakes(home, now, names=None):
     for role in names:
         record_path = os.path.join(home, "dispatch", f"{role}.json")
         try:
-            with open(record_path) as fh:
-                record = json.load(fh)
+            record = state_files.read_json(Path(record_path))
             when = os.path.getmtime(record_path)
         except (OSError, ValueError):
+            record = None
+        if not isinstance(record, dict):
             out.append((role, f"{role:13s} UNKNOWN   no dispatch record", False))
             continue
         state = str(record.get("state") or "UNKNOWN")
