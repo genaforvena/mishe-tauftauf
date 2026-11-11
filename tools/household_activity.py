@@ -43,6 +43,13 @@ def hhmm(t):
     return time.strftime("%H:%M", time.gmtime(t)) + "Z" if t is not None else None
 
 
+def iso_utc(t):
+    """Absolute UTC timestamp; a bucket label without its date must never be read as 'today'."""
+    if t is None:
+        return None
+    return datetime.datetime.fromtimestamp(float(t), datetime.timezone.utc).isoformat(timespec="seconds")
+
+
 def grid_distance(a, b):
     return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
 
@@ -317,6 +324,7 @@ def buckets(frames: list[dict]) -> list[dict]:
         act = statistics.median(cell["diffs"]) if len(cell["diffs"]) >= 3 else None
         series.append({
             "utc": hhmm(k),
+            "utc_iso": iso_utc(k),
             "frame_pairs": len(cell["diffs"]),
             "activity": None if act is None else round(act, 4),
             "mean_luma": None if luma is None else round(luma, 1),
@@ -383,8 +391,11 @@ def build(signature_rows: list[dict], audio_rows: list[dict], now: float,
                            "usable_buckets": sum(1 for s in series if s["activity"] is not None)}
     living = frame_records(frames["living room"]) if frames["living room"] else ([], [])
     bedroom = frame_records(frames["bedroom"]) if frames["bedroom"] else ([], [])
+    newest = max(float(r["captured_at_epoch_s"]) for rs in frames.values() for r in rs)
     return {"version": 1, "generated_utc": datetime.datetime.fromtimestamp(now, datetime.timezone.utc)
             .isoformat(timespec="seconds"),
+            # Freshness of the newest usable frame; a negative age is a future-dated row, not a reading.
+            "newest_frame_utc": iso_utc(newest), "frame_age_s": round(now - newest, 1),
             "method": "rooms: median consecutive-frame change /255 over gaps <= 300 s, 15-min buckets; "
                       "summary: 600 s trailing change, lamp steps, settled and quiet runs",
             "rooms": rooms, "summary": summarize(living, bedroom, blind or [], cleaning),

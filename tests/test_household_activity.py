@@ -202,3 +202,22 @@ def test_night_candidate_needs_both_rooms_settled_for_the_run(tmp_path):
     runs_ = ha.both_rooms_settled_runs(lall, ltimes, brecs)
     assert runs_, "a 30 min settled run with both rooms quiet must be reported"
     assert runs_[0][0] >= T0 + 1800 + ha.ACT_WINDOW
+
+
+def test_buckets_carry_absolute_date_so_a_stale_label_is_not_read_as_now():
+    # Frames from the previous UTC day: the bucket label alone (e.g. "14:15Z") is ambiguous.
+    day_before = T0 - 86400
+    rows = _frames("bedroom", day_before, day_before + 3600, lambda t: 40.0, lambda t: True)
+    report = ha.build(rows, [], now=float(T0))
+    buckets = report["rooms"]["bedroom"]["buckets"]
+    assert buckets and all(b["utc_iso"].startswith(ha.datetime.datetime.fromtimestamp(
+        day_before, ha.datetime.timezone.utc).strftime("%Y-%m-%d")) for b in buckets)
+    assert report["frame_age_s"] > 80000  # newest frame ~1 h into the old day
+    assert report["newest_frame_utc"].startswith("2026-")
+
+
+def test_fresh_frames_have_small_age_and_future_rows_have_negative_age():
+    fresh = _frames("living room", T0 - 120, T0 - 30, lambda t: 40.0, lambda t: True)
+    assert 0 < ha.build(fresh, [], now=float(T0))["frame_age_s"] < 300
+    future = _frames("living room", T0 + 600, T0 + 900, lambda t: 40.0, lambda t: True)
+    assert ha.build(future, [], now=float(T0))["frame_age_s"] < 0
