@@ -54,6 +54,12 @@ Scope and limits, named:
   worktree", ...).  A page that describes the rule in prose the vocabulary
   does not cover is not a finding, and that is a known limit rather than a
   cleared question.
+* The phrase must sit in a sentence whose subject is something *other than*
+  the phrase's own nouns.  The phrase "outside the checkout" contains
+  "checkout", so a subject read from the whole sentence is always found; a
+  harness sentence ("at ``nice 19``, outside the checkout") would then read
+  as a claim about where the site lives.  The subject is read with the
+  phrase removed.
 * A page may name **both** the inside and the outside form, because both are
   true of different rules: the site is inside the worktree, and its state
   is not tracked by Git.  Each form is read separately, and each is compared
@@ -273,6 +279,17 @@ def _placements_of(unit: str) -> list[str]:
             match = pattern.search(sentence)
             if not match:
                 continue
+            # The phrase's own nouns are not evidence that the sentence is
+            # about where the site lives: the phrase "outside the checkout"
+            # *contains* a subject word, so a subject read from the whole
+            # sentence is always found.  A harness sentence -- "at `nice 19`,
+            # outside the checkout" -- then reads as a placement claim the
+            # page never made, and the gate fails a correct page.  Read the
+            # sentence with the phrase removed: what remains is the subject
+            # the claim is actually about.
+            remainder = sentence[:match.start()] + sentence[match.end():]
+            if not PLACEMENT_SUBJECT.search(remainder):
+                break
             # A negated statement is the **same** placement stated the other
             # way round: "the state is never outside the checkout" says the
             # site is inside, not outside.  Reading it as the bare phrase

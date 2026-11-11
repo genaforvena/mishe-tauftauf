@@ -102,6 +102,32 @@ def test_a_negated_statement_is_read_as_the_placement_it_states(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+# A sentence whose only subject word ("checkout") arrives *inside* the
+# placement phrase.  It states where a command ran, not where the site
+# home lives, and the page must not be failed for it.
+HARNESS_PAGE = """# Bench
+
+The benchmark lives outside the checkout.
+"""
+
+
+def test_a_phrase_that_only_names_its_own_subject_is_not_a_claim(tmp_path):
+    """The phrase's own nouns are not evidence the sentence is about the site."""
+    tree = make_tree(tmp_path, {"docs/bench.md": HARNESS_PAGE})
+    result = run_check(tree)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "statements=0" in result.stdout, result.stdout
+
+
+def test_a_real_placement_named_with_the_phrase_noun_is_still_caught(tmp_path):
+    """The subject gate must not hide a claim that does place the site."""
+    page = "# Mesh\n\nThe site lives outside the checkout.\n"
+    tree = make_tree(tmp_path, {"docs/mesh.md": page})
+    result = run_check(tree)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "STALE PLACEMENT RULE" in result.stdout
+
+
 def test_the_gate_observes_the_tree_rather_than_asserting_a_result(tmp_path):
     """The observed outcome is read from the tree and reported."""
     tree = make_tree(tmp_path, {"docs/mesh.md": CURRENT_PAGE})
