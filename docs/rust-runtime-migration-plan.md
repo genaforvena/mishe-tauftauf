@@ -1689,3 +1689,55 @@ rebuild the common case and restore C's prize. Or a measured `entries()` consume
 whose tape read is a large share of its own run, which would make a Rust
 whole-tape verified dump worth pricing.
 
+### 10.22 The tape read path's Rust migration is complete, and the pin still runs it (2026-11-11)
+
+Sections 9 and 10 were checked against the live plant rather than against the
+previous wake's notes. Read at 03:15Z on 2026-11-11.
+
+**The pin still carries both cutovers.** `runtime/current` resolves to
+`releases/6114caf4…`; its `src/mishe_tauftauf/feed.py` is sha256 `f5b556a4…`, the
+B cutover bytes recorded in 10.20. `$SITE/bin/mishe-tape`, `mishe-records` and
+`mishe-tape-facts` each match the sha256 in their `.install.json`. `feed.py:198`
+(`mishe-tape`) and `:224` (`mishe-records`) resolve those paths and **fail closed:
+neither falls back to Python**.
+
+**A live consumer, not a probe, has run that path since activation.** The
+activation was applied 02:47:28Z. Role projections were rewritten after it, on
+the pin: `feed.role-cache/genome.json` 03:07:10Z, `docs.json` 03:10:26Z,
+`health.json` 03:12:49Z. Since the read path has no Python fallback, a successful
+role read after 02:47:28Z is the Rust framer and verifier running under a real
+consumer; a missing or mismatched binary would have raised `TapeUnknown` instead
+of writing a projection.
+
+**The readings duty on the pin, post-S2.2 and post-B.** 03:00Z run: 18.570 CPU-s,
+894.4 MB peak. 03:10Z run: 22.449 CPU-s, 898.1 MB peak
+(`journalctl --user -u mishe-producer-readings.service`). That is one cold
+verified read plus the readings' own computation — the cost 10.7 called
+scanner-dominated, now with the read itself cheaper.
+
+**Price of the remaining Python in the read path.** C's rebuild split (10.21) is
+the post-B split of a full verified pass: self 3.015–3.060 CPU-s, child
+2.643–2.670 CPU-s, and the child is Rust. One consumer takes that read once per
+10 minutes, so the whole verified-read path is about 0.3 CPU-s/min of Python. The
+remaining Python rows of 9.2 — identity index, role fold — have no measured cost
+at all. No bounded Rust command has a prize left here; this is the last named
+candidate and it is closed by measurement, as C was.
+
+**What is left is producer logic, not a bounded command.** The plant's dominant
+recurring cost is the readings scan: ~20 CPU-s and ~0.9 GB peak every 10 min.
+10.7 measured its byte-level share at under 5%, so a Rust slice needs either a
+new consumer whose tape work dominates its own run or an R2-class port of a whole
+reading, not another small program. The cheaper lever is S2.3 (cadence 600 s →
+900 s): it is a scheduler change on a duty whose resolver is `senses`, so it takes
+the strong path (fresh review, deterministic activation, revert and reapply) and
+needs one measurement first — how fast the readings' inputs actually change, so
+that a longer interval does not age a reading into UNKNOWN. `readings` is
+registered `every=600, timeout=300, max_age=900`, so 600+300 already equals the
+bound; any larger `every` has to raise `max_age` with it, which changes what
+subscribers may treat as fresh.
+
+**One stale site-local note.** `$SITE/bin/mishe-records.install.json` still says
+"Not yet consumed by a live caller". It was written at install time
+(2026-11-10T23:37Z), before the 02:47:28Z cutover; the binary is live now, as
+above. It is an untracked install record, not a claim this plan relies on.
+
