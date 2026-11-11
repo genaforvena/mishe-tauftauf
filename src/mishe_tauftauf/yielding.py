@@ -14,7 +14,7 @@ from . import intentions, owed, signal_store
 from .state_files import read_json, write_json
 
 IDLE_ID = "idle-initiative"
-DEFAULT_IDLE_SECONDS = 6 * 3600
+DEFAULT_IDLE_SECONDS = 2 * 3600  # idle-initiative pace; was 6h (Ilya DM 299699: ~2h for roles with open plates)
 RESULTS = ("changed", "verified", "blocked")
 
 
