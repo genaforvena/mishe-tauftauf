@@ -327,7 +327,7 @@ def _is_num(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _budget_windows(windows, now) -> list:
+def _budget_windows(windows, now) -> tuple[list, list]:
     """The budget.json windows of one account in the window shape :mod:`engine_policy` reads.
 
     The file keys its windows by label (``5h``, ``7d``) and stores ``remaining`` and an
@@ -335,11 +335,14 @@ def _budget_windows(windows, now) -> list:
     ISO ``reset_at``. A window missing either number is left out rather than guessed at.
     A window the file labels FRESH is re-aged here against ``now``: the producer's label is
     only true at production time, so a window that has since outlived MAX_AGE_S or reset is STALE.
+    Returns ``(rows, malformed)``: the names of dropped windows are reported so the account cannot
+    be admitted as complete without them (a required window missing a number is not healthy).
     """
     from . import budget_producer
-    rows = []
+    rows, malformed = [], []
     for name, w in (windows if isinstance(windows, dict) else {}).items():
         if not isinstance(w, dict):
+            malformed.append(name)
             continue
         remaining, reset_at = w.get("remaining"), w.get("reset_at")
         if _is_num(remaining) and _is_num(reset_at):
@@ -348,7 +351,9 @@ def _budget_windows(windows, now) -> list:
                 state = "STALE"
             rows.append({"window": name, "limit": name, "remaining_fraction": float(remaining),
                          "reset_at": _iso(reset_at * 1000), "provider_status": None, "state": state})
-    return rows
+        else:
+            malformed.append(name)
+    return rows, malformed
 
 
 def _row_state(state, windows: list):
@@ -394,9 +399,11 @@ def status_from_payload(data: dict, now: float | None = None) -> dict | None:
     for alias, row in accounts.items():
         if not isinstance(row, dict):
             continue
-        windows = _budget_windows(row.get("windows"), now)
-        out[alias] = {"provider": row.get("provider"), "state": _row_state(row.get("state"), windows),
-                      "reason": row.get("reason"), "windows": windows}
+        windows, malformed = _budget_windows(row.get("windows"), now)
+        state, reason = _row_state(row.get("state"), windows), row.get("reason")
+        if malformed and state == "FRESH":
+            state, reason = "UNREADABLE", "malformed window(s) without remaining/reset_at: " + ",".join(map(str, malformed))
+        out[alias] = {"provider": row.get("provider"), "state": state, "reason": reason, "windows": windows}
     return {"state": "FRESH", "unknowns": data.get("unknowns") or [], "accounts": out}
 
 

@@ -212,3 +212,14 @@ def test_router_never_upgrades_a_non_fresh_row_and_drops_a_fresh_row_without_win
     accounts = er.status_from_payload(payload, NOW)["accounts"]
     assert accounts["codex-a"]["state"] == "UNKNOWN"
     assert accounts["go-a"]["state"] == "UNREADABLE"
+
+
+def test_router_does_not_admit_an_account_with_a_malformed_window():
+    from mishe_tauftauf import engine_router as er
+
+    payload = {"schema": 1, "produced_at": NOW, "accounts": {"codex-a": {"provider": "openai-codex", "state": "FRESH", "windows": {
+        "5h": {"remaining": 0.8, "reset_at": NOW + 600, "observed_at": NOW - 1, "state": "FRESH"},
+        "30d": {"remaining": 0, "observed_at": NOW - 1, "state": "FRESH"}}}}}
+    row = er.status_from_payload(payload, NOW)["accounts"]["codex-a"]
+    assert row["state"] == "UNREADABLE"
+    assert "30d" in row["reason"]
