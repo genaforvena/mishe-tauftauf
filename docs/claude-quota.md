@@ -39,17 +39,32 @@ References: [native commands](https://code.claude.com/docs/en/commands),
 [status line data](https://code.claude.com/docs/en/statusline). Observed native
 contract: Claude Code 2.1.319 on 2026-11-06; unsupported future formats fail closed.
 
-## Spending policy (decided, not yet enforced in code)
+## Spending policy (decided; enforced in the budget view, not in the router)
 
-Operator decision of 2026-11-11, recorded in the operator notes:
+Status: the 50% threshold is enforced in the site's budget view, and the router
+does not read it.
+
+- The rule lives in the site-local `operator/budget/budget_view.py`, which is not
+  tracked in Git. Its window verdict is `RUNS OUT BEFORE RESET` only when the
+  window is at or above 50% used and the burn projection empties it before the
+  reset; below 50% the projection is information, not a verdict.
+- `src/mishe_tauftauf/provider_budget.py` consumes those verdicts and turns a
+  non-`ok` Claude window into RED, so the site's Claude readiness does read the
+  weekly figure — through the view's verdict, not through a percentage test of
+  its own. The tracked module has no weekly-percentage rule.
+- The router does not read it. `engine_policy._classify_account` judges a window
+  by its remaining fraction against a reserve threshold of 15%, so a weekly
+  window at 60% or 80% used still classifies as healthy and admission depends
+  on the remaining fraction alone.
+
+RouterAI is the backup in practice: `engine/routes.json` lists its candidates
+after the subscription providers for every role, so it is reached when the
+earlier candidates are not admitted rather than chosen first.
+
+The operator decision of 2026-11-11, recorded in the operator notes:
 
 - Subscription windows may be spent freely up to 50% of their weekly limit.
 - Above 50% weekly use, Mishe counts and cares about pace. Mishe still decides; the
   decision does not route to the human owner.
 - RouterAI is the backup when the subscription providers fail, not a primary route.
 - Alerts about budget do not ask the human for anything.
-
-Status: the code does not yet encode the 50% threshold. `provider_budget.py` reports GREEN
-against "the existing budget policy", and the router's ranking has no weekly-percentage
-rule that I could find on 2026-11-11. Treat the threshold as a stated decision with
-UNKNOWN enforcement until a check or router rule reads the weekly figure.

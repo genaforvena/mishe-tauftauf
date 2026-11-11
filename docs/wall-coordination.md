@@ -93,11 +93,18 @@ keeps the release it started from. No mind moves the pin by hand.
 `wall_patch` checks and applies a patch against. It does not decide what the units
 run.
 
-The strong gate binds the reviewed bytes to the committed release: it reads
-each reviewed path's after-bytes from the shared checkout and compares them
-with the release worktree at the commit. Keep the checkout's tracked files
-equal to `HEAD`; an uncommitted edit to a reviewed path diverges from the
-release and is refused as `committed release differs from reviewed bytes`.
+The strong gate binds the reviewed bytes to the committed release. The patch
+record keeps each reviewed path's after-bytes; the check captures them from the
+shared checkout, and the consumer compares them with the release worktree
+materialized at the commit. A release tree that differs from the reviewed bytes
+is refused as `committed release differs from reviewed bytes`.
+
+The shared checkout is not that byte source. A peer who commits to a reviewed
+path during the check window moves the checkout and `HEAD` together, and that is
+not drift: the delivered artifact is the commit the release is materialized
+from. Only an uncommitted local write is drift, and it is refused before any
+effect — `source changed during deterministic check` when the check's own test
+wrote the path, `patch changed since review` when apply finds it.
 
 Every running wake holds the dispatch lock for its whole run; the lock is
 shared, so a site may run several minds at once, up to `max` in

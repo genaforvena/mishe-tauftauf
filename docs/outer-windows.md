@@ -8,7 +8,7 @@ Each must stay dependency-free so Mishe still works with the window closed, and 
 | --- | --- | --- | --- |
 | health | tools/health_view.py | steward | verdict of the hourly tending pass (guard, units, wakes, signals, delivery) |
 | senses | tools/household_view.py | senses | the apartment map and what Mishe senses |
-| senses-map | tools/map_view.py | senses | best guess per person from the apartment map, read-only (needs senses/map/render_map.py run first) |
+| senses-map | tools/map_view.py | senses | best guess per person from the apartment map, read-only (needs tools/map_render.py run first) |
 | network | tools/network_view.py | network | home network and connection |
 | budget | operator/budget/budget_view.py | budget | provider quota and spend |
 
@@ -34,14 +34,16 @@ the planner consumes decoded values.
 - A missing window is created; a dead pane (remain-on-exit) of a restorable window is respawned.
   It never types into a pane and never touches wake, hold or guard windows.
 - A run with nothing to do prints `nothing to restore`. A run right after a successful apply
-  should act on nothing, unless a restorable pane has died again (`senses-map` may, see below).
+  should act on nothing, unless a restorable pane has died again.
 
 What is not in place yet (UNKNOWN until it is):
 
 - No timer runs the restorer. It is run by hand.
-- `senses-map` is marked `restore: true`, but its renderer exits after one render, so a
-  periodic restore would flap it. The genome wall records this and asks for the command
-  to follow or the flag to go to `false` before any timer exists.
+- `senses-map` is marked `restore: true` and its viewer now loops every 30 s instead of
+  exiting after one render, so a periodic restore would not flap it. What still has no
+  schedule is the renderer behind it: nothing runs `tools/map_render.py` on a timer, so
+  the map state ages until the next senses wake refreshes it. The viewer flags a render
+  older than 30 minutes as stale.
 - Many inner `mind-view` windows are `pending-decision`; they are not restored until someone
   classifies them as per-duty or drops them.
 - The registry's `budget` window runs `operator/budget/budget_pane.sh`, while the table above
