@@ -46,6 +46,14 @@ def refusal(unit: str) -> str | None:
     return None
 
 
+def _retire_reoffers(home, name: str) -> None:
+    """Drop ``reoffer-<name>`` wherever it sits. It can be minted under the signal's resolver (``report``) or under a
+    subscriber role (``yielding.settle``); a GREEN failure signal leaves neither a standing fault to return, so both
+    are residue. A later failed run re-adds it, so this cannot lose a live fault."""
+    for role_dir in (Path(home) / "intentions").glob("*"):
+        intentions.remove(home, role_dir.name, f"reoffer-{name}")
+
+
 def clear_recovered(home, *, now, last_exit=None) -> list[str]:
     """Observe GREEN every RED failure signal whose unit has since exited 0 after the RED reading.
 
@@ -55,7 +63,9 @@ def clear_recovered(home, *, now, last_exit=None) -> list[str]:
 
     Recovery also retires the pending ``reoffer-<name>`` intention: it was scheduled to return a still-standing fault,
     and once the signal is GREEN it only fires a spurious wake (2026-11-10: a recovered pub service still woke Health).
-    A later failed run re-adds it, so removing it here cannot lose a live fault.
+    A signal that was already GREEN when this ran — recovered by a path that predates that retirement (the 2026-11-10
+    ``failed-mishe-doctor-service`` residue, and the same shape under ``failed-mishe-producer-*-service``) — carries the
+    same spurious re-offer and is retired here too, so a stale re-offer cannot outlive the next sweep.
     """
     from . import work_boundary
     home = Path(home)
@@ -64,16 +74,23 @@ def clear_recovered(home, *, now, last_exit=None) -> list[str]:
     for name in sorted(signal_store.registry(home)):
         if not work_boundary.failure_signal(name):
             continue
+        reading = signal_store.recorded(home, name)
+        if not reading or reading.get("state") != signal_store.OK:
+            continue
+        if reading.get("value") == "GREEN":
+            _retire_reoffers(home, name)     # already recovered: any re-offer is residue, not a standing fault
+            continue
+        if reading.get("value") != "RED":
+            continue
         incident = read_json(home / "work/incidents" / f"{name}.json")
         unit = incident.get("unit") if isinstance(incident, dict) else None
-        reading = signal_store.recorded(home, name)
-        if not isinstance(unit, str) or not reading or reading.get("state") != signal_store.OK or reading.get("value") != "RED":
+        if not isinstance(unit, str):
             continue
         exit_ = last_exit(unit)
         observed = reading.get("observed_at")
         if exit_ and exit_[1] and isinstance(observed, (int, float)) and exit_[0] > observed:
             signal_store.observe(home, name, "GREEN", now=now, source="failure-recovered")
-            intentions.remove(home, resolver_role(home, unit), f"reoffer-{name}")
+            _retire_reoffers(home, name)
             cleared.append(name)
     return cleared
 

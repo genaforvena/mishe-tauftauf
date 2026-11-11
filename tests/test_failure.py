@@ -49,6 +49,31 @@ def test_a_still_failing_unit_keeps_its_reoffer(tmp_path):
     assert [i["id"] for i in intentions.list_(tmp_path, "health")] == [f"reoffer-{name}"]
 
 
+def test_an_already_green_failure_signal_drops_a_stale_reoffer(tmp_path):
+    # 2026-11-10 residue: a fault recovered through a path that predates the retire-on-recovery fix left its
+    # reoffer-<name> in place, and the RED-only clear_recovered skipped it, so it still scheduled one spurious wake
+    # (the live failed-mishe-doctor-service case). A GREEN failure signal has no standing fault to return.
+    from mishe_tauftauf import intentions
+    unit, name = "mishe-wake@docs.service", "failed-mishe-wake-docs-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    assert [i["id"] for i in intentions.list_(tmp_path, "health")] == [f"reoffer-{name}"]
+    store.observe(tmp_path, name, "GREEN", now=NOW + 30, source="failure-recovered")   # the pre-fix recovery
+    assert failure.clear_recovered(tmp_path, now=NOW + 120) == []
+    assert intentions.list_(tmp_path, "health") == []
+
+
+def test_a_subscriber_roles_stale_reoffer_is_retired_too(tmp_path):
+    # report mints the re-offer under the signal's resolver, yielding.settle under the subscriber role. A producer
+    # failure observed GREEN must not keep the subscriber's copy either.
+    from mishe_tauftauf import intentions
+    unit, name = "mishe-producer-tape-lock.service", "failed-mishe-producer-tape-lock-service"
+    store.register(tmp_path, name, max_age=604800, subscribers=["genome"], reoffer=3600)
+    intentions.add(tmp_path, "genome", f"reoffer-{name}", note="still failing", due=NOW + 3600)
+    store.observe(tmp_path, name, "GREEN", now=NOW, source="producer")
+    assert failure.clear_recovered(tmp_path, now=NOW + 60) == []
+    assert intentions.list_(tmp_path, "genome") == []
+
+
 def test_stale_failure_record_reads_unknown_not_green(tmp_path):
     failure.report(tmp_path, "mishe-wake@docs.service", now=NOW, notify=lambda *a: None)
     sig = store.read(tmp_path, "failed-mishe-wake-docs-service", now=NOW + 10 * 86400)
