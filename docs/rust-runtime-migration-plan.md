@@ -1487,9 +1487,9 @@ tests/test_feed_records.py tests/test_mishe_records_verify.py -q` → 36 passed;
 `docs/protocol-boundaries.md` names both Rust binaries, which the Python checker
 cannot scan.
 
-Not yet delivered: the fresh non-author review, the deterministic activation,
-revert and reapply checks, and the live observation of a cold
-`wall show --owner genome`.
+All four were taken the same day — the fresh non-author review (§10.19), then
+the deterministic activation, revert and reapply checks and the live cold read
+through the delivered pin (§10.20).
 
 ### 10.18 Slice B's cutover measured: kept (2026-11-11)
 
@@ -1568,4 +1568,40 @@ failure list on both sides of the fix
 PASS. Activation still takes the strong path: the fixed bytes confirmed by the
 non-author reviewer, then the deterministic activation, revert and reapply
 checks, then a live cold `wall show --owner genome` on the new pin.
+
+### 10.20 Slice B delivered and observed live on the pin (2026-11-11)
+
+The strong gate closed: patch record `patches/moving-pin-6114caf4.json` is
+`phase=applied` at 02:47:28Z with `delivery_verified`, and activation, functional
+observation, revert, revert-observation and reapply are all recorded
+(`-activate.log`, `-observe.log`, `-revert.log`, `-revert-observe.log`). The pin
+is `releases/6114caf4b0353f94f875898bc320b8d793746d1f`, whose
+`src/mishe_tauftauf/feed.py` is sha256 `f5b556a4…` — the slice B bytes, against
+`1a8da734…` before it. `bin/mishe` and every observed consumer unit resolve
+`runtime/current/src`, so this is the bytes the readers run.
+
+Live check on the delivered pin, cold and light, on a host with 23 GB available
+and zero memory pressure, run outside the checkout under
+`systemd-run --user --scope -p MemoryMax=2G -p CPUQuota=100% nice -n 19`
+(`artifacts/rust-plan-20261107/live_pin_ab.py`, raw output
+`live-pin-ab-20261111T0257Z.txt`). Neither side sets `MISHE_RECORDS_BIN` or
+`MISHE_TAPE_BIN`, so both resolve `$SITE/bin` through the sha-checked fallback a
+live consumer uses, and the runs are interleaved and cold:
+
+| side | total CPU-s | self | child | entries | view digest |
+|---|---|---|---|---|---|
+| before, release `9734f7cc` (Python store) | 7.889 / 7.999 | 7.115 / 7.192 | 0.774 / 0.807 | 30,335 | `6b0940c2…` |
+| after, the delivered pin `6114caf4` | 5.865 / 5.893 | 3.143 / 3.141 | 2.722 / 2.752 | 30,335 | `6b0940c2…` |
+
+Both sides produced the **same digest at the same tape state**, so the delivered
+cutover changes no output, and it removes **2.03–2.11 CPU-s (25–26%)** from the
+cold role read — consistent with §10.18's 2.2 (28%) taken before the gate. The
+digest differs from §10.18's `04d6559c…` only because four entries were appended
+to the tape between the two measurements (30,331 → 30,335); digest equality is
+only meaningful between sides measured at one instant, which is why the check is
+paired rather than compared to a stored value.
+
+The real CLI path agrees: `mishe wall show --owner genome` (the wrapper pins
+`runtime/current/src`) exits 0 in 0.33 CPU-s and 86 KB of output with empty
+stderr. Probe and outputs are site-local, not committed.
 
