@@ -158,4 +158,7 @@ def tick(site: Path, dry: bool = False, now: float | None = None) -> dict:
 
 
 if __name__ == "__main__":
-    print(json.dumps(tick(site_home(), dry="--dry" in sys.argv)))
+    res = tick(site_home(), dry="--dry" in sys.argv)
+    print(json.dumps(res))
+    # signal run maps exit 2 to RED: an uncorrected stale label keeps the signal RED until label_correction
+    sys.exit(2 if res.get("stale_labels") else 0)

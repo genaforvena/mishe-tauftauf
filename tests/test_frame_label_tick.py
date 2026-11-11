@@ -54,3 +54,19 @@ def test_reply_receipts(tmp_path, monkeypatch):
     t.apply_replies(site, 2.0)
     rows = [json.loads(l) for l in (fl._dir(site) / "replies-consumed.jsonl").read_text().splitlines()]
     assert [r["result"] for r in rows] == ["input_missing", "malformed", "unmatched"]
+
+
+def test_main_exits_2_while_a_label_is_stale(tmp_path, monkeypatch):
+    import runpy, pytest
+    import frame_label as fl
+    fl._append(tmp_path, {"ev": "label", "room": fl.BEDROOM, "label": "unknown", "det": "o", "t": 1,
+                          "text": "никого нет, Илья только ушёл", "guess": "ilya"})
+    monkeypatch.setenv("MISHE_TAUFTAUF_HOME", str(tmp_path))
+    monkeypatch.setattr("sys.argv", ["frame_label_tick.py", "--dry"])
+    with pytest.raises(SystemExit) as e:
+        runpy.run_path("tools/frame_label_tick.py", run_name="__main__")
+    assert e.value.code == 2
+    fl.correct_label(tmp_path, "o", "nobody", "fix", 2.0)
+    with pytest.raises(SystemExit) as e:
+        runpy.run_path("tools/frame_label_tick.py", run_name="__main__")
+    assert e.value.code == 0
