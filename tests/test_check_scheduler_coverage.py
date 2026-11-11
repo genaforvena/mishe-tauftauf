@@ -355,6 +355,67 @@ def test_a_check_a_systemd_unit_runs_is_not_called_unobserved(tmp_path):
     assert "FAILING-UNOBSERVED unit-run-check.py" not in result.stdout, result.stdout
 
 
+def test_a_producer_unit_running_the_pinned_release_copy_is_not_called_unobserved(tmp_path):
+    """A producer unit runs the pinned release, and that is this plant's bytes.
+
+    ``mishe sync`` writes a producer unit's command line to run the check from
+    the pinned release worktree (``releases/SHA/checks/NAME.py``), not from the
+    checkout, because running code comes from a committed snapshot. That copy
+    is this plant's own check, run on a timer, with its verdict routed through
+    the unit's signal — so the check is observed, and the reported location
+    names the release the unit ran. Reading only the checkout's ``checks/``
+    path called every producer-scheduled check unobserved, which was a false
+    verdict about the plant.
+    """
+    repo = make_repo(tmp_path / "repo", {
+        "scheduled-check.py": PASSING_CHECK,
+        "declared-check.py": PASSING_CHECK,
+        "release-run-check.py": FAILING_CHECK,
+    })
+    home = make_home(tmp_path / "home")
+    sha = "a" * 40
+    release = home / "releases" / sha / "checks"
+    release.mkdir(parents=True)
+    (release / "release-run-check.py").write_text(FAILING_CHECK, encoding="utf-8")
+    fake = write_fake_systemctl(tmp_path, units={
+        "mishe-producer-release-run.service": [
+            "/usr/bin/python3 %s/release-run-check.py --home %s" % (release, home)],
+    })
+    result = run_check(home, repo, env={"MISHE_CHECK_SYSTEMCTL": fake,
+                                        "MISHE_CHECK_SYSTEMD_SOCKET": str(fake)})
+    assert "unobserved     release-run-check.py" not in result.stdout, result.stdout
+    assert ("SCHEDULED-ELSEWHERE release-run-check.py "
+            "(systemd:mishe-producer-release-run.service@%s)" % sha[:12]) in result.stdout, result.stdout
+    assert "FAILING-UNOBSERVED release-run-check.py" not in result.stdout, result.stdout
+
+
+def test_another_sites_release_copy_does_not_make_this_trees_check_observed(tmp_path):
+    """Only this site's release worktrees count as this plant's bytes.
+
+    A unit can name any path. A release worktree under *another* site home, or
+    any other directory called ``releases``, is a different plant's copy of the
+    script: its verdict is about different bytes, so it does not make this
+    tree's tracked check observed, and the tracked one must still be reported.
+    """
+    repo = make_repo(tmp_path / "repo", {
+        "scheduled-check.py": PASSING_CHECK,
+        "declared-check.py": PASSING_CHECK,
+        "foreign-run-check.py": PASSING_CHECK,
+    })
+    home = make_home(tmp_path / "home")
+    foreign = tmp_path / "other-site" / "releases" / ("b" * 40) / "checks"
+    foreign.mkdir(parents=True)
+    (foreign / "foreign-run-check.py").write_text(PASSING_CHECK, encoding="utf-8")
+    fake = write_fake_systemctl(tmp_path, units={
+        "mishe-producer-foreign.service": [
+            "/usr/bin/python3 %s/foreign-run-check.py --home %s" % (foreign, home)],
+    })
+    result = run_check(home, repo, env={"MISHE_CHECK_SYSTEMCTL": fake,
+                                        "MISHE_CHECK_SYSTEMD_SOCKET": str(fake)})
+    assert "SCHEDULED-ELSEWHERE foreign-run-check.py" not in result.stdout, result.stdout
+    assert "unobserved     foreign-run-check.py" in result.stdout, result.stdout
+
+
 def test_a_check_a_ci_workflow_runs_is_not_called_unobserved(tmp_path):
     """A CI job is a scheduler too.
 

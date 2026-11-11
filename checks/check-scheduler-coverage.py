@@ -18,7 +18,12 @@ nothing to it.
    checks it runs) and ``NOT_SCHEDULED`` (the checks it deliberately does not
    run, each with the measured reason it is excluded).
 2. A systemd user unit that starts the check script. The unit runs it on a
-   timer and its alert routes the verdict to health.
+   timer and its alert routes the verdict to health. A unit names its script by
+   path, and two of those paths are this plant's own bytes: the reviewed tree's
+   ``checks/`` copy, and a release worktree of the site home
+   (``SITE/releases/SHA/checks/NAME.py``), which is what ``mishe sync`` writes
+   so a unit runs the pinned committed snapshot. The reported location names
+   which release a unit runs.
 3. A CI workflow job that runs the check. The plant's CI resident reads the
    run's status and routes a failure to the role that owns it.
 
@@ -105,6 +110,14 @@ from pathlib import Path
 
 #: The reviewed tree's detector scripts.
 CHECKS_DIR = "checks"
+
+#: The site's own release worktrees, under the site home. ``mishe sync`` writes
+#: a producer unit's command line to name the release it runs, not the
+#: checkout, so a check a producer unit runs is named here.
+RELEASES_DIR = "releases"
+
+#: A release worktree's directory name: the sha it was materialized from.
+RELEASE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 #: The runner's own source, relative to the site home.
 RUNNER_SOURCE = "checks-runner/observer-checks.py"
@@ -260,7 +273,7 @@ def _systemctl(arguments: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run([*parts, "--user", *arguments], capture_output=True, text=True)
 
 
-def systemd_scheduled(repo: Path) -> tuple[dict[str, list[str]], str]:
+def systemd_scheduled(repo: Path, home: Path) -> tuple[dict[str, list[str]], str]:
     """The checks a systemd unit runs, and the units that run them.
 
     A systemd unit is a scheduler: it names the check script it starts, and
@@ -303,8 +316,8 @@ def systemd_scheduled(repo: Path) -> tuple[dict[str, list[str]], str]:
     for unit, exec_lines in _unit_exec_lines(shown.stdout).items():
         if unit not in units:
             continue
-        for check in _checks_named_in_exec(exec_lines, repo):
-            scheduled.setdefault(check, []).append(unit)
+        for check, where in _checks_named_in_exec(exec_lines, repo, home):
+            scheduled.setdefault(check, []).append(unit + where)
     return scheduled, "read from systemd"
 
 
@@ -357,16 +370,30 @@ def _unit_exec_lines(show_output: str) -> dict[str, list[str]]:
     return blocks
 
 
-def _checks_named_in_exec(exec_lines: list[str], repo: Path) -> list[str]:
-    """The check scripts a unit's command lines name.
+def _checks_named_in_exec(exec_lines: list[str], repo: Path,
+                          home: Path) -> list[tuple[str, str]]:
+    """The check scripts a unit's command lines name, and where each one runs.
 
-    A unit's command line names a check script by path. Only a path under
-    the reviewed tree's own ``checks/`` directory counts, so a unit that
-    runs another site's copy of a script does not make the reviewed tree's
-    copy observed: the two are different bytes, and the plant's verdict is
-    about the one it runs.
+    A unit's command line names a check script by path. Two of those paths are
+    this plant's own bytes, and both count:
+
+    * the reviewed tree's own ``checks/`` directory, for a unit that runs the
+      checkout directly; and
+    * a release worktree of this site home — ``releases/SHA/checks/NAME.py`` —
+      which is what ``mishe sync`` writes so that a producer unit runs a
+      committed snapshot rather than whatever the checkout holds right now.
+
+    The second location is reported with the release it names, so a reader can
+    see which bytes a unit runs. Whether those pinned bytes are the newest ones
+    is a different question: a check whose delivery has not caught up with the
+    checkout runs older bytes, and that is the release lag, not an unscheduled
+    check. This check asks only whether anything runs the check at all.
+
+    Any other path is excluded: a unit that runs another site's copy of a
+    script does not make this tree's copy observed, since the two are different
+    bytes and the plant's verdict is about the one it runs.
     """
-    names = []
+    named: list[tuple[str, str]] = []
     for line in exec_lines:
         if not line.startswith(("ExecStart", "ExecStartPre", "ExecStartPost")):
             continue
@@ -377,12 +404,36 @@ def _checks_named_in_exec(exec_lines: list[str], repo: Path) -> list[str]:
             argv = token[len("argv[]="):].split()
             for argument in argv:
                 candidate = Path(argument)
-                if candidate.parent != repo / CHECKS_DIR:
-                    continue
                 if candidate.suffix != ".py":
                     continue
-                names.append(candidate.name)
-    return sorted(set(names))
+                if candidate.parent == repo / CHECKS_DIR:
+                    named.append((candidate.name, ""))
+                    continue
+                release = _release_of(candidate, home)
+                if release:
+                    named.append((candidate.name, "@" + release[:12]))
+    return sorted(set(named))
+
+
+def _release_of(candidate: Path, home: Path) -> str | None:
+    """The release sha a script path belongs to, or None if it belongs to none.
+
+    ``mishe sync`` writes a producer unit's command line to run the pinned
+    release (``SITE/releases/SHA/checks/NAME.py``). Only this site's own
+    release worktrees match: the shape is exactly ``releases/SHA/checks/NAME``
+    under the given home, so another site's release tree, or a copy of the
+    check in a scratch directory, is not this plant's reviewed bytes.
+    """
+    try:
+        relative = candidate.relative_to(home / RELEASES_DIR)
+    except ValueError:
+        return None
+    parts = relative.parts
+    if len(parts) != 3 or parts[1] != CHECKS_DIR:
+        return None
+    if not RELEASE_SHA_PATTERN.match(parts[0]):
+        return None
+    return parts[0]
 
 
 def ci_scheduled(repo: Path) -> dict[str, list[str]]:
@@ -515,7 +566,7 @@ def main() -> int:
         # it, both publish its verdict to the plant. Reading only the
         # runner's tables would call those checks unobserved, which is a
         # false verdict about the plant.
-        units, systemd_note = systemd_scheduled(repo)
+        units, systemd_note = systemd_scheduled(repo, home)
         workflows = ci_scheduled(repo)
         provenance, object_id = runner_provenance(repo, home)
     except (OSError, UnicodeError, ValueError) as exc:
