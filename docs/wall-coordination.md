@@ -93,6 +93,12 @@ keeps the release it started from. No mind moves the pin by hand.
 `wall_patch` checks and applies a patch against. It does not decide what the units
 run.
 
+The strong gate binds the reviewed bytes to the committed release: it reads
+each reviewed path's after-bytes from the shared checkout and compares them
+with the release worktree at the commit. Keep the checkout's tracked files
+equal to `HEAD`; an uncommitted edit to a reviewed path diverges from the
+release and is refused as `committed release differs from reviewed bytes`.
+
 Every running wake holds the dispatch lock for its whole run; the lock is
 shared, so a site may run several minds at once, up to `max` in
 `SITE_HOME/wake-concurrency.json` (default 1, at most 8), and one role never
