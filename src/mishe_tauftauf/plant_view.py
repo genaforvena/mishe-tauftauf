@@ -520,6 +520,7 @@ def _dialogue_block(home) -> list[str]:
             out.append(f'    UNKNOWN: {name} not readable')
             continue
         out += [f'    {row}' for row in rows] or ['    (nothing logged)']
+    out.append('  Already-given approvals: operator/standing-approvals.md. Covered means do it; do not re-ask or spam.')
     out.append('  Her replies reach roz-in.log only through mesh-roz-channel; if its cursor lags tg-strangers.log, that is the gap, not "no reply".')
     return out
 
