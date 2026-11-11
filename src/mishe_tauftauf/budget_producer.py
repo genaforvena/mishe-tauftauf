@@ -121,31 +121,26 @@ def write_atomic(path: Path, payload: dict) -> None:
 
 
 def _read_json(path: Path):
+    """Approved read (state_files.read_json); missing or unreadable input is None, never a guess."""
+    from .state_files import read_json
+
     try:
-        return json.loads(path.read_text())
+        return read_json(path)
     except (OSError, ValueError):
         return None
 
 
-def main(argv=None) -> int:
-    import argparse
+def main(home: Path, out: Path | None = None) -> int:
+    """Produce the accounts section from the site home. Dry-run (stdout) unless `out` is given.
+    The argv entrypoint is `mishe budget-produce` in runtime_cli, which owns argument parsing."""
     import time
 
-    parser = argparse.ArgumentParser(description="Produce the budget accounts section (dry-run unless --out).")
-    parser.add_argument("--home", required=True, help="site home (contains operator/budget/)")
-    parser.add_argument("--out", help="write here atomically; omit to print to stdout")
-    args = parser.parse_args(argv)
-    home = Path(args.home)
     now = time.time()
     status = _read_json(home / "operator" / "budget" / "quota.json")
     tap = _read_json(home / "operator" / "budget" / "claude-native-quota.json")
     payload = build_budget(status, tap, now)
-    if args.out:
-        write_atomic(Path(args.out), payload)
+    if out:
+        write_atomic(Path(out), payload)
     else:
         print(json.dumps(payload, sort_keys=True, indent=1, allow_nan=False))
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

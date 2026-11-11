@@ -98,6 +98,7 @@ def register(sub) -> None:
         p = sub.add_parser(*args, **kwargs)
         p.set_defaults(func=cmd_runtime)
         return p
+    p = add("budget-produce"); p.add_argument("--out", type=Path, help="write atomically here; omit for a dry-run to stdout")
     p = add("wake"); p.add_argument("role"); p.add_argument("--timeout", type=float, default=WAKE_TIMEOUT)
     p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO"), help="engine working directory (default: MISHE_REPO)")
     p = add("yield"); p.add_argument("--result", choices=YIELD_RESULTS, required=True)
@@ -178,6 +179,9 @@ def run(args) -> int:
     from . import engines, owed, signal_store, wake, yielding
     home = args.home.resolve()
     now = time.time()
+    if args.command == "budget-produce":
+        from . import budget_producer
+        return budget_producer.main(home, args.out)
     if args.command == "component":
         from . import components
         return components.main_component(args)

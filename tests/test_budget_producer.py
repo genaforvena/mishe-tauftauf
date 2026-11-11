@@ -109,7 +109,7 @@ def test_cli_dry_run_reads_real_shaped_files(tmp_path: Path, capsys):
     budget = tmp_path / "operator" / "budget"
     budget.mkdir(parents=True)
     (budget / "claude-native-quota.json").write_text(json.dumps(tap(five_hour={"observed_at": NOW, "resets_at": None, "used_percentage": 0})))
-    assert bp.main(["--home", str(tmp_path)]) == 0
+    assert bp.main(tmp_path) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["schema"] == 1
     assert "5h" not in out["accounts"]["claude"]["windows"]
