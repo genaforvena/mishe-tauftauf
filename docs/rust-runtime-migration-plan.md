@@ -2285,7 +2285,7 @@ One pass over the live tape frames 299,640 entries with 0 mismatches
 reserved, 196,351 reference lines (each entry exactly one, always final),
 1,260 single-line bodies. The golden framing suite is unchanged.
 
-**Not yet delivered.** This is only the carrier. The `F` line has no consumer
+**Delivered in §10.31.** This was only the carrier when written. The `F` line has no consumer
 until Shape B's pieces 2 and 3 exist (`mishe-records verify`'s kind column;
 `classify_outcomes` consuming the facts), and those take the strong gate because
 they touch `outcome_publication.py` and a store schema. The framer's own release
@@ -2298,3 +2298,52 @@ one live read. Build outside the checkout:
 Limits: the fact cost itself is not yet measured against §10.29's 1.44-CPU-s
 budget — the live differential pass is a correctness check, not a timed A/B; that
 measurement belongs with piece 3, where the payoff is observable.
+
+### 10.31 The framer 0.2 is delivered and live: component `2b5d7ea1`, `$SITE/bin/mishe-tape` re-pointed, the live read unchanged (2026-11-11)
+
+§10.30's carrier is now the live framer.
+
+**Genome's lock fix comes first.** `225a7be9` bumped `rust/mishe-tape/Cargo.toml`
+to 0.2.0 without regenerating `Cargo.lock`, so `cargo build --release --locked`
+exited 101 in CI run 42976870198 (both core jobs). Genome committed `2b5d7ea1`
+("Cargo.lock carries mishe-tape 0.2.0") at 07:09Z — one line, no source change.
+The promote build uses `--locked`, so the delivered SHA is **`2b5d7ea1`**, not
+`225a7be9`.
+
+**Promotion.** `mishe component promote mishe-tape 2b5d7ea1… --check-file
+$SITE/components-check-mishe-tape.json`, run under `systemd-run --user --scope -p
+MemoryMax=1G nice -n 19`, returned `phase promoted`, `current ->
+releases/2b5d7ea1…`, `verify GREEN`; ledger `promote … previous a2b7d182`. The
+check is new (`$SITE/components-check-mishe-tape.json`, following the
+`components-check-NAME.json` convention): it builds a two-entry tape, asserts the
+`--facts` stream minus its `F ` lines equals the default stream, pins the two exact
+`F` lines (`F 1 0 0 0 1 -`, `F 2 1 1 1 0 <digest>`), and pins exit 1 for no-arg
+and for `--offsets --facts`.
+
+**Install.** `$SITE/bin/mishe-tape` was re-pointed to the promoted bytes
+(`d67f07b0…`, from `12dde4d2…`); the old binary is kept at
+`$SITE/bin/mishe-tape.prev-12dde4d2` and `mishe-tape.install.json` was rewritten
+(sha256 `d67f07b0`, source `2b5d7ea1`, contract 0.2). `feed._tape_binary()` in the
+pinned release now resolves that path and its sha matches the record.
+
+**Observation, on the delivered bytes, live.**
+- Default output is byte-identical between the promoted binary and the kept 0.1
+  binary over the live tape: both `3ef5afbf…` (216,358,379 bytes).
+- Live facts differential over the same tape: **299,642 entries, 299,642 `F`
+  lines, 0 mismatches** against `outcome_publication`'s predicates, rc 0.
+- The real consumer read is unchanged: `mishe task landing-status` (pinned
+  release, live path) gives one output digest `cc826cdc…` with the new framer and
+  with `MISHE_TAPE_BIN=$SITE/bin/mishe-tape.prev-12dde4d2`.
+
+**One open observation, not a defect in this delivery.** The promote built the
+release in a staging dir and produced sha256 `d67f07b0…`; the earlier checkout
+build of the same source produced `3a90e6d9…`, so two builds of one source are not
+byte-identical across build directories. The cause is not established here, and
+the delivery is sound: the component manifest, the install record and the live
+resolver all pin the bytes that were actually built and checked. But
+`CONTRACT.md` §Build's "reproducible … same SHA-256" claim is stronger than what
+these two builds show; a bounded `RUSTFLAGS=--remap-path-prefix` measurement should
+settle it before the contract repeats the claim.
+
+Limits: one tape, one machine, warm page cache; the facts cost and the Shape B
+payoff are still unmeasured — piece 3's acceptance measures both.
