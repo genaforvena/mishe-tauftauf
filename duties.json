@@ -419,6 +419,22 @@
       "replaces": []
     },
     {
+      "name": "map-render",
+      "command": [
+        "nice",
+        "{python}",
+        "{repo}/tools/map_render.py",
+        "--site",
+        "{home}"
+      ],
+      "every": 180,
+      "timeout": 120,
+      "max_age": 600,
+      "resolver": "senses",
+      "covers": "re-renders the apartment map (svg, text, map-state.json) from the latest evidence, hypothesis priors and corrections so sprites move without a senses wake; RED/UNKNOWN only when the renderer itself fails",
+      "replaces": []
+    },
+    {
       "name": "household-phones",
       "command": [
         "{python}",
