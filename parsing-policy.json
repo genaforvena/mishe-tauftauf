@@ -78,7 +78,9 @@
     "tools/unit_psi_attribution.py",
     "tools/wake_cost_rows.py",
     "src/mishe_tauftauf/router_text.py",
-    "tools/network_boundary.py"
+    "tools/network_boundary.py",
+    "tools/health_view.py",
+    "tools/map_view.py"
   ],
   "legacy": {
     "src/mishe_tauftauf/access.py": {
