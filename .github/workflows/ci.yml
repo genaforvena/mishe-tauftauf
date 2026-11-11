@@ -41,6 +41,16 @@ jobs:
           cargo build --release --locked --manifest-path rust/mishe-network-probe/Cargo.toml
           cargo test --release --locked --manifest-path rust/mishe-network-probe/Cargo.toml
           echo "MISHE_NETWORK_PROBE_BIN=$GITHUB_WORKSPACE/rust/mishe-network-probe/target/release/mishe-network-probe" >> "$GITHUB_ENV"
+      # Since the slice-B cutover the feed verifies records through the mishe-records
+      # binary and never falls back to Python, so a CI host with no site-local
+      # $SITE/bin/mishe-records raises RecordsUnknown (fail-closed) and fails every
+      # record-verifying read in the suite: 107 failures on 4deba04b, run 42934449475.
+      # Build it from the committed crate with the same pinned toolchain and export the
+      # explicit override, exactly as the framer above.
+      - name: Build mishe-records verifier
+        run: |
+          cargo build --release --locked --manifest-path rust/mishe-records/Cargo.toml
+          echo "MISHE_RECORDS_BIN=$GITHUB_WORKSPACE/rust/mishe-records/target/release/mishe-records" >> "$GITHUB_ENV"
       - run: python tools/check_parsing.py
       - run: python tools/check_dangling.py
       - run: python checks/parsing-legacy-freeze.py
