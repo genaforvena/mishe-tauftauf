@@ -40,7 +40,8 @@ def test_null_resets_at_omits_the_window_and_never_reads_as_zero():
     # (fail closed), not a 0% reading.
     accounts = bp.build_accounts(None, tap(five_hour={"observed_at": NOW - 10, "resets_at": None, "used_percentage": 0}), NOW)
     assert "5h" not in accounts["claude"]["windows"]
-    assert accounts["claude"]["state"] == "FRESH"  # the 7d window alone is still fresh
+    # the malformed window is kept as evidence and the account fails closed (DM 300043)
+    assert accounts["claude"]["state"] == "UNREADABLE" and accounts["claude"]["malformed"] == ["5h"]
 
 
 def test_valid_zero_percent_with_future_reset_is_fresh_zero():
@@ -223,3 +224,14 @@ def test_router_does_not_admit_an_account_with_a_malformed_window():
     row = er.status_from_payload(payload, NOW)["accounts"]["codex-a"]
     assert row["state"] == "UNREADABLE"
     assert "30d" in row["reason"]
+
+
+def test_producer_marks_account_with_malformed_window_unreadable_and_keeps_evidence():
+    from mishe_tauftauf import budget_producer as bp
+
+    now = 1000.0
+    good = {"remaining": 0.5, "reset_at": 2000.0, "observed_at": 990.0, "state": "FRESH"}
+    status = {"accounts": {"a": {"provider": "p", "state": "FRESH", "observed_at": 990.0,
+                                 "windows": {"5h": good, "7d": {"remaining": None, "reset_at": 2000.0}}}}}
+    acc = bp.build_accounts(status, None, now)["a"]
+    assert acc["state"] == "UNREADABLE" and acc["malformed"] == ["7d"] and "5h" in acc["windows"]

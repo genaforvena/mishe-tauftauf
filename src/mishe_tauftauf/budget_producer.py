@@ -52,7 +52,7 @@ def _window(used, reset_at, observed_at, source, now, source_state="FRESH") -> d
     }
 
 
-def native_claude_windows(tap, now) -> dict:
+def native_claude_windows(tap, now, malformed: list | None = None) -> dict:
     """Claude windows from the native tap. used_percentage is 0..100; a window with any
     non-numeric field is omitted (a null resets_at once crashed the reader)."""
     windows = {}
@@ -64,6 +64,8 @@ def native_claude_windows(tap, now) -> dict:
             continue
         used_pct, reset_at, observed_at = x.get("used_percentage"), x.get("resets_at"), x.get("observed_at")
         if not all(_num(v) for v in (used_pct, reset_at, observed_at)):
+            if malformed is not None:
+                malformed.append(window)
             continue
         windows[window] = _window(used_pct / 100, reset_at, observed_at, "claude-native-usage", now)
     return windows
@@ -74,7 +76,7 @@ def _source_state(value) -> str:
     return value if value in SOURCE_STATES else "UNKNOWN"
 
 
-def engine_windows(account_row, now) -> dict:
+def engine_windows(account_row, now, malformed: list | None = None) -> dict:
     """Windows from one engine status account row: {state, observed_at?, windows: {w: {remaining, reset_at, state?}}}.
 
     Provenance is the engine's own observation time: a window's `observed_at`, else the account's
@@ -87,10 +89,14 @@ def engine_windows(account_row, now) -> dict:
     account_state = _source_state(account_row.get("state"))
     for window, v in (account_row.get("windows") or {}).items():
         if not isinstance(v, dict):
+            if malformed is not None:
+                malformed.append(window)
             continue
         remaining, reset_at = v.get("remaining"), v.get("reset_at")
         observed_at = v.get("observed_at", account_row.get("observed_at"))
         if not all(_num(x) for x in (remaining, reset_at, observed_at)):
+            if malformed is not None:
+                malformed.append(window)
             continue
         source = _source_state(v.get("state")) if account_state == "FRESH" else account_state
         windows[window] = _window(1 - remaining, reset_at, observed_at, "engine-usage", now, source)
@@ -104,13 +110,19 @@ def build_accounts(status: dict | None, tap, now: float) -> dict:
     for name, row in (engine or {}).items():
         if not isinstance(row, dict):
             continue
-        windows = engine_windows(row, now)
+        bad: list = []
+        windows = engine_windows(row, now, bad)
         accounts[name] = {"provider": row.get("provider"), "windows": windows}
-    claude = native_claude_windows(tap, now)
+        if bad:
+            accounts[name]["malformed"] = bad
+    bad = []
+    claude = native_claude_windows(tap, now, bad)
     accounts["claude"] = {"provider": "claude-code", "windows": claude}
+    if bad:
+        accounts["claude"]["malformed"] = bad
     for name, row in accounts.items():
         states = {w["state"] for w in row["windows"].values()}
-        row["state"] = "UNREADABLE" if not row["windows"] else "FRESH" if states == {"FRESH"} else "STALE"
+        row["state"] = "UNREADABLE" if not row["windows"] or row.get("malformed") else "FRESH" if states == {"FRESH"} else "STALE"
     return accounts
 
 
