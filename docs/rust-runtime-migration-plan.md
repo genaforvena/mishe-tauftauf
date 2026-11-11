@@ -885,7 +885,7 @@ two parts, in measured cost order:
   reads 941 MB every 10 minutes, but the stored receipts show the reading is
   *not* slow-changing: 0 of 143 consecutive 10-minute pairs carry an identical
   observation set, and sampling the same series every 1200 s drops a distinct
-  verdict word for 15 of 74 readings, three of them tape-derived. The cadence
+  verdict word for 20 of 74 readings, three of them tape-derived. The cadence
   is not a free lever; no change was made.
 
 **Rust's place in the readings duty** is unchanged and still real: it is
@@ -1751,12 +1751,13 @@ Read at 03:2xZ on 2026-11-11 from all 144 stored scan receipts in
 observations). **No live scan was run** — this is stored evidence, not a new
 sample.
 
-- **25 of 74 readings are byte-stable across all 143 consecutive pairs, 49
-  change at least once, and 15 change in every single pair** (`sense.disk.free`,
-  `sense.disk.inodes-available`, `sense.proc.loadavg`, `sense.proc.cpu-pressure`,
-  `sense.proc.io-pressure`, `sense.proc.memory-available`, `sense.proc.unit-cpu`,
-  `sense.proc.top-cpu`, `sense.thermal.hwmon`, `sense.host.boot`,
-  `sense.coord.dm-disposition-age`, `sense.cgroup.mishe-plants.throttle`,
+- **25 of 74 readings' raw samples are identical across all 143 consecutive
+  pairs, 49 change at least once, and 16 change in every single pair**
+  (`sense.disk.free`, `sense.disk.inodes-available`, `sense.proc.loadavg`,
+  `sense.proc.cpu-pressure`, `sense.proc.io-pressure`,
+  `sense.proc.memory-available`, `sense.proc.unit-cpu`, `sense.proc.top-cpu`,
+  `sense.thermal.hwmon`, `sense.host.boot`, `sense.coord.dm-disposition-age`,
+  `sense.cgroup.mishe-plants.throttle`, `sense.ledger.evidence-binding`,
   `sense.body.redmi10.peer-delivery`, `sense.mind.treadmill`,
   `sense.mind.loop-stall`). The stable set is the 15 `command.*` declarations
   plus `sense.mind.artifact-recurrence`, `sense.runtime.renderer-coverage`,
@@ -1766,15 +1767,21 @@ sample.
 - **Coarser sampling drops verdict words.** Comparing the normalized verdicts
   seen at 600 s with those seen at 1200 s in the same series — a conservative
   proxy for 900 s, since the stored series was written at 600 s and cannot be
-  sampled more finely — 15 of 74 readings lose at least one distinct verdict.
+  sampled more finely — 20 of 74 readings lose at least one distinct verdict.
   Three are tape-derived: `sense.mind.loop-stall` (loses
   `genome(watch-loop-stall)`), `sense.mind.treadmill`, and `sense.mind.watch-wait`
   (loses `watch-wait=unknown`, the one `unknown=senses` excursion). The others
-  include `sense.coord.dm-disposition-age`, `sense.coord.gate-latency`,
-  `sense.coord.authorship-fog`, `sense.proc.unit-cpu`, `sense.proc.unit-psi`,
-  `sense.proc.top-cpu`, `sense.journal.unit-failure-count`,
-  `sense.repo.push-freshness`, `sense.body.redmi10[.light]`,
-  `sense.body.multibody.coverage` and `sense.runtime.sensor-coverage`.
+  are `sense.body.redmi10`, `sense.body.redmi10.light`,
+  `sense.body.redmi10.stream`, `sense.cgroup.mishe-lifeline.throttle`,
+  `sense.cgroup.mishe-plants.throttle`, `sense.coord.authorship-fog`,
+  `sense.host.boot`, `sense.journal.kernel-error-count`,
+  `sense.journal.unit-failure-count`, `sense.ledger.delivery-invariant`,
+  `sense.net.tailnet-peer`, `sense.proc.top-cpu`, `sense.proc.unit-cpu`,
+  `sense.proc.unit-psi`, `sense.runtime.sensor-coverage`, `sense.site.ghost-homes`
+  and `sense.space.light`.
+
+Reproduce all three with `artifacts/rust-plan-20261107/reading-churn.py` (stored
+receipts only; it reads no tape and runs no scan).
 
 The 941 MB read exists to serve the tape-derived readings, and those are among
 the readings a coarser sample blurs. **S2.3 abandoned; no `duties.json` or unit
