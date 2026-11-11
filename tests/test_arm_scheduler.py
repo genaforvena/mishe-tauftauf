@@ -122,3 +122,56 @@ def test_a_refused_systemd_run_surfaces_the_manager_error(monkeypatch):
         raise AssertionError("a refused arm must raise, not pass silently")
     except RuntimeError as exc:
         assert "rc=1" in str(exc) and "bound to an existing unit" in str(exc), str(exc)
+
+
+def test_concurrent_rearms_serialise_so_no_arm_cancels_its_peer(monkeypatch, tmp_path):
+    """Two arms racing must not interleave their stop/start.
+
+    2026-11-11: producers ending in the same second each re-armed the next-due timer; B's
+    ``systemctl stop`` caught A's still-pending start job and cancelled it, so A's
+    ``systemd-run`` returned rc=1 "Job ... canceled" (delivery-requests 00:52:46Z,
+    household-daylight 01:50:07Z). The lock file must make each replace atomic.
+    """
+    import threading
+    import time
+
+    lock = tmp_path / "next-due.lock"
+    entered = threading.Event()   # a fresh timer start is in flight
+    release = threading.Event()   # let that arm finish
+    log = []
+    log_lock = threading.Lock()
+
+    class GatedRun:
+        def __call__(self, argv, **kwargs):
+            with log_lock:
+                log.append((threading.current_thread().name, tuple(argv[:3])))
+            if argv[0] == "systemd-run":
+                entered.set()
+                release.wait(5)
+
+            class Done:
+                returncode = 0
+                stderr = b""
+                stdout = ""
+
+            return Done()
+
+    monkeypatch.setattr(arm.subprocess, "run", GatedRun())
+
+    def arm_once():
+        arm.systemd_scheduler(2_000_000_000.0, command=["python", "due"], lock=lock)
+
+    first = threading.Thread(target=arm_once, name="a")
+    first.start()
+    assert entered.wait(5), "the first arm never reached its fresh timer"
+    second = threading.Thread(target=arm_once, name="b")
+    second.start()
+    time.sleep(0.2)                                  # b is contending for the lock
+    assert {name for name, _ in log} == {"a"}, "b ran before the first arm released the lock"
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert not first.is_alive() and not second.is_alive()
+    names = [name for name, _ in log]
+    assert set(names) == {"a", "b"}
+    assert names == sorted(names)                    # every "a" call precedes every "b" call

@@ -6,7 +6,9 @@ silent signals (an edge subscribers are woken by) and arms the next one.
 """
 from __future__ import annotations
 
+import fcntl
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 import time
 import uuid
@@ -34,28 +36,49 @@ def _pending_timers() -> list[str]:
     return sorted(set(units.user_timer_names(TIMER_GLOB) + [f"{TIMER_UNIT}.timer"]))
 
 
-def systemd_scheduler(epoch: float | None, *, command: list[str]) -> None:
-    """Replace the transient next-due timer. ``None`` just removes it."""
-    for timer in _pending_timers():
-        subprocess.run(["systemctl", "--user", "stop", timer],
-                       check=False, capture_output=True)
-    if epoch is None:
+@contextmanager
+def _replacement_lock(lock: Path | None):
+    """Serialise the stop-then-start replacement across processes.
+
+    Without it two arms interleave: A starts its fresh transient timer (the start job is
+    pending, so ``systemctl list-units --type=timer --all`` already shows it) and B's
+    ``systemctl stop`` cancels A's pending start job, so A's ``systemd-run`` returns rc=1
+    and the producer that armed fails (2026-11-11 00:52:46Z delivery-requests, 01:50:07Z
+    household-daylight). ``None`` keeps callers that never touch systemd lock-free.
+    """
+    if lock is None:
+        yield
         return
-    now = time.time()
-    # A genuinely upcoming time keeps its precision (at least a second out); one that is already overdue backs off.
-    when = max(epoch, now + 1) if epoch > now else now + OVERDUE_RETRY_SECONDS
-    moment = datetime.fromtimestamp(when, timezone.utc)
-    unit = f"{TIMER_UNIT}-{uuid.uuid4().hex[:12]}"
-    result = subprocess.run(["systemd-run", "--user", f"--unit={unit}",
-                             "--slice=mishe-plants.slice",
-                             "--setenv=PYTHONPATH=" + str(Path(__file__).resolve().parent.parent),
-                             f"--on-calendar={moment:%Y-%m-%d %H:%M:%S} UTC",
-                             "--timer-property=AccuracySec=1s", "--collect", *command],
-                            capture_output=True)
-    # The manager error text is the only way to diagnose a refused arm (DM 299366):
-    # without it a failed arm looks like a generic producer failure.
-    if result.returncode != 0:
-        raise RuntimeError(f"systemd-run rc={result.returncode} unit={unit}: {units.manager_error(result)}")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+
+
+def systemd_scheduler(epoch: float | None, *, command: list[str],
+                      lock: Path | None = None) -> None:
+    """Replace the transient next-due timer. ``None`` just removes it."""
+    with _replacement_lock(lock):
+        for timer in _pending_timers():
+            subprocess.run(["systemctl", "--user", "stop", timer],
+                           check=False, capture_output=True)
+        if epoch is None:
+            return
+        now = time.time()
+        # A genuinely upcoming time keeps its precision (at least a second out); one that is already overdue backs off.
+        when = max(epoch, now + 1) if epoch > now else now + OVERDUE_RETRY_SECONDS
+        moment = datetime.fromtimestamp(when, timezone.utc)
+        unit = f"{TIMER_UNIT}-{uuid.uuid4().hex[:12]}"
+        result = subprocess.run(["systemd-run", "--user", f"--unit={unit}",
+                                 "--slice=mishe-plants.slice",
+                                 "--setenv=PYTHONPATH=" + str(Path(__file__).resolve().parent.parent),
+                                 f"--on-calendar={moment:%Y-%m-%d %H:%M:%S} UTC",
+                                 "--timer-property=AccuracySec=1s", "--collect", *command],
+                                capture_output=True)
+        # The manager error text is the only way to diagnose a refused arm (DM 299366):
+        # without it a failed arm looks like a generic producer failure.
+        if result.returncode != 0:
+            raise RuntimeError(f"systemd-run rc={result.returncode} unit={unit}: {units.manager_error(result)}")
 
 
 def arm(home, *, scheduler) -> float | None:

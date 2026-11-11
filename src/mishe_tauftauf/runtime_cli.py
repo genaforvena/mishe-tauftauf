@@ -62,7 +62,8 @@ def scheduler(home: Path):
         write_json(home / "next-due.json", {"at": epoch})
         if installed:
             armmod.systemd_scheduler(epoch, command=[sys.executable, "-m", "mishe_tauftauf",
-                                                     "--home", str(home), "due"])
+                                                     "--home", str(home), "due"],
+                                     lock=home / "next-due.lock")
             if not (home / "hold").exists():
                 from . import wake
                 wake.resume_owed(home, declared_roles(home), now=time.time())
