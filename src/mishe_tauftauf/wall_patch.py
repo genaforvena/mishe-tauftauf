@@ -223,6 +223,39 @@ def base_snapshot(root, base, name):
     return committed_snapshot(root, base, name)
 
 
+def committed_or_none(root, name):
+    """Bytes ``name`` has at HEAD, or None when ``root`` has no readable HEAD.
+
+    The delivered artifact is a commit, so a manifest file's reviewed bytes can be
+    read back from HEAD. A unit-test layout is not a Git checkout; there the caller
+    keeps the strict working-tree comparison.
+    """
+    try:
+        return committed_snapshot(root, "HEAD", name)
+    except ValueError:
+        return None
+
+
+def tree_drifted(root, name, after):
+    """Has the shared checkout's ``name`` left the reviewed ``after`` bytes?
+
+    ``after`` is the reviewed snapshot. A tree that now equals HEAD's committed
+    bytes is a peer's commit during the check window, not drift of the delivered
+    bytes: what is delivered is the commit, ``activate`` materializes the release
+    worktree from it, and ``bind_reviewed_source`` binds that worktree to
+    ``after``. Only an uncommitted local write to the path, or a layout with no
+    readable HEAD, is drift.
+    """
+    current = snapshot(target(root, name))
+    if current == after:
+        return False
+    committed = committed_or_none(root, name)
+    # Git records only the executable bit, so umask can leave the checkout mode
+    # different from the committed one; the commit's content is what a peer's
+    # commit moved, and mode drift is neither readable nor delivered here.
+    return committed is None or current is None or current["bytes"] != committed["bytes"]
+
+
 def prepare(home, identity, paths, base=None):
     with lock(home):
         path = location(home, identity)
@@ -328,7 +361,7 @@ def check(home, identity, command, *, activate=None, observe=None, revert_observ
             _save(location(home, identity), record)
             raise ValueError("deterministic patch check failed")
         changed = [name for name, values in record["files"].items()
-                   if snapshot(target(home.parent, name)) != values["after"]]
+                   if tree_drifted(home.parent, name, values["after"])]
         if changed:
             # Bytes changed under the check; any earlier verdict was on those bytes.
             # Name the files: a bare phase cannot tell a peer's commit to a shared
@@ -409,7 +442,7 @@ def _apply(home, identity, record, activate, observe):
         raise ValueError("patch needs a passing review")
     runtime = Path(record["runtime"])
     for name, values in record["files"].items():
-        if snapshot(target(home.parent, name)) != values["after"]:
+        if tree_drifted(home.parent, name, values["after"]):
             raise ValueError(f"patch changed since review: {name}")
         if snapshot(target(runtime, name)) != values["runtime_before"]:
             raise ValueError(f"runtime changed since prepare: {name}")

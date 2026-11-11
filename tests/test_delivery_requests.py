@@ -386,12 +386,16 @@ def test_patch_drift_before_apply_fails_without_admission_or_runtime_write(plant
     monkeypatch.setattr(q, "notify", lambda *a, **k: None)
     # Simulate drift after the request-time check: only the apply-time check (wall_patch._apply) must catch it.
     monkeypatch.setattr(q, "validate_source", lambda *a, **k: None)
-    home, *_ = plant; row, runtime = strong_request(plant, monkeypatch)
+    home, repo, *_ = plant; row, runtime = strong_request(plant, monkeypatch)
     record = wall_patch.status(home, "strong")
     assert record["phase"] == "reviewed"
     name = next(iter(record["files"]))
-    record["files"][name]["after"] = "drifted-after-review"
-    write_json(wall_patch.location(home, "strong"), record)
+    # A cooperating writer edits the delivered path without committing it, so the
+    # reviewed bytes are in neither the checkout nor HEAD and apply must refuse before
+    # any write. Drift that *is* a commit is the delivered commit's business: activate
+    # materializes the release from that commit and bind_reviewed_source binds it to
+    # the reviewed bytes.
+    (repo / name).write_text("drifted-after-review\n")
     before = (runtime / "docs/page.md").read_text()
     result = q.consume(home)[0]
     assert result["state"] == "failed" and "patch changed since review" in result["error"]

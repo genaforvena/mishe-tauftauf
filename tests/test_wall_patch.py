@@ -748,3 +748,61 @@ def test_base_rejects_option_like_ref_and_escaping_path(tmp_path):
         wall_patch.base_snapshot(home.parent, "--output=/tmp/x", "src/mishe_tauftauf/example.py")
     with pytest.raises(ValueError, match="invalid patch path"):
         wall_patch.base_snapshot(home.parent, "HEAD", "../escape.py")
+
+
+def git_layout(tmp_path):
+    """A layout whose shared checkout is a real Git repository with a base commit."""
+    home, source, deployed = layout(tmp_path)
+    git = ["git", "-C", str(tmp_path), "-c", "user.email=t@example", "-c", "user.name=t"]
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(git + ["add", "src"], check=True)
+    subprocess.run(git + ["commit", "-qm", "base"], check=True)
+    return home, source, deployed
+
+
+def commit_peer(root, *paths):
+    git = ["git", "-C", str(root), "-c", "user.email=t@example", "-c", "user.name=t"]
+    subprocess.run(git + ["add", *paths], check=True)
+    subprocess.run(git + ["commit", "-qm", "peer"], check=True)
+
+
+def test_peer_commit_to_a_manifest_path_does_not_refuse_apply(tmp_path, monkeypatch):
+    """The delivered artifact is the commit the release is materialized from.
+
+    A cooperating writer committing to a manifest path during the check window moves
+    the shared checkout and HEAD together. That is not drift of the delivered bytes,
+    and refusing it cost five consecutive moving-pin cycles on 2026-11-11.
+    """
+    home, source, deployed = git_layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
+    wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
+    source.write_text("peer\n")
+    commit_peer(tmp_path, "src/mishe_tauftauf/example.py")
+    wall_patch.apply(home, "change", [sys.executable, "-c", "pass"], [sys.executable, "-c", "pass"])
+    assert wall_patch.status(home, "change")["phase"] == "applied"
+    assert deployed.read_text() == "after\n"
+
+
+def test_uncommitted_edit_to_a_manifest_path_still_refuses_apply(tmp_path, monkeypatch):
+    home, source, deployed = git_layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
+    wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
+    source.write_text("uncommitted\n")
+    with pytest.raises(ValueError, match="changed since review"):
+        wall_patch.apply(home, "change", [sys.executable, "-c", "pass"], [sys.executable, "-c", "pass"])
+    assert deployed.read_text() == "before\n"
+
+
+def test_peer_commit_during_check_is_not_a_source_mutation(tmp_path, monkeypatch):
+    """A peer's commit during the test window is not the test mutating source."""
+    home, source, deployed = git_layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
+    escaped = f"import subprocess,pathlib;pathlib.Path({str(source)!r}).write_text('peer\\n');subprocess.run(['git','-C',{str(tmp_path)!r},'-c','user.email=t@example','-c','user.name=t','add','src'],check=True);subprocess.run(['git','-C',{str(tmp_path)!r},'-c','user.email=t@example','-c','user.name=t','commit','-qm','peer'],check=True)"
+    wall_patch.check(home, "change", [sys.executable, "-c", escaped])
+    assert wall_patch.status(home, "change")["phase"] == "reviewed"
