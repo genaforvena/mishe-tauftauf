@@ -5,6 +5,7 @@ on opening, then follows new records without repainting or clearing scrollback.
 """
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -26,13 +27,16 @@ def wakes_step(home, cursor):
     root = Path(home) / 'wakes'
     if not root.is_dir():
         raise ValueError(f'wake history missing: {root}')
-    paths = sorted(((kind, p) for kind, pattern in (('wake', '*.snapshot.json'),
-                    ('settled', '*.yield.json'), ('output', '*.work.json'))
-                    for p in root.glob(pattern)), key=lambda row: (row[1].stat().st_mtime_ns,
-                    wake_key(row[1]), {'wake': 0, 'settled': 1, 'output': 2}[row[0]]))
     known = set() if cursor is None else set(cursor)
-    names = {p.name for _, p in paths}
-    selected = paths[-60:] if cursor is None else [(kind, p) for kind, p in paths if p.name not in known]
+    kinds = (('.snapshot.json', 'wake'), ('.yield.json', 'settled'), ('.work.json', 'output'))
+    # One directory pass; with a cursor, only names not seen before need a stat for ordering (the directory holds
+    # thousands of retained records and this runs every few seconds).
+    listing = [(kind, e.name) for e in os.scandir(root) for suffix, kind in kinds if e.name.endswith(suffix)]
+    names = {name for _, name in listing}
+    fresh = listing if cursor is None else [(kind, name) for kind, name in listing if name not in known]
+    paths = sorted(((kind, root / name) for kind, name in fresh), key=lambda row: (row[1].stat().st_mtime_ns,
+                   wake_key(row[1]), {'wake': 0, 'settled': 1, 'output': 2}[row[0]]))
+    selected = paths[-60:] if cursor is None else paths
     blocks = []
     deferred = set()
     models = wake_models(home)
@@ -78,8 +82,11 @@ def wakes_step(home, cursor):
     # While a wake runs, add one short progress block per PROGRESS_SECONDS bucket: the last lines of its stream so far.
     progress = set()
     now = time.time()
-    for start in root.glob('*.work-start.json'):
+    for start in (root / e.name for e in os.scandir(root) if e.name.endswith('.work-start.json')):
         key = wake_key(start)
+        # `names` was listed before this loop; a record that lands in between is caught by the exists() recheck below.
+        if key + '.work.json' in names or key + '.yield.json' in names:
+            continue
         if (root / (key + '.work.json')).exists() or (root / (key + '.yield.json')).exists():
             continue
         outputs = sorted(root.glob(key + '.prompt.out.*'))
