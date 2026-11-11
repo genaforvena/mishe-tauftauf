@@ -55,6 +55,11 @@ def parse_reply(text: str) -> str:
             w = w.replace("ё", "е")
             if re.search(r"(?<![\w-])" + re.escape(w) + r"(?![\w-])", t):
                 hits.add(label)
+    # An explicit "nobody on the frame" outranks names that only explain the miss
+    # ("никого нет, это илья только что ушел"): the person named is not in the frame.
+    if "nobody" in hits and len(hits) > 1 and re.search(
+            r"(?<![\w-])(никого нет|нет никого|никого на|no one|nobody)(?![\w-])", t):
+        return "nobody"
     return hits.pop() if len(hits) == 1 else "unknown"
 
 
