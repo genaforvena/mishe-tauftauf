@@ -217,8 +217,9 @@ def test_every_uncovered_leaf_of_the_served_plant_is_dispositioned() -> None:
     out = home / "artifacts" / "check-leaf-invocation-coverage.json"
 
     # The real plant is audited from its committed bytes, not from the
-    # working tree: seven reader pages are gitignored and a clone never
-    # receives them.  Without ``--tree`` the audit reads HEAD.
+    # working tree: five reader pages are gitignored and checkout-local, so a
+    # clone receives fewer pages than this checkout holds.  Without ``--tree``
+    # the audit reads HEAD.
     argv = [sys.executable, str(_CHECKER), "--home", str(home),
             "--root", str(_CHECKOUT_ROOT), "--out", str(out)]
     done = subprocess.run(argv, capture_output=True, text=True, timeout=300,

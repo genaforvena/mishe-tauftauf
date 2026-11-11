@@ -11,10 +11,12 @@ invocation (`top sub`, or a bare `top`) against the reader corpus
 The corpus is the **committed** pages — the bytes a clone of this repository
 receives.  The working tree and a clone differ here, and the difference
 decides the verdict: commit ``237db71f`` ("Remove local operating records
-from the public repository", 2026-10-30) gitignored seven reader pages that
-still exist on this checkout, so the working tree shows 16 pages where a clone
-shows 9.  Measured on 2026-11-01, the working tree's pages name 52 leaf
-invocations and the clone's name 34; the 18 in between are named only by
+from the public repository", 2026-10-30) added ``.gitignore`` rules for seven
+reader pages; five are still checkout-local and two
+(``protocol-boundaries.md``, ``wall-coordination.md``) were committed again at
+``d6f3266f`` (2026-11-06), so the working tree holds more pages than a clone
+receives.  Measured on 2026-11-01, the working tree's pages named 52 leaf
+invocations and the clone's named 34; the 18 in between were named only by
 pages a reader never receives.  So the corpus is read through ``git archive``,
 exactly like ``checks/shipped-book-links.py``.  The working-tree reading is
 reported beside it, because the gap between the two is the measurement.
@@ -235,9 +237,11 @@ def committed_reader_corpus(repo: Path) -> dict[str, str]:
     ``.gitignore`` rules that excluded ``docs/operating.md``,
     ``docs/how-it-works.md``, ``docs/wall-coordination.md``,
     ``docs/agent-step-experiments.md``, ``docs/decision-models.md``,
-    ``docs/protocol-boundaries.md`` and ``docs/recovery.md``.  Those seven
-    pages still exist on this checkout, so ``reader_corpus`` sees 16 files
-    where a clone sees 9.
+    ``docs/protocol-boundaries.md`` and ``docs/recovery.md``.  Five of those
+    seven are still checkout-local; ``docs/protocol-boundaries.md`` and
+    ``docs/wall-coordination.md`` were committed again at ``d6f3266f``
+    (2026-11-06) and are in the clone.  The working tree therefore holds more
+    reader pages than a clone receives.
 
     Measured on this plant on 2026-11-01 (Docs wake 155786): the working-tree
     reading leaves **one** unnamed leaf, ``dispatch-receipt``, while the

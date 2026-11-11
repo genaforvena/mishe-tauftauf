@@ -8,11 +8,13 @@ Unknown subcommands are stale claims. Prose is excluded because command tops
 such as `wall`, `seed` and `pain` are also ordinary words.
 
 The corpus is the **committed** pages — the bytes a clone of this repository
-receives — not the working tree.  Seven reader pages are gitignored since
-commit ``237db71f`` (2026-10-30) but still exist on this checkout, so a
-working-tree scan audits 16 pages where a clone receives 9.  A stale command
-claim in a page the clone never receives is not the reader's problem; a stale
-claim in a page it does receive is.  The corpus is therefore read through
+receives — not the working tree.  Commit ``237db71f`` (2026-10-30) added
+``.gitignore`` rules for seven reader pages; five are still checkout-local and
+two — ``protocol-boundaries.md`` and ``wall-coordination.md`` — were committed
+again at ``d6f3266f`` (2026-11-06) and are in the clone.  The working tree
+therefore holds more reader pages than a clone receives, so a stale command
+claim in a page the clone never receives is not the reader's problem while one
+in a page it does receive is.  The corpus is therefore read through
 ``git archive``, as ``checks/shipped-book-links.py`` does.
 
 A non-site command-shaped span may be recorded in DISPOSITIONS. An
@@ -32,9 +34,9 @@ ROOT = Path(__file__).resolve().parents[1]
 LEAF_CHECKER = ROOT / "tools" / "check_leaf_invocation_coverage.py"
 
 # No disposition is recorded here.  The one that stood for
-# ``docs/protocol-boundaries.md`` is gone: that page is gitignored since
-# commit ``237db71f`` (2026-10-30), so a clone never receives it, and the
-# span it keyed — ``tmux list-panes`` — is already excluded by
+# ``docs/protocol-boundaries.md`` is gone: the span it keyed —
+# ``tmux list-panes`` — no longer appears in the corpus (it was dropped when
+# that page was rewritten), and a ``tmux`` top is excluded by
 # ``RAW_BINARY_TOPS`` before any disposition is consulted, so the key could
 # never fire.  A dead key would read as covered coverage.
 DISPOSITIONS: dict[tuple[str, str], str] = {}
