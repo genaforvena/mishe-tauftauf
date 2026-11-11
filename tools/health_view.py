@@ -18,6 +18,7 @@ TEND = SITE / "operator" / "tend" / "tend.py"
 REFRESH_S = 300
 TIMEOUT_S = 120
 WIDTH = 170
+WINDOW_ROWS = 41
 _cache = {"at": 0.0, "text": None, "error": None}
 
 
@@ -89,16 +90,17 @@ def render(now=None):
     rows.append(f"VERDICT: {verdict}")
     rows.append(f"  Why: {why}")
     rows.append(f"  Pass: {head or 'tending pass'}")
-    rows.append("")
+    attention = secs.get("verdict", [])[1:]
+    if attention:
+        rows.append("")
+        rows.append("NEEDS YOU OR STEWARD")
+        rows.extend("  " + l for l in attention[:4])
     for name in ("guard, hold, views", "units", "wakes", "signals", "delivery", "resources"):
         if name in secs:
-            rows.append(name.upper())
-            rows.extend("  " + l for l in secs[name][:8])
             rows.append("")
-    if "verdict" in secs and len(secs["verdict"]) > 1:
-        rows.append("ATTENTION")
-        rows.extend("  " + l for l in secs["verdict"][1:8])
-    return [fit(r) for r in rows]
+            rows.append(name.upper())
+            rows.extend("  " + l for l in secs[name][:5])
+    return [fit(r) for r in rows[:WINDOW_ROWS]]
 
 
 def main():
