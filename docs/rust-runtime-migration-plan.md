@@ -1809,5 +1809,82 @@ trigger for collecting it: free memory ≥ 8 GB and memory pressure near zero
 a wake and outside the checkout under a cgroup cap
 (`artifacts/rust-plan-20261107/cargo-capped.sh` is the existing capped-run
 helper), one reading per process so a fold's cost is separable from the shared
-snapshot's.
+snapshot's. **Answered by §10.24: the fold does not pay; the ledger lane does.**
+
+### 10.24 §10.23 answered: the per-reading tape folds are negligible, the ledger lane is the real Python share (2026-11-11)
+
+Measured at 03:53Z on the live plant, from the pinned source
+(`PYTHONPATH=$SITE/runtime/current/src` → release `6114caf4`), one cold
+`discovery.sample($SITE)` run under
+`systemd-run --user --scope -q -p MemoryMax=1G nice -n 19` from outside the
+checkout. Script and raw output:
+`artifacts/rust-plan-20261107/fold-share-20261111.py` and `.out`. Every reading
+function was wrapped to charge self CPU (`time.process_time`), child CPU
+(`RUSAGE_CHILDREN`) and wall time; the wrapper's overhead is per call and each
+reading ran once.
+
+Run total: **15.39 CPU-s** (self 10.30 + child 5.09), 17.4 s wall, 74
+observations, peak RSS 861 MiB. The kernel's own accounting for the live duty's
+03:50:01Z run was **18.95 CPU-s** and 899 MiB peak (`systemctl --user show
+mishe-producer-readings.service -p CPUUsageNSec -p MemoryPeak`); the 3.56 CPU-s
+difference is outside `sample()` — CLI import, the receipt write and the
+`signal run` wrapper — and is not attributed here.
+
+Where the CPU goes (self+child CPU-s):
+
+| item | CPU-s | note |
+| --- | --- | --- |
+| `_scan_snapshot` — the shared tape read | 3.88 | Rust child 2.23 + Python glue 1.66; 2 `Feed.entries` calls, the second a cache hit |
+| `_ledger_evidence_binding` | 4.50 | includes `classify_outcomes` 1.81 nested → own 2.69 |
+| `_head_rewinds` | 2.03 | git child 1.85 |
+| `_disk_trend` | 0.97 | |
+| `_ledger_delivery_invariant` | 0.66 | |
+| `_ledger_dv_binding` | 0.44 | |
+| `_coord_dm_disposition_age` | 0.35 | |
+| `_repo_release_retention` | 0.33 | |
+| `_seed_settle_result_mix` | 0.32 | |
+| `_mind_artifact_recurrence` | 0.31 | |
+| `_mind_watch_wait` / `_mind_treadmill` / `_mind_docs_treadmill` | 0.16 / 0.12 / 0.11 | each mostly its git child |
+| every other reading | < 0.1 each | |
+
+**The per-reading tape folds do not pay.** Every tape-derived reading's own fold
+is ≤ 0.35 CPU-s, and the whole lane — treadmill, docs-treadmill, artifact
+recurrence, loop stall, watch wait, disposition age — is **1.07 CPU-s of the
+15.39** (7.0%; 5.7% of the live 18.95). The largest, `_mind_artifact_recurrence`
+at 0.31, folds a warm, already-verified entry list with no read of its own. A
+per-reading Rust port (R2-class, not a small POSIX command) would chase about a
+second. **Abandoned; no commit, no port.** This settles §10.23's open question
+the way its own bound predicted, and supersedes the "half of a reading's own
+cost" criterion, which was under-specified: `_mind_artifact_recurrence`'s fold is
+100% of its own cost and still worth nothing in absolute terms. Judge a fold
+against the run, not against the reading.
+
+**What the run's Python actually costs is the ledger lane.** The folds
+over the tape's outcome and ledger records — `_ledger_evidence_binding` (own
+2.69), `classify_outcomes` (1.81), `_ledger_delivery_invariant` (0.66) and
+`_ledger_dv_binding` (0.44) — are **5.61 CPU-s = 36%** of the sampled run; adding
+`_disk_trend` (0.97) makes the outcome/ledger folds 43%. The read the migration
+has already made Rust is 3.88.
+
+A bounded probe of the biggest of those (same cap; script
+`artifacts/rust-plan-20261107/ledger-hash-probe-20261111.py`) shows what it is
+made of: `_ledger_evidence_binding` creates **9,761** sha256 objects, hashes
+**240,258,287 bytes** in **783,841 `update` calls**, and spends only **0.754
+CPU-s inside `hashlib`** (318 MB/s). The rest of its 4.5 s is Python — about 80
+chunked reads per file, then the path policy and the classification. A Rust port
+would delete Python per-file and per-chunk work, not C hashing, which is the
+shape of a small POSIX command (`mishe-evidence-verify --manifest -`) and the
+kind the migration wants. Its payoff and exact seam are **UNKNOWN** until the
+lane is split by its own profile.
+
+Limits: one run; warm page cache (the live 03:50Z run had just read the tape), so
+the first `_scan_snapshot` charges no I/O wait. Child CPU is `RUSAGE_CHILDREN`
+deltas, so grandchildren are counted but a child's own threads only as the time
+it reports. The 15.39/18.95 gap is unattributed. The probe's wrapper inflates
+per-`update` cost, so its ledger total (6.15 s) and its 0.754 s hashing figure
+are both upper bounds.
+
+Next: split the ledger lane with a cProfile of `_ledger_evidence_binding` and
+`classify_outcomes` on a primed snapshot, capped and outside the checkout, and
+choose the port shape from that.
 
