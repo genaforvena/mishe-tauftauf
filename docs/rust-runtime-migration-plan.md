@@ -1487,8 +1487,40 @@ tests/test_feed_records.py tests/test_mishe_records_verify.py -q` → 36 passed;
 `docs/protocol-boundaries.md` names both Rust binaries, which the Python checker
 cannot scan.
 
-Not yet delivered: the commit, the fresh non-author review, the deterministic
-activation, revert and reapply checks, and the live observation of a cold
-`wall show --owner genome` with the drain-thread wrapper's measured cost against
-the ~2 CPU-s the boundary removes (§5.2 abandonment condition).
+Not yet delivered: the fresh non-author review, the deterministic activation,
+revert and reapply checks, and the live observation of a cold
+`wall show --owner genome`.
+
+### 10.18 Slice B's cutover measured: kept (2026-11-11)
+
+The abandonment test §10.17 left open is now taken, before the strong gate
+spends anything on the change. A/B on the live tape, same cold role read through
+the real path (`Feed.role_entries("genome", _force_full=True)`, fresh process per
+run, role cache moved aside per run, runs interleaved so drift hits both sides):
+before is the pinned release `9734f7cc` src (verification in Python through
+`records.VerifiedStore`), after is the cutover at `9cecab64` (record-bearing
+entries streamed into one `mishe-records verify` child per site home, stdout
+drained on a thread). Interpreter `.venv/bin/python` (3.12.3), under
+`systemd-run --user --scope -p MemoryMax=2G -p CPUQuota=100%` at `nice 19`,
+outside the checkout; CPU-s is `rusage` self + children; loadavg 2.85 and
+MemAvailable 23 GB at the run.
+
+| side | total CPU-s (3 runs) | self | child | view entries | view digest |
+|---|---|---|---|---|---|
+| before `9734f7cc`, Python store | 7.83 / 7.95 / 8.22 | 7.05–7.35 | 0.78–0.87 (framer only) | 30,331 | `04d6559c…` |
+| after `9cecab64`, Rust verifier | 5.73 / 5.73 / 6.49 | 3.09–3.40 | 2.64–3.09 (framer + records) | 30,331 | `04d6559c…` |
+
+All six runs produced the **same view digest**, so the cutover changes no output.
+**Net 2.2 CPU-s (28%) removed from the cold role read** (median 7.95 → 5.73): the
+Python side gives up 4.1 CPU-s and the Rust child — framer plus record
+verification — costs 2.3 CPU-s of it. The drain-thread wrapper is inside the
+after side's self time, so it is already paid for in this comparison: the §5.2
+condition ("the serialization cost exceeds the Python parse cost") is **not met:
+B is kept**, and the strong gate is worth running.
+
+Limits: one representative read (one role, the live tape as it stood), ambient
+load 2.85 rather than zero, buffers warm; this is a relative A/B, not a baseline
+row. Probe and raw output are site-local
+(`artifacts/rust-plan-20261107/sliceB_wrapper_ab.py`,
+`sliceB-wrapper-ab-20261111T0048Z.txt`), not committed.
 
