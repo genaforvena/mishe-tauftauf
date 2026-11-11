@@ -3,14 +3,29 @@
 Textual protocol interpretation belongs to the literal boundary files named in
 `parsing-policy.json`. Internal consumers operate on decoded values. Human prose
 in walls, chat and documents is opaque content, not a protocol to mine for state
-or authority. Append chat through the canonical CLI, for example
+or authority. The only text forms an adapter reads are the first-line forms it
+names (a DM's `[dm] to=ROLE` line and a permission record's header); the rest of a
+body is never parsed for state. Append chat through the canonical CLI, for example
 `mishe wall dm --source ROLE --to OTHER --text TEXT`. Give exactly one of `--text`
 or `--file FILE`.
 
 The chat and wall adapters are `src/mishe_tauftauf/chat_protocol.py`, which decodes
-lifecycle and linked-site control records, and `src/mishe_tauftauf/wall_text.py`,
-which decides whether two wall documents are the same document. Both are named in
-the policy; the wall prose itself stays opaque.
+lifecycle, site-sync and market records from feed entries, and
+`src/mishe_tauftauf/wall_text.py`. `wall_text.py` does four things, and nothing else:
+
+- `is_peer_copy` decides whether a note is a peer's wall document, so a write that
+  would reproduce one is refused. Trailing blank lines do not count.
+- `document_digest` and `decode_audit_entries` give the same document identity for
+  notes that exist only in the write audit log.
+- `dm_recipient` reads a DM's first line. The canonical form is exactly
+  `[dm] to=ROLE`, with the text on the next line. Natural prose such as
+  `to genome: ...` addresses a recipient only when the named role is declared.
+  `near_miss_dm` catches a `[dm] to=ROLE` line with words after the role. The CLI
+  then records the entry as plain chat, wakes nobody, and prints a warning.
+- `addressed` reads the first line of a feed entry, including the permission header
+  `[permission] id=... decision=granted|revoked owner=...`.
+
+Both adapters are named in the policy. Everything after the first line stays opaque.
 
 The policy lists approved adapters and frozen legacy sites. For executable
 Python changes run:
@@ -18,6 +33,9 @@ Python changes run:
 ```sh
 env PYTHONPATH=src python3 tools/check_parsing.py
 ```
+
+`--boundary-surface` prints how many parse sites each approved adapter exempts. Those
+sites are not debt; the count tells a reviewer where interpretation lives.
 
 The checker exits 0 when every parse site is inside a named adapter or inside
 the frozen legacy budget. It exits 1 when it finds a parse site outside both,
