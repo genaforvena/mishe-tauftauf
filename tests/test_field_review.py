@@ -89,6 +89,12 @@ def _repo(root: Path, reviews: dict[str, str] | None = None, *, commit_reviews: 
     (repo / "src" / "example.py").write_text("# alpha lives here\n", encoding="utf-8")
     (repo / "docs").mkdir()
     (repo / "docs" / "note.md").write_text("beta note\n", encoding="utf-8")
+    # The site's charters are the declared roles an owner must name.
+    (repo / ".mishe-tauftauf" / "charters").mkdir(parents=True)
+    for role in ("genome", "health", "witness", "discover", "senses", "docs",
+                 "research-methods", "pub", "body-research", "inference-research",
+                 "field-review", "steward"):
+        (repo / ".mishe-tauftauf" / "charters" / f"{role}.md").write_text("charter", encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
     subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@example.org",
@@ -390,6 +396,15 @@ The plant already implements this, so there is nothing to apply.
             repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md": broken})
             problems = field_review.validate_tree(repo)["alpha--recent--2026-10-21.md"]
             self.assertTrue(any("owner is not a plant role" in p for p in problems))
+
+    def test_a_newly_seated_charter_is_a_plant_role(self):
+        """The owner set is the site's charters, so a new mind needs no edit here."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _repo(Path(tmp), {"alpha--recent--2026-10-21.md":
+                                     GOOD_REVIEW.replace("owner: genome", "owner: newmind")})
+            (repo / ".mishe-tauftauf" / "charters" / "newmind.md").write_text("charter", encoding="utf-8")
+            problems = field_review.validate_tree(repo).get("alpha--recent--2026-10-21.md", [])
+            self.assertFalse(any("owner is not a plant role" in p for p in problems))
 
 
 def _commit(repo: Path, message: str) -> None:

@@ -56,9 +56,6 @@ APPLICATION_HEADING = "## Application"
 APPLY_CUTOVER = "2026-11-03"
 APPLY_ROOTS = ("src/", "tests/", "checks/", "tools/")
 DISCARD_HEADING = "## Discard"
-ROLES = ("genome", "health", "witness", "discover", "senses", "docs",
-         "research-methods", "pub", "body-research", "inference-research",
-         "field-review", "steward")
 URL_RE = re.compile(r"https?://[^\s<>\"')]+")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 FRONT_MATTER_END = "---"
@@ -343,6 +340,14 @@ def section_body(text: str, heading: str) -> str:
     return "\n".join(lines).strip()
 
 
+def declared_owner_roles(repo: Path) -> frozenset[str]:
+    """The roles this site declares: its charters, the same set as roles.declared."""
+    try:
+        return frozenset(path.stem for path in (repo / ".mishe-tauftauf" / "charters").glob("*.md"))
+    except OSError:
+        return frozenset()
+
+
 def validate_review_text(name: str, text: str, repo: Path, *,
                          target_exists=None) -> list[str]:
     """Every way this review breaks the content contract.
@@ -368,7 +373,7 @@ def validate_review_text(name: str, text: str, repo: Path, *,
     if status and status not in ("applied", "discarded", "proposed"):
         problems.append(f"status must be proposed, applied or discarded: {status}")
     owner = matter.get("owner", "")
-    if owner and owner not in ROLES:
+    if owner and owner not in declared_owner_roles(repo):
         problems.append(f"owner is not a plant role: {owner}")
     for heading in REQUIRED_SECTIONS:
         if heading not in text:
