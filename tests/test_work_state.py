@@ -60,6 +60,24 @@ def test_claim_expiry_is_advisory_and_does_not_overwrite(home):
     assert w.claims(home, now=200)[0]["expired"] is True
 
 
+def test_signal_watch_needs_a_revision_integer_or_a_value_mapping(home):
+    """A scalar signal watch is a revision integer, never a value like "GREEN".
+
+    evaluate_wait compares a scalar against the signal's integer revision, so a string scalar read "changed" on every
+    sweep and fired a spurious wake each pass (health's observe-genome-signal-green, 2026-11-11). Refuse it, and keep
+    both documented forms working.
+    """
+    v = wait(); v["signals"] = {"svc": "GREEN"}
+    with pytest.raises(ValueError): w.validate_wait(home, v)
+    assert w.evaluate_wait(home, v, repo=home, now=100)["state"] == "unknown"   # surfaced, not a silent always-changed
+    v["signals"] = {"svc": 3}
+    w.validate_wait(home, v)                      # the documented scalar form: a revision integer
+    v["signals"] = {"svc": {"value": "GREEN"}}
+    w.validate_wait(home, v)                      # a value mapping
+    r = record(); r["tasks"][0]["wait"]["signals"] = {"svc": "GREEN"}
+    with pytest.raises(ValueError): w.save(home, "docs", r)
+
+
 @pytest.mark.parametrize("change", [{"claims":[None]}, {"claims":{}}, {"tasks":[dict(id="x",state="waiting",wait=None)]},
     {"claims":[dict(path="x",expires=float("nan"))]}, {"tasks":[dict(id="x",state="ready",retry_intentions=["../../other"])]}])
 def test_malformed_nested_records_remain_unknown(home, change):

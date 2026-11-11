@@ -32,6 +32,13 @@ def validate_wait(home, wait):
             raise ValueError(f"wait needs {key}")
     if not isinstance(wait.get("signals", {}), dict) or not isinstance(wait.get("paths", {}), dict):
         raise ValueError("wait watches must be mappings")
+    # A signal watch is either a revision integer (the documented scalar form) or a value mapping such as
+    # {"value": "GREEN"}. A scalar such as "GREEN" is neither: evaluate_wait compares it against the signal's
+    # integer revision, so it read "changed" on every sweep and fired a spurious wake each pass
+    # (health's observe-genome-signal-green, 2026-11-11). Refuse it loudly rather than silently misfire.
+    for expected in wait.get("signals", {}).values():
+        if isinstance(expected, bool) or not isinstance(expected, (int, dict)):
+            raise ValueError("signal watch needs a revision integer or a value mapping")
     if wait.get("external") and wait.get("resolver") != "steward":
         raise ValueError("external dependencies need accountable Steward ownership")
 
