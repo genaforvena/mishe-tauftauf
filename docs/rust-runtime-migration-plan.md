@@ -1738,10 +1738,10 @@ registered `every=600, timeout=300, max_age=900`, so 600+300 already equals the
 bound; any larger `every` has to raise `max_age` with it, which changes what
 subscribers may treat as fresh.
 
-**One stale site-local note.** `$SITE/bin/mishe-records.install.json` still says
-"Not yet consumed by a live caller". It was written at install time
-(2026-11-10T23:37Z), before the 02:47:28Z cutover; the binary is live now, as
-above. It is an untracked install record, not a claim this plan relies on.
+**The site-local install record.** It said "Not yet consumed by a live caller"
+until §10.33 rewrote it at 08:07Z; the binary has been live since the 02:47:28Z
+cutover, as above. The record is untracked site state, so the plan states the
+live binding itself rather than leaning on it.
 
 ### 10.23 S2.3 refuted from the stored receipts: the reading is not slow-changing (2026-11-11)
 
@@ -2392,9 +2392,66 @@ the 0.3 shape and pins miss-then-heal. Limits: the kind is a whitespace-free slu
 in this plant; a kind containing a space or newline is not representable on the
 line and is a documented contract limitation.
 
-**Not delivered.** The source is committed but not activated: no promotion, no
-pin move, and no live observation, so the payoff is not yet observed. Next:
-strong gate (fresh non-author reviewer; deterministic activation, revert,
-reapply in the order above), then piece 3, whose acceptance is the A/B that
-measures both the payoff and the framer's own fact cost.
+**Delivered.** The pin moved to `cc071b62` at 08:02:54Z through the strong gate
+and the site binary was re-pointed at 08:07Z, in the order above. Both, with
+their evidence and limits, are §10.33. Piece 3 is the next slice, and its
+acceptance is the A/B that measures both the payoff and the framer's own fact
+cost.
+
+### 10.33 Records 0.4 is live: the pin took the tolerant drain, and `$SITE/bin/mishe-records` was re-pointed after it (2026-11-11)
+
+§10.32's carrier is now activated and observed, in the order §10.32 fixed: pin
+first, binary second.
+
+**The pin.** `cc071b62` was applied at 08:02:54Z by the strong path. Attempt
+074429 prepared 07:44:29, the gate check ran `941 passed, 28 subtests passed in
+208.80s`, a non-author reviewer returned `review.clear=true`, activation and
+observation both exited 0, `revert_activation`/`revert_observation` both exited
+0, and `delivery_verified` is true (`$SITE/patches/moving-pin-cc071b62.json`;
+`operator/plans/moving-pin-20261105/delivery/deliver-run-074429.log`).
+`runtime/current` names `releases/cc071b625049…`, and the pin's own
+`_RecordsChild._drain` takes the sequence from the first token and drops the
+kind.
+
+**The binary.** `$SITE/bin/mishe-records` moved from 0.3 (sha256
+`d2b2d519…38d5`, source `98dd7b5c`) to 0.4 (sha256 `491048571e78…e01e`, built
+07:22:46Z), and `mishe-records.install.json` was rewritten to match (source
+`cc071b625049…`, contract `rust/mishe-records/CONTRACT.md@77daca1b…`). The old
+binary and its record are kept as `mishe-records.prev-98dd7b5c` and
+`mishe-records.install.json.prev-98dd7b5c`; the rollback moves both back. That
+stays safe after the store's `kind` migration: 0.3 ignores the extra column, so
+reverting loses no row.
+
+**Observation, on the live bytes through the pinned consumer.**
+- `mishe pain read rust-plan --launcher dashboard` — a read that does resolve
+  the verifier (the same command with `MISHE_RECORDS_BIN=/nonexistent` exits 2,
+  `MISHE_RECORDS_BIN names no executable file`) — exits 0, and its pane is
+  identical to the 0.3 run apart from the clock lines (`view at 08:06Z` against
+  `08:07Z`).
+- The store migrated through that read:
+  `SITE/records.verified.sqlite3` gained a `kind` column, and 40 rows already
+  read `kind='wall-outcome'` while 171,977 are still NULL. Only 0.4 writes a
+  kind, so the live child is provably the installed bytes; the kindless rows are
+  healed one miss at a time as reads reach them.
+- The installed bytes pass their own contract:
+  `PYTHONPATH=src MISHE_RECORDS_BIN=$SITE/bin/mishe-records pytest -q
+  tests/test_mishe_records_verify.py` → **17 passed**.
+- Revert and reapply, deterministic. Restoring the 0.3 pair and reading exits 0
+  with `kind` still present; re-applying 0.4 and reading exits 0 with the same
+  pane content. Both directions ran twice.
+
+**Limits.** The 0.4 bytes were built at 07:22:46Z, two minutes before the commit
+was created, so "these bytes are `cc071b62`'s source" rests on the gate's green
+run over exactly these bytes (`MISHE_RECORDS_BIN` pointed at them) plus the
+empty `git diff cc071b62 -- rust/mishe-records`, not on a rebuild. The re-point
+is a hand install following §10.31's convention, and it is invisible to `mishe
+component verify`, whose scope is `components/NAME/current`; **registering a
+`mishe-records` component** (`components-check-mishe-records.json` plus `mishe
+component promote mishe-records cc071b62…`) is the step that would give these
+bytes a ledger and a drift detector. Not done here: the promote build needs a
+cargo build run outside a wake with at least 8 GB free.
+
+**Next.** Shape B piece 3: `FeedEntry` carries the kind and `classify_outcomes`
+uses it, so the kind stops being read and dropped. Its acceptance is the same
+A/B §10.32 names.
 
