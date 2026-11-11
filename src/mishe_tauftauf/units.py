@@ -102,11 +102,19 @@ def _is_wake_failure_signal(name: str, prefix: str) -> bool:
 
 
 def render(cfg: Config, roles, *, producers=()) -> dict:
+    from .delivery_requests import admission_path
     p = cfg.prefix
     failed = f"OnFailure={p}-failed@%n.service"
     files = {}
     files[f"{p}-wake@.service"] = _file(
-        f"[Unit]\nDescription=Mishe wake %i\n{failed}",
+        f"[Unit]\nDescription=Mishe wake %i\n{failed}"
+        # A start while a hold or delivery admission is present only returns "held": it does no work
+        # but each start still spends the host StartLimitBurst budget, so a short burst of them turns
+        # the wake RED (2026-11-11: mishe-wake@genome.service start-limit-hit, 73rd occurrence). A
+        # start skipped by an unmet condition is not counted toward the limit (measured with a
+        # path-triggered probe), so refuse the start instead of running the no-op.
+        f"\nConditionPathExists=!{cfg.home / 'hold'}"
+        f"\nConditionPathExists=!{admission_path(cfg.home)}",
         "[Service]\nType=oneshot\nUMask=0077\n" + f"WorkingDirectory={cfg.repo}\n" + _env(cfg)
         + f"ExecStart={_cmd(cfg, 'wake', '%i', '--repo', str(cfg.repo), '--timeout', str(WAKE_TIMEOUT))}\n"
         # Initial serialization check and dispatch/reconcile each have a

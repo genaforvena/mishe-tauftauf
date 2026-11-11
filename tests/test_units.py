@@ -47,6 +47,15 @@ def test_wake_service_is_bounded_oneshot_with_onfailure(cfg):
     assert "RuntimeMaxSec=" not in svc
 
 
+def test_wake_start_is_refused_while_a_hold_or_delivery_admission_stands(cfg):
+    # 2026-11-11: a held plant's path-triggered wake starts spent the host StartLimitBurst budget and
+    # turned mishe-wake@genome.service RED (73rd start-limit-hit). A start skipped by an unmet condition
+    # is not counted toward the limit, so the generated wake now refuses the no-op start entirely.
+    svc = units.render(cfg, ROLES)["mishe-wake@.service"]
+    assert f"ConditionPathExists=!{cfg.home}/hold" in svc
+    assert f"ConditionPathExists=!{cfg.home}/work/delivery-admission.json" in svc
+
+
 def test_lifeline_roles_get_the_lifeline_slice_dropin(cfg):
     files = units.render(cfg, ROLES)
     assert "Slice=mishe-lifeline.slice" in files["mishe-wake@genome.service.d/10-slice.conf"]
