@@ -5,6 +5,7 @@ than killing human activity. The caller chooses the owned socket and session.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import shlex
 import subprocess
@@ -59,6 +60,27 @@ def parse_session_births(output: str) -> list[tuple[str, float]] | None:
             return None
         births.append((parts[0], float(parts[1])))
     return births
+
+
+def parse_pane_dead_flags(text: str) -> dict[str, list[bool]]:
+    """Decode ``#{window_name}\\t#{pane_index}\\t#{pane_dead}`` rows.
+
+    Preserve tmux's row order and reject malformed field counts rather than
+    treating an unreadable observation as an empty session.
+    """
+    windows: dict[str, list[bool]] = {}
+    for line in text.splitlines():
+        name, _index, dead = line.split("\t")
+        windows.setdefault(name, []).append(dead == "1")
+    return windows
+
+
+def restore_arguments(argv=None):
+    """Decode the standalone registry restorer's command-line options."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--registry")
+    return parser.parse_args(argv)
 
 
 def view_argv(view_command=None):

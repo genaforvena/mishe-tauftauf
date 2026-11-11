@@ -21,6 +21,12 @@ Never type into another plant's panes. Keep this table current when a window is 
 It reads the registry at `$MISHE_SEED_HOME/operator/window-registry.json` (site-local, not tracked):
 each window names its session, its command and a `restore` flag.
 
+The restorer uses `src/mishe_tauftauf/plant_tmux.py` for command-line arguments and
+tmux pane-row decoding, and `src/mishe_tauftauf/state_files.py` for registry JSON.
+Malformed pane rows or invalid JSON abort the run; failed-command stderr is printed
+verbatim. These existing protocol boundaries are declared in `parsing-policy.json`;
+the planner consumes decoded values.
+
 - Dry run is the default. It prints the `DRY` actions it would take. `--apply` acts.
 - Only entries with `"restore": true` and a command are touched. Entries marked
   `pending-decision`, `observed-only`, or `empty-shell` are skipped, and so are windows

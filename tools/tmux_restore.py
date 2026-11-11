@@ -6,8 +6,12 @@ missing; respawns dead panes (remain-on-exit) of those windows. Never types
 into a pane, never touches windows that are not restorable, never touches
 wake/hold/guard. Default is a dry run; pass --apply to act.
 """
-import argparse, json, os, subprocess, sys
+import os, subprocess, sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from mishe_tauftauf.plant_tmux import parse_pane_dead_flags, restore_arguments
+from mishe_tauftauf.state_files import read_json
 
 
 def tmux(sock, *args):
@@ -50,21 +54,14 @@ def observe(sock, session):
     if tmux(sock, "has-session", "-t", session).returncode != 0:
         return None
     r = tmux(sock, "list-panes", "-s", "-t", session, "-F", "#{window_name}\t#{pane_index}\t#{pane_dead}")
-    out = {}
-    for line in r.stdout.splitlines():
-        n, _i, d = line.split("\t")
-        out.setdefault(n, []).append(d == "1")
-    return out
+    return parse_pane_dead_flags(r.stdout)
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--apply", action="store_true")
-    ap.add_argument("--registry")
-    a = ap.parse_args()
+    a = restore_arguments()
     site = os.environ.get("MISHE_SEED_HOME") or os.environ.get("MISHE_TAUFTAUF_HOME")
     checkout = str(Path(__file__).resolve().parent.parent)
-    reg = json.loads(Path(a.registry or f"{site}/operator/window-registry.json").read_text())
+    reg = read_json(Path(a.registry or f"{site}/operator/window-registry.json"))
     socks = {k: (v["socket"], v["session"]) for k, v in reg["sessions"].items()}
     state = {k: observe(*socks[k]) for k in socks}
     acts = plan(reg, checkout, site, state)
@@ -82,7 +79,7 @@ def main():
         else:
             r = tmux(sock, "respawn-pane", "-c", checkout, "-t", f"{sess}:{name}.{act[4]}", *argv)
         if r.returncode:
-            print("  FAILED", r.stderr.strip(), file=sys.stderr)
+            print("  FAILED", r.stderr, file=sys.stderr)
         elif kind != "respawn-pane":
             tmux(sock, "set-option", "-w", "-t", f"{sess}:{name}", "remain-on-exit", "on")
     if not acts:

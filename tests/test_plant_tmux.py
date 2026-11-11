@@ -53,3 +53,18 @@ def test_parse_session_pids_maps_names_and_rejects_malformed_lines():
     assert parse_session_pids("") == {}
     assert parse_session_pids("no-tab-here\n") is None
     assert parse_session_pids("bad\tpid\n") is None
+
+
+def test_parse_pane_dead_flags_preserves_windows_and_pane_order():
+    from mishe_tauftauf.plant_tmux import parse_pane_dead_flags
+    assert parse_pane_dead_flags(
+        "health\t0\t0\nhealth\t1\t1\nbudget\t0\t0\n"
+    ) == {"health": [False, True], "budget": [False]}
+    assert parse_pane_dead_flags("") == {}
+
+
+@pytest.mark.parametrize("text", ["health\t0\n", "health\t0\t1\textra\n", "\n"])
+def test_parse_pane_dead_flags_rejects_malformed_observations(text):
+    from mishe_tauftauf.plant_tmux import parse_pane_dead_flags
+    with pytest.raises(ValueError):
+        parse_pane_dead_flags(text)
