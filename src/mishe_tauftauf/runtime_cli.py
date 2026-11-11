@@ -22,6 +22,11 @@ def duration(text: str) -> float:
 # entries measured 0.3-0.5 s (2026-11-09), so 20000 keeps a run to a few seconds
 # and a cold full tape (~230 s measured) completes in about 15 doctor runs.
 FEED_VERIFY_SLICE = 20000
+# A cycle whose run count exceeds this multiple of the runs needed to cover the tape
+# length it began with is stalled: the tape is outgrowing verification, so records stop
+# being covered while every run still succeeds. The budget is frozen at cycle start so
+# growth during the cycle cannot inflate the expected count and hide the stall.
+FEED_VERIFY_STALL_FACTOR = 3
 
 
 def default_home() -> Path:
@@ -405,25 +410,43 @@ def run_units(args, home: Path, now: float) -> int:
         # verification covers one FEED_VERIFY_SLICE window per run, starting at the
         # stamped cursor and wrapping at the tape end, so a cold store (a full pass
         # measured ~230 s, longer than the unit's start timeout) never kills doctor.
-        # The stamp keeps the cursor and the time the last full cycle completed.
+        # The stamp keeps the cursor, the time the last full cycle completed, and the
+        # run count and tape length of the cycle in progress (the stall budget).
         stamp_path = home / "doctor-feed-verified.json"
-        cursor, cycle_done = 1, 0.0
+        cursor, cycle_done, cycle_runs, cycle_entries = 1, 0.0, 0, 0
         try:
             stamp = read_json(stamp_path)
             if isinstance(stamp, dict):
                 cursor = max(1, int(stamp.get("cursor", 1)))
                 cycle_done = float(stamp.get("verified_at", 0.0))
+                cycle_runs = max(0, int(stamp.get("cycle_runs", 0)))
+                cycle_entries = max(0, int(stamp.get("cycle_entries", 0)))
         except (TypeError, ValueError):
-            cursor, cycle_done = 1, 0.0
+            cursor, cycle_done, cycle_runs, cycle_entries = 1, 0.0, 0, 0
         try:
             feed = Feed(home)
-            feed.entries(verify_records=False)
+            entries = feed.entries(verify_records=False)  # whole tape: the tape-level checks, and its length
             window = feed.entries(start=cursor, limit=FEED_VERIFY_SLICE)
             if len(window) < FEED_VERIFY_SLICE:           # reached the tape end: the cycle is complete
-                cursor, cycle_done = 1, now
+                # The length now is the run budget for the next cycle, frozen there so
+                # growth during that cycle cannot inflate the expected count.
+                cursor, cycle_done, cycle_runs, cycle_entries = 1, now, 0, len(entries)
             else:
                 cursor = window[-1].sequence + 1
-            write_json(stamp_path, {"cursor": cursor, "verified_at": cycle_done})
+                cycle_runs += 1
+                if not cycle_entries:                     # first run of a cycle from an empty stamp
+                    cycle_entries = len(entries)
+            expected_runs = max(1, -(-cycle_entries // FEED_VERIFY_SLICE))
+            if cycle_runs > expected_runs * FEED_VERIFY_STALL_FACTOR:
+                when = (f"last completed cycle {now - cycle_done:.0f}s ago" if cycle_done
+                        else "no cycle has completed yet")
+                report.state = "RED"
+                report.problems.append(
+                    f"chat.log: feed-verify-stalled: {cycle_runs} runs without covering the "
+                    f"{cycle_entries}-entry tape this cycle began with (expected <={expected_runs}); "
+                    f"{when}; the tape is outgrowing verification")
+            write_json(stamp_path, {"cursor": cursor, "verified_at": cycle_done,
+                                    "cycle_runs": cycle_runs, "cycle_entries": cycle_entries})
         except FeedError as exc:
             report.state = "RED"
             report.problems.append(f"chat.log: feed-corrupt: {exc}")

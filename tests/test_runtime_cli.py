@@ -414,3 +414,60 @@ def test_doctor_feed_cycle_retains_coverage_while_tape_grows(site, tmp_path, mon
     for _ in range(3):                                       # ceil(5/2) runs cover [1..5]
         assert cli("doctor", "--unit-dir", str(units_dir)) == 0
     assert verified == {1, 2, 3, 4, 5}
+
+
+def test_doctor_reports_a_stalled_feed_cycle_so_lost_coverage_is_visible(site, tmp_path, monkeypatch):
+    """A cycle that never reaches the tape end turns doctor RED and the doctor signal RED.
+    The tape grows by one slice between runs, so the cursor advances but never wraps and
+    verified_at never advances; the run budget is the tape length the cycle began with,
+    frozen, so that growth cannot inflate the expected count and hide the stall."""
+    from types import SimpleNamespace
+    from mishe_tauftauf import feed as feed_mod, runtime_cli as rc
+    units_dir, _ = _doctor_feed_calls(site, tmp_path, monkeypatch)
+    monkeypatch.setattr(rc, "FEED_VERIFY_SLICE", 2)
+    monkeypatch.setattr(rc, "FEED_VERIFY_STALL_FACTOR", 2)
+    tape = {"length": 4}
+
+    def fake(self, *a, **kw):
+        if kw.get("verify_records", True) is False:
+            tape["length"] += 2                               # the tape outgrows one slice per run
+            return [SimpleNamespace(sequence=s) for s in range(1, tape["length"] + 1)]
+        start = kw.get("start", 1)
+        end = min(start + kw["limit"] - 1, tape["length"])
+        return [SimpleNamespace(sequence=s) for s in range(start, end + 1)]
+
+    monkeypatch.setattr(feed_mod.Feed, "entries", fake)
+    states = []
+    for _ in range(8):                                        # enough runs to cross the budget
+        cli("doctor", "--unit-dir", str(units_dir))
+        states.append(store.read(site, "doctor", now=__import__("time").time()).value)
+    assert "RED" in states, states
+    stamp = json.loads((site / "doctor-feed-verified.json").read_text())
+    assert stamp["cursor"] > 1 and stamp["verified_at"] == 0.0   # advanced, never wrapped
+    assert stamp["cycle_runs"] > 0
+
+
+def test_doctor_completes_a_cycle_under_slow_tape_growth_without_a_stall(site, tmp_path, monkeypatch):
+    """A tape that grows slower than one slice per run still wraps within its budget, so the
+    stall detector stays quiet and an entry appended mid-cycle is still covered."""
+    from types import SimpleNamespace
+    from mishe_tauftauf import feed as feed_mod, runtime_cli as rc
+    units_dir, _ = _doctor_feed_calls(site, tmp_path, monkeypatch)
+    monkeypatch.setattr(rc, "FEED_VERIFY_SLICE", 2)
+    monkeypatch.setattr(rc, "FEED_VERIFY_STALL_FACTOR", 2)
+    tape = {"length": 4, "runs": 0}
+
+    def fake(self, *a, **kw):
+        if kw.get("verify_records", True) is False:
+            tape["runs"] += 1
+            if tape["runs"] == 2:                             # one entry appended mid-cycle
+                tape["length"] += 1
+            return [SimpleNamespace(sequence=s) for s in range(1, tape["length"] + 1)]
+        start = kw.get("start", 1)
+        end = min(start + kw["limit"] - 1, tape["length"])
+        return [SimpleNamespace(sequence=s) for s in range(start, end + 1)]
+
+    monkeypatch.setattr(feed_mod.Feed, "entries", fake)
+    for _ in range(5):
+        assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+    assert json.loads((site / "doctor-feed-verified.json").read_text())["verified_at"] > 0
