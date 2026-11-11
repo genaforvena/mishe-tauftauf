@@ -5,6 +5,7 @@ state cannot suppress work. No content in walls or chat is interpreted here.
 """
 from __future__ import annotations
 import math
+from datetime import datetime, timezone
 from pathlib import Path
 from . import roles, signal_store
 from .state_files import read_json, write_json
@@ -208,6 +209,38 @@ def _notified(entry, deadline):
     return math.isfinite(stamp)
 
 
+def _clock(epoch):
+    """An instant as a UTC clock time. A notification is read in a pane, where a raw epoch is machine syntax."""
+    if isinstance(epoch, bool) or not isinstance(epoch, (int, float)) or not math.isfinite(epoch):
+        return "UNKNOWN"
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _observed(name, value):
+    """One wait-evidence entry as words: its observed fields, never a dict repr."""
+    if not isinstance(value, dict):
+        return f"{name} {value}"
+    fields = ", ".join(f"{key} {field}" for key, field in sorted(value.items()) if field is not None)
+    return f"{name} ({fields})" if fields else f"{name} UNKNOWN"
+
+
+def _evaluation_words(evaluation):
+    """A wait evaluation as one line a person reads.
+
+    The text is delivered as mail and rendered into every pane, where a dumped
+    record is machine syntax; the same facts in words are what the reader needs.
+    """
+    if not isinstance(evaluation, dict):
+        return str(evaluation)
+    reasons = [str(reason) for reason in evaluation.get("reasons") or []]
+    evidence = evaluation.get("evidence")
+    parts = [f"state {evaluation.get('state', 'UNKNOWN')}",
+             "because " + ", ".join(reasons) if reasons else "no observed change"]
+    if isinstance(evidence, dict) and evidence:
+        parts.append("observed " + ", ".join(_observed(name, value) for name, value in sorted(evidence.items())))
+    return "; ".join(parts)
+
+
 def _deliver(home, recipient, text, notify):
     """Notify and mark the inbox. Returns None on success, else the failure.
 
@@ -239,7 +272,7 @@ def _escalate_overdue(home, role, identity, wait, overdue, errors, *, now, notif
     # the wait already named.
     recipient = "genome" if "genome" in declared else wait.get("escalate_to")
     text = (f"Work {role}/{identity} is still waiting, more than five minutes past its deadline "
-            f"({deadline}); the deadline action was: {wait.get('action_at_deadline')}. "
+            f"({_clock(deadline)}); the deadline action was: {wait.get('action_at_deadline')}. "
             f"Inspect this unresolved wait and its resolver.")
     error = _deliver(home, recipient, text, notify)
     if error is None:
@@ -289,7 +322,7 @@ def _sweep(home, *, repo, now, notify=None):
                 continue
             if seen.get(key) != token:
                 recipient = wait["escalate_to"] if wait and evaluation["state"] == "due" else role
-                error = _deliver(home, recipient, f"Work {role}/{identity}: {evaluation}; " +
+                error = _deliver(home, recipient, f"Work {role}/{identity}: {_evaluation_words(evaluation)}; " +
                                  (wait["action_at_deadline"] if wait else "UNKNOWN work state; repair the sidecar"),
                                  notify)
                 if error is None:

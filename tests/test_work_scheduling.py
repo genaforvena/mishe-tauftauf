@@ -254,3 +254,24 @@ def test_systemd_failure_signature_ignores_timestamp_and_tracks_exit_class(monke
     assert b.failure_signature("check.service")==first
     state[0]="Result=timeout\nExecMainCode=2\nExecMainStatus=15\n"
     assert b.failure_signature("check.service")!=first
+
+
+def test_work_notification_text_is_human(tmp_path):
+    """A notification becomes mail and every pane renders it: never a dict repr and never a raw epoch.
+
+    The plant's own view-readability producer lints the panes with plant_view_boundary.machine_syntax
+    and went RED on a `Work <role>/<task>: {...}` record reaching a pane as a dumped evaluation.
+    """
+    from mishe_tauftauf.plant_view_boundary import machine_syntax
+    setup(tmp_path)
+    record = w.load(tmp_path, "health")
+    record["tasks"][0]["wait"].update(signals={"failed-check-service": {"value": "GREEN"}},
+                                      deadline=1794366000)
+    w.save(tmp_path, "health", record)
+    calls = []
+    w.sweep(tmp_path, repo=tmp_path, now=20, notify=lambda *a: calls.append(a))
+    assert [role for role, _ in calls] == ["health"]                      # the watched signal moved
+    w.sweep(tmp_path, repo=tmp_path, now=1794366000 + 400, notify=lambda *a: calls.append(a))
+    assert [role for role, _ in calls] == ["health", "steward", "genome"]  # due, then overdue
+    for role, text in calls:
+        assert machine_syntax(text) == [], (role, text)
