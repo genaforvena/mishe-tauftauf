@@ -806,3 +806,11 @@ def test_peer_commit_during_check_is_not_a_source_mutation(tmp_path, monkeypatch
     escaped = f"import subprocess,pathlib;pathlib.Path({str(source)!r}).write_text('peer\\n');subprocess.run(['git','-C',{str(tmp_path)!r},'-c','user.email=t@example','-c','user.name=t','add','src'],check=True);subprocess.run(['git','-C',{str(tmp_path)!r},'-c','user.email=t@example','-c','user.name=t','commit','-qm','peer'],check=True)"
     wall_patch.check(home, "change", [sys.executable, "-c", escaped])
     assert wall_patch.status(home, "change")["phase"] == "reviewed"
+
+
+def test_gitignore_is_a_patchable_target_but_other_dot_paths_are_refused(tmp_path):
+    # 2a0b24ff edits .gitignore; the gate refused every dot path, so the moving-pin manifest could not be prepared.
+    assert wall_patch.target(tmp_path, ".gitignore") == tmp_path / ".gitignore"
+    for name in (".git/config", ".mishe-tauftauf/state.json", ".env", "../.gitignore"):
+        with pytest.raises(ValueError, match="invalid patch path"):
+            wall_patch.target(tmp_path, name)

@@ -100,9 +100,14 @@ def status(home, identity):
     return json.loads(location(home, identity).read_text())
 
 
+PATCHABLE_DOTFILES = frozenset({".gitignore"})
+"""Tracked repository-root dotfiles a patch may name; every other dot path (hidden dirs, .git, site state) stays refused."""
+
+
 def target(root, name):
     path = root / name
-    if Path(name).is_absolute() or ".." in Path(name).parts or name.startswith(".") or not path.resolve().is_relative_to(root.resolve()):
+    hidden = name.startswith(".") and name not in PATCHABLE_DOTFILES
+    if Path(name).is_absolute() or ".." in Path(name).parts or hidden or not path.resolve().is_relative_to(root.resolve()):
         raise ValueError(f"invalid patch path: {name}")
     return path
 
