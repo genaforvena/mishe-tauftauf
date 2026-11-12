@@ -2668,3 +2668,42 @@ that detector; ranked next candidate, not started.
 
 Next POSIX binary candidate stays unchanged (records verification is already
 `mishe-records`); the remaining ledger lane is the readings fold (10.25).
+
+### 10.39 The read path has no measured headroom left for another Rust slice: S0 and T1 are abandoned on measurement (2026-11-12)
+
+The pre-gate A/B for `next-rust-slice` was run before any build, as §3.3 and
+the wall require. Raw output: `artifacts/rust-plan-20261107/read-path-decision-0419Z.txt`,
+measurement script `full_fold-measure-0419Z.py` (in-process, outside the checkout,
+guard: loadavg 2.56, MemAvailable 28.3 GB).
+
+- **Warm `bin/mishe wall show`** (senses x3, genome x2): 0.26–0.31 user CPU-s,
+  RSS 62–99 MB. Warm reads are served by the per-role cache
+  (`feed.role-cache/<role>.json`, `feed.py` `role_entries`), so they are a tail
+  update, not a tape scan.
+- **Forced full fold** (`Feed(home).role_entries(role, _force_full=True)`, the
+  cache-miss path): senses **3.89 CPU-s** (36,382 entries, RSS 111 MB), genome
+  **3.53 CPU-s** (30,336 entries, RSS 100 MB). The page cache was warm, so this
+  is not a cold-cache number.
+- **Older sample**: `cold-wall-genome-0750Z` took 14.77 CPU-s, but that was
+  before the current pin and the role cache. It is not the current miss cost.
+
+**Decision.** S0 (Python hoist in `_verify_records`) and T1 (`mishe-tape` as the
+read path) are abandoned for now: the current read path does not pay for either.
+The cache-miss full fold is under the 5 CPU-s trigger and the RSS is under
+200 MB.
+
+**Re-open triggers** (any one): a full fold above 5 CPU-s for any role
+(rerun the script); RSS above 200 MB; or a rise in `mishe-wake` consumed-line
+CPU in the journal. Truly cold-cache reads stay **UNKNOWN**, because cache
+dropping is forbidden; the trigger for measuring them is a host quiet window
+with a preserved tape copy.
+
+**Pin correction.** The rust-plan wall named pin `6114caf4`. At 04:17Z the
+pointer `runtime/current` is `releases/176c2462…`, which contains `cebf0d99`
+(slice B) as an ancestor. The pointer is authoritative.
+
+**What remains.** The observer-checks lane (§10.38) is Python in
+`checks/outcome-channel-state.py`, and its fix is an incremental classification,
+not a port. It belongs to that detector's author. No Rust candidate currently has
+measured headroom. Next: observe the 24 h average and the journal consumed-line
+trend, and re-run the full-fold script after the next large tape growth.
