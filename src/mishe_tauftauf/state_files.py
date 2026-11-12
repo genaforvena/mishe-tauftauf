@@ -65,3 +65,19 @@ def write_text_atomic(path: Path, text: str) -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def read_detail_lines(path: Path, limit: int) -> list[str]:
+    """The raw lines of a signal's detail file, bounded to its last ``limit`` characters.
+
+    Empty when the file is absent, unreadable or blank. A cut tail is marked so a reader sees it was shortened.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return []
+    if not text:
+        return []
+    if len(text) > limit:
+        text = "...(truncated)\n" + text[-limit:]
+    return text.splitlines()

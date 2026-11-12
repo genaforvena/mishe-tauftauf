@@ -8,7 +8,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from . import intentions, signal_store
+from . import intentions, signal_store, state_files
 from .plant_view_boundary import salvage_text
 from .state_files import read_json
 
@@ -57,15 +57,10 @@ def _detail_lines(home, name: str, sig) -> list[str]:
     """
     if sig.state == signal_store.OK and sig.value == "GREEN":
         return []
-    try:
-        text = (Path(home) / "signals" / f"{name}.detail").read_text(encoding="utf-8", errors="replace").strip()
-    except OSError:
+    lines = state_files.read_detail_lines(Path(home) / "signals" / f"{name}.detail", DETAIL_SHOWN_CHARS)
+    if not lines:
         return []
-    if not text:
-        return []
-    if len(text) > DETAIL_SHOWN_CHARS:
-        text = "...(truncated)\n" + text[-DETAIL_SHOWN_CHARS:]
-    return ["  raw output:", *[f"    {line}" for line in text.splitlines()]]
+    return ["  raw output:", *[f"    {line}" for line in lines]]
 
 
 def _read(path: Path) -> str:
