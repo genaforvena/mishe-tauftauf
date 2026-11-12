@@ -590,9 +590,45 @@ def test_review_answer_names_the_timeout_when_retries_exhaust(tmp_path, monkeypa
 
     monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
     importlib.reload(wall_review)
-    with pytest.raises(RuntimeError, match="timed out"):
+    with pytest.raises(RuntimeError, match="timed out") as info:
         wall_review.review_answer("model", tmp_path, tmp_path / "req.txt", runner=stall)
     importlib.reload(wall_review)
+    # The failure names each attempt's category, so a provider stall is not
+    # confused with an invalid answer or an empty one.
+    assert str(info.value).count("attempt ") == wall_review.MAX_EMPTY_RETRIES
+    assert "timeout at cap" in str(info.value)
+
+
+def test_review_answer_failure_history_names_each_attempt_category(tmp_path, monkeypatch):
+    import subprocess
+    from mishe_tauftauf import wall_review
+    import importlib
+
+    outcomes = iter([
+        subprocess.TimeoutExpired(cmd="omp", timeout=40),
+        type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+        type("R", (), {"returncode": 0, "stdout": '{"version": 1}', "stderr": ""})(),
+    ])
+
+    def scripted(*args, **kwargs):
+        outcome = next(outcomes)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    def reject(answer):
+        raise ValueError("review protocol/input hash mismatch")
+
+    monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
+    importlib.reload(wall_review)
+    with pytest.raises(RuntimeError, match="invalid answer") as info:
+        wall_review.review_answer("model", tmp_path, tmp_path / "req.txt",
+                                  runner=scripted, validate=reject)
+    importlib.reload(wall_review)
+    message = str(info.value)
+    assert "attempt 1: timeout at cap" in message
+    assert "attempt 2: empty after" in message
+    assert "attempt 3: invalid after" in message
 
 
 def test_failed_test_drops_the_stale_review_verdict(tmp_path, monkeypatch):

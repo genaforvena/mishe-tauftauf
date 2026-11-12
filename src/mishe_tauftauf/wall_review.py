@@ -151,30 +151,37 @@ def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run
     budget = reviewer_timeout(home)
     started = time.monotonic()
     attempt = 0
+    # Per-attempt elapsed seconds and failure category, so a failed review says
+    # whether the provider was slow (near the attempt cap) or failed fast.
+    history: list[str] = []
     while True:
         attempt += 1
         # Cap each attempt at an even share of the budget; one stalled call can
         # no longer consume the whole budget before a retry can run.
         share = max(1.0, min(remaining_budget(budget, started), budget / MAX_EMPTY_RETRIES))
+        began = time.monotonic()
         try:
             result = runner([reviewer_executable(), "--print", "--no-session", "--no-extensions", "--no-tools",
                              "--no-lsp", "--no-pty", "--model", model, "--thinking", "high",
                              "--cwd", str(directory), "@" + str(path)],
                             capture_output=True, text=True, timeout=share)
         except subprocess.TimeoutExpired:
+            history.append(f"attempt {attempt}: timeout at cap {share:.0f}s")
             if attempt >= MAX_EMPTY_RETRIES:
                 raise RuntimeError(
                     f"patch reader timed out on {attempt} attempts; "
-                    f"its {budget:.0f}s budget is spent") from None
+                    f"its {budget:.0f}s budget is spent; {'; '.join(history)}") from None
             continue
+        elapsed = time.monotonic() - began
         if result.returncode:
             raise RuntimeError(f"patch reader failed: {result.stderr[-1000:]}")
         raw = result.stdout.strip()
         if not raw:
+            history.append(f"attempt {attempt}: empty after {elapsed:.1f}s")
             if attempt >= MAX_EMPTY_RETRIES:
                 raise RuntimeError(
                     f"patch reader returned empty output on {attempt} attempts; "
-                    f"last stderr was {result.stderr[-400:]!r}")
+                    f"last stderr was {result.stderr[-400:]!r}; {'; '.join(history)}")
             continue
         if raw.startswith("```json\n") and raw.endswith("\n```"):
             raw = raw[8:-4]
@@ -183,10 +190,11 @@ def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run
             if validate is not None:
                 validate(answer)
         except ValueError as exc:
+            history.append(f"attempt {attempt}: invalid after {elapsed:.1f}s ({exc!r})")
             if attempt >= MAX_EMPTY_RETRIES:
                 raise RuntimeError(
                     f"patch reader returned an invalid answer on {attempt} attempts; "
-                    f"last error {exc!r}; last stdout {raw[:400]!r}")
+                    f"last error {exc!r}; last stdout {raw[:400]!r}; {'; '.join(history)}")
             continue
         return answer
 
