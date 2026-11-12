@@ -73,6 +73,7 @@
     "tools/household_call_watcher.py",
     "tools/household_collector.py",
     "tools/household_text.py",
+    "tools/rssi_text.py",
     "tools/household_view.py",
     "tools/household_patterns.py",
     "tools/frame_label.py",

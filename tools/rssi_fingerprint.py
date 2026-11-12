@@ -21,23 +21,25 @@ Rules:
     Compared with the majority-room baseline, because n is small.
   - Confidence is the LOO accuracy, capped by n. It is never raised above that.
 """
-import argparse
 import datetime
+import importlib.util
 import json
 import os
 import sys
+from pathlib import Path
+
+# Parsing lives in the named adapter tools/rssi_text.py (listed in parsing-policy.json).
+_spec = importlib.util.spec_from_file_location("rssi_text", Path(__file__).with_name("rssi_text.py"))
+rt = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(rt)
+parse_iso = rt.parse_iso
 
 ROOMS = {"living_room", "hallway", "bedroom", "balcony", "wardrobe", "kitchen_stall"}
 STALE_S = 180
 
 
-def parse_iso(s):
-    t = datetime.datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ")
-    return t.replace(tzinfo=datetime.timezone.utc)
-
-
 def load_moments(path):
-    doc = json.load(open(path, encoding="utf-8"))
+    doc = rt.read_json(path)
     out = []
     for m in doc.get("moments", []):
         room = m.get("room")
@@ -52,7 +54,7 @@ def load_moments(path):
 def live_vector(path, now):
     unknown = {"state": "UNKNOWN", "dbm": None}
     try:
-        doc = json.load(open(path, encoding="utf-8"))
+        doc = rt.read_json(path)
     except (OSError, ValueError):
         return dict(unknown, reason="rssi-table.json missing or unreadable")
     gen = doc.get("generated_at")
@@ -106,10 +108,7 @@ def loo(moments):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description="RSSI room fingerprint for one site.")
-    p.add_argument("--site", required=True)
-    p.add_argument("--now", help="ISO UTC time (testing); default host clock")
-    a = p.parse_args(argv)
+    a = rt.parse_cli(argv, "RSSI room fingerprint for one site.")
     site = os.path.abspath(a.site)
     mapdir = os.path.join(site, "senses", "map")
     now = parse_iso(a.now) if a.now else datetime.datetime.now(datetime.timezone.utc)
