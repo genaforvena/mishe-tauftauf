@@ -6,7 +6,8 @@ assess() over those accounts), the `cooling` section (the router's own cooldown 
 ledger sections `free_models`, `paid_models`, `unclassified_models` (ledger candidates absent from
 routes.json, UNKNOWN) and `per_mind` (outcome counts, pending selects and the last outcome from
 routing-ledger.jsonl), plus a `ledger` meta block (events read, malformed rows skipped, newest event
-time). Per-window usage, burn and ETA, and candidate token counts are later slices. Pure functions here; file IO is limited to the atomic writer.
+time), and per fresh window `burn_h` (used fraction per hour) and `eta_s` (seconds to 100% at that burn) from the
+rate histories. Candidate token counts are a later slice. Pure functions here; file IO is limited to the atomic writer and the history reads.
 
 Fail-closed rules from the contract: a window is FRESH only when its own observation is
 within MAX_AGE_S and its reset lies in the future; any window whose fields are not all
@@ -25,6 +26,11 @@ MAX_AGE_S = 900.0
 PRODUCER = "src/mishe_tauftauf/budget_producer.py"
 WINDOW_TAP_KEYS = {"5h": "five_hour", "7d": "seven_day"}
 SOURCE_STATES = ("FRESH", "STALE", "UNKNOWN", "UNATTRIBUTED", "UNREADABLE")
+BURN_HISTORY_S = 6 * 3600.0   # history considered for burn; older points are dropped
+BURN_MIN_SPAN_S = 1500.0      # a burn needs at least this much observed span
+BURN_RESET_TOL_S = 120.0      # points from a previous window (different reset) are not the same window
+CLAUDE_HISTORY = "claude-rate-history.jsonl"   # rows: {at, five_hour: [pct, reset], seven_day: [pct, reset]}
+ENGINE_HISTORY = "quota-history.jsonl"         # rows: {at, q: {"acct/window": [remaining, reset]}}
 
 
 def _num(value) -> bool:
@@ -105,8 +111,79 @@ def engine_windows(account_row, now, malformed: list | None = None) -> dict:
     return windows
 
 
-def build_accounts(status: dict | None, tap, now: float) -> dict:
-    """Accounts section. `status` is the engine status dict (or None if unreadable)."""
+def recent_burn(points, reset_at) -> float | None:
+    """Pure: burn per hour (used fraction) from (at, used, reset) points of one window.
+    Only points whose reset matches this window count; the reading must span BURN_MIN_SPAN_S.
+    Negative deltas (a reset inside the span) are not burn. None when there is no honest reading."""
+    pts = sorted(
+        (at, used) for at, used, reset in points
+        if _num(at) and _num(used) and _num(reset) and abs(reset - reset_at) < BURN_RESET_TOL_S
+    )
+    if len(pts) < 2 or pts[-1][0] - pts[0][0] < BURN_MIN_SPAN_S:
+        return None
+    (t0, u0), (t1, u1) = pts[0], pts[-1]
+    return max(u1 - u0, 0.0) / ((t1 - t0) / 3600.0)
+
+
+def _history_rows(path: Path, now: float) -> list:
+    """Rows of a JSONL history within BURN_HISTORY_S of now. Unreadable or undecodable lines are skipped."""
+    rows = []
+    try:
+        lines = path.read_bytes().splitlines()
+    except OSError:
+        return rows
+    for raw in lines:
+        try:
+            row = json.loads(raw.decode("utf-8"))
+        except ValueError:  # includes UnicodeDecodeError: one bad line never hides the rest
+            continue
+        if isinstance(row, dict) and _num(row.get("at")) and now - BURN_HISTORY_S <= row["at"] <= now + 5:
+            rows.append(row)
+    return rows
+
+
+def load_burn_history(home: Path, now: float) -> dict:
+    """{(account, window): [(at, used, reset), ...]} from the claude tap and engine quota histories.
+    The claude windows are keyed as ("claude", "5h"|"7d"); engine windows as (account, window)."""
+    points: dict = {}
+    budget_dir = home / "operator" / "budget"
+    for row in _history_rows(budget_dir / CLAUDE_HISTORY, now):
+        for window, key in WINDOW_TAP_KEYS.items():
+            v = row.get(key)
+            if isinstance(v, list) and len(v) == 2:
+                points.setdefault(("claude", window), []).append((row["at"], _pct_used(v[0]), v[1]))
+    for row in _history_rows(budget_dir / ENGINE_HISTORY, now):
+        q = row.get("q")
+        if not isinstance(q, dict):
+            continue
+        for label, v in q.items():
+            account, _, window = str(label).rpartition("/")
+            if account and isinstance(v, list) and len(v) == 2:
+                points.setdefault((account, window), []).append((row["at"], _engine_used(v[0]), v[1]))
+    return points
+
+
+def _pct_used(x):
+    return x / 100 if _num(x) else None
+
+
+def _engine_used(remaining):
+    return 1 - remaining if _num(remaining) else None
+
+
+def _attach_burn(windows: dict, account: str, burn: dict | None) -> None:
+    """Add burn_h and eta_s to each FRESH window. Non-fresh windows get None: a stale reading is no burn."""
+    for window, w in windows.items():
+        burned = None
+        if burn is not None and w["state"] == "FRESH":
+            burned = recent_burn(burn.get((account, window), []), w["reset_at"])
+        w["burn_h"] = burned
+        w["eta_s"] = (1 - w["used"]) / burned * 3600.0 if burned else None
+
+
+def build_accounts(status: dict | None, tap, now: float, burn: dict | None = None) -> dict:
+    """Accounts section. `status` is the engine status dict (or None if unreadable).
+    `burn` is the history from load_burn_history; without it burn_h and eta_s are None."""
     accounts = {}
     engine = (status or {}).get("accounts") if isinstance(status, dict) else None
     for name, row in (engine or {}).items():
@@ -123,17 +200,18 @@ def build_accounts(status: dict | None, tap, now: float) -> dict:
     if bad:
         accounts["claude"]["malformed"] = bad
     for name, row in accounts.items():
+        _attach_burn(row["windows"], name, burn)
         states = {w["state"] for w in row["windows"].values()}
         row["state"] = "UNREADABLE" if not row["windows"] or row.get("malformed") else "FRESH" if states == {"FRESH"} else "STALE"
     return accounts
 
 
-def build_budget(status: dict | None, tap, now: float) -> dict:
+def build_budget(status: dict | None, tap, now: float, burn: dict | None = None) -> dict:
     return {
         "schema": SCHEMA,
         "produced_at": now,
         "producer": PRODUCER,
-        "accounts": build_accounts(status, tap, now),
+        "accounts": build_accounts(status, tap, now, burn),
         "unknowns": [] if status is not None else ["engine status unavailable"],
     }
 
@@ -386,7 +464,7 @@ def main(home: Path, out: Path | None = None) -> int:
     now = time.time()
     status = _read_json(home / "operator" / "budget" / "quota.json")
     tap = _read_json(home / "operator" / "budget" / "claude-native-quota.json")
-    payload = build_budget(status, tap, now)
+    payload = build_budget(status, tap, now, load_burn_history(home, now))
     payload["routing"] = build_routing(home, payload, now)
     payload["cooling"] = build_cooling(home, now)
     ledger = build_ledger(home, now)

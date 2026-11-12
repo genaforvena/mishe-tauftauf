@@ -387,3 +387,67 @@ def test_invalid_utf8_ledger_line_is_skipped_not_replaced(tmp_path):
     events = list(ledger_events(path, skipped))
     assert len(events) == 1 and events[0]["key"] == "omp:m:acc"
     assert skipped == [2]
+
+
+def _hist(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def test_recent_burn_is_used_delta_per_hour_over_the_observed_span():
+    reset = NOW + 3600
+    pts = [(NOW - 3000, 0.10, reset), (NOW, 0.40, reset)]
+    assert bp.recent_burn(pts, reset) == pytest.approx(0.30 / (3000 / 3600))
+
+
+def test_recent_burn_needs_span_and_same_window_and_never_goes_negative():
+    reset = NOW + 3600
+    assert bp.recent_burn([(NOW - 600, 0.1, reset), (NOW, 0.2, reset)], reset) is None  # span too short
+    assert bp.recent_burn([(NOW - 3000, 0.1, reset - 7200), (NOW, 0.2, reset)], reset) is None  # other window
+    assert bp.recent_burn([(NOW - 3000, 0.5, reset), (NOW, 0.2, reset)], reset) == 0.0  # reset inside span
+
+
+def test_stale_window_gets_no_burn_or_eta_even_with_history(tmp_path: Path):
+    budget = tmp_path / "operator" / "budget"
+    old = NOW - 3000
+    _hist(budget / bp.CLAUDE_HISTORY, [
+        {"at": old, "five_hour": [10, NOW + 3600], "seven_day": [50, NOW + 3600]},
+        {"at": NOW, "five_hour": [40, NOW + 3600], "seven_day": [50, NOW + 3600]},
+    ])
+    stale_tap = tap(five_hour={"observed_at": NOW - 5000, "resets_at": NOW + 3600, "used_percentage": 40})
+    accounts = bp.build_accounts(None, stale_tap, NOW, bp.load_burn_history(tmp_path, NOW))
+    five = accounts["claude"]["windows"]["5h"]
+    assert five["state"] == "STALE" and five["burn_h"] is None and five["eta_s"] is None
+
+
+def test_fresh_claude_window_gets_burn_and_eta_from_history(tmp_path: Path):
+    budget = tmp_path / "operator" / "budget"
+    _hist(budget / bp.CLAUDE_HISTORY, [
+        {"at": NOW - 3000, "five_hour": [10, NOW + 3600], "seven_day": [50, NOW + 3600]},
+        {"at": NOW, "five_hour": [40, NOW + 3600], "seven_day": [50, NOW + 3600]},
+    ])
+    accounts = bp.build_accounts(None, tap(), NOW, bp.load_burn_history(tmp_path, NOW))
+    five = accounts["claude"]["windows"]["5h"]
+    burn = 0.30 / (3000 / 3600)
+    assert five["burn_h"] == pytest.approx(burn)
+    assert five["eta_s"] == pytest.approx((1 - 0.02) / burn * 3600)
+
+
+def test_engine_window_burn_uses_remaining_inverted_and_undecodable_lines_are_skipped(tmp_path: Path):
+    budget = tmp_path / "operator" / "budget"
+    budget.mkdir(parents=True)
+    (budget / bp.ENGINE_HISTORY).write_bytes(
+        b'{"at": %f, "q": {"go-a/5h": [0.9, %f]}}\n' % (NOW - 3000, NOW + 3600)
+        + b"\xff\xfe not json\n"
+        + b'{"at": %f, "q": {"go-a/5h": [0.6, %f]}}\n' % (NOW, NOW + 3600)
+    )
+    accounts = bp.build_accounts(status(**{"5h": {"remaining": 0.6, "reset_at": NOW + 3600, "observed_at": NOW, "state": "FRESH"}}),
+                                 None, NOW, bp.load_burn_history(tmp_path, NOW))
+    row = accounts["go-a"]["windows"]["5h"]
+    assert row["burn_h"] == pytest.approx(0.30 / (3000 / 3600))
+
+
+def test_without_history_burn_and_eta_are_none_not_zero():
+    accounts = bp.build_accounts(None, tap(), NOW)
+    five = accounts["claude"]["windows"]["5h"]
+    assert five["state"] == "FRESH" and five["burn_h"] is None and five["eta_s"] is None

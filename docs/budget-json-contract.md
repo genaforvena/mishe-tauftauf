@@ -6,8 +6,10 @@ section from the engine status and the native Claude tap (`mishe budget-produce 
 `engine_router.live_status()` reads the accounts section and the router no longer reads
 `engine_usage.status` or refetches stale readings. The producer also writes the cooling,
 ledger (`free_models`, `paid_models`, `unclassified_models`, `per_mind`, `ledger`) sections,
-committed but not yet observed on the pinned bytes. Still open: per-window usage, burn and
-ETA in the producer, the render-only budget view (step 3) and deleting the old writers (step 5). The `budget` duty
+committed but not yet observed on the pinned bytes. Each fresh window also carries `burn_h` (used
+fraction per hour over the rate history, at least 1500 s of span, same reset only) and `eta_s` (seconds
+to 100% at that burn); a non-fresh window gets null for both. Still open: candidate token counts and
+verdicts in the producer, the render-only budget view (step 3) and deleting the old writers (step 5). The `budget` duty
 now runs the producer (step 2): the site-local `producers/budget.sh` runs the old collector
 first and `mishe budget-produce` after it, so the producer reads this tick's `quota.json`
 rather than the previous tick's. Observed on the timer 2026-11-11
