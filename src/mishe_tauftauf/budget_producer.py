@@ -21,6 +21,8 @@ import os
 import tempfile
 from pathlib import Path
 
+from mishe_tauftauf.quota_history_text import read_jsonl_rows, split_quota_label
+
 SCHEMA = 1
 MAX_AGE_S = 900.0
 PRODUCER = "src/mishe_tauftauf/budget_producer.py"
@@ -127,19 +129,10 @@ def recent_burn(points, reset_at) -> float | None:
 
 def _history_rows(path: Path, now: float) -> list:
     """Rows of a JSONL history within BURN_HISTORY_S of now. Unreadable or undecodable lines are skipped."""
-    rows = []
-    try:
-        lines = path.read_bytes().splitlines()
-    except OSError:
-        return rows
-    for raw in lines:
-        try:
-            row = json.loads(raw.decode("utf-8"))
-        except ValueError:  # includes UnicodeDecodeError: one bad line never hides the rest
-            continue
-        if isinstance(row, dict) and _num(row.get("at")) and now - BURN_HISTORY_S <= row["at"] <= now + 5:
-            rows.append(row)
-    return rows
+    return [
+        row for row in read_jsonl_rows(path)
+        if _num(row.get("at")) and now - BURN_HISTORY_S <= row["at"] <= now + 5
+    ]
 
 
 def load_burn_history(home: Path, now: float) -> dict:
@@ -157,7 +150,7 @@ def load_burn_history(home: Path, now: float) -> dict:
         if not isinstance(q, dict):
             continue
         for label, v in q.items():
-            account, _, window = str(label).rpartition("/")
+            account, window = split_quota_label(label)
             if account and isinstance(v, list) and len(v) == 2:
                 points.setdefault((account, window), []).append((row["at"], _engine_used(v[0]), v[1]))
     return points
