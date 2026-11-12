@@ -104,8 +104,12 @@ def main(argv: list[str]) -> int:
     if view_mod is None:
         print(f"budget-view-mapping: CANNOT-DECIDE {err}")
         return 3
+    budget, err = view_mod.load_budget()
+    if budget is None:
+        print(f"budget-view-mapping: CANNOT-DECIDE {err}")
+        return 3
     try:
-        view = view_mod.engine_view()
+        view = view_mod.engine_view(budget)
     except Exception as exc:  # noqa: BLE001
         print(f"budget-view-mapping: CANNOT-DECIDE engine_view raised {str(exc)[:120]}")
         return 3
