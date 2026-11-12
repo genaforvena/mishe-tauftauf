@@ -72,8 +72,10 @@ def report_window_state():
     try:
         WINDOW_STATE.parent.mkdir(parents=True, exist_ok=True)
         tmp = WINDOW_STATE.with_name("window.json.tmp")
-        tmp.write_text(json.dumps({"pid": os.getpid(), "started": STARTED, "code": VERSION[0],
-                                   "fingerprint": code_fingerprint()}))
+        # "started" is the kernel start time of this pid: an os.execv reload keeps it, so the window check
+        # still matches the live process (STARTED is only when this copy of the code loaded).
+        tmp.write_text(json.dumps({"pid": os.getpid(), "started": nb.process_start(os.getpid()),
+                                   "code": VERSION[0], "fingerprint": code_fingerprint()}))
         tmp.replace(WINDOW_STATE)
     except OSError:
         pass

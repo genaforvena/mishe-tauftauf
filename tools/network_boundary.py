@@ -5,8 +5,10 @@ The speed reading's own log is decoded here too, so tools/network_speed.py reads
 values and never parses text itself.
 """
 import json
+import os
 import re
 import time
+from pathlib import Path
 
 
 def decode_rows(text, limit=1440):
@@ -175,3 +177,17 @@ def decode_router_rows(text):
 def stderr_summary(stderr, limit=120):
     """First ``limit`` characters of a failed probe's stderr, stripped."""
     return (stderr or "").strip()[:limit]
+
+
+def process_start(pid):
+    """Epoch seconds at which the live process with this pid started (None when unreadable).  The kernel
+    keeps this across os.execv, so a view that reloads itself in place keeps its start time."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        fields = stat.rsplit(")", 1)[1].split()
+        ticks = int(fields[19])  # field 22 (starttime), counted after the parenthesised command name
+        btime = next(int(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines()
+                     if line.startswith("btime "))
+        return btime + ticks / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError, StopIteration):
+        return None

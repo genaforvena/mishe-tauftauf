@@ -16,6 +16,9 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+import network_boundary as nb
+
 WALL_MAX_AGE_S = 6 * 3600
 COMMIT_MAX_AGE_S = 48 * 3600
 FILES = ("tools/network_view.py", "tools/network_boundary.py", "rust/mishe-network-probe", "checks/network-care.py")
@@ -80,20 +83,6 @@ def is_view_argv(argv):
     return False
 
 
-def process_start(pid):
-    """Epoch seconds at which the live process with this pid started (None when unreadable).  Used to
-    tell the recorded view from a later process that reused its pid."""
-    try:
-        stat = Path(f"/proc/{pid}/stat").read_text()
-        fields = stat.rsplit(")", 1)[1].split()
-        ticks = int(fields[19])  # field 22 (starttime), counted after the parenthesised command name
-        btime = next(int(line.split()[1]) for line in Path("/proc/stat").read_text().splitlines()
-                     if line.startswith("btime "))
-        return btime + ticks / os.sysconf("SC_CLK_TCK")
-    except (OSError, ValueError, IndexError, StopIteration):
-        return None
-
-
 def window_process(home, pane_pid, pane_cmd):
     """0 when the process running in the pane right now is the recorded view, 2 when it is not (a pane
     that was respawned, a process other than the view, a window state that names another pid, or a
@@ -118,7 +107,7 @@ def window_process(home, pane_pid, pane_cmd):
         print(f"network-care: the pane runs pid {pane_pid} but the view recorded pid {recorded} "
               "(its fingerprint describes another process)", file=sys.stderr)
         return 2
-    started = process_start(pane_pid)
+    started = nb.process_start(pane_pid)
     try:
         recorded_start = float(state["started"])
     except (KeyError, ValueError, TypeError):

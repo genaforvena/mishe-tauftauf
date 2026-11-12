@@ -122,3 +122,31 @@ def test_is_view_argv_rules():
     assert not care.is_view_argv(["python3", "other.py", "network_view.py"])
     assert not care.is_view_argv(["sleep", "network_view.py"])
     assert not care.is_view_argv([])
+
+
+
+def test_exec_reload_keeps_the_recorded_start_matching_the_live_pid(tmp_path):
+    """The view reloads itself with os.execv when its code changes. The pid and kernel start time survive
+    the reload, so the recorded "started" must be the kernel start, not the moment the new image loaded."""
+    tools = REPO / "tools"
+    wrapper = tmp_path / "reload_wrapper.py"
+    wrapper.write_text(
+        "import os, sys, time, json\n"
+        f"sys.path.insert(0, {str(tools)!r})\n"
+        "import network_boundary as nb\n"
+        "import network_view as v\n"
+        "v.report_window_state()\n"
+        "if len(sys.argv) == 1:\n"
+        "    time.sleep(1.5)  # the new image loads well after the process started\n"
+        "    os.execv(sys.executable, [sys.executable, __file__, 'reloaded'])\n"
+        "state = json.loads(v.WINDOW_STATE.read_text())\n"
+        "print(json.dumps({'pid': os.getpid(), 'recorded_pid': state['pid'], 'started': state['started'],\n"
+        "                  'kernel_start': nb.process_start(os.getpid())}))\n"
+    )
+    env = dict(os.environ, MISHE_TAUFTAUF_HOME=str(tmp_path))
+    out = subprocess.run([sys.executable, str(wrapper)], env=env, capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    rec = json.loads(out.stdout.strip().splitlines()[-1])
+    assert rec["recorded_pid"] == rec["pid"]
+    assert rec["kernel_start"] is not None
+    assert abs(rec["started"] - rec["kernel_start"]) < 0.5, rec
