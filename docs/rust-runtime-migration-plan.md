@@ -2672,7 +2672,8 @@ Next POSIX binary candidate stays unchanged (records verification is already
 ### 10.39 The read path has no measured headroom left for another Rust slice: S0 and T1 are abandoned on measurement (2026-11-12)
 
 The pre-gate A/B for `next-rust-slice` was run before any build, as §3.3 and
-the wall require. Raw output: `artifacts/rust-plan-20261107/read-path-decision-0419Z.txt`,
+the wall require. Raw output was kept in the site's ignored artifacts, not in this
+clone (the 0419Z read-path decision record of the 2026-11-07 rust-plan run),
 measurement script `full_fold-measure-0419Z.py` (in-process, outside the checkout,
 guard: loadavg 2.56, MemAvailable 28.3 GB).
 

@@ -38,9 +38,10 @@ nothing else:
 
 `wall_text.py` reads three kinds of text:
 
-- A message's first line. `dm_recipient` reads the canonical `[dm] to=ROLE` line
-  and the natural prose form, as in `health to genome: ...`, which addresses a
-  recipient only when the named role is declared and is not the sender.
+- A message's first line. `dm_recipient` reads the canonical `[dm] to=ROLE` line:
+  the slug must be valid and the recipient must not be the sender. It also reads the
+  natural prose form, as in `health to genome: ...`, which addresses a recipient only
+  when the named role is one of the declared roles and is not the sender.
   `near_miss_dm` catches a `[dm] to=ROLE` line with words after the role. The CLI
   then records the entry as plain chat, wakes nobody, and prints a warning.
 - A feed entry's first line. `addressed` reads it, including the permission header
@@ -54,7 +55,7 @@ nothing else:
   `names_sender` looks for a role as a whole token in a body, and
   `strip_render_volatile` blanks the growing age and cache stamp in a body so a
   digest does not change with the clock. `strip_render_volatile` has no caller
-  since the pane runtime was deleted: nothing publishes observation digests now.
+  in the tree: no code path in `src/`, `tools/` or `checks/` calls it.
 
 Everything the adapters do not name stays opaque.
 
