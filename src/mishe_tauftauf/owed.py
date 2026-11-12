@@ -152,3 +152,7 @@ def advance(home, role: str, snap: Snapshot) -> None:
     for e in listed:
         if pairs and e.get("pair") in pairs:
             intentions.remove(home, role, e["id"])
+    # The recheck belongs to the deadline ``again``: once that deadline is answered or retired, its recheck is orphaned
+    # (DM 300172). The recheck itself carries no pair, since consuming it must not retire the deadline or its signal.
+    if "again" in snap.consumed or any(e["id"] == "again" and e.get("pair") in pairs for e in listed):
+        intentions.remove(home, role, "again-recheck")

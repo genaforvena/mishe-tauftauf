@@ -122,3 +122,17 @@ def test_unrelated_yield_keeps_a_pending_recheck_while_the_lane_is_open(tmp_path
     monkeypatch.setattr(yielding, "open_lane", lambda home, role: False)
     _settle(home, "genome", "wake-g-5", 3000)
     assert "again-recheck" not in {e["id"] for e in intentions.list_(home, "genome")}
+
+
+def test_signal_answer_retires_the_recheck_of_its_deadline(tmp_path):
+    """DM 300172: when the paired signal answers the yield, its deadline's recheck goes too, not a wake at the deadline."""
+    home = tmp_path / "site"; home.mkdir()
+    owed.touch_inbox(home, "field-review")
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"], now=10)
+    _settle(home, "field-review", "wake-f-3", 1000, again=6 * 3600,
+            when={"signal": "moving-pin-delivery", "equals": "VERIFIED"})
+    # The signal answers at 16000, before the 2h recheck (8200) and before the 6h deadline (22600) would fire.
+    snap = owed.Snapshot(); snap.consumed = ["when-moving-pin-delivery"]
+    owed.advance(home, "field-review", snap)
+    left = {e["id"] for e in intentions.list_(home, "field-review")}
+    assert "again" not in left and "again-recheck" not in left
