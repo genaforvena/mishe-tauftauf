@@ -96,3 +96,28 @@ def test_failing_rows_are_saved_before_fail_closed(tmp_path, monkeypatch):
     samples = json.loads(next(tmp_path.glob('consumer-drain-pin-*.json')).read_text())['samples']
     assert samples[-1]['error'] == 'unbounded pinned consumer: mishe-debounce.service'
     assert samples[-1]['invocations']['mishe-debounce.service']['Type'] == 'simple'
+
+
+def test_blank_properties_while_starting_are_retried_not_unbounded(tmp_path, monkeypatch):
+    """A queued start can read blank Type/KillMode (the 17:41Z delivery); that is a transient read and drains once settled."""
+    transition(tmp_path)
+    blank = dict(STARTING, Type='', KillMode='', ControlGroup='/')
+    rows = iter([{'mishe-x.service': blank}, {'mishe-x.service': SETTLED}])
+    monkeypatch.setattr(fence, 'inventory', lambda home, previous=None: next(rows))
+    monkeypatch.setattr(fence, 'cgroup_pids', lambda group: [])
+    naps = []
+    record = fence.drain(tmp_path, tmp_path, 'pin', timeout=5, sleep=naps.append)
+    assert record['label'] == 'pin' and naps
+    samples = json.loads(next(tmp_path.glob('consumer-drain-pin-*.json')).read_text())['samples']
+    assert samples[0]['transient'] == 'active unit properties UNKNOWN: mishe-x.service'
+
+
+def test_persistent_blank_properties_fail_closed_at_deadline(tmp_path, monkeypatch):
+    transition(tmp_path)
+    blank = dict(STARTING, Type='', KillMode='', ControlGroup='/')
+    monkeypatch.setattr(fence, 'inventory', lambda home, previous=None: {'mishe-x.service': blank})
+    monkeypatch.setattr(fence, 'cgroup_pids', lambda group: [7])
+    clock = iter([0.0, 0.0, 0.5, 100.0, 100.0])
+    monkeypatch.setattr(fence.time, 'monotonic', lambda: next(clock, 200.0))
+    with pytest.raises(ValueError, match='active unit properties UNKNOWN: mishe-x.service'):
+        fence.drain(tmp_path, tmp_path, 'pin', timeout=1, sleep=lambda s: None)

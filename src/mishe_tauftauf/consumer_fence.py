@@ -12,7 +12,7 @@ import subprocess
 import time
 
 PROPERTIES = 'Id,Type,ActiveState,SubState,MainPID,ControlGroup,InvocationID,ExecMainStartTimestampMonotonic,Environment,FragmentPath,ExecStart,KillMode'
-TRANSIENT_UNKNOWN = ('active cgroup evidence UNKNOWN', 'invocation evidence UNKNOWN')
+TRANSIENT_UNKNOWN = ('active cgroup evidence UNKNOWN', 'invocation evidence UNKNOWN', 'active unit properties UNKNOWN')
 RETRY_INTERVAL_S = 2
 
 
@@ -79,6 +79,9 @@ def pending_old(record, rows):
             raise ValueError('active cgroup evidence UNKNOWN: ' + name)
         pids = cgroup_pids(group)
         if not pids and row.get('ActiveState') not in ('activating', 'active', 'deactivating', 'reloading'): continue
+        # A non-atomic systemctl read during a queued start can return blank properties: that is UNKNOWN (retried), not unbounded.
+        if row.get('ActiveState') in ('activating', 'reloading') and not (row.get('Type') and row.get('KillMode')):
+            raise ValueError('active unit properties UNKNOWN: ' + name)
         if row.get('Type') != 'oneshot' or row.get('KillMode') != 'control-group':
             raise ValueError('unbounded pinned consumer: ' + name)
         stamp = row.get('ExecMainStartTimestampMonotonic', '')
