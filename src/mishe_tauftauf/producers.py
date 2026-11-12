@@ -60,8 +60,26 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
     return 0
 
 
-def dispatch(home, *, now: float, max_open: float = 1800.0) -> str:
-    """RED when any dispatch has stayed open longer than ``max_open`` seconds."""
+DISPATCH_OPEN_GRACE_S = 300.0
+"""Slack past the engine hard cap before an open dispatch counts as stuck."""
+
+
+def dispatch_open_bound(home) -> float:
+    """Longest a dispatch may stay open before it counts as stuck: the engine hard cap plus grace.
+
+    A wake still producing output runs past its soft timeout up to the hard cap (engine_process),
+    so a soft-timeout bound flags healthy runs as RED. A record open past the hard cap means the
+    engine bound itself failed, which is what this detector must still catch.
+    """
+    from .engine_router import DEFAULT_HARD_TIMEOUT_S, load_routes
+    routes = load_routes(home) or {}
+    return float(routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S)) + DISPATCH_OPEN_GRACE_S
+
+
+def dispatch(home, *, now: float, max_open: float | None = None) -> str:
+    """RED when any dispatch has stayed open longer than ``max_open`` seconds (default: the hard-cap bound)."""
+    if max_open is None:
+        max_open = dispatch_open_bound(home)
     store = DispatchStore(Path(home) / "dispatch")
     for record in store.open_records():
         age = now - store.path_for(record.role).stat().st_mtime

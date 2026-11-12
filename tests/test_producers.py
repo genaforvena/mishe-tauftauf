@@ -50,6 +50,23 @@ def test_dispatch_producer_red_when_a_dispatch_is_open_too_long(tmp_path):
     assert producers.dispatch(tmp_path, now=NOW - 900 + 1, max_open=600) == "GREEN"
 
 
+def test_dispatch_default_bound_is_the_engine_hard_cap_not_the_soft_timeout(tmp_path):
+    from mishe_tauftauf.core.interfaces import UNKNOWN
+    from mishe_tauftauf.core.state import DispatchRecord, DispatchStore
+    import os
+    from mishe_tauftauf.engine_router import DEFAULT_HARD_TIMEOUT_S
+    assert producers.dispatch_open_bound(tmp_path) == DEFAULT_HARD_TIMEOUT_S + producers.DISPATCH_OPEN_GRACE_S
+    DispatchStore(tmp_path / "dispatch").write(
+        DispatchRecord(role="docs", key="k", state=UNKNOWN, detail="d"))
+    path = tmp_path / "dispatch" / "docs.json"
+    # a productive wake open past its 1800 s soft timeout, inside the hard cap: not stuck
+    os.utime(path, (NOW - 1900, NOW - 1900))
+    assert producers.dispatch(tmp_path, now=NOW) == "GREEN"
+    # open past the hard cap plus grace: the engine bound failed, so it is stuck
+    os.utime(path, (NOW - DEFAULT_HARD_TIMEOUT_S - producers.DISPATCH_OPEN_GRACE_S - 1,) * 2)
+    assert producers.dispatch(tmp_path, now=NOW) == "RED"
+
+
 def test_load_registers_declared_signals_and_returns_units_producers(home):
     (home / "producers.json").write_text(
         '[{"name":"egress","command":["/bin/true"],"every":300,"signal":{"max_age":900,"subscribers":["health"]}}]')
