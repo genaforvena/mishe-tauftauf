@@ -30,12 +30,16 @@ Rules:
   - Floor plan is schematic: room rectangles are not measured.
 """
 import argparse
+import contextlib
 import datetime
+import importlib.util
+import io
 import json
 import os
 import re
 import sys
 
+SITE = ""          # site root, set by configure()
 HERE = ""          # output directory, set by configure()
 HH = ""            # household input directory, set by configure()
 LABELS = ""
@@ -47,8 +51,9 @@ FUTURE_SLACK_S = 60          # a bucket this far past NOW is future-dated, rejec
 
 def configure(site, now=None):
     """Point the renderer at one site; the site is an argument, never the file location."""
-    global HERE, HH, LABELS, ACTIVITY, NOW
+    global SITE, HERE, HH, LABELS, ACTIVITY, NOW
     site = os.path.abspath(site)
+    SITE = site
     HH = os.path.join(site, "spatial", "work", "household")
     LABELS = os.path.join(HH, "labels.tsv")
     ACTIVITY = os.path.join(HH, "activity.json")
@@ -272,6 +277,40 @@ def phone_home():
         return None, unknown
 
 
+def rssi_evidence():
+    """Redmi10 Wi-Fi RSSI fingerprint for this render, as one evidence line (derived numbers only).
+
+    Recomputed each render by tools/rssi_fingerprint.py so the line is never older than the
+    render. It is evidence, not a placement: it never changes a marker's room or confidence,
+    because leave-one-out accuracy is what decides that, and it sits on Ilya's marker only
+    (the Redmi10 is his phone).
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        spec = importlib.util.spec_from_file_location("rssi_fingerprint", os.path.join(here, "rssi_fingerprint.py"))
+        fp = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fp)
+        with contextlib.redirect_stdout(io.StringIO()):
+            fp.main(["--site", SITE])
+        doc = json.load(open(os.path.join(HERE, "rssi-fingerprint.json"), encoding="utf-8"))
+    except (Exception, SystemExit) as exc:  # a failed helper is UNKNOWN, never a guess
+        return {"state": "UNKNOWN", "text": "rssi (Redmi10): UNKNOWN, fingerprint failed (%s)" % type(exc).__name__}
+    loo = doc.get("loo") or {}
+    loo_txt = "leave-one-out %s/%s correct, majority baseline %s" % (
+        loo.get("correct"), loo.get("n"), loo.get("majority_baseline_accuracy"))
+    live = doc.get("live") or {}
+    if live.get("state") != "fresh":
+        return {"state": "UNKNOWN", "text": "rssi (Redmi10): UNKNOWN, %s; %s"
+                % (live.get("reason", "no live vector"), loo_txt)}
+    est = doc.get("estimate") or {}
+    if est.get("room") is None:
+        where = "tie between %s" % " and ".join(est.get("tied_rooms") or ["?"])
+    else:
+        where = "nearest %s" % est["room"]
+    return {"state": "fresh", "text": "rssi (Redmi10): %.0f dBm, %s at %s dB; %s; not a room claim"
+            % (live["dbm"], where, est.get("distance_dbm"), loo_txt)}
+
+
 def add_guesses(rows, activity):
     """Best guess per person: a room, a confidence number and one evidence phrase.
 
@@ -323,7 +362,7 @@ def add_guesses(rows, activity):
                       "evidence": "%s; %s" % (why, cam)}
 
 
-def svg(rows, activity):
+def svg(rows, activity, rssi):
     scale, pad = 50, 20
     width = 13 * scale + 2 * pad
     height = 6 * scale + 2 * pad + 120
@@ -378,11 +417,12 @@ def svg(rows, activity):
         place = ROOM_LABEL[r["room"]] if r["room"] else "UNKNOWN"
         line = "%s: %s, confidence %s (%s)" % (person, place, r["confidence"], r["why"])
         out.append('<text x="%d" y="%d" fill="%s">%s</text>' % (pad, ly + 20 + i * 18, colours[person], line))
+    out.append('<text x="%d" y="%d" fill="%s">%s</text>' % (pad, ly + 20 + len(PEOPLE) * 18, colours["ilya"], rssi["text"]))
     out.append("</svg>")
     return "\n".join(out) + "\n"
 
 
-def ascii_map(rows):
+def ascii_map(rows, rssi):
     lines = ["+" + "-" * 62 + "+",
              "|  living room    | hall |        bedroom          |",
              "|                 |      |                          |",
@@ -403,6 +443,7 @@ def ascii_map(rows):
         else:
             conf = "%.2f" % g["confidence"] if g["confidence"] >= 0.01 else "<0.01"
         out += "         best guess: %s, confidence %s; %s\n" % (gplace, conf, g["evidence"])
+    out += rssi["text"] + "\n"
     return out
 
 
@@ -419,13 +460,14 @@ def main(argv=None):
     activity = room_activity()
     rooms_only = {k: v for k, v in activity.items() if not k.startswith("_")}
     add_guesses(rows, rooms_only)
+    rssi = rssi_evidence()
     os.makedirs(HERE, exist_ok=True)
     with open(os.path.join(HERE, "apartment-map.svg"), "w", encoding="utf-8") as fh:
-        fh.write(svg(rows, rooms_only))
+        fh.write(svg(rows, rooms_only, rssi))
     with open(os.path.join(HERE, "apartment-map.txt"), "w", encoding="utf-8") as fh:
-        fh.write(ascii_map(rows))
+        fh.write(ascii_map(rows, rssi))
     state = {"generated_utc": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"), "markers": rows,
-             "room_activity": activity}
+             "room_activity": activity, "rssi": rssi}
     with open(os.path.join(HERE, "map-state.json"), "w", encoding="utf-8") as fh:
         json.dump(state, fh, indent=1, ensure_ascii=False)
     print(json.dumps({p: {"room": rows[p]["room"], "confidence": rows[p]["confidence"]} for p in PEOPLE}))

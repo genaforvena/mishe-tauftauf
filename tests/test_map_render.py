@@ -164,3 +164,13 @@ def test_row_without_collector_time_is_unknown(tmp_path):
     site = _site(tmp_path, _activity({}), phones=[row])
     state, _ = _render(site)
     assert "no collector time" in _phone_note(state)
+
+
+def test_rssi_line_without_vectors_is_unknown_not_a_room(tmp_path):
+    # no label-rssi-vectors.json or rssi-table.json: the fingerprint cannot run, so the line is UNKNOWN
+    site = _site(tmp_path, _activity({}))
+    state, svg = _render(site)
+    assert state["rssi"]["state"] == "UNKNOWN"
+    assert "UNKNOWN" in state["rssi"]["text"]
+    assert "not a room claim" not in state["rssi"]["text"]
+    assert state["markers"]["ilya"]["room"] is None or state["markers"]["ilya"]["confidence"] == "UNKNOWN"
