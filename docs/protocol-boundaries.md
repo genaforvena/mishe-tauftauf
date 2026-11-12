@@ -33,7 +33,9 @@ nothing else:
 - `has_task_opportunity` looks for one named marker line, `receipt_line` returns a
   receipt's own first line (`feed.py` matches the `seed observation` form against
   it), and `grounding_ack` looks for a `grounded:<digest>` acknowledgement anywhere
-  in a body. `grounding_ack` has no production caller: only
+  in a body, where the digest is 7 to 40 lowercase hex characters on a word
+  boundary, so a SHA prefix matches and free prose does not.
+  `grounding_ack` has no production caller: only
   `tests/test_chat_protocol.py` calls it, so nothing in `src/`, `tools/` or
   `checks/` consumes the value it decodes.
 - The AutoGen-style and PARADISE vocabularies (`CONVERSATION_PATTERNS`,
