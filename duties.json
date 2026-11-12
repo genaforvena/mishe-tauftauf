@@ -683,6 +683,16 @@
       "resolver": "steward",
       "covers": "the human's own inbound lines reach the operator chat: the mishe-human-inbound-relay timer relays each new line of voice-in.log from a byte cursor; RED when an unrelayed human line is older than the limit (relay stopped), UNKNOWN when the log, cursor or voice receiver cannot be read; this duty only observes, the timer does the relay",
       "replaces": []
+    },
+    {
+      "name": "rust-measurement",
+      "command": ["{python}", "{repo}/checks/rust-measurement.py", "--home", "{home}", "--repo", "{repo}"],
+      "every": 3600,
+      "timeout": 240,
+      "max_age": 7500,
+      "resolver": "rust-plan",
+      "covers": "the cache-miss full fold of the senses and genome tapes, measured in fresh processes: GREEN when both are under 5 CPU-s and 200 MB (the Rust slice stays closed), RED when a trigger is hit (the slice may reopen), UNKNOWN when the host guard or the fold cannot give a reading",
+      "replaces": []
     }
   ],
   "retired": [
