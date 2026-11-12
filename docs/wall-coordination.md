@@ -210,9 +210,12 @@ ever read as permission to skip the work.
 Committed and pushed, but not yet in the release the plant executes. A reader of the
 committed tree has them; a reader of the running plant does not.
 
-- A yield that names an unregistered signal in `--when` now warns that the wait can never
-  fire. The underlying rule is already live: a signal that is not registered never fires,
-  so such a wait is dead from the moment it is written.
+- A yield that names an unregistered signal in `--when` now warns that the wait cannot
+  fire until the signal is registered. The underlying rule is already live: a signal that
+  is not registered never fires, so such a wait is dead from the moment it is written.
+- A `--when` with no `--again` now gets a six-hour deadline paired with the signal wait,
+  so whichever fires first retires the other and no wait can sit forever. The served
+  release still leaves such a wait without a deadline.
 - A budget observation dated in the future no longer counts as spare evidence. The served
   release still counts a future-dated observation within an hour of now as spare, so a
   window that is not yet real can shorten the idle pace there.
