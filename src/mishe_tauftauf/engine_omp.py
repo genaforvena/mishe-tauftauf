@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import engine_process
+from .model_policy import refuse_banned_model
 from .router_text import stream_events
 from .wake import EngineExhausted, EngineRateLimited, EngineRejected
 
@@ -117,6 +118,7 @@ class OmpEngine:
     name = "omp"
 
     def __init__(self, model: str | None = None, env: dict | None = None, thinking: str | None = None):
+        refuse_banned_model(model)
         self.model, self.extra_env, self.thinking = model, env or {}, thinking
         self.stream: Path | None = None
 

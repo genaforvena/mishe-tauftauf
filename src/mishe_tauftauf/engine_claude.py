@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import engine_process
+from .model_policy import refuse_banned_model
 
 ALLOW = ("Bash", "Read", "Edit", "Write", "NotebookEdit", "Glob", "Grep", "WebFetch", "WebSearch", "Agent")
 APPEND = "You are a Mishe mind, woken for one turn. Follow AGENTS.md in the working directory. End by running `mishe yield`."
@@ -20,6 +21,7 @@ class ClaudeEngine:
     name = "claude"
 
     def __init__(self, model: str, env: dict | None = None, tools: tuple = ALLOW):
+        refuse_banned_model(model)
         self.model, self.extra_env, self.tools = model, env or {}, tuple(tools)
 
     def run(self, prompt_file, *, env, cwd, timeout, on_start=None, hard_timeout=None) -> int:
