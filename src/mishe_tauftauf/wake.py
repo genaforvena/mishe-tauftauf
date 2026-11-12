@@ -28,8 +28,12 @@ DEFAULT_TIMEOUT = 1800.0
 # 300 s window, under the protected host StartLimitBurst of 3, with one start of headroom for path units.
 START_SPACING_SECONDS = 150.0
 START_LEDGER = "wake-start-ledger.json"
-# A start request that has not returned within this bound is treated as possibly accepted (see _start_once).
+# Hard bound on one start request. It is enforced by a `timeout -s KILL` wrapper that is a separate
+# process: if the calling wake dies while systemctl is in flight, the wrapper still kills systemctl at this
+# bound, so no request can be accepted later than START_REQUEST_TIMEOUT_SECONDS after it was issued.
 START_REQUEST_TIMEOUT_SECONDS = 60.0
+# The write-ahead record covers the whole acceptance window plus the spacing (see _start_once).
+START_WRITE_AHEAD_SECONDS = START_REQUEST_TIMEOUT_SECONDS + START_SPACING_SECONDS
 
 
 class EngineNotStarted(Exception):
@@ -77,9 +81,20 @@ def systemd_starter(role: str) -> bool:
     A refused start is reported on stderr (the journal of the calling unit) instead of being discarded,
     so a debounce that could not start its wake is a visible failure, and the caller does not record it.
     """
-    # The timeout bounds how long a write-ahead record can lag the real acceptance (see _start_once).
-    result = subprocess.run(["systemctl", "--user", "start", "--no-block", f"mishe-wake@{role}.service"],
-                            check=False, capture_output=True, text=True, timeout=START_REQUEST_TIMEOUT_SECONDS)
+    # The request runs under coreutils `timeout`, a separate process that outlives this caller. If the
+    # caller dies (SIGKILL, cgroup teardown) while systemctl is in flight, the wrapper still ends the request
+    # at START_REQUEST_TIMEOUT_SECONDS, which is what makes the write-ahead bound enforceable. The Python
+    # timeout is a belt only; expiring it raises and the write-ahead record is kept by _ledger_update.
+    argv = ["timeout", "-s", "KILL", str(int(START_REQUEST_TIMEOUT_SECONDS)),
+            "systemctl", "--user", "start", "--no-block", f"mishe-wake@{role}.service"]
+    result = subprocess.run(argv, check=False, capture_output=True, text=True,
+                            timeout=START_REQUEST_TIMEOUT_SECONDS + 5)
+    if result.returncode in (124, 137):
+        # The wrapper killed the request: acceptance is unresolved, not refused. The caller keeps the
+        # spacing record at the post-request clock (conservative), and the role stays owed for a retry.
+        sys.stderr.write(f"wake start for {role} unresolved after {START_REQUEST_TIMEOUT_SECONDS:.0f} s; "
+                         f"spacing kept\n")
+        return None
     if result.returncode != 0:
         sys.stderr.write(f"wake start refused for {role} (exit {result.returncode}): {result.stderr}\n")
         return False
@@ -159,18 +174,18 @@ def _start_once(home, ledger: dict, role: str, starter, clock) -> tuple[str, flo
     Returns ("start", recorded_time), ("wait", seconds_left) or ("refused", None). The record is
     written AHEAD of the request, so a process that dies inside the starter (review of e77d2c1a:
     os._exit in the second starter) still leaves a spacing record. That write-ahead value is
-    request_at + START_SPACING_SECONDS, not the bare request time: the real acceptance happens at or
-    after request_at and no later than START_REQUEST_TIMEOUT_SECONDS after it, so a record of
-    request_at + 150 keeps the next request at least 240 s after the real start even if the process
-    dies right after systemd accepted (review of 20f172c7: a bare request_at record let a request
-    go out 50 s after acceptance). After acceptance the record is moved to the post-acceptance time,
+    request_at + START_WRITE_AHEAD_SECONDS (request + 60 s bound + 150 s spacing). The request is
+    killed by its detached `timeout` wrapper no later than request_at + 60, so any acceptance happens at
+    or before request_at + 60 even if the caller dies; the next request therefore waits to at least
+    acceptance + 150 (review of 5716e061: a record of request_at + 150 let a delayed acceptance at
+    +290 be followed by a request at +300, 10 s after it). After acceptance the record is moved to the post-acceptance time,
     which is exact; a refusal restores the previous record, so a refused start is not recorded.
     """
     last = ledger.get(role)
     request_at = clock()
     if last is not None and request_at - float(last) < START_SPACING_SECONDS:
         return "wait", START_SPACING_SECONDS - (request_at - float(last))
-    ledger[role] = request_at + START_SPACING_SECONDS
+    ledger[role] = request_at + START_WRITE_AHEAD_SECONDS
     write_json(Path(home) / START_LEDGER, ledger)
     if _start_accepted(starter, role):
         ledger[role] = max(clock(), request_at)
