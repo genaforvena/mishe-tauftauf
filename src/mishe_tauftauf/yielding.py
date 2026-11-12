@@ -54,6 +54,22 @@ def open_lane(home, role) -> bool:
     return bool(record and record.get("state") != "UNKNOWN" and any(t.get("state") == "ready" for t in record.get("tasks", [])))
 
 
+def _pending_due(home, role, now, name):
+    """The due time of the role's unfired intention ``name``, or None when it is absent or already due."""
+    for entry in intentions.list_(home, role):
+        if entry.get("id") == name and "due" in entry and float(entry["due"]) > now:
+            return float(entry["due"])
+    return None
+
+
+def _pending_again_due(home, role, now):
+    return _pending_due(home, role, now, "again")
+
+
+def _pending_recheck(home, role, now):
+    return _pending_due(home, role, now, "again-recheck")
+
+
 def idle_delay(home, role, now, idle_seconds) -> float:
     if idle_seconds == DEFAULT_IDLE_SECONDS and open_lane(home, role) and spare_budget(home, now):
         return OPEN_LANE_SECONDS
@@ -131,11 +147,19 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
         # The explicit deadline is kept whole, so a clamp cannot retire it early (DM 300156). The clamp is
         # a separate, unpaired recheck: waking on it consumes only itself and the deadline still stands.
         intentions.add(home, role, "again", note="scheduled return", due=now + requested_again, pair=pair)
+    pending_deadline = _pending_again_due(home, role, now) if requested_again is None else None
     if again is not None and requested_again is not None and again < requested_again:
         intentions.add(home, role, "again-recheck", note="open lane: recheck at the clamp; the scheduled return still stands", due=now + again)
+    elif requested_again is None and lane_open and pending_deadline is not None:
+        # A yield with no --again while the lane stays open keeps a still-pending recheck as it is (DM 300162), and
+        # once the recheck has fired and been consumed, re-arms the next one from the pending paired deadline,
+        # capped at the clamp, so successive rechecks reach the deadline (DM 300168). Rechecks never move the deadline.
+        if not _pending_recheck(home, role, now):
+            intentions.add(home, role, "again-recheck", note="open lane: recheck at the clamp; the scheduled return still stands",
+                           due=now + min(CLAMP_SECONDS, pending_deadline - now))
     elif requested_again is not None or not lane_open:
-        # A new unclamped --again or a closed lane retires the recheck. A yield with no --again while the lane
-        # stays open leaves a pending recheck in place: unrelated yields must not drop it (DM 300162).
+        # A new unclamped --again or a closed lane retires the recheck. Unrelated yields with no pending deadline
+        # keep the recheck (DM 300162) only through the branch above.
         intentions.remove(home, role, "again-recheck")
     dead_wait = ""
     if when is not None and when["signal"] not in signal_store.registry(home):
