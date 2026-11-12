@@ -58,3 +58,26 @@ def test_cli_exit_code_when_home_missing(tmp_path):
     done = subprocess.run([sys.executable, str(REPO / 'checks/next-due-armed.py'), '--home', str(tmp_path / 'nope')],
                           capture_output=True, text=True)
     assert done.returncode in (2, 3)
+
+
+def test_timer_listing_waits_for_scheduler_replacement_lock(tmp_path, monkeypatch):
+    # The scheduler stops and starts the timer under next-due.lock; sampling outside it sees a false "never armed".
+    locked = []
+    real_flock = check.fcntl.flock
+
+    def recording_flock(fd, op):
+        locked.append(op)
+        return real_flock(fd, op)
+
+    class Done:
+        returncode = 0
+        stdout = 'Thu 2026 mishe-next-due-abc.timer mishe-next-due-abc.service\n'
+        stderr = ''
+
+    monkeypatch.setattr(check.fcntl, 'flock', recording_flock)
+    monkeypatch.setattr(check.subprocess, 'run', lambda *a, **k: Done())
+    code, timers = check.list_timers(tmp_path)
+    assert code == 0
+    assert timers == ['mishe-next-due-abc.timer']
+    assert locked and locked[0] == check.fcntl.LOCK_EX
+    assert (tmp_path / check.LOCK_NAME).exists()

@@ -16,20 +16,34 @@ Exit status:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 GRACE_S = 300.0
 TIMER_PREFIX = "mishe-next-due-"
+# The scheduler (arm.systemd_scheduler) holds this lock across its stop-then-start replacement.
+# Listing timers outside it can sample the gap between the two and report a timer as never armed.
+LOCK_NAME = "next-due.lock"
 
 
-def list_timers() -> tuple[int, list[str]]:
+@contextmanager
+def replacement_lock(home: Path):
+    lock = home / LOCK_NAME
+    with lock.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+
+
+def list_timers(home: Path) -> tuple[int, list[str]]:
     try:
-        done = subprocess.run(["systemctl", "--user", "list-timers", "--all", "--no-legend", "--plain"],
-                              capture_output=True, text=True, timeout=30)
+        with replacement_lock(home):
+            done = subprocess.run(["systemctl", "--user", "list-timers", "--all", "--no-legend", "--plain"],
+                                  capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError) as exc:
         return 3, [str(exc)]
     if done.returncode != 0:
@@ -73,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--grace-minutes", type=float, default=GRACE_S / 60)
     args = parser.parse_args(argv)
     now = time.time()
-    code, timers = list_timers()
+    code, timers = list_timers(args.home)
     lines_code, lines = evaluate(args.home, now, timers if code == 0 else None, args.grace_minutes * 60)
     print("\n".join(lines))
     return lines_code
