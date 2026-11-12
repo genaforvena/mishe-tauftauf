@@ -287,6 +287,27 @@ def _mail_lines(home, role, cursor_start):
 
 # --- the views ----------------------------------------------------------------
 
+def _verdict(home, role, now) -> str:
+    """One line at the top: the worst subscribed signal (RED before UNKNOWN) with its recorded cause."""
+    try:
+        rows = []
+        for name, entry in sorted(signal_store.registry(home).items()):
+            if role not in entry.get('subscribers', []):
+                continue
+            sig = signal_store.read(home, name, now=now)
+            value = str(sig.value) if sig.state == 'OK' else str(sig.state)
+            if value != 'GREEN':
+                rows.append((0 if value == 'RED' else 1, name, value, sig.reason))
+        if not rows:
+            return 'Verdict: GREEN — every subscribed signal is GREEN'
+        _, name, value, reason = sorted(rows)[0]
+        why = brief(safe(reason), 90) if reason else 'no cause recorded in the signal'
+        more = f'; {len(rows) - 1} more not GREEN' if len(rows) > 1 else ''
+        return cut(f'Verdict: {safe(value)} — {safe(name)}: {why}{more}', 2 * LINE)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        return f'Verdict UNKNOWN: {safe(exc)}'
+
+
 def _header(home, role, now, configured, facts=None):
     held = (home / 'hold').exists()
     if facts and facts.get('models'):
@@ -295,7 +316,7 @@ def _header(home, role, now, configured, facts=None):
         # engines/ROLE.json is only what is configured; the router's ledger says what the role's latest wake really ran on.
         routed = routed_models(Path(home) / 'engine' / 'routing-ledger.jsonl')[1].get(role)
         shown = f'model {safe(routed)} (router\'s latest pick for this role)' if routed else _model_text(facts, configured)
-    title = f'{role} — {shown} — view at {_clock(now)[:5]}Z'
+    title = cut(f'{role} — {shown} — view at {_clock(now)[:5]}Z — {_verdict(home, role, now)}', 2 * LINE)
     state = ('HELD — autonomous work stopped' if held
              else 'Not held (a hold stops new wakes; its absence does not show work is running)')
     return [title, state]
