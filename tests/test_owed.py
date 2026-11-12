@@ -184,3 +184,17 @@ def test_settle_warns_when_the_awaited_signal_is_not_registered(tmp_path):
     msg = yielding.settle(tmp_path, "genome", "wake-10", text="wall", result="changed", now=100.0,
                           when={"signal": "no-such", "equals": "RED"}, wall_writer=lambda h, r, t: None)
     assert "WARNING" in msg and "no-such" in msg
+
+
+def test_settle_when_without_again_sets_a_paired_deadline(tmp_path):
+    from mishe_tauftauf import yielding
+    from mishe_tauftauf.state_files import write_json
+    store.register(tmp_path, "ci", max_age=600, subscribers=["genome"])
+    store.observe(tmp_path, "ci", "GREEN", now=100.0, source="t")
+    write_json(yielding.snapshot_path(tmp_path, "wake-11"),
+               {"role": "genome", "snapshot": owed.check(tmp_path, "genome", now=100.0).to_json()})
+    msg = yielding.settle(tmp_path, "genome", "wake-11", text="wall", result="changed", now=100.0,
+                          when={"signal": "ci", "equals": "RED"}, wall_writer=lambda h, r, t: None)
+    pairs = {i["id"]: i.get("pair") for i in intentions.list_(tmp_path, "genome")}
+    assert pairs["again"] == "wake-11" and pairs["when-ci"] == "wake-11"
+    assert "deadline was set" in msg

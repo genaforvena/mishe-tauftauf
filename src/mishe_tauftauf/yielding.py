@@ -15,6 +15,7 @@ from .state_files import read_json, write_json
 
 IDLE_ID = "idle-initiative"
 DEFAULT_IDLE_SECONDS = 2 * 3600  # idle-initiative pace; was 6h (Ilya DM 299699: ~2h for roles with open plates)
+WHEN_DEADLINE_SECONDS = 6 * 3600  # fallback timer paired with a --when that names no --again
 # A continue yield must not be due at once: a due-now continue re-arms the next wake in the same
 # minute, and the restart storm trips the unit's start limit (2026-11-11 health wall).
 CONTINUE_FLOOR_SECONDS = 120
@@ -95,6 +96,12 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
     owed.advance(home, role, snap)
     if continue_:
         intentions.add(home, role, "continue", note="continue the work started in the previous wake", due=now + CONTINUE_FLOOR_SECONDS)
+    # A signal wait always carries a deadline (DM 300071 item 3): without --again the
+    # yield sets the default one rather than leaving a wait that may never fire.
+    deadline_note = ""
+    if when is not None and again is None:
+        again = WHEN_DEADLINE_SECONDS
+        deadline_note = f"; no --again given, so a {WHEN_DEADLINE_SECONDS // 3600}h deadline was set with the signal wait"
     # The fallback timer and the signal condition of one yield share a pair: whichever fires first retires the other.
     pair = key if (again is not None and when is not None) else None
     if again is not None:
@@ -124,4 +131,4 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
     work_state.settle_waits(home, role, now=now)
     write_json(receipt_path(home, key), {"role": role, "key": key, "result": result,
                                          "continue": continue_, "settled_at": now, "artifacts": artifact_facts})
-    return f"yield {role} {key} settled ({result}){dead_wait}"
+    return f"yield {role} {key} settled ({result}){dead_wait}{deadline_note}"
