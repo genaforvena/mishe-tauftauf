@@ -45,7 +45,7 @@ def test_resume_owed_spaces_starts_of_one_role(tmp_path, monkeypatch):
     # Each arm (every producer finish) calls resume_owed. Unspaced, a refused genome start was
     # retried on each finish and tripped the protected host start limit (2026-11-11 genome loop).
     started = []
-    monkeypatch.setattr(wake, "systemd_starter", started.append)
+    monkeypatch.setattr(wake, "systemd_starter", lambda role: started.append(role) or True)
     monkeypatch.setattr(owed, "check", lambda home, role, now: type("S", (), {"reasons": ["owed"]})())
     wake.resume_owed(tmp_path, ["genome"], now=1000, clock=lambda: 1000)
     wake.resume_owed(tmp_path, ["genome"], now=1100, clock=lambda: 1100)     # inside the spacing: skipped
@@ -84,7 +84,7 @@ def test_debounced_path_start_waits_for_the_shared_spacing_and_records_itself(tm
         clock["t"] += seconds
 
     recorded = wake.debounced_start(tmp_path, "genome", 120, clock=lambda: clock["t"], sleep=sleep,
-                                    starter=lambda role: None)
+                                    starter=lambda role: True)
     assert slept == [120, 150.0 - (121.0 - 0.0)]  # window, then the rest of the 150 s spacing
     assert recorded == 150.0
     assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 150.0
@@ -111,7 +111,7 @@ def test_debounced_start_without_a_prior_start_only_waits_the_window(tmp_path):
         clock["t"] += seconds
 
     wake.debounced_start(tmp_path, "senses", 120, clock=lambda: clock["t"], sleep=sleep,
-                         starter=lambda role: None)
+                         starter=lambda role: True)
     assert slept == [120]
 
 
@@ -130,7 +130,7 @@ def test_debounced_start_checks_and_records_in_one_ledger_step(tmp_path):
             wake.record_wake_start(tmp_path, "genome", now=clock["t"])
 
     recorded = wake.debounced_start(tmp_path, "genome", 0, clock=lambda: clock["t"], sleep=sleep,
-                                    starter=started.append)
+                                    starter=lambda role: started.append(role) or True)
     assert recorded == 300.0
     assert started == ["genome"]                  # exactly one start from the debounce
     assert slept == [0, 149.0, 150.0]
@@ -359,3 +359,17 @@ def test_signal_killed_start_request_is_unresolved_not_refused(tmp_path, monkeyp
     monkeypatch.setattr(wake.subprocess, "run", lambda *a, **k: SignalKilled())
     assert wake.systemd_starter("genome") is None
     assert "unresolved" in capsys.readouterr().err
+
+
+def test_unresolved_start_keeps_the_forward_write_ahead_record(tmp_path):
+    # Field review of 9f1c9c1e: an unresolved request (timeout or signal, None) at 1001 replaced its
+    # write-ahead record with 1001, so a request at 1151 was allowed while acceptance could still land
+    # after the client died. The record must stay at request + START_WRITE_AHEAD_SECONDS.
+    ledger = {}
+    result = wake._start_once(tmp_path, ledger, "genome", lambda role: None, lambda: 1000.0)
+    assert result == ("start", 1000.0 + wake.START_WRITE_AHEAD_SECONDS)
+    assert ledger["genome"] == 1000.0 + wake.START_WRITE_AHEAD_SECONDS
+    assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 1000.0 + wake.START_WRITE_AHEAD_SECONDS
+    # A second request inside the spacing of that record waits instead of starting.
+    kind, left = wake._start_once(tmp_path, ledger, "genome", lambda role: True, lambda: 1151.0)
+    assert kind == "wait" and left > 0

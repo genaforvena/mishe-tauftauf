@@ -103,9 +103,16 @@ def systemd_starter(role: str) -> bool:
     return True
 
 
-def _start_accepted(starter, role: str) -> bool:
-    # Test doubles and older starters return None; only an explicit False is a refusal.
-    return starter(role) is not False
+def _start_outcome(starter, role: str) -> str:
+    # systemd_starter: True accepted, False refused, None unresolved (timeout or signal death). An
+    # unresolved request may still be accepted later, so it is never treated as a refusal or as an
+    # acceptance at the post-request clock (field review of 9f1c9c1e: 1001 replaced the 1240 record).
+    result = starter(role)
+    if result is False:
+        return "refused"
+    if result is None:
+        return "unresolved"
+    return "accepted"
 
 
 def default_mail_reader(home, role: str, after: int) -> list:
@@ -189,8 +196,12 @@ def _start_once(home, ledger: dict, role: str, starter, clock) -> tuple[str, flo
         return "wait", START_SPACING_SECONDS - (request_at - float(last))
     ledger[role] = request_at + START_WRITE_AHEAD_SECONDS
     write_json(Path(home) / START_LEDGER, ledger)
-    if _start_accepted(starter, role):
+    outcome = _start_outcome(starter, role)
+    if outcome == "accepted":
         ledger[role] = max(clock(), request_at)
+        return "start", ledger[role]
+    if outcome == "unresolved":
+        # Keep the forward write-ahead record: a late acceptance must still be inside the spacing.
         return "start", ledger[role]
     if last is None:
         ledger.pop(role, None)
