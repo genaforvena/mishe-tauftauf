@@ -73,7 +73,6 @@ only that file and computes nothing itself.
   "schema": 1,
   "produced_at": 1794321600.0,
   "producer": "src/mishe_tauftauf/budget_producer.py",
-  "routes_version": 1,
   "accounts": {
     "claude": {
       "provider": "claude-code",
