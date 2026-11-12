@@ -313,6 +313,44 @@ def test_build_ledger_splits_free_and_paid_and_keeps_unrouted_out(tmp_path):
     assert "omp:longcat:-" not in out["free_models"] and "omp:longcat:-" not in out["paid_models"]
     assert any("not classified" in u and "omp:longcat:-" in u for u in out["ledger_unknowns"])
     assert out["per_mind"]["genome"]["omp:longcat:-"]["turns_1h"] == 1
+    un = out["unclassified_models"]["omp:longcat:-"]
+    assert un["in_routes"] is False and un["verdict"] == "UNKNOWN" and un["free"] is None
+    assert un["turns_1h"] == 1 and un["last_outcome"]["outcome"] == "yielded"
+
+
+def test_unclassified_keeps_last_outcome_older_than_24h(tmp_path):
+    import json
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    (engine / "routes.json").write_text(json.dumps({"version": 1, "cool_off_s": 600, "env": {}, "roles": {}}))
+    rows = [_ev("outcome", key="omp:old:-", wake="z", outcome="timeout", at="2026-11-01T06:00:00Z")]
+    (engine / "routing-ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    from mishe_tauftauf import budget_producer as bp
+    out = bp.build_ledger(tmp_path, 1794464000.0)
+    un = out["unclassified_models"]["omp:old:-"]
+    assert un["turns_24h"] == 0 and un["last_outcome"]["outcome"] == "timeout"
+
+
+def test_malformed_ledger_rows_are_counted_and_reported(tmp_path):
+    import json
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    (engine / "routes.json").write_text(json.dumps({"version": 1, "cool_off_s": 600, "env": {}, "roles": {}}))
+    good = json.dumps(_ev("outcome", key="omp:x:-", wake="a", outcome="yielded", at="2026-11-12T06:00:00Z"))
+    (engine / "routing-ledger.jsonl").write_text(good + "\n{truncated\n[1, 2]\n" + good + "\n")
+    from mishe_tauftauf import budget_producer as bp
+    out = bp.build_ledger(tmp_path, 1794464000.0)
+    assert out["ledger"]["malformed_skipped"] == 2
+    assert out["ledger"]["events"] == 2
+    assert out["unclassified_models"]["omp:x:-"]["turns_1h"] == 2
+    assert any("2 ledger row(s) not a JSON object skipped" in u for u in out["ledger_unknowns"])
+
+
+def test_ledger_meta_says_idle_or_missing_not_fresh(tmp_path):
+    from mishe_tauftauf import budget_producer as bp
+    out = bp.build_ledger(tmp_path, 1794464000.0)
+    assert out["ledger"] == {"present": False, "events": 0, "malformed_skipped": 0,
+                             "newest_event_at": None, "produced_at": 1794464000.0}
 
 
 def test_build_ledger_without_ledger_file_is_unknown_not_zero(tmp_path):

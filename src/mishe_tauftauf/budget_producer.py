@@ -3,9 +3,10 @@
 This producer writes the `accounts` section (account windows from the engine status
 (quota.json shape) and the native Claude tap), the `routing` section (the router's own
 assess() over those accounts), the `cooling` section (the router's own cooldown state), and the
-ledger sections `free_models`, `paid_models` and `per_mind` (outcome counts, pending selects and
-the last outcome from routing-ledger.jsonl). Per-window usage, burn and ETA, and candidate token
-counts are later slices. Pure functions here; file IO is limited to the atomic writer.
+ledger sections `free_models`, `paid_models`, `unclassified_models` (ledger candidates absent from
+routes.json, UNKNOWN) and `per_mind` (outcome counts, pending selects and the last outcome from
+routing-ledger.jsonl), plus a `ledger` meta block (events read, malformed rows skipped, newest event
+time). Per-window usage, burn and ETA, and candidate token counts are later slices. Pure functions here; file IO is limited to the atomic writer.
 
 Fail-closed rules from the contract: a window is FRESH only when its own observation is
 within MAX_AGE_S and its reset lies in the future; any window whose fields are not all
@@ -263,8 +264,12 @@ def build_ledger(home: Path, now: float) -> dict:
     present = path.exists()
     if not present:
         unknowns.append("routing ledger missing: ledger sections are UNKNOWN")
-    events = list(ledger_events(path)) if present else []
+    skipped: list = []
+    events = list(ledger_events(path, skipped)) if present else []
     tally = _ledger_tally(events, now)
+    if skipped:
+        unknowns.append(f"{len(skipped)} ledger row(s) not a JSON object skipped (first at line {skipped[0]}); "
+                        "counts exclude them")
     if tally["unreadable"]:
         unknowns.append(f"{tally['unreadable']} ledger outcome row(s) with unreadable timestamps not counted")
     if present:
@@ -285,12 +290,13 @@ def build_ledger(home: Path, now: float) -> dict:
             unrouted.add(key)
         roles.setdefault(role, set()).add(key)
     if unrouted:
-        # Not in routes.json: free or paid cannot be read from the file, so neither section claims it.
-        # Its counts stay in per_mind; the unknown names it.
+        # Not in routes.json: free or paid cannot be read from the file, so neither classified section
+        # claims it. Its totals and last outcome go to `unclassified_models` (UNKNOWN, in_routes false),
+        # and its per-role rows stay in per_mind; the unknown names it.
         unknowns.append("ledger candidates absent from routes, not classified: " + ", ".join(sorted(unrouted)))
 
     wm = tally["watermark"]
-    free_models, paid_models = {}, {}
+    free_models, paid_models, unclassified_models = {}, {}, {}
     for key, m in sorted(meta.items()):
         if m["free"]:
             base = {"free": True, "account": None, "in_routes": True, "verdict": "FREE",
@@ -301,13 +307,23 @@ def build_ledger(home: Path, now: float) -> dict:
             if m["account"] is None:
                 base["note"] = "subscription safety net: no account window is read"
             paid_models[key] = _model_row(tally, key, base, present, wm)
+    for key in sorted(unrouted):
+        base = {"free": None, "account": None, "in_routes": False, "verdict": "UNKNOWN",
+                "note": "absent from routes.json: free or paid is not readable from the file"}
+        unclassified_models[key] = _model_row(tally, key, base, present, wm)
 
     per_mind: dict = {}
     for role, keys in sorted(roles.items()):
         per_mind[role] = {}
         for key in sorted(keys):
             per_mind[role][key] = _ledger_row(tally, (role, key), {}, present, wm)
-    return {"free_models": free_models, "paid_models": paid_models, "per_mind": per_mind, "ledger_unknowns": unknowns}
+    # `newest_event_at` is the newest ledger event, not proof the collector ran or the ledger is complete:
+    # an idle host and a failed writer both look like an old newest event. `produced_at` is the producer clock.
+    ledger = {"present": present, "events": len(events), "malformed_skipped": len(skipped),
+              "newest_event_at": wm / 1000 if present and wm is not None else None,
+              "produced_at": now}
+    return {"free_models": free_models, "paid_models": paid_models, "unclassified_models": unclassified_models,
+            "per_mind": per_mind, "ledger": ledger, "ledger_unknowns": unknowns}
 
 
 def _model_row(tally: dict, key: str, base: dict, present: bool, wm) -> dict:
@@ -368,7 +384,9 @@ def main(home: Path, out: Path | None = None) -> int:
     ledger = build_ledger(home, now)
     payload["free_models"] = ledger["free_models"]
     payload["paid_models"] = ledger["paid_models"]
+    payload["unclassified_models"] = ledger["unclassified_models"]
     payload["per_mind"] = ledger["per_mind"]
+    payload["ledger"] = ledger["ledger"]
     payload["unknowns"] = payload["unknowns"] + ledger["ledger_unknowns"]
     if out:
         write_atomic(Path(out), payload)

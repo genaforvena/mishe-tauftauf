@@ -61,23 +61,26 @@ def file_lines(path: Path) -> list:
     return path.read_text(encoding="utf-8").splitlines()
 
 
-def ledger_events(path: Path):
+def ledger_events(path: Path, skipped: list | None = None):
     """The decoded routing-ledger events, oldest first.
 
     A line that is not a JSON object is not an event: it is skipped, so a
     truncated ledger still yields the events it does hold. A missing ledger
-    yields no events.
+    yields no events. Pass a list as `skipped` to receive the 1-based line
+    numbers of the rows that were skipped, so a caller can report them.
     """
     if not path.exists():
         return
     with path.open(encoding="utf-8", errors="replace") as lines:
-        for line in lines:
+        for number, line in enumerate(lines, 1):
             try:
                 event = json.loads(line)
             except ValueError:
-                continue
+                event = None
             if isinstance(event, dict):
                 yield event
+            elif skipped is not None:
+                skipped.append(number)
 
 
 def iso_ms(value) -> float | None:

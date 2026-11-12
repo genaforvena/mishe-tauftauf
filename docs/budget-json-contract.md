@@ -4,8 +4,10 @@ Status: **active, partial**. `src/mishe_tauftauf/budget_producer.py` produces th
 section from the engine status and the native Claude tap (`mishe budget-produce --out …`);
 `checks/budget-consistency.py` judges it. The router migration (step 4) has shipped:
 `engine_router.live_status()` reads the accounts section and the router no longer reads
-`engine_usage.status` or refetches stale readings. Still open: the ledger sections, the
-render-only budget view (step 3) and deleting the old writers (step 5). The `budget` duty
+`engine_usage.status` or refetches stale readings. The producer also writes the cooling,
+ledger (`free_models`, `paid_models`, `unclassified_models`, `per_mind`, `ledger`) sections,
+committed but not yet observed on the pinned bytes. Still open: per-window usage, burn and
+ETA in the producer, the render-only budget view (step 3) and deleting the old writers (step 5). The `budget` duty
 now runs the producer (step 2): the site-local `producers/budget.sh` runs the old collector
 first and `mishe budget-produce` after it, so the producer reads this tick's `quota.json`
 rather than the previous tick's. Observed on the timer 2026-11-11
@@ -136,7 +138,22 @@ only that file and computes nothing itself.
   They get their own rows and MUST NOT be summed into any paid account window. Their
   verdict is `FREE` with `no limit known`, plus turns/h and last outcome.
 - **`paid_models`** are candidates with an account. Their spend is the ledger's, not a
-  share of the account window.
+  share of the account window. **Exception (steward decision, DM 300199):** the Claude
+  subscription safety net is listed here with `account: null`, `in_routes: true` and an
+  explicit note that no unwindowed subscription window is read. The producer never infers a
+  quota account for it; the exception is not a general rule for `account: null` candidates.
+- **`unclassified_models`** are ledger candidates absent from `routes.json`. Free or paid
+  cannot be read from the file, so they are never placed in `free_models` or `paid_models`
+  and never inferred from their names. Each row carries `free: null`, `account: null`,
+  `in_routes: false` and `verdict: UNKNOWN`, with the same turns/pending/last-outcome fields.
+  Their last outcome is kept whatever its age, including older than 24 h, so a retired
+  candidate stays visible. They also appear in `per_mind` and are named in `unknowns`.
+- **`ledger`** is the meta block for the ledger sections: `present`, `events` (rows read as
+  events), `malformed_skipped` (lines that were not a JSON object; they are excluded from the
+  counts and named in `unknowns`), `newest_event_at` (the newest ledger event, not proof the
+  collector ran or the ledger is complete) and `produced_at` (the producer clock). An idle
+  ledger and a failed writer can both show an old `newest_event_at`; a consumer must not read
+  an old value as either fresh or failed without also checking `produced_at` and the `unknowns`.
 - **Ledger counts** include every `outcome` event (`yielded`, `timeout`, `lost`, any
   other) and every `select` with no later `outcome` for that role is `pending` (UNKNOWN,
   never 0). A wake that times out or dies is counted, because that is where burn is
