@@ -140,7 +140,40 @@ def record_wake_start(home, role: str, *, now: float) -> None:
     Path-triggered starts (the debounced units) never pass through ``resume_owed``, so without this
     record a resume could start a fourth unit inside the host's 300 s start limit (DM 300352).
     """
-    _ledger_update(home, lambda ledger: ledger.__setitem__(role, now))
+    def _record(ledger: dict) -> None:
+        # Only forward: a delayed record carrying an older `now` must not move the clock back below a
+        # start already accepted (review of e77d2c1a: 200 accepted, then 100 recorded, next start at 250).
+        last = ledger.get(role)
+        if last is None or float(last) < now:
+            ledger[role] = now
+
+    _ledger_update(home, _record)
+
+
+def _start_once(home, ledger: dict, role: str, starter, clock) -> tuple[str, float | None]:
+    """Check the spacing, request the start and record it. Runs inside the held ledger lock.
+
+    Returns ("start", recorded_time), ("wait", seconds_left) or ("refused", None). The record is
+    written AHEAD of the request, so a process that dies inside the starter (review of e77d2c1a:
+    os._exit in the second starter) still leaves the spacing record in place. The pre-request time is
+    earlier than the real request by the starter's own duration, which only makes the next start wait
+    longer. After acceptance the record is moved to the post-acceptance time; a refusal restores the
+    previous record, so a refused start is not recorded.
+    """
+    last = ledger.get(role)
+    request_at = clock()
+    if last is not None and request_at - float(last) < START_SPACING_SECONDS:
+        return "wait", START_SPACING_SECONDS - (request_at - float(last))
+    ledger[role] = request_at
+    write_json(Path(home) / START_LEDGER, ledger)
+    if _start_accepted(starter, role):
+        ledger[role] = max(clock(), request_at)
+        return "start", ledger[role]
+    if last is None:
+        ledger.pop(role, None)
+    else:
+        ledger[role] = last
+    return "refused", None
 
 
 def debounced_start(home, role: str, window: float, *, clock=time.time, sleep=time.sleep,
@@ -160,26 +193,14 @@ def debounced_start(home, role: str, window: float, *, clock=time.time, sleep=ti
     sleep(window)
     while True:
         decision: dict = {}
-
-        def _check_start_and_record(ledger: dict) -> None:
-            now = clock()
-            last = ledger.get(role)
-            remaining = START_SPACING_SECONDS - (now - float(last)) if last is not None else 0.0
-            if remaining > 0:
-                decision["wait"] = remaining
-                return
-            if _start_accepted(starter, role):
-                ledger[role] = clock()
-                decision["start"] = ledger[role]
-            else:
-                decision["refused"] = True
-
-        _ledger_update(home, _check_start_and_record)
-        if "start" in decision:
-            return decision["start"]
-        if decision.get("refused"):
+        _ledger_update(home, lambda ledger: decision.update(
+            result=_start_once(home, ledger, role, starter, clock)))
+        kind, value = decision["result"]
+        if kind == "start":
+            return value
+        if kind == "refused":
             raise RuntimeError(f"systemd refused the wake start for {role}; it stays owed for the next arm")
-        sleep(decision["wait"])
+        sleep(value)
 
 
 def resume_owed(home, roles, *, now: float, clock=time.time, starter=None) -> list[str]:
@@ -204,15 +225,10 @@ def resume_owed(home, roles, *, now: float, clock=time.time, starter=None) -> li
     # on each finish and the host start limit (3 per 300 s, protected) refuses the rest, leaving the
     # wake failed and the role owed again (2026-11-11 genome loop). A throttled role is retried by the
     # next arm after the spacing, so a start is delayed, never dropped while the role stays owed.
-    def _space(ledger: dict) -> None:
-        for role in started:
-            request_at = clock()
-            last = ledger.get(role)
-            if last is not None and request_at - float(last) < START_SPACING_SECONDS:
-                continue
-            if _start_accepted(starter, role):
-                ledger[role] = clock()
-    _ledger_update(home, _space)
+    # One locked step per role: each role's accepted start is persisted before the next role's request,
+    # so a failure or exit inside a later starter cannot erase an earlier accepted start.
+    for role in started:
+        _ledger_update(home, lambda ledger, role=role: _start_once(home, ledger, role, starter, clock))
     return started
 
 

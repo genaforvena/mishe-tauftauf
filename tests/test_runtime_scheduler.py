@@ -225,3 +225,49 @@ def test_systemd_starter_reports_refusal_as_false(monkeypatch):
     assert wake.systemd_starter("genome") is False
     Done.returncode = 0
     assert wake.systemd_starter("genome") is True
+
+
+def test_late_wake_record_never_moves_the_start_clock_back(tmp_path):
+    # Review of e77d2c1a: a delayed record with an older `now` overwrote an accepted start at 200, so a
+    # request at 250 was spaced only 50 s after it. The record only moves forward.
+    wake.record_wake_start(tmp_path, "genome", now=200)
+    wake.record_wake_start(tmp_path, "genome", now=100)
+    assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 200
+
+
+def test_exit_inside_a_later_starter_keeps_the_earlier_accepted_start(tmp_path, monkeypatch):
+    # Review of e77d2c1a: os._exit in the second starter skipped the single final write, so the first
+    # accepted start vanished. Each role now persists before the next role's request.
+    from types import SimpleNamespace
+    monkeypatch.setattr(wake.owed, "check", lambda home, role, now: SimpleNamespace(reasons=["inbox"]))
+
+    def starter(role):
+        if role == "senses":
+            raise SystemExit(77)
+        return True
+
+    monkeypatch.setattr(wake, "systemd_starter", starter)
+    import pytest
+    with pytest.raises(SystemExit):
+        wake.resume_owed(tmp_path, ["genome", "senses"], now=1000, clock=lambda: 1000)
+    ledger = wake.read_json(tmp_path / wake.START_LEDGER)
+    assert ledger["genome"] == 1000
+    assert ledger["senses"] == 1000  # write-ahead: the in-flight request is recorded before the starter runs
+
+
+def test_exit_inside_a_debounced_starter_still_leaves_the_record(tmp_path):
+    import pytest
+    def starter(role):
+        raise SystemExit(77)
+    with pytest.raises(SystemExit):
+        wake.debounced_start(tmp_path, "genome", 0, clock=lambda: 1000, sleep=lambda s: None, starter=starter)
+    assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 1000
+
+
+def test_refused_start_restores_the_previous_record(tmp_path):
+    wake._ledger_update(tmp_path, lambda ledger: ledger.__setitem__("genome", 0.0))
+    import pytest
+    with pytest.raises(RuntimeError):
+        wake.debounced_start(tmp_path, "genome", 0, clock=lambda: 1000, sleep=lambda s: None,
+                             starter=lambda role: False)
+    assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 0.0

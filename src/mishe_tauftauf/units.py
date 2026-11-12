@@ -161,7 +161,9 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         # per 5 min (2026-11-12: 29 starts in 6 h, start-limit-hit at 07:51:58, 07:52:46, 07:57:51).
         target = f"{p}-wake-debounce-{role}.service"
         files[target] = _file(
-            f"[Unit]\nDescription=Coalesce wake triggers for {role}",
+            # OnFailure routes a refused debounce to the failed-unit signal (review of e77d2c1a: the raise was
+            # only visible in the journal). The failed signal name is excluded from path triggers above.
+            f"[Unit]\nDescription=Coalesce wake triggers for {role}\n{failed}",
             # Same interpreter, PYTHONPATH (the release pin) and working directory as the wake unit, so the
             # debounce imports the pinned code rather than whatever the user's environment resolves.
             "[Service]\nType=oneshot\n" + f"WorkingDirectory={cfg.repo}\n" + _env(cfg)
