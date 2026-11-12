@@ -29,15 +29,20 @@ nothing else:
   the JSON line that follows the header. A malformed market record raises
   `ProtocolError`; it is not dropped.
 - `has_task_opportunity` looks for one named marker line, `receipt_line` returns a
-  receipt's own first line, and `grounding_ack` looks for a `grounded:<digest>`
-  acknowledgement in a body. `grounding_ack` has no caller yet: it is a decoded
-  value nothing consumes.
+  receipt's own first line (`feed.py` matches the `seed observation` form against
+  it), and `grounding_ack` looks for a `grounded:<digest>` acknowledgement anywhere
+  in a body. `grounding_ack` has no production caller: only
+  `tests/test_chat_protocol.py` calls it, so nothing in `src/`, `tools/` or
+  `checks/` consumes the value it decodes.
 - The AutoGen-style and PARADISE vocabularies (`CONVERSATION_PATTERNS`,
   `AGENT_CAPABILITIES`, `CONVERSABLE_ROLES`, `CHAT_TERMINATION_TOKENS` and the
   `PARADISE_*` constants) and their predicates and computations
-  (`conversation_pattern_is_valid`, `is_termination_token`, `paradise_kappa` and the
-  other `paradise_*` functions) have no caller outside `chat_protocol.py`. They
-  gate nothing and emit no bytes. They are not machine records a feed entry carries.
+  (`conversation_pattern_is_valid`, `agent_capability_is_valid`,
+  `conversable_role_is_valid`, `auto_reply_limit_is_valid`,
+  `next_speaker_is_valid`, `is_termination_token`, `paradise_kappa` and the
+  other `paradise_*` functions) have no caller outside `chat_protocol.py`, tests
+  included. They gate nothing and emit no bytes. They are not machine records a
+  feed entry carries.
 
 `wall_text.py` reads three kinds of text:
 
@@ -47,10 +52,13 @@ nothing else:
   when the named role is one of the declared roles and is not the sender.
   `near_miss_dm` catches a `[dm] to=ROLE` line with words after the role. In
   `mishe append`, when `dm_recipient` gives no recipient, the entry is recorded as
-  plain chat, wakes nobody, and prints a warning. `mishe wall dm` is the canonical
-  writer.
+  plain chat and wakes nobody. A warning is printed only when `near_miss_dm` finds a
+  `[dm] to=ROLE` first line with words after the role; an ordinary plain-chat entry
+  is silent. `mishe wall dm` is the canonical writer.
 - A feed entry's first line. `addressed` reads it, including the permission header
-  `[permission] id=... decision=granted|revoked owner=...`.
+  `[permission] id=... decision=granted|revoked owner=...`. It is defined in
+  `wall_text.py`. `wall.py` re-exports it, and `wake.py` and `plant_view.py` import
+  it from there; `feed.py` imports it from `wall_text.py` directly.
 - A wall document or a body as a whole. `is_peer_copy` decides whether a note is a
   peer's wall document, so a write that would reproduce one is refused; trailing
   blank lines do not count. `document_digest` gives that same document identity as
