@@ -13,6 +13,8 @@ Checks (RED when any fails):
   - an account whose state disagrees with its windows (FRESH needs every window FRESH and at
     least one window; UNREADABLE needs no windows; otherwise STALE)
   - an account marked FRESH with no windows
+  - decision level (live file only): the scheduler's admission (yielding.spare_budget) disagrees with the
+    admission rule recomputed from raw fields (FRESH account and windows, age 0..3600 s, reset ahead, floor met)
 
 Exit status:
   0  GREEN: every account row matches its windows and no window is shown FRESH past its age
@@ -114,6 +116,55 @@ def check_accounts(data: dict, now: float, max_age: float) -> tuple[list, list, 
     return problems, exhausted, summary
 
 
+# Decision-level rule, written again here from the raw fields (not from budget_producer.window_fresh_at),
+# so a regression in the shared freshness helper or in the scheduler's spare_budget cannot agree with
+# itself. Constants mirror the scheduler's admission floor and its evidence age limit.
+ADMIT_MAX_AGE_S = 3600.0
+ADMIT_FLOORS = {"5h": 0.30, "7d": 0.30}
+
+
+def raw_admission(data: dict, now: float) -> bool:
+    """True when some account has FRESH state and both 5h and 7d windows FRESH, recent (0..3600 s old),
+    not yet reset and above the spare floor. Computed from raw fields only."""
+    for acct in (data.get("accounts") or {}).values():
+        if not isinstance(acct, dict) or acct.get("state") != "FRESH" or not isinstance(acct.get("windows"), dict):
+            continue
+        ok = True
+        for name, floor in ADMIT_FLOORS.items():
+            w = acct["windows"].get(name)
+            if not isinstance(w, dict) or w.get("state") != "FRESH" or not all(_num(w.get(f)) for f in ("remaining", "reset_at", "observed_at")):
+                ok = False
+                break
+            age = now - w["observed_at"]
+            ok = 0 <= age <= ADMIT_MAX_AGE_S and w["reset_at"] > now and w["remaining"] >= floor
+            if not ok:
+                break
+        if ok:
+            return True
+    return False
+
+
+def check_admission(home: Path, data: dict, now: float) -> tuple[list, dict]:
+    """Compare the scheduler's admission decision (yielding.spare_budget, which reads home/engine/budget.json)
+    with raw_admission on the same data. Disagreement is a RED problem; an unimportable scheduler is UNKNOWN."""
+    repo_src = Path(__file__).resolve().parent.parent / "src"
+    if str(repo_src) not in sys.path:
+        sys.path.insert(0, str(repo_src))
+    try:
+        from mishe_tauftauf import yielding
+    except Exception as exc:  # noqa: BLE001 - any import failure means the decision cannot be observed
+        return [], {"available": False, "reason": f"scheduler not importable: {exc}"}
+    try:
+        decided = bool(yielding.spare_budget(home, now))
+    except Exception as exc:  # noqa: BLE001
+        return [f"scheduler spare_budget raised: {exc}"], {"available": True, "decided": None}
+    raw = raw_admission(data, now)
+    summary = {"available": True, "decided": decided, "raw": raw}
+    if decided != raw:
+        return [f"admission disagrees: scheduler spare_budget={decided}, raw fields={raw}"], summary
+    return [], summary
+
+
 def run(home: Path, max_age: float, now: float, path: Path | None) -> tuple[int, dict]:
     target = path or home / "engine" / "budget.json"
     result: dict = {"file": str(target), "now": now, "max_age": max_age, "not_checked": NOT_CHECKED}
@@ -135,6 +186,14 @@ def run(home: Path, max_age: float, now: float, path: Path | None) -> tuple[int,
             "reason": f"file is {now - produced_at:.0f}s old, older than max_age {max_age:.0f}s",
         }
     problems, exhausted, summary = check_accounts(data, now, max_age)
+    if path is None:
+        # The scheduler reads home/engine/budget.json itself, so the decision is only comparable for the live file.
+        adm_problems, admission = check_admission(home, data, now)
+        problems = problems + adm_problems
+        result["admission"] = admission
+        if not admission.get("available"):
+            result.update({"accounts": summary, "exhausted_windows": exhausted, "problems": problems})
+            return UNKNOWN, {**result, "verdict": "UNKNOWN", "reason": admission["reason"]}
     result.update({"accounts": summary, "exhausted_windows": exhausted, "problems": problems})
     if problems:
         return RED, {**result, "verdict": "RED"}
