@@ -174,3 +174,13 @@ def test_settle_pairs_fallback_and_signal_of_one_yield(tmp_path):
     store.observe(tmp_path, "ci", "RED", now=101.0, source="t")
     owed.advance(tmp_path, "genome", owed.check(tmp_path, "genome", now=101.0))
     assert "when-ci" not in _ids(tmp_path) and "again" not in _ids(tmp_path)
+
+
+def test_settle_warns_when_the_awaited_signal_is_not_registered(tmp_path):
+    from mishe_tauftauf import yielding
+    from mishe_tauftauf.state_files import write_json
+    write_json(yielding.snapshot_path(tmp_path, "wake-10"),
+               {"role": "genome", "snapshot": owed.check(tmp_path, "genome", now=100.0).to_json()})
+    msg = yielding.settle(tmp_path, "genome", "wake-10", text="wall", result="changed", now=100.0,
+                          when={"signal": "no-such", "equals": "RED"}, wall_writer=lambda h, r, t: None)
+    assert "WARNING" in msg and "no-such" in msg
