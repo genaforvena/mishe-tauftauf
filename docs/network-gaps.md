@@ -15,7 +15,7 @@ shown), **MISSING** (not measured or not shown).
 | Latency to 1.1.1.1 and 8.8.8.8 | MISSING | deliberately not used: the router answers public pings itself, so they look fast when the internet is down (note in `draw()`) |
 | Latency to a couple of regional hosts | MISSING | only two secure sites are checked (gstatic, cloudflare) |
 | Packet loss | PARTLY | loss to the router only (`loss_pct`, "worst loss"); no loss to the internet |
-| Jitter | MISSING | no jitter value is computed anywhere in the probe or the view |
+| Jitter | BUILT | router jitter from the gateway pings, shown in the window (UNKNOWN when absent) |
 | DNS lookup time | BUILT | `dns_ms` line with sparkline |
 | HTTPS time to stable sites | PARTLY | two sites (gstatic.com, cloudflare.com), full time and "failed in last 40" |
 
@@ -42,7 +42,7 @@ shown), **MISSING** (not measured or not shown).
 | --- | --- | --- |
 | Router uptime | BUILT | `router_facts()`: "router up N days" from `/proc/uptime` |
 | WAN link state | BUILT | `router_facts()`: "WAN up" or "UNKNOWN/down" from `ubus` |
-| Errors and drops | MISSING | the router read does not include interface error or drop counters |
+| Errors and drops | BUILT | WAN link errors and drops from `ip -s link`, shown as an uplink line (UNKNOWN when absent) |
 | Load | BUILT | `router_facts()`: 1/5/15-minute load from `/proc/loadavg` |
 | VPN state (sing-box) | MISSING | nothing reads sing-box |
 | Tailscale exit-node path | MISSING | nothing reads tailscale; the old `egress` duty is not shown in the window |
@@ -58,13 +58,11 @@ shown), **MISSING** (not measured or not shown).
 
 ## Count
 
-- BUILT: 10
+- BUILT: 13
 - PARTLY: 4
-- MISSING: 10
+- MISSING: 8
 
 ## Next gaps, in order of value
 
-1. Jitter from the existing gateway pings (derived from data already collected; no new traffic).
-2. Errors and drops from the router `ubus`/`ip` counters (read-only).
-3. Upload speed, one bounded night-time try alongside the download.
-4. Worse-than-usual baseline, once two days of `network/router.jsonl` rows exist.
+1. Upload speed, one bounded night-time try alongside the download.
+2. Worse-than-usual baseline, once two days of `network/router.jsonl` rows exist.
