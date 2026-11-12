@@ -36,7 +36,7 @@ def spare_budget(home, now) -> bool:
             ok = acct.get("state") == "FRESH"
             for name, floor in (("5h", SPARE_5H), ("7d", SPARE_7D)):
                 x = w[name]
-                ok = ok and x.get("state") == "FRESH" and now - float(x["observed_at"]) <= BUDGET_MAX_AGE and float(x["remaining"]) >= floor
+                ok = ok and x.get("state") == "FRESH" and abs(now - float(x["observed_at"])) <= BUDGET_MAX_AGE and float(x["remaining"]) >= floor
             if ok:
                 return True
         except (KeyError, TypeError, ValueError, AttributeError):
