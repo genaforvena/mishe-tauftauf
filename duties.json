@@ -168,6 +168,22 @@
       "covers": "token and quota windows; RED or UNKNOWN holds spontaneous wakes"
     },
     {
+      "name": "budget-consistency",
+      "command": [
+        "{python}",
+        "{repo}/checks/budget-consistency.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 300,
+      "timeout": 60,
+      "max_age": 900,
+      "red_codes": [2],
+      "resolver": "senses",
+      "replaces": [],
+      "covers": "budget accounts consistency and freshness"
+    },
+    {
       "name": "host-capacity",
       "command": [
         "{home}/producers/host-capacity.sh"

@@ -70,6 +70,15 @@ def test_silence_ages_to_unknown_and_wakes_the_resolver(tmp_path, name):
     assert store.expire(tmp_path, now=late) == [name]
     assert f"signal:{name}" in owed.check(tmp_path, resolver, now=late).reasons
 
+def test_budget_consistency_missing_input_does_not_leave_green(tmp_path):
+    item = next(i for i in declared(tmp_path) if i["name"] == "budget-consistency")
+    store.observe(tmp_path, item["name"], "GREEN", now=NOW, source="previous")
+    assert producers.run(tmp_path, item["name"], item["command"], now=NOW + 1,
+                         timeout=item["timeout"], red_codes=tuple(item["red_codes"]),
+                         unknown_codes=tuple(item["unknown_codes"])) == 2
+    assert store.read(tmp_path, item["name"], now=NOW + 1).state == "UNKNOWN"
+    assert "signal:budget-consistency" in owed.check(tmp_path, "senses", now=NOW + 1).reasons
+
 
 def test_readings_renewal_has_a_bounded_senses_owned_producer():
     item = next(d for d in ALL if d["name"] == "readings")

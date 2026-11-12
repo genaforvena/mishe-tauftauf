@@ -11,10 +11,10 @@ first and `mishe budget-produce` after it, so the producer reads this tick's `qu
 rather than the previous tick's. Observed on the timer 2026-11-11
 (`produced_at` 05:18:05Z → 05:28:06Z, next fire 05:38:04Z). With a 600 s period inside the
 900 s `MAX_AGE_S`, the file stays fresh with ~300 s of margin, so a role whose candidate
-reads an account window no longer routes on no evidence. Still open for the judge: no
-scheduler runs `checks/budget-consistency.py`, so a silent aging-out would go unreported
-(see that check below). Roles whose candidates are all free models or the Claude safety net
-read no window and are unaffected.
+reads an account window no longer routes on no evidence. The checkout declares a separate
+`budget-consistency` duty below; its live installation and observation must be verified after
+delivery. Roles whose candidates are all free models or the Claude safety net read no window
+and are unaffected.
 Owner of the model/account mapping: `engine/routes.json`. Owner of this contract: steward.
 
 ## Problem
@@ -155,14 +155,12 @@ Command: `{python} {repo}/checks/budget-consistency.py --home {home}`.
 Exit codes: 0 GREEN, 2 RED, 3 cannot decide (ages to UNKNOWN). Its own `--max-age` default
 is 900 s.
 
-**Not registered as a duty.** `checks/budget-consistency.py` is in no systemd timer, CI job
-or observer-check inventory, so it has no resolver, no `every`, `timeout` or `max_age` of its
-own and nothing routes its verdict to anyone. The `budget` duty that does exist runs the
-producer and has resolver **senses**; it does not run this check. Measured 2026-11-11 with
-`checks/check-scheduler-coverage.py`, the check is `unobserved`, so its verdict is manual
-only and a file that silently ages past `MAX_AGE_S` produces no reading. Registering it is a
-scheduler change and needs fresh review. Until then, run it by hand and treat a missing
-result as UNKNOWN, never as GREEN.
+The checkout declares a `budget-consistency` duty in `duties.json`: every 300 s, timeout
+60 s, signal max age 900 s, resolver **senses**. Exit 2 routes RED and exit 3 records UNKNOWN
+immediately; a missing or stale observation is UNKNOWN. The check covers only the accounts section; the
+ledger and router checks remain `not_checked`. This declaration requires the scheduler's
+reviewed delivery and a live timer observation before it is considered active. The existing
+`budget` duty runs the producer, not this judge.
 
 RED when any of:
 
