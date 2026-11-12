@@ -1,8 +1,9 @@
 """Independent, tool-free patch reading; no task or receipt admission.
 
-The reviewer model is configurable so a limited or exhausted provider is not a
-permanent hard gate. Set `MISHE_WALL_REVIEW_MODEL` (or the `model` key of
-`SITE/patch-review.json`) to any independent, tool-free reviewer.
+The reviewer is a Haiku model run through the claude engine with tools off
+(Ilya, DM 300461: RouterAI is decide()-only; no RouterAI model reviews patches).
+Set `MISHE_WALL_REVIEW_MODEL` (or the `model` key of `SITE/patch-review.json`)
+to another Haiku model id; any other model is refused.
 """
 from __future__ import annotations
 import math
@@ -15,14 +16,21 @@ import subprocess
 import shutil
 import tempfile
 
-DEFAULT_MODEL = "opencode-go/longcat-2.5-preview-free"
+DEFAULT_MODEL = "claude-haiku-5-5"
 DEFAULT_TIMEOUT = 240
 MAX_EMPTY_RETRIES = 3
 
 
+def _checked_model(model: object, source: str) -> str:
+    text = str(model).strip()
+    if not text.startswith("claude-haiku-"):
+        raise ValueError(f"reviewer model from {source} must be a claude-haiku-* id, got {text!r}")
+    return text
+
+
 def reviewer_model(home: Path | None = None) -> str:
     if os.environ.get("MISHE_WALL_REVIEW_MODEL"):
-        return os.environ["MISHE_WALL_REVIEW_MODEL"]
+        return _checked_model(os.environ["MISHE_WALL_REVIEW_MODEL"], "MISHE_WALL_REVIEW_MODEL")
     if home is not None:
         for name in ("patch-review.json", "publication-check.json"):
             config = home / name
@@ -32,7 +40,7 @@ def reviewer_model(home: Path | None = None) -> str:
                 except (OSError, ValueError):
                     model = None
                 if model:
-                    return str(model)
+                    return _checked_model(model, name)
     return DEFAULT_MODEL
 
 
@@ -112,22 +120,29 @@ def main():
 
 
 def reviewer_executable() -> str:
-    """Absolute reviewer CLI path.
+    """Absolute claude CLI path.
 
     The gate must not depend on the caller's PATH: a patch check launched from a
     shell that lacks the installed agent CLI directory used to die with
-    ``FileNotFoundError: 'omp'`` and record the whole patch as
-    ``review-unavailable`` (9 of 101 records). Prefer the PATH-resolved binary;
-    fall back to the standard user install location, else let the OS report the
-    missing executable.
+    ``FileNotFoundError`` and record the whole patch as ``review-unavailable``.
+    Prefer the PATH-resolved binary; fall back to the standard user install
+    location, else let the OS report the missing executable.
     """
-    found = shutil.which("omp")
+    found = shutil.which("claude")
     if found:
         return found
-    fallback = Path.home() / ".local" / "bin" / "omp"
+    fallback = Path.home() / ".local" / "bin" / "claude"
     if fallback.is_file():
         return str(fallback)
-    return "omp"
+    return "claude"
+
+
+def reviewer_command(model: str) -> list[str]:
+    """Tool-free, single-turn claude call; the prompt arrives on stdin."""
+    return [reviewer_executable(), "-p", "--model", _checked_model(model, "reviewer_command"),
+            "--tools", "", "--max-turns", "1", "--output-format", "text",
+            "--no-session-persistence", "--setting-sources", "project,local",
+            "--settings", '{"disableAllHooks":true}']
 
 
 def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run, validate=None) -> dict:
@@ -161,16 +176,10 @@ def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run
         share = max(1.0, min(remaining_budget(budget, started), budget / MAX_EMPTY_RETRIES))
         began = time.monotonic()
         try:
-            result = runner([reviewer_executable(), "--print", "--no-session", "--no-extensions", "--no-tools",
-                             "--no-lsp", "--no-pty", "--model", model, "--thinking", "high",
-                             "--cwd", str(directory), "@" + str(path)],
-                            capture_output=True, text=True, timeout=share,
-                            # omp reads piped stdin before a large @file prompt and
-                            # stalls past ~64 KiB when stdin is an open pipe; /dev/null
-                            # lets the prompt file load (measured 5 s vs >190 s). The gate
-                            # passes a regular file as stdin and did not reproduce the stall,
-                            # so this removes one stall mode; the gate's cause is not established.
-                            stdin=subprocess.DEVNULL)
+            # The prompt file is stdin, a regular file: claude -p reads it whole, with no pipe.
+            with path.open("rb") as prompt:
+                result = runner(reviewer_command(model), capture_output=True, text=True,
+                                timeout=share, stdin=prompt, cwd=str(directory))
         except subprocess.TimeoutExpired:
             history.append(f"attempt {attempt}: timeout at cap {share:.0f}s")
             if attempt >= MAX_EMPTY_RETRIES:

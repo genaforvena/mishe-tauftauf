@@ -385,9 +385,10 @@ def build_ledger(home: Path, now: float) -> dict:
                 account = c.get("account")
                 meta[key] = {"free": bool(c.get("free")), "account": account, "in_routes": True}
                 roles.setdefault(role, set()).add(key)
+    retired_keys = {er.candidate_key(c) for c in (routes or {}).get("retired", [])}
     unrouted: set = set()
     for (role, key) in list(tally["counts"]) + list(tally["pending"]):
-        if key not in meta:
+        if key not in meta and key not in retired_keys:
             unrouted.add(key)
         roles.setdefault(role, set()).add(key)
     if unrouted:
@@ -413,6 +414,12 @@ def build_ledger(home: Path, now: float) -> dict:
                 "note": "absent from routes.json: free or paid is not readable from the file"}
         unclassified_models[key] = _model_row(tally, key, base, present, wm)
 
+    retired_models: dict = {}
+    for key in sorted(retired_keys):
+        base = {"free": None, "account": None, "in_routes": False, "verdict": "RETIRED",
+                "note": "retired from routes.json: no role selects it"}
+        retired_models[key] = _model_row(tally, key, base, present, wm)
+
     per_mind: dict = {}
     for role, keys in sorted(roles.items()):
         per_mind[role] = {}
@@ -425,7 +432,7 @@ def build_ledger(home: Path, now: float) -> dict:
               "newest_event_at": wm / 1000 if present and wm is not None else None,
               "produced_at": now}
     return {"free_models": free_models, "paid_models": paid_models, "unclassified_models": unclassified_models,
-            "per_mind": per_mind, "ledger": ledger, "ledger_unknowns": unknowns}
+            "retired_models": retired_models, "per_mind": per_mind, "ledger": ledger, "ledger_unknowns": unknowns}
 
 
 def _model_row(tally: dict, key: str, base: dict, present: bool, wm) -> dict:
@@ -487,6 +494,7 @@ def main(home: Path, out: Path | None = None) -> int:
     payload["free_models"] = ledger["free_models"]
     payload["paid_models"] = ledger["paid_models"]
     payload["unclassified_models"] = ledger["unclassified_models"]
+    payload["retired_models"] = ledger["retired_models"]
     payload["per_mind"] = ledger["per_mind"]
     payload["ledger"] = ledger["ledger"]
     payload["unknowns"] = payload["unknowns"] + ledger["ledger_unknowns"]

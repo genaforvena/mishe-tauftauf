@@ -167,9 +167,16 @@ def load_routes(home) -> dict | None:
     max_rate_cool = value.get("max_rate_limit_cool_off_s", MAX_RATE_LIMIT_COOL_OFF_S)
     if isinstance(max_rate_cool, bool) or not isinstance(max_rate_cool, (int, float)) or max_rate_cool < rate_cool:
         raise ValueError("invalid max_rate_limit_cool_off_s")
+    # Candidates removed from every role (Ilya DM 300461). The budget reports them as
+    # retired, not unclassified; no role may select them.
+    retired = []
+    for c in value.get("retired", []):
+        if not isinstance(c, dict) or c.get("engine") not in ENGINES or not isinstance(c.get("model"), str):
+            raise ValueError("invalid retired candidate in engine routes")
+        retired.append({"engine": c["engine"], "model": c["model"], "account": c.get("account")})
     return {"roles": roles, "cool_off_s": cool, "account_cool_off_s": account_cool, "env": env,
             "hard_timeout_s": hard, "rate_limit_cool_off_s": rate_cool,
-            "max_rate_limit_cool_off_s": max_rate_cool}
+            "max_rate_limit_cool_off_s": max_rate_cool, "retired": retired}
 
 
 def _load_state(home) -> dict:

@@ -475,3 +475,22 @@ def test_elapsed_window_burn_is_not_used_when_history_or_window_length_is_missin
     assert bp.elapsed_window_burn(0.6, reset, "9h", NOW) is None          # unknown window length
     assert bp.elapsed_window_burn(0.6, NOW + 4.9 * 3600, "5h", NOW) is None  # under 0.25 h elapsed
     assert bp.elapsed_window_burn(0.6, None, "5h", NOW) is None
+
+
+def test_retired_routerai_candidates_are_listed_retired_not_unclassified(tmp_path):
+    # Ilya DM 300461: the two RouterAI candidates were removed from every role; the budget
+    # must list them as retired, never as unclassified (UNKNOWN).
+    import json
+    from pathlib import Path
+    from mishe_tauftauf import budget_producer as bp
+
+    home = tmp_path / "site"
+    (home / "engine").mkdir(parents=True)
+    (home / "engine" / "routes.json").write_text(json.dumps({
+        "version": 1, "roles": {"genome": [{"engine": "claude", "model": "claude-haiku-5-5", "account": None}]},
+        "retired": [{"engine": "omp", "model": "routerai/deepseek/deepseek-v4.1-flash", "account": None}],
+    }))
+    ledger = bp.build_ledger(home, 1794521756.0)
+    assert "omp:routerai/deepseek/deepseek-v4.1-flash:-" in ledger["retired_models"]
+    assert ledger["retired_models"]["omp:routerai/deepseek/deepseek-v4.1-flash:-"]["verdict"] == "RETIRED"
+    assert ledger["unclassified_models"] == {}

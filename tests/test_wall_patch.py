@@ -5,6 +5,13 @@ from mishe_tauftauf import wall_patch
 import subprocess
 
 
+
+def _req_file(tmp_path):
+    # The reviewer receives its prompt file as stdin, so the file must exist.
+    path = tmp_path / "req.txt"
+    path.write_text("prompt")
+    return path
+
 def layout(tmp_path):
     home = tmp_path / "site"
     home.mkdir()
@@ -371,11 +378,64 @@ def test_reviewer_model_honors_site_config_and_env_override(tmp_path, monkeypatc
     monkeypatch.delenv("MISHE_WALL_REVIEW_MODEL", raising=False)
     home = tmp_path / "site"
     home.mkdir()
-    assert wall_review.reviewer_model(home) == wall_review.DEFAULT_MODEL
-    (home / "patch-review.json").write_text(json.dumps({"model": "nvidia/moonshotai/kimi-k3"}))
-    assert wall_review.reviewer_model(home) == "nvidia/moonshotai/kimi-k3"
-    monkeypatch.setenv("MISHE_WALL_REVIEW_MODEL", "override/model")
-    assert wall_review.reviewer_model(home) == "override/model"
+    assert wall_review.reviewer_model(home) == wall_review.DEFAULT_MODEL == "claude-haiku-5-5"
+    (home / "patch-review.json").write_text(json.dumps({"model": "claude-haiku-4-6"}))
+    assert wall_review.reviewer_model(home) == "claude-haiku-4-6"
+    monkeypatch.setenv("MISHE_WALL_REVIEW_MODEL", "claude-haiku-5-5-x")
+    assert wall_review.reviewer_model(home) == "claude-haiku-5-5-x"
+
+
+def test_reviewer_refuses_non_haiku_models_and_runs_tool_free_claude(tmp_path, monkeypatch):
+    # Ilya DM 300461: the patch reviewer is Haiku through the claude engine, never Sonnet
+    # or a RouterAI route. A non-Haiku id is refused, not silently run.
+    from mishe_tauftauf import wall_review
+    import pytest
+
+    monkeypatch.delenv("MISHE_WALL_REVIEW_MODEL", raising=False)
+    home = tmp_path / "site"
+    home.mkdir()
+    for bad in ("routerai/z-ai/glm-5.3-flash", "claude-sonnet-5-5", "opencode-go/longcat-2.5-preview-free"):
+        (home / "patch-review.json").write_text(json.dumps({"model": bad}))
+        with pytest.raises(ValueError):
+            wall_review.reviewer_model(home)
+    argv = wall_review.reviewer_command("claude-haiku-5-5")
+    assert argv[1:3] == ["-p", "--model"] and argv[3] == "claude-haiku-5-5"
+    assert argv[argv.index("--tools") + 1] == ""
+    assert "omp" not in argv[0]
+    with pytest.raises(ValueError):
+        wall_review.reviewer_command("claude-sonnet-5-5")
+
+
+def test_recorded_invalid_evidence_answer_is_retried_then_unavailable(tmp_path, monkeypatch):
+    # A recorded answer citing evidence outside the request (the 12 Nov glm failure mode)
+    # is a failed attempt. Retried answers that stay invalid raise, so the gate records
+    # review-unavailable; a bad answer never passes as clear.
+    from mishe_tauftauf import wall_review
+    import importlib
+    import pytest
+
+    invalid = json.dumps({"version": 1, "input_hash": "h", "results": [
+        {"id": "q1", "verdict": "clear", "reason": "ok", "evidence": ["invented or unrelated evidence reference"]}]})
+    runs = []
+
+    def runner(*args, **kwargs):
+        runs.append(kwargs)
+        return type("R", (), {"returncode": 0, "stdout": invalid, "stderr": ""})()
+
+    def validate(answer):
+        allowed = {"ref-a"}
+        for row in answer["results"]:
+            if any(ref not in allowed for ref in row["evidence"]):
+                raise ValueError("invented or unrelated evidence reference")
+
+    monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
+    importlib.reload(wall_review)
+    with pytest.raises(RuntimeError, match="invalid answer on 3 attempts"):
+        wall_review.review_answer("claude-haiku-5-5", tmp_path, _req_file(tmp_path),
+                                  runner=runner, validate=validate)
+    importlib.reload(wall_review)
+    assert len(runs) == wall_review.MAX_EMPTY_RETRIES
+    assert all(run["stdin"] is not None for run in runs)
 
 
 def test_reviewer_timeout_honors_site_config_and_env_override(tmp_path, monkeypatch):
@@ -472,7 +532,7 @@ def test_empty_reviewer_output_is_retried_then_succeeds(tmp_path, monkeypatch):
 
     monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
     importlib.reload(wall_review)
-    answer = wall_review.review_answer("model", tmp_path, tmp_path / "req.txt", runner=empty_then_ok)
+    answer = wall_review.review_answer("claude-haiku-5-5", tmp_path, _req_file(tmp_path), runner=empty_then_ok)
     importlib.reload(wall_review)
     assert len(runs) == 3, "empty output must be retried, not accepted on the empty run"
     assert answer == json.loads(good)
@@ -485,7 +545,7 @@ def test_empty_reviewer_output_names_the_failure_when_retries_exhaust(tmp_path, 
     monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
     importlib.reload(wall_review)
     with pytest.raises(RuntimeError, match="patch reader returned empty output"):
-        wall_review.review_answer("model", tmp_path, tmp_path / "req.txt",
+        wall_review.review_answer("claude-haiku-5-5", tmp_path, _req_file(tmp_path),
                                   runner=lambda *a, **k:
                                   type("R", (), {"returncode": 0, "stdout": "",
                                                  "stderr": "Working..."})())
@@ -499,7 +559,7 @@ def test_review_answer_reports_a_nonzero_reviewer_exit(tmp_path, monkeypatch):
     monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
     importlib.reload(wall_review)
     with pytest.raises(RuntimeError, match="patch reader failed"):
-        wall_review.review_answer("model", tmp_path, tmp_path / "req.txt",
+        wall_review.review_answer("claude-haiku-5-5", tmp_path, _req_file(tmp_path),
                                   runner=lambda *a, **k:
                                   type("R", (), {"returncode": 2, "stdout": "",
                                                  "stderr": "boom"})())
@@ -528,7 +588,7 @@ def test_review_answer_retries_an_answer_that_fails_validation(tmp_path, monkeyp
 
     monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
     importlib.reload(wall_review)
-    answer = wall_review.review_answer("model", tmp_path, tmp_path / "req.txt",
+    answer = wall_review.review_answer("claude-haiku-5-5", tmp_path, _req_file(tmp_path),
                                        runner=bad_then_ok, validate=check)
     importlib.reload(wall_review)
     assert len(runs) == 3, "a mismatched answer must be retried, not accepted"
@@ -545,7 +605,7 @@ def test_review_answer_names_invalid_answer_when_retries_exhaust(tmp_path, monke
     monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
     importlib.reload(wall_review)
     with pytest.raises(RuntimeError, match="invalid answer"):
-        wall_review.review_answer("model", tmp_path, tmp_path / "req.txt",
+        wall_review.review_answer("claude-haiku-5-5", tmp_path, _req_file(tmp_path),
                                   runner=lambda *a, **k:
                                   type("R", (), {"returncode": 0,
                                                  "stdout": '{"version": 1}', "stderr": ""})(),
@@ -571,7 +631,7 @@ def test_review_answer_retries_a_timed_out_reader_then_succeeds(tmp_path, monkey
 
     monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
     importlib.reload(wall_review)
-    answer = wall_review.review_answer("model", tmp_path, tmp_path / "req.txt", runner=stall_then_ok)
+    answer = wall_review.review_answer("claude-haiku-5-5", tmp_path, _req_file(tmp_path), runner=stall_then_ok)
     importlib.reload(wall_review)
     assert len(runs) == 3, "a timed-out reader must be retried, not accepted on the stalled run"
     assert answer == json.loads(good)
@@ -591,7 +651,7 @@ def test_review_answer_names_the_timeout_when_retries_exhaust(tmp_path, monkeypa
     monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
     importlib.reload(wall_review)
     with pytest.raises(RuntimeError, match="timed out") as info:
-        wall_review.review_answer("model", tmp_path, tmp_path / "req.txt", runner=stall)
+        wall_review.review_answer("claude-haiku-5-5", tmp_path, _req_file(tmp_path), runner=stall)
     importlib.reload(wall_review)
     # The failure names each attempt's category, so a provider stall is not
     # confused with an invalid answer or an empty one.
@@ -622,7 +682,7 @@ def test_review_answer_failure_history_names_each_attempt_category(tmp_path, mon
     monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
     importlib.reload(wall_review)
     with pytest.raises(RuntimeError, match="invalid answer") as info:
-        wall_review.review_answer("model", tmp_path, tmp_path / "req.txt",
+        wall_review.review_answer("claude-haiku-5-5", tmp_path, _req_file(tmp_path),
                                   runner=scripted, validate=reject)
     importlib.reload(wall_review)
     message = str(info.value)
@@ -852,11 +912,9 @@ def test_gitignore_is_a_patchable_target_but_other_dot_paths_are_refused(tmp_pat
             wall_patch.target(tmp_path, name)
 
 
-def test_review_answer_gives_the_reader_no_open_stdin(tmp_path):
-    # omp stalls in readPipedInput on a prompt file above ~64 KiB when its stdin is
-    # an open pipe (moving-pin-dbb2ce11 review: 3 timeouts at the 180 s cap). The
-    # reader must get stdin=DEVNULL so the @file prompt loads.
-    import subprocess
+def test_review_answer_gives_the_reader_the_prompt_file_as_stdin(tmp_path):
+    # claude -p reads its prompt from stdin; a regular file (not an open pipe) is the
+    # stdin, so the whole prompt loads without a pipe stall.
     from mishe_tauftauf import wall_review
 
     seen = {}
@@ -865,5 +923,6 @@ def test_review_answer_gives_the_reader_no_open_stdin(tmp_path):
         seen["stdin"] = kwargs.get("stdin")
         return type("R", (), {"returncode": 0, "stdout": '{"version": 1, "input_hash": "h", "results": []}', "stderr": ""})()
 
-    wall_review.review_answer("model", tmp_path, tmp_path / "req.txt", runner=runner)
-    assert seen["stdin"] is subprocess.DEVNULL
+    prompt = _req_file(tmp_path)
+    wall_review.review_answer("claude-haiku-5-5", tmp_path, prompt, runner=runner)
+    assert seen["stdin"].name == str(prompt)
