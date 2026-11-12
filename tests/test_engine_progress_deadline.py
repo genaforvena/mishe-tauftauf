@@ -107,7 +107,7 @@ def test_a_cap_below_the_idle_gap_still_ends_the_run(tmp_path: Path):
 
 
 WAITS_ON_CHILD = ("import subprocess,sys\n"
-                  "subprocess.run([sys.executable,'-c','import time; time.sleep(4)'])\n")
+                  "subprocess.run([sys.executable,'-c','import time; time.sleep(5)'])\n")
 
 
 def test_an_engine_waiting_on_a_live_child_is_not_idle(tmp_path: Path):
@@ -115,9 +115,10 @@ def test_an_engine_waiting_on_a_live_child_is_not_idle(tmp_path: Path):
     out = tmp_path / "stream"
     started = time.monotonic()
     code = proc.run_bounded([sys.executable, "-c", WAITS_ON_CHILD], env=dict(os.environ), cwd=tmp_path,
-                            timeout=1, stdout_to=out, hard_timeout=20, idle_gap=1.0)
+                            timeout=1, stdout_to=out, hard_timeout=20, idle_gap=2.5)
     assert code == 0
-    assert time.monotonic() - started >= 4.0, "the engine waiting on its child was cut as idle"
+    # idle_gap leaves room for a slow interpreter start before the child exists at the first check
+    assert time.monotonic() - started >= 5.0, "the engine waiting on its child was cut as idle"
 
 
 def test_a_child_does_not_extend_the_hard_cap(tmp_path: Path):
