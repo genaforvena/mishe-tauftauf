@@ -87,3 +87,14 @@ def test_engine_budget_malformed_account_stays_unknown(tmp_path):
     data["accounts"]["claude"]["windows"]["5h"]["used"] = "0.2"
     _write_engine_budget(tmp_path, data)
     assert budget.evaluate(budget.rows_from_engine_budget(tmp_path, now), "claude", now=now)[0] == "UNKNOWN"
+
+
+def test_other_account_error_does_not_blind_healthy_claude():
+    # The live shape: claude FRESH, codex-a STALE contributes a tagged error row.
+    evidence = rows() + [dict(account="codex-a", error="codex-a: account state STALE")]
+    assert budget.evaluate(evidence, "claude", now=100)[0] == "GREEN"
+
+
+def test_untagged_error_still_holds_claude_unknown():
+    evidence = rows() + [dict(error="engine/budget.json unreadable")]
+    assert budget.evaluate(evidence, "claude", now=100)[0] == "UNKNOWN"

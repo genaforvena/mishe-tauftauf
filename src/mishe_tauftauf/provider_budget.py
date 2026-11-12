@@ -13,7 +13,10 @@ from . import signal_store, state_files
 def evaluate(rows, account, *, now):
     if account != "claude":
         return "UNKNOWN", "provider window contract not configured"
-    if not isinstance(rows, list) or any(not isinstance(r, dict) or r.get("error") for r in rows):
+    # An error tagged with another account (e.g. codex-a STALE) does not make this provider's evidence incomplete;
+    # an untagged error (unreadable file, accounting failure) still does.
+    if not isinstance(rows, list) or any(
+            not isinstance(r, dict) or (r.get("error") and r.get("account", account) == account) for r in rows):
         return "UNKNOWN", "budget collection or accounting incomplete"
     selected = [r for r in rows if r.get("account") == account]
     if (len(selected) != 2 or any(r.get("window") not in ("5h", "7d") for r in selected)
@@ -58,15 +61,15 @@ def rows_from_engine_budget(home, now):
     rows = []
     for account, body in accounts.items():
         if not isinstance(body, dict) or body.get("state") != "FRESH":
-            rows.append(dict(error=f"{account}: account state {body.get('state') if isinstance(body, dict) else 'malformed'}"))
+            rows.append(dict(account=account, error=f"{account}: account state {body.get('state') if isinstance(body, dict) else 'malformed'}"))
             continue
         windows = body.get("windows")
         if not isinstance(windows, dict) or not windows:
-            rows.append(dict(error=f"{account}: FRESH account has no windows observed"))
+            rows.append(dict(account=account, error=f"{account}: FRESH account has no windows observed"))
             continue
         for window, x in windows.items():
             if not isinstance(x, dict):
-                rows.append(dict(error=f"{account}/{window}: malformed window"))
+                rows.append(dict(account=account, error=f"{account}/{window}: malformed window"))
                 continue
             used, reset, observed = x.get("used"), x.get("reset_at"), x.get("observed_at")
             fresh = (isinstance(observed, (int, float)) and not isinstance(observed, bool)
