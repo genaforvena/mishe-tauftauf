@@ -38,8 +38,12 @@
       "every": 300,
       "timeout": 120,
       "max_age": 900,
-      "red_codes": [2],
-      "unknown_codes": [3],
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
       "resolver": "health",
       "replaces": [
         "exit-node-egress",
@@ -105,7 +109,9 @@
       "every": 900,
       "timeout": 900,
       "max_age": 2700,
-      "unknown_codes": [3],
+      "unknown_codes": [
+        3
+      ],
       "resolver": "genome",
       "replaces": [
         "observer-checks",
@@ -178,7 +184,9 @@
       "every": 300,
       "timeout": 60,
       "max_age": 900,
-      "red_codes": [2],
+      "red_codes": [
+        2
+      ],
       "resolver": "senses",
       "replaces": [],
       "covers": "budget accounts consistency and freshness"
@@ -191,7 +199,9 @@
       "every": 120,
       "timeout": 60,
       "max_age": 300,
-      "unknown_codes": [3],
+      "unknown_codes": [
+        3
+      ],
       "resolver": "health",
       "replaces": [
         "host-capacity",
@@ -303,8 +313,12 @@
       "max_age": 900,
       "resolver": "health",
       "replaces": [],
-      "red_codes": [2],
-      "unknown_codes": [3],
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
       "covers": "due intentions are served:RED when an intention is more than 15 minutes past due with no wake of its role since then and no GREEN budget hold explaining it; UNKNOWN when intentions, the wake ledger or a budget signal cannot be read or is stale; HELD (not a fault) when a spontaneous intention is held by a RED budget signal"
     },
     {
@@ -374,7 +388,9 @@
       "every": 105,
       "timeout": 15,
       "max_age": 120,
-      "unknown_codes": [4],
+      "unknown_codes": [
+        4
+      ],
       "resolver": "senses",
       "covers": "resident living-room listener heartbeat: GREEN when its status is fresh and at least half of wall time is observed, RED under 50 %, UNKNOWN when the status is stale, missing, stopped, restarting, suspended or warming up",
       "replaces": []
@@ -410,7 +426,9 @@
       "every": 150,
       "timeout": 120,
       "max_age": 300,
-      "unknown_codes": [4],
+      "unknown_codes": [
+        4
+      ],
       "resolver": "senses",
       "covers": "living-room webcam brightness grid, one row every 150 s (kept under the unit start budget); a blind lens (covered, dark or flat) is status blind, recorded and exits 2 (RED, observed); the V4L2 input held by another process on every bounded attempt exits 4 (UNKNOWN, input missing, unit succeeds); any other failed capture exits 1 (crash)",
       "replaces": []
@@ -431,7 +449,9 @@
       "every": 240,
       "timeout": 240,
       "max_age": 900,
-      "unknown_codes": [4],
+      "unknown_codes": [
+        4
+      ],
       "resolver": "senses",
       "covers": "bedroom Mac camera brightness grid every four minutes; a blind lens is status blind, recorded and exits 2 (RED, observed); an unreachable Mac exits 4 (UNKNOWN, input missing, unit succeeds); a local crash or config error exits 1 (crash)",
       "replaces": []
@@ -469,7 +489,10 @@
     },
     {
       "name": "rssi-history",
-      "command": ["{python}", "{home}/senses/map/rssi_table.py"],
+      "command": [
+        "{python}",
+        "{home}/senses/map/rssi_table.py"
+      ],
       "every": 60,
       "timeout": 30,
       "max_age": 180,
@@ -489,7 +512,9 @@
       "every": 120,
       "timeout": 30,
       "max_age": 300,
-      "unknown_codes": [4],
+      "unknown_codes": [
+        4
+      ],
       "resolver": "senses",
       "covers": "Note3 sensor sample and Redmi10 stream freshness with raw light and accelerometer; a stale or missing phone exits UNKNOWN",
       "replaces": []
@@ -563,17 +588,26 @@
     },
     {
       "name": "network-speed",
-      "command": ["{python}", "{repo}/tools/network_speed.py", "--home", "{home}"],
+      "command": [
+        "{python}",
+        "{repo}/tools/network_speed.py",
+        "--home",
+        "{home}"
+      ],
       "every": 180,
       "timeout": 60,
       "max_age": 300,
-      "red_codes": [2],
-      "unknown_codes": [3],
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
       "resolver": "network",
       "covers": "the bounded download speed reading (rows in network/speed.jsonl): one 5 MB download, only 02-05 local and at most every 12 h; UNKNOWN when the last attempt failed, RED when the duty itself cannot run",
       "replaces": []
     },
-{
+    {
       "name": "network-router",
       "command": [
         "{python}",
@@ -686,22 +720,44 @@
     },
     {
       "name": "rust-measurement",
-      "command": ["{python}", "{repo}/checks/rust-measurement.py", "--home", "{home}", "--repo", "{repo}"],
+      "command": [
+        "{python}",
+        "{repo}/checks/rust-measurement.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
       "every": 3600,
       "timeout": 240,
       "max_age": 7500,
       "resolver": "rust-plan",
       "covers": "the cache-miss full fold of the senses and genome tapes, measured in fresh processes: GREEN when both are under 5 CPU-s and 200 MB (the Rust slice stays closed), RED when a trigger is hit (the slice may reopen), UNKNOWN when the host guard or the fold cannot give a reading",
       "replaces": []
+    },
+    {
+      "name": "sonnet-ban",
+      "command": [
+        "{python}",
+        "{repo}/checks/sonnet-ban.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 600,
+      "timeout": 60,
+      "max_age": 1800,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "steward",
+      "covers": "the human's Sonnet ban (re-imposed 2026-11-12 ~01:10Z by Ilya, open-ended until he lifts it): RED when a live engine config, a routes.json candidate or a recent (6 h) routing-ledger selection names a Sonnet model a wake could use or used, UNKNOWN when the configs or ledger cannot be read; retire the duty when Ilya lifts the ban",
+      "replaces": []
     }
   ],
   "retired": [
-    {
-      "units": [
-        "sonnet-ban"
-      ],
-      "why": "Ilya lifted the Sonnet ban (DM 299668, 2026-11-11 08:30Z: Sonnet first again for genome and rust-plan). The ban window ended 2026-11-11T03:00Z and checks/sonnet-ban.py reported retire this duty; removed rather than kept as a dead RED detector."
-    },
     {
       "units": [
         "session-watch",
