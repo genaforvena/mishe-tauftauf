@@ -40,7 +40,9 @@ def _load_intentions(home: Path):
     """Return (entries, problems). Each entry is (role, intention dict). Unreadable files are problems, never skipped."""
     entries, problems = [], []
     root = home / "intentions"
-    if not root.exists():
+    if not root.is_dir():
+        # A missing root is missing evidence, not an empty schedule.
+        problems.append("intentions root missing or not a directory")
         return entries, problems
     for role_dir in sorted(p for p in root.iterdir() if p.is_dir()):
         for path in sorted(role_dir.glob("*.json")):
@@ -50,6 +52,9 @@ def _load_intentions(home: Path):
                 problems.append(f"{role_dir.name}/{path.name} unreadable: {str(exc)[:100]}")
                 continue
             if isinstance(item, dict) and item.get("id"):
+                due = item.get("due")
+                if due is not None and (isinstance(due, bool) or not isinstance(due, (int, float))):
+                    problems.append(f"{role_dir.name}/{path.name} has non-numeric due {str(due)[:40]!r}")
                 entries.append((role_dir.name, item))
             else:
                 problems.append(f"{role_dir.name}/{path.name} has no id")
