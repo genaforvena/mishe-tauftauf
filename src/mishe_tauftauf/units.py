@@ -29,6 +29,16 @@ SLACK = 300
 # network hit start-limit-hit on 2026-11-12 (13:34:44, 13:35:34, 13:37:39, 13:38:45 starts; DMs 300309-300313
 # each touched inbox/network and each wake runs about a minute), so it is coalesced too.
 WAKE_DEBOUNCE_SECONDS = {"senses": 120, "health": 120, "network": 120}
+# Every other role gets the same coalescing window (DM 300343, 2026-11-12: genome hit start-limit-hit at
+# 2026-11-11 with the direct path trigger, and a RED signal is a path trigger for any subscriber). Ordinary
+# wake runtime is about a minute, so 120 s keeps two starts per 5 min at most.
+WAKE_DEBOUNCE_DEFAULT_SECONDS = 120
+
+
+def wake_debounce_seconds(role: str) -> int:
+    return WAKE_DEBOUNCE_SECONDS.get(role, WAKE_DEBOUNCE_DEFAULT_SECONDS)
+
+
 # The wake unit's own memory throttle. The generated unit declares it, and a wake that runs in the
 # unit restores it at runtime when a protected host drop-in shadows it with a lower value (see
 # ``ensure_wake_memory_high``): a wake pinned at its throttle makes no progress and runs out its
@@ -143,17 +153,15 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         watched += [f"PathChanged={cfg.home}/signals/{name}.json"
                     for name, entry in sorted(registry.items())
                     if role in entry.get("subscribers", []) and not _is_wake_failure_signal(name, p)]
-        target = f"{p}-wake@{role}.service"
-        if role in WAKE_DEBOUNCE_SECONDS:
-            # A path change starts this oneshot, which sleeps out the burst and then starts the wake once.
-            # A change while it sleeps is a no-op (the unit is already active), so one burst of signal writes
-            # becomes one wake start. Uncoalesced, senses restarted every ~100 s and hit StartLimitBurst=3
-            # per 5 min (2026-11-12: 29 starts in 6 h, start-limit-hit at 07:51:58, 07:52:46, 07:57:51).
-            target = f"{p}-wake-debounce-{role}.service"
-            files[target] = _file(
-                f"[Unit]\nDescription=Coalesce wake triggers for {role}",
-                "[Service]\nType=oneshot\n" + f"ExecStart=/bin/sleep {WAKE_DEBOUNCE_SECONDS[role]}\n"
-                + f"ExecStopPost=/usr/bin/systemctl --user --no-block start {p}-wake@{role}.service\n")
+        # A path change starts this oneshot, which sleeps out the burst and then starts the wake once.
+        # A change while it sleeps is a no-op (the unit is already active), so one burst of signal writes
+        # becomes one wake start. Uncoalesced, senses restarted every ~100 s and hit StartLimitBurst=3
+        # per 5 min (2026-11-12: 29 starts in 6 h, start-limit-hit at 07:51:58, 07:52:46, 07:57:51).
+        target = f"{p}-wake-debounce-{role}.service"
+        files[target] = _file(
+            f"[Unit]\nDescription=Coalesce wake triggers for {role}",
+            "[Service]\nType=oneshot\n" + f"ExecStart=/bin/sleep {wake_debounce_seconds(role)}\n"
+            + f"ExecStopPost=/usr/bin/systemctl --user --no-block start {p}-wake@{role}.service\n")
         files[f"{p}-wake-{role}.path"] = _file(
             f"[Unit]\nDescription=Mishe wake triggers for {role}",
             "[Path]\n" + "\n".join(watched) + f"\nUnit={target}",

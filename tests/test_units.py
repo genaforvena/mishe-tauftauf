@@ -33,7 +33,7 @@ def test_every_role_gets_a_path_unit_watching_inbox_and_subscribed_signals(cfg):
     genome = files["mishe-wake-genome.path"]
     assert f"PathChanged={cfg.home}/inbox/genome" in genome
     assert f"PathChanged={cfg.home}/signals/ci.json" in genome
-    assert "Unit=mishe-wake@genome.service" in genome
+    assert "Unit=mishe-wake-debounce-genome.service" in genome
     assert "signals/ci" not in files["mishe-wake-docs.path"]
     assert ".seen" not in "".join(files.values())            # freshness sidecar never triggers
 
@@ -419,9 +419,9 @@ def test_senses_path_triggers_go_through_a_debounce_that_starts_the_wake_once(cf
     assert "ExecStopPost=/usr/bin/systemctl --user --no-block start mishe-wake@senses.service" in debounce
     assert "Unit=mishe-wake-debounce-senses.service" in files["mishe-wake-senses.path"]
     assert "Unit=mishe-wake@senses.service" not in files["mishe-wake-senses.path"]
-    # Other roles keep their direct path-to-wake trigger and get no debounce unit.
-    assert "Unit=mishe-wake@genome.service" in files["mishe-wake-genome.path"]
-    assert "mishe-wake-debounce-genome.service" not in files
+    # Every role is coalesced, genome included: its path trigger goes through its own debounce unit.
+    assert "Unit=mishe-wake-debounce-genome.service" in files["mishe-wake-genome.path"]
+    assert "Unit=mishe-wake@genome.service" not in files["mishe-wake-genome.path"]
 
 
 def test_network_path_triggers_are_coalesced_like_health(cfg):
@@ -432,7 +432,7 @@ def test_network_path_triggers_are_coalesced_like_health(cfg):
     assert "ExecStopPost=/usr/bin/systemctl --user --no-block start mishe-wake@network.service" in debounce
     assert "Unit=mishe-wake-debounce-network.service" in files["mishe-wake-network.path"]
     assert "Unit=mishe-wake@network.service" not in files["mishe-wake-network.path"]
-    assert "mishe-wake-debounce-genome.service" not in files
+    assert "Unit=mishe-wake-debounce-genome.service" in files["mishe-wake-genome.path"]
 
 
 def test_health_path_triggers_are_coalesced_like_senses(cfg):
@@ -441,4 +441,15 @@ def test_health_path_triggers_are_coalesced_like_senses(cfg):
     assert "ExecStart=/bin/sleep 120" in debounce
     assert "ExecStopPost=/usr/bin/systemctl --user --no-block start mishe-wake@health.service" in debounce
     assert "Unit=mishe-wake-debounce-health.service" in files["mishe-wake-health.path"]
-    assert "mishe-wake-debounce-genome.service" not in files
+    assert "Unit=mishe-wake-debounce-genome.service" in files["mishe-wake-genome.path"]
+
+
+def test_every_role_gets_a_coalescing_window_with_the_default_length(cfg):
+    # DM 300343 (c): a burst of path triggers for any role must start its wake once, not once per touch.
+    from mishe_tauftauf.units import WAKE_DEBOUNCE_DEFAULT_SECONDS, wake_debounce_seconds
+    files = units.render(cfg, ["genome", "observer", "health"])
+    assert wake_debounce_seconds("observer") == WAKE_DEBOUNCE_DEFAULT_SECONDS == 120
+    assert "ExecStart=/bin/sleep 120" in files["mishe-wake-debounce-observer.service"]
+    for role in ("genome", "observer"):
+        assert f"Unit=mishe-wake-debounce-{role}.service" in files[f"mishe-wake-{role}.path"]
+        assert f"Unit=mishe-wake@{role}.service" not in files[f"mishe-wake-{role}.path"]
