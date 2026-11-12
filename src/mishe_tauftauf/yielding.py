@@ -120,18 +120,25 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
         deadline_note = f"; no --again given, so a {WHEN_DEADLINE_SECONDS // 3600}h deadline was set with the signal wait"
     # A role with an open lane never sleeps past the clamp (DM 300152): the wait is cut and the yield says so.
     clamp_note = ""
+    requested_again = again
     if again is not None:
         again, clamp_note = _clamp(again, lane_open, "--again")
     idle, idle_clamp = _clamp(idle_delay(home, role, now, idle_seconds), lane_open, "idle")
     clamp_note += idle_clamp
     # The fallback timer and the signal condition of one yield share a pair: whichever fires first retires the other.
-    pair = key if (again is not None and when is not None) else None
-    if again is not None:
-        intentions.add(home, role, "again", note="scheduled return", due=now + again, pair=pair)
+    pair = key if (requested_again is not None and when is not None) else None
+    if requested_again is not None:
+        # The explicit deadline is kept whole, so a clamp cannot retire it early (DM 300156). The clamp is
+        # a separate, unpaired recheck: waking on it consumes only itself and the deadline still stands.
+        intentions.add(home, role, "again", note="scheduled return", due=now + requested_again, pair=pair)
+    if again is not None and requested_again is not None and again < requested_again:
+        intentions.add(home, role, "again-recheck", note="open lane: recheck at the clamp; the scheduled return still stands", due=now + again)
+    else:
+        intentions.remove(home, role, "again-recheck")
     dead_wait = ""
     if when is not None and when["signal"] not in signal_store.registry(home):
         dead_wait = f"; WARNING --when names signal {when['signal']!r}, which is not registered, so it cannot fire until it is registered"
-    wait = again if again is not None else idle
+    wait = requested_again if requested_again is not None else idle
     if wait > CLAMP_SECONDS and not _subscribed_signals(home, role):
         dead_wait += f"; WARNING {role} subscribes to no signal, so a wait over {CLAMP_SECONDS // 3600}h has nothing to wake it early"
     if when is not None:

@@ -117,16 +117,20 @@ def _seen(home, name: str) -> float | None:
         return None
 
 
-def _store(home, name: str, *, value, state: str, reason: str, at: float, source: str) -> None:
+def _store(home, name: str, *, value, state: str, reason: str, at: float, source: str, event=None) -> None:
     path = _dir(home) / f"{name}.json"
     if path.exists() and _load(home, name) is None:
         os.replace(path, path.with_name(f"{name}.corrupt-{int(at)}"))   # keep the evidence
-    write_json(path, {"value": value, "state": state, "reason": reason,
+    write_json(path, {"value": value, "state": state, "reason": reason, "event": event,
                          "observed_at": at, "source": source, "rev": rev(home, name) + 1})
 
 
-def observe(home, name: str, value, *, now: float, source: str) -> bool:
+def observe(home, name: str, value, *, now: float, source: str, event=None) -> bool:
     """Record a successful observation. True when it is an edge (json replaced).
+
+    ``event`` names the occurrence behind a reading (a pin's patch id). The same value under a new
+    event is an edge too, so a repeated VERIFIED for the next pin wakes subscribers; without one,
+    an unchanged reading stays silent.
 
     A value that names a state ("OK", "UNKNOWN", "STALE") is refused: it reports that the input
     was not readable, which is ``observe_unknown``'s meaning, and ``observe`` would store it as
@@ -141,9 +145,10 @@ def observe(home, name: str, value, *, now: float, source: str) -> bool:
             f"{value!r} is a state, not a reading: use observe_unknown to record an unreadable input")
     _entry(home, name)
     current = _load(home, name)
-    edge = not (current and current.get("state") == OK and current.get("value") == value)
+    edge = not (current and current.get("state") == OK and current.get("value") == value
+                and current.get("event") == event)
     if edge:
-        _store(home, name, value=value, state=OK, reason="", at=now, source=source)
+        _store(home, name, value=value, state=OK, reason="", at=now, source=source, event=event)
     _touch_seen(home, name, now)
     return edge
 

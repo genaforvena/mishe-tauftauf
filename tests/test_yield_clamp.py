@@ -26,8 +26,34 @@ def test_open_inbox_clamps_a_long_again_to_two_hours(tmp_path):
     home = tmp_path / "site"; home.mkdir()
     owed.touch_inbox(home, "field-review")                       # unread mail: an open lane
     msg = _settle(home, "field-review", "wake-f-1", 1000, again=12 * 3600)
-    assert _again_due(home, "field-review") == 1000 + yielding.CLAMP_SECONDS
+    assert _again_due(home, "field-review") == 1000 + 12 * 3600   # the explicit deadline is kept whole
+    recheck = {e["id"]: e["due"] for e in intentions.list_(home, "field-review") if "due" in e}
+    assert recheck["again-recheck"] == 1000 + yielding.CLAMP_SECONDS
     assert "clamped --again from 43200s to 2h" in msg             # the clamp is printed in the result
+
+
+def test_clamp_recheck_does_not_retire_the_paired_deadline(tmp_path):
+    home = tmp_path / "site"; home.mkdir()
+    owed.touch_inbox(home, "field-review")
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"], now=10)
+    _settle(home, "field-review", "wake-f-2", 1000, again=6 * 3600,
+            when={"signal": "moving-pin-delivery", "equals": "VERIFIED"})
+    # The 2h recheck fires first: consuming it must not take the 6h deadline or the signal condition with it.
+    snap = owed.Snapshot(); snap.consumed = ["again-recheck"]
+    owed.advance(home, "field-review", snap)
+    left = {e["id"] for e in intentions.list_(home, "field-review")}
+    assert "again" in left and "when-moving-pin-delivery" in left
+    assert "again-recheck" not in left
+
+
+def test_repeated_pin_value_is_an_edge_only_under_a_new_event(tmp_path):
+    home = tmp_path / "site"; home.mkdir()
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"], now=10)
+    assert signal_store.observe(home, "moving-pin-delivery", "VERIFIED", now=10, source="t", event="p1") is True
+    assert signal_store.observe(home, "moving-pin-delivery", "VERIFIED", now=20, source="t", event="p1") is False
+    rev = signal_store.rev(home, "moving-pin-delivery")
+    assert signal_store.observe(home, "moving-pin-delivery", "VERIFIED", now=30, source="t", event="p2") is True
+    assert signal_store.rev(home, "moving-pin-delivery") == rev + 1   # the subscriber's cursor sees a new rev
 
 
 def test_ready_work_clamps_the_idle_wait_too(tmp_path, monkeypatch):

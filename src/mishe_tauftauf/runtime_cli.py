@@ -153,6 +153,7 @@ def register(sub) -> None:
     p = sig.add_parser("register"); p.set_defaults(func=cmd_runtime); p.add_argument("name"); p.add_argument("--max-age", type=float, required=True)
     p.add_argument("--subscribers", default="")
     p = sig.add_parser("observe"); p.set_defaults(func=cmd_runtime); p.add_argument("name"); p.add_argument("value"); p.add_argument("--source", default="cli")
+    p.add_argument("--event", default=None, help="the occurrence behind the reading (e.g. a pin id): a new event is an edge even for the same value")
     p = sig.add_parser("observe-unknown", help="record that NAME could not be read (state UNKNOWN); unlike observe, it does not refresh freshness")
     p.set_defaults(func=cmd_runtime); p.add_argument("name"); p.add_argument("--reason", default="no readable observation"); p.add_argument("--source", default="cli")
     p = sig.add_parser("show"); p.set_defaults(func=cmd_runtime); p.add_argument("name")
@@ -285,7 +286,7 @@ def run(args) -> int:
             signal_store.register(home, args.name, max_age=args.max_age,
                                   subscribers=[s for s in args.subscribers.split(",") if s])
         elif args.signal_command == "observe":
-            edge = signal_store.observe(home, args.name, args.value, now=now, source=args.source)
+            edge = signal_store.observe(home, args.name, args.value, now=now, source=args.source, event=args.event)
             armmod.arm(home, scheduler=scheduler(home))
             print("edge" if edge else "refreshed")
         elif args.signal_command == "observe-unknown":
