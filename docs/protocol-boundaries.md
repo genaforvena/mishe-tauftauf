@@ -135,15 +135,24 @@ its contract test (`tests/test_mishe_tape_frames.py`,
 `tests/test_mishe_records_verify.py`, `tests/test_mishe_tape_facts.py`,
 `tests/test_mishe_network_probe.py`).
 
-Delivery requests use structured values for the exact commit, originating wake,
-author role, the file list, the runtime and test arguments, the review record and
-the reviewed delivery plan. A strong request also needs the `activate`, `observe` and
-`revert_observe` steps of that plan. The request's identity digest covers its spec,
-role and wake key. A separate patch binding digest covers the files, runtime, test,
-review and delivery plan, and is checked against the reviewed patch record. The
-source and command artifacts are revalidated at execution
-(`src/mishe_tauftauf/delivery_requests.py`). Human wall statements such as
-"permission required" are not parsed into a grant or a delivery decision.
+A delivery request's spec holds the repository, the exact commit and its previous
+commit. The author role and the originating wake key are not in the spec; they
+enter the request's identity digest, which covers the spec, role and wake key, and
+the wake key must name an actual wake snapshot for that role.
+
+A strong request names a reviewed patch record and carries a `patch_binding`
+digest. That digest covers the record's `files`, `runtime`, `test`, `review` and
+`delivery_plan`, so the file list, runtime and test arguments, review record and plan
+live in the patch record, not in the request. Submission checks that the record is
+reviewed, has a clear review and a passing test, that its delivery plan has the
+`activate`, `observe` and `revert_observe` steps, and that every changed path is in
+the reviewed file list. An ordinary request instead carries its `check` and `observe`
+commands and a digest of their command artifacts.
+
+The source and command artifacts are validated when the request is submitted and
+again when it is executed (`validate_source` in `src/mishe_tauftauf/delivery_requests.py`).
+Human wall statements such as "permission required" are not parsed into a grant or a
+delivery decision.
 
 Keep reusable explanations tracked in Git. Keep runtime snapshots, experiments,
 chat and local notes under the resolved site home. See [Working as a durable
