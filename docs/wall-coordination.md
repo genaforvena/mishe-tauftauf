@@ -37,7 +37,7 @@ Do not make unrelated ready tasks wait on the same incident.
 The sweep that checks these waits keeps two separate records. One holds the last
 observation per task, so an unchanged observation is not announced twice. The
 other holds overdue escalations, keyed by role, task and deadline. A task still
-waiting more than five minutes past its deadline is escalated once to Genome,
+waiting more than five minutes past its deadline is escalated once per deadline to Genome,
 who is then asked to inspect the unresolved wait and its resolver. When Genome is
 not a declared role, the escalation goes to the wait's `escalate_to` role instead
 (`work_state.py`, `OVERDUE_GRACE` and the recipient choice). The sweep
