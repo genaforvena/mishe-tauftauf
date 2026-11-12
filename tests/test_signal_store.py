@@ -122,3 +122,24 @@ def test_each_stored_edge_is_appended_to_history_and_refresh_is_not(home):
     assert [(e["state"], e["value"], e["at"], e["rev"]) for e in edges] == [
         (OK, "GREEN", 1000.0, 1), (OK, "RED", 1060.0, 2), (UNKNOWN, None, 1100.0, 3)]
     assert edges[0]["event"] == "a" and edges[0]["source"] == "t"
+
+
+def test_retire_removes_registration_and_files_and_keeps_reason_in_history(home, tmp_path):
+    store.observe(home, "ci", "GREEN", now=1000.0, source="t")
+    store.retire(home, "ci", now=1100.0, reason="experiment closed")
+    assert "ci" not in store.registry(home)
+    assert not (tmp_path / "signals" / "ci.json").exists()
+    assert not (tmp_path / "signals" / "ci.seen").exists()
+    history = (tmp_path / "signals" / "edges.jsonl").read_text().splitlines()
+    last = json.loads(history[-1])
+    assert last["name"] == "ci" and last["state"] == "RETIRED" and last["reason"] == "experiment closed"
+    with pytest.raises(ValueError):
+        store.observe(home, "ci", "GREEN", now=1200.0, source="t")
+
+
+def test_retire_needs_a_registered_name_and_a_reason(home):
+    with pytest.raises(ValueError):
+        store.retire(home, "nope", now=1.0, reason="closed")
+    with pytest.raises(ValueError):
+        store.retire(home, "ci", now=1.0, reason="  ")
+    assert "ci" in store.registry(home)

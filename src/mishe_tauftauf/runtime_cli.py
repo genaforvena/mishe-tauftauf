@@ -156,6 +156,8 @@ def register(sub) -> None:
     p.add_argument("--event", default=None, help="the occurrence behind the reading (e.g. a pin id): a new event is an edge even for the same value")
     p = sig.add_parser("observe-unknown", help="record that NAME could not be read (state UNKNOWN); unlike observe, it does not refresh freshness")
     p.set_defaults(func=cmd_runtime); p.add_argument("name"); p.add_argument("--reason", default="no readable observation"); p.add_argument("--source", default="cli")
+    p = sig.add_parser("retire", help="remove a closed experiment's signal (registration and files) with a recorded reason"); p.set_defaults(func=cmd_runtime)
+    p.add_argument("name"); p.add_argument("--reason", required=True)
     p = sig.add_parser("show"); p.set_defaults(func=cmd_runtime); p.add_argument("name")
     p = sig.add_parser("run", help="observe NAME by running CMD: exit 0 GREEN, non-zero RED, cannot-run leaves it to expire")
     p.add_argument("name"); p.add_argument("--timeout", type=float, default=120)
@@ -308,6 +310,10 @@ def run(args) -> int:
                                 unknown_codes=tuple(int(c) for c in args.unknown_codes.split(",") if c != "none"))
             armmod.arm(home, scheduler=scheduler(home))
             return code
+        elif args.signal_command == "retire":
+            signal_store.retire(home, args.name, now=now, reason=args.reason)
+            armmod.arm(home, scheduler=scheduler(home))
+            print(f"retired {args.name}")
         else:
             print(signal_store.read(home, args.name, now=now))
         return 0
