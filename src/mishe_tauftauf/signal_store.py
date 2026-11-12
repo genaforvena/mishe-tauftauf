@@ -40,12 +40,20 @@ def _touch_seen(home, name: str, at: float) -> None:
     os.utime(seen, ns=(int(at * 1e9), int(at * 1e9)))
 
 
+# Roles that always subscribe to a named signal (DM 300152): every new pin is field-review's review trigger.
+# Applied to an existing registration only, so an unregistered name is still refused by ``observe``.
+DEFAULT_SUBSCRIBERS = {"moving-pin-delivery": ("field-review",)}
+
+
 def registry(home) -> dict:
     data = read_json(_dir(home) / "registry.json")
     if data is None:
         return {}
     if not isinstance(data, dict):
         raise ValueError("signal registry must be an object")
+    for name, roles in DEFAULT_SUBSCRIBERS.items():
+        if name in data:
+            data[name]["subscribers"] = sorted(set(data[name].get("subscribers", [])) | set(roles))
     return data
 
 

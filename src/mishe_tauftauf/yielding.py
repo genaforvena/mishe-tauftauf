@@ -20,6 +20,7 @@ WHEN_DEADLINE_SECONDS = 6 * 3600  # fallback timer paired with a --when that nam
 # minute, and the restart storm trips the unit's start limit (2026-11-11 health wall).
 CONTINUE_FLOOR_SECONDS = 120
 OPEN_LANE_SECONDS = 30 * 60  # a role with a ready lane and spare budget returns in 30 min (Ilya DM 300036)
+CLAMP_SECONDS = 2 * 3600  # a role with an open lane (unread inbox or ready work) never sleeps past this (DM 300152)
 BUDGET_MAX_AGE = 3600
 SPARE_5H, SPARE_7D = 0.30, 0.30
 RESULTS = ("changed", "verified", "blocked")
@@ -59,6 +60,17 @@ def idle_delay(home, role, now, idle_seconds) -> float:
     return idle_seconds
 
 
+def _clamp(seconds, lane_open: bool, label: str):
+    """(seconds, note): a wait over CLAMP_SECONDS is cut to it while the role has an open lane."""
+    if lane_open and seconds > CLAMP_SECONDS:
+        return CLAMP_SECONDS, f"; clamped {label} from {int(seconds)}s to {CLAMP_SECONDS // 3600}h because the role has an open lane"
+    return seconds, ""
+
+
+def _subscribed_signals(home, role) -> list:
+    return [name for name, entry in signal_store.registry(home).items() if role in entry.get("subscribers", [])]
+
+
 def wakes_dir(home) -> Path:
     return Path(home) / "wakes"
 
@@ -91,6 +103,8 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
     if work_record is not None:
         from . import work_state
         work_state.save(home, role, work_record)
+    # Read before the cursor advances: an inbox that changed during this wake, or ready work, is open work.
+    lane_open = owed.inbox_unread(home, role) or open_lane(home, role)
     if wall_writer is None:
         from . import wall
         wall_writer = wall.write
@@ -104,6 +118,12 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
     if when is not None and again is None:
         again = WHEN_DEADLINE_SECONDS
         deadline_note = f"; no --again given, so a {WHEN_DEADLINE_SECONDS // 3600}h deadline was set with the signal wait"
+    # A role with an open lane never sleeps past the clamp (DM 300152): the wait is cut and the yield says so.
+    clamp_note = ""
+    if again is not None:
+        again, clamp_note = _clamp(again, lane_open, "--again")
+    idle, idle_clamp = _clamp(idle_delay(home, role, now, idle_seconds), lane_open, "idle")
+    clamp_note += idle_clamp
     # The fallback timer and the signal condition of one yield share a pair: whichever fires first retires the other.
     pair = key if (again is not None and when is not None) else None
     if again is not None:
@@ -111,6 +131,9 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
     dead_wait = ""
     if when is not None and when["signal"] not in signal_store.registry(home):
         dead_wait = f"; WARNING --when names signal {when['signal']!r}, which is not registered, so it cannot fire until it is registered"
+    wait = again if again is not None else idle
+    if wait > CLAMP_SECONDS and not _subscribed_signals(home, role):
+        dead_wait += f"; WARNING {role} subscribes to no signal, so a wait over {CLAMP_SECONDS // 3600}h has nothing to wake it early"
     if when is not None:
         intentions.add(home, role, f"when-{when['signal']}", note="signal condition you asked to be woken on", when=when, pair=pair)
     for name, entry in sorted(signal_store.registry(home).items()):
@@ -128,9 +151,9 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
             else:                                             # clear again: the re-offer is residue, not a standing fault
                 intentions.remove(home, role, f"reoffer-{name}")
     intentions.add(home, role, IDLE_ID, note="idle initiative: look for useful work",
-                   due=now + idle_delay(home, role, now, idle_seconds), spontaneous=True)
+                   due=now + idle, spontaneous=True)
     from . import work_state
     work_state.settle_waits(home, role, now=now)
     write_json(receipt_path(home, key), {"role": role, "key": key, "result": result,
                                          "continue": continue_, "settled_at": now, "artifacts": artifact_facts})
-    return f"yield {role} {key} settled ({result}){dead_wait}{deadline_note}"
+    return f"yield {role} {key} settled ({result}){dead_wait}{deadline_note}{clamp_note}"

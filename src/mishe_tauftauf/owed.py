@@ -93,6 +93,17 @@ def _budget_green(home, now: float, role: str) -> bool:
     return sig.state == "OK" and sig.value == BUDGET_OK
 
 
+def inbox_unread(home, role: str) -> bool:
+    """True when the inbox changed since the role's cursor last advanced (an unread DM is open work)."""
+    cursor = _cursor(home, role)
+    if cursor is None:
+        return False
+    try:
+        return inbox_path(home, role).stat().st_mtime_ns > cursor.get("inbox_ns", 0)
+    except FileNotFoundError:
+        return False
+
+
 def check(home, role: str, *, now: float) -> Snapshot:
     cursor = _cursor(home, role)
     snap = Snapshot()
