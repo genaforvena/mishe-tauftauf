@@ -167,7 +167,9 @@ def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run
                             capture_output=True, text=True, timeout=share,
                             # omp reads piped stdin before a large @file prompt and
                             # stalls past ~64 KiB when stdin is an open pipe; /dev/null
-                            # lets the prompt file load (measured 5 s vs >190 s).
+                            # lets the prompt file load (measured 5 s vs >190 s). The gate
+                            # passes a regular file as stdin and did not reproduce the stall,
+                            # so this removes one stall mode; the gate's cause is not established.
                             stdin=subprocess.DEVNULL)
         except subprocess.TimeoutExpired:
             history.append(f"attempt {attempt}: timeout at cap {share:.0f}s")
