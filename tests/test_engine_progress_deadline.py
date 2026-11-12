@@ -124,6 +124,6 @@ def test_an_engine_waiting_on_a_live_child_is_not_idle(tmp_path: Path):
 def test_a_child_does_not_extend_the_hard_cap(tmp_path: Path):
     out = tmp_path / "stream"
     with pytest.raises(EngineTimeout, match="hard cap"):
-        proc.run_bounded([sys.executable, "-c", WAITS_ON_CHILD.replace("4)", "60)")],
+        proc.run_bounded([sys.executable, "-c", WAITS_ON_CHILD.replace("5)", "60)")],
                          env=dict(os.environ), cwd=tmp_path, timeout=1, stdout_to=out,
                          hard_timeout=3, idle_gap=1.0)

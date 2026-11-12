@@ -101,7 +101,7 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
         intentions.add(home, role, "again", note="scheduled return", due=now + again, pair=pair)
     dead_wait = ""
     if when is not None and when["signal"] not in signal_store.registry(home):
-        dead_wait = f"; WARNING --when names signal {when['signal']!r}, which is not registered, so it can never fire"
+        dead_wait = f"; WARNING --when names signal {when['signal']!r}, which is not registered, so it cannot fire until it is registered"
     if when is not None:
         intentions.add(home, role, f"when-{when['signal']}", note="signal condition you asked to be woken on", when=when, pair=pair)
     for name, entry in sorted(signal_store.registry(home).items()):
