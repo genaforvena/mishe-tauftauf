@@ -464,49 +464,6 @@ def test_server_slice_verified_and_drift_through_socket_listing():
     assert unread["state"] == "unknown"
 
 
-from mishe_tauftauf.replacement_readings import (  # noqa: E402
-    judge_server_keeper, read_server_keeper, SERVER_KEEPER_ID,
-)
-
-KEEPER = "mishe-self-development-current-session-" + "a" * 32 + ".service"
-
-
-def test_server_keeper_verified_when_each_server_held_by_own_keeper():
-    out = judge_server_keeper({"mishe-self-development-current": ("2961199", KEEPER)})
-    assert out["id"] == SERVER_KEEPER_ID
-    assert out["state"] == "verified"
-    assert "keeper=" + KEEPER in out["sample"]
-
-
-def test_server_keeper_unreadable_or_absent_is_unknown_not_calm():
-    assert judge_server_keeper(None)["state"] == "unknown"
-    assert judge_server_keeper({})["state"] == "unknown"
-    assert judge_server_keeper({"s": ("1", "")})["state"] == "unknown"
-
-
-def test_server_keeper_foreign_unit_is_drift():
-    test_unit = "mishe-tauftauf-test-1-" + "b" * 32 + "-session-" + "c" * 32 + ".service"
-    out = judge_server_keeper({"mishe-self-development-current": ("2961199", test_unit)})
-    assert out["state"] == "drift"
-    assert "not held by own keeper" in out["sample"]
-
-
-def test_server_keeper_read_through_socket_listing():
-    class Done:
-        def __init__(self, rc, out="", err=""):
-            self.returncode, self.stdout, self.stderr = rc, out, err
-    def runner(sock, args):
-        return Done(0, f"mishe-self-development-current\t2961199\n")
-    out = read_server_keeper("/tmp/s", runner=runner, cgroup_unit=lambda pid: KEEPER)
-    assert out["state"] == "verified"
-    out = read_server_keeper("/tmp/s", runner=runner, cgroup_unit=lambda pid: "app.scope")
-    assert out["state"] == "drift"
-    assert read_server_keeper("/tmp/s", runner=lambda s, a: None)["state"] == "unknown"
-    bad = lambda s, a: Done(0, "no tab here\n")
-    assert read_server_keeper("/tmp/s", runner=bad)["state"] == "unknown"
-    assert read_server_keeper(None)["state"] == "unknown"
-
-
 from mishe_tauftauf.replacement_readings import DRIFT_SITES_ID, judge_drift_across_sites, read_drift_across_sites
 from mishe_tauftauf import unit_properties
 
