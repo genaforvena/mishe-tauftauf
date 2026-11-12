@@ -422,3 +422,12 @@ def test_senses_path_triggers_go_through_a_debounce_that_starts_the_wake_once(cf
     # Other roles keep their direct path-to-wake trigger and get no debounce unit.
     assert "Unit=mishe-wake@genome.service" in files["mishe-wake-genome.path"]
     assert "mishe-wake-debounce-genome.service" not in files
+
+
+def test_health_path_triggers_are_coalesced_like_senses(cfg):
+    files = units.render(cfg, ["health", "genome"])
+    debounce = files["mishe-wake-debounce-health.service"]
+    assert "ExecStart=/bin/sleep 120" in debounce
+    assert "ExecStopPost=/usr/bin/systemctl --user --no-block start mishe-wake@health.service" in debounce
+    assert "Unit=mishe-wake-debounce-health.service" in files["mishe-wake-health.path"]
+    assert "mishe-wake-debounce-genome.service" not in files

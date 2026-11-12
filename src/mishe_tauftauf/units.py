@@ -23,8 +23,10 @@ WAKE_TIMEOUT = 1800
 SLACK = 300
 # Roles whose path triggers are coalesced: a burst of signal writes waits this many seconds, then starts
 # the wake once. Keep the window such that window + wake runtime leaves at most StartLimitBurst-1 starts
-# per StartLimitIntervalUSec (the host drop-in allows 3 per 5 min). Senses is the measured offender.
-WAKE_DEBOUNCE_SECONDS = {"senses": 120}
+# per StartLimitIntervalUSec (the host drop-in allows 3 per 5 min). Senses is the measured offender;
+# health hit start-limit-hit on 2026-11-12 (08:33:39, 08:34:18, 08:36:51, 08:38:07 starts, each a
+# producer rewrite of an unchanged signal file), so it is coalesced the same way.
+WAKE_DEBOUNCE_SECONDS = {"senses": 120, "health": 120}
 # The wake unit's own memory throttle. The generated unit declares it, and a wake that runs in the
 # unit restores it at runtime when a protected host drop-in shadows it with a lower value (see
 # ``ensure_wake_memory_high``): a wake pinned at its throttle makes no progress and runs out its
