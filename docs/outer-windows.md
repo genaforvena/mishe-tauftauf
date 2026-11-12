@@ -1,6 +1,7 @@
 # Outer windows: registry
 
-Read-only tmux windows in the outer `plants` session. Each is a `tools/*_view.py` renderer:
+Read-only tmux windows in the outer `plants` session. Each is a `tools/*_view.py` renderer,
+except `budget`, whose renderer lives in the site (`SITE_HOME/operator/budget/`, gitignored, not in git):
 plain words first (state, why it matters, next action), numbers second, UNKNOWN when not measured.
 Each must stay dependency-free so Mishe still works with the window closed, and must fit the
 pane it draws in: 41 rows, and 170 columns for the health view, which is the widest.
@@ -11,9 +12,9 @@ pane it draws in: 41 rows, and 170 columns for the health view, which is the wid
 | senses | tools/household_view.py | senses | the apartment map and what Mishe senses |
 | senses-map | tools/map_view.py | senses | best guess per person from the apartment map, read-only (needs tools/map_render.py run first) |
 | network | tools/network_view.py | network | home network and connection |
-| budget | operator/budget/budget_view.py | budget | provider quota and spend |
+| budget | operator/budget/budget_view.py (site-local) | budget | provider quota and spend |
 
-The `budget` window runs `operator/budget/budget_pane.sh`, a loop that calls
+The `budget` window runs `operator/budget/budget_pane.sh` (site-local, under `SITE_HOME`), a loop that calls
 `budget_view.py` every 20 s and clears the screen between frames, so the registry's
 command and the table's tool name the same view.
 
