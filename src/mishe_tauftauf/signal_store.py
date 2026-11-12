@@ -8,6 +8,7 @@ registry (``signals/registry.json``) declares max_age and subscribing roles.
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -121,8 +122,19 @@ def _store(home, name: str, *, value, state: str, reason: str, at: float, source
     path = _dir(home) / f"{name}.json"
     if path.exists() and _load(home, name) is None:
         os.replace(path, path.with_name(f"{name}.corrupt-{int(at)}"))   # keep the evidence
+    rev_no = rev(home, name) + 1
     write_json(path, {"value": value, "state": state, "reason": reason, "event": event,
-                         "observed_at": at, "source": source, "rev": rev(home, name) + 1})
+                      "observed_at": at, "source": source, "rev": rev_no})
+    _append_edge(home, {"name": name, "state": state, "value": value, "reason": reason,
+                        "event": event, "at": at, "source": source, "rev": rev_no})
+
+
+def _append_edge(home, edge: dict) -> None:
+    """One history line per stored edge. ``NAME.json`` keeps only the last state; this keeps the
+    sequence, so loop stages can be timed from the edge that opened them. Path units watch the
+    ``NAME.json`` files, never this log, so appending here does not wake subscribers."""
+    with open(_dir(home) / "edges.jsonl", "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(edge, sort_keys=True, ensure_ascii=False) + "\n")
 
 
 def observe(home, name: str, value, *, now: float, source: str, event=None) -> bool:

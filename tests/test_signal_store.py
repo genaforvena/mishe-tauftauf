@@ -106,3 +106,19 @@ def test_observe_unknown_records_the_failure_without_refreshing_freshness(home):
     assert seen.stat().st_mtime_ns == before          # a failure is not evidence of freshness
     sig = store.read(home, "ci", now=1100.0)
     assert sig.state == UNKNOWN and sig.value is None
+
+
+def _edges(home):
+    path = home / "signals" / "edges.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
+
+
+def test_each_stored_edge_is_appended_to_history_and_refresh_is_not(home):
+    store.observe(home, "ci", "GREEN", now=1000.0, source="t", event="a")
+    store.observe(home, "ci", "GREEN", now=1050.0, source="t", event="a")   # refresh: no edge
+    store.observe(home, "ci", "RED", now=1060.0, source="t")
+    store.observe_unknown(home, "ci", now=1100.0, reason="no input", source="t")
+    edges = _edges(home)
+    assert [(e["state"], e["value"], e["at"], e["rev"]) for e in edges] == [
+        (OK, "GREEN", 1000.0, 1), (OK, "RED", 1060.0, 2), (UNKNOWN, None, 1100.0, 3)]
+    assert edges[0]["event"] == "a" and edges[0]["source"] == "t"
