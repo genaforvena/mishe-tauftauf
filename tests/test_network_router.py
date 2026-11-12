@@ -110,3 +110,43 @@ def test_router_load_unknown_not_zero_when_missing():
     assert nr.parse(SAMPLE)["router_load"] is None
     partial = SAMPLE.replace("LINKS\n", "LOAD\nnot a load line\nLINKS\n")
     assert nr.parse(partial)["router_load"] is None
+
+
+def _loaded(ts, load, mem):
+    return {"ts": ts, "ok": True, "router_load": {"load_1m": load, "mem_available_mb": mem}}
+
+
+def test_over_the_load_limit_holds_the_probe_off_for_the_cooldown():
+    rows = [_loaded(1000.0, 1.4, 200.0)]
+    assert nr.backoff_reason(rows, 1060.0) is not None
+    assert nr.backoff_reason(rows, 1000.0 + nr.COOLDOWN_S + 1) is None
+
+
+def test_free_ram_under_the_floor_also_holds_the_probe_off():
+    assert nr.backoff_reason([_loaded(1000.0, 0.1, 100.0)], 1060.0) is not None
+
+
+def test_within_limit_missing_or_no_rows_never_hold_off():
+    assert nr.backoff_reason([_loaded(1000.0, 0.2, 240.0)], 1060.0) is None
+    assert nr.backoff_reason([{"ts": 1000.0, "ok": True, "router_load": None}], 1060.0) is None
+    assert nr.backoff_reason([], 1060.0) is None
+
+
+def test_skipped_row_does_not_hide_the_last_real_load():
+    skipped = {"ts": 1500.0, "ok": False, "error": "skipped"}
+    assert nr.backoff_reason([_loaded(1000.0, 1.4, 200.0), skipped], 1600.0) is not None
+
+
+def test_main_skips_ssh_while_held_off(tmp_path, monkeypatch):
+    home = tmp_path
+    (home / "network").mkdir()
+    import json as _json
+    import time as _time
+    now = _time.time()
+    (home / "network" / "router.jsonl").write_text(_json.dumps(_loaded(now - 60, 1.4, 200.0)) + "\n")
+    calls = []
+    monkeypatch.setattr(nr, "measure", lambda now=None: calls.append(now) or {"ts": now, "ok": True})
+    assert nr.main(["--home", str(home)]) == 3
+    assert calls == []
+    last = _json.loads((home / "network" / "router.jsonl").read_text().splitlines()[-1])
+    assert last["ok"] is False and "self-limit" in last["error"]

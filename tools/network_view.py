@@ -285,8 +285,8 @@ def uplink_line(now=None):
             f"(since router boot; read {ago:.0f} s ago{stale})")
 
 
-LOAD_LIMIT_1M = 1.0       # self-limit: above this, the router is busy and the probe should ease off
-MEM_FLOOR_MB = 120.0      # self-limit: below this much free RAM, the router is under pressure
+LOAD_LIMIT_1M = nb.LOAD_LIMIT_1M
+MEM_FLOOR_MB = nb.MEM_FLOOR_MB
 
 
 def router_health_line(now=None):

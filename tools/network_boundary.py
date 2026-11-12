@@ -107,6 +107,12 @@ def is_down(verdict_text):
     return verdict_text.startswith("DOWN")
 
 
+# Router self-limit: above this 1-minute load, or below this much free RAM, the router is busy and the
+# probe holds off (see network_router.backoff_reason) and the window marks it over the limit.
+LOAD_LIMIT_1M = 1.0
+MEM_FLOOR_MB = 120.0
+
+
 STATION_LINE = re.compile(r"^([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\s+(-?\d+)\s+dBm")
 RATE_LINE = re.compile(r"^\s*(RX|TX):\s*([\d.]+)\s*MBit/s")
 

@@ -26,6 +26,7 @@ SITE = Path(os.environ.get("MISHE_TAUFTAUF_HOME") or os.environ.get("MISHE_SEED_
 LOG_NAME = "router.jsonl"
 KEEP_S = 2 * 86400
 TIMEOUT_S = 20
+COOLDOWN_S = 900  # after a read over the router self-limit, do not ssh the router again for this long
 BANDS = {"ra0": "2.4", "rax0": "5"}  # radio name -> GHz; ra0 is the 2.4 GHz radio, rax0 the 5 GHz one
 REMOTE = (
     'echo "UPTIME $(cut -d" " -f1 /proc/uptime)"; '
@@ -55,6 +56,24 @@ def _row(now, body=None, error=None):
     return row
 
 
+def backoff_reason(rows, now):
+    """Why this pass should not ssh the router yet, or None. The newest row that carries a router load
+    decides: if it was over the self-limit less than COOLDOWN_S ago, the probe holds off (a skipped row
+    carries no load, so it never hides the last real reading)."""
+    for row in reversed(rows):
+        rl = row.get("router_load")
+        if not isinstance(rl, dict):
+            continue
+        load, mem = rl.get("load_1m"), rl.get("mem_available_mb")
+        over = (load is not None and load > nb.LOAD_LIMIT_1M) or (mem is not None and mem < nb.MEM_FLOOR_MB)
+        age = now - row.get("ts", now)
+        if over and age < COOLDOWN_S:
+            return (f"skipped: router over its self-limit at the last read (load {load}, free RAM {mem} MB); "
+                    f"next read after {COOLDOWN_S // 60} min")
+        return None
+    return None
+
+
 def measure(now=None):
     """One read-only router pass. Returns a row; never raises."""
     now = time.time() if now is None else now
@@ -82,11 +101,12 @@ def main(argv=None):
     args = nb.parse_argv(ap, argv)
     path = Path(args.home) / "network" / LOG_NAME
     now = time.time()
-    row = measure(now)
     try:
         kept = trim(nb.decode_router_rows(path.read_text()), now)
     except OSError:
         kept = []
+    reason = backoff_reason(kept, now)
+    row = _row(now, error=reason) if reason else measure(now)
     kept.append(row)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
