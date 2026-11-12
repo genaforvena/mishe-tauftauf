@@ -53,8 +53,9 @@ def test_settle_keeps_the_reoffer_while_the_signal_is_unreadable(tmp_path):
     assert "reoffer-observer-checks" in _ids(home, "genome")         # missing evidence is not recovery
 
 
-def _budget(home, now, remaining=0.9, age=0):
-    w = {n: dict(state="FRESH", observed_at=now - age, remaining=remaining) for n in ("5h", "7d")}
+def _budget(home, now, remaining=0.9, age=0, reset_at=None):
+    reset_at = now + 3600 if reset_at is None else reset_at
+    w = {n: dict(state="FRESH", observed_at=now - age, remaining=remaining, reset_at=reset_at) for n in ("5h", "7d")}
     write_json(home / "engine" / "budget.json", dict(accounts=dict(a=dict(state="FRESH", windows=w))))
 
 
@@ -87,3 +88,14 @@ def test_unknown_budget_or_no_lane_keeps_the_slow_pace(tmp_path):
         else: _lane(home, "genome", state="done")
         _open(home, "genome", "w1"); _settle(home, "genome", "w1", 10000)
         assert _idle_due(home, "genome") == 10000 + yielding.DEFAULT_IDLE_SECONDS, case
+
+
+def test_spare_budget_is_false_at_and_after_the_window_reset(tmp_path):
+    # Reset-boundary experiment (wall DM 300130/300135): observed_at fresh, reset_at=1000.
+    # Before this, spare_budget read True at 999, 1000 and 1001, so idle_delay scheduled the open-lane wake on expired evidence.
+    home = tmp_path / "site"; home.mkdir(); _budget(home, 999, reset_at=1000)
+    assert yielding.spare_budget(home, 999) is True
+    assert yielding.spare_budget(home, 1000) is False
+    assert yielding.spare_budget(home, 1001) is False
+    _lane(home, "genome")
+    assert yielding.idle_delay(home, "genome", 1000, yielding.DEFAULT_IDLE_SECONDS) == yielding.DEFAULT_IDLE_SECONDS

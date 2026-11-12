@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import intentions, owed, signal_store
+from . import budget_producer, intentions, owed, signal_store
 from .state_files import read_json, write_json
 
 IDLE_ID = "idle-initiative"
@@ -26,7 +26,8 @@ RESULTS = ("changed", "verified", "blocked")
 
 
 def spare_budget(home, now) -> bool:
-    """True only on fresh evidence: some account has both 5h and 7d windows FRESH, recent and above the spare floor.
+    """True only on fresh evidence: some account has both 5h and 7d windows FRESH, recent, not yet reset and above the spare floor.
+    The reset rule is the router's own (budget_producer.window_fresh_at), so a window cannot read as spare past its reset.
     Missing, stale or unreadable evidence is UNKNOWN and reads as False."""
     data = read_json(Path(home) / "engine" / "budget.json")
     if not isinstance(data, dict) or not isinstance(data.get("accounts"), dict):
@@ -38,6 +39,7 @@ def spare_budget(home, now) -> bool:
             for name, floor in (("5h", SPARE_5H), ("7d", SPARE_7D)):
                 x = w[name]
                 ok = ok and x.get("state") == "FRESH" and 0 <= now - float(x["observed_at"]) <= BUDGET_MAX_AGE and float(x["remaining"]) >= floor
+                ok = ok and budget_producer.window_fresh_at(x.get("observed_at"), x.get("reset_at"), now)
             if ok:
                 return True
         except (KeyError, TypeError, ValueError, AttributeError):
