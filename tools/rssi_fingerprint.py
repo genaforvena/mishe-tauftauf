@@ -115,7 +115,9 @@ def main(argv=None):
     moments = load_moments(os.path.join(mapdir, "label-rssi-vectors.json"))
     cv = loo(moments)
     live = live_vector(os.path.join(mapdir, "rssi-table.json"), now)
-    if live["state"] == "fresh":
+    # No labelled moment means nothing to match against: report UNKNOWN, do not
+    # let nearest() raise on an empty training set.
+    if live["state"] == "fresh" and moments:
         pred, dist, tied = nearest(live["dbm"], moments)
         est = {"room": pred, "tied_rooms": tied if pred is None else [pred],
                "distance_dbm": round(dist, 1)}
