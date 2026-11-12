@@ -17,9 +17,9 @@ addressed message are written in. Both are named in the policy.
 `chat_protocol.py` reads those records. Each reader takes the form it names and
 nothing else:
 
-- `decode_lifecycle` reads the `seed wake`, `seed yield` and `seed clear` lines. A
-  malformed reserved control sentence raises `ProtocolError` instead of being read
-  as ordinary chat.
+- `decode_lifecycle` reads the `seed wake`, `seed yield` and `seed clear` lines of
+  entries from the `seed` source only. A malformed reserved control sentence from
+  that source raises `ProtocolError` instead of being read as ordinary chat.
 - `decode_site_sync` reads the coordinator's `[site-sync]` marker, and
   `decode_kernel_sync_target` reads the target suffix of a kernel-sync task
   identity.
@@ -29,8 +29,12 @@ nothing else:
   receipt's own first line, and `grounding_ack` looks for a `grounded:<digest>`
   acknowledgement in a body. `grounding_ack` has no caller yet: it is a decoded
   value nothing consumes.
-- The `CONVERSATION_*`, `CHAT_TERMINATION_TOKENS` and `PARADISE_*` vocabularies are
-  advisory headers with no caller. They gate nothing and emit no bytes.
+- The AutoGen-style and PARADISE vocabularies (`CONVERSATION_PATTERNS`,
+  `AGENT_CAPABILITIES`, `CONVERSABLE_ROLES`, `CHAT_TERMINATION_TOKENS` and the
+  `PARADISE_*` constants) and their predicates and computations
+  (`conversation_pattern_is_valid`, `is_termination_token`, `paradise_kappa` and the
+  other `paradise_*` functions) have no caller outside `chat_protocol.py`. They
+  gate nothing and emit no bytes. They are not machine records a feed entry carries.
 
 `wall_text.py` reads three kinds of text:
 
