@@ -8,7 +8,9 @@ section from the engine status and the native Claude tap (`mishe budget-produce 
 ledger (`free_models`, `paid_models`, `unclassified_models`, `per_mind`, `ledger`) sections,
 committed but not yet observed on the pinned bytes. Each fresh window also carries `burn_h` (used
 fraction per hour over the rate history, at least 1500 s of span, same reset only) and `eta_s` (seconds
-to 100% at that burn); a non-fresh window gets null for both. Still open: candidate token counts and
+to 100% at that burn); a non-fresh window gets null for both. `burn_source` says where a burn came from: `history` (a measured
+rate reading) or `window-elapsed` (estimate: used / hours elapsed in a 5h or 7d window, used only when history has no
+honest reading and at least 0.25 h of the window has passed). A window-elapsed burn is an estimate, not a measurement. Still open: candidate token counts and
 verdicts in the producer, the render-only budget view (step 3) and deleting the old writers (step 5). The `budget` duty
 now runs the producer (step 2): the site-local `producers/budget.sh` runs the old collector
 first and `mishe budget-produce` after it, so the producer reads this tick's `quota.json`

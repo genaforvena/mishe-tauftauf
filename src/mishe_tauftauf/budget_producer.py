@@ -31,6 +31,8 @@ SOURCE_STATES = ("FRESH", "STALE", "UNKNOWN", "UNATTRIBUTED", "UNREADABLE")
 BURN_HISTORY_S = 6 * 3600.0   # history considered for burn; older points are dropped
 BURN_MIN_SPAN_S = 1500.0      # a burn needs at least this much observed span
 BURN_RESET_TOL_S = 120.0      # points from a previous window (different reset) are not the same window
+WINDOW_DURATION_S = {"5h": 5 * 3600.0, "7d": 7 * 24 * 3600.0}  # elapsed-window fallback needs the window length
+BURN_ELAPSED_MIN_H = 0.25     # the elapsed-window estimate needs this much elapsed window time (legacy budget_view rule)
 CLAUDE_HISTORY = "claude-rate-history.jsonl"   # rows: {at, five_hour: [pct, reset], seven_day: [pct, reset]}
 ENGINE_HISTORY = "quota-history.jsonl"         # rows: {at, q: {"acct/window": [remaining, reset]}}
 
@@ -164,13 +166,34 @@ def _engine_used(remaining):
     return 1 - remaining if _num(remaining) else None
 
 
-def _attach_burn(windows: dict, account: str, burn: dict | None) -> None:
-    """Add burn_h and eta_s to each FRESH window. Non-fresh windows get None: a stale reading is no burn."""
+def elapsed_window_burn(used, reset_at, window: str, now: float) -> float | None:
+    """Pure: burn per hour estimated from the elapsed part of a known-length window (used / hours elapsed).
+    Used only when the rate history has no honest reading. None when the window length is unknown, nothing is
+    used yet, or less than BURN_ELAPSED_MIN_H of the window has elapsed. This is an estimate, not a measurement:
+    the caller tags it burn_source="window-elapsed"."""
+    duration = WINDOW_DURATION_S.get(window)
+    if duration is None or not all(_num(v) for v in (used, reset_at, now)) or used <= 0:
+        return None
+    elapsed_h = (duration - (reset_at - now)) / 3600.0
+    if elapsed_h < BURN_ELAPSED_MIN_H:
+        return None
+    return used / elapsed_h
+
+
+def _attach_burn(windows: dict, account: str, burn: dict | None, now: float) -> None:
+    """Add burn_h, eta_s and burn_source to each FRESH window. Non-fresh windows get None: a stale reading is no burn.
+    burn_source is "history" (rate history reading), "window-elapsed" (fallback estimate) or None (no burn)."""
     for window, w in windows.items():
-        burned = None
-        if burn is not None and w["state"] == "FRESH":
-            burned = recent_burn(burn.get((account, window), []), w["reset_at"])
+        burned, source = None, None
+        if w["state"] == "FRESH":
+            if burn is not None:
+                burned = recent_burn(burn.get((account, window), []), w["reset_at"])
+                source = "history" if burned is not None else None
+            if burned is None:
+                burned = elapsed_window_burn(w["used"], w["reset_at"], window, now)
+                source = "window-elapsed" if burned is not None else None
         w["burn_h"] = burned
+        w["burn_source"] = source
         w["eta_s"] = (1 - w["used"]) / burned * 3600.0 if burned else None
 
 
@@ -193,7 +216,7 @@ def build_accounts(status: dict | None, tap, now: float, burn: dict | None = Non
     if bad:
         accounts["claude"]["malformed"] = bad
     for name, row in accounts.items():
-        _attach_burn(row["windows"], name, burn)
+        _attach_burn(row["windows"], name, burn, now)
         states = {w["state"] for w in row["windows"].values()}
         row["state"] = "UNREADABLE" if not row["windows"] or row.get("malformed") else "FRESH" if states == {"FRESH"} else "STALE"
     return accounts

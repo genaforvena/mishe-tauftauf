@@ -447,7 +447,31 @@ def test_engine_window_burn_uses_remaining_inverted_and_undecodable_lines_are_sk
     assert row["burn_h"] == pytest.approx(0.30 / (3000 / 3600))
 
 
-def test_without_history_burn_and_eta_are_none_not_zero():
+def test_without_history_burn_falls_back_to_elapsed_window_and_is_tagged():
+    # No rate history: the window-elapsed estimate stands in, tagged so it is never read as a measured burn.
     accounts = bp.build_accounts(None, tap(), NOW)
     five = accounts["claude"]["windows"]["5h"]
-    assert five["state"] == "FRESH" and five["burn_h"] is None and five["eta_s"] is None
+    assert five["state"] == "FRESH" and five["burn_source"] == "window-elapsed"
+    assert five["burn_h"] is not None and five["burn_h"] > 0 and five["eta_s"] is not None
+    stale = dict(tap(), five_hour=dict(tap()["five_hour"], observed_at=NOW - 5000))
+    assert bp.build_accounts(None, stale, NOW)["claude"]["windows"]["5h"]["burn_h"] is None
+
+
+def test_elapsed_window_burn_matches_legacy_when_history_is_missing():
+    # DM 300211 case: fresh 5h window at 60% used, reset in 2h, no history -> 0.2/h and ETA 2h, tagged as estimate.
+    reset = NOW + 2 * 3600
+    assert bp.elapsed_window_burn(0.6, reset, "5h", NOW) == pytest.approx(0.2)
+    w = bp.build_accounts(None, {"state": "FRESH", "source": "claude-native-usage",
+                                 "five_hour": {"observed_at": NOW - 10, "resets_at": reset, "used_percentage": 60}},
+                          NOW, None)["claude"]["windows"]["5h"]
+    assert w["burn_h"] == pytest.approx(0.2)
+    assert w["burn_source"] == "window-elapsed"
+    assert w["eta_s"] == pytest.approx(2 * 3600)
+
+
+def test_elapsed_window_burn_is_not_used_when_history_or_window_length_is_missing():
+    reset = NOW + 2 * 3600
+    assert bp.elapsed_window_burn(0.0, reset, "5h", NOW) is None          # nothing used yet
+    assert bp.elapsed_window_burn(0.6, reset, "9h", NOW) is None          # unknown window length
+    assert bp.elapsed_window_burn(0.6, NOW + 4.9 * 3600, "5h", NOW) is None  # under 0.25 h elapsed
+    assert bp.elapsed_window_burn(0.6, None, "5h", NOW) is None
