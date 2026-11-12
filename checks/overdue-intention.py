@@ -10,6 +10,9 @@ For every intention more than --grace-minutes past its ``due`` time:
   * a spontaneous intention whose role's engine budget signal is not GREEN: an intentional budget hold. A hold on a
     signal that is itself RED (the provider quota holds work) is HELD (reported, not a fault). A hold on an UNKNOWN,
     stale or unreadable budget signal is UNKNOWN, because missing evidence must not look like a deliberate hold;
+  * a delivery or operator hold in force now (``home/hold`` or ``work/delivery-admission.json``) that blocks every wake:
+    HELD, naming the hold. Observed 2026-11-12: the steward intention went RED at 14:04:32Z while a moving-pin delivery
+    hold stood; the wake started the second the hold was released, so the RED named the wrong cause;
   * anything else (no wake, no hold explanation): RED. A GREEN budget that did not wake the role is a routing fault.
 
 Only stdlib is used, so the check runs from committed HEAD bytes without importing the pinned release.
@@ -85,6 +88,20 @@ def _budget_state(home: Path, role: str, now: float):
     return "UNKNOWN", None, f"budget signal {name} is {state}"
 
 
+def _hold_reason(home: Path):
+    """Name the hold that blocks wakes right now, or None. A present hold file is a fact even if unreadable."""
+    hold = home / "hold"
+    if hold.exists():
+        try:
+            text = hold.read_text(encoding="utf-8").strip()
+        except (OSError, ValueError):
+            text = ""
+        return f"hold ({text[:120]})" if text else "hold (reason unreadable)"
+    if (home / "work" / "delivery-admission.json").exists():
+        return "delivery admission present"
+    return None
+
+
 def evaluate(home: Path, now: float, grace: float = GRACE_S):
     entries, problems = _load_intentions(home)
     try:
@@ -107,6 +124,10 @@ def evaluate(home: Path, now: float, grace: float = GRACE_S):
         started = starts.get(role)
         if isinstance(started, (int, float)) and started >= due:
             served.append(f"{role}/{item['id']} served by a wake {int((started - due) // 60)} min after due")
+            continue
+        blocked = _hold_reason(home)
+        if blocked:
+            held.append(f"{role}/{item['id']} overdue {late} min, wakes held: {blocked}")
             continue
         if item.get("spontaneous"):
             state, _, reason = _budget_state(home, role, now)

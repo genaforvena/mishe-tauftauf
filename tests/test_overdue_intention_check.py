@@ -93,3 +93,29 @@ def test_non_numeric_due_is_unknown_not_skipped(tmp_path):
     _write(home / "intentions" / "docs" / "bad-due.json", {"id": "bad-due", "due": "tomorrow"})
     code, lines = check.evaluate(home, NOW)
     assert code == 3 and any("non-numeric due" in line for line in lines)
+
+
+def test_delivery_hold_explains_overdue_wake_as_held_not_red(tmp_path):
+    home = _site(tmp_path, budget=_budget("OK", "GREEN"))
+    (home / "hold").write_text("moving-pin delivery abc: short activation hold\n")
+    code, lines = check.evaluate(home, NOW)
+    assert code == 0 and any(line.startswith("HELD:") and "delivery abc" in line for line in lines)
+
+
+def test_delivery_admission_explains_overdue_wake_as_held_not_red(tmp_path):
+    home = _site(tmp_path, budget=_budget("OK", "GREEN"))
+    _write(home / "work" / "delivery-admission.json", {"pid": 1})
+    code, lines = check.evaluate(home, NOW)
+    assert code == 0 and any(line.startswith("HELD:") and "admission" in line for line in lines)
+
+
+def test_hold_does_not_override_a_served_intention(tmp_path):
+    home = _site(tmp_path, starts={"docs": NOW - 60}, budget=_budget("OK", "GREEN"))
+    (home / "hold").write_text("hold\n")
+    code, lines = check.evaluate(home, NOW)
+    assert code == 0 and any(line.startswith("served:") for line in lines)
+
+
+def test_no_hold_still_red_when_green_budget_and_no_wake(tmp_path):
+    home = _site(tmp_path, budget=_budget("OK", "GREEN"))
+    assert check.evaluate(home, NOW)[0] == 2
