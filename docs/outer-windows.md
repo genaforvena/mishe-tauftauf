@@ -2,11 +2,12 @@
 
 Read-only tmux windows in the outer `plants` session. Each is a `tools/*_view.py` renderer:
 plain words first (state, why it matters, next action), numbers second, UNKNOWN when not measured.
-Each must stay dependency-free so Mishe still works with the window closed, and must fit 172x41.
+Each must stay dependency-free so Mishe still works with the window closed, and must fit the
+pane it draws in: 41 rows, and 170 columns for the health view, which is the widest.
 
 | window | tool | owner | purpose |
 | --- | --- | --- | --- |
-| health | tools/health_view.py | steward | verdict of the hourly tending pass (guard, units, wakes, signals, delivery) |
+| health | tools/health_view.py | steward | verdict of the tending pass (guard, units, wakes, signals, delivery) |
 | senses | tools/household_view.py | senses | the apartment map and what Mishe senses |
 | senses-map | tools/map_view.py | senses | best guess per person from the apartment map, read-only (needs tools/map_render.py run first) |
 | network | tools/network_view.py | network | home network and connection |
@@ -54,6 +55,20 @@ What is not in place yet (UNKNOWN until it is):
 - No timer runs the restorer. It is run by hand.
 - Many inner `mind-view` windows are `pending-decision`; they are not restored until someone
   classifies them as per-duty or drops them.
+
+## A decisions window (proposed, not built)
+
+A window that shows what the plant decided and why, rather than what it observed. It was
+asked for on 2026-11-11. There is no renderer for it, no entry for it in the window
+registry and no duty behind it, so nothing about it runs today; until one does, a reader
+must take the decision records — the routing ledger, the sense labels, the dispositions —
+as the evidence, and treat the absence of a decision view as UNKNOWN rather than as
+"nothing was decided".
+
+Two things have to be true before such a window means anything. It has to cover the
+decisions the plant actually made, which the existing routing records do not: they capture
+which candidate was selected, not the reasoning behind it. And it has to say what it does
+not cover, so a gap in the record reads as a gap instead of as silence.
 
 ## Crash drill (not implemented)
 

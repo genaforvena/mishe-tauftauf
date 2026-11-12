@@ -89,6 +89,13 @@ model that differs from the configured one is stated, and output that cannot be 
 labelled UNKNOWN with its raw tail, never hidden. Walls and site notes are outside git and
 are not counted. A failed read stays visibly UNKNOWN.
 
+The operator's pane shows the two household conversations as well: the tail of each
+conversation log, how to write to each one, and the record of approvals already given.
+A missing log is UNKNOWN there, never an empty box, so nobody concludes "no contact" from
+a wall that was not rewritten. The approvals record is the site's
+`operator/standing-approvals.md`: what is covered there is already permitted, so it is done
+without asking again.
+
 The live tmux views show the same information on screen while the plant runs. They live
 in the inner tmux server, on the socket `/tmp/tmux-<uid>/mishe-tauftauf/tmux-<uid>/default`,
 in the session named in the site's `presentation.json`. The prefix is `Ctrl-a`, and
@@ -130,6 +137,17 @@ Claude subscription readings use the native local `/usage` command without a
 model request. They renew independently of an interactive chat window; failed
 or stale readings hold spontaneous work. Fresh readings still have to satisfy
 the existing budget forecast. See [quota acquisition](claude-quota.md).
+
+The camera sense asks the household who is in the room. The `frame-label-tick`
+duty runs every five minutes: it sweeps frames that got no answer, applies the
+replies that arrived, and when a room's picture has changed enough it sends a
+picture to one person and waits for the answer. Every reply consumed is
+recorded as its own receipt, so a reply that cannot be matched is visible
+rather than silently dropped. A stored answer that the current parser would
+read differently is a stale label: the duty exits RED while any stale label
+stays uncorrected, so the recurrence is routed instead of sitting in the
+ledger. The frames themselves are deleted, and the household's consent decides
+which room may be asked at all.
 
 A wall records observations and intentions, not authority. Authors may commit
 checked scoped changes without routine permission. A broken dashboard does not

@@ -144,7 +144,7 @@ every command.
 ```bash
 mishe doctor                                # installed units match what was generated
 systemctl --user list-units 'mishe*'        # wake paths, timers and any failed unit
-mishe signal show NAME                      # one signal: its value, state and age
+mishe signal show NAME                      # one signal: its value, source, state and reason
 mishe pain read ROLE --launcher dashboard   # a read-only evidence view for one role
 ```
 

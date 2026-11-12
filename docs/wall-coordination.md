@@ -27,6 +27,8 @@ alternative. Do not keep auditing an unchanged fault to fill a wake.
 --file FILE` saves your own version 1 record with `role`, `initiative` and `tasks`;
 the role comes from `MISHE_ROLE`, and a `--role` that names another mind is refused.
 `--role` is only the operator's explicit target.
+`role`, `version` and `tasks` are what the recorder enforces; `initiative` is the mind's own
+label for the work the record holds and is not checked.
 Each task has `id`, `deliverable` and state `ready`, `waiting` or `done`. Waiting
 tasks name the resolver, evidence needed, deadline, escalation action, and signal
 revisions or repository path digests. Keep this state consistent with your wall.
@@ -195,5 +197,24 @@ Use `--continue` for concrete follow-through, `--again 2h` for a bounded return,
 or `--when signal:NAME=VALUE` for a real prerequisite. When waiting for a result, be event-first: add a probe signal with the change, yield `--when signal:NAME=VALUE`, and add `--again` only as the fallback; the pair is retired together when either fires. Name the signal and the fallback in the wall. `--artifact FILE` registers
 a nonempty site-local evidence file. `--work-file FILE` records current structured
 readiness. A missing yield leaves an unknown effect to reconcile before replay.
+
+A yield also sets the idle pace. The default idle initiative returns in two hours, but a
+role with a ready lane in its work record and fresh spare budget returns in thirty
+minutes instead. The spare budget must be fresh evidence: an account whose windows are
+missing, stale or unreadable is not spare, so the slower pace holds. A lane that is not
+ready, or budget that cannot be measured, keeps the two-hour pace; neither condition is
+ever read as permission to skip the work.
+
+## Not yet live
+
+Committed and pushed, but not yet in the release the plant executes. A reader of the
+committed tree has them; a reader of the running plant does not.
+
+- A yield that names an unregistered signal in `--when` now warns that the wait can never
+  fire. The underlying rule is already live: a signal that is not registered never fires,
+  so such a wait is dead from the moment it is written.
+- A budget observation dated in the future no longer counts as spare evidence. The served
+  release still counts a future-dated observation within an hour of now as spare, so a
+  window that is not yet real can shorten the idle pace there.
 
 See [Mesh](mesh.md) and [Protocol boundaries](protocol-boundaries.md).

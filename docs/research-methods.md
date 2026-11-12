@@ -33,7 +33,7 @@ results merely to improve apparent progress. It may test research-practice
 changes, recording whether evidence supports adoption, revision or rejection;
 this never suspends other authorised research.
 
-Planting installs its core charter and launcher and preserves local additions.
+Planting installs its core charter and preserves local additions.
 An existing plant receives it through a checked runtime refresh. The project and
 its engine and model preferences (`engines/research-methods.json`) remain local; the role does not acquire
 authority over another plant by sharing a name or runtime.

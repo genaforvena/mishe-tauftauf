@@ -6,13 +6,14 @@ section from the engine status and the native Claude tap (`mishe budget-produce 
 `engine_router.live_status()` reads the accounts section and the router no longer reads
 `engine_usage.status` or refetches stale readings. Still open: the ledger sections, the
 render-only budget view (step 3) and deleting the old writers (step 5). The `budget` duty
-now runs the producer (step 2): the site-local `producers/budget.sh` calls
-`mishe budget-produce` before the old collector, observed on the timer 2026-11-11
+now runs the producer (step 2): the site-local `producers/budget.sh` runs the old collector
+first and `mishe budget-produce` after it, so the producer reads this tick's `quota.json`
+rather than the previous tick's. Observed on the timer 2026-11-11
 (`produced_at` 05:18:05Z → 05:28:06Z, next fire 05:38:04Z). With a 600 s period inside the
 900 s `MAX_AGE_S`, the file stays fresh with ~300 s of margin, so a role whose candidate
 reads an account window no longer routes on no evidence. Still open for the judge: no
 scheduler runs `checks/budget-consistency.py`, so a silent aging-out would go unreported
-(see that duty below). Roles whose candidates are all free models or the Claude safety net
+(see that check below). Roles whose candidates are all free models or the Claude safety net
 read no window and are unaffected.
 Owner of the model/account mapping: `engine/routes.json`. Owner of this contract: steward.
 
@@ -148,17 +149,20 @@ only that file and computes nothing itself.
 - **Age**: every window and every ledger-derived number carries its own `observed_at` /
   `at`. A number older than its max age is shown `STALE`/`UNKNOWN`, never fresh.
 
-## `budget-consistency` duty
+## `budget-consistency` check
 
-Resolver: **steward**. Command: `{python} {repo}/checks/budget-consistency.py --home {home}`.
-Exit codes: 0 GREEN, 2 RED, 3 cannot decide (ages to UNKNOWN). `every`: 300, `timeout`: 60,
-`max_age`: 900.
+Command: `{python} {repo}/checks/budget-consistency.py --home {home}`.
+Exit codes: 0 GREEN, 2 RED, 3 cannot decide (ages to UNKNOWN). Its own `--max-age` default
+is 900 s.
 
-Not yet registered: `checks/budget-consistency.py` is in no systemd timer, CI job or
-observer-check inventory. Measured 2026-11-11 with `checks/check-scheduler-coverage.py`, the
-check is `unobserved`, so its verdict is manual only and a file that silently ages past
-`MAX_AGE_S` produces no reading. Registering this duty is a scheduler change and needs fresh
-review.
+**Not registered as a duty.** `checks/budget-consistency.py` is in no systemd timer, CI job
+or observer-check inventory, so it has no resolver, no `every`, `timeout` or `max_age` of its
+own and nothing routes its verdict to anyone. The `budget` duty that does exist runs the
+producer and has resolver **senses**; it does not run this check. Measured 2026-11-11 with
+`checks/check-scheduler-coverage.py`, the check is `unobserved`, so its verdict is manual
+only and a file that silently ages past `MAX_AGE_S` produces no reading. Registering it is a
+scheduler change and needs fresh review. Until then, run it by hand and treat a missing
+result as UNKNOWN, never as GREEN.
 
 RED when any of:
 

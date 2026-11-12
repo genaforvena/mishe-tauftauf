@@ -23,7 +23,9 @@ Failure publishes no current windows; last-good readings remain evidence and
 cannot admit work. The producer should run at least every ten minutes; the
 existing budget view expires readings after fifteen minutes. A missing or stale
 producer therefore cannot establish budget readiness. Senses owns acquisition
-failures; the `budget-claude` signal routes changed verdicts to its subscribers.
+failures; the `budget-claude` signal carries the verdict. The tracked publisher registers
+that signal with no subscribers, so a site that wants the verdict routed registers its own
+resolver.
 
 The native report has display precision: whole percentage points and minute
 reset times. The result records that precision explicitly. It is not an exact

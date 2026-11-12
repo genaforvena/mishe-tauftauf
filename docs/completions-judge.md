@@ -225,9 +225,10 @@ analysis tasks.
 
 ## Identity gate for a pinned wrapper
 
-This checkout has no `run --judge` option, and nothing under `src/` calls
-`judges.run_external`, so this adapter is not selectable as a judge in `run`.
-Selecting it for live dispatch is a separate change that needs its own review.
+This checkout has no `run --judge` option, and `judges.run_external` has no caller
+under `src/` — the CLI imports it but never calls it — so this adapter is not selectable as
+a judge in `run`. Selecting it for live dispatch is a separate change that needs its own
+review.
 
 The identity gate still works on its own. `--identity` prints a hash over the
 base URL, model, timeout and token limit, the judge prompt, the response format,
