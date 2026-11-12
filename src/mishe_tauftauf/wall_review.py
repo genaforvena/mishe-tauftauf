@@ -164,7 +164,11 @@ def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run
             result = runner([reviewer_executable(), "--print", "--no-session", "--no-extensions", "--no-tools",
                              "--no-lsp", "--no-pty", "--model", model, "--thinking", "high",
                              "--cwd", str(directory), "@" + str(path)],
-                            capture_output=True, text=True, timeout=share)
+                            capture_output=True, text=True, timeout=share,
+                            # omp reads piped stdin before a large @file prompt and
+                            # stalls past ~64 KiB when stdin is an open pipe; /dev/null
+                            # lets the prompt file load (measured 5 s vs >190 s).
+                            stdin=subprocess.DEVNULL)
         except subprocess.TimeoutExpired:
             history.append(f"attempt {attempt}: timeout at cap {share:.0f}s")
             if attempt >= MAX_EMPTY_RETRIES:

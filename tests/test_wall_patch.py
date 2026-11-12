@@ -850,3 +850,20 @@ def test_gitignore_is_a_patchable_target_but_other_dot_paths_are_refused(tmp_pat
     for name in (".git/config", ".mishe-tauftauf/state.json", ".env", "../.gitignore"):
         with pytest.raises(ValueError, match="invalid patch path"):
             wall_patch.target(tmp_path, name)
+
+
+def test_review_answer_gives_the_reader_no_open_stdin(tmp_path):
+    # omp stalls in readPipedInput on a prompt file above ~64 KiB when its stdin is
+    # an open pipe (moving-pin-dbb2ce11 review: 3 timeouts at the 180 s cap). The
+    # reader must get stdin=DEVNULL so the @file prompt loads.
+    import subprocess
+    from mishe_tauftauf import wall_review
+
+    seen = {}
+
+    def runner(*args, **kwargs):
+        seen["stdin"] = kwargs.get("stdin")
+        return type("R", (), {"returncode": 0, "stdout": '{"version": 1, "input_hash": "h", "results": []}', "stderr": ""})()
+
+    wall_review.review_answer("model", tmp_path, tmp_path / "req.txt", runner=runner)
+    assert seen["stdin"] is subprocess.DEVNULL
