@@ -38,7 +38,8 @@ def test_busy_host_is_unknown_not_green(tmp_path):
 def test_under_triggers_is_green(tmp_path):
     home = tmp_path / "site"
     home.mkdir()
-    proc = run(home, "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000")
+    proc = run(home, "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000",
+               "--max-load", "100000")
     assert proc.returncode == 0, proc.stderr
     assert "GREEN" in proc.stdout and "senses" in proc.stdout
 
@@ -46,7 +47,7 @@ def test_under_triggers_is_green(tmp_path):
 def test_trigger_hit_is_red(tmp_path):
     home = tmp_path / "site"
     home.mkdir()
-    proc = run(home, "--cpu-trigger", "-1")
+    proc = run(home, "--cpu-trigger", "-1", "--max-load", "100000")
     assert proc.returncode == 2
     assert "RED" in proc.stderr and "senses cpu" in proc.stderr
 
@@ -56,7 +57,8 @@ def test_artifact_records_the_reading(tmp_path):
     home.mkdir()
     proc = subprocess.run(
         [sys.executable, str(CHECK), "--home", str(home), "--repo", str(REPO),
-         "--roles", "senses", "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000"],
+         "--roles", "senses", "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000",
+         "--max-load", "100000"],
         capture_output=True, text=True, timeout=120)
     assert proc.returncode == 0, proc.stderr
     data = json.loads((home / "artifacts" / "rust-plan-20261107"
