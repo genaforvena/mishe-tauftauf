@@ -111,3 +111,13 @@ def test_recorded_clients_line_marks_stale(tmp_path, monkeypatch):
     log.write_text('{"ts": 1000000.0, "ok": true, "clients": []}\n')
     monkeypatch.setattr(view, "ROUTER_LOG", log)
     assert "STALE" in view.recorded_clients_line(1000000.0 + 3600)
+
+
+def test_gateway_line_shows_jitter_and_unknown_when_missing():
+    rows = [{"gateway": {"loss_pct": 0.0, "avg_ms": 0.47, "jitter_ms": 0.027}}]
+    line = view.gateway_line(rows)
+    assert "jitter 0.03 ms" in line
+    old = [{"gateway": {"loss_pct": 0.0, "avg_ms": 0.47}}]
+    assert "jitter UNKNOWN" in view.gateway_line(old)
+    assert "jitter UNKNOWN" in view.gateway_line([{"gateway": None}])
+    assert "jitter UNKNOWN" in view.gateway_line([])

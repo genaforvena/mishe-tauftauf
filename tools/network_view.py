@@ -272,8 +272,9 @@ def gateway_line(data):
     loss = [((r.get("gateway") or {}).get("loss_pct")) for r in data]
     now = f"{cur['avg_ms']:.1f} ms" if "avg_ms" in cur else "UNKNOWN"
     lossnow = f"{cur['loss_pct']:.0f}% loss" if "loss_pct" in cur else ""
+    jitnow = f"jitter {cur['jitter_ms']:.2f} ms" if "jitter_ms" in cur else "jitter UNKNOWN"
     worst = max([v for v in loss if v is not None], default=None)
-    return (f"  {'router (LAN)':<22}{now:>10}  {lossnow:<9} {spark(vals)}  "
+    return (f"  {'router (LAN)':<22}{now:>10}  {lossnow:<9} {jitnow:<17} {spark(vals)}  "
             f"worst loss {('%.0f%%' % worst) if worst is not None else 'UNKNOWN'}")
 
 
