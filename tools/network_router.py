@@ -31,7 +31,7 @@ REMOTE = (
     'echo "UPTIME $(cut -d" " -f1 /proc/uptime)"; '
     "for d in ra0 rax0; do echo \"RADIO $d\"; iwinfo $d assoclist 2>/dev/null; done; "
     'echo LEASES; cat /tmp/dhcp.leases 2>/dev/null; echo WAN; '
-    "ubus call network.interface.wan status 2>/dev/null"
+    'ubus call network.interface.wan status 2>/dev/null; echo LINKS; ip -s link show 2>/dev/null'
 )
 
 

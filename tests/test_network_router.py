@@ -25,6 +25,24 @@ LEASES
 1794500001 aa:bb:cc:00:00:02 192.168.8.51 * 01:bb
 WAN
 {"up": true, "uptime": 123456, "l3_device": "eth0"}
+LINKS
+1: lo: <LOOPBACK,UP> mtu 65536 qdisc noqueue state UNKNOWN
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    RX:  bytes  packets errors dropped  missed   mcast
+    1000     10      0       0       0       0
+    TX:  bytes  packets errors dropped carrier collsns
+    1000     10      0       0       0       0
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP
+    link/ether 00:11:22:33:44:55 brd ff:ff:ff:ff:ff:ff
+    RX:  bytes  packets errors dropped  missed   mcast
+    987654321 1234567 7      42      0       9
+    TX:  bytes  packets errors dropped carrier collsns
+    123456789 765432  3       5       0       0
+3: eth1: <BROADCAST,UP> mtu 1500 qdisc noop state DOWN
+    RX:  bytes  packets errors dropped  missed   mcast
+    0        0       0       0       0       0
+    TX:  bytes  packets errors dropped carrier collsns
+    0        0       0       0       0       0
 """
 
 
@@ -32,6 +50,8 @@ def test_clients_names_bands_and_rates():
     body = nr.parse(SAMPLE)
     assert body["uptime_s"] == 569000
     assert body["wan"] == {"up": True, "uptime_s": 123456}
+    assert body["uplink"] == {"device": "eth0", "rx_errors": 7, "rx_dropped": 42,
+                              "tx_errors": 3, "tx_dropped": 5}
     c = body["clients"]
     assert len(c) == 3
     assert c[0]["name"] == "iPad-Rozalia" and c[0]["band"] == "2.4" and c[0]["dbm"] == -29
@@ -64,3 +84,18 @@ def test_trim_keeps_two_days():
     now = 1_000_000.0
     rows = [{"ts": now - 3 * 86400}, {"ts": now - 60}]
     assert nr.trim(rows, now) == [{"ts": now - 60}]
+
+
+def test_uplink_counters_read_the_wan_device_only():
+    body = nr.parse(SAMPLE)
+    assert body["uplink"]["device"] == "eth0"  # not lo, not eth1
+
+
+def test_uplink_unknown_when_wan_device_has_no_block():
+    text = SAMPLE.replace('"l3_device": "eth0"', '"l3_device": "wwan9"')
+    assert nr.parse(text)["uplink"] is None
+
+
+def test_uplink_unknown_without_links_section():
+    text = SAMPLE.split("LINKS")[0]
+    assert nr.parse(text)["uplink"] is None

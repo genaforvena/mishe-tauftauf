@@ -266,6 +266,25 @@ def recorded_clients_line(now=None):
             f"                    clients over the last hour: {trend}")
 
 
+def uplink_line(now=None):
+    """WAN link errors and drops since the router booted, from the last recorded router read."""
+    now = time.time() if now is None else now
+    rows_ = router_rows()
+    if not rows_:
+        return "UNKNOWN (no router reading recorded yet)"
+    last = rows_[-1]
+    ago = now - last["ts"]
+    if not last.get("ok"):
+        return f"UNKNOWN (last router read failed {ago:.0f} s ago: {last.get('error', 'no reason recorded')})"
+    up = last.get("uplink")
+    if not up:
+        return f"UNKNOWN (WAN counters not in the read {ago:.0f} s ago)"
+    stale = "  STALE" if ago > STALE_ROUTER_S else ""
+    return (f"{up['device']}: rx errors {up['rx_errors']}, dropped {up['rx_dropped']}; "
+            f"tx errors {up['tx_errors']}, dropped {up['tx_dropped']} "
+            f"(since router boot; read {ago:.0f} s ago{stale})")
+
+
 def gateway_line(data):
     cur = (data[-1].get("gateway") if data else None) or {}
     vals = [((r.get("gateway") or {}).get("avg_ms")) for r in data]
@@ -331,6 +350,7 @@ def draw():
     out.append("  RECORDED      " + recorded_clients_line())
     rf = router_facts()
     out.append("  ROUTER        " + (rf or "UNKNOWN (ssh read failed)") + "   (read-only)")
+    out.append("  UPLINK        " + uplink_line() + "   (read-only)")
     out.append("")
     out.append("  note: pings to public addresses are not used: the router answers them itself,")
     out.append("  so they look fast even when the internet is down. Internet checks are secure page loads.")

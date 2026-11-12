@@ -124,7 +124,7 @@ def decode_router_output(stdout, bands, client_id):
         if line.startswith("UPTIME "):
             uptime_line = line.split(None, 1)[1]
             current = None
-        elif line == "LEASES" or line == "WAN" or line.startswith("RADIO "):
+        elif line in ("LEASES", "WAN", "LINKS") or line.startswith("RADIO "):
             current = line
             sections.setdefault(current, [])
         elif current is not None:
@@ -159,14 +159,46 @@ def decode_router_output(stdout, bands, client_id):
                 current_station["rx" if r.group(1) == "RX" else "tx"] = float(r.group(2))
 
     wan = None
+    wan_device = None
     wan_text = "\n".join(sections.get("WAN", [])).strip()
     if wan_text:
         try:
             status = json.loads(wan_text)
             wan = {"up": bool(status.get("up")), "uptime_s": int(status.get("uptime", 0))}
-        except (ValueError, TypeError):
+            wan_device = status.get("l3_device") or status.get("device") or None
+        except (ValueError, TypeError, AttributeError):
             wan = None
-    return {"uptime_s": round(uptime_s), "wan": wan, "clients": clients}
+    uplink = None
+    if wan_device and isinstance(wan_device, str):
+        uplink = decode_link_counters(sections.get("LINKS", []), wan_device)
+    return {"uptime_s": round(uptime_s), "wan": wan, "uplink": uplink, "clients": clients}
+
+
+def decode_link_counters(lines, device):
+    """RX/TX errors and drops of one interface from ``ip -s link show`` output, or None when absent.
+
+    Cumulative since the router booted (kernel counters). An interface block is a header
+    "N: name[@peer]: <flags>", then "RX:" and "TX:" column titles, each followed by one numbers line
+    (RX: bytes packets errors dropped missed mcast; TX: bytes packets errors dropped carrier collsns).
+    """
+    counters = {}
+    current = None
+    for i, line in enumerate(lines):
+        head = line.split()
+        if line[:1].isdigit() and len(head) >= 2 and head[1].endswith(":"):
+            current = head[1].rstrip(":").split("@")[0]
+            continue
+        tag = line.strip()[:3]
+        if current != device or tag not in ("RX:", "TX:") or i + 1 >= len(lines):
+            continue
+        nums = lines[i + 1].split()
+        if len(nums) >= 4 and all(n.isdigit() for n in nums[:4]):
+            side = tag[:2].lower()
+            counters[f"{side}_errors"] = int(nums[2])
+            counters[f"{side}_dropped"] = int(nums[3])
+    if len(counters) != 4:
+        return None
+    return {"device": device, **counters}
 
 
 def decode_router_rows(text):

@@ -121,3 +121,30 @@ def test_gateway_line_shows_jitter_and_unknown_when_missing():
     assert "jitter UNKNOWN" in view.gateway_line(old)
     assert "jitter UNKNOWN" in view.gateway_line([{"gateway": None}])
     assert "jitter UNKNOWN" in view.gateway_line([])
+
+
+def _router_log(tmp_path, monkeypatch, row):
+    import json
+    log = tmp_path / "router.jsonl"
+    log.write_text(json.dumps(row) + "\n")
+    monkeypatch.setattr(view, "ROUTER_LOG", log)
+
+
+def test_uplink_line_shows_wan_errors_and_drops_with_age(tmp_path, monkeypatch):
+    row = {"ts": 1000000.0, "ok": True, "clients": [],
+           "uplink": {"device": "eth0", "rx_errors": 7, "rx_dropped": 42, "tx_errors": 3, "tx_dropped": 5}}
+    _router_log(tmp_path, monkeypatch, row)
+    line = view.uplink_line(1000000.0 + 60)
+    assert "eth0" in line and "rx errors 7, dropped 42" in line and "tx errors 3, dropped 5" in line
+    assert "read 60 s ago" in line and "STALE" not in line
+
+
+def test_uplink_line_unknown_when_counters_missing(tmp_path, monkeypatch):
+    _router_log(tmp_path, monkeypatch, {"ts": 1000000.0, "ok": True, "clients": [], "uplink": None})
+    assert view.uplink_line(1000000.0 + 60).startswith("UNKNOWN")
+
+
+def test_uplink_line_failed_read_is_unknown_not_zero(tmp_path, monkeypatch):
+    _router_log(tmp_path, monkeypatch, {"ts": 1000000.0, "ok": False, "error": "ssh exit 255"})
+    line = view.uplink_line(1000000.0 + 60)
+    assert line.startswith("UNKNOWN") and "rx errors" not in line
