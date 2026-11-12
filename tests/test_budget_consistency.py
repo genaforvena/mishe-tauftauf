@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -42,9 +43,17 @@ def _status(window_state: str, account_state: str = "FRESH", observed_at: float 
 
 
 def _home_with(tmp_path: Path, budget: dict) -> Path:
+    """A home with the budget file and a pin (runtime/current/src) to the checkout src."""
     (tmp_path / "engine").mkdir(parents=True, exist_ok=True)
     (tmp_path / "engine" / "budget.json").write_text(json.dumps(budget))
+    _pin(tmp_path, REPO / "src")
     return tmp_path
+
+
+def _pin(home: Path, src: Path) -> None:
+    release = home / "runtime" / "current"
+    release.mkdir(parents=True, exist_ok=True)
+    (release / "src").symlink_to(src, target_is_directory=True)
 
 
 @pytest.mark.parametrize("label", ["FRESH", "STALE", "UNKNOWN", "UNATTRIBUTED", "UNREADABLE"])
@@ -131,3 +140,57 @@ def test_producer_shaped_stale_window_past_900s_agrees_with_no_admission(tmp_pat
     assert code == bc.GREEN, result
     assert result["admission"]["decided"] is False
     assert result["admission"]["raw"] is False
+
+
+def test_missing_pin_is_unknown_not_green_from_the_checkout(tmp_path: Path):
+    # no runtime/current: the scheduler decision is not observed, so the checkout src must not stand in for it
+    budget = _admit_budget(800.0)
+    (tmp_path / "engine").mkdir(parents=True)
+    (tmp_path / "engine" / "budget.json").write_text(json.dumps(budget))
+    code, result = bc.run(tmp_path, 900.0, NOW, None)
+    assert code == bc.UNKNOWN, result
+    assert result["admission"]["available"] is False
+    assert "no pinned scheduler" in result["reason"]
+
+
+def test_broken_pinned_scheduler_is_unknown(tmp_path: Path):
+    broken = tmp_path / "pin-src"
+    (broken / "mishe_tauftauf").mkdir(parents=True)
+    (broken / "mishe_tauftauf" / "__init__.py").write_text("")
+    (broken / "mishe_tauftauf" / "yielding.py").write_text("raise RuntimeError('broken pin')\n")
+    home = tmp_path / "home"
+    budget = _admit_budget(800.0)
+    (home / "engine").mkdir(parents=True)
+    (home / "engine" / "budget.json").write_text(json.dumps(budget))
+    _pin(home, broken)
+    code, result = bc.run(home, 900.0, NOW, None)
+    assert code == bc.UNKNOWN, result
+    assert "not importable or raised" in result["reason"]
+
+
+def test_regressed_pinned_admission_rule_is_red_through_the_detector(tmp_path: Path):
+    # controlled decision regression: the pinned copy admits any window (drops the freshness bound)
+    pin = tmp_path / "pin-src"
+    shutil.copytree(REPO / "src", pin)
+    yl = pin / "mishe_tauftauf" / "yielding.py"
+    text = yl.read_text()
+    needle = 'budget_producer.window_fresh_at(x.get("observed_at"), x.get("reset_at"), now)'
+    assert needle in text
+    yl.write_text(text.replace(needle, "True"))
+    home = tmp_path / "home"
+    budget = _admit_budget(1200.0)
+    (home / "engine").mkdir(parents=True)
+    (home / "engine" / "budget.json").write_text(json.dumps(budget))
+    _pin(home, pin)
+    code, result = bc.run(home, 900.0, NOW, None)
+    assert code == bc.RED, result
+    assert result["admission"]["decided"] is True and result["admission"]["raw"] is False
+    assert result["admission"]["scheduler_file"].startswith(str(pin.resolve()))
+
+
+def test_detector_judges_the_pinned_bytes_not_the_checkout(tmp_path: Path):
+    budget = _admit_budget(800.0)
+    home = _home_with(tmp_path, budget)
+    code, result = bc.run(home, 900.0, NOW, None)
+    assert code == bc.GREEN, result
+    assert result["admission"]["scheduler_file"].startswith(str((REPO / "src").resolve()))

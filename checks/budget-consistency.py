@@ -13,14 +13,15 @@ Checks (RED when any fails):
   - an account whose state disagrees with its windows (FRESH needs every window FRESH and at
     least one window; UNREADABLE needs no windows; otherwise STALE)
   - an account marked FRESH with no windows
-  - decision level (live file only): the scheduler's admission (yielding.spare_budget) disagrees with the
-    admission rule recomputed from raw fields (FRESH account and windows, age 0..900 s and within 3600 s, reset ahead, floor met)
+  - decision level (live file only): the pinned scheduler's admission (yielding.spare_budget, run in a fresh
+    interpreter from runtime/current/src) disagrees with the admission rule recomputed from raw fields (FRESH account
+    and windows, age 0..900 s and within 3600 s, reset ahead, floor met). No pin, or a pin that cannot be run, is UNKNOWN.
 
 Exit status:
   0  GREEN: every account row matches its windows and no window is shown FRESH past its age
   2  RED: one of the checks above fails
-  3  UNKNOWN: file missing, unreadable, not schema 1, or produced_at older than --max-age
-     (a stale file cannot prove anything about current windows)
+  3  UNKNOWN: file missing, unreadable, not schema 1, produced_at older than --max-age, or no runnable pinned
+     scheduler (a stale file or an unobserved decision cannot prove anything)
 
 Usage: budget-consistency.py --home SITE_HOME [--max-age 900] [--now EPOCH] [--file PATH]
 """
@@ -29,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -152,29 +154,48 @@ def raw_admission(data: dict, now: float) -> bool:
     return False
 
 
+# Run in a fresh interpreter (-I: no PYTHONPATH, no cwd on sys.path) so no cached module can stand in for the
+# pinned bytes. The child prints the file it actually imported and the decision it actually made.
+_PROBE = """
+import json, sys
+src, home, now = sys.argv[1], sys.argv[2], float(sys.argv[3])
+sys.path.insert(0, src)
+from mishe_tauftauf import yielding
+print(json.dumps({"file": yielding.__file__, "decided": bool(yielding.spare_budget(home, now))}))
+"""
+
+
 def check_admission(home: Path, data: dict, now: float) -> tuple[list, dict]:
     """Compare the scheduler's admission decision (yielding.spare_budget, which reads home/engine/budget.json)
-    with raw_admission on the same data. Disagreement is a RED problem; an unimportable scheduler is UNKNOWN."""
-    # The scheduler that actually decides is the pinned release (home/runtime/current/src); the checkout src is
-    # only a fallback when no pin exists. The result names the bytes imported so the observation is attributable.
+    with raw_admission on the same data. Only the pinned release (home/runtime/current/src) is judged: with no
+    pin, or with a pinned scheduler that cannot be imported or run, the decision is not observed and the result
+    is UNKNOWN. A disagreement is RED. The checkout src is never used as a stand-in for the pin."""
     home = Path(home).resolve()
     pinned_src = home / "runtime" / "current" / "src"
-    if pinned_src.is_dir():
-        src = pinned_src
-    else:
-        src = Path(__file__).resolve().parent.parent / "src"
-    sys.path.insert(0, str(src))
+    if not pinned_src.is_dir():
+        return [], {"available": False, "reason": f"no pinned scheduler at {pinned_src} (runtime/current/src missing)"}
+    src = pinned_src.resolve()
     try:
-        from mishe_tauftauf import yielding
-    except Exception as exc:  # noqa: BLE001 - any import failure means the decision cannot be observed
-        return [], {"available": False, "reason": f"scheduler not importable from {src}: {exc}"}
+        proc = subprocess.run(
+            [sys.executable, "-I", "-c", _PROBE, str(src), str(home), repr(float(now))],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [], {"available": False, "reason": f"pinned scheduler probe did not run: {exc}", "scheduler_src": str(src)}
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
+        return [], {"available": False, "reason": f"pinned scheduler not importable or raised: {tail[0]}", "scheduler_src": str(src)}
     try:
-        decided = bool(yielding.spare_budget(home, now))
-    except Exception as exc:  # noqa: BLE001
-        return [f"scheduler spare_budget raised: {exc}"], {"available": True, "decided": None, "scheduler_src": str(src)}
+        probe = json.loads(proc.stdout)
+        imported = Path(probe["file"]).resolve()
+        decided = probe["decided"]
+    except (ValueError, KeyError, TypeError):
+        return [], {"available": False, "reason": "pinned scheduler probe printed no decision", "scheduler_src": str(src)}
+    if not imported.is_relative_to(src) or not isinstance(decided, bool):
+        return [], {"available": False, "reason": f"imported {imported}, not under the pin {src}", "scheduler_src": str(src)}
     raw = raw_admission(data, now)
     summary = {"available": True, "decided": decided, "raw": raw, "scheduler_src": str(src),
-               "scheduler_file": str(getattr(yielding, "__file__", ""))}
+               "scheduler_file": str(imported)}
     if decided != raw:
         return [f"admission disagrees: scheduler spare_budget={decided}, raw fields={raw}"], summary
     return [], summary
