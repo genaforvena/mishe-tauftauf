@@ -14,7 +14,7 @@ Checks (RED when any fails):
     least one window; UNREADABLE needs no windows; otherwise STALE)
   - an account marked FRESH with no windows
   - decision level (live file only): the scheduler's admission (yielding.spare_budget) disagrees with the
-    admission rule recomputed from raw fields (FRESH account and windows, age 0..3600 s, reset ahead, floor met)
+    admission rule recomputed from raw fields (FRESH account and windows, age 0..900 s and within 3600 s, reset ahead, floor met)
 
 Exit status:
   0  GREEN: every account row matches its windows and no window is shown FRESH past its age
@@ -118,14 +118,17 @@ def check_accounts(data: dict, now: float, max_age: float) -> tuple[list, list, 
 
 # Decision-level rule, written again here from the raw fields (not from budget_producer.window_fresh_at),
 # so a regression in the shared freshness helper or in the scheduler's spare_budget cannot agree with
-# itself. Constants mirror the scheduler's admission floor and its evidence age limit.
+# itself. The scheduler applies two independent age bounds: its own evidence limit (BUDGET_MAX_AGE, 3600 s)
+# and the producer's freshness rule (window_fresh_at, MAX_AGE_S, 900 s). Both are mirrored here and both
+# must hold, so a window aged 901..3600 s is not admitted (DM 300163).
 ADMIT_MAX_AGE_S = 3600.0
+PRODUCER_MAX_AGE_S = 900.0
 ADMIT_FLOORS = {"5h": 0.30, "7d": 0.30}
 
 
 def raw_admission(data: dict, now: float) -> bool:
-    """True when some account has FRESH state and both 5h and 7d windows FRESH, recent (0..3600 s old),
-    not yet reset and above the spare floor. Computed from raw fields only."""
+    """True when some account has FRESH state and both 5h and 7d windows FRESH, recent (0..900 s old, and
+    within the 3600 s evidence limit), not yet reset and above the spare floor. Computed from raw fields only."""
     for acct in (data.get("accounts") or {}).values():
         if not isinstance(acct, dict) or acct.get("state") != "FRESH" or not isinstance(acct.get("windows"), dict):
             continue
@@ -136,7 +139,12 @@ def raw_admission(data: dict, now: float) -> bool:
                 ok = False
                 break
             age = now - w["observed_at"]
-            ok = 0 <= age <= ADMIT_MAX_AGE_S and w["reset_at"] > now and w["remaining"] >= floor
+            ok = (
+                0 <= age <= ADMIT_MAX_AGE_S
+                and age <= PRODUCER_MAX_AGE_S
+                and w["reset_at"] > now
+                and w["remaining"] >= floor
+            )
             if not ok:
                 break
         if ok:
@@ -147,19 +155,26 @@ def raw_admission(data: dict, now: float) -> bool:
 def check_admission(home: Path, data: dict, now: float) -> tuple[list, dict]:
     """Compare the scheduler's admission decision (yielding.spare_budget, which reads home/engine/budget.json)
     with raw_admission on the same data. Disagreement is a RED problem; an unimportable scheduler is UNKNOWN."""
-    repo_src = Path(__file__).resolve().parent.parent / "src"
-    if str(repo_src) not in sys.path:
-        sys.path.insert(0, str(repo_src))
+    # The scheduler that actually decides is the pinned release (home/runtime/current/src); the checkout src is
+    # only a fallback when no pin exists. The result names the bytes imported so the observation is attributable.
+    home = Path(home).resolve()
+    pinned_src = home / "runtime" / "current" / "src"
+    if pinned_src.is_dir():
+        src = pinned_src
+    else:
+        src = Path(__file__).resolve().parent.parent / "src"
+    sys.path.insert(0, str(src))
     try:
         from mishe_tauftauf import yielding
     except Exception as exc:  # noqa: BLE001 - any import failure means the decision cannot be observed
-        return [], {"available": False, "reason": f"scheduler not importable: {exc}"}
+        return [], {"available": False, "reason": f"scheduler not importable from {src}: {exc}"}
     try:
         decided = bool(yielding.spare_budget(home, now))
     except Exception as exc:  # noqa: BLE001
-        return [f"scheduler spare_budget raised: {exc}"], {"available": True, "decided": None}
+        return [f"scheduler spare_budget raised: {exc}"], {"available": True, "decided": None, "scheduler_src": str(src)}
     raw = raw_admission(data, now)
-    summary = {"available": True, "decided": decided, "raw": raw}
+    summary = {"available": True, "decided": decided, "raw": raw, "scheduler_src": str(src),
+               "scheduler_file": str(getattr(yielding, "__file__", ""))}
     if decided != raw:
         return [f"admission disagrees: scheduler spare_budget={decided}, raw fields={raw}"], summary
     return [], summary

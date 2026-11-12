@@ -17,6 +17,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from mishe_tauftauf import budget_producer as bp  # noqa: E402
+from mishe_tauftauf import yielding  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("budget_consistency", REPO / "checks" / "budget-consistency.py")
 bc = importlib.util.module_from_spec(_spec)
@@ -102,3 +103,31 @@ def test_old_produced_at_is_unknown_not_green(tmp_path: Path):
 
 def test_detector_enum_matches_the_producer_states():
     assert bc.WINDOW_STATES == {"FRESH", "STALE"} | set(bp.SOURCE_STATES)
+
+
+def _admit_budget(age: float, state: str = "FRESH") -> dict:
+    window = {"used": 0.5, "remaining": 0.5, "reset_at": NOW + 3600, "observed_at": NOW - age, "state": state}
+    return {
+        "schema": 1,
+        "produced_at": NOW,
+        "accounts": {
+            "codex-a": {"state": state, "windows": {"5h": dict(window), "7d": dict(window)}},
+        },
+    }
+
+
+@pytest.mark.parametrize("age,expected", [(800.0, True), (1200.0, False), (3000.0, False)])
+def test_admission_bounds_match_the_scheduler_for_hand_made_fresh_windows(tmp_path: Path, age: float, expected: bool):
+    # 901..3600 s: the scheduler's 3600 s evidence limit allows it, but the producer's 900 s rule does not (DM 300163)
+    budget = _admit_budget(age)
+    home = _home_with(tmp_path, budget)
+    assert bc.raw_admission(budget, NOW) is expected
+    assert yielding.spare_budget(home, NOW) is expected
+
+
+def test_producer_shaped_stale_window_past_900s_agrees_with_no_admission(tmp_path: Path):
+    budget = _admit_budget(1200.0, state="STALE")
+    code, result = bc.run(_home_with(tmp_path, budget), 900.0, NOW, None)
+    assert code == bc.GREEN, result
+    assert result["admission"]["decided"] is False
+    assert result["admission"]["raw"] is False
