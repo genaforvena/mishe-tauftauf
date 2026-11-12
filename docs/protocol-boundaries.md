@@ -58,7 +58,8 @@ nothing else:
 - A feed entry's first line. `addressed` reads it, including the permission header
   `[permission] id=... decision=granted|revoked owner=...`. It is defined in
   `wall_text.py`. `wall.py` re-exports it, and `wake.py` and `plant_view.py` import
-  it from there; `feed.py` imports it from `wall_text.py` directly.
+  it from `wall.py`, which re-exports it (`from .wall import addressed`); `feed.py`
+  imports it from `wall_text.py` directly.
 - A wall document or a body as a whole. `is_peer_copy` decides whether a note is a
   peer's wall document, so a write that would reproduce one is refused; trailing
   blank lines do not count. `document_digest` gives that same document identity as
