@@ -424,6 +424,17 @@ def test_senses_path_triggers_go_through_a_debounce_that_starts_the_wake_once(cf
     assert "mishe-wake-debounce-genome.service" not in files
 
 
+def test_network_path_triggers_are_coalesced_like_health(cfg):
+    # DM bursts to network (2026-11-12 13:34-13:38Z) started one wake per touch and hit StartLimitBurst=3.
+    files = units.render(cfg, ["network", "genome"])
+    debounce = files["mishe-wake-debounce-network.service"]
+    assert "ExecStart=/bin/sleep 120" in debounce
+    assert "ExecStopPost=/usr/bin/systemctl --user --no-block start mishe-wake@network.service" in debounce
+    assert "Unit=mishe-wake-debounce-network.service" in files["mishe-wake-network.path"]
+    assert "Unit=mishe-wake@network.service" not in files["mishe-wake-network.path"]
+    assert "mishe-wake-debounce-genome.service" not in files
+
+
 def test_health_path_triggers_are_coalesced_like_senses(cfg):
     files = units.render(cfg, ["health", "genome"])
     debounce = files["mishe-wake-debounce-health.service"]

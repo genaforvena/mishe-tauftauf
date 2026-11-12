@@ -26,7 +26,9 @@ SLACK = 300
 # per StartLimitIntervalUSec (the host drop-in allows 3 per 5 min). Senses is the measured offender;
 # health hit start-limit-hit on 2026-11-12 (08:33:39, 08:34:18, 08:36:51, 08:38:07 starts, each a
 # producer rewrite of an unchanged signal file), so it is coalesced the same way.
-WAKE_DEBOUNCE_SECONDS = {"senses": 120, "health": 120}
+# network hit start-limit-hit on 2026-11-12 (13:34:44, 13:35:34, 13:37:39, 13:38:45 starts; DMs 300309-300313
+# each touched inbox/network and each wake runs about a minute), so it is coalesced too.
+WAKE_DEBOUNCE_SECONDS = {"senses": 120, "health": 120, "network": 120}
 # The wake unit's own memory throttle. The generated unit declares it, and a wake that runs in the
 # unit restores it at runtime when a protected host drop-in shadows it with a lower value (see
 # ``ensure_wake_memory_high``): a wake pinned at its throttle makes no progress and runs out its
