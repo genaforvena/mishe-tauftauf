@@ -17,14 +17,17 @@ addressed message are written in. Both are named in the policy.
 `chat_protocol.py` reads those records. Each reader takes the form it names and
 nothing else:
 
-- `decode_lifecycle` reads the `seed wake`, `seed yield` and `seed clear` lines of
-  entries from the `seed` source only. A malformed reserved control sentence from
-  that source raises `ProtocolError` instead of being read as ordinary chat.
-- `decode_site_sync` reads the coordinator's `[site-sync]` marker, and
-  `decode_kernel_sync_target` reads the target suffix of a kernel-sync task
-  identity.
+- `decode_lifecycle` reads the first line of an entry from the `seed` source only:
+  `seed wake`, `seed yield` or `seed clear`. Later lines are prose. A malformed
+  reserved control sentence from that source raises `ProtocolError` instead of
+  being read as ordinary chat.
+- `decode_site_sync` reads the coordinator's `[site-sync]` marker from the `sync`
+  source. Its JSON payload must have exactly `target` and `core_sha`; a malformed
+  marker raises `ProtocolError`. `decode_kernel_sync_target` reads the target
+  suffix of a kernel-sync task identity.
 - `decode_market` reads the reserved market records, and for the `[task-…]` forms
-  the JSON line that follows the header.
+  the JSON line that follows the header. A malformed market record raises
+  `ProtocolError`; it is not dropped.
 - `has_task_opportunity` looks for one named marker line, `receipt_line` returns a
   receipt's own first line, and `grounding_ack` looks for a `grounded:<digest>`
   acknowledgement in a body. `grounding_ack` has no caller yet: it is a decoded
@@ -42,8 +45,10 @@ nothing else:
   the slug must be valid and the recipient must not be the sender. It also reads the
   natural prose form, as in `health to genome: ...`, which addresses a recipient only
   when the named role is one of the declared roles and is not the sender.
-  `near_miss_dm` catches a `[dm] to=ROLE` line with words after the role. The CLI
-  then records the entry as plain chat, wakes nobody, and prints a warning.
+  `near_miss_dm` catches a `[dm] to=ROLE` line with words after the role. In
+  `mishe append`, when `dm_recipient` gives no recipient, the entry is recorded as
+  plain chat, wakes nobody, and prints a warning. `mishe wall dm` is the canonical
+  writer.
 - A feed entry's first line. `addressed` reads it, including the permission header
   `[permission] id=... decision=granted|revoked owner=...`.
 - A wall document or a body as a whole. `is_peer_copy` decides whether a note is a
