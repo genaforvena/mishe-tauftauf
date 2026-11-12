@@ -94,6 +94,18 @@ def next_role(home, roles, *, now: float, exclude: str | None = None) -> str | N
     return None
 
 
+def record_wake_start(home, role: str, *, now: float) -> None:
+    """Record that a wake for ``role`` has started, whatever triggered it.
+
+    Path-triggered starts (the debounced units) never pass through ``resume_owed``, so without this
+    record a resume could start a fourth unit inside the host's 300 s start limit (DM 300352).
+    """
+    path = Path(home) / START_LEDGER
+    ledger = read_json(path) or {}
+    ledger[role] = now
+    write_json(path, ledger)
+
+
 def resume_owed(home, roles, *, now: float) -> list[str]:
     """Start a wake unit for every role that is owed work, not just the first.
 
@@ -208,6 +220,7 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
     home = Path(home)
     if (home / "hold").exists() or delivery_requests.admission_path(home).exists():
         return WakeResult("held", "hold or delivery admission present")
+    record_wake_start(home, role, now=now)
     store = DispatchStore(home / "dispatch")
     supervisor = Supervisor(store=store, registry=StaticRoleRegistry(roles),
                             worker=_Worker(home, engine, now, mail_reader, repo, timeout),
