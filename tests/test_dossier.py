@@ -180,3 +180,11 @@ def test_detail_is_bounded_to_its_tail(tmp_path):
     snap = owed.Snapshot(signal_revs={"noisy": 1})
     out = dossier.build(tmp_path, "genome", snap, key="k", now=20, mail=[])
     assert "TAIL-LINE" in out and "HEAD" not in out and "(truncated)" in out
+
+
+def test_ending_names_the_fifteen_minute_red_follow_up_default(tmp_path):
+    (tmp_path / "walls").mkdir()
+    out = dossier.build(tmp_path, "genome", owed.Snapshot(), key="example", now=100, mail=[])
+    assert "## Ending the wake" in out
+    ending = out[out.index("## Ending the wake"):]
+    assert "RED signal" in ending and "15 minutes" in ending and "--again 15m" in ending
