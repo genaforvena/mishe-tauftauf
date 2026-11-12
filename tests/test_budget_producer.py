@@ -365,3 +365,25 @@ def test_build_ledger_without_ledger_file_is_unknown_not_zero(tmp_path):
     row = out["free_models"]["omp:free/m:-"]
     assert row["turns_1h"] is None and row["pending"] is None and row["observed_at"] is None
     assert any("ledger missing" in u for u in out["ledger_unknowns"])
+
+
+def test_identityless_outcome_is_counted_as_malformed_not_dropped():
+    from mishe_tauftauf import budget_producer as bp
+    events = [{"event": "outcome", "wake": "a", "at": "2026-11-12T06:00:00Z", "outcome": "yielded"},
+              _ev("outcome", wake="b", outcome="yielded")]
+    t = bp._ledger_tally(events, 1794464000.0)
+    assert t["malformed"] == 1
+    assert t["counts"][("genome", "omp:m:acc")]["1h"] == 1
+
+
+def test_invalid_utf8_ledger_line_is_skipped_not_replaced(tmp_path):
+    import json
+    from mishe_tauftauf.router_text import ledger_events
+    path = tmp_path / "routing-ledger.jsonl"
+    good = json.dumps(_ev("outcome", outcome="yielded")).encode()
+    bad = b'{"event":"outcome","role":"genome","key":"bad\xff\xfekey","at":"2026-11-12T06:00:00Z"}'
+    path.write_bytes(good + b"\n" + bad + b"\n")
+    skipped: list = []
+    events = list(ledger_events(path, skipped))
+    assert len(events) == 1 and events[0]["key"] == "omp:m:acc"
+    assert skipped == [2]

@@ -68,13 +68,16 @@ def ledger_events(path: Path, skipped: list | None = None):
     truncated ledger still yields the events it does hold. A missing ledger
     yields no events. Pass a list as `skipped` to receive the 1-based line
     numbers of the rows that were skipped, so a caller can report them.
+    A line that is not valid UTF-8 is not decoded with replacement characters
+    (that would mint a key that never ran); it is skipped and reported like any
+    other unreadable row.
     """
     if not path.exists():
         return
-    with path.open(encoding="utf-8", errors="replace") as lines:
-        for number, line in enumerate(lines, 1):
+    with path.open("rb") as lines:
+        for number, raw in enumerate(lines, 1):
             try:
-                event = json.loads(line)
+                event = json.loads(raw.decode("utf-8"))
             except ValueError:
                 event = None
             if isinstance(event, dict):

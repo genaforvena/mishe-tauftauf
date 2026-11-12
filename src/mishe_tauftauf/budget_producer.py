@@ -187,7 +187,9 @@ def _ledger_tally(events, now: float) -> dict:
 
     Every outcome counts, timeouts and no-yield included, because that is where burn is highest.
     Only `outcome` rows count as turns; a `fallback` closes a select without counting a turn.
-    An outcome whose timestamp cannot be read is not counted and is returned as `unreadable`."""
+    An outcome whose timestamp cannot be read is not counted and is returned as `unreadable`.
+    A select, outcome or fallback row without a role or key string cannot be attributed to any candidate;
+    it is not counted and is returned as `malformed` (partial evidence, never folded into another slot)."""
     from .router_text import iso_ms
 
     now_ms = now * 1000
@@ -195,20 +197,22 @@ def _ledger_tally(events, now: float) -> dict:
     last: dict = {}
     open_sel: dict = {}
     unreadable = 0
+    malformed = 0
     watermark = None
     for ev in events:
         at = iso_ms(ev.get("at"))
         if at is not None and (watermark is None or at > watermark):
             watermark = at
         role, key, wake = ev.get("role"), ev.get("key"), ev.get("wake")
+        kind = ev.get("event")
+        if kind not in ("select", "outcome", "fallback"):
+            continue
         if not isinstance(role, str) or not isinstance(key, str):
+            malformed += 1
             continue
         ident = (wake, role, key)
-        kind = ev.get("event")
         if kind == "select":
             open_sel[ident] = open_sel.get(ident, 0) + 1
-            continue
-        if kind not in ("outcome", "fallback"):
             continue
         if open_sel.get(ident, 0) > 0:
             open_sel[ident] -= 1
@@ -228,7 +232,8 @@ def _ledger_tally(events, now: float) -> dict:
     for (_wake, role, key), n in open_sel.items():
         if n > 0:
             pending[(role, key)] = pending.get((role, key), 0) + n
-    return {"counts": counts, "last": last, "pending": pending, "watermark": watermark, "unreadable": unreadable}
+    return {"counts": counts, "last": last, "pending": pending, "watermark": watermark, "unreadable": unreadable,
+            "malformed": malformed}
 
 
 def _ledger_row(tally: dict, slot, meta: dict, present: bool, watermark_ms) -> dict:
@@ -272,6 +277,8 @@ def build_ledger(home: Path, now: float) -> dict:
                         "counts exclude them")
     if tally["unreadable"]:
         unknowns.append(f"{tally['unreadable']} ledger outcome row(s) with unreadable timestamps not counted")
+    if tally["malformed"]:
+        unknowns.append(f"{tally['malformed']} ledger row(s) with no role or key not attributed; counts exclude them")
     if present:
         unknowns.append(TOKEN_NOTE)
 
@@ -319,7 +326,8 @@ def build_ledger(home: Path, now: float) -> dict:
             per_mind[role][key] = _ledger_row(tally, (role, key), {}, present, wm)
     # `newest_event_at` is the newest ledger event, not proof the collector ran or the ledger is complete:
     # an idle host and a failed writer both look like an old newest event. `produced_at` is the producer clock.
-    ledger = {"present": present, "events": len(events), "malformed_skipped": len(skipped),
+    ledger = {"present": present, "events": len(events),
+              "malformed_skipped": len(skipped) + tally["malformed"],
               "newest_event_at": wm / 1000 if present and wm is not None else None,
               "produced_at": now}
     return {"free_models": free_models, "paid_models": paid_models, "unclassified_models": unclassified_models,

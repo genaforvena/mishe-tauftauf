@@ -149,8 +149,9 @@ only that file and computes nothing itself.
   Their last outcome is kept whatever its age, including older than 24 h, so a retired
   candidate stays visible. They also appear in `per_mind` and are named in `unknowns`.
 - **`ledger`** is the meta block for the ledger sections: `present`, `events` (rows read as
-  events), `malformed_skipped` (lines that were not a JSON object; they are excluded from the
-  counts and named in `unknowns`), `newest_event_at` (the newest ledger event, not proof the
+  events), `malformed_skipped` (lines that were not valid UTF-8 or not a JSON object, plus
+  select/outcome/fallback rows with no role or key string; all are excluded from the counts
+  and named in `unknowns`, so the counts are partial whenever this is nonzero), `newest_event_at` (the newest ledger event, not proof the
   collector ran or the ledger is complete) and `produced_at` (the producer clock). An idle
   ledger and a failed writer can both show an old `newest_event_at`; a consumer must not read
   an old value as either fresh or failed without also checking `produced_at` and the `unknowns`.
