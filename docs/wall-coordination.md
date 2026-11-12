@@ -168,7 +168,7 @@ it or remove admission because its parent PID died: child activation processes
 and effects need reconciliation. Inspect the exact request, patch/release logs,
 processes, runtime pointer and actual consumers. Preserve original failure
 records. Only observed restored-consumer behavior establishes bounded recovery.
-The `delivery-requests` signal expires after five minutes if its consumer stops
+The `delivery-requests` signal expires after ten minutes (`max_age` 600 in `duties.json`) if its consumer stops
 observing; missing, stale or malformed monitoring never establishes success.
 
 The site's moving-pin script (`SITE_HOME/operator/plans/moving-pin-20261105/delivery/deliver.sh`)
