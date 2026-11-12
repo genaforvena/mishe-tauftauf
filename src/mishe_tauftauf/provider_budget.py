@@ -7,7 +7,7 @@ freshness/forecast verdicts. Missing evidence never admits spontaneous work.
 import math
 from pathlib import Path
 
-from . import signal_store
+from . import signal_store, state_files
 
 
 def evaluate(rows, account, *, now):
@@ -46,11 +46,12 @@ def rows_from_engine_budget(home, now):
     lands before the reset, otherwise ok. An unreadable file, a malformed account or a stale observation becomes an
     error row or a non-FRESH row, so ``evaluate`` reports UNKNOWN or STALE and never admits spontaneous work.
     """
-    import json
     try:
-        data = json.loads((Path(home) / "engine" / "budget.json").read_text(encoding="utf-8"))
+        data = state_files.read_json(Path(home) / "engine" / "budget.json")
     except (OSError, ValueError) as error:
         return [dict(error=f"engine/budget.json unreadable: {str(error)[:120]}")]
+    if data is None:
+        return [dict(error="engine/budget.json missing")]
     accounts = data.get("accounts") if isinstance(data, dict) else None
     if not isinstance(accounts, dict) or not accounts:
         return [dict(error="engine/budget.json has no accounts")]
