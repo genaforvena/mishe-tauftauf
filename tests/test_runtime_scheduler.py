@@ -259,7 +259,7 @@ def test_exit_inside_a_later_starter_keeps_the_earlier_accepted_start(tmp_path, 
 def test_child_exit_after_acceptance_keeps_the_next_start_spaced(tmp_path, monkeypatch):
     # Review of 20f172c7 (DM 300376): systemd accepted at t=1100, the child died before the post-accept
     # write, and a request at t=1150 went out 50 s after the real start. The write-ahead value covers the
-    # whole acceptance window (60 s bound) plus spacing, so the next request waits until 1210 + 150 = 1360.
+    # whole acceptance window (bound + launch slack) plus spacing, so the next request waits for that record.
     from types import SimpleNamespace
     monkeypatch.setattr(wake.owed, "check", lambda home, role, now: SimpleNamespace(reasons=["inbox"]))
 
@@ -272,21 +272,22 @@ def test_child_exit_after_acceptance_keeps_the_next_start_spaced(tmp_path, monke
         wake.resume_owed(tmp_path, ["genome"], now=1000, clock=lambda: 1000)
     ledger = wake.read_json(tmp_path / wake.START_LEDGER)
     assert ledger["genome"] == 1000 + wake.START_WRITE_AHEAD_SECONDS
-    # A request at 1150 (the reviewer's case) is refused as too early: 1150 - 1210 < 150.
+    # A request at 1150 (the reviewer's case) is refused as too early: the record is still ahead of it.
     requests = []
     monkeypatch.setattr(wake, "systemd_starter", lambda role: requests.append(role) or True)
     outcome = wake.resume_owed(tmp_path, ["genome"], now=1000, clock=lambda: 1150)
     assert outcome == ["genome"] and requests == []
     ledger = wake.read_json(tmp_path / wake.START_LEDGER)
-    assert ledger["genome"] == 1210  # the spaced-out request was not sent, so the record is unchanged
+    assert ledger["genome"] == 1000 + wake.START_WRITE_AHEAD_SECONDS  # spaced-out request not sent; record unchanged
 
 
 def test_caller_death_during_acceptance_keeps_the_bound(tmp_path, monkeypatch):
     # Review of 5716e061 (DM 300379): the caller died while systemctl was still in flight, so the
     # subprocess timeout never applied and a second request at 1300 landed 10 s after a delayed
-    # acceptance at 1290. The write-ahead record is request + 60 + 150 = 1210, so a request at 1300 waits;
-    # the earliest allowed request is 1360, which is past any acceptance (at most 1060) plus 150.
-    assert wake.START_WRITE_AHEAD_SECONDS == wake.START_REQUEST_TIMEOUT_SECONDS + wake.START_SPACING_SECONDS
+    # acceptance at 1290. The write-ahead record is request + 60 + 30 slack + 150 = 1240, so a request at 1300
+    # waits; the earliest allowed request is 1390, past any acceptance (at most 1060 + 30 slack) plus 150.
+    assert wake.START_WRITE_AHEAD_SECONDS == (wake.START_REQUEST_TIMEOUT_SECONDS + wake.START_LAUNCH_SLACK_SECONDS
+                                              + wake.START_SPACING_SECONDS)
     from types import SimpleNamespace
     monkeypatch.setattr(wake.owed, "check", lambda home, role, now: SimpleNamespace(reasons=["inbox"]))
 
@@ -300,9 +301,9 @@ def test_caller_death_during_acceptance_keeps_the_bound(tmp_path, monkeypatch):
     requests = []
     monkeypatch.setattr(wake, "systemd_starter", lambda role: requests.append(role) or True)
     wake.resume_owed(tmp_path, ["genome"], now=1000, clock=lambda: 1300)
-    assert requests == []  # 1300 is inside the spacing after the 1210 write-ahead record
-    wake.resume_owed(tmp_path, ["genome"], now=1000, clock=lambda: 1360)
-    assert requests == ["genome"]  # 1210 + 150: the earliest request allowed after the bound
+    assert requests == []  # 1300 is inside the spacing after the 1240 write-ahead record
+    wake.resume_owed(tmp_path, ["genome"], now=1000, clock=lambda: 1390)
+    assert requests == ["genome"]  # 1240 + 150: the earliest request allowed after the bound
 
 
 def test_systemd_starter_argv_is_bounded_by_a_detached_timeout(monkeypatch):
@@ -347,3 +348,14 @@ def test_refused_start_restores_the_previous_record(tmp_path):
         wake.debounced_start(tmp_path, "genome", 0, clock=lambda: 1000, sleep=lambda s: None,
                              starter=lambda role: False)
     assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 0.0
+
+
+def test_signal_killed_start_request_is_unresolved_not_refused(tmp_path, monkeypatch, capsys):
+    # Field review of 22f51b67 (DM 300385): `timeout -s KILL` also signals its own process group, so the
+    # caller sees returncode -9, not 124/137. That must be unresolved, or the write-ahead record is restored.
+    class SignalKilled:
+        returncode = -9
+        stderr = ""
+    monkeypatch.setattr(wake.subprocess, "run", lambda *a, **k: SignalKilled())
+    assert wake.systemd_starter("genome") is None
+    assert "unresolved" in capsys.readouterr().err
