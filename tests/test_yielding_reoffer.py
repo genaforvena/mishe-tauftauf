@@ -75,10 +75,12 @@ def test_open_lane_with_spare_budget_returns_in_thirty_minutes(tmp_path):
 
 
 def test_unknown_budget_or_no_lane_keeps_the_slow_pace(tmp_path):
-    for case in ("stale", "future", "missing", "nolane", "low"):
+    for case in ("stale", "stale-edge", "future", "future-1", "missing", "nolane", "low"):
         home = tmp_path / case; home.mkdir()
         if case == "stale": _budget(home, 10000, age=7200)
+        elif case == "stale-edge": _budget(home, 10000, age=yielding.BUDGET_MAX_AGE + 1)
         elif case == "future": _budget(home, 10000, age=-7200)
+        elif case == "future-1": _budget(home, 10000, age=-1)
         elif case == "low": _budget(home, 10000, remaining=0.05)
         elif case != "missing": _budget(home, 10000)
         if case != "nolane": _lane(home, "genome")
