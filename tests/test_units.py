@@ -416,7 +416,8 @@ def test_senses_path_triggers_go_through_a_debounce_that_starts_the_wake_once(cf
     files = units.render(cfg, ["senses", "genome"])
     debounce = files["mishe-wake-debounce-senses.service"]
     assert "wake-debounce senses --window 120" in debounce
-    assert "ExecStopPost=/usr/bin/systemctl --user --no-block start mishe-wake@senses.service" in debounce
+    assert "ExecStopPost" not in debounce                  # the debounce starts the wake itself, after spacing
+    assert "PYTHONPATH=" in debounce and "WorkingDirectory=" in debounce  # pinned, like the wake unit
     assert "Unit=mishe-wake-debounce-senses.service" in files["mishe-wake-senses.path"]
     assert "Unit=mishe-wake@senses.service" not in files["mishe-wake-senses.path"]
     # Every role is coalesced, genome included: its path trigger goes through its own debounce unit.
@@ -429,7 +430,7 @@ def test_network_path_triggers_are_coalesced_like_health(cfg):
     files = units.render(cfg, ["network", "genome"])
     debounce = files["mishe-wake-debounce-network.service"]
     assert "wake-debounce network --window 120" in debounce
-    assert "ExecStopPost=/usr/bin/systemctl --user --no-block start mishe-wake@network.service" in debounce
+    assert "ExecStopPost" not in debounce
     assert "Unit=mishe-wake-debounce-network.service" in files["mishe-wake-network.path"]
     assert "Unit=mishe-wake@network.service" not in files["mishe-wake-network.path"]
     assert "Unit=mishe-wake-debounce-genome.service" in files["mishe-wake-genome.path"]
@@ -439,7 +440,7 @@ def test_health_path_triggers_are_coalesced_like_senses(cfg):
     files = units.render(cfg, ["health", "genome"])
     debounce = files["mishe-wake-debounce-health.service"]
     assert "wake-debounce health --window 120" in debounce
-    assert "ExecStopPost=/usr/bin/systemctl --user --no-block start mishe-wake@health.service" in debounce
+    assert "ExecStopPost" not in debounce
     assert "Unit=mishe-wake-debounce-health.service" in files["mishe-wake-health.path"]
     assert "Unit=mishe-wake-debounce-genome.service" in files["mishe-wake-genome.path"]
 

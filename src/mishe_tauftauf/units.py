@@ -162,12 +162,15 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         target = f"{p}-wake-debounce-{role}.service"
         files[target] = _file(
             f"[Unit]\nDescription=Coalesce wake triggers for {role}",
-            "[Service]\nType=oneshot\n"
-            # The debounce waits out the window and then the shared start spacing (wake.debounced_start),
-            # so its start is spaced against resume_owed's starts. The wait is at most window + spacing.
+            # Same interpreter, PYTHONPATH (the release pin) and working directory as the wake unit, so the
+            # debounce imports the pinned code rather than whatever the user's environment resolves.
+            "[Service]\nType=oneshot\n" + f"WorkingDirectory={cfg.repo}\n" + _env(cfg)
+            # The debounce waits out the window and the shared start spacing, checks and records under one
+            # ledger lock, then starts the wake itself (wake.debounced_start). No ExecStopPost start: that ran
+            # after a failed or timed-out debounce and skipped the spacing. A failed debounce starts nothing;
+            # the owed inbox is picked up by the next resume_owed.
             + f"ExecStart={_cmd(cfg, 'wake-debounce', role, '--window', str(wake_debounce_seconds(role)))}\n"
-            + f"TimeoutStartSec={WAKE_DEBOUNCE_TIMEOUT}\n"
-            + f"ExecStopPost=/usr/bin/systemctl --user --no-block start {p}-wake@{role}.service\n")
+            + f"TimeoutStartSec={WAKE_DEBOUNCE_TIMEOUT}\n")
         files[f"{p}-wake-{role}.path"] = _file(
             f"[Unit]\nDescription=Mishe wake triggers for {role}",
             "[Path]\n" + "\n".join(watched) + f"\nUnit={target}",

@@ -81,7 +81,8 @@ def test_debounced_path_start_waits_for_the_shared_spacing_and_records_itself(tm
         slept.append(seconds)
         clock["t"] += seconds
 
-    recorded = wake.debounced_start(tmp_path, "genome", 120, clock=lambda: clock["t"], sleep=sleep)
+    recorded = wake.debounced_start(tmp_path, "genome", 120, clock=lambda: clock["t"], sleep=sleep,
+                                    starter=lambda role: None)
     assert slept == [120, 150.0 - (121.0 - 0.0)]  # window, then the rest of the 150 s spacing
     assert recorded == 150.0
     assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 150.0
@@ -107,5 +108,34 @@ def test_debounced_start_without_a_prior_start_only_waits_the_window(tmp_path):
         slept.append(seconds)
         clock["t"] += seconds
 
-    wake.debounced_start(tmp_path, "senses", 120, clock=lambda: clock["t"], sleep=sleep)
+    wake.debounced_start(tmp_path, "senses", 120, clock=lambda: clock["t"], sleep=sleep,
+                         starter=lambda role: None)
     assert slept == [120]
+
+
+def test_debounced_start_checks_and_records_in_one_ledger_step(tmp_path):
+    # Review of 52b50ab5 (DM 300362): the debounce read the ledger, then a resume recorded the same role
+    # before the debounce wrote its own record, so both started at 150. Here a resume records genome at
+    # 150 while the debounce sleeps out the spacing: the debounce must re-check and wait for 300.
+    wake.record_wake_start(tmp_path, "genome", now=0.0)
+    clock = {"t": 1.0}
+    slept, started = [], []
+
+    def sleep(seconds):
+        slept.append(seconds)
+        clock["t"] += seconds
+        if len(slept) == 2:                       # the spacing sleep: a competing resume records here
+            wake.record_wake_start(tmp_path, "genome", now=clock["t"])
+
+    recorded = wake.debounced_start(tmp_path, "genome", 0, clock=lambda: clock["t"], sleep=sleep,
+                                    starter=started.append)
+    assert recorded == 300.0
+    assert started == ["genome"]                  # exactly one start from the debounce
+    assert slept == [0, 149.0, 150.0]
+
+
+def test_debounced_start_starts_the_wake_only_after_recording(tmp_path):
+    started = []
+    wake.debounced_start(tmp_path, "health", 0, clock=lambda: 10.0, sleep=lambda s: None,
+                         starter=lambda role: started.append((role, wake.read_json(tmp_path / wake.START_LEDGER)[role])))
+    assert started == [("health", 10.0)]

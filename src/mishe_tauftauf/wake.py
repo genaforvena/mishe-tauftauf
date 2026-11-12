@@ -124,25 +124,38 @@ def record_wake_start(home, role: str, *, now: float) -> None:
     _ledger_update(home, lambda ledger: ledger.__setitem__(role, now))
 
 
-def debounced_start(home, role: str, window: float, *, clock=time.time, sleep=time.sleep) -> float:
-    """Wait out the coalescing window, then the start spacing, and record the start before it is made.
+def debounced_start(home, role: str, window: float, *, clock=time.time, sleep=time.sleep,
+                    starter=None) -> float:
+    """Wait out the coalescing window, then the start spacing, then check-and-record and start the wake.
 
     The path-triggered unit used to start the wake after the window alone, so it ignored starts that
     resume_owed had already made (DM 300359: resume at 0, path at 1 -> start at 121, next path -> 241, four
-    requests in 241 s). Here the wait is against the same ledger resume_owed reads, and the start is
-    recorded so the next resume spaces against it. Returns the time recorded.
+    requests in 241 s). The spacing check and the record happen in ONE locked ledger change, so a resume
+    recording the same role between them cannot slip in (review of 52b50ab5: a separate read then a
+    separate write let both start at 150). Only the sleep runs outside the lock. The systemd start is made
+    here, after the record and only on this success path, not from ExecStopPost, which also ran after a
+    failed or timed-out debounce and bypassed the spacing. Returns the time recorded.
     """
+    starter = systemd_starter if starter is None else starter
     sleep(window)
     while True:
-        now = clock()
-        last = _ledger_update(home).get(role)
-        remaining = START_SPACING_SECONDS - (now - float(last)) if last is not None else 0.0
-        if remaining <= 0:
-            break
-        sleep(remaining)
-    now = clock()
-    record_wake_start(home, role, now=now)
-    return now
+        decision: dict = {}
+
+        def _check_and_record(ledger: dict) -> None:
+            now = clock()
+            last = ledger.get(role)
+            remaining = START_SPACING_SECONDS - (now - float(last)) if last is not None else 0.0
+            if remaining <= 0:
+                ledger[role] = now
+                decision["start"] = now
+            else:
+                decision["wait"] = remaining
+
+        _ledger_update(home, _check_and_record)
+        if "start" in decision:
+            starter(role)
+            return decision["start"]
+        sleep(decision["wait"])
 
 
 def resume_owed(home, roles, *, now: float) -> list[str]:
