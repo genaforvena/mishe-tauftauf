@@ -35,9 +35,10 @@ nothing else:
   `tests/test_chat_protocol.py` calls it, so nothing in `src/`, `tools/` or
   `checks/` consumes the value it decodes.
 - The AutoGen-style and PARADISE vocabularies (`CONVERSATION_PATTERNS`,
-  `AGENT_CAPABILITIES`, `CONVERSABLE_ROLES`, `CHAT_TERMINATION_TOKENS` and the
-  `PARADISE_*` constants) and their predicates and computations
-  (`conversation_pattern_is_valid`, `agent_capability_is_valid`,
+  `AGENT_CAPABILITIES`, `CONVERSABLE_ROLES`, `CHAT_TERMINATION_TOKENS`,
+  `AUTO_REPLY_LIMIT_DEFAULT` and the `PARADISE_*` constants) and their predicates
+  and computations (`is_conversation_annotation_required`,
+  `conversation_pattern_is_valid`, `agent_capability_is_valid`,
   `conversable_role_is_valid`, `auto_reply_limit_is_valid`,
   `next_speaker_is_valid`, `is_termination_token`, `paradise_kappa` and the
   other `paradise_*` functions) have no caller outside `chat_protocol.py`, tests
@@ -57,11 +58,12 @@ nothing else:
   plain chat and wakes nobody. A warning is printed only when `near_miss_dm` finds a
   `[dm] to=ROLE` first line with words after the role; an ordinary plain-chat entry
   is silent. `mishe wall dm` is the canonical writer.
-- A feed entry's first line. `addressed` reads it, including the permission header
-  `[permission] id=... decision=granted|revoked owner=...`. It is defined in
-  `wall_text.py`. `wall.py` re-exports it, and `wake.py` and `plant_view.py` import
-  it from `wall.py`, which re-exports it (`from .wall import addressed`); `feed.py`
-  imports it from `wall_text.py` directly.
+- A feed entry's first line. `addressed` reads it. The permission header
+  `[permission] id=... decision=granted|revoked owner=...` counts only when the
+  entry's source is `operator/permissions`. `addressed` is defined in
+  `wall_text.py`; `wall.py` re-exports it, `wake.py` and `plant_view.py` import it
+  from `wall.py` (`from .wall import addressed`), and `feed.py` imports it from
+  `wall_text.py` directly.
 - A wall document or a body as a whole. `is_peer_copy` decides whether a note is a
   peer's wall document, so a write that would reproduce one is refused; trailing
   blank lines do not count. `document_digest` gives that same document identity as
