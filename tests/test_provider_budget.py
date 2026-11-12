@@ -40,3 +40,50 @@ def test_provider_signal_missing_stale_and_recovery(tmp_path):
     assert signal_store.read(tmp_path, "budget-claude", now=1001).state != "OK"
     assert budget.publish(tmp_path, [], now=1002)["state"] == "UNKNOWN"
     assert signal_store.read(tmp_path, "budget-claude", now=1002).state == "UNKNOWN"
+
+
+def _engine_budget(now, **over):
+    window = dict(used=0.2, reset_at=now + 3600, observed_at=now - 10, state="FRESH", eta_s=None)
+    window.update(over)
+    return {"accounts": {"claude": {"state": "FRESH", "windows": {"5h": dict(window), "7d": dict(window)}}}}
+
+
+def _write_engine_budget(home, data):
+    import json
+    (home / "engine").mkdir(parents=True, exist_ok=True)
+    (home / "engine" / "budget.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_engine_budget_fresh_claude_publishes_green(tmp_path):
+    now = 10_000.0
+    _write_engine_budget(tmp_path, _engine_budget(now))
+    signal_store.register(tmp_path, "budget-claude", max_age=900, subscribers=[])
+    result = budget.publish(tmp_path, budget.rows_from_engine_budget(tmp_path, now), now=now)
+    assert result["state"] == "GREEN"
+
+
+def test_engine_budget_missing_file_stays_unknown(tmp_path):
+    rows = budget.rows_from_engine_budget(tmp_path, 10_000.0)
+    assert budget.evaluate(rows, "claude", now=10_000.0)[0] == "UNKNOWN"
+
+
+def test_engine_budget_stale_observation_stays_unknown(tmp_path):
+    now = 10_000.0
+    _write_engine_budget(tmp_path, _engine_budget(now, observed_at=now - 3000))
+    assert budget.evaluate(budget.rows_from_engine_budget(tmp_path, now), "claude", now=now)[0] == "UNKNOWN"
+
+
+def test_engine_budget_spent_or_burning_window_holds_work(tmp_path):
+    now = 10_000.0
+    _write_engine_budget(tmp_path, _engine_budget(now, used=0.95))
+    assert budget.evaluate(budget.rows_from_engine_budget(tmp_path, now), "claude", now=now)[0] == "RED"
+    _write_engine_budget(tmp_path, _engine_budget(now, eta_s=100))
+    assert budget.evaluate(budget.rows_from_engine_budget(tmp_path, now), "claude", now=now)[0] == "RED"
+
+
+def test_engine_budget_malformed_account_stays_unknown(tmp_path):
+    now = 10_000.0
+    data = _engine_budget(now)
+    data["accounts"]["claude"]["windows"]["5h"]["used"] = "0.2"
+    _write_engine_budget(tmp_path, data)
+    assert budget.evaluate(budget.rows_from_engine_budget(tmp_path, now), "claude", now=now)[0] == "UNKNOWN"

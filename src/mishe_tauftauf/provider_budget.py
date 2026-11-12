@@ -36,6 +36,56 @@ def evaluate(rows, account, *, now):
     return "GREEN", "both provider windows satisfy the existing budget policy"
 
 
+FRESH_S = 900
+
+
+def rows_from_engine_budget(home, now):
+    """Rows for ``evaluate`` from the producer's engine/budget.json (the one budget source since the 2026-11-12 cutover).
+
+    The verdict keeps the pre-cutover rule: LOW on a spent window (used > 0.9), RUNS OUT BEFORE RESET when the burn ETA
+    lands before the reset, otherwise ok. An unreadable file, a malformed account or a stale observation becomes an
+    error row or a non-FRESH row, so ``evaluate`` reports UNKNOWN or STALE and never admits spontaneous work.
+    """
+    import json
+    try:
+        data = json.loads((Path(home) / "engine" / "budget.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return [dict(error=f"engine/budget.json unreadable: {str(error)[:120]}")]
+    accounts = data.get("accounts") if isinstance(data, dict) else None
+    if not isinstance(accounts, dict) or not accounts:
+        return [dict(error="engine/budget.json has no accounts")]
+    rows = []
+    for account, body in accounts.items():
+        if not isinstance(body, dict) or body.get("state") != "FRESH":
+            rows.append(dict(error=f"{account}: account state {body.get('state') if isinstance(body, dict) else 'malformed'}"))
+            continue
+        windows = body.get("windows")
+        if not isinstance(windows, dict) or not windows:
+            rows.append(dict(error=f"{account}: FRESH account has no windows observed"))
+            continue
+        for window, x in windows.items():
+            if not isinstance(x, dict):
+                rows.append(dict(error=f"{account}/{window}: malformed window"))
+                continue
+            used, reset, observed = x.get("used"), x.get("reset_at"), x.get("observed_at")
+            fresh = (isinstance(observed, (int, float)) and not isinstance(observed, bool)
+                     and now - FRESH_S < observed <= now + 5 and x.get("state") == "FRESH")
+            eta = x.get("eta_s")
+            if not isinstance(used, (int, float)) or isinstance(used, bool) or not isinstance(reset, (int, float)):
+                verdict = "UNKNOWN"
+            elif not fresh:
+                verdict = "STALE"
+            elif used > 0.9:
+                verdict = "LOW"
+            elif isinstance(eta, (int, float)) and not isinstance(eta, bool) and now + eta < reset:
+                verdict = "RUNS OUT BEFORE RESET"
+            else:
+                verdict = "ok"
+            rows.append(dict(account=account, window=window, used=used, reset=reset,
+                             state="FRESH" if fresh else "STALE", verdict=verdict))
+    return rows
+
+
 def publish(home, rows, *, now):
     state, reason = evaluate(rows, "claude", now=now)
     name = "budget-claude"
