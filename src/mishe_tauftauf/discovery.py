@@ -51,6 +51,7 @@ from .replacement_readings import (
     probe_session_restarts, probe_session_stability, read_drift_across_sites, read_renderer_coverage,
     read_role_render_coverage, read_server_keeper, read_server_slice, read_tmux_windows,
 )
+from .server_placement import read_server_placement
 from .slice_throttle import read_slice_throttle
 from .units import unit_file_service_names
 from .unit_cpu import read_unit_cpu
@@ -7362,6 +7363,7 @@ def sample(home: Path) -> dict[str, object]:
                      if temperatures else "no readable hwmon temperature sensor",
                      "identity": thermal_identity, "kind": "read"})
     observed.extend(read_slice_throttle(home))
+    observed.extend(read_server_placement())
     observed.append(read_unit_psi(home / "operator" / "unit-psi.jsonl", now=time.time()))
     # The manifest can name units that are no longer installed (health/services.json
     # listed retired self-development units, so it yielded no roots at all), so the
