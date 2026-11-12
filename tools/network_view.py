@@ -237,15 +237,7 @@ def router_rows():
         text = ROUTER_LOG.read_text()
     except OSError:
         return []
-    out = []
-    for line in text.splitlines():
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(row, dict) and isinstance(row.get("ts"), (int, float)):
-            out.append(row)
-    return out
+    return nb.decode_router_rows(text)
 
 
 def recorded_clients_line(now=None):

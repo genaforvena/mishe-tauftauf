@@ -5,6 +5,7 @@ The speed reading's own log is decoded here too, so tools/network_speed.py reads
 values and never parses text itself.
 """
 import json
+import re
 import time
 
 
@@ -102,3 +103,75 @@ def utc_epoch(stamp):
 
 def is_down(verdict_text):
     return verdict_text.startswith("DOWN")
+
+
+STATION_LINE = re.compile(r"^([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\s+(-?\d+)\s+dBm")
+RATE_LINE = re.compile(r"^\s*(RX|TX):\s*([\d.]+)\s*MBit/s")
+
+
+def decode_router_output(stdout, bands, client_id):
+    """Row body from the router's combined read-only output; ValueError when it is not what we asked for.
+
+    ``bands`` maps radio name to GHz; ``client_id`` maps a MAC to its short hash. The MAC itself is
+    never kept in the returned body.
+    """
+    sections = {}
+    current = None
+    uptime_line = None
+    for line in stdout.splitlines():
+        if line.startswith("UPTIME "):
+            uptime_line = line.split(None, 1)[1]
+            current = None
+        elif line == "LEASES" or line == "WAN" or line.startswith("RADIO "):
+            current = line
+            sections.setdefault(current, [])
+        elif current is not None:
+            sections[current].append(line)
+    if uptime_line is None:
+        raise ValueError("no uptime line from the router")
+    uptime_s = float(uptime_line)
+
+    names = {}
+    for line in sections.get("LEASES", []):
+        parts = line.split()
+        if len(parts) >= 4:
+            host = parts[3] if parts[3] != "*" else ""
+            names[parts[1].lower()] = host or "unnamed device"
+
+    clients = []
+    for key in [k for k in sections if k.startswith("RADIO ")]:
+        radio = key.split()[1]
+        if radio not in bands:
+            continue
+        current_station = None
+        for line in sections[key]:
+            m = STATION_LINE.match(line.strip())
+            if m:
+                mac = m.group(1)
+                current_station = {"id": client_id(mac), "name": names.get(mac.lower(), "unnamed device"),
+                                   "band": bands[radio], "dbm": int(m.group(2)), "rx": None, "tx": None}
+                clients.append(current_station)
+                continue
+            r = RATE_LINE.match(line)
+            if r and current_station is not None:
+                current_station["rx" if r.group(1) == "RX" else "tx"] = float(r.group(2))
+
+    wan = None
+    wan_text = "\n".join(sections.get("WAN", [])).strip()
+    if wan_text:
+        try:
+            status = json.loads(wan_text)
+            wan = {"up": bool(status.get("up")), "uptime_s": int(status.get("uptime", 0))}
+        except (ValueError, TypeError):
+            wan = None
+    return {"uptime_s": round(uptime_s), "wan": wan, "clients": clients}
+
+
+def decode_router_rows(text):
+    """Router log rows that carry a numeric ``ts``, oldest first. Malformed lines are skipped."""
+    return [row for row in decode_json_lines(text) if isinstance(row.get("ts"), (int, float))]
+
+
+def stderr_summary(stderr, limit=120):
+    """First ``limit`` characters of a failed probe's stderr, stripped."""
+    return (stderr or "").strip()[:limit]

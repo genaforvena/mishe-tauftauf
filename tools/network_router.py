@@ -14,7 +14,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -34,8 +33,6 @@ REMOTE = (
     'echo LEASES; cat /tmp/dhcp.leases 2>/dev/null; echo WAN; '
     "ubus call network.interface.wan status 2>/dev/null"
 )
-STATION = re.compile(r"^([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\s+(-?\d+)\s+dBm")
-RATE = re.compile(r"^\s*(RX|TX):\s*([\d.]+)\s*MBit/s")
 
 
 def client_id(mac):
@@ -45,56 +42,7 @@ def client_id(mac):
 
 def parse(stdout):
     """Decode the router's combined output into a row body. ValueError when the output is not what we asked for."""
-    sections = {}
-    current = None
-    uptime_line = None
-    for line in stdout.splitlines():
-        if line.startswith("UPTIME "):
-            uptime_line = line.split(None, 1)[1]
-            current = None
-        elif line == "LEASES" or line == "WAN" or line.startswith("RADIO "):
-            current = line
-            sections.setdefault(current, [])
-        elif current is not None:
-            sections[current].append(line)
-    if uptime_line is None:
-        raise ValueError("no uptime line from the router")
-    uptime_s = float(uptime_line)
-
-    names = {}
-    for line in sections.get("LEASES", []):
-        parts = line.split()
-        if len(parts) >= 4:
-            host = parts[3] if parts[3] != "*" else ""
-            names[parts[1].lower()] = host or "unnamed device"
-
-    clients = []
-    for key in [k for k in sections if k.startswith("RADIO ")]:
-        radio = key.split()[1]
-        if radio not in BANDS:
-            continue
-        current_station = None
-        for line in sections[key]:
-            m = STATION.match(line.strip())
-            if m:
-                mac = m.group(1)
-                current_station = {"id": client_id(mac), "name": names.get(mac.lower(), "unnamed device"),
-                                   "band": BANDS[radio], "dbm": int(m.group(2)), "rx": None, "tx": None}
-                clients.append(current_station)
-                continue
-            r = RATE.match(line)
-            if r and current_station is not None:
-                current_station["rx" if r.group(1) == "RX" else "tx"] = float(r.group(2))
-
-    wan = None
-    wan_text = "\n".join(sections.get("WAN", [])).strip()
-    if wan_text:
-        try:
-            status = json.loads(wan_text)
-            wan = {"up": bool(status.get("up")), "uptime_s": int(status.get("uptime", 0))}
-        except (ValueError, TypeError):
-            wan = None
-    return {"uptime_s": round(uptime_s), "wan": wan, "clients": clients}
+    return nb.decode_router_output(stdout, BANDS, client_id)
 
 
 def _row(now, body=None, error=None):
@@ -115,7 +63,7 @@ def measure(now=None):
     except (OSError, subprocess.SubprocessError) as exc:
         return _row(now, error=type(exc).__name__ + ": " + str(exc)[:120])
     if r.returncode != 0:
-        return _row(now, error=f"ssh exit {r.returncode}: " + r.stderr.strip()[:120])
+        return _row(now, error=f"ssh exit {r.returncode}: " + nb.stderr_summary(r.stderr))
     try:
         return _row(now, body=parse(r.stdout))
     except ValueError as exc:
@@ -135,7 +83,7 @@ def main(argv=None):
     now = time.time()
     row = measure(now)
     try:
-        kept = trim(nb.decode_json_lines(path.read_text()), now)
+        kept = trim(nb.decode_router_rows(path.read_text()), now)
     except OSError:
         kept = []
     kept.append(row)
