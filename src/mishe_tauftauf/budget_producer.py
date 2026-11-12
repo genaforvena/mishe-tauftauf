@@ -1,10 +1,11 @@
 """Producer for the one-source budget file (docs/budget-json-contract.md, schema 1).
 
-This slice produces the `accounts` section (account windows from the engine status
-(quota.json shape) and the native Claude tap) and the `routing` section (the router's own
-assess() over those accounts) and the `cooling` section (the router's own cooldown state).
-Ledger sections (free_models, paid_models, per_mind) are later slices. Pure functions here; file IO
-is limited to the atomic writer.
+This producer writes the `accounts` section (account windows from the engine status
+(quota.json shape) and the native Claude tap), the `routing` section (the router's own
+assess() over those accounts), the `cooling` section (the router's own cooldown state), and the
+ledger sections `free_models`, `paid_models` and `per_mind` (outcome counts, pending selects and
+the last outcome from routing-ledger.jsonl). Per-window usage, burn and ETA, and candidate token
+counts are later slices. Pure functions here; file IO is limited to the atomic writer.
 
 Fail-closed rules from the contract: a window is FRESH only when its own observation is
 within MAX_AGE_S and its reset lies in the future; any window whose fields are not all
@@ -173,6 +174,159 @@ def build_cooling(home: Path, now: float) -> dict:
     return out
 
 
+LEDGER_WINDOWS = (("1h", 3600.0), ("24h", 86400.0))
+TOKEN_NOTE = ("per-candidate out/in tokens unattributed: state.json buckets are keyed provider|model, "
+              "not router candidate; null until attributed")
+
+
+def _ledger_tally(events, now: float) -> dict:
+    """Pure: outcome counts per (role, candidate key) for each window, the latest outcome, the
+    pending selects (a select with no closing outcome or fallback for the same wake, role and key),
+    and the newest ledger timestamp in epoch ms (the read watermark, not the producer clock).
+
+    Every outcome counts, timeouts and no-yield included, because that is where burn is highest.
+    Only `outcome` rows count as turns; a `fallback` closes a select without counting a turn.
+    An outcome whose timestamp cannot be read is not counted and is returned as `unreadable`."""
+    from .router_text import iso_ms
+
+    now_ms = now * 1000
+    counts: dict = {}
+    last: dict = {}
+    open_sel: dict = {}
+    unreadable = 0
+    watermark = None
+    for ev in events:
+        at = iso_ms(ev.get("at"))
+        if at is not None and (watermark is None or at > watermark):
+            watermark = at
+        role, key, wake = ev.get("role"), ev.get("key"), ev.get("wake")
+        if not isinstance(role, str) or not isinstance(key, str):
+            continue
+        ident = (wake, role, key)
+        kind = ev.get("event")
+        if kind == "select":
+            open_sel[ident] = open_sel.get(ident, 0) + 1
+            continue
+        if kind not in ("outcome", "fallback"):
+            continue
+        if open_sel.get(ident, 0) > 0:
+            open_sel[ident] -= 1
+        if kind == "fallback":
+            continue
+        if at is None:
+            unreadable += 1
+            continue
+        slot = (role, key)
+        if slot not in last or at >= last[slot][0]:
+            last[slot] = (at, {"outcome": ev.get("outcome"), "at": ev.get("at")}, role)
+        window = counts.setdefault(slot, {name: 0 for name, _ in LEDGER_WINDOWS})
+        for name, span in LEDGER_WINDOWS:
+            if now_ms - span * 1000 <= at <= now_ms + 5000:
+                window[name] += 1
+    pending: dict = {}
+    for (_wake, role, key), n in open_sel.items():
+        if n > 0:
+            pending[(role, key)] = pending.get((role, key), 0) + n
+    return {"counts": counts, "last": last, "pending": pending, "watermark": watermark, "unreadable": unreadable}
+
+
+def _ledger_row(tally: dict, slot, meta: dict, present: bool, watermark_ms) -> dict:
+    """One model or per-role row. Counts are null when the ledger is missing (UNKNOWN, never 0)."""
+    counts = tally["counts"].get(slot, {name: 0 for name, _ in LEDGER_WINDOWS})
+    last = tally["last"].get(slot)
+    row = dict(meta)
+    for name, _ in LEDGER_WINDOWS:
+        row[f"turns_{name}"] = counts[name] if present else None
+        row[f"out_{name}"] = None
+        row[f"in_{name}"] = None
+    row["last_outcome"] = last[1] if last and present else None
+    row["pending"] = tally["pending"].get(slot, 0) if present else None
+    row["observed_at"] = watermark_ms / 1000 if present and watermark_ms is not None else None
+    return row
+
+
+def build_ledger(home: Path, now: float) -> dict:
+    """The ledger sections (`free_models`, `paid_models`, `per_mind`) from routing-ledger.jsonl and the
+    routes file. Free candidates (`free: true`, no account) never sum into a paid account; a candidate
+    absent from the routes is kept with `in_routes: false`, not dropped. Token fields are null until
+    candidate-level attribution exists (see TOKEN_NOTE)."""
+    from . import engine_router as er
+    from .router_text import ledger_events
+
+    unknowns: list = []
+    try:
+        routes = er.load_routes(home)
+    except (OSError, ValueError) as exc:
+        routes = None
+        unknowns.append(f"routes unreadable, free/paid split unknown: {exc}")
+    path = er._dir(home) / er.LEDGER
+    present = path.exists()
+    if not present:
+        unknowns.append("routing ledger missing: ledger sections are UNKNOWN")
+    events = list(ledger_events(path)) if present else []
+    tally = _ledger_tally(events, now)
+    if tally["unreadable"]:
+        unknowns.append(f"{tally['unreadable']} ledger outcome row(s) with unreadable timestamps not counted")
+    if present:
+        unknowns.append(TOKEN_NOTE)
+
+    meta: dict = {}
+    roles: dict = {}
+    if routes is not None:
+        for role, cands in (routes.get("roles") or {}).items():
+            for c in cands:
+                key = er.candidate_key(c)
+                account = c.get("account")
+                meta[key] = {"free": bool(c.get("free")), "account": account, "in_routes": True}
+                roles.setdefault(role, set()).add(key)
+    unrouted: set = set()
+    for (role, key) in list(tally["counts"]) + list(tally["pending"]):
+        if key not in meta:
+            unrouted.add(key)
+        roles.setdefault(role, set()).add(key)
+    if unrouted:
+        # Not in routes.json: free or paid cannot be read from the file, so neither section claims it.
+        # Its counts stay in per_mind; the unknown names it.
+        unknowns.append("ledger candidates absent from routes, not classified: " + ", ".join(sorted(unrouted)))
+
+    wm = tally["watermark"]
+    free_models, paid_models = {}, {}
+    for key, m in sorted(meta.items()):
+        if m["free"]:
+            base = {"free": True, "account": None, "in_routes": True, "verdict": "FREE",
+                    "note": "no limit known"}
+            free_models[key] = _model_row(tally, key, base, present, wm)
+        else:
+            base = {"free": False, "account": m["account"], "in_routes": True, "verdict": None}
+            if m["account"] is None:
+                base["note"] = "subscription safety net: no account window is read"
+            paid_models[key] = _model_row(tally, key, base, present, wm)
+
+    per_mind: dict = {}
+    for role, keys in sorted(roles.items()):
+        per_mind[role] = {}
+        for key in sorted(keys):
+            per_mind[role][key] = _ledger_row(tally, (role, key), {}, present, wm)
+    return {"free_models": free_models, "paid_models": paid_models, "per_mind": per_mind, "ledger_unknowns": unknowns}
+
+
+def _model_row(tally: dict, key: str, base: dict, present: bool, wm) -> dict:
+    """A candidate's row across all roles: counts, pending and last outcome summed/latest over roles."""
+    row = dict(base)
+    slots = [s for s in set(tally["counts"]) | set(tally["pending"]) | set(tally["last"]) if s[1] == key]
+    for name, _ in LEDGER_WINDOWS:
+        total = sum(tally["counts"][s][name] for s in slots if s in tally["counts"]) if present else None
+        row[f"turns_{name}"] = total
+        row[f"out_{name}"] = None
+        row[f"in_{name}"] = None
+    row["pending"] = sum(tally["pending"].get(s, 0) for s in slots) if present else None
+    latest = max((tally["last"][s] for s in slots if s in tally["last"]), default=None, key=lambda v: v[0])
+    row["last_outcome"] = ({"role": latest[2], "outcome": latest[1]["outcome"], "at": latest[1]["at"]}
+                           if latest and present else None)
+    row["observed_at"] = wm / 1000 if present and wm is not None else None
+    return row
+
+
 def write_atomic(path: Path, payload: dict) -> None:
     """Write JSON to a temp file in the same directory, then replace; no partial reads."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -211,6 +365,11 @@ def main(home: Path, out: Path | None = None) -> int:
     payload = build_budget(status, tap, now)
     payload["routing"] = build_routing(home, payload, now)
     payload["cooling"] = build_cooling(home, now)
+    ledger = build_ledger(home, now)
+    payload["free_models"] = ledger["free_models"]
+    payload["paid_models"] = ledger["paid_models"]
+    payload["per_mind"] = ledger["per_mind"]
+    payload["unknowns"] = payload["unknowns"] + ledger["ledger_unknowns"]
     if out:
         write_atomic(Path(out), payload)
     else:

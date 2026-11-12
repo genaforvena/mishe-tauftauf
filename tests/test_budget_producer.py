@@ -250,3 +250,80 @@ def test_cooling_section_mirrors_router_state_and_drops_non_numeric_until(tmp_pa
     cooling = bp.build_cooling(tmp_path, NOW)
     assert cooling == {"genome|omp:x:-": {"until": NOW * 1000 + 60000, "active": True},
                        "docs|omp:y:-": {"until": NOW * 1000 - 60000, "active": False}}
+
+
+def _ev(event, role="genome", key="omp:m:acc", wake="w1", at="2026-11-12T06:00:00Z", **extra):
+    row = {"event": event, "role": role, "key": key, "wake": wake, "at": at}
+    row.update(extra)
+    return row
+
+
+def test_tally_counts_timeouts_and_leaves_open_selects_pending():
+    from mishe_tauftauf import budget_producer as bp
+    now = 1794464000.0  # 2026-11-12T06:00:00Z-ish; the ledger times below sit inside the 1h window
+    events = [
+        _ev("select", wake="a"), _ev("outcome", wake="a", outcome="yielded"),
+        _ev("select", wake="b"), _ev("outcome", wake="b", outcome="timeout"),
+        _ev("select", wake="c"),  # still running: pending, not a turn
+    ]
+    t = bp._ledger_tally(events, now)
+    assert t["counts"][("genome", "omp:m:acc")]["1h"] == 2  # the timeout counts as a turn
+    assert t["pending"] == {("genome", "omp:m:acc"): 1}
+    assert t["last"][("genome", "omp:m:acc")][1]["outcome"] == "timeout"
+
+
+def test_fallback_closes_a_select_without_counting_a_turn():
+    from mishe_tauftauf import budget_producer as bp
+    events = [_ev("select", wake="a"), _ev("fallback", wake="a")]
+    t = bp._ledger_tally(events, 1794464000.0)
+    assert t["pending"] == {}
+    assert ("genome", "omp:m:acc") not in t["counts"]
+
+
+def test_unreadable_outcome_timestamp_is_not_counted_and_is_reported():
+    from mishe_tauftauf import budget_producer as bp
+    events = [_ev("outcome", wake="a", outcome="yielded", at="not-a-time")]
+    t = bp._ledger_tally(events, 1794464000.0)
+    assert t["unreadable"] == 1
+    assert t["counts"] == {}
+
+
+def test_build_ledger_splits_free_and_paid_and_keeps_unrouted_out(tmp_path):
+    import json
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    routes = {"version": 1, "cool_off_s": 600, "env": {}, "roles": {"genome": [
+        {"engine": "omp", "model": "free/m", "free": True},
+        {"engine": "omp", "model": "paid/m", "account": "acc-a"},
+    ]}}
+    (engine / "routes.json").write_text(json.dumps(routes))
+    rows = [
+        _ev("outcome", key="omp:free/m:-", wake="a", outcome="yielded", at="2026-11-12T06:00:00Z"),
+        _ev("select", key="omp:paid/m:acc-a", wake="b", at="2026-11-12T06:00:00Z"),
+        _ev("outcome", key="omp:longcat:-", wake="c", outcome="yielded", at="2026-11-12T06:00:00Z"),
+    ]
+    (engine / "routing-ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    out = bp.build_ledger(tmp_path, 1794464000.0)
+    assert set(out["free_models"]) == {"omp:free/m:-"}
+    assert out["free_models"]["omp:free/m:-"]["verdict"] == "FREE"
+    assert out["free_models"]["omp:free/m:-"]["turns_1h"] == 1
+    assert set(out["paid_models"]) == {"omp:paid/m:acc-a"}
+    assert out["paid_models"]["omp:paid/m:acc-a"]["pending"] == 1
+    assert out["paid_models"]["omp:paid/m:acc-a"]["account"] == "acc-a"
+    assert "omp:longcat:-" not in out["free_models"] and "omp:longcat:-" not in out["paid_models"]
+    assert any("not classified" in u and "omp:longcat:-" in u for u in out["ledger_unknowns"])
+    assert out["per_mind"]["genome"]["omp:longcat:-"]["turns_1h"] == 1
+
+
+def test_build_ledger_without_ledger_file_is_unknown_not_zero(tmp_path):
+    import json
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    routes = {"version": 1, "cool_off_s": 600, "env": {}, "roles": {"genome": [
+        {"engine": "omp", "model": "free/m", "free": True}]}}
+    (engine / "routes.json").write_text(json.dumps(routes))
+    from mishe_tauftauf import budget_producer as bp
+    out = bp.build_ledger(tmp_path, 1794464000.0)
+    row = out["free_models"]["omp:free/m:-"]
+    assert row["turns_1h"] is None and row["pending"] is None and row["observed_at"] is None
+    assert any("ledger missing" in u for u in out["ledger_unknowns"])
