@@ -166,6 +166,22 @@ def test_row_without_collector_time_is_unknown(tmp_path):
     assert "no collector time" in _phone_note(state)
 
 
+def test_rssi_fresh_live_without_labels_is_unknown_not_a_tie(tmp_path):
+    # fresh phone RSSI but no labelled moment: nothing to match, so no tie and no crash
+    import json
+    site = _site(tmp_path, _activity({}))
+    mapdir = Path(site) / "senses" / "map"
+    mapdir.mkdir(parents=True, exist_ok=True)
+    stamp = _now().strftime("%Y-%m-%dT%H:%M:%SZ")
+    (mapdir / "rssi-table.json").write_text(json.dumps(
+        {"generated_at": stamp, "vantages": [{"vantage": "redmi10", "rssi": -60.0, "rssi_age_s": 1}]}))
+    (mapdir / "label-rssi-vectors.json").write_text(json.dumps({"moments": []}))
+    state, _ = _render(site)
+    assert state["rssi"]["state"] == "UNKNOWN"
+    assert "no labelled moments" in state["rssi"]["text"]
+    assert "tie" not in state["rssi"]["text"]
+
+
 def test_rssi_line_without_vectors_is_unknown_not_a_room(tmp_path):
     # no label-rssi-vectors.json or rssi-table.json: the fingerprint cannot run, so the line is UNKNOWN
     site = _site(tmp_path, _activity({}))

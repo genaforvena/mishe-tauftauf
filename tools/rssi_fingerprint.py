@@ -115,9 +115,11 @@ def main(argv=None):
     moments = load_moments(os.path.join(mapdir, "label-rssi-vectors.json"))
     cv = loo(moments)
     live = live_vector(os.path.join(mapdir, "rssi-table.json"), now)
-    # No labelled moment means nothing to match against: report UNKNOWN, do not
-    # let nearest() raise on an empty training set.
-    if live["state"] == "fresh" and moments:
+    # No labelled moment means nothing to match against: a fresh RSSI is not a
+    # room claim, so mark the live vector UNKNOWN instead of reporting a tie.
+    if live["state"] == "fresh" and not moments:
+        live = dict(live, state="UNKNOWN", reason="no labelled moments to match against")
+    if live["state"] == "fresh":
         pred, dist, tied = nearest(live["dbm"], moments)
         est = {"room": pred, "tied_rooms": tied if pred is None else [pred],
                "distance_dbm": round(dist, 1)}
