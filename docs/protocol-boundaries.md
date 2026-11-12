@@ -25,9 +25,11 @@ nothing else:
   source. Its JSON payload must have exactly `target` and `core_sha`; a malformed
   marker raises `ProtocolError`. `decode_kernel_sync_target` reads the target
   suffix of a kernel-sync task identity.
-- `decode_market` reads the reserved market records, and for the `[task-…]` forms
-  the JSON line that follows the header. A malformed market record raises
-  `ProtocolError`; it is not dropped.
+- `decode_market` reads the reserved market records. The legacy single-line forms
+  `announce:ID:requires=QUAL`, `bid:ID:qual=QUAL:available=N` and `award:ID:winner=ROLE:bids=N`
+  are matched whole against the first line. The `[task-announce]`, `[task-bid]` and
+  `[task-award]` forms read the JSON line that follows the header and must carry the
+  same identity. A malformed market record raises `ProtocolError`; it is not dropped.
 - `has_task_opportunity` looks for one named marker line, `receipt_line` returns a
   receipt's own first line (`feed.py` matches the `seed observation` form against
   it), and `grounding_ack` looks for a `grounded:<digest>` acknowledgement anywhere
