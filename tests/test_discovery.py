@@ -339,9 +339,10 @@ def test_keyboard_counter_distinguishes_absent_source_from_unreadable_counter(tm
                             for line in (real_interrupts or "").splitlines())
     keyboard_line = "  12:        3        4   IR-IO-APIC    2-edge      atkbd\n"
     if has_keyboard_line:
-        # This host really names a keyboard interrupt line, so only the
-        # verified and unreadable branches are reachable here.
-        cases = {"verified": real_interrupts, "unknown": None}
+        # This host really names a keyboard interrupt line. The verified
+        # branch uses the fixture line, not the host's live counter, so the
+        # expected sample of 7 holds on every runner.
+        cases = {"verified": keyboard_line, "unknown": None}
     else:
         # The source is readable but names no keyboard, which must read as a
         # structural absence rather than a transient read failure.
