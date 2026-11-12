@@ -252,7 +252,33 @@ def test_exit_inside_a_later_starter_keeps_the_earlier_accepted_start(tmp_path, 
         wake.resume_owed(tmp_path, ["genome", "senses"], now=1000, clock=lambda: 1000)
     ledger = wake.read_json(tmp_path / wake.START_LEDGER)
     assert ledger["genome"] == 1000
-    assert ledger["senses"] == 1000  # write-ahead: the in-flight request is recorded before the starter runs
+    # write-ahead: the in-flight request is recorded before the starter runs, at request + spacing
+    assert ledger["senses"] == 1000 + wake.START_SPACING_SECONDS
+
+
+def test_child_exit_after_acceptance_keeps_the_next_start_spaced(tmp_path, monkeypatch):
+    # Review of 20f172c7 (DM 300376): systemd accepted at t=1100, the child died before the post-accept
+    # write, and a request at t=1150 went out 50 s after the real start. The write-ahead value now
+    # covers the acceptance, so the next request must wait until 1300 or later (150 s after the record).
+    from types import SimpleNamespace
+    monkeypatch.setattr(wake.owed, "check", lambda home, role, now: SimpleNamespace(reasons=["inbox"]))
+
+    def dies_after_accept(role):
+        raise SystemExit(77)  # systemd accepted at t=1100; the process exits before the post-accept record
+
+    monkeypatch.setattr(wake, "systemd_starter", dies_after_accept)
+    import pytest
+    with pytest.raises(SystemExit):
+        wake.resume_owed(tmp_path, ["genome"], now=1000, clock=lambda: 1000)
+    ledger = wake.read_json(tmp_path / wake.START_LEDGER)
+    assert ledger["genome"] == 1000 + wake.START_SPACING_SECONDS
+    # A request at 1150 (the reviewer's case) is refused as too early: 1150 - 1150 < 150.
+    requests = []
+    monkeypatch.setattr(wake, "systemd_starter", lambda role: requests.append(role) or True)
+    outcome = wake.resume_owed(tmp_path, ["genome"], now=1000, clock=lambda: 1150)
+    assert outcome == ["genome"] and requests == []
+    ledger = wake.read_json(tmp_path / wake.START_LEDGER)
+    assert ledger["genome"] == 1150  # the spaced-out request was not sent, so the record is unchanged
 
 
 def test_exit_inside_a_debounced_starter_still_leaves_the_record(tmp_path):
@@ -261,7 +287,7 @@ def test_exit_inside_a_debounced_starter_still_leaves_the_record(tmp_path):
         raise SystemExit(77)
     with pytest.raises(SystemExit):
         wake.debounced_start(tmp_path, "genome", 0, clock=lambda: 1000, sleep=lambda s: None, starter=starter)
-    assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 1000
+    assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 1000 + wake.START_SPACING_SECONDS
 
 
 def test_refused_start_restores_the_previous_record(tmp_path):

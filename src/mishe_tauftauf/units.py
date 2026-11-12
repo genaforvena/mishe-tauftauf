@@ -233,7 +233,9 @@ def is_plant_unit(name: str) -> bool:
 
 
 def is_health_wake(unit: str, prefix: str = "mishe") -> bool:
-    return unit == f"{prefix}-wake@health.service"
+    # The health debounce is part of health's wake: its failure must not be routed to health's own inbox,
+    # which the debounce watches (review of 20f172c7: a self-routed failure retriggers the debounce).
+    return unit in {f"{prefix}-wake@health.service", f"{prefix}-wake-debounce-health.service"}
 
 
 def user_timer_names(glob: str) -> list[str]:

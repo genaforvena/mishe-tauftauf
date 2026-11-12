@@ -211,6 +211,9 @@ def test_sync_installs_every_duty_and_routes_failures_to_its_resolver(site, tmp_
     from mishe_tauftauf import failure
     assert failure.resolver_for(site, "mishe-producer-egress.service") == "health"
     assert failure.resolver_for(site, "mishe-producer-ci.service") == "genome"
+    # Review of 20f172c7: a failed health debounce must not route to health's own inbox (self-retrigger).
+    assert failure.resolver_for(site, "mishe-wake-debounce-health.service") == "genome"
+    assert failure.resolver_for(site, "mishe-wake@health.service") == "genome"
 
 
 def test_doctor_is_red_when_a_duty_resolver_has_no_charter(site, tmp_path, monkeypatch):
