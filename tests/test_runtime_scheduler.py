@@ -47,11 +47,12 @@ def test_resume_owed_spaces_starts_of_one_role(tmp_path, monkeypatch):
     started = []
     monkeypatch.setattr(wake, "systemd_starter", started.append)
     monkeypatch.setattr(owed, "check", lambda home, role, now: type("S", (), {"reasons": ["owed"]})())
-    wake.resume_owed(tmp_path, ["genome"], now=1000)
-    wake.resume_owed(tmp_path, ["genome"], now=1100)     # inside the spacing: skipped
-    wake.resume_owed(tmp_path, ["genome"], now=1100.5)   # still inside: skipped
+    wake.resume_owed(tmp_path, ["genome"], now=1000, clock=lambda: 1000)
+    wake.resume_owed(tmp_path, ["genome"], now=1100, clock=lambda: 1100)     # inside the spacing: skipped
+    wake.resume_owed(tmp_path, ["genome"], now=1100.5, clock=lambda: 1100.5) # still inside: skipped
     assert started == ["genome"]
-    wake.resume_owed(tmp_path, ["genome"], now=1000 + wake.START_SPACING_SECONDS)
+    t = 1000 + wake.START_SPACING_SECONDS
+    wake.resume_owed(tmp_path, ["genome"], now=t, clock=lambda: t)
     assert started == ["genome", "genome"]
 
 
@@ -63,9 +64,10 @@ def test_resume_owed_respects_a_path_triggered_wake_start(tmp_path, monkeypatch)
     monkeypatch.setattr(wake, "systemd_starter", started.append)
     monkeypatch.setattr(owed, "check", lambda home, role, now: type("R", (), {"reasons": ["owed"]})())
     wake.record_wake_start(tmp_path, "genome", now=120.0)   # what a path-triggered wake does on entry
-    wake.resume_owed(tmp_path, ["genome"], now=150.0)        # 30 s after that start: must be skipped
+    wake.resume_owed(tmp_path, ["genome"], now=150.0, clock=lambda: 150.0)   # 30 s after: must be skipped
     assert started == []
-    wake.resume_owed(tmp_path, ["genome"], now=120.0 + wake.START_SPACING_SECONDS)
+    t = 120.0 + wake.START_SPACING_SECONDS
+    wake.resume_owed(tmp_path, ["genome"], now=t, clock=lambda: t)
     assert started == ["genome"]
 
 
@@ -94,7 +96,7 @@ def test_debounced_path_start_waits_for_the_shared_spacing_and_records_itself(tm
     try:
         mp.setattr(wake, "systemd_starter", started.append)
         mp.setattr(owed, "check", lambda home, role, now: type("R", (), {"reasons": ["owed"]})())
-        wake.resume_owed(tmp_path, ["genome"], now=200.0)   # 50 s after the path start: skipped
+        wake.resume_owed(tmp_path, ["genome"], now=200.0, clock=lambda: 200.0)   # 50 s after: skipped
     finally:
         mp.undo()
     assert started == []
@@ -134,21 +136,60 @@ def test_debounced_start_checks_and_records_in_one_ledger_step(tmp_path):
     assert slept == [0, 149.0, 150.0]
 
 
-def test_debounced_start_records_the_time_the_start_is_requested(tmp_path):
-    # Review of cd3bc95c: the record must be the moment systemd is asked, not an earlier reservation.
+def test_debounced_start_records_no_earlier_than_the_request(tmp_path):
+    # Review of 906a146e: a record taken before a slow starter let the real request land 148 s after the
+    # recorded time. The record is read after systemd accepts, so it is never earlier than the request.
     started = []
     clock = {"t": 10.0}
 
     def starter(role):
         started.append((role, clock["t"]))
-        clock["t"] += 2.0                          # time passes after the request
+        clock["t"] += 2.0                          # the request takes 2 s to be accepted
         return True
 
     recorded = wake.debounced_start(tmp_path, "health", 0, clock=lambda: clock["t"], sleep=lambda s: None,
                                     starter=starter)
     assert started == [("health", 10.0)]
-    assert recorded == 10.0
-    assert wake.read_json(tmp_path / wake.START_LEDGER)["health"] == 10.0
+    assert recorded == 12.0
+    assert wake.read_json(tmp_path / wake.START_LEDGER)["health"] == 12.0
+
+
+def test_spacing_gap_between_real_requests_is_at_least_the_contract(tmp_path):
+    # The guarantee: with the record taken after acceptance, two real request times are never closer
+    # than START_SPACING_SECONDS, even when the starter is slow.
+    requests = []
+    clock = {"t": 0.0}
+
+    def starter(role):
+        requests.append(clock["t"])
+        clock["t"] += 3.0                          # slow acceptance
+        return True
+
+    wake.debounced_start(tmp_path, "genome", 0, clock=lambda: clock["t"], sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+                         starter=starter)
+    clock["t"] = 10.0                              # a resume arrives soon after
+    wake.debounced_start(tmp_path, "genome", 0, clock=lambda: clock["t"], sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+                         starter=starter)
+    assert len(requests) == 2
+    assert requests[1] - requests[0] >= wake.START_SPACING_SECONDS
+
+
+def test_accepted_start_survives_a_later_failure_in_the_same_pass(tmp_path, monkeypatch):
+    # Review of 906a146e: the ledger was written only after the whole loop, so an exception after the
+    # first accepted start dropped that start's evidence. The accepted record must persist anyway.
+    from types import SimpleNamespace
+    monkeypatch.setattr(wake.owed, "check", lambda home, role, now: SimpleNamespace(reasons=["inbox"]))
+
+    def starter(role):
+        if role == "senses":
+            raise OSError("interrupted after the first acceptance")
+        return True
+
+    monkeypatch.setattr(wake, "systemd_starter", starter)
+    import pytest
+    with pytest.raises(OSError):
+        wake.resume_owed(tmp_path, ["genome", "senses"], now=1000, clock=lambda: 1000)
+    assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 1000
 
 
 def test_debounced_start_refused_by_systemd_is_not_recorded_and_fails(tmp_path):
@@ -165,12 +206,12 @@ def test_resume_owed_refused_start_is_not_recorded_so_the_next_arm_retries(tmp_p
     monkeypatch.setattr(wake.owed, "check", lambda home, role, now: SimpleNamespace(reasons=["inbox"]))
     attempts = []
     monkeypatch.setattr(wake, "systemd_starter", lambda role: attempts.append(role) or False)
-    assert wake.resume_owed(tmp_path, ["genome"], now=1000) == ["genome"]
+    assert wake.resume_owed(tmp_path, ["genome"], now=1000, clock=lambda: 1000) == ["genome"]
     assert attempts == ["genome"]
     assert "genome" not in wake.read_json(tmp_path / wake.START_LEDGER)   # refused: no spacing recorded
     # The next arm retries at once, because nothing was recorded for the refused start.
     monkeypatch.setattr(wake, "systemd_starter", lambda role: attempts.append(role) or True)
-    wake.resume_owed(tmp_path, ["genome"], now=1001)
+    wake.resume_owed(tmp_path, ["genome"], now=1001, clock=lambda: 1001)
     assert attempts == ["genome", "genome"]
     assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 1001
 

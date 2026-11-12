@@ -123,8 +123,12 @@ def _ledger_update(home, change=None) -> dict:
         try:
             ledger = read_json(path) or {}
             if change is not None:
-                change(ledger)
-                write_json(path, ledger)
+                # Persist even when the change raises: a start accepted before the failure is real
+                # evidence and must not be lost (review of 906a146e: a later exception dropped it).
+                try:
+                    change(ledger)
+                finally:
+                    write_json(path, ledger)
             return ledger
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
@@ -143,13 +147,14 @@ def debounced_start(home, role: str, window: float, *, clock=time.time, sleep=ti
                     starter=None) -> float | None:
     """Wait out the coalescing window, then the start spacing, then start the wake.
 
-    The spacing check, the start request and the ledger record happen in ONE locked ledger change: the
-    time recorded is the time the start is requested, so a resume cannot slip a start in between
-    (review of 52b50ab5: a separate read then write let both start at 150; review of cd3bc95c: a
-    reservation recorded before the starter ran let a start land 2 s after the recorded time). Only
-    the sleeps run outside the lock. A refused start (systemd rejected it) is NOT recorded, and this
-    raises so the debounce unit fails visibly; the role stays owed and the next resume_owed or arm
-    retries it. Returns the time of the accepted start, or None when there was nothing to start.
+    The spacing check, the start request and the ledger record happen in ONE locked ledger change.
+    The spacing clock is read inside the lock before the request, and the recorded time is read AFTER
+    systemd accepted the request. A recorded time is therefore never earlier than the real request, so
+    the next check (reading the clock before its own request) guarantees the real gap between two
+    requests is at least START_SPACING_SECONDS (review of 906a146e: a clock read before a slow starter
+    let a start land 148 s after the recorded time). Only the sleeps run outside the lock. A refused
+    start is NOT recorded, and this raises so the debounce unit fails visibly; the role stays owed and
+    the next resume_owed or arm retries it. Returns the time recorded for the accepted start, or None.
     """
     starter = systemd_starter if starter is None else starter
     sleep(window)
@@ -164,8 +169,8 @@ def debounced_start(home, role: str, window: float, *, clock=time.time, sleep=ti
                 decision["wait"] = remaining
                 return
             if _start_accepted(starter, role):
-                ledger[role] = now
-                decision["start"] = now
+                ledger[role] = clock()
+                decision["start"] = ledger[role]
             else:
                 decision["refused"] = True
 
@@ -177,13 +182,16 @@ def debounced_start(home, role: str, window: float, *, clock=time.time, sleep=ti
         sleep(decision["wait"])
 
 
-def resume_owed(home, roles, *, now: float) -> list[str]:
+def resume_owed(home, roles, *, now: float, clock=time.time, starter=None) -> list[str]:
     """Start a wake unit for every role that is owed work, not just the first.
 
     A wake that fired while the plant was held exits without running, so nothing
     else re-fires it when the hold is released; every resume path calls this so each
     owed role gets its own start. Starts are non-blocking; the wake lock queues them.
+    ``now`` decides which roles are owed; the spacing uses ``clock`` read inside the lock, per role,
+    and the recorded time is read after systemd accepted that role's request (see debounced_start).
     """
+    starter = systemd_starter if starter is None else starter
     store = DispatchStore(Path(home) / "dispatch")
     started: list[str] = []
     for record in store.stale_open_records():
@@ -198,11 +206,12 @@ def resume_owed(home, roles, *, now: float) -> list[str]:
     # next arm after the spacing, so a start is delayed, never dropped while the role stays owed.
     def _space(ledger: dict) -> None:
         for role in started:
+            request_at = clock()
             last = ledger.get(role)
-            if last is not None and now - float(last) < START_SPACING_SECONDS:
+            if last is not None and request_at - float(last) < START_SPACING_SECONDS:
                 continue
-            if _start_accepted(systemd_starter, role):
-                ledger[role] = now
+            if _start_accepted(starter, role):
+                ledger[role] = clock()
     _ledger_update(home, _space)
     return started
 
