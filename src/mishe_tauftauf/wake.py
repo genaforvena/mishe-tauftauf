@@ -78,7 +78,7 @@ def systemd_starter(role: str) -> bool:
     result = subprocess.run(["systemctl", "--user", "start", "--no-block", f"mishe-wake@{role}.service"],
                             check=False, capture_output=True, text=True)
     if result.returncode != 0:
-        sys.stderr.write(f"wake start refused for {role} (exit {result.returncode}): {result.stderr.strip()}\n")
+        sys.stderr.write(f"wake start refused for {role} (exit {result.returncode}): {result.stderr}\n")
         return False
     return True
 
