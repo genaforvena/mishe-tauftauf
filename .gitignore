@@ -37,9 +37,7 @@ docs/agent-step-experiments.md
 docs/decision-models.md
 docs/how-it-works.md
 docs/operating.md
-docs/protocol-boundaries.md
 docs/recovery.md
-docs/wall-coordination.md
 docs/superpowers/
 research/field-review/__pycache__/
 .claude/

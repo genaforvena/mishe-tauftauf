@@ -190,6 +190,6 @@ A mind owns a durable area and carries useful initiatives through investigation,
 implementation, checks, delivery and observation. Stop at a meaningful work or
 execution boundary and leave concrete continuation. Critical verification belongs
 inside the initiative; use peer messages for action, transfer, material impact or
-unresolved disagreement. High-impact changes retain fresh review and deterministic recovery checks. Ordinary reversible changes use asynchronous review and automatic rollback. See the wall coordination notes in the plant's local operating book.
+unresolved disagreement. High-impact changes retain fresh review and deterministic recovery checks. Ordinary reversible changes use asynchronous review and automatic rollback. See [Working as a durable mind](wall-coordination.md).
 
 How the mind picks its next move is [How a mind chooses what to do](how-a-mind-chooses.md).
