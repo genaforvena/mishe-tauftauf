@@ -68,7 +68,8 @@ nothing else:
   `wall_text.py` directly.
 - A wall document or a body as a whole. `is_peer_copy` decides whether a note is a
   peer's wall document, so a write that would reproduce one is refused; trailing
-  blank lines do not count. `document_digest` gives that same document identity as
+  newline bytes at the end do not count (a trailing space or carriage return does).
+  `document_digest` gives that same document identity as
   a digest, so notes that exist only in the write audit log still have one, and
   `decode_audit_entries` decodes that log. `heading_present` and
   `ends_with_newline` read a document's headings and its last character.
