@@ -64,7 +64,7 @@ def unit_last_exit(unit):
     values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
     stamp = (values.get("ExecMainExitTimestamp", "") or values.get("InactiveEnterTimestamp", "")).strip()
     if not stamp:
-        return None
+        return _journal_last_exit(unit)
     # systemd prints the exit in local time, e.g. "Sun 2026-11-08 00:21:39 UTC".
     try:
         parsed = time.strptime(stamp, "%a %Y-%m-%d %H:%M:%S %Z")
@@ -72,6 +72,35 @@ def unit_last_exit(unit):
         return None
     exited_at = calendar.timegm(parsed) if parsed.tm_zone in ("UTC", "GMT") else time.mktime(parsed)
     return exited_at, values.get("Result") == "success" and values.get("ExecMainStatus") == "0"
+
+
+def _journal_last_exit(unit):
+    """``(exited_at, clean)`` from the unit's own journal, for a unit systemd has forgotten.
+
+    systemd garbage-collects an inactive unit that nothing references, and then ``systemctl show`` reports Result=success
+    with blank exit timestamps. Such a unit recovered at 2026-11-12 16:44:24Z (journal: "Finished ... engine exit 0") but
+    stayed RED because no timestamp was readable (the failure-recovered path needs one). The journal keeps the exit:
+    systemd logs "Finished <unit>" for a clean run and "Failed with result" / "Failed to start" otherwise. The latest
+    such event decides. None when journalctl cannot answer or no exit event is retained.
+    """
+    try:
+        result = subprocess.run(["journalctl", "--user", "-u", unit, "-o", "short-unix", "--no-pager", "-n", "50",
+                                 "-g", "^Finished |Failed with result|Failed to start"],
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode:
+        return None
+    latest = None
+    for line in result.stdout.splitlines():
+        stamp = line.partition(" ")[0]
+        try:
+            at = float(stamp)
+        except ValueError:
+            continue
+        if latest is None or at > latest[0]:
+            latest = (at, "]: Finished " in line)
+    return latest
 
 
 def failure_signal(name):
