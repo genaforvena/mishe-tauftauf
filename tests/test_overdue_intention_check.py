@@ -79,3 +79,17 @@ def test_unreadable_ledger_with_overdue_intention_is_unknown(tmp_path):
 def test_non_spontaneous_overdue_without_wake_is_red(tmp_path):
     home = _site(tmp_path, spontaneous=False, engine=False)
     assert check.evaluate(home, NOW)[0] == 2
+
+
+def test_missing_intentions_root_is_unknown_not_empty_schedule(tmp_path):
+    home = tmp_path  # no intentions/ directory at all
+    _write(home / "wake-start-ledger.json", {})
+    code, lines = check.evaluate(home, NOW)
+    assert code == 3 and any("intentions root missing" in line for line in lines)
+
+
+def test_non_numeric_due_is_unknown_not_skipped(tmp_path):
+    home = _site(tmp_path, due=NOW + 60, budget=_budget("OK", "GREEN"))  # base intention not overdue
+    _write(home / "intentions" / "docs" / "bad-due.json", {"id": "bad-due", "due": "tomorrow"})
+    code, lines = check.evaluate(home, NOW)
+    assert code == 3 and any("non-numeric due" in line for line in lines)
