@@ -4,6 +4,10 @@ import pytest
 
 from mishe_tauftauf import access, feed as feed_module
 from mishe_tauftauf.feed import Feed
+from tests.records_binary import pin_records_binary  # noqa: F401  (fixture)
+from tests.tape_binary import pin_tape_binary  # noqa: F401  (fixture)
+
+pytestmark = pytest.mark.usefixtures("pin_tape_binary", "pin_records_binary")
 
 
 def _forget_parsed_tape():

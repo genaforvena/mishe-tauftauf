@@ -4,8 +4,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from mishe_tauftauf.access import get, list_requests
 from mishe_tauftauf.feed import Feed
+from tests.tape_binary import pin_tape_binary  # noqa: F401  (fixture)
 
 
 def run(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -13,6 +16,7 @@ def run(home: Path, *args: str) -> subprocess.CompletedProcess[str]:
                            "access", *args], text=True, capture_output=True)
 
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_request_records_scope_and_revocable_decision(tmp_path: Path) -> None:
     home = tmp_path / "site"
     home.mkdir()
@@ -39,6 +43,7 @@ def test_request_records_scope_and_revocable_decision(tmp_path: Path) -> None:
     assert "decision=revoked" in decisions[1]
 
 
+@pytest.mark.usefixtures("pin_tape_binary")
 def test_request_id_and_scope_cannot_be_silently_reused(tmp_path: Path) -> None:
     home = tmp_path / "site"
     home.mkdir()

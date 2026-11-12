@@ -4,6 +4,9 @@ import pytest
 
 from mishe_tauftauf import access
 from mishe_tauftauf.feed import Feed
+from tests.tape_binary import pin_tape_binary  # noqa: F401  (fixture)
+
+pytestmark = pytest.mark.usefixtures("pin_tape_binary")
 
 
 def recover(home, **changes):
