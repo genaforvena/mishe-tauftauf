@@ -227,6 +227,51 @@ def wifi_facts():
     return _wifi["text"], weak
 
 
+ROUTER_LOG = SITE / "network" / "router.jsonl"
+STALE_ROUTER_S = 15 * 60  # the producer runs every 5 min; three missed runs is stale
+
+
+def router_rows():
+    """Rows the network-router duty wrote (failed runs included), oldest first."""
+    try:
+        text = ROUTER_LOG.read_text()
+    except OSError:
+        return []
+    out = []
+    for line in text.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and isinstance(row.get("ts"), (int, float)):
+            out.append(row)
+    return out
+
+
+def recorded_clients_line(now=None):
+    """Client count, weakest device and last-hour trend from the recorded router reads."""
+    now = time.time() if now is None else now
+    rows_ = router_rows()
+    if not rows_:
+        return "UNKNOWN (no router reading recorded yet)"
+    last = rows_[-1]
+    ago = now - last["ts"]
+    if not last.get("ok"):
+        return f"UNKNOWN (last router read failed {ago:.0f} s ago: {last.get('error', 'no reason recorded')})"
+    clients = last.get("clients", [])
+    bands = {}
+    for c in clients:
+        bands[c.get("band", "?")] = bands.get(c.get("band", "?"), 0) + 1
+    band_txt = "; ".join(f"{b} GHz {n}" for b, n in sorted(bands.items()))
+    weakest = min(clients, key=lambda c: c.get("dbm", 0)) if clients else None
+    weak_txt = f", weakest {weakest.get('name', '?')} {weakest.get('dbm')} dBm" if weakest else ""
+    hour = [r for r in rows_ if now - r["ts"] <= 3600 and r.get("ok")]
+    trend = spark([len(r.get("clients", [])) for r in hour]) if hour else "(no data)"
+    stale = "  STALE" if ago > STALE_ROUTER_S else ""
+    return (f"{len(clients)} clients ({band_txt}){weak_txt}; read {ago:.0f} s ago{stale}\n"
+            f"                    clients over the last hour: {trend}")
+
+
 def gateway_line(data):
     cur = (data[-1].get("gateway") if data else None) or {}
     vals = [((r.get("gateway") or {}).get("avg_ms")) for r in data]
@@ -288,6 +333,7 @@ def draw():
     out.extend(outage_lines(data))
     wf, _weak = wifi_facts()
     out.append("  WI-FI         " + (wf or "UNKNOWN (router Wi-Fi listing could not be read)") + "   (read-only, clients counted, no devices named)")
+    out.append("  RECORDED      " + recorded_clients_line())
     rf = router_facts()
     out.append("  ROUTER        " + (rf or "UNKNOWN (ssh read failed)") + "   (read-only)")
     out.append("")

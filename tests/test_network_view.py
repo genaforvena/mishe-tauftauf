@@ -79,3 +79,35 @@ def test_outage_lines_say_none_when_all_probes_answer_and_unknown_without_rows()
 def test_outage_skips_rows_from_before_the_secure_web_check():
     old = {"at": "2026-11-10T09:00:00Z", "gateway": {"loss_pct": 0.0, "avg_ms": 0.4}}
     assert view.outage_episodes([old, _probe("2026-11-10T09:01:00Z", False)]) == []
+
+
+def test_recorded_clients_line_unknown_without_log(tmp_path, monkeypatch):
+    monkeypatch.setattr(view, "ROUTER_LOG", tmp_path / "router.jsonl")
+    assert view.recorded_clients_line().startswith("UNKNOWN")
+
+
+def test_recorded_clients_line_shows_count_weakest_and_age(tmp_path, monkeypatch):
+    log = tmp_path / "router.jsonl"
+    now = 1_000_000.0
+    clients = [{"band": "2.4", "dbm": -30, "name": "iPad", "id": "a", "rx": 1, "tx": 1},
+               {"band": "5", "dbm": -36, "name": "Redmi-10", "id": "b", "rx": 1, "tx": 1}]
+    log.write_text('{"ts": %s, "ok": true, "clients": %s}\n' % (now - 600, __import__("json").dumps(clients)))
+    monkeypatch.setattr(view, "ROUTER_LOG", log)
+    line = view.recorded_clients_line(now)
+    assert "2 clients" in line and "weakest Redmi-10 -36 dBm" in line and "read 600 s ago" in line
+    assert "STALE" not in line
+
+
+def test_recorded_clients_line_reports_failed_read_not_calm(tmp_path, monkeypatch):
+    log = tmp_path / "router.jsonl"
+    log.write_text('{"ts": 1000000.0, "ok": false, "error": "ssh timeout"}\n')
+    monkeypatch.setattr(view, "ROUTER_LOG", log)
+    line = view.recorded_clients_line(1000000.0 + 60)
+    assert line.startswith("UNKNOWN") and "ssh timeout" in line
+
+
+def test_recorded_clients_line_marks_stale(tmp_path, monkeypatch):
+    log = tmp_path / "router.jsonl"
+    log.write_text('{"ts": 1000000.0, "ok": true, "clients": []}\n')
+    monkeypatch.setattr(view, "ROUTER_LOG", log)
+    assert "STALE" in view.recorded_clients_line(1000000.0 + 3600)
