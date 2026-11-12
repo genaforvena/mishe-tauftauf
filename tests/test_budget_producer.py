@@ -235,3 +235,18 @@ def test_producer_marks_account_with_malformed_window_unreadable_and_keeps_evide
                                  "windows": {"5h": good, "7d": {"remaining": None, "reset_at": 2000.0}}}}}
     acc = bp.build_accounts(status, None, now)["a"]
     assert acc["state"] == "UNREADABLE" and acc["malformed"] == ["7d"] and "5h" in acc["windows"]
+
+
+def test_cooling_section_mirrors_router_state_and_drops_non_numeric_until(tmp_path):
+    from mishe_tauftauf import budget_producer as bp
+    from mishe_tauftauf import engine_router as er
+
+    state_dir = er._dir(tmp_path)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / er.STATE).write_text(json.dumps({"cooling": {
+        "genome|omp:x:-": NOW * 1000 + 60000,
+        "docs|omp:y:-": NOW * 1000 - 60000,
+        "bad|omp:z:-": "soon"}}), encoding="utf-8")
+    cooling = bp.build_cooling(tmp_path, NOW)
+    assert cooling == {"genome|omp:x:-": {"until": NOW * 1000 + 60000, "active": True},
+                       "docs|omp:y:-": {"until": NOW * 1000 - 60000, "active": False}}

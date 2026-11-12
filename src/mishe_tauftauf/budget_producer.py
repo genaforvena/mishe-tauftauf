@@ -2,8 +2,8 @@
 
 This slice produces the `accounts` section (account windows from the engine status
 (quota.json shape) and the native Claude tap) and the `routing` section (the router's own
-assess() over those accounts). Ledger sections (free_models, paid_models, per_mind, cooling)
-are later slices. Pure functions here; file IO
+assess() over those accounts) and the `cooling` section (the router's own cooldown state).
+Ledger sections (free_models, paid_models, per_mind) are later slices. Pure functions here; file IO
 is limited to the atomic writer.
 
 Fail-closed rules from the contract: a window is FRESH only when its own observation is
@@ -155,6 +155,24 @@ def build_routing(home: Path, payload: dict, now: float) -> dict:
     return er.assess(routes, er.status_from_payload(payload, now), state["cooling"], now * 1000, running=running)
 
 
+def build_cooling(home: Path, now: float) -> dict:
+    """The `cooling` section: the router's own cooling entries (routing state, keyed as the router
+    keys them), so the view reads the same cooldowns the next selection will honour. An entry
+    whose `until` is not a finite number is dropped, never read as cooled-forever or never-cooled."""
+    from . import engine_router as er
+
+    try:
+        cooling = er._load_state(home)["cooling"]
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for key, until in cooling.items():
+        if not _num(until):
+            continue
+        out[key] = {"until": until, "active": until > now * 1000}
+    return out
+
+
 def write_atomic(path: Path, payload: dict) -> None:
     """Write JSON to a temp file in the same directory, then replace; no partial reads."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,6 +210,7 @@ def main(home: Path, out: Path | None = None) -> int:
     tap = _read_json(home / "operator" / "budget" / "claude-native-quota.json")
     payload = build_budget(status, tap, now)
     payload["routing"] = build_routing(home, payload, now)
+    payload["cooling"] = build_cooling(home, now)
     if out:
         write_atomic(Path(out), payload)
     else:
