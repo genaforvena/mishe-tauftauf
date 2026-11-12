@@ -99,3 +99,14 @@ def test_uplink_unknown_when_wan_device_has_no_block():
 def test_uplink_unknown_without_links_section():
     text = SAMPLE.split("LINKS")[0]
     assert nr.parse(text)["uplink"] is None
+
+
+def test_router_load_and_free_ram_are_read_from_the_same_pass():
+    text = SAMPLE.replace("LINKS\n", "LOAD\n0.42 0.30 0.25 1/200 999\nMemTotal:  235000 kB\nMemAvailable:  180224 kB\nLINKS\n")
+    assert nr.parse(text)["router_load"] == {"load_1m": 0.42, "mem_available_mb": 176.0}
+
+
+def test_router_load_unknown_not_zero_when_missing():
+    assert nr.parse(SAMPLE)["router_load"] is None
+    partial = SAMPLE.replace("LINKS\n", "LOAD\nnot a load line\nLINKS\n")
+    assert nr.parse(partial)["router_load"] is None

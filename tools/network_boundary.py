@@ -124,7 +124,7 @@ def decode_router_output(stdout, bands, client_id):
         if line.startswith("UPTIME "):
             uptime_line = line.split(None, 1)[1]
             current = None
-        elif line in ("LEASES", "WAN", "LINKS") or line.startswith("RADIO "):
+        elif line in ("LEASES", "WAN", "LOAD", "LINKS") or line.startswith("RADIO "):
             current = line
             sections.setdefault(current, [])
         elif current is not None:
@@ -171,7 +171,26 @@ def decode_router_output(stdout, bands, client_id):
     uplink = None
     if wan_device and isinstance(wan_device, str):
         uplink = decode_link_counters(sections.get("LINKS", []), wan_device)
-    return {"uptime_s": round(uptime_s), "wan": wan, "uplink": uplink, "clients": clients}
+    return {"uptime_s": round(uptime_s), "wan": wan, "uplink": uplink, "clients": clients,
+            "router_load": decode_router_load(sections.get("LOAD", []))}
+
+
+def decode_router_load(lines):
+    """Router self-limit numbers from /proc/loadavg and MemAvailable: {"load_1m", "mem_available_mb"}.
+
+    A missing or unreadable field is None, never zero, so a dead read cannot look like an idle router.
+    """
+    load_1m = None
+    mem_mb = None
+    for line in lines:
+        parts = line.split()
+        if load_1m is None and len(parts) >= 3 and parts[0].replace(".", "", 1).isdigit():
+            load_1m = float(parts[0])
+        elif len(parts) >= 2 and parts[0] == "MemAvailable:" and parts[1].isdigit():
+            mem_mb = round(int(parts[1]) / 1024, 1)
+    if load_1m is None and mem_mb is None:
+        return None
+    return {"load_1m": load_1m, "mem_available_mb": mem_mb}
 
 
 def decode_link_counters(lines, device):

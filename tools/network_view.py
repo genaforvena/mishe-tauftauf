@@ -285,6 +285,52 @@ def uplink_line(now=None):
             f"(since router boot; read {ago:.0f} s ago{stale})")
 
 
+LOAD_LIMIT_1M = 1.0       # self-limit: above this, the router is busy and the probe should ease off
+MEM_FLOOR_MB = 120.0      # self-limit: below this much free RAM, the router is under pressure
+
+
+def router_health_line(now=None):
+    """Router load and free RAM from the last recorded read, with the self-limit it is held to."""
+    now = time.time() if now is None else now
+    rows_ = router_rows()
+    if not rows_:
+        return "UNKNOWN (no router reading recorded yet)"
+    last = rows_[-1]
+    ago = now - last["ts"]
+    if not last.get("ok"):
+        return f"UNKNOWN (last router read failed {ago:.0f} s ago)"
+    rl = last.get("router_load")
+    if not rl or rl.get("load_1m") is None or rl.get("mem_available_mb") is None:
+        return f"UNKNOWN (load or free RAM not in the read {ago:.0f} s ago)"
+    over = rl["load_1m"] > LOAD_LIMIT_1M or rl["mem_available_mb"] < MEM_FLOOR_MB
+    limit_txt = "over the self-limit" if over else "within the self-limit"
+    stale = "  STALE" if ago > STALE_ROUTER_S else ""
+    return (f"load {rl['load_1m']:.2f} (1 min), free RAM {rl['mem_available_mb']:.0f} MB, {limit_txt} "
+            f"(limit: load {LOAD_LIMIT_1M:g}, free RAM {MEM_FLOOR_MB:.0f} MB); read {ago:.0f} s ago{stale}")
+
+
+def uplink_rate_line(now=None):
+    """Receive drops on the WAN link over the last hour, from recorded counters; a router reboot restarts the span."""
+    now = time.time() if now is None else now
+    reads = [r for r in router_rows() if r.get("ok") and r.get("uplink") and r.get("uptime_s") is not None
+             and now - r["ts"] <= 3600]
+    if len(reads) < 2:
+        return "UNKNOWN (fewer than two WAN counter reads in the last hour)"
+    start = reads[0]
+    for prev, cur in zip(reads, reads[1:]):
+        if cur["uptime_s"] < prev["uptime_s"]:  # the router rebooted: counters restarted from zero
+            start = cur
+    end = reads[-1]
+    span = end["ts"] - start["ts"]
+    if span < 600:
+        return "UNKNOWN (less than 10 min of WAN counters since the last router boot in the last hour)"
+    drops = end["uplink"]["rx_dropped"] - start["uplink"]["rx_dropped"]
+    if drops < 0:
+        return "UNKNOWN (WAN counter fell without a reboot; check the router read)"
+    return (f"{drops} receive drops in the last {span / 60:.0f} min "
+            f"(about {drops * 3600 / span:.0f} per hour)")
+
+
 def gateway_line(data):
     cur = (data[-1].get("gateway") if data else None) or {}
     vals = [((r.get("gateway") or {}).get("avg_ms")) for r in data]
@@ -351,6 +397,8 @@ def draw():
     rf = router_facts()
     out.append("  ROUTER        " + (rf or "UNKNOWN (ssh read failed)") + "   (read-only)")
     out.append("  UPLINK        " + uplink_line() + "   (read-only)")
+    out.append("  UPLINK RATE   " + uplink_rate_line())
+    out.append("  ROUTER LOAD   " + router_health_line() + "   (read-only, one read per 5 min)")
     out.append("")
     out.append("  note: pings to public addresses are not used: the router answers them itself,")
     out.append("  so they look fast even when the internet is down. Internet checks are secure page loads.")

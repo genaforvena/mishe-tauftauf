@@ -5,6 +5,7 @@ The probe that writes the rows is a separate responsibility with its own
 contract and its own tests (tests/test_mishe_network_probe.py).
 """
 import importlib.util
+import json
 import sys
 import time
 from pathlib import Path
@@ -148,3 +149,46 @@ def test_uplink_line_failed_read_is_unknown_not_zero(tmp_path, monkeypatch):
     _router_log(tmp_path, monkeypatch, {"ts": 1000000.0, "ok": False, "error": "ssh exit 255"})
     line = view.uplink_line(1000000.0 + 60)
     assert line.startswith("UNKNOWN") and "rx errors" not in line
+
+
+def _uplink_read(ts, uptime, rx_dropped):
+    return {"ts": ts, "ok": True, "uptime_s": uptime, "clients": [],
+            "uplink": {"device": "eth0", "rx_errors": 0, "rx_dropped": rx_dropped, "tx_errors": 0, "tx_dropped": 0}}
+
+
+def test_uplink_rate_over_the_last_hour(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    _router_log(tmp_path, monkeypatch, _uplink_read(now - 3000, 100000, 1000))
+    log = tmp_path / "router.jsonl"
+    log.write_text(log.read_text() + json.dumps(_uplink_read(now, 103000, 1300)) + "\n")
+    assert "300 receive drops in the last 50 min (about 360 per hour)" in view.uplink_rate_line(now)
+
+
+def test_uplink_rate_restarts_after_a_reboot(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    _router_log(tmp_path, monkeypatch, _uplink_read(now - 3000, 90000, 5000))
+    log = tmp_path / "router.jsonl"
+    log.write_text(log.read_text() + json.dumps(_uplink_read(now - 2000, 1000, 10)) + "\n"
+                   + json.dumps(_uplink_read(now, 3000, 40)) + "\n")
+    # after the reboot the span is 2000 s with 30 drops: the pre-reboot counter is not subtracted
+    assert "30 receive drops" in view.uplink_rate_line(now)
+
+
+def test_uplink_rate_unknown_with_one_read(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    _router_log(tmp_path, monkeypatch, _uplink_read(now, 3000, 40))
+    assert view.uplink_rate_line(now).startswith("UNKNOWN")
+
+
+def test_router_health_flags_the_self_limit(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    row = {"ts": now, "ok": True, "clients": [], "router_load": {"load_1m": 1.4, "mem_available_mb": 300.0}}
+    _router_log(tmp_path, monkeypatch, row)
+    line = view.router_health_line(now)
+    assert "load 1.40" in line and "over the self-limit" in line
+
+
+def test_router_health_unknown_without_numbers(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    _router_log(tmp_path, monkeypatch, {"ts": now, "ok": True, "clients": [], "router_load": None})
+    assert view.router_health_line(now).startswith("UNKNOWN")
