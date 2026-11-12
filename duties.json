@@ -468,6 +468,16 @@
       "replaces": []
     },
     {
+      "name": "rssi-history",
+      "command": ["{python}", "{home}/senses/map/rssi_table.py"],
+      "every": 60,
+      "timeout": 30,
+      "max_age": 180,
+      "resolver": "senses",
+      "replaces": [],
+      "covers": "one age-stamped Redmi10 Wi-Fi RSSI and BLE-count row appended to senses/map/rssi-history.jsonl every minute; GREEN while the newest row is under three minutes old, UNKNOWN when the writer stops or fails"
+    },
+    {
       "name": "household-phones",
       "command": [
         "{python}",
