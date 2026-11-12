@@ -67,6 +67,26 @@ def test_dispatch_default_bound_is_the_engine_hard_cap_not_the_soft_timeout(tmp_
     assert producers.dispatch(tmp_path, now=NOW) == "RED"
 
 
+def test_dispatch_bound_is_the_soft_deadline_when_the_route_cap_is_below_it(tmp_path):
+    # hard_cap() returns None when hard_timeout_s <= the soft deadline: the engine cuts at the soft
+    # deadline, so an open record inside soft + grace is still healthy.
+    from mishe_tauftauf import units
+    import os
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "engine" / "routes.json").write_text('{"version": 1, "hard_timeout_s": 600, "roles": {}}')
+    bound = producers.dispatch_open_bound(tmp_path)
+    assert bound == units.WAKE_TIMEOUT + producers.DISPATCH_OPEN_GRACE_S
+    from mishe_tauftauf.core.interfaces import UNKNOWN
+    from mishe_tauftauf.core.state import DispatchRecord, DispatchStore
+    DispatchStore(tmp_path / "dispatch").write(
+        DispatchRecord(role="docs", key="k", state=UNKNOWN, detail="d"))
+    path = tmp_path / "dispatch" / "docs.json"
+    os.utime(path, (NOW - 2000, NOW - 2000))
+    assert producers.dispatch(tmp_path, now=NOW) == "GREEN"
+    os.utime(path, (NOW - bound - 1, NOW - bound - 1))
+    assert producers.dispatch(tmp_path, now=NOW) == "RED"
+
+
 def test_load_registers_declared_signals_and_returns_units_producers(home):
     (home / "producers.json").write_text(
         '[{"name":"egress","command":["/bin/true"],"every":300,"signal":{"max_age":900,"subscribers":["health"]}}]')

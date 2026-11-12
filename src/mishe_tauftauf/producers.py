@@ -65,15 +65,17 @@ DISPATCH_OPEN_GRACE_S = 300.0
 
 
 def dispatch_open_bound(home) -> float:
-    """Longest a dispatch may stay open before it counts as stuck: the engine hard cap plus grace.
+    """Longest a dispatch may stay open before it counts as stuck: the engine's real runtime ceiling plus grace.
 
-    A wake still producing output runs past its soft timeout up to the hard cap (engine_process),
-    so a soft-timeout bound flags healthy runs as RED. A record open past the hard cap means the
-    engine bound itself failed, which is what this detector must still catch.
+    The engine's ceiling is ``RoutedEngine.hard_cap``: the route hard cap only applies when it is
+    above the soft deadline (units.WAKE_TIMEOUT); otherwise the wake is cut at the soft deadline.
+    So the ceiling is the larger of the two. A record open past that ceiling means the engine bound
+    itself failed, which is what this detector must still catch.
     """
     from .engine_router import DEFAULT_HARD_TIMEOUT_S, load_routes
     routes = load_routes(home) or {}
-    return float(routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S)) + DISPATCH_OPEN_GRACE_S
+    hard = float(routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S))
+    return max(hard, float(units.WAKE_TIMEOUT)) + DISPATCH_OPEN_GRACE_S
 
 
 def dispatch(home, *, now: float, max_open: float | None = None) -> str:
