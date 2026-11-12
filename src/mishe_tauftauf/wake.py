@@ -8,6 +8,7 @@ leaves its dispatch open; the next wake of that role reconciles it first.
 from __future__ import annotations
 
 import os
+import sys
 import time
 import subprocess
 from dataclasses import dataclass
@@ -68,9 +69,23 @@ def _key(role: str, now_ns: int) -> str:
     return f"wake-{role}-{now_ns}"
 
 
-def systemd_starter(role: str) -> None:
-    subprocess.run(["systemctl", "--user", "start", "--no-block", f"mishe-wake@{role}.service"],
-                   check=False, capture_output=True)
+def systemd_starter(role: str) -> bool:
+    """Ask systemd to start the wake unit; False when systemd refused (e.g. start-limit-hit).
+
+    A refused start is reported on stderr (the journal of the calling unit) instead of being discarded,
+    so a debounce that could not start its wake is a visible failure, and the caller does not record it.
+    """
+    result = subprocess.run(["systemctl", "--user", "start", "--no-block", f"mishe-wake@{role}.service"],
+                            check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        sys.stderr.write(f"wake start refused for {role} (exit {result.returncode}): {result.stderr.strip()}\n")
+        return False
+    return True
+
+
+def _start_accepted(starter, role: str) -> bool:
+    # Test doubles and older starters return None; only an explicit False is a refusal.
+    return starter(role) is not False
 
 
 def default_mail_reader(home, role: str, after: int) -> list:
@@ -125,36 +140,40 @@ def record_wake_start(home, role: str, *, now: float) -> None:
 
 
 def debounced_start(home, role: str, window: float, *, clock=time.time, sleep=time.sleep,
-                    starter=None) -> float:
-    """Wait out the coalescing window, then the start spacing, then check-and-record and start the wake.
+                    starter=None) -> float | None:
+    """Wait out the coalescing window, then the start spacing, then start the wake.
 
-    The path-triggered unit used to start the wake after the window alone, so it ignored starts that
-    resume_owed had already made (DM 300359: resume at 0, path at 1 -> start at 121, next path -> 241, four
-    requests in 241 s). The spacing check and the record happen in ONE locked ledger change, so a resume
-    recording the same role between them cannot slip in (review of 52b50ab5: a separate read then a
-    separate write let both start at 150). Only the sleep runs outside the lock. The systemd start is made
-    here, after the record and only on this success path, not from ExecStopPost, which also ran after a
-    failed or timed-out debounce and bypassed the spacing. Returns the time recorded.
+    The spacing check, the start request and the ledger record happen in ONE locked ledger change: the
+    time recorded is the time the start is requested, so a resume cannot slip a start in between
+    (review of 52b50ab5: a separate read then write let both start at 150; review of cd3bc95c: a
+    reservation recorded before the starter ran let a start land 2 s after the recorded time). Only
+    the sleeps run outside the lock. A refused start (systemd rejected it) is NOT recorded, and this
+    raises so the debounce unit fails visibly; the role stays owed and the next resume_owed or arm
+    retries it. Returns the time of the accepted start, or None when there was nothing to start.
     """
     starter = systemd_starter if starter is None else starter
     sleep(window)
     while True:
         decision: dict = {}
 
-        def _check_and_record(ledger: dict) -> None:
+        def _check_start_and_record(ledger: dict) -> None:
             now = clock()
             last = ledger.get(role)
             remaining = START_SPACING_SECONDS - (now - float(last)) if last is not None else 0.0
-            if remaining <= 0:
+            if remaining > 0:
+                decision["wait"] = remaining
+                return
+            if _start_accepted(starter, role):
                 ledger[role] = now
                 decision["start"] = now
             else:
-                decision["wait"] = remaining
+                decision["refused"] = True
 
-        _ledger_update(home, _check_and_record)
+        _ledger_update(home, _check_start_and_record)
         if "start" in decision:
-            starter(role)
             return decision["start"]
+        if decision.get("refused"):
+            raise RuntimeError(f"systemd refused the wake start for {role}; it stays owed for the next arm")
         sleep(decision["wait"])
 
 
@@ -182,8 +201,8 @@ def resume_owed(home, roles, *, now: float) -> list[str]:
             last = ledger.get(role)
             if last is not None and now - float(last) < START_SPACING_SECONDS:
                 continue
-            systemd_starter(role)
-            ledger[role] = now
+            if _start_accepted(systemd_starter, role):
+                ledger[role] = now
     _ledger_update(home, _space)
     return started
 

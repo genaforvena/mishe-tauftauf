@@ -134,8 +134,53 @@ def test_debounced_start_checks_and_records_in_one_ledger_step(tmp_path):
     assert slept == [0, 149.0, 150.0]
 
 
-def test_debounced_start_starts_the_wake_only_after_recording(tmp_path):
+def test_debounced_start_records_the_time_the_start_is_requested(tmp_path):
+    # Review of cd3bc95c: the record must be the moment systemd is asked, not an earlier reservation.
     started = []
-    wake.debounced_start(tmp_path, "health", 0, clock=lambda: 10.0, sleep=lambda s: None,
-                         starter=lambda role: started.append((role, wake.read_json(tmp_path / wake.START_LEDGER)[role])))
+    clock = {"t": 10.0}
+
+    def starter(role):
+        started.append((role, clock["t"]))
+        clock["t"] += 2.0                          # time passes after the request
+        return True
+
+    recorded = wake.debounced_start(tmp_path, "health", 0, clock=lambda: clock["t"], sleep=lambda s: None,
+                                    starter=starter)
     assert started == [("health", 10.0)]
+    assert recorded == 10.0
+    assert wake.read_json(tmp_path / wake.START_LEDGER)["health"] == 10.0
+
+
+def test_debounced_start_refused_by_systemd_is_not_recorded_and_fails(tmp_path):
+    wake.record_wake_start(tmp_path, "genome", now=0.0)   # prior start, spacing already passed
+    import pytest
+    with pytest.raises(RuntimeError, match="refused"):
+        wake.debounced_start(tmp_path, "genome", 0, clock=lambda: 1000.0, sleep=lambda s: None,
+                             starter=lambda role: False)
+    assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 0.0   # refused start left no record
+
+
+def test_resume_owed_refused_start_is_not_recorded_so_the_next_arm_retries(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(wake.owed, "check", lambda home, role, now: SimpleNamespace(reasons=["inbox"]))
+    attempts = []
+    monkeypatch.setattr(wake, "systemd_starter", lambda role: attempts.append(role) or False)
+    assert wake.resume_owed(tmp_path, ["genome"], now=1000) == ["genome"]
+    assert attempts == ["genome"]
+    assert "genome" not in wake.read_json(tmp_path / wake.START_LEDGER)   # refused: no spacing recorded
+    # The next arm retries at once, because nothing was recorded for the refused start.
+    monkeypatch.setattr(wake, "systemd_starter", lambda role: attempts.append(role) or True)
+    wake.resume_owed(tmp_path, ["genome"], now=1001)
+    assert attempts == ["genome", "genome"]
+    assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 1001
+
+
+def test_systemd_starter_reports_refusal_as_false(monkeypatch):
+    import subprocess
+    class Done:
+        returncode = 1
+        stderr = "Start request repeated too quickly."
+    monkeypatch.setattr(wake.subprocess, "run", lambda *a, **k: Done())
+    assert wake.systemd_starter("genome") is False
+    Done.returncode = 0
+    assert wake.systemd_starter("genome") is True
