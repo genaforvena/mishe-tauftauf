@@ -33,6 +33,8 @@ WAKE_DEBOUNCE_SECONDS = {"senses": 120, "health": 120, "network": 120}
 # 2026-11-11 with the direct path trigger, and a RED signal is a path trigger for any subscriber). Ordinary
 # wake runtime is about a minute, so 120 s keeps two starts per 5 min at most.
 WAKE_DEBOUNCE_DEFAULT_SECONDS = 120
+# Upper bound of one debounce run: its window plus the start spacing (wake.START_SPACING_SECONDS, 150 s).
+WAKE_DEBOUNCE_TIMEOUT = 600
 
 
 def wake_debounce_seconds(role: str) -> int:
@@ -160,7 +162,11 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         target = f"{p}-wake-debounce-{role}.service"
         files[target] = _file(
             f"[Unit]\nDescription=Coalesce wake triggers for {role}",
-            "[Service]\nType=oneshot\n" + f"ExecStart=/bin/sleep {wake_debounce_seconds(role)}\n"
+            "[Service]\nType=oneshot\n"
+            # The debounce waits out the window and then the shared start spacing (wake.debounced_start),
+            # so its start is spaced against resume_owed's starts. The wait is at most window + spacing.
+            + f"ExecStart={_cmd(cfg, 'wake-debounce', role, '--window', str(wake_debounce_seconds(role)))}\n"
+            + f"TimeoutStartSec={WAKE_DEBOUNCE_TIMEOUT}\n"
             + f"ExecStopPost=/usr/bin/systemctl --user --no-block start {p}-wake@{role}.service\n")
         files[f"{p}-wake-{role}.path"] = _file(
             f"[Unit]\nDescription=Mishe wake triggers for {role}",

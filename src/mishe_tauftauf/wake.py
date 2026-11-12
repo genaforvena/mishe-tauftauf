@@ -94,16 +94,55 @@ def next_role(home, roles, *, now: float, exclude: str | None = None) -> str | N
     return None
 
 
+def _ledger_update(home, change=None) -> dict:
+    """Read, optionally change, and write the shared start ledger under one lock.
+
+    Path-triggered debounce units, resume_owed and run_wake all write it, so the read-modify-write
+    is serialised with an exclusive flock on a sibling lock file (DM 300359: unlocked writers could
+    drop each other's starts).
+    """
+    import fcntl
+    path = Path(home) / START_LEDGER
+    with open(path.with_suffix(".lock"), "a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            ledger = read_json(path) or {}
+            if change is not None:
+                change(ledger)
+                write_json(path, ledger)
+            return ledger
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 def record_wake_start(home, role: str, *, now: float) -> None:
     """Record that a wake for ``role`` has started, whatever triggered it.
 
     Path-triggered starts (the debounced units) never pass through ``resume_owed``, so without this
     record a resume could start a fourth unit inside the host's 300 s start limit (DM 300352).
     """
-    path = Path(home) / START_LEDGER
-    ledger = read_json(path) or {}
-    ledger[role] = now
-    write_json(path, ledger)
+    _ledger_update(home, lambda ledger: ledger.__setitem__(role, now))
+
+
+def debounced_start(home, role: str, window: float, *, clock=time.time, sleep=time.sleep) -> float:
+    """Wait out the coalescing window, then the start spacing, and record the start before it is made.
+
+    The path-triggered unit used to start the wake after the window alone, so it ignored starts that
+    resume_owed had already made (DM 300359: resume at 0, path at 1 -> start at 121, next path -> 241, four
+    requests in 241 s). Here the wait is against the same ledger resume_owed reads, and the start is
+    recorded so the next resume spaces against it. Returns the time recorded.
+    """
+    sleep(window)
+    while True:
+        now = clock()
+        last = _ledger_update(home).get(role)
+        remaining = START_SPACING_SECONDS - (now - float(last)) if last is not None else 0.0
+        if remaining <= 0:
+            break
+        sleep(remaining)
+    now = clock()
+    record_wake_start(home, role, now=now)
+    return now
 
 
 def resume_owed(home, roles, *, now: float) -> list[str]:
@@ -125,15 +164,14 @@ def resume_owed(home, roles, *, now: float) -> list[str]:
     # on each finish and the host start limit (3 per 300 s, protected) refuses the rest, leaving the
     # wake failed and the role owed again (2026-11-11 genome loop). A throttled role is retried by the
     # next arm after the spacing, so a start is delayed, never dropped while the role stays owed.
-    path = Path(home) / START_LEDGER
-    ledger = read_json(path) or {}
-    for role in started:
-        last = ledger.get(role)
-        if last is not None and now - float(last) < START_SPACING_SECONDS:
-            continue
-        systemd_starter(role)
-        ledger[role] = now
-    write_json(path, ledger)
+    def _space(ledger: dict) -> None:
+        for role in started:
+            last = ledger.get(role)
+            if last is not None and now - float(last) < START_SPACING_SECONDS:
+                continue
+            systemd_starter(role)
+            ledger[role] = now
+    _ledger_update(home, _space)
     return started
 
 
@@ -218,9 +256,11 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
     instead of exiting 0 with the owed wake dropped.
     """
     home = Path(home)
+    # Recorded before the held return: a start that only returns "held" still spends the host's
+    # start-limit budget, so resume_owed must see it (DM 300359).
+    record_wake_start(home, role, now=now)
     if (home / "hold").exists() or delivery_requests.admission_path(home).exists():
         return WakeResult("held", "hold or delivery admission present")
-    record_wake_start(home, role, now=now)
     store = DispatchStore(home / "dispatch")
     supervisor = Supervisor(store=store, registry=StaticRoleRegistry(roles),
                             worker=_Worker(home, engine, now, mail_reader, repo, timeout),

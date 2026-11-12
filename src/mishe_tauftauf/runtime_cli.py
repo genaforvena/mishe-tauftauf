@@ -168,6 +168,7 @@ def register(sub) -> None:
     hold = add("hold"); hold.add_argument("state", choices=("on", "off", "status"))
     hold.add_argument("--reason", default="held")
     add("arm"); add("due"); add("migrate")
+    p = add("wake-debounce"); p.add_argument("role"); p.add_argument("--window", type=float, required=True)
     p = add("failed"); p.add_argument("unit")
     for name in ("sync", "doctor"):
         p = add(name)
@@ -330,6 +331,9 @@ def run(args) -> int:
             path.unlink(missing_ok=True)
             wake.resume_owed(home, declared_roles(home), now=now)  # wakes that arrived while held would not otherwise return
         print("held" if path.exists() else "running")
+        return 0
+    if args.command == "wake-debounce":
+        wake.debounced_start(home, args.role, args.window)
         return 0
     if args.command == "arm":
         print(armmod.arm(home, scheduler=scheduler(home)))

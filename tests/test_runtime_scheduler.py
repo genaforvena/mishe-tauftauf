@@ -67,3 +67,45 @@ def test_resume_owed_respects_a_path_triggered_wake_start(tmp_path, monkeypatch)
     assert started == []
     wake.resume_owed(tmp_path, ["genome"], now=120.0 + wake.START_SPACING_SECONDS)
     assert started == ["genome"]
+
+
+def test_debounced_path_start_waits_for_the_shared_spacing_and_records_itself(tmp_path):
+    # DM 300359: resume at 0 starts genome; a path trigger at 1 with a 120 s window used to start the
+    # wake at 121, inside the 150 s spacing. The debounced start waits out the spacing against the
+    # ledger and records its own start, so a resume right after it is skipped.
+    wake.record_wake_start(tmp_path, "genome", now=0.0)
+    clock = {"t": 1.0}
+    slept = []
+
+    def sleep(seconds):
+        slept.append(seconds)
+        clock["t"] += seconds
+
+    recorded = wake.debounced_start(tmp_path, "genome", 120, clock=lambda: clock["t"], sleep=sleep)
+    assert slept == [120, 150.0 - (121.0 - 0.0)]  # window, then the rest of the 150 s spacing
+    assert recorded == 150.0
+    assert wake.read_json(tmp_path / wake.START_LEDGER)["genome"] == 150.0
+
+    started = []
+    import mishe_tauftauf.owed as owed
+    import pytest
+    mp = pytest.MonkeyPatch()
+    try:
+        mp.setattr(wake, "systemd_starter", started.append)
+        mp.setattr(owed, "check", lambda home, role, now: type("R", (), {"reasons": ["owed"]})())
+        wake.resume_owed(tmp_path, ["genome"], now=200.0)   # 50 s after the path start: skipped
+    finally:
+        mp.undo()
+    assert started == []
+
+
+def test_debounced_start_without_a_prior_start_only_waits_the_window(tmp_path):
+    slept = []
+    clock = {"t": 0.0}
+
+    def sleep(seconds):
+        slept.append(seconds)
+        clock["t"] += seconds
+
+    wake.debounced_start(tmp_path, "senses", 120, clock=lambda: clock["t"], sleep=sleep)
+    assert slept == [120]
