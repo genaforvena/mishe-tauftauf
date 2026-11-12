@@ -82,3 +82,17 @@ def test_transient_retry_is_bounded_by_deadline(tmp_path, monkeypatch):
     monkeypatch.setattr(fence.time, 'monotonic', lambda: next(clock, 200.0))
     with pytest.raises(ValueError, match='active cgroup evidence UNKNOWN'):
         fence.drain(tmp_path, tmp_path, 'pin', timeout=1, sleep=lambda s: None)
+
+
+def test_failing_rows_are_saved_before_fail_closed(tmp_path, monkeypatch):
+    """An unbounded consumer raises, but its row must reach the drain file (the 12 Nov failure saved zero samples)."""
+    transition(tmp_path)
+    bad = dict(SETTLED, Id='mishe-debounce.service', ActiveState='active', Type='simple',
+               ControlGroup='', ExecMainStartTimestampMonotonic='5', InvocationID='inv-1')
+    monkeypatch.setattr(fence, 'inventory', lambda home, previous=None: {'mishe-debounce.service': bad})
+    monkeypatch.setattr(fence, 'cgroup_pids', lambda group: [7])
+    with pytest.raises(ValueError, match='unbounded pinned consumer: mishe-debounce.service'):
+        fence.drain(tmp_path, tmp_path, 'pin', timeout=60, sleep=lambda s: None)
+    samples = json.loads(next(tmp_path.glob('consumer-drain-pin-*.json')).read_text())['samples']
+    assert samples[-1]['error'] == 'unbounded pinned consumer: mishe-debounce.service'
+    assert samples[-1]['invocations']['mishe-debounce.service']['Type'] == 'simple'

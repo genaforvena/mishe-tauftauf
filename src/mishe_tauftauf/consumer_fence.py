@@ -109,9 +109,11 @@ def drain(home, directory, label, timeout=150, sleep=time.sleep):
             except ValueError as exc:
                 # Transient mid-start evidence: retry until the same deadline, then fail closed with the last error.
                 if str(exc).split(':')[0] in TRANSIENT_UNKNOWN and time.monotonic() < until:
-                    samples.append(dict(at=time.time(), transient=str(exc)))
+                    samples.append(dict(at=time.time(), transient=str(exc), invocations=rows))
                     sleep(RETRY_INTERVAL_S)
                     continue
+                # Fail closed, but keep the rows that failed: the drain file is written in `finally`.
+                samples.append(dict(at=time.time(), error=str(exc), invocations=rows))
                 raise
             samples.append(dict(at=time.time(), pending=pending, invocations=rows))
             # The caller drains from inside its own invocation; that invocation cannot exit until drain returns.
