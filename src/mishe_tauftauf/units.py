@@ -21,6 +21,10 @@ from . import signal_store
 MARKER = "# mishe-generated: observation runtime (edit nothing here; run `mishe sync`)"
 WAKE_TIMEOUT = 1800
 SLACK = 300
+# Roles whose path triggers are coalesced: a burst of signal writes waits this many seconds, then starts
+# the wake once. Keep the window such that window + wake runtime leaves at most StartLimitBurst-1 starts
+# per StartLimitIntervalUSec (the host drop-in allows 3 per 5 min). Senses is the measured offender.
+WAKE_DEBOUNCE_SECONDS = {"senses": 120}
 # The wake unit's own memory throttle. The generated unit declares it, and a wake that runs in the
 # unit restores it at runtime when a protected host drop-in shadows it with a lower value (see
 # ``ensure_wake_memory_high``): a wake pinned at its throttle makes no progress and runs out its
@@ -135,9 +139,20 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         watched += [f"PathChanged={cfg.home}/signals/{name}.json"
                     for name, entry in sorted(registry.items())
                     if role in entry.get("subscribers", []) and not _is_wake_failure_signal(name, p)]
+        target = f"{p}-wake@{role}.service"
+        if role in WAKE_DEBOUNCE_SECONDS:
+            # A path change starts this oneshot, which sleeps out the burst and then starts the wake once.
+            # A change while it sleeps is a no-op (the unit is already active), so one burst of signal writes
+            # becomes one wake start. Uncoalesced, senses restarted every ~100 s and hit StartLimitBurst=3
+            # per 5 min (2026-11-12: 29 starts in 6 h, start-limit-hit at 07:51:58, 07:52:46, 07:57:51).
+            target = f"{p}-wake-debounce-{role}.service"
+            files[target] = _file(
+                f"[Unit]\nDescription=Coalesce wake triggers for {role}",
+                "[Service]\nType=oneshot\n" + f"ExecStart=/bin/sleep {WAKE_DEBOUNCE_SECONDS[role]}\n"
+                + f"ExecStopPost=/usr/bin/systemctl --user --no-block start {p}-wake@{role}.service\n")
         files[f"{p}-wake-{role}.path"] = _file(
             f"[Unit]\nDescription=Mishe wake triggers for {role}",
-            "[Path]\n" + "\n".join(watched) + f"\nUnit={p}-wake@{role}.service",
+            "[Path]\n" + "\n".join(watched) + f"\nUnit={target}",
             "[Install]\nWantedBy=paths.target")
     files[f"{p}-failed@.service"] = _file(
         "[Unit]\nDescription=Mishe failure report for %i",

@@ -410,3 +410,15 @@ def test_wake_failure_filter_follows_configured_prefix(cfg):
     health = files["scratch-wake-health.path"]
     assert "failed-scratch-wake-genome-service" not in health
     assert "failed-mishe-wake-genome-service" in health  # another prefix's signal is an ordinary subscription
+
+
+def test_senses_path_triggers_go_through_a_debounce_that_starts_the_wake_once(cfg):
+    files = units.render(cfg, ["senses", "genome"])
+    debounce = files["mishe-wake-debounce-senses.service"]
+    assert "ExecStart=/bin/sleep 120" in debounce
+    assert "ExecStopPost=/usr/bin/systemctl --user --no-block start mishe-wake@senses.service" in debounce
+    assert "Unit=mishe-wake-debounce-senses.service" in files["mishe-wake-senses.path"]
+    assert "Unit=mishe-wake@senses.service" not in files["mishe-wake-senses.path"]
+    # Other roles keep their direct path-to-wake trigger and get no debounce unit.
+    assert "Unit=mishe-wake@genome.service" in files["mishe-wake-genome.path"]
+    assert "mishe-wake-debounce-genome.service" not in files
