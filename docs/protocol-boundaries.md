@@ -49,7 +49,9 @@ nothing else:
 - A message's first line. `dm_recipient` reads the canonical `[dm] to=ROLE` line:
   the slug must be valid and the recipient must not be the sender. It also reads the
   natural prose form, as in `health to genome: ...`, which addresses a recipient only
-  when the named role is one of the declared roles and is not the sender.
+  when the named role is one of the roles the caller passes and is not the sender.
+  `mishe append` passes the declared roles; `addressed` passes only the role whose
+  inbox is being tested.
   `near_miss_dm` catches a `[dm] to=ROLE` line with words after the role. In
   `mishe append`, when `dm_recipient` gives no recipient, the entry is recorded as
   plain chat and wakes nobody. A warning is printed only when `near_miss_dm` finds a
