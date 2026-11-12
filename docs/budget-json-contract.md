@@ -159,8 +159,8 @@ only that file and computes nothing itself.
   ledger and a failed writer can both show an old `newest_event_at`; a consumer must not read
   an old value as either fresh or failed without also checking `produced_at` and the `unknowns`.
 - **Ledger counts** include every `outcome` event (`yielded`, `timeout`, `lost`, any
-  other) and every `select` with no later `outcome` for that role is `pending` (UNKNOWN,
-  never 0). A wake that times out or dies is counted, because that is where burn is
+  other) and every `select` with no later `outcome` or `fallback` for the same wake, role and
+  candidate key is `pending` (UNKNOWN, never 0). A wake that times out or dies is counted, because that is where burn is
   highest.
 - **`per_mind`** is actual spend per role per model from the ledger, not a historic share
   estimate. It replaces `budget_view.window_models`' "historic 6h share" column.
