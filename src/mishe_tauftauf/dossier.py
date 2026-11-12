@@ -46,6 +46,28 @@ def work_context(rows):
     return "\n".join(lines)
 
 
+DETAIL_SHOWN_CHARS = 1200
+
+
+def _detail_lines(home, name: str, sig) -> list[str]:
+    """Raw failing-check output for a signal that is not GREEN (state not OK, or a non-GREEN value).
+
+    The producer writes signals/<name>.detail on every non-GREEN run; the bounded tail is shown verbatim so a
+    woken mind reads the check's own words rather than only the one-line reason.
+    """
+    if sig.state == signal_store.OK and sig.value == "GREEN":
+        return []
+    try:
+        text = (Path(home) / "signals" / f"{name}.detail").read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return []
+    if not text:
+        return []
+    if len(text) > DETAIL_SHOWN_CHARS:
+        text = "...(truncated)\n" + text[-DETAIL_SHOWN_CHARS:]
+    return ["  raw output:", *[f"    {line}" for line in text.splitlines()]]
+
+
 def _read(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
@@ -107,6 +129,7 @@ def build(home, role: str, snap, *, key: str, now: float, mail: list, reconcile_
     for name in snap.signal_revs:
         sig = signal_store.read(home, name, now=now)
         out.append(f"- {name}: {sig.state} {sig.value!r} {sig.reason}")
+        out.extend(_detail_lines(home, name, sig))
     if not snap.signal_revs:
         out.append("(none)")
     out += ["", "## Due intentions", ""]

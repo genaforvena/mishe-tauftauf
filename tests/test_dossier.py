@@ -152,3 +152,31 @@ def test_salvage_survives_a_deeply_nested_stream_event(tmp_path):
                                  "content": [{"type": "text", "text": "the last words"}]}}) + "\n")
     text = salvage_text(stream)
     assert "the last words" in text
+
+
+def test_red_signal_carries_its_raw_failing_output_and_green_does_not(tmp_path):
+    from mishe_tauftauf import owed, signal_store
+    signal_store.register(tmp_path, "window", max_age=900, subscribers=["genome"])
+    signal_store.observe(tmp_path, "window", "RED", now=10, source="fixture")
+    (tmp_path / "signals").mkdir(exist_ok=True)
+    (tmp_path / "signals/window.detail").write_text("network-care: pid 2936 reused\nexit 2\n")
+    signal_store.register(tmp_path, "quiet", max_age=900, subscribers=["genome"])
+    signal_store.observe(tmp_path, "quiet", "GREEN", now=10, source="fixture")
+    (tmp_path / "signals/quiet.detail").write_text("should not appear\n")
+    snap = owed.Snapshot(signal_revs={"window": 1, "quiet": 1})
+    out = dossier.build(tmp_path, "genome", snap, key="k", now=20, mail=[])
+    assert "- window: OK 'RED'" in out
+    assert "raw output:" in out
+    assert "    network-care: pid 2936 reused" in out
+    assert "should not appear" not in out
+
+
+def test_detail_is_bounded_to_its_tail(tmp_path):
+    from mishe_tauftauf import owed, signal_store
+    signal_store.register(tmp_path, "noisy", max_age=900, subscribers=["genome"])
+    signal_store.observe(tmp_path, "noisy", "RED", now=10, source="fixture")
+    (tmp_path / "signals").mkdir(exist_ok=True)
+    (tmp_path / "signals/noisy.detail").write_text("HEAD" + "x" * 5000 + "TAIL-LINE\n")
+    snap = owed.Snapshot(signal_revs={"noisy": 1})
+    out = dossier.build(tmp_path, "genome", snap, key="k", now=20, mail=[])
+    assert "TAIL-LINE" in out and "HEAD" not in out and "(truncated)" in out
