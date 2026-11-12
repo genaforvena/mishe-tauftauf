@@ -87,3 +87,20 @@ def test_field_review_is_a_default_subscriber_of_the_pin_signal(tmp_path):
     assert "field-review" in signal_store.registry(home)["moving-pin-delivery"]["subscribers"]
     assert "genome" in signal_store.registry(home)["moving-pin-delivery"]["subscribers"]
     assert "field-review" not in signal_store.registry(home).get("ci", {}).get("subscribers", [])
+
+
+def test_unrelated_yield_keeps_a_pending_recheck_while_the_lane_is_open(tmp_path, monkeypatch):
+    home = tmp_path / "site"; home.mkdir()
+    monkeypatch.setattr(yielding, "open_lane", lambda home, role: True)
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["genome"], now=10)
+    _settle(home, "genome", "wake-g-3", 1000, again=6 * 3600,
+            when={"signal": "moving-pin-delivery", "equals": "VERIFIED"})
+    # An inbox wake yields with no --again: the pending 2h recheck must survive it.
+    _settle(home, "genome", "wake-g-4", 2000)
+    due = {e["id"]: e["due"] for e in intentions.list_(home, "genome") if "due" in e}
+    assert due["again-recheck"] == 1000 + yielding.CLAMP_SECONDS
+    assert due["again"] == 1000 + 6 * 3600
+    # Once the lane closes, the same kind of yield retires the recheck.
+    monkeypatch.setattr(yielding, "open_lane", lambda home, role: False)
+    _settle(home, "genome", "wake-g-5", 3000)
+    assert "again-recheck" not in {e["id"] for e in intentions.list_(home, "genome")}

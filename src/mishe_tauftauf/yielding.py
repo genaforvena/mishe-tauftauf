@@ -133,7 +133,9 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
         intentions.add(home, role, "again", note="scheduled return", due=now + requested_again, pair=pair)
     if again is not None and requested_again is not None and again < requested_again:
         intentions.add(home, role, "again-recheck", note="open lane: recheck at the clamp; the scheduled return still stands", due=now + again)
-    else:
+    elif requested_again is not None or not lane_open:
+        # A new unclamped --again or a closed lane retires the recheck. A yield with no --again while the lane
+        # stays open leaves a pending recheck in place: unrelated yields must not drop it (DM 300162).
         intentions.remove(home, role, "again-recheck")
     dead_wait = ""
     if when is not None and when["signal"] not in signal_store.registry(home):
