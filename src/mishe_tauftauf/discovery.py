@@ -760,56 +760,6 @@ def _journal_unit_failure_window(home: Path, past_minutes: int = 10) -> dict:
             "unit_context": restart_context, "coverage": coverage}
 
 
-WEDGE_CHAIN_THRESHOLD = 3
-"""Open continue chain length at or above which a mind is suspect."""
-
-WEDGE_SPAN_THRESHOLD_MINUTES = 15.0
-"""Minutes an open continue chain must span before a mind is suspect."""
-
-WEDGE_ERROR_STALE_MINUTES = 5.0
-"""Minutes since the last provider error before a chainless pane is suspect.
-
-Rule R2 fires when a pane has provider errors but no continue chain: the turn
-fails instantly (e.g. a 403 FreeTierError), so omp never schedules a retry and
-rule R (chain >= 3, span >= 15 min) cannot fire. Five minutes is long enough
-that a healthy retry would have produced either a success or a continue chain.
-"""
-
-
-def _omp_log_path(pid: int) -> Path | None:
-    """The omp session log for one pane pid, or None when absent."""
-    logs_dir = Path.home() / ".omp" / "logs"
-    if not logs_dir.is_dir():
-        return None
-    matches = sorted(logs_dir.glob(f"omp.*.{pid}.log"),
-                     key=lambda p: p.stat().st_mtime)
-    return matches[-1] if matches else None
-
-
-def _provider_error_class(record: dict) -> str:
-    """The class of a provider error record: its HTTP status when named.
-
-    ``errorStatus`` is the direct field; the message carries ``[500]`` or a
-    leading status when the record omits it. Anything else (a closed socket, a
-    deadline without a status) reads ``unknown`` rather than being guessed.
-    """
-    status = record.get("errorStatus")
-    if isinstance(status, int):
-        return str(status)
-    if isinstance(status, str) and re.fullmatch(r"\d{3}", status):
-        return status
-    message = record.get("errorMessage")
-    if isinstance(message, str):
-        match = re.search(r"\[(\d{3})\]|(?:\A|\s)(\d{3})\b", message)
-        if match:
-            return match.group(1) or match.group(2)
-    return "unknown"
-
-
-
-
-
-
 WATCH_WAIT_BOUND_SECONDS = 600
 """An external-state wait inside an open wake older than this is a watch-wait.
 
