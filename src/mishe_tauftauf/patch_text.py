@@ -124,3 +124,20 @@ def decode_b64_text(encoded):
 def decode_lossy(data):
     """Text of raw bytes, undecodable bytes replaced rather than refused."""
     return data.decode("utf-8", errors="replace")
+
+
+def source_parts(name: str) -> list[str]:
+    """Dotted-path segments of a patched ``src/`` file, or [] for other paths."""
+    if name[:4] != "src/":
+        return []
+    return name[4:-3].split("/")
+
+
+def split_lines(text: str) -> list[str]:
+    """The lines of a text body, without their line endings."""
+    return text.splitlines()
+
+
+def last_segment(dotted: str) -> str:
+    """The final dotted segment of a qualified name."""
+    return dotted.rsplit(".", 1)[-1]

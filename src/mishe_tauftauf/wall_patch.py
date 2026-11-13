@@ -19,7 +19,7 @@ import subprocess
 
 from .argv_text import decode_argv
 from .patch_text import (decode_b64_text, decode_lossy, import_candidates, in_package,
-                         is_python, module_file)
+                         is_python, last_segment, module_file, source_parts, split_lines)
 from .git_base_text import committed_snapshot
 from .observations import validate_slug
 from .post_check import _save, _worker
@@ -319,7 +319,7 @@ def _definitions(text):
 
 def _imported_names(name, text):
     """(package module, name) for each name a patched file imports from the package."""
-    owner = name[len("src/"):-len(".py")].split("/") if name.startswith("src/") else []
+    owner = source_parts(name)
     pairs = []
     for node in ast.walk(ast.parse(text)):
         if not isinstance(node, ast.ImportFrom):
@@ -348,7 +348,7 @@ def _changed_names(record):
             before = _definitions(decode_b64_text(values["before"]["bytes"])) if values["before"] else {}
         except SyntaxError:
             continue  # named as unresolved by symbol_context
-        changed.update(qual.rsplit(".", 1)[-1] for qual, text in after.items() if before.get(qual) != text)
+        changed.update(last_segment(qual) for qual, text in after.items() if before.get(qual) != text)
     return changed
 
 
@@ -451,7 +451,7 @@ def symbol_context(home, record):
             refs = _symbol_references(text, symbol)
             if not refs:
                 continue
-            lines = text.splitlines()
+            lines = split_lines(text)
             sites += len(refs)
             for index in refs:
                 if len(windows) < CALLER_SITES:
