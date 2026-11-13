@@ -142,3 +142,14 @@ def test_hold_does_not_override_a_served_intention(tmp_path):
 def test_no_hold_still_red_when_green_budget_and_no_wake(tmp_path):
     home = _site(tmp_path, budget=_budget("OK", "GREEN"))
     assert check.evaluate(home, NOW)[0] == 2
+
+
+@pytest.mark.parametrize("payload", [["not", "an", "object"], "text", None])
+def test_non_object_budget_signal_is_unknown_not_a_crash(tmp_path, payload):
+    home = _site(tmp_path)
+    _write(home / "signals" / "budget-claude.json", payload)
+    seen_path = home / "signals" / "budget-claude.seen"
+    seen_path.touch()
+    os.utime(seen_path, (NOW - 10, NOW - 10))
+    code, lines = check.evaluate(home, NOW)
+    assert code == 3 and any("not a JSON object" in line for line in lines)

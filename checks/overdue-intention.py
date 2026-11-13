@@ -85,6 +85,8 @@ def _budget_state(home: Path, role: str, now: float):
         sig = _read_json(home / "signals" / f"{name}.json")
     except (OSError, ValueError) as exc:
         return "UNKNOWN", None, f"budget signal {name} unreadable: {str(exc)[:80]}"
+    if not isinstance(sig, dict):
+        return "UNKNOWN", None, f"budget signal {name} is not a JSON object"
     # Freshness is the .seen stamp (signal_store touches it on every observation). observed_at only moves on
     # a value edge, so a steady RED would read stale here while the producer keeps re-observing it.
     seen = _seen_time(home, name)
