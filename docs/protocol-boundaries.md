@@ -18,9 +18,12 @@ addressed message are written in. Both are named in the policy.
 nothing else:
 
 - `decode_lifecycle` reads the first line of an entry from the `seed` source only:
-  `seed wake`, `seed yield` or `seed clear`. Later lines are prose. A malformed
-  reserved control sentence from that source raises `ProtocolError` instead of
-  being read as ordinary chat.
+  `seed wake`, `seed yield` or `seed clear`. Later lines are prose, with one
+  exception: a `seed yield` body may carry a line that begins `Turn settled (STATE);`.
+  The first such line sets the yield's `result`, which `seed_board.py` and
+  `discovery.py` read as the wake's settlement. Other later lines stay prose. A
+  malformed reserved control sentence from that source raises `ProtocolError`
+  instead of being read as ordinary chat.
 - `decode_site_sync` reads the coordinator's `[site-sync]` marker from the `sync`
   source. Its JSON payload must have exactly `target` and `core_sha`: `target` is a
   non-empty string of at most 255 characters with no CR, LF or NUL, and `core_sha` is
@@ -80,6 +83,10 @@ nothing else:
   `strip_render_volatile` blanks the growing age and cache stamp in a body so a
   digest does not change with the clock. `strip_render_volatile` has no caller
   in the tree: no code path in `src/`, `tools/` or `checks/` calls it.
+
+`checked_reviewer_model` is the one function here that reads configuration rather
+than wall text. It accepts a reviewer model id only when the id starts with
+`claude-haiku-`, and `wall_review.py` calls it on the configured id.
 
 Everything the adapters do not name stays opaque.
 
