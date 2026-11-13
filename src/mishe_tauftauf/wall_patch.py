@@ -291,7 +291,7 @@ def prepare(home, identity, paths, base=None):
 # imports from the package is sent as its definition, and each changed
 # definition is sent as bounded windows around its call sites.
 CONTEXT_EXCERPT_BYTES = 12_000
-CONTEXT_TOTAL_BYTES = 160_000
+CONTEXT_TOTAL_BYTES = 256_000
 CALLER_SITES = 12
 CALLER_RADIUS = 2
 RESOLVE_HOPS = 2
@@ -428,7 +428,8 @@ def symbol_context(home, record):
     src = root / "src"
     patched = set(record["files"])
     unresolved, truncated, omitted = [], [], []
-    ordered = []  # (label, path, text) before the total cap is applied
+    ordered = []  # imported definitions, (label, path, text), before the total cap
+    callers = []  # changed-definition call sites: the reviewer's cheapest must-have, budgeted first
 
     for name, values in record["files"].items():
         if not is_python(name) or not values["after"]:
@@ -471,17 +472,17 @@ def symbol_context(home, record):
                     low, high = max(0, index - CALLER_RADIUS), index + CALLER_RADIUS + 1
                     windows.append(f"{rel}:{index + 1}\n" + "\n".join(lines[low:high]))
         if windows:
-            ordered.append((f"callers:{symbol}", "shared checkout", "\n---\n".join(windows)))
+            callers.append((f"callers:{symbol}", "shared checkout", "\n---\n".join(windows)))
             if sites > CALLER_SITES:
                 truncated.append(f"callers:{symbol}")
         elif symbol in removed:
             # A removed name with no surviving reference is evidence, not silence:
             # say the search ran so the reviewer does not assume unseen callers.
-            ordered.append((f"callers:{symbol}", "shared checkout",
+            callers.append((f"callers:{symbol}", "shared checkout",
                             "no imported reference found in src/, checks/, tests/ or tools/"))
 
     modules, total, seen = {}, 0, set()
-    for label, path, text in ordered:
+    for label, path, text in callers + ordered:
         # A name imported by several patched files is one excerpt: charge the
         # budget once, or duplicates crowd out distinct context.
         if label in seen:

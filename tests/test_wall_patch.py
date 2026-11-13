@@ -1026,6 +1026,26 @@ def test_removed_symbol_callers_reach_the_reviewer(tmp_path):
     assert context["unresolved"] == []
 
 
+def test_changed_definition_callers_are_budgeted_before_imports(tmp_path, monkeypatch):
+    # Imported definitions must not starve the call sites of changed definitions:
+    # the caller excerpt survives, and the imported one is what gets omitted.
+    import base64
+    home, source, deployed = layout(tmp_path)
+    (tmp_path / "src/mishe_tauftauf/big.py").write_text("def big():\n    return '" + "a" * 150 + "'\n")
+    (tmp_path / "src/mishe_tauftauf/other.py").write_text("from mishe_tauftauf.example import nonblank\nprint(nonblank('x'))\n")
+    old = "def nonblank(text):\n    return text\n"
+    new = "def nonblank(text):\n    return text.strip()\n"
+    source.write_text(new + "from mishe_tauftauf.big import big\nvalue = big()\n")
+    record = {"runtime": str(tmp_path / "runtime"),
+              "files": {"src/mishe_tauftauf/example.py": {
+                  "before": {"bytes": base64.b64encode(old.encode()).decode(), "mode": 0o644},
+                  "after": {"bytes": base64.b64encode(source.read_bytes()).decode(), "mode": 0o644}}}}
+    monkeypatch.setattr(wall_patch, "CONTEXT_TOTAL_BYTES", 250)
+    context = wall_patch.symbol_context(home, record)
+    assert "callers:nonblank" in context["modules"]
+    assert "mishe_tauftauf.big:big" in context["omitted_over_limit"]
+
+
 def test_removed_symbol_without_callers_records_the_search(tmp_path):
     # With no surviving reference, the reviewer must see that the search ran
     # (an explicit "none found" excerpt), and the context stays complete.
