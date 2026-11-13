@@ -7119,17 +7119,24 @@ def sample(home: Path) -> dict[str, object]:
     # One tape revision serves the readings that need the whole tape: the
     # recurrence reading needs it verified, the census needs the record
     # digests the entries name, and the disposition reading needs a window of
-    # it. The snapshot is taken here, once, before any of them runs.
+    # it. The three whole-tape readings run right after the one snapshot, and
+    # the snapshot is released before the rest of the scan: holding ~300k parsed
+    # entries for the whole scan pushed the readings child past its 1G limit.
+    # Results are appended at their original positions, so output order holds.
     snapshot = _scan_snapshot(home)
+    recurrence = _mind_artifact_recurrence(home, entries=snapshot)
+    evidence_binding = _ledger_evidence_binding(home, entries=snapshot)
+    disposition = _coord_dm_disposition_age(home, entries=snapshot)
+    del snapshot
     observed.append(_mind_treadmill(home))
     observed.append(_mind_docs_treadmill(home))
-    observed.append(_mind_artifact_recurrence(home, entries=snapshot))
+    observed.append(recurrence)
     observed.append(_mind_loop_stall(home))
     observed.append(_mind_watch_wait(home))
     observed.append(_seed_settle_result_mix(home))
     observed.append(_ledger_delivery_invariant(home))
     observed.append(_ledger_dv_binding(home))
-    observed.append(_ledger_evidence_binding(home, entries=snapshot))
+    observed.append(evidence_binding)
     observed.append(_head_rewinds(home))
     observed.append(_disk_trend(home))
     observed.append(_space_light_read(home))
@@ -7332,7 +7339,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_ghost_site_homes(home))
     # One tape parse serves both the disposition reading and the gate-latency
     # reading that ages its open set; reading the tape twice gave the same bytes.
-    disposition = _coord_dm_disposition_age(home, entries=snapshot)
+    # The disposition reading ran above, on the shared snapshot.
     observed.append(disposition)
     observed.append(_coord_authorship_fog(home))
     observed.append(_repo_landing_block(home))
