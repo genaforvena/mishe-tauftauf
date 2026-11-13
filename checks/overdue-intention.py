@@ -64,6 +64,14 @@ def _load_intentions(home: Path):
     return entries, problems
 
 
+def _seen_time(home: Path, name: str):
+    """mtime of signals/NAME.seen, the freshness stamp; None when it was never touched."""
+    try:
+        return (home / "signals" / f"{name}.seen").stat().st_mtime
+    except OSError:
+        return None
+
+
 def _budget_state(home: Path, role: str, now: float):
     """(state, value, reason) of the role's budget signal; state is OK, RED or UNKNOWN."""
     try:
@@ -77,8 +85,10 @@ def _budget_state(home: Path, role: str, now: float):
         sig = _read_json(home / "signals" / f"{name}.json")
     except (OSError, ValueError) as exc:
         return "UNKNOWN", None, f"budget signal {name} unreadable: {str(exc)[:80]}"
-    observed = sig.get("observed_at") if isinstance(sig, dict) else None
-    if not isinstance(observed, (int, float)) or now - observed > SIGNAL_FRESH_S:
+    # Freshness is the .seen stamp (signal_store touches it on every observation). observed_at only moves on
+    # a value edge, so a steady RED would read stale here while the producer keeps re-observing it.
+    seen = _seen_time(home, name)
+    if seen is None or now - seen > SIGNAL_FRESH_S:
         return "UNKNOWN", None, f"budget signal {name} stale or has no observation time"
     state = sig.get("state")
     if state == "OK" and sig.get("value") == "GREEN":

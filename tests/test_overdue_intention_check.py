@@ -1,6 +1,7 @@
 """Controlled-failure tests for checks/overdue-intention.py (stdlib only, run from the committed check file)."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -26,12 +27,20 @@ def _site(tmp_path, *, due=NOW - 3600, spontaneous=True, starts=None, budget=Non
         _write(home / "engines" / "docs.json", {"budget_signal": "budget-claude"})
     if budget is not None:
         _write(home / "signals" / "budget-claude.json", budget)
+        # the freshness stamp signal_store touches on every observation (mtime = last seen)
+        seen = budget.get("seen_at", budget["observed_at"])
+        seen_path = home / "signals" / "budget-claude.seen"
+        seen_path.touch()
+        os.utime(seen_path, (seen, seen))
     _write(home / "wake-start-ledger.json", starts if starts is not None else {})
     return home
 
 
-def _budget(state, value, observed=NOW - 10):
-    return {"state": state, "value": value, "observed_at": observed, "reason": ""}
+def _budget(state, value, observed=NOW - 10, seen_at=None):
+    data = {"state": state, "value": value, "observed_at": observed, "reason": ""}
+    if seen_at is not None:
+        data["seen_at"] = seen_at
+    return data
 
 
 def test_no_overdue_intention_is_clean(tmp_path):
@@ -54,6 +63,20 @@ def test_real_quota_hold_is_reported_as_held_not_red(tmp_path):
     home = _site(tmp_path, budget=_budget("RED", "RED"))
     code, lines = check.evaluate(home, NOW)
     assert code == 0 and any(line.startswith("HELD:") for line in lines)
+
+
+def test_steady_red_reobserved_recently_is_held_even_if_value_edge_is_old(tmp_path):
+    # 2026-11-13: budget-claude RED since 14:55 (observed_at = last edge), re-observed every tick (.seen fresh).
+    home = _site(tmp_path, budget=_budget("OK", "RED", observed=NOW - 5000, seen_at=NOW - 10))
+    code, lines = check.evaluate(home, NOW)
+    assert code == 0 and any(line.startswith("HELD:") for line in lines)
+
+
+def test_budget_without_freshness_stamp_is_unknown(tmp_path):
+    home = _site(tmp_path, budget=_budget("OK", "GREEN"))
+    (home / "signals" / "budget-claude.seen").unlink()
+    code, lines = check.evaluate(home, NOW)
+    assert code == 3 and any("stale or has no observation time" in line for line in lines)
 
 
 @pytest.mark.parametrize("budget", [_budget("UNKNOWN", None), _budget("OK", "GREEN", observed=NOW - 5000), None])
