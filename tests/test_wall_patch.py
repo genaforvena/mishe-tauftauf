@@ -970,3 +970,38 @@ def test_imported_context_caps_size_and_names_what_it_omits(tmp_path):
     assert context["truncated"] == ["mishe_tauftauf.big"]
     assert len(context["modules"]["mishe_tauftauf.big"]["text"]) == wall_patch.CONTEXT_MODULE_BYTES
     assert context["unresolved"] == []
+
+
+def test_omitted_context_marks_the_request_incomplete(tmp_path, monkeypatch):
+    # A module dropped over the total cap must reach the reviewer as missing
+    # evidence (context_complete False), never as a complete context.
+    home, source, deployed = layout(tmp_path)
+    (tmp_path / "src/mishe_tauftauf/helper.py").write_text("def nonblank(text):\n    return text.strip()\n")
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("from mishe_tauftauf.helper import nonblank\nvalue = nonblank(' x ')\n")
+    (home / "patch-review.json").write_text(json.dumps(
+        {"command": [sys.executable, "-c", "pass"], "timeout_seconds": 420}))
+    monkeypatch.setattr(wall_patch, "CONTEXT_TOTAL_BYTES", 10)
+    seen = {}
+
+    def spy(command, encoded, timeout):
+        request = json.loads(encoded.decode())
+        seen["complete"] = request["context"]["context_complete"]
+        seen["omitted"] = request["context"]["patch"]["context_modules"]["omitted_over_limit"]
+        return json.dumps({"version": 1, "input_hash": request["input_hash"],
+                           "results": [{"id": "PATCH", "verdict": "unknown", "reason": "missing", "evidence": []}]}).encode()
+
+    monkeypatch.setattr(wall_patch, "_worker", spy)
+    with pytest.raises(ValueError, match="refused"):
+        wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
+    assert seen["omitted"] == ["mishe_tauftauf.helper"]
+    assert seen["complete"] is False
+
+
+def test_packer_caps_cover_the_measured_closure_of_the_c41707ff_range():
+    # Measured with the caps lifted (.mishe-tauftauf/scratch/packer/uncapped.py):
+    # 17 in-package modules, 285,625 bytes total, wall 50,723 bytes. Shrinking a
+    # cap below this drops modules the moving-pin reviewer needs.
+    assert wall_patch.CONTEXT_MODULE_LIMIT >= 17
+    assert wall_patch.CONTEXT_TOTAL_BYTES >= 285_625
+    assert wall_patch.CONTEXT_MODULE_BYTES >= 50_723

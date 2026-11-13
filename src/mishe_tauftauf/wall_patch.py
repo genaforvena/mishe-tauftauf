@@ -282,9 +282,12 @@ def prepare(home, identity, paths, base=None):
         _save(path, record)
 
 
-CONTEXT_MODULE_LIMIT = 12
-CONTEXT_MODULE_BYTES = 40_000
-CONTEXT_TOTAL_BYTES = 150_000
+# Sized to the measured uncapped closure of the moving-pin-c41707ff range
+# (17 modules, 285,625 bytes; wall alone is 50,723). A reviewer that is shown
+# fewer modules answers unknown, so these caps must cover the real closure.
+CONTEXT_MODULE_LIMIT = 24
+CONTEXT_MODULE_BYTES = 60_000
+CONTEXT_TOTAL_BYTES = 300_000
 
 
 def imported_context(home, record):
@@ -334,9 +337,13 @@ def review(home, record):
     from .codex_review import validate_response
     config_path = home / "patch-review.json"
     config = json.loads((config_path if config_path.exists() else home / "publication-check.json").read_text())
+    context = imported_context(home, record)
     evidence = {"runtime": record["runtime"], "phase": record["phase"], "test": record["test"],
                 "test_output": Path(record["test"]["log"]).read_text(), "files": {},
-                "context_modules": imported_context(home, record)}
+                "context_modules": context}
+    # Omitted, truncated or unresolved modules mean the reviewer lacks evidence
+    # it needs; say so rather than claiming a complete context.
+    context_complete = not (context["omitted_over_limit"] or context["truncated"] or context["unresolved"])
     for name, values in record["files"].items():
         texts = {key: base64.b64decode(values[key]["bytes"]).decode("utf-8") if values[key] else ""
                  for key in ("before", "after", "runtime_before")}
@@ -367,7 +374,7 @@ def review(home, record):
     reference = "exact scoped patch bytes and test result"
     request = {"version": 1, "input_hash": hashlib.sha256(body.encode()).hexdigest(), "body": "Review the complete scoped patch and test evidence supplied in context.",
         "questions": [{"id": "PATCH", "question": "This is a pre-activation review of code, deterministic tests and the executable delivery/recovery plan. Live activation and recovery results are not yet expected: apply runs only after this review passes, and verify independently exercises revert/reapply before delivery_verified can become true. Assess whether the supplied plan can safely produce that evidence; do not treat this review as verified delivery. Do the supplied patch bytes and test result support this bounded change under its stated cooperating-writer scope? Check code correctness, visible failures and scoped runtime recovery. Activation commands are required to restart consumers without editing source or performing irreversible external actions; arbitrary shell side effects and hostile concurrent writers are outside this scope. Do not require task/receipt/branch machinery or whole-system transactions. Suspicious for a concrete code defect under these preconditions; unknown for missing essential evidence."}],
-        "context": {"context_complete": True, "evidence_references": [reference], "patch": evidence}}
+        "context": {"context_complete": context_complete, "evidence_references": [reference], "patch": evidence}}
     # The outer budget must exceed the reviewer's own model-call budget, or the
     # gate kills a reviewer that would have finished and reports a false refusal.
     outer = _worker_timeout(config)
