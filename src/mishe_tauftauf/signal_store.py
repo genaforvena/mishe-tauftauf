@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from .live_signal import OK, STALE, UNKNOWN, Signal
+from .space_text import nonblank
 from .state_files import read_json, write_json
 
 _NAME_OK = set("abcdefghijklmnopqrstuvwxyz0123456789-_")
@@ -202,13 +203,14 @@ def retire(home, name: str, *, now: float, reason: str) -> None:
     """Remove a closed experiment's signal: its registration and its files, with a RETIRED edge in
     the history (the reason is kept there). Refuses an empty reason. Subscribers must be checked by
     the caller: a retired name is no longer readable, and its unit's failure hook must not depend on it."""
-    if not reason or not reason.strip():
+    text = nonblank(reason)
+    if text is None:
         raise ValueError("retire needs a reason")
     _check_name(name)
     reg = registry(home)
     if name not in reg:
         raise ValueError(f"signal {name!r} is not registered")
-    _append_edge(home, {"name": name, "state": "RETIRED", "value": None, "reason": reason.strip(),
+    _append_edge(home, {"name": name, "state": "RETIRED", "value": None, "reason": text,
                         "event": None, "at": float(now), "source": "retire", "rev": rev(home, name) + 1})
     del reg[name]
     write_json(_dir(home) / "registry.json", reg)

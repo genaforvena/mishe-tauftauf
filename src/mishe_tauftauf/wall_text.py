@@ -24,6 +24,18 @@ import re
 from .slugs import validate_slug
 
 
+def checked_reviewer_model(model: object, source: str) -> str:
+    """The reviewer model id, trimmed, or ValueError unless it is a Haiku id.
+
+    Reading a configured model name is interpretation of external text, so the
+    check lives at this boundary; the reviewer acts on the checked id.
+    """
+    text = str(model).strip()
+    if not text.startswith("claude-haiku-"):
+        raise ValueError(f"reviewer model from {source} must be a claude-haiku-* id, got {text!r}")
+    return text
+
+
 def is_peer_copy(notes: str, peer_wall: bytes) -> bool:
     """Report whether ``notes`` are another role's wall document.
 

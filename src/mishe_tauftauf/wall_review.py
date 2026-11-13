@@ -16,21 +16,16 @@ import subprocess
 import shutil
 import tempfile
 
+from .wall_text import checked_reviewer_model
+
 DEFAULT_MODEL = "claude-haiku-5-5"
 DEFAULT_TIMEOUT = 240
 MAX_EMPTY_RETRIES = 3
 
 
-def _checked_model(model: object, source: str) -> str:
-    text = str(model).strip()
-    if not text.startswith("claude-haiku-"):
-        raise ValueError(f"reviewer model from {source} must be a claude-haiku-* id, got {text!r}")
-    return text
-
-
 def reviewer_model(home: Path | None = None) -> str:
     if os.environ.get("MISHE_WALL_REVIEW_MODEL"):
-        return _checked_model(os.environ["MISHE_WALL_REVIEW_MODEL"], "MISHE_WALL_REVIEW_MODEL")
+        return checked_reviewer_model(os.environ["MISHE_WALL_REVIEW_MODEL"], "MISHE_WALL_REVIEW_MODEL")
     if home is not None:
         for name in ("patch-review.json", "publication-check.json"):
             config = home / name
@@ -40,7 +35,7 @@ def reviewer_model(home: Path | None = None) -> str:
                 except (OSError, ValueError):
                     model = None
                 if model:
-                    return _checked_model(model, name)
+                    return checked_reviewer_model(model, name)
     return DEFAULT_MODEL
 
 
@@ -139,7 +134,7 @@ def reviewer_executable() -> str:
 
 def reviewer_command(model: str) -> list[str]:
     """Tool-free, single-turn claude call; the prompt arrives on stdin."""
-    return [reviewer_executable(), "-p", "--model", _checked_model(model, "reviewer_command"),
+    return [reviewer_executable(), "-p", "--model", checked_reviewer_model(model, "reviewer_command"),
             "--tools", "", "--max-turns", "1", "--output-format", "text",
             "--no-session-persistence", "--setting-sources", "project,local",
             "--settings", '{"disableAllHooks":true}']
