@@ -22,6 +22,9 @@ import pytest
 from mishe_tauftauf import discovery, feed as feedmod, store_census
 from tests.tape_binary import pin_tape_binary
 
+# Every test here reads the tape through the feed framer; pin it for the module.
+pytestmark = pytest.mark.usefixtures("pin_tape_binary")
+
 
 def _tape_entry(sequence: int, timestamp: str, source: str, body: str) -> bytes:
     header = f"v1 {sequence:020d} {timestamp} {source} ::\n"
