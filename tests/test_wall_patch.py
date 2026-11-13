@@ -1005,3 +1005,20 @@ def test_packer_caps_cover_the_measured_closure_of_the_c41707ff_range():
     assert wall_patch.CONTEXT_MODULE_LIMIT >= 17
     assert wall_patch.CONTEXT_TOTAL_BYTES >= 285_625
     assert wall_patch.CONTEXT_MODULE_BYTES >= 50_723
+
+
+def test_check_description_reaches_the_review(tmp_path, monkeypatch):
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    seen = {}
+
+    def fake_review(home_, record):
+        seen["rationale"] = record.get("description")
+        return {"clear": False, "reason": "stop"}
+
+    monkeypatch.setattr(wall_patch, "review", fake_review)
+    with pytest.raises(ValueError, match="review"):
+        wall_patch.check(home, "change", [sys.executable, "-c", "pass"], description="jitter the timers")
+    assert seen["rationale"] == "jitter the timers"
+    assert deployed.read_text() == "before\n"

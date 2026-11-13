@@ -383,11 +383,15 @@ def review(home, record):
     return {"clear": result["results"][0].get("verdict") == "clear", "request_hash": request["input_hash"], "response": result}
 
 
-def check(home, identity, command, *, activate=None, observe=None, revert_observe=None, revert=None):
+def check(home, identity, command, *, activate=None, observe=None, revert_observe=None, revert=None, description=None):
     from .delivery_requests import check_admission
     with lock(home):
         check_admission(home)
         record = status(home, identity)
+        # The reviewer judges intent from this field; without it an unknown
+        # verdict on the same bytes is the only possible answer.
+        if description is not None and description.strip():
+            record["description"] = description
         # A check produces no delivery verdict of its own: leave the field unset
         # so an aborted attempt is not read as a genuine non-delivery. _apply and
         # _revert write False only once bytes actually move.
@@ -604,6 +608,7 @@ def main():
     parser.add_argument("--observe", help="JSON argument list checking real live consumers")
     parser.add_argument("--revert-observe", help="JSON argument list checking the restored live consumer")
     parser.add_argument("--revert", help="JSON argument list restoring the old consumer pin")
+    parser.add_argument("--description", help="what changed and why, shown to the strong reviewer")
     args = parser.parse_args()
     if args.action == "prepare":
         prepare(args.home, args.id, args.files or [], base=args.base)
@@ -612,7 +617,7 @@ def main():
               activate=decode_argv(args.activate),
               observe=decode_argv(args.observe),
               revert_observe=decode_argv(args.revert_observe),
-              revert=decode_argv(args.revert))
+              revert=decode_argv(args.revert), description=args.description)
     elif args.action == "apply":
         apply(args.home, args.id, decode_argv(args.activate), decode_argv(args.observe))
     elif args.action == "revert":
