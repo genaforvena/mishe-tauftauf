@@ -7486,12 +7486,32 @@ SCAN_STACK_DUMP_S = 270
 """Seconds into a scan before its thread stacks are dumped; the readings producer cuts at 300 s."""
 
 
+def _scan_trace(path: Path, started: float, event: str) -> None:
+    """Append one timestamped stage line. Each line is opened and closed, so a SIGKILLed scan keeps every
+    stage it reached; the epoch column lines up with the producer's journal `start=` to split pre-scan from in-scan time."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{time.time():.3f} +{time.monotonic() - started:.3f}s {event}\n")
+    except OSError:
+        pass  # tracing is evidence, never a reason to fail the scan
+
+
 def scan(home: Path) -> Path:
     """Acquire and publish a receipt; notification failure never rolls it back."""
     previous = latest(home)
     scan_id = uuid4().hex
     attempt = {"scan_id": scan_id, "status": "running", "stage": "acquisition",
                "created": datetime.now(timezone.utc).isoformat()}
+    # Per-scan stage trace: kept when the parent kills the scan (the evidence of where the cut landed),
+    # removed on success. Written beside the stack dump, which is keyed the same way.
+    trace_started = time.monotonic()
+    trace_path = home / "signals" / f"readings-scan-trace-{scan_id}.txt"
+
+    def trace(event: str) -> None:
+        _scan_trace(trace_path, trace_started, event)
+
+    trace("enter")
     _write_attempt(home, attempt)
     # A scan that is still running shortly before the readings producer's 300 s deadline dumps every
     # Python thread's stack, so a blocked subprocess call is named by the timeout itself. The dump is
@@ -7504,7 +7524,9 @@ def scan(home: Path) -> Path:
         stack_file = stack_path.open("w", encoding="utf-8")
         faulthandler.dump_traceback_later(SCAN_STACK_DUMP_S, repeat=False, file=stack_file)
         start = endpoint()
+        trace("sample:start")
         snapshot = dict(sample(home))
+        trace("sample:done")
         # Windowed AoI beside age_bounds: prior acquisition starts (observation
         # instants) as the sawtooth, now = this receipt's created. Additive,
         # warmup -> None (unknown) same vocabulary as classify_age.
@@ -7519,6 +7541,7 @@ def scan(home: Path) -> Path:
         snapshot["scan_id"] = scan_id
         snapshot["producer"] = _producer()
         attempt["stage"] = "publication"
+        trace("publication")
         _write_attempt(home, attempt)
         root = home / "discovery"
         stamp = snapshot["created"].replace(":", "").replace("-", "")
@@ -7530,11 +7553,14 @@ def scan(home: Path) -> Path:
         temporary.write_text(payload, encoding="utf-8")
         os.replace(temporary, latest_path)
         attempt.update(stage="notification", artifact=artifact.name)
+        trace("notification")
         _write_attempt(home, attempt)
         _notify_scan(home, snapshot, previous, artifact)
         attempt["status"] = "succeeded"
         _write_attempt(home, attempt)
+        trace_path.unlink(missing_ok=True)
     except Exception as error:
+        trace(f"failed {type(error).__name__} at {attempt.get('stage')}")
         attempt.update(status="failed", error=f"{type(error).__name__}: {error}")
         try:
             _write_attempt(home, attempt)
