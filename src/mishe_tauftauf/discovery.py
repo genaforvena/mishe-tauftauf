@@ -25,6 +25,7 @@ import bisect
 import io
 import ast
 
+import faulthandler
 import hashlib
 import json
 import math
@@ -7474,6 +7475,10 @@ def producer_label(home: Path, producer: object) -> str:
     return f"{origin}@{sha[:12] or 'unknown'}"
 
 
+SCAN_STACK_DUMP_S = 270
+"""Seconds into a scan before its thread stacks are dumped; the readings producer cuts at 300 s."""
+
+
 def scan(home: Path) -> Path:
     """Acquire and publish a receipt; notification failure never rolls it back."""
     previous = latest(home)
@@ -7481,6 +7486,13 @@ def scan(home: Path) -> Path:
     attempt = {"scan_id": scan_id, "status": "running", "stage": "acquisition",
                "created": datetime.now(timezone.utc).isoformat()}
     _write_attempt(home, attempt)
+    # A scan that is still running shortly before the readings producer's 300 s deadline dumps every
+    # Python thread's stack, so a blocked subprocess call is named by the timeout itself. The dump is
+    # keyed by scan id and kept when the parent kills the scan; an empty one (normal completion) is removed.
+    stack_path = home / "signals" / f"readings-scan-stack-{scan_id}.txt"
+    stack_path.parent.mkdir(parents=True, exist_ok=True)
+    stack_file = stack_path.open("w", encoding="utf-8")
+    faulthandler.dump_traceback_later(SCAN_STACK_DUMP_S, repeat=False, file=stack_file)
     try:
         start = endpoint()
         snapshot = dict(sample(home))
@@ -7520,6 +7532,11 @@ def scan(home: Path) -> Path:
         except OSError as marker_error:
             raise marker_error from error
         raise
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+        stack_file.close()
+        if stack_path.stat().st_size == 0:
+            stack_path.unlink(missing_ok=True)
     return artifact
 
 
