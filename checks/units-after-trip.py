@@ -151,7 +151,13 @@ def main(argv=None) -> int:
         print(f"units-after-trip: cannot observe: {exc}")
         return 3
     # Saved even when some unit could not be read, so a start already made is never repeated.
-    save_state(state_path, new_state)
+    try:
+        save_state(state_path, new_state)
+    except OSError as exc:
+        # A start may already have happened; say so instead of crashing with a traceback.
+        print("\n".join(lines))
+        print(f"units-after-trip: cannot save state, a start may not be recorded: {exc}")
+        return 3
     print("\n".join(lines))
     return code
 

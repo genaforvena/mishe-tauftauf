@@ -140,3 +140,21 @@ def test_deliberately_stopped_unit_is_not_started():
     code, lines, state = mod.evaluate({}, now=5000.0, latch_present=False, run=host.run, runj=host.runj,
                                       act=True, grace=0)
     assert code == 0 and not any(call[:1] == ["start"] for call in host.calls)
+
+
+def test_failed_state_save_after_a_start_reports_unknown_and_does_not_crash(tmp_path, monkeypatch, capsys):
+    mod = _load()
+    host = _PostTripHost()
+    monkeypatch.setattr(mod, "run_systemctl", host.run)
+    monkeypatch.setattr(mod, "run_journal", host.runj)
+    monkeypatch.setattr(mod, "LATCH", tmp_path / "no-latch")
+
+    def _save_fails(path, state):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(mod, "save_state", _save_fails)
+    code = mod.main(["--home", str(tmp_path), "--act", "--grace", "0"])
+    out = capsys.readouterr().out
+    assert code == 3
+    assert "cannot save state" in out
+    assert sum(call[:1] == ["start"] for call in host.calls) == 1
