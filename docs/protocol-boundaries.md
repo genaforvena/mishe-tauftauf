@@ -50,8 +50,9 @@ nothing else:
   `conversable_role_is_valid`, `auto_reply_limit_is_valid`,
   `next_speaker_is_valid`, `is_termination_token`, `paradise_kappa` and the
   other `paradise_*` functions) have no caller outside `chat_protocol.py`, tests
-  included. They gate nothing and emit no bytes. They are not machine records a
-  feed entry carries.
+  included. `CHAT_VOCABULARY_POLICY`, the constant that says the vocabulary is
+  advisory, has no caller either. They gate nothing and emit no bytes. They are
+  not machine records a feed entry carries.
 
 `wall_text.py` reads three kinds of text:
 
@@ -160,7 +161,9 @@ live in the patch record, not in the request. Submission checks that the record 
 reviewed, has a clear review and a passing test, that its delivery plan has the
 `activate`, `observe` and `revert_observe` steps, and that every changed path is in
 the reviewed file list. An ordinary request instead carries its `check` and `observe`
-commands and a digest of their command artifacts.
+commands and a `command_artifacts` map — each command script's bytes and mode —
+which the request's own identity digest covers and which is compared byte-for-byte
+again when the request is executed.
 
 The source and command artifacts are validated when the request is submitted and
 again when it is executed (`validate_source` in `src/mishe_tauftauf/delivery_requests.py`).
