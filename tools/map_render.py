@@ -32,18 +32,22 @@ Rules:
 import argparse
 import contextlib
 import datetime
+import html
 import importlib.util
 import io
 import json
 import os
 import re
 import sys
+import textwrap
 
 SITE = ""          # site root, set by configure()
 HERE = ""          # output directory, set by configure()
 HH = ""            # household input directory, set by configure()
 LABELS = ""
 ACTIVITY = ""
+FLOORPLAN = ""     # SITE/senses/map/floorplan.json, set by configure()
+RSSI_HISTORY = ""  # SITE/senses/map/rssi-history.jsonl, set by configure()
 NOW = datetime.datetime.now(datetime.timezone.utc)
 ACTIVITY_FRESH_S = 30 * 60   # newest usable bucket older than this is historical
 FUTURE_SLACK_S = 60          # a bucket this far past NOW is future-dated, rejected
@@ -51,30 +55,26 @@ FUTURE_SLACK_S = 60          # a bucket this far past NOW is future-dated, rejec
 
 def configure(site, now=None):
     """Point the renderer at one site; the site is an argument, never the file location."""
-    global SITE, HERE, HH, LABELS, ACTIVITY, NOW
+    global SITE, HERE, HH, LABELS, ACTIVITY, FLOORPLAN, RSSI_HISTORY, NOW
     site = os.path.abspath(site)
     SITE = site
     HH = os.path.join(site, "spatial", "work", "household")
     LABELS = os.path.join(HH, "labels.tsv")
     ACTIVITY = os.path.join(HH, "activity.json")
     HERE = os.path.join(site, "senses", "map")
+    FLOORPLAN = os.path.join(HERE, "floorplan.json")
+    RSSI_HISTORY = os.path.join(HERE, "rssi-history.jsonl")
     NOW = now or datetime.datetime.now(datetime.timezone.utc)
 
-# schematic layout: (x, y, w, h) in map units; hallway in the middle
-ROOMS = {
-    "living_room": (0, 0, 6, 4),
-    "hallway":     (6, 0, 2, 4),
-    "bedroom":     (8, 0, 5, 4),
-    "balcony":     (0, 4, 4, 2),
-    "wardrobe":    (8, 4, 2, 2),
-    "kitchen_stall": (0, 0, 2, 2),   # inside the living room, left, outside camera view
-}
-# Camera sits in the hallway/wardrobe and looks west into the living room (Ilya, 2026-11-11):
-# it sees the near/ground part and the open balcony edge, not the left part or the kitchen stall.
-CAMERA_ORIGIN = (6, 2)
-CAMERA_CONE = [(6, 2), (2.2, 0.2), (2.2, 5.8)]      # seen region, schematic
+# Room vocabulary for label text. Geometry is NOT here: the drawing comes from
+# SITE/senses/map/floorplan.json (Ilya said 2 rooms; the others are not carried).
+ROOMS = ["living_room", "hallway", "bedroom", "balcony", "wardrobe", "kitchen_stall"]
 BLIND_CAP = 0.3                                      # a blind-spot room is never seen, only inferred
-BLIND_SPOT = (0, 0, 2.2, 4)                          # living room left part: cannot see
+# Living room left part, metres from the living room corner (Ilya, 11 Nov: camera cannot see
+# the left part or the kitchen stall). Inferred; drawn dashed red.
+BLIND_SPOT_M = (0.0, 0.0, 2.2, 5.0)
+PLAN_SCALE = 50    # pixels per metre
+PLAN_PAD = 20
 ROOM_LABEL = {
     "living_room": "living room",
     "hallway": "hallway",
@@ -362,64 +362,230 @@ def add_guesses(rows, activity):
                       "evidence": "%s; %s" % (why, cam)}
 
 
-def svg(rows, activity, rssi):
-    scale, pad = 50, 20
-    width = 13 * scale + 2 * pad
-    height = 6 * scale + 2 * pad + 120
-    out = ['<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" '
-           'font-family="monospace" font-size="12">' % (width, height)]
-    out.append('<rect width="100%" height="100%" fill="#1b1d24"/>')
-    for room, (x, y, w, h) in ROOMS.items():
-        act = activity.get(room, {})
+def load_floorplan():
+    """SITE floorplan.json as (doc, None), or (None, reason). A missing plan is UNKNOWN, never a guessed one."""
+    try:
+        with open(FLOORPLAN, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return None, "floorplan.json unreadable (%s)" % type(exc).__name__
+    if not isinstance(doc, dict) or not isinstance(doc.get("rooms"), list):
+        return None, "floorplan.json has no rooms list"
+    return doc, None
+
+
+def _field(d):
+    """(value, provenance) of one floorplan field; absent is (None, 'unknown')."""
+    if not isinstance(d, dict):
+        return None, "unknown"
+    return d.get("value"), d.get("provenance", "unknown")
+
+
+def plan_rooms(doc):
+    """Floorplan rooms in metres with per-field provenance. geo is False when any drawing number is missing."""
+    out = []
+    for r in doc.get("rooms", []):
+        if not isinstance(r, dict) or not r.get("id"):
+            continue
+        w, wp = _field(r.get("width_m"))
+        d, dp = _field(r.get("depth_m"))
+        a, ap = _field(r.get("area_m2"))
+        pos = r.get("position_m") if isinstance(r.get("position_m"), dict) else {}
+        x, y, pp = pos.get("x"), pos.get("y"), pos.get("provenance", "unknown")
+        out.append({"id": r["id"], "label": ROOM_LABEL.get(r["id"], r.get("label") or r["id"]),
+                    "x": x, "y": y, "w": w, "d": d, "area": a,
+                    "wp": wp, "dp": dp, "ap": ap, "pp": pp,
+                    "geo": all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (x, y, w, d))})
+    return out
+
+
+def _tag(prov):
+    return "assumed" if prov == "assumed" else str(prov)
+
+
+def _esc(text):
+    return html.escape(str(text), quote=True)
+
+
+def fingerprint_footer():
+    """RSSI footer facts: leave-one-out and the live vector, read from the fingerprint written this render."""
+    try:
+        doc = json.load(open(os.path.join(HERE, "rssi-fingerprint.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        return "Leave-one-out: UNKNOWN (rssi-fingerprint.json missing)"
+    loo = doc.get("loo") or {}
+    live = doc.get("live") or {}
+    age = live.get("rssi_age_s")
+    return ("Leave-one-out: %s/%s correct, majority baseline %s; one feature, not a room claim. "
+            "Live Redmi10 vector age %s s."
+            % (loo.get("correct"), loo.get("n"), loo.get("majority_baseline_accuracy"),
+               "%.0f" % age if isinstance(age, (int, float)) else "UNKNOWN"))
+
+
+def rssi_history_footer():
+    """Rows in rssi-history.jsonl and the age of the newest one; unreadable is UNKNOWN."""
+    try:
+        with open(RSSI_HISTORY, encoding="utf-8") as fh:
+            rows = [json.loads(line) for line in fh if line.strip()]
+    except (OSError, ValueError) as exc:
+        return "RSSI history: UNKNOWN (%s)" % type(exc).__name__
+    if not rows:
+        return "RSSI history: 0 rows"
+    at = parse_iso(rows[-1].get("at"))
+    age = "%.0f s" % (NOW - at).total_seconds() if at else "UNKNOWN"
+    return "RSSI history: %d rows, newest %s old" % (len(rows), age)
+
+
+def activity_footer(activity):
+    """Camera room activity as one footer line: current, historical (named as not current) or UNKNOWN."""
+    parts = []
+    for room in ("living_room", "bedroom"):
+        act = activity.get(room) or {}
         state = act.get("state", "UNKNOWN")
-        tint = "#2f3f3a" if state == "current" else "#2a3140"
-        out.append('<rect x="%d" y="%d" width="%d" height="%d" fill="%s" stroke="#7a8599" '
-                   'stroke-width="2"/>' % (pad + x * scale, pad + y * scale, w * scale, h * scale, tint))
-        out.append('<text x="%d" y="%d" fill="#c9d1e0">%s</text>' %
-                   (pad + x * scale + 6, pad + y * scale + 16, ROOM_LABEL[room]))
+        name = ROOM_LABEL[room]
         if state == "current":
-            note = "activity %.3f (%s)" % (act["activity"], act["last_usable_utc"])
+            parts.append("%s activity %.3f (%s)" % (name, act["activity"], act["last_usable_utc"]))
         elif state == "historical":
-            note = "historical %.3f (%s), not current" % (act["activity"], act["last_usable_utc"])
+            parts.append("%s historical %.3f (%s), not current" % (name, act["activity"], act["last_usable_utc"]))
         else:
-            note = "activity UNKNOWN"
-        out.append('<text x="%d" y="%d" fill="#7f8aa3" font-size="10">%s</text>' %
-                   (pad + x * scale + 6, pad + y * scale + h * scale - 8, note))
-    bx, by, bw, bh = BLIND_SPOT
-    out.append('<rect x="%d" y="%d" width="%d" height="%d" fill="#000" fill-opacity="0.45" '
-               'stroke="#c0504d" stroke-dasharray="4 3"/>' % (pad + bx * scale, pad + by * scale, bw * scale, bh * scale))
-    out.append('<text x="%d" y="%d" fill="#e08a87" font-size="10">BLIND SPOT: camera cannot see</text>' %
-               (pad + bx * scale + 4, pad + (by + bh) * scale - 26))
-    out.append('<polygon points="%s" fill="#f2c14e" fill-opacity="0.12" stroke="#f2c14e" stroke-opacity="0.5"/>' %
-               " ".join("%d,%d" % (pad + px * scale, pad + py * scale) for px, py in CAMERA_CONE))
-    out.append('<circle cx="%d" cy="%d" r="4" fill="#f2c14e"/>' % (pad + CAMERA_ORIGIN[0] * scale, pad + CAMERA_ORIGIN[1] * scale))
+            parts.append("%s activity UNKNOWN" % name)
+    return "Camera activity: " + "; ".join(parts)
+
+
+def svg(rows, activity, rssi, fp_doc, fp_error):
+    """Floorplan picture: rooms from floorplan.json, tokens with uncertainty halos, evidence footer."""
+    rooms = plan_rooms(fp_doc) if fp_doc else []
+    geo = {r["id"]: r for r in rooms if r["geo"]}
+    s, pad = PLAN_SCALE, PLAN_PAD
+    plan_w = max([r["x"] + r["w"] for r in geo.values()] or [6])
+    plan_h = max([r["y"] + r["d"] for r in geo.values()] or [5])
+    def X(m):
+        return pad + m * s
+    def Y(m):
+        return pad + m * s
+
     colours = {"ilya": "#f2c14e", "rozalia": "#e8788c", "bruno": "#7ec8e3"}
-    slot = {}
+    out = []
+    plan_bottom = Y(plan_h)
+    footer = []
+    # plan rooms, drawn from floorplan.json; assumed geometry is dashed and tagged
+    for r in geo.values():
+        dash = ' stroke-dasharray="8 5"' if "assumed" in (r["wp"], r["dp"], r["ap"], r["pp"]) else ""
+        out.append('<rect x="%g" y="%g" width="%g" height="%g" fill="#2a3140" stroke="#7a8599" '
+                   'stroke-width="2"%s/>' % (X(r["x"]), Y(r["y"]), r["w"] * s, r["d"] * s, dash))
+        out.append('<text x="%g" y="%g" fill="#c9d1e0">%s  %g m² [%s]</text>' %
+                   (X(r["x"]) + 6, Y(r["y"]) + 16, _esc(r["label"]), r["area"] if isinstance(r["area"], (int, float)) else 0,
+                    _esc(_tag(r["ap"]))))
+        dims_tag = "assumed" if "assumed" in (r["wp"], r["dp"]) else _tag(r["wp"])
+        out.append('<text x="%g" y="%g" fill="#7f8aa3" font-size="10">%.1f × %.1f m [%s]</text>' %
+                   (X(r["x"]) + 6, Y(r["y"]) + 32, r["w"], r["d"], _esc(dims_tag)))
+    if fp_doc is None:
+        out.append('<text x="%d" y="%d" fill="#e08a87">NO FLOORPLAN: %s</text>' % (X(0), Y(1), _esc(fp_error)))
+    elif not geo:
+        out.append('<text x="%d" y="%d" fill="#e08a87">floorplan has no drawable room geometry</text>' % (X(0), Y(1)))
+    # blind spot: inferred, living room left part, relative to the living room corner
+    lr = geo.get("living_room")
+    if lr:
+        bx, by, bw, bh = BLIND_SPOT_M
+        out.append('<rect x="%g" y="%g" width="%g" height="%g" fill="#000" fill-opacity="0.35" '
+                   'stroke="#c0504d" stroke-dasharray="4 3"/>' % (X(lr["x"] + bx), Y(lr["y"] + by), bw * s, bh * s))
+        out.append('<text x="%g" y="%g" fill="#e08a87" font-size="10">BLIND SPOT (inferred): camera cannot see</text>' %
+                   (X(lr["x"] + bx) + 4, Y(lr["y"] + bh) - 6))
+    # tokens: halo radius shows uncertainty; UNKNOWN is hollow
+    slot, unplaced = {}, []
     for person in PEOPLE:
         r = rows[person]
-        if r["room"] is None:
+        g = r["guess"]
+        conf = g["confidence"]
+        unknown = r["confidence"] == "UNKNOWN"
+        if g["room"] is None or not conf:
+            unplaced.append("%s: no position, %s" % (person, r["why"]))
             continue
-        x, y, w, h = ROOMS[r["room"]]
-        k = slot.get(r["room"], 0)
-        slot[r["room"]] = k + 1
-        cx = pad + x * scale + 30 + k * 60
-        cy = pad + y * scale + 50
+        room = geo.get(g["room"])
+        if room is None:
+            unplaced.append("%s: best guess %s is not in floorplan (unplaced)" % (person, ROOM_LABEL[g["room"]]))
+            continue
+        k = slot.get(room["id"], 0)
+        slot[room["id"]] = k + 1
+        cx = X(room["x"] + 1.2 + 1.4 * k)
+        cy = Y(room["y"] + 2.0)
+        halo = 12 + 45 * (1 - conf)
         colour = colours[person]
-        if r["confidence"] == "UNKNOWN":
-            colour = "#555b68"
-        out.append('<circle cx="%d" cy="%d" r="12" fill="%s" fill-opacity="0.85"/>' % (cx, cy, colour))
-        out.append('<text x="%d" y="%d" fill="#fff" font-size="10">%s %s</text>' %
-                   (cx - 14, cy + 26, person, r["confidence"]))
-    ly = pad + 6 * scale + 30
-    out.append('<text x="%d" y="%d" fill="#c9d1e0">Ilya / Rozalia / Bruno — best guess, room level. Schematic plan, not measured.</text>' % (pad, ly))
-    for i, person in enumerate(PEOPLE):
+        out.append('<circle cx="%g" cy="%g" r="%g" fill="%s" fill-opacity="0.12" stroke="%s" '
+                   'stroke-opacity="0.5" stroke-dasharray="2 3"/>' % (cx, cy, halo, colour, colour))
+        if unknown:
+            out.append('<circle cx="%g" cy="%g" r="10" fill="none" stroke="%s" stroke-width="2" '
+                       'stroke-dasharray="3 2"/>' % (cx, cy, colour))
+        else:
+            out.append('<circle cx="%g" cy="%g" r="10" fill="%s" fill-opacity="0.85"/>' % (cx, cy, colour))
+        # labels stack under the room name, so neighbouring halos cannot hide them
+        out.append('<text x="%g" y="%g" fill="%s" font-size="10">%s best guess %s %.2f%s</text>' %
+                   (X(room["x"]) + 6, Y(room["y"]) + 50 + 14 * k, colour, person, ROOM_LABEL[room["id"]],
+                    conf, " UNKNOWN" if unknown else ""))
+    # footer: what the picture says and what it does not
+    ly = plan_bottom + 30
+    lines = []
+    if fp_doc:
+        total = fp_doc.get("total_area_m2") if isinstance(fp_doc.get("total_area_m2"), dict) else {}
+        lines.append("Plan: schematic, from floorplan.json (written %s). Total %s m2 [%s]. "
+                     "Tagged assumed = placeholder, not measured."
+                     % (fp_doc.get("written_utc", "?"), total.get("value", "UNKNOWN"), _tag(total.get("provenance", "unknown"))))
+    else:
+        lines.append("Plan: UNKNOWN, %s; no rooms drawn." % fp_error)
+    for person in PEOPLE:
         r = rows[person]
         place = ROOM_LABEL[r["room"]] if r["room"] else "UNKNOWN"
-        line = "%s: %s, confidence %s (%s)" % (person, place, r["confidence"], r["why"])
-        out.append('<text x="%d" y="%d" fill="%s">%s</text>' % (pad, ly + 20 + i * 18, colours[person], line))
-    out.append('<text x="%d" y="%d" fill="%s">%s</text>' % (pad, ly + 20 + len(PEOPLE) * 18, colours["ilya"], rssi["text"]))
+        lines.append("%s: %s, marker confidence %s (%s)" % (person, place, r["confidence"], r["why"]))
+    lines.append(rssi["text"])
+    lines.append(activity_footer(activity))
+    lines.append(rssi_history_footer())
+    lines.append(fingerprint_footer())
+    lines.append("Camera coverage: not drawn; floorplan has no camera pose (cam_livingroom in living room, "
+                 "cam_bedroom in bedroom).")
+    lines.append("Blind spot: living room left 2.2 m, inferred (Ilya 11 Nov); kitchen stall room not stated in floorplan.")
+    lines.extend(unplaced)
+    wrapped = []
+    for line in lines:
+        parts = textwrap.wrap(line, 118) or [""]
+        wrapped.append(parts[0])
+        wrapped.extend("    " + part for part in parts[1:])
+    lines = wrapped
+    width = int(max(plan_w * s, 860) + 2 * pad)
+    height = int(ly + 4 + len(lines) * 18 + pad)
+    head = ['<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" font-family="monospace" font-size="12">'
+            % (width, height), '<rect width="100%" height="100%" fill="#1b1d24"/>']
+    out = head + out
+    out.append('<text x="%d" y="%g" fill="#c9d1e0">Ilya / Rozalia / Bruno: best guess, room level. Halo radius = uncertainty; hollow = UNKNOWN.</text>'
+               % (pad, ly - 16))
+    for i, line in enumerate(lines):
+        colour = colours.get(line.split(":", 1)[0], "#c9d1e0")
+        out.append('<text x="%d" y="%g" fill="%s">%s</text>' % (pad, ly + 4 + 18 * i, colour, _esc(line)))
     out.append("</svg>")
     return "\n".join(out) + "\n"
+
+
+def write_png(svg_path, png_path):
+    """PNG beside the SVG via cairosvg. A missing tool or a failed conversion is UNKNOWN, and any old PNG is removed."""
+    try:
+        import cairosvg
+    except ImportError:
+        cairosvg = None
+    if cairosvg is None:
+        _drop(png_path)
+        return {"state": "UNKNOWN", "reason": "cairosvg not importable from this python"}
+    try:
+        cairosvg.svg2png(url=svg_path, write_to=png_path)
+    except Exception as exc:  # any conversion failure is UNKNOWN, not a stale picture
+        _drop(png_path)
+        return {"state": "UNKNOWN", "reason": "cairosvg failed (%s)" % type(exc).__name__}
+    return {"state": "ok", "path": png_path}
+
+
+def _drop(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 def ascii_map(rows, rssi):
@@ -461,17 +627,24 @@ def main(argv=None):
     rooms_only = {k: v for k, v in activity.items() if not k.startswith("_")}
     add_guesses(rows, rooms_only)
     rssi = rssi_evidence()
+    fp_doc, fp_error = load_floorplan()
     os.makedirs(HERE, exist_ok=True)
-    with open(os.path.join(HERE, "apartment-map.svg"), "w", encoding="utf-8") as fh:
-        fh.write(svg(rows, rooms_only, rssi))
+    svg_path = os.path.join(HERE, "apartment-map.svg")
+    png_path = os.path.join(HERE, "apartment-map.png")
+    with open(svg_path, "w", encoding="utf-8") as fh:
+        fh.write(svg(rows, rooms_only, rssi, fp_doc, fp_error))
+    png = write_png(svg_path, png_path)
     with open(os.path.join(HERE, "apartment-map.txt"), "w", encoding="utf-8") as fh:
         fh.write(ascii_map(rows, rssi))
     state = {"generated_utc": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"), "markers": rows,
-             "room_activity": activity, "rssi": rssi}
+             "room_activity": activity, "rssi": rssi,
+             "floorplan": {"state": "ok" if fp_doc else "UNKNOWN", "reason": fp_error},
+             "png": png}
     with open(os.path.join(HERE, "map-state.json"), "w", encoding="utf-8") as fh:
         json.dump(state, fh, indent=1, ensure_ascii=False)
     print(json.dumps({p: {"room": rows[p]["room"], "confidence": rows[p]["confidence"]} for p in PEOPLE}))
-    print(os.path.join(HERE, "apartment-map.svg"))
+    print(svg_path)
+    print(png)
     return 0
 
 
