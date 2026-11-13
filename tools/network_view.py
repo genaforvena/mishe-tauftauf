@@ -467,10 +467,16 @@ if __name__ == "__main__":
         print(draw())
     else:
         report_window_state()
+        state_at = time.time()
         while True:
             STAMP = maybe_reexec(STAMP)
             if time.time() - VERSION_AT > 60:  # commits and edits show in the header within a minute
                 VERSION, VERSION_AT = code_version(), time.time()
+            # Re-record once a minute: a stray loop run (not --once) overwrites window.json with its own pid,
+            # and the window check would then call the live pane's copy stale until this copy writes again.
+            if time.time() - state_at > 60:
+                report_window_state()
+                state_at = time.time()
             sys.stdout.write("\x1b[H\x1b[2J" + draw() + "\n")
             sys.stdout.flush()
             time.sleep(10)
