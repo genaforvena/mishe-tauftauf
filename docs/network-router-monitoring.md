@@ -59,3 +59,8 @@ per device per day.
 The network window's ROUTER LOAD line shows 1-minute load and free RAM for each router read. Reads
 stay at one per 5 minutes. A read above load 1.0 or below 120 MB free is shown as over the
 self-limit; the probe itself does not yet skip the read when over the limit (next step).
+
+The window's HOST GUARD line says whether the host guard's trip marker
+(`/var/lib/mishe-containment/tripped`) is present. A trip makes the router units skip, so the router
+readings go STALE; the guard line names that cause. It is a read-only stat; an unreadable marker shows
+UNKNOWN, never a clear.

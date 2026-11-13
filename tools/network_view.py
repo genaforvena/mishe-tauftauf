@@ -285,6 +285,25 @@ def uplink_line(now=None):
             f"(since router boot; read {ago:.0f} s ago{stale})")
 
 
+GUARD_TRIP_MARKER = "/var/lib/mishe-containment/tripped"
+
+
+def guard_line(now=None, marker=GUARD_TRIP_MARKER):
+    """Whether the host guard's trip marker is present: the usual reason a router read goes STALE.
+
+    Read-only stat. Any error other than "absent" is UNKNOWN, never a calm clear.
+    """
+    now = time.time() if now is None else now
+    try:
+        mtime = os.stat(marker).st_mtime
+    except FileNotFoundError:
+        return "clear (no trip marker; the router and window units may run)"
+    except OSError as exc:
+        return f"UNKNOWN (trip marker could not be read: {exc.strerror or type(exc).__name__})"
+    return (f"TRIPPED {(now - mtime) / 60:.0f} min ago: the guard holds back the router units "
+            "and their readings go STALE until it is rearmed")
+
+
 LOAD_LIMIT_1M = nb.LOAD_LIMIT_1M
 MEM_FLOOR_MB = nb.MEM_FLOOR_MB
 
@@ -399,6 +418,7 @@ def draw():
     out.append("  UPLINK        " + uplink_line() + "   (read-only)")
     out.append("  UPLINK RATE   " + uplink_rate_line())
     out.append("  ROUTER LOAD   " + router_health_line() + "   (read-only, one read per 5 min)")
+    out.append("  HOST GUARD    " + guard_line() + "   (read-only, marker file only)")
     out.append("")
     out.append("  note: pings to public addresses are not used: the router answers them itself,")
     out.append("  so they look fast even when the internet is down. Internet checks are secure page loads.")
