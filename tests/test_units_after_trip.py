@@ -169,6 +169,22 @@ def test_deliberately_stopped_unit_is_not_started():
     assert code == 0 and not any(call[:1] == ["start"] for call in host.calls)
 
 
+def test_consent_gated_microphone_listener_is_never_revived_after_trip():
+    mod = _load()
+    assert "mishe-audio-listener.service" in mod.DELIBERATE
+
+    class _ListenerHost(_PostTripHost):
+        def run(self, args):
+            if args[:1] == ["list-unit-files"]:
+                return _Result("mishe-audio-listener.service enabled enabled\n")
+            return super().run(args)
+
+    host = _ListenerHost()
+    code, lines, state = mod.evaluate({}, now=5000.0, latch_present=False, run=host.run, runj=host.runj,
+                                      act=True, grace=0)
+    assert code == 0 and not any(call[:1] == ["start"] for call in host.calls)
+
+
 def test_failed_state_save_after_a_start_reports_unknown_and_does_not_crash(tmp_path, monkeypatch, capsys):
     mod = _load()
     host = _PostTripHost()

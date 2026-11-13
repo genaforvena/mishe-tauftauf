@@ -36,7 +36,9 @@ from pathlib import Path
 LATCH = Path("/var/lib/mishe-containment/tripped")
 SKIP_MARK = "unmet condition check"
 START_MARK = "Started "
-DELIBERATE = frozenset({"mishe-host-guard.service"})
+# mishe-audio-listener records a living-room microphone with no standing grant: it starts only on the operator's
+# recorded yes, so a dead-after-trip revival must never bring it back (2026-11-13: revived unasked at 10:33Z).
+DELIBERATE = frozenset({"mishe-host-guard.service", "mishe-audio-listener.service"})
 GRACE_SECONDS = 120
 STATE_NAME = "units-after-trip.json"
 
