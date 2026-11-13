@@ -292,7 +292,7 @@ def prepare(home, identity, paths, base=None):
 # definition is sent as bounded windows around its call sites.
 CONTEXT_EXCERPT_BYTES = 12_000
 CONTEXT_TOTAL_BYTES = 256_000
-CALLER_SITES = 12
+CALLER_SITES = 40  # `check` has 18 sites and `main` 23; at 12 both stayed truncated and context_complete never held
 CALLER_RADIUS = 2
 RESOLVE_HOPS = 2
 
