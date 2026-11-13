@@ -244,6 +244,33 @@ def test_unreadable_exit_time_keeps_the_signal_red(tmp_path):
     assert store.read(tmp_path, name, now=NOW + 60).value == "RED"
 
 
+def test_an_expired_failure_is_cleared_by_a_clean_exit_after_its_last_failure(tmp_path):
+    # 2026-11-13: work-watch failed (count 78, last_seen 2026-11-05), lapsed to UNKNOWN by expiry, and stayed UNKNOWN
+    # while its unit exited 0 every 2 minutes, because clear_recovered skipped every non-RED reading.
+    unit, name = "mishe-producer-work-watch.service", "failed-mishe-producer-work-watch-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    later = NOW + 8 * 86400
+    assert store.read(tmp_path, name, now=later).state == "UNKNOWN"
+    assert failure.clear_recovered(tmp_path, now=later + 60, last_exit=lambda u: (later + 50, True)) == [name]
+    assert store.read(tmp_path, name, now=later + 60).value == "GREEN"
+
+
+def test_an_expired_failure_stays_unknown_while_its_unit_still_fails(tmp_path):
+    unit, name = "mishe-producer-work-watch.service", "failed-mishe-producer-work-watch-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    later = NOW + 8 * 86400
+    assert failure.clear_recovered(tmp_path, now=later + 60, last_exit=lambda u: (later + 50, False)) == []
+    assert store.read(tmp_path, name, now=later + 60).state == "UNKNOWN"
+
+
+def test_an_expired_failure_is_not_cleared_by_a_clean_exit_before_its_last_failure(tmp_path):
+    unit, name = "mishe-producer-work-watch.service", "failed-mishe-producer-work-watch-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    later = NOW + 8 * 86400
+    assert failure.clear_recovered(tmp_path, now=later + 60, last_exit=lambda u: (NOW - 10, True)) == []
+    assert store.read(tmp_path, name, now=later + 60).state == "UNKNOWN"
+
+
 def test_an_incident_without_a_recorded_unit_is_left_red(tmp_path):
     # Incidents written before the unit was recorded cannot be matched to a systemd exit: never cleared by guess.
     unit, name = "mishe-wake@docs.service", "failed-mishe-wake-docs-service"

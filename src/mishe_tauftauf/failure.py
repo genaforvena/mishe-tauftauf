@@ -75,20 +75,27 @@ def clear_recovered(home, *, now, last_exit=None) -> list[str]:
         if not work_boundary.failure_signal(name):
             continue
         reading = signal_store.recorded(home, name)
-        if not reading or reading.get("state") != signal_store.OK:
+        if not reading:
             continue
-        if reading.get("value") == "GREEN":
+        state, value = reading.get("state"), reading.get("value")
+        if state == signal_store.OK and value == "GREEN":
             _retire_reoffers(home, name)     # already recovered: any re-offer is residue, not a standing fault
             continue
-        if reading.get("value") != "RED":
+        # A RED failure is a level the sweep clears. A failure that lapsed to UNKNOWN by expiry (nobody cleared it within
+        # SIGNAL_MAX_AGE) is still a standing record, and the clean-exit test below is the same evidence for it: 2026-11-13
+        # failed-mishe-producer-work-watch-service stayed UNKNOWN for a week while its unit exited 0 every 2 minutes.
+        expired = state == signal_store.UNKNOWN and value is None
+        if not (expired or (state == signal_store.OK and value == "RED")):
             continue
         incident = read_json(home / "work/incidents" / f"{name}.json")
         unit = incident.get("unit") if isinstance(incident, dict) else None
         if not isinstance(unit, str):
             continue
         exit_ = last_exit(unit)
-        observed = reading.get("observed_at")
-        if exit_ and exit_[1] and isinstance(observed, (int, float)) and exit_[0] > observed:
+        # A RED reading is cleared by an exit after the RED was observed; an expired one by an exit after the last failure
+        # the incident saw (its observed_at is the expiry write, which is later than the failure).
+        since = incident.get("last_seen") if expired else reading.get("observed_at")
+        if exit_ and exit_[1] and isinstance(since, (int, float)) and exit_[0] > since:
             signal_store.observe(home, name, "GREEN", now=now, source="failure-recovered")
             _retire_reoffers(home, name)
             cleared.append(name)
