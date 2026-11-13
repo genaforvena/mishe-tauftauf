@@ -100,27 +100,37 @@ def evaluate(state: dict, *, now: float, latch_present: bool, run, runj, act: bo
     """Return (exit_code, lines, new_state). Pure except for the injected run/runj calls."""
     if latch_present:
         return 0, ["latch present: units are held by design; no episodes"], {}
-    lines, dead_names, new_state = [], [], {}
+    lines, dead_names, new_state, errors = [], [], {}, []
     for name in enabled_units(run):
         if name in DELIBERATE:
             continue
-        props = unit_props(run, name)
-        if props.get("ActiveState") != "inactive" or props.get("Result") == "start-limit-hit" \
-                or props.get("Restart", "no") == "no":
-            continue
-        if not last_event_is_skip(runj, name):
-            continue
-        episode = state.get(name, {"dead_since": now, "started": False})
-        age = now - float(episode["dead_since"])
-        new_state[name] = episode
-        dead_names.append(name)
-        line = f"{name} dead {age / 60:.1f} min after trip"
-        if act and age >= grace and not episode.get("started"):
-            res = run(["start", name])
-            episode["started"] = True
-            episode["started_at"] = now
-            line += f"; started once (exit {res.returncode})"
-        lines.append(line)
+        # A failure on one unit must not lose the episodes already recorded for the others: a start that
+        # happened is written to new_state (and so to disk) before the loop moves on.
+        try:
+            props = unit_props(run, name)
+            if props.get("ActiveState") != "inactive" or props.get("Result") == "start-limit-hit" \
+                    or props.get("Restart", "no") == "no":
+                continue
+            if not last_event_is_skip(runj, name):
+                continue
+            episode = state.get(name, {"dead_since": now, "started": False})
+            age = now - float(episode["dead_since"])
+            new_state[name] = episode
+            dead_names.append(name)
+            line = f"{name} dead {age / 60:.1f} min after trip"
+            if act and age >= grace and not episode.get("started"):
+                # Mark the episode started before the call: a failing or raising start is still one start.
+                episode["started"] = True
+                episode["started_at"] = now
+                res = run(["start", name])
+                line += f"; started once (exit {res.returncode})"
+            lines.append(line)
+        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            errors.append(f"{name}: {exc}")
+            if name in state and name not in new_state:
+                new_state[name] = state[name]
+    if errors:
+        return 3, [f"cannot observe {len(errors)} unit(s): " + "; ".join(errors)] + lines, new_state
     if dead_names:
         head = f"dead after trip: {len(dead_names)}"
         return 2, [head] + lines, new_state
@@ -140,6 +150,7 @@ def main(argv=None) -> int:
     except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
         print(f"units-after-trip: cannot observe: {exc}")
         return 3
+    # Saved even when some unit could not be read, so a start already made is never repeated.
     save_state(state_path, new_state)
     print("\n".join(lines))
     return code

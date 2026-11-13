@@ -77,6 +77,58 @@ def test_latch_present_is_green_and_clears_episodes():
     assert not any(call[:1] == ["start"] for call in host.calls)
 
 
+def test_failure_after_a_start_does_not_repeat_the_start():
+    """A later unit that raises must not erase the started flag of an earlier unit (the defect of -2)."""
+    mod = _load()
+
+    class _TwoUnits(_PostTripHost):
+        def __init__(self):
+            super().__init__()
+            self.fail_second = True
+
+        def run(self, args):
+            if args[:1] == ["list-unit-files"]:
+                return _Result("mishe-drill-probe.service enabled enabled\n"
+                               "mishe-drill-second.service enabled enabled\n")
+            if args[:1] == ["show"] and args[1] == "mishe-drill-second.service":
+                if self.fail_second:
+                    raise RuntimeError("show mishe-drill-second.service failed: transient")
+                return _Result("ActiveState=inactive\nResult=success\nRestart=always\n")
+            return super().run(args)
+
+    host = _TwoUnits()
+    code, lines, state = mod.evaluate({}, now=1000.0, latch_present=False, run=host.run, runj=host.runj,
+                                      act=True, grace=0)
+    assert code == 3, "the unreadable second unit makes the run undecidable"
+    assert state["mishe-drill-probe.service"]["started"] is True, "the first unit's start is recorded"
+    assert sum(call[:1] == ["start"] for call in host.calls) == 1
+
+    host.fail_second = False
+    code, lines, state = mod.evaluate(state, now=1100.0, latch_present=False, run=host.run, runj=host.runj,
+                                      act=True, grace=0)
+    assert sum(call[:1] == ["start"] and call[1] == "mishe-drill-probe.service" for call in host.calls) == 1, \
+        "the next run must not start the same unit again"
+
+
+def test_raising_start_still_counts_as_the_one_start():
+    mod = _load()
+
+    class _StartRaises(_PostTripHost):
+        def run(self, args):
+            if args[:1] == ["start"]:
+                self.calls.append(list(args))
+                raise OSError("systemctl timed out")
+            return super().run(args)
+
+    host = _StartRaises()
+    code, lines, state = mod.evaluate({}, now=1000.0, latch_present=False, run=host.run, runj=host.runj,
+                                      act=True, grace=0)
+    assert code == 3 and state["mishe-drill-probe.service"]["started"] is True
+    code, lines, state = mod.evaluate(state, now=1200.0, latch_present=False, run=host.run, runj=host.runj,
+                                      act=True, grace=0)
+    assert sum(call[:1] == ["start"] for call in host.calls) == 1
+
+
 def test_deliberately_stopped_unit_is_not_started():
     mod = _load()
 
