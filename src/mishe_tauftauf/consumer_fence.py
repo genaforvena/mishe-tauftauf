@@ -14,6 +14,12 @@ import time
 PROPERTIES = 'Id,Type,ActiveState,SubState,MainPID,ControlGroup,InvocationID,ExecMainStartTimestampMonotonic,Environment,FragmentPath,ExecStart,KillMode'
 TRANSIENT_UNKNOWN = ('active cgroup evidence UNKNOWN', 'invocation evidence UNKNOWN', 'active unit properties UNKNOWN')
 RETRY_INTERVAL_S = 2
+# A pinned oneshot consumer started just before the cutoff may run to its own TimeoutStartSec, which is the
+# producer's engine --timeout + 30 (producers.load): readings 300 s -> 330 s. The drain window must cover that
+# plus a margin; 150 s cut a legitimately running 300 s consumer (2026-11-13 moving-pin ca3952a6 revert).
+CONSUMER_MAX_RUN_S = 330
+DRAIN_MARGIN_S = 90
+DRAIN_TIMEOUT_S = CONSUMER_MAX_RUN_S + DRAIN_MARGIN_S
 
 
 def command(argv, timeout=10):
@@ -92,7 +98,7 @@ def pending_old(record, rows):
     return pending
 
 
-def drain(home, directory, label, timeout=150, sleep=time.sleep):
+def drain(home, directory, label, timeout=DRAIN_TIMEOUT_S, sleep=time.sleep):
     pointer = json.loads((directory / ('consumer-transition-' + label + '-latest.json')).read_text())
     evidence = Path(pointer['path']).resolve()
     if not evidence.is_relative_to(directory.resolve()): raise ValueError('transition evidence escapes owned directory')

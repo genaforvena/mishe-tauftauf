@@ -121,3 +121,28 @@ def test_persistent_blank_properties_fail_closed_at_deadline(tmp_path, monkeypat
     monkeypatch.setattr(fence.time, 'monotonic', lambda: next(clock, 200.0))
     with pytest.raises(ValueError, match='active unit properties UNKNOWN: mishe-x.service'):
         fence.drain(tmp_path, tmp_path, 'pin', timeout=1, sleep=lambda s: None)
+
+
+def test_default_drain_window_covers_longest_pinned_producer_run():
+    """A 300 s engine-timeout producer (TimeoutStartSec 330 s) started before the cutoff must still drain."""
+    import inspect
+    assert fence.CONSUMER_MAX_RUN_S >= 300 + 30
+    assert inspect.signature(fence.drain).parameters['timeout'].default == fence.DRAIN_TIMEOUT_S
+    assert fence.DRAIN_TIMEOUT_S >= fence.CONSUMER_MAX_RUN_S + fence.DRAIN_MARGIN_S
+
+
+def test_old_invocation_running_300s_drains_under_default_window(tmp_path, monkeypatch):
+    transition(tmp_path)
+    clock = {'now': 0.0}
+    monkeypatch.setattr(fence.time, 'monotonic', lambda: clock['now'])
+    running = dict(STARTING, ActiveState='active', ControlGroup='/', ExecMainStartTimestampMonotonic='1',
+                   InvocationID='old-invocation', Type='oneshot', KillMode='control-group')
+    def fake_inventory(home, previous=None):
+        return {'mishe-x.service': running if clock['now'] < 300 else SETTLED}
+    monkeypatch.setattr(fence, 'inventory', fake_inventory)
+    monkeypatch.setattr(fence, 'cgroup_pids', lambda group: [4242] if clock['now'] < 300 else [])
+    def sleep(seconds):
+        clock['now'] += seconds
+    record = fence.drain(tmp_path, tmp_path, 'pin', sleep=sleep)
+    assert record['label'] == 'pin'
+    assert clock['now'] >= 300
