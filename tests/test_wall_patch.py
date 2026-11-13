@@ -1100,3 +1100,19 @@ def test_generic_name_callers_count_only_real_references(tmp_path):
     assert "src/mishe_tauftauf/user.py:1" in text
     assert "unrelated.py" not in text
     assert context["truncated"] == []
+
+
+def test_broken_dependency_module_is_named_unresolved_not_raised(tmp_path):
+    # A syntactically broken module in the import closure must not escape
+    # symbol_context as a traceback: the missing excerpt is named instead.
+    import base64
+    home, source, deployed = layout(tmp_path)
+    (tmp_path / "src/mishe_tauftauf/broken.py").write_text("def nonblank(text:\n    return\n")
+    source.write_text("from mishe_tauftauf.broken import nonblank\nvalue = nonblank(' x ')\n")
+    record = {"runtime": str(tmp_path / "runtime"),
+              "files": {"src/mishe_tauftauf/example.py": {
+                  "before": None,
+                  "after": {"bytes": base64.b64encode(source.read_bytes()).decode(), "mode": 0o644}}}}
+    context = wall_patch.symbol_context(home, record)
+    assert context["modules"] == {}
+    assert "mishe_tauftauf.broken:nonblank" in context["unresolved"]

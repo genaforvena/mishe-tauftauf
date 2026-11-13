@@ -363,12 +363,16 @@ def _resolve_export(root, src, module, alias, patched, depth=0):
         return None
     rel = path.relative_to(root).as_posix()
     text = decode_lossy(path.read_bytes())
-    defs = _definitions(text)
+    try:
+        defs = _definitions(text)
+        imports = _imported_names(rel, text)
+    except SyntaxError:
+        return None  # a broken dependency is named as unresolved, never raised
     if alias in defs:
         return rel, defs[alias]
     if depth >= RESOLVE_HOPS:
         return None
-    for next_module, next_alias in _imported_names(rel, text):
+    for next_module, next_alias in imports:
         if next_alias == alias and next_module != module:
             found = _resolve_export(root, src, next_module, next_alias, patched, depth + 1)
             if found is not None:
