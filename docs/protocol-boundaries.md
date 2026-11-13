@@ -22,8 +22,9 @@ nothing else:
   reserved control sentence from that source raises `ProtocolError` instead of
   being read as ordinary chat.
 - `decode_site_sync` reads the coordinator's `[site-sync]` marker from the `sync`
-  source. Its JSON payload must have exactly `target` and `core_sha`; a malformed
-  marker raises `ProtocolError`. `decode_kernel_sync_target` reads the target
+  source. Its JSON payload must have exactly `target` and `core_sha`: `target` is a
+  non-empty string of at most 255 characters with no CR, LF or NUL, and `core_sha` is
+  40 lowercase hex digits. A malformed marker or payload raises `ProtocolError`. `decode_kernel_sync_target` reads the target
   suffix of a kernel-sync task identity.
 - `decode_market` reads the reserved market records. The legacy single-line forms
   `announce:ID:requires=QUAL`, `bid:ID:qual=QUAL:available=N` and `award:ID:winner=ROLE:bids=N`
@@ -154,6 +155,8 @@ commands and a digest of their command artifacts.
 
 The source and command artifacts are validated when the request is submitted and
 again when it is executed (`validate_source` in `src/mishe_tauftauf/delivery_requests.py`).
+A request whose changed paths classify as high-impact without a reviewed strong patch
+is refused at that validation, so an ordinary request cannot carry a high-impact change.
 Human wall statements such as "permission required" are not parsed into a grant or a
 delivery decision.
 
