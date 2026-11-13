@@ -1,0 +1,90 @@
+"""Drill for checks/units-after-trip.py: the post-trip state goes RED, one bounded start, then GREEN.
+
+Simulated, not live: a fake systemctl/journalctl stands in for the host, so no real unit is stopped or started.
+"""
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+CHECK = Path(__file__).resolve().parent.parent / "checks" / "units-after-trip.py"
+
+
+def _load():
+    spec = importlib.util.spec_from_file_location("units_after_trip", CHECK)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _Result:
+    def __init__(self, stdout="", returncode=0):
+        self.stdout = stdout
+        self.stderr = ""
+        self.returncode = returncode
+
+
+class _PostTripHost:
+    """One harmless enabled unit dead after an unmet-condition skip, plus host-guard stopped by design."""
+
+    def __init__(self):
+        self.active = False
+        self.calls = []
+
+    def run(self, args):
+        self.calls.append(list(args))
+        if args[:1] == ["list-unit-files"]:
+            return _Result("mishe-drill-probe.service enabled enabled\nmishe-host-guard.service enabled enabled\n")
+        if args[:1] == ["show"] and args[1] == "mishe-drill-probe.service":
+            state = "active" if self.active else "inactive"
+            return _Result(f"ActiveState={state}\nResult=success\nRestart=always\n")
+        if args[:1] == ["show"]:
+            return _Result("ActiveState=inactive\nResult=success\nRestart=always\n")
+        if args[:1] == ["start"]:
+            self.active = True
+        return _Result()
+
+    def runj(self, args):
+        return _Result("Stopped drill\nunit skipped because of an unmet condition check (ConditionPathExists=!tripped)\n")
+
+
+def test_dead_after_trip_goes_red_then_one_start_then_green():
+    mod = _load()
+    host = _PostTripHost()
+    code, lines, state = mod.evaluate({}, now=1000.0, latch_present=False, run=host.run, runj=host.runj,
+                                      act=True, grace=120)
+    assert code == 2 and lines[0] == "dead after trip: 1"
+    assert not any(call[:1] == ["start"] for call in host.calls), "no start inside the grace period"
+
+    code, lines, state = mod.evaluate(state, now=1130.0, latch_present=False, run=host.run, runj=host.runj,
+                                      act=True, grace=120)
+    assert code == 2 and "started once (exit 0)" in lines[1]
+    assert sum(call[:1] == ["start"] for call in host.calls) == 1
+
+    host.active = True
+    code, lines, state = mod.evaluate(state, now=1200.0, latch_present=False, run=host.run, runj=host.runj,
+                                      act=True, grace=120)
+    assert code == 0 and state == {}
+
+
+def test_latch_present_is_green_and_clears_episodes():
+    mod = _load()
+    host = _PostTripHost()
+    code, lines, state = mod.evaluate({"mishe-drill-probe.service": {"dead_since": 1.0, "started": True}},
+                                      now=1300.0, latch_present=True, run=host.run, runj=host.runj,
+                                      act=True, grace=120)
+    assert code == 0 and state == {}
+    assert not any(call[:1] == ["start"] for call in host.calls)
+
+
+def test_deliberately_stopped_unit_is_not_started():
+    mod = _load()
+
+    class _Stopped(_PostTripHost):
+        def runj(self, args):
+            return _Result("Stopped mishe-host-guard by operator\n")
+
+    host = _Stopped()
+    code, lines, state = mod.evaluate({}, now=5000.0, latch_present=False, run=host.run, runj=host.runj,
+                                      act=True, grace=0)
+    assert code == 0 and not any(call[:1] == ["start"] for call in host.calls)
