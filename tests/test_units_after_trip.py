@@ -185,7 +185,7 @@ def test_consent_gated_microphone_listener_is_never_revived_after_trip():
     assert code == 0 and not any(call[:1] == ["start"] for call in host.calls)
 
 
-def test_failed_state_save_after_a_start_reports_unknown_and_does_not_crash(tmp_path, monkeypatch, capsys):
+def test_failed_state_save_before_a_start_reports_unknown_and_starts_nothing(tmp_path, monkeypatch, capsys):
     mod = _load()
     host = _PostTripHost()
     monkeypatch.setattr(mod, "run_systemctl", host.run)
@@ -200,7 +200,8 @@ def test_failed_state_save_after_a_start_reports_unknown_and_does_not_crash(tmp_
     out = capsys.readouterr().out
     assert code == 3
     assert "cannot save state" in out
-    assert sum(call[:1] == ["start"] for call in host.calls) == 1
+    # The started flag cannot be recorded, so no start happens (no start without a recorded flag).
+    assert sum(call[:1] == ["start"] for call in host.calls) == 0
 
 
 def test_unrelated_unmet_condition_is_not_a_trip_and_is_not_started():
@@ -213,3 +214,31 @@ def test_unrelated_unmet_condition_is_not_a_trip_and_is_not_started():
                                       act=True, grace=0)
     assert code == 0 and lines == ["dead after trip: 0"] and state == {}
     assert not any(call[:1] == ["start"] for call in host.calls)
+
+
+def test_started_flag_is_persisted_before_the_start_call():
+    mod = _load()
+    host = _PostTripHost()
+    order = []
+    def persist(st):
+        order.append(("persist", st["mishe-drill-probe.service"]["started"]))
+    def run(args):
+        if args[:1] == ["start"]:
+            order.append(("start",))
+        return host.run(args)
+    mod.evaluate({"mishe-drill-probe.service": {"dead_since": 1.0, "started": False}}, now=1300.0,
+                 latch_present=False, run=run, runj=host.runj, act=True, grace=120, persist=persist)
+    assert order == [("persist", True), ("start",)]
+
+
+def test_failed_persist_skips_the_start():
+    mod = _load()
+    host = _PostTripHost()
+    def persist(st):
+        raise OSError("disk full")
+    code, lines, state = mod.evaluate({"mishe-drill-probe.service": {"dead_since": 1.0, "started": False}},
+                                      now=1300.0, latch_present=False, run=host.run, runj=host.runj,
+                                      act=True, grace=120, persist=persist)
+    assert not any(call[:1] == ["start"] for call in host.calls)
+    assert state["mishe-drill-probe.service"]["started"] is False
+    assert "not started: state not saved" in lines[-1]

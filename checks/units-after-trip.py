@@ -104,16 +104,19 @@ def save_state(path: Path, state: dict) -> None:
     tmp.replace(path)
 
 
-def evaluate(state: dict, *, now: float, latch_present: bool, run, runj, act: bool, grace: float):
-    """Return (exit_code, lines, new_state). Pure except for the injected run/runj calls."""
+def evaluate(state: dict, *, now: float, latch_present: bool, run, runj, act: bool, grace: float, persist=None):
+    """Return (exit_code, lines, new_state). Pure except for the injected run/runj/persist calls.
+
+    ``persist(new_state)`` is called before each start, so the started flag is on disk before the start can
+    happen. If it raises OSError the start is skipped (no start without a recorded flag).
+    """
     if latch_present:
         return 0, ["latch present: units are held by design; no episodes"], {}
     lines, dead_names, new_state, errors = [], [], {}, []
     for name in enabled_units(run):
         if name in DELIBERATE:
             continue
-        # A failure on one unit must not lose the episodes already recorded for the others: a start that
-        # happened is written to new_state (and so to disk) before the loop moves on.
+        # A failure on one unit must not lose the episodes already recorded for the others.
         try:
             props = unit_props(run, name)
             if props.get("ActiveState") != "inactive" or props.get("Result") == "start-limit-hit" \
@@ -127,9 +130,18 @@ def evaluate(state: dict, *, now: float, latch_present: bool, run, runj, act: bo
             dead_names.append(name)
             line = f"{name} dead {age / 60:.1f} min after trip"
             if act and age >= grace and not episode.get("started"):
-                # Mark the episode started before the call: a failing or raising start is still one start.
+                # Mark the episode started and persist it before the call: a failing, raising or killed start
+                # is still one start, and a run killed after the start cannot repeat it.
                 episode["started"] = True
                 episode["started_at"] = now
+                if persist is not None:
+                    try:
+                        persist(new_state)
+                    except OSError as exc:
+                        episode["started"] = False
+                        episode.pop("started_at", None)
+                        lines.append(f"{name} dead {age / 60:.1f} min after trip; not started: state not saved ({exc})")
+                        continue
                 res = run(["start", name])
                 line += f"; started once (exit {res.returncode})"
             lines.append(line)
@@ -154,7 +166,8 @@ def main(argv=None) -> int:
     state_path = Path(args.home) / STATE_NAME
     try:
         code, lines, new_state = evaluate(load_state(state_path), now=time.time(), latch_present=LATCH.exists(),
-                                          run=run_systemctl, runj=run_journal, act=args.act, grace=args.grace)
+                                          run=run_systemctl, runj=run_journal, act=args.act, grace=args.grace,
+                                          persist=lambda st: save_state(state_path, st))
     except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
         print(f"units-after-trip: cannot observe: {exc}")
         return 3
