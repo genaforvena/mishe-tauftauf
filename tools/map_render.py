@@ -408,13 +408,18 @@ def _esc(text):
 
 
 def fingerprint_footer():
-    """RSSI footer facts: leave-one-out and the live vector, read from the fingerprint written this render."""
+    """RSSI footer facts: leave-one-out and the live vector, read from the fingerprint written this render.
+
+    Anything that is not a JSON object (a list, a number, truncated text) is UNKNOWN, never a guess.
+    """
     try:
         doc = json.load(open(os.path.join(HERE, "rssi-fingerprint.json"), encoding="utf-8"))
     except (OSError, ValueError):
-        return "Leave-one-out: UNKNOWN (rssi-fingerprint.json missing)"
-    loo = doc.get("loo") or {}
-    live = doc.get("live") or {}
+        return "Leave-one-out: UNKNOWN (rssi-fingerprint.json missing or unreadable)"
+    if not isinstance(doc, dict):
+        return "Leave-one-out: UNKNOWN (rssi-fingerprint.json is not an object)"
+    loo = doc.get("loo") if isinstance(doc.get("loo"), dict) else {}
+    live = doc.get("live") if isinstance(doc.get("live"), dict) else {}
     age = live.get("rssi_age_s")
     return ("Leave-one-out: %s/%s correct, majority baseline %s; one feature, not a room claim. "
             "Live Redmi10 vector age %s s."
@@ -423,17 +428,33 @@ def fingerprint_footer():
 
 
 def rssi_history_footer():
-    """Rows in rssi-history.jsonl and the age of the newest one; unreadable is UNKNOWN."""
+    """Rows in rssi-history.jsonl and the age of the newest one; unreadable is UNKNOWN.
+
+    Only JSON objects count as rows. Any other line (truncated JSON, a list, a number, a string)
+    is skipped and counted in the footer, so one bad line never stops the render.
+    """
     try:
         with open(RSSI_HISTORY, encoding="utf-8") as fh:
-            rows = [json.loads(line) for line in fh if line.strip()]
+            lines = [line for line in fh if line.strip()]
     except (OSError, ValueError) as exc:
         return "RSSI history: UNKNOWN (%s)" % type(exc).__name__
+    rows, bad = [], 0
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            bad += 1
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+        else:
+            bad += 1
+    unreadable = ", %d unreadable rows" % bad if bad else ""
     if not rows:
-        return "RSSI history: 0 rows"
+        return "RSSI history: 0 rows" + unreadable
     at = parse_iso(rows[-1].get("at"))
     age = "%.0f s" % (NOW - at).total_seconds() if at else "UNKNOWN"
-    return "RSSI history: %d rows, newest %s old" % (len(rows), age)
+    return "RSSI history: %d rows, newest %s old%s" % (len(rows), age, unreadable)
 
 
 def activity_footer(activity):

@@ -251,3 +251,57 @@ def test_footer_states_leave_one_out_and_camera_coverage(tmp_path):
     assert "Leave-one-out" in svg
     assert "Camera coverage: not drawn" in svg
     assert "Blind spot:" in svg
+
+
+def _history(site, text):
+    path = site / "senses/map/rssi-history.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def test_history_non_object_lines_are_skipped_and_counted(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _floorplan(site)
+    good = json.dumps({"at": _iso(_now())})
+    _history(site, "\n".join([good, "[]", "3", '"x"', '{"at": ', good]) + "\n")
+    state, svg = _render(site)
+    assert state["generated_utc"]
+    assert "RSSI history: 2 rows" in svg
+    assert "4 unreadable rows" in svg
+
+
+def test_history_only_bad_lines_says_zero_readable_rows(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _floorplan(site)
+    _history(site, "[]\n3\n")
+    _, svg = _render(site)
+    assert "RSSI history: 0 rows, 2 unreadable rows" in svg
+
+
+def test_empty_history_file_is_zero_rows(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _floorplan(site)
+    _history(site, "")
+    _, svg = _render(site)
+    assert "RSSI history: 0 rows" in svg
+    assert "unreadable rows" not in svg
+
+
+def test_history_row_without_time_has_unknown_age(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _floorplan(site)
+    _history(site, json.dumps({"rssi": -50}) + "\n")
+    _, svg = _render(site)
+    assert "RSSI history: 1 rows, newest UNKNOWN old" in svg
+
+
+def test_fingerprint_that_is_a_list_is_unknown_and_render_completes(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _floorplan(site)
+    fp = site / "senses/map/rssi-fingerprint.json"
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text("[1, 2, 3]")
+    mr.configure(str(site))
+    assert mr.fingerprint_footer() == "Leave-one-out: UNKNOWN (rssi-fingerprint.json is not an object)"
+    _, svg = _render(site)
+    assert "Leave-one-out: UNKNOWN" in svg
