@@ -733,6 +733,9 @@
       "max_age": 7500,
       "resolver": "rust-plan",
       "covers": "the cache-miss full fold of the senses and genome tapes, measured in fresh processes: GREEN when both are under 5 CPU-s and 200 MB (the Rust slice stays closed), RED when a trigger is hit (the slice may reopen), UNKNOWN when the host guard or the fold cannot give a reading",
+      "unknown_codes": [
+        3
+      ],
       "replaces": []
     },
     {

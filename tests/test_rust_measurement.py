@@ -65,3 +65,11 @@ def test_artifact_records_the_reading(tmp_path):
                        / "rust-measurement-latest.json").read_text())
     assert data["readings"][0]["role"] == "senses"
     assert data["over"] == []
+
+
+def test_duty_declares_host_busy_exit_as_unknown():
+    # The checker exits 3 when the host guard skips it. Without declaring 3 as unknown,
+    # the producer treats it as a crash, the unit fails, and the failed-service signal goes RED.
+    duties = json.loads((Path(__file__).resolve().parents[1] / "duties.json").read_text())["duties"]
+    duty = next(d for d in duties if d["name"] == "rust-measurement")
+    assert duty.get("unknown_codes") == [3]
