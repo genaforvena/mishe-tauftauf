@@ -467,3 +467,12 @@ def test_every_role_gets_a_coalescing_window_with_the_default_length(cfg):
     for role in ("genome", "observer"):
         assert f"Unit=mishe-wake-debounce-{role}.service" in files[f"mishe-wake-{role}.path"]
         assert f"Unit=mishe-wake@{role}.service" not in files[f"mishe-wake-{role}.path"]
+
+
+def test_producer_unit_for_signal_round_trips_or_is_none():
+    # the derived unit is accepted only when signal_name maps it back to the signal, so a lossy name names no unit
+    assert units.producer_unit_for_signal("failed-mishe-producer-work-trial-service") == "mishe-producer-work-trial.service"
+    assert units.signal_name("mishe-producer-work-trial.service") == "failed-mishe-producer-work-trial-service"
+    assert units.producer_unit_for_signal("failed-mishe-producer-work.trial-service") is None
+    assert units.producer_unit_for_signal("failed-mishe-wake-docs-service") is None
+    assert units.producer_unit_for_signal("failed-mishe-producer-X-service") is None

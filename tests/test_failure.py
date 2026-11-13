@@ -342,3 +342,11 @@ def test_a_legacy_producer_still_failing_stays_expired(tmp_path):
     _expired_producer_failure(tmp_path, name, incident={"count": 1, "first_seen": NOW - 9, "last_seen": NOW - 5})
     assert failure.clear_recovered(tmp_path, now=NOW + 200, last_exit=lambda u: (NOW + 100, False)) == []
     assert store.recorded(tmp_path, name)["state"] == "UNKNOWN"
+
+
+def test_unit_for_prefers_the_incident_unit_and_derives_only_a_round_tripping_one():
+    # an incident that records its unit wins; without one, the producer unit is derived from the signal name
+    assert failure._unit_for("failed-mishe-producer-work-trial-service", {"unit": "mishe-producer-work-trial.service"}) \
+        == "mishe-producer-work-trial.service"
+    assert failure._unit_for("failed-mishe-producer-work-trial-service", None) == "mishe-producer-work-trial.service"
+    assert failure._unit_for("failed-mishe-wake-docs-service", {}) is None
