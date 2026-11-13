@@ -35,6 +35,10 @@ from pathlib import Path
 
 LATCH = Path("/var/lib/mishe-containment/tripped")
 SKIP_MARK = "unmet condition check"
+# Only the containment latch's own condition counts as a trip skip. Any other unmet condition (a device, a consent
+# or off-file gate) is not a containment effect and must never be reported or started by this check.
+LATCH_CONDITION = "ConditionPathExists=!"
+LATCH_NAME = "tripped"
 START_MARK = "Started "
 # mishe-audio-listener records a living-room microphone with no standing grant: it starts only on the operator's
 # recorded yes, so a dead-after-trip revival must never bring it back (2026-11-13: revived unasked at 10:33Z).
@@ -80,7 +84,7 @@ def last_event_is_skip(runj, name):
         raise RuntimeError(f"journalctl {name} failed: {res.stderr.strip()}")
     for line in reversed(res.stdout.splitlines()):
         if SKIP_MARK in line:
-            return True
+            return LATCH_CONDITION in line and LATCH_NAME in line
         if START_MARK in line:
             return False
     return False

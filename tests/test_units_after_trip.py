@@ -201,3 +201,15 @@ def test_failed_state_save_after_a_start_reports_unknown_and_does_not_crash(tmp_
     assert code == 3
     assert "cannot save state" in out
     assert sum(call[:1] == ["start"] for call in host.calls) == 1
+
+
+def test_unrelated_unmet_condition_is_not_a_trip_and_is_not_started():
+    # A skip for some other condition (a device gate) is not a containment effect: not RED, never started.
+    mod = _load()
+    host = _PostTripHost()
+    host.runj = lambda args: _Result("Stopped drill\nunit skipped because of an unmet condition check "
+                                     "(ConditionPathExists=/dev/example-device)\n")
+    code, lines, state = mod.evaluate({}, now=1000.0, latch_present=False, run=host.run, runj=host.runj,
+                                      act=True, grace=0)
+    assert code == 0 and lines == ["dead after trip: 0"] and state == {}
+    assert not any(call[:1] == ["start"] for call in host.calls)
