@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 from . import signal_store, units
@@ -27,19 +28,32 @@ DECLARED_REOFFER_SECONDS = 3600
 DETAIL_BYTES = 4000
 
 
+def _utc(epoch: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+
+
 def run(home, name: str, command: list, *, now: float, timeout: float, red_codes=(2,), unknown_codes=()) -> int:
     detail = Path(home) / "signals" / f"{name}.detail"
     detail.parent.mkdir(parents=True, exist_ok=True)
     scratch = detail.with_suffix(".detail.tmp")
+    started, clock = time.time(), time.monotonic()
+
+    def ran(outcome: str) -> None:
+        # One line per run, whatever the outcome, so an overrun or a kill can be attributed to its run.
+        print(f"mishe: {name}: ran start={_utc(started)} end={_utc(time.time())} "
+              f"elapsed={time.monotonic() - clock:.1f}s limit={timeout:g}s outcome={outcome}", file=sys.stderr)
+
     try:
         code = run_bounded(command, env=dict(os.environ), cwd=Path(home), timeout=timeout, stdout_to=scratch)
     except (EngineNotStarted, EngineTimeout) as exc:
         scratch.unlink(missing_ok=True)
+        ran(type(exc).__name__)
         # Not-started (fork/exec failure) and timeout otherwise leave no trace in the journal.
         print(f"mishe: {name}: not run: {type(exc).__name__}: {exc}", file=sys.stderr)
         signal_store.observe_unknown(home, name, now=now, source=f"run:{command[0]}",
                                      reason=f"not run: {type(exc).__name__}")
         return 2
+    ran(f"exit={code}")
     os.replace(scratch, detail)
     if code in unknown_codes or (code != 0 and code not in red_codes):
         # The detail file is overwritten by the next run, so the journal carries the check's output for every

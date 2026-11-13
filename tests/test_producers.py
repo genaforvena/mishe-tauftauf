@@ -250,3 +250,15 @@ def test_delivery_requests_duty_is_green_idle_and_red_for_standing_faults(tmp_pa
     (tmp_path / "work/delivery-admission.json").write_text(json.dumps({"id": "x", "pid": 2**30, "at": NOW - 3600}))
     assert "dead owner" in dr.standing_problem(tmp_path, NOW)
     assert producers.delivery_requests(tmp_path, now=NOW) == "RED"
+
+
+def test_every_run_journals_its_start_end_elapsed_and_outcome(home, capsys):
+    import re
+    assert producers.run(home, "devto", [PY, "-c", "pass"], now=NOW, timeout=10) == 0
+    assert producers.run(home, "devto", [PY, "-c", "import time; time.sleep(30)"], now=NOW + 1, timeout=0.5) == 2
+    err = capsys.readouterr().err
+    ok, timed_out = re.findall(r"mishe: devto: ran (.*)", err)
+    assert "outcome=exit=0" in ok and "limit=10s" in ok
+    assert "outcome=EngineTimeout" in timed_out and "limit=0.5s" in timed_out
+    assert re.search(r"start=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ end=\S+ elapsed=\d+\.\ds", timed_out)
+    assert "devto: not run: EngineTimeout: exceeded 0.5s" in err
