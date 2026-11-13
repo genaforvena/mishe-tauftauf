@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from . import proc_table
+from . import engine_boundary, proc_table
 from .wake import EngineNotStarted, EngineTimeout
 
 IDLE_GAP_S = 180.0
@@ -84,10 +84,6 @@ def _kill_pids(pids: set[int]) -> None:
             continue
 
 
-HEARTBEAT_PREFIX = b'{"type":"tool_execution_update"'
-"""A wait tool's periodic update line. It re-reports a tool that is still running, so it is not progress."""
-
-
 class _ProgressReader:
     """Cumulative bytes of engine output that is progress, read incrementally from the output file.
 
@@ -112,13 +108,9 @@ class _ProgressReader:
                 data = handle.read()
         except OSError:
             return None
-        end = data.rfind(b"\n")
-        if end < 0:
-            return self.progress
-        self.offset += end + 1
-        for line in data[:end + 1].splitlines(keepends=True):
-            if not line.startswith(HEARTBEAT_PREFIX):
-                self.progress += len(line)
+        progress, consumed = engine_boundary.progress_bytes(data)
+        self.offset += consumed
+        self.progress += progress
         return self.progress
 
 

@@ -30,6 +30,26 @@ STORE_DEFAULT = 'omp-recovery/agent'
 AUTH_SCHEMA_VERSION = 8
 
 
+HEARTBEAT_PREFIX = b'{"type":"tool_execution_update"'
+
+
+def progress_bytes(data):
+    """Split engine output bytes into (progress bytes, bytes consumed).
+
+    Only complete lines count: the consumed figure stops at the last newline, so a
+    half-written line is picked up on the next read. Heartbeat lines (``HEARTBEAT_PREFIX``)
+    re-report a running wait tool and are not progress.
+    """
+    end = data.rfind(b'\n')
+    if end < 0:
+        return 0, 0
+    progress = 0
+    for line in data[:end + 1].splitlines(keepends=True):
+        if not line.startswith(HEARTBEAT_PREFIX):
+            progress += len(line)
+    return progress, end + 1
+
+
 def _finite(value):
     return type(value) in (int, float) and math.isfinite(value)
 
