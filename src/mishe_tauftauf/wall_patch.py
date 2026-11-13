@@ -280,12 +280,99 @@ def prepare(home, identity, paths, base=None):
         _save(path, record)
 
 
+CONTEXT_MODULE_LIMIT = 12
+CONTEXT_MODULE_BYTES = 40_000
+CONTEXT_TOTAL_BYTES = 150_000
+
+
+def _import_candidates(name, text):
+    """Dotted in-package module names that a changed Python file imports (one hop)."""
+    import ast
+    parts = Path(name).relative_to("src").parts[:-1] if name.startswith("src/") else ()
+    found = []
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return found
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found += [(alias.name, False) for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                base = list(parts[:len(parts) - (node.level - 1)]) if node.level - 1 <= len(parts) else None
+                if base is None:
+                    continue
+                module = ".".join(base + ([node.module] if node.module else []))
+            else:
+                module = node.module or ""
+            # `from . import sub` names no module of its own; only its aliases can be modules.
+            if node.module:
+                found.append((module, False))
+            # `from pkg import sub` may import a submodule; the alias is a candidate too.
+            found += [(module + "." + alias.name, True) for alias in node.names]
+    return found
+
+
+def _module_file(src, dotted):
+    parts = dotted.split(".")
+    if parts[0] != "mishe_tauftauf":
+        return None
+    for candidate in (src.joinpath(*parts).with_suffix(".py"), src.joinpath(*parts, "__init__.py")):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def imported_context(home, record):
+    """Read-only text of the in-package modules the changed Python files import.
+
+    A reviewer that cannot see what a diff calls answers unknown. Modules that
+    are themselves part of the patch are already in the evidence, so only the
+    others are added. Anything not read is named, never silently dropped.
+    """
+    src = home.parent / "src"
+    patched = {name for name in record["files"]}
+    wanted, unresolved, truncated = {}, [], []
+    for name, values in record["files"].items():
+        if not name.endswith(".py") or not values["after"]:
+            continue
+        text = base64.b64decode(values["after"]["bytes"]).decode("utf-8")
+        for dotted, optional in _import_candidates(name, text):
+            if dotted in wanted:
+                continue
+            path = _module_file(src, dotted)
+            if path is None:
+                if not optional and dotted.startswith("mishe_tauftauf"):
+                    unresolved.append(dotted)
+                continue
+            if path.relative_to(home.parent).as_posix() in patched:
+                continue
+            wanted[dotted] = path
+    modules, total = {}, 0
+    for dotted in sorted(wanted)[:CONTEXT_MODULE_LIMIT]:
+        path = wanted[dotted]
+        data = path.read_bytes()
+        if len(data) > CONTEXT_MODULE_BYTES:
+            truncated.append(dotted)
+            data = data[:CONTEXT_MODULE_BYTES]
+        if total + len(data) > CONTEXT_TOTAL_BYTES:
+            continue  # named in omitted_over_limit below
+        total += len(data)
+        modules[dotted] = {"path": path.relative_to(home.parent).as_posix(),
+                           "text": data.decode("utf-8", errors="replace")}
+    omitted = sorted(set(wanted) - set(modules))
+    return {"modules": modules, "truncated": truncated, "omitted_over_limit": omitted,
+            "unresolved": sorted(set(unresolved)),
+            "source": "shared checkout at review time; patch files use their after bytes"}
+
+
 def review(home, record):
     from .codex_review import validate_response
     config_path = home / "patch-review.json"
     config = json.loads((config_path if config_path.exists() else home / "publication-check.json").read_text())
     evidence = {"runtime": record["runtime"], "phase": record["phase"], "test": record["test"],
-                "test_output": Path(record["test"]["log"]).read_text(), "files": {}}
+                "test_output": Path(record["test"]["log"]).read_text(), "files": {},
+                "context_modules": imported_context(home, record)}
     for name, values in record["files"].items():
         texts = {key: base64.b64decode(values[key]["bytes"]).decode("utf-8") if values[key] else ""
                  for key in ("before", "after", "runtime_before")}

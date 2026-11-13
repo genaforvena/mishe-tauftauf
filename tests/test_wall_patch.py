@@ -926,3 +926,47 @@ def test_review_answer_gives_the_reader_the_prompt_file_as_stdin(tmp_path):
     prompt = _req_file(tmp_path)
     wall_review.review_answer("claude-haiku-5-5", tmp_path, prompt, runner=runner)
     assert seen["stdin"].name == str(prompt)
+
+
+def test_review_evidence_carries_the_modules_the_patch_imports(tmp_path, monkeypatch):
+    # An unknown verdict was the default because the reviewer was shown the
+    # changed file but not the modules it calls. The evidence must name them.
+    home, source, deployed = layout(tmp_path)
+    helper = tmp_path / "src/mishe_tauftauf/helper.py"
+    helper.write_text("def nonblank(text):\n    return text.strip()\n")
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("from mishe_tauftauf.helper import nonblank\nfrom . import missing_mod\nfrom . import helper\nvalue = nonblank(' x ')\n")
+    (home / "patch-review.json").write_text(json.dumps(
+        {"command": [sys.executable, "-c", "pass"], "timeout_seconds": 420}))
+    seen = {}
+
+    def spy(command, encoded, timeout):
+        request = json.loads(encoded.decode())
+        seen["context"] = request["context"]["patch"]["context_modules"]
+        return json.dumps({"version": 1, "input_hash": request["input_hash"],
+                           "results": [{"id": "PATCH", "verdict": "clear", "reason": "ok", "evidence": []}]}).encode()
+
+    monkeypatch.setattr(wall_patch, "_worker", spy)
+    wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
+    context = seen["context"]
+    assert list(context["modules"]) == ["mishe_tauftauf.helper"]
+    assert context["modules"]["mishe_tauftauf.helper"]["path"] == "src/mishe_tauftauf/helper.py"
+    assert "def nonblank" in context["modules"]["mishe_tauftauf.helper"]["text"]
+    assert context["unresolved"] == []
+    assert wall_patch.status(home, "change")["phase"] == "reviewed"
+
+
+def test_imported_context_caps_size_and_names_what_it_omits(tmp_path):
+    home, source, deployed = layout(tmp_path)
+    package = tmp_path / "src/mishe_tauftauf"
+    big = "x = '" + "a" * (wall_patch.CONTEXT_MODULE_BYTES + 10) + "'\n"
+    (package / "big.py").write_text(big)
+    source.write_text("from mishe_tauftauf.big import x\n")
+    record = {"runtime": str(tmp_path / "runtime"),
+              "files": {"src/mishe_tauftauf/example.py": {
+                  "before": None,
+                  "after": {"bytes": __import__("base64").b64encode(source.read_bytes()).decode(), "mode": 0o644}}}}
+    context = wall_patch.imported_context(home, record)
+    assert context["truncated"] == ["mishe_tauftauf.big"]
+    assert len(context["modules"]["mishe_tauftauf.big"]["text"]) == wall_patch.CONTEXT_MODULE_BYTES
+    assert context["unresolved"] == []
