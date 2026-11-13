@@ -1,6 +1,7 @@
 """Small patch gate: exact scoped bytes, tests, System 1 review, activation/revert."""
 from __future__ import annotations
 import argparse
+import ast
 import base64
 import difflib
 from datetime import datetime, timezone
@@ -10,6 +11,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -282,54 +284,140 @@ def prepare(home, identity, paths, base=None):
         _save(path, record)
 
 
-# Sized to the measured uncapped closure of the moving-pin-c41707ff range
-# (17 modules, 285,625 bytes; wall alone is 50,723). A reviewer that is shown
-# fewer modules answers unknown, so these caps must cover the real closure.
-CONTEXT_MODULE_LIMIT = 24
-CONTEXT_MODULE_BYTES = 60_000
-CONTEXT_TOTAL_BYTES = 300_000
+# The reviewer needs what the patch calls and what calls the changed code, not
+# whole modules: a 400 KB module hides the one caller under unrelated text, yet
+# a reviewer that cannot see a caller answers unknown. So each name the patch
+# imports from the package is sent as its definition, and each changed
+# definition is sent as bounded windows around its call sites.
+CONTEXT_EXCERPT_BYTES = 8_000
+CONTEXT_TOTAL_BYTES = 160_000
+CALLER_SITES = 12
+CALLER_RADIUS = 2
 
 
-def imported_context(home, record):
-    """Read-only text of the in-package modules the changed Python files import.
+def _definitions(text):
+    """Source text of every def, class and top-level assignment, by dotted name."""
+    found = {}
 
-    A reviewer that cannot see what a diff calls answers unknown. Modules that
-    are themselves part of the patch are already in the evidence, so only the
-    others are added. Anything not read is named, never silently dropped.
-    """
-    src = home.parent / "src"
-    patched = {name for name in record["files"]}
-    wanted, unresolved, truncated = {}, [], []
+    def walk(nodes, prefix):
+        for node in nodes:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                found[prefix + node.name] = ast.get_source_segment(text, node) or ""
+                walk(node.body, prefix + node.name + ".")
+            elif isinstance(node, ast.Assign) and not prefix:
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        found[target.id] = ast.get_source_segment(text, node) or ""
+
+    walk(ast.parse(text).body, "")
+    return found
+
+
+def _imported_names(name, text):
+    """(package module, name) for each name a patched file imports from the package."""
+    owner = name[len("src/"):-len(".py")].split("/") if name.startswith("src/") else []
+    pairs = []
+    for node in ast.walk(ast.parse(text)):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        parts = owner[:-1]
+        for _ in range(max(node.level - 1, 0)):
+            parts = parts[:-1]
+        if node.level:
+            module = ".".join(parts + ([node.module] if node.module else []))
+        else:
+            module = node.module or ""
+        if not module or not in_package(module):
+            continue
+        pairs.extend((module, alias.name) for alias in node.names if alias.name != "*")
+    return pairs
+
+
+def _changed_names(record):
+    """Names whose definition differs between the base and the patched bytes."""
+    changed = set()
     for name, values in record["files"].items():
         if not is_python(name) or not values["after"]:
             continue
-        text = decode_b64_text(values["after"]["bytes"])
-        for dotted, optional in import_candidates(name, text):
-            if dotted in wanted:
+        try:
+            after = _definitions(decode_b64_text(values["after"]["bytes"]))
+            before = _definitions(decode_b64_text(values["before"]["bytes"])) if values["before"] else {}
+        except SyntaxError:
+            continue  # named as unresolved by symbol_context
+        changed.update(qual.rsplit(".", 1)[-1] for qual, text in after.items() if before.get(qual) != text)
+    return changed
+
+
+def symbol_context(home, record):
+    """Read-only excerpts a reviewer needs: definitions the patch imports and
+    bounded call-site windows for each changed definition in the shared checkout.
+
+    Anything omitted, cut or unresolved is named, so the reviewer can see the
+    context is incomplete instead of assuming it is whole.
+    """
+    root = home.parent
+    src = root / "src"
+    patched = set(record["files"])
+    unresolved, truncated, omitted = [], [], []
+    ordered = []  # (label, path, text) before the total cap is applied
+
+    for name, values in record["files"].items():
+        if not is_python(name) or not values["after"]:
+            continue
+        try:
+            pairs = _imported_names(name, decode_b64_text(values["after"]["bytes"]))
+        except SyntaxError:
+            unresolved.append(f"syntax:{name}")
+            continue
+        for module, alias in pairs:
+            path = module_file(src, module)
+            if path is None or path.relative_to(root).as_posix() in patched:
+                # A bare package (`from . import x`) has no module file to read here;
+                # only a dotted module that is missing is flagged as unresolved.
+                if path is None and "." in module and module_file(src, f"{module}.{alias}") is None:
+                    unresolved.append(f"{module}:{alias}")
                 continue
-            path = module_file(src, dotted)
-            if path is None:
-                if not optional and in_package(dotted):
-                    unresolved.append(dotted)
-                continue
-            if path.relative_to(home.parent).as_posix() in patched:
-                continue
-            wanted[dotted] = path
+            defs = _definitions(decode_lossy(path.read_bytes()))
+            if alias in defs:
+                ordered.append((f"{module}:{alias}", path.relative_to(root).as_posix(), defs[alias]))
+            elif module_file(src, f"{module}.{alias}") is None:
+                unresolved.append(f"{module}:{alias}")
+
+    corpus = {}
+    for base in (src, root / "checks"):
+        if base.is_dir():
+            for path in sorted(base.rglob("*.py")):
+                rel = path.relative_to(root).as_posix()
+                if rel not in patched:
+                    corpus[rel] = path.read_text(errors="replace").splitlines()
+    for symbol in sorted(_changed_names(record)):
+        pattern = re.compile(rf"\b{re.escape(symbol)}\b")
+        windows, sites = [], 0
+        for rel, lines in corpus.items():
+            for index, line in enumerate(lines):
+                if not pattern.search(line):
+                    continue
+                sites += 1
+                if len(windows) < CALLER_SITES:
+                    low, high = max(0, index - CALLER_RADIUS), index + CALLER_RADIUS + 1
+                    windows.append(f"{rel}:{index + 1}\n" + "\n".join(lines[low:high]))
+        if windows:
+            ordered.append((f"callers:{symbol}", "shared checkout", "\n---\n".join(windows)))
+            if sites > CALLER_SITES:
+                truncated.append(f"callers:{symbol}")
+
     modules, total = {}, 0
-    for dotted in sorted(wanted)[:CONTEXT_MODULE_LIMIT]:
-        path = wanted[dotted]
-        data = path.read_bytes()
-        if len(data) > CONTEXT_MODULE_BYTES:
-            truncated.append(dotted)
-            data = data[:CONTEXT_MODULE_BYTES]
-        if total + len(data) > CONTEXT_TOTAL_BYTES:
-            continue  # named in omitted_over_limit below
-        total += len(data)
-        modules[dotted] = {"path": path.relative_to(home.parent).as_posix(),
-                           "text": decode_lossy(data)}
-    omitted = sorted(set(wanted) - set(modules))
-    return {"modules": modules, "truncated": truncated, "omitted_over_limit": omitted,
-            "unresolved": sorted(set(unresolved)),
+    for label, path, text in ordered:
+        if len(text) > CONTEXT_EXCERPT_BYTES:
+            text = text[:CONTEXT_EXCERPT_BYTES]
+            truncated.append(label)
+        if total + len(text) > CONTEXT_TOTAL_BYTES:
+            omitted.append(label)
+            continue
+        total += len(text)
+        modules[label] = {"path": path, "text": text}
+    return {"modules": modules, "truncated": sorted(set(truncated)),
+            "omitted_over_limit": sorted(set(omitted)), "unresolved": sorted(set(unresolved)),
             "source": "shared checkout at review time; patch files use their after bytes"}
 
 
@@ -337,7 +425,7 @@ def review(home, record):
     from .codex_review import validate_response
     config_path = home / "patch-review.json"
     config = json.loads((config_path if config_path.exists() else home / "publication-check.json").read_text())
-    context = imported_context(home, record)
+    context = symbol_context(home, record)
     evidence = {"runtime": record["runtime"], "phase": record["phase"], "test": record["test"],
                 "test_output": Path(record["test"]["log"]).read_text(), "files": {},
                 "context_modules": context}

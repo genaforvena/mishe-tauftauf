@@ -949,31 +949,47 @@ def test_review_evidence_carries_the_modules_the_patch_imports(tmp_path, monkeyp
     monkeypatch.setattr(wall_patch, "_worker", spy)
     wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
     context = seen["context"]
-    assert list(context["modules"]) == ["mishe_tauftauf.helper"]
-    assert context["modules"]["mishe_tauftauf.helper"]["path"] == "src/mishe_tauftauf/helper.py"
-    assert "def nonblank" in context["modules"]["mishe_tauftauf.helper"]["text"]
+    assert list(context["modules"]) == ["mishe_tauftauf.helper:nonblank"]
+    assert context["modules"]["mishe_tauftauf.helper:nonblank"]["path"] == "src/mishe_tauftauf/helper.py"
+    assert "def nonblank" in context["modules"]["mishe_tauftauf.helper:nonblank"]["text"]
     assert context["unresolved"] == []
     assert wall_patch.status(home, "change")["phase"] == "reviewed"
 
 
-def test_imported_context_caps_size_and_names_what_it_omits(tmp_path):
+def test_excerpt_caps_size_and_names_what_it_cuts(tmp_path):
     home, source, deployed = layout(tmp_path)
-    package = tmp_path / "src/mishe_tauftauf"
-    big = "x = '" + "a" * (wall_patch.CONTEXT_MODULE_BYTES + 10) + "'\n"
-    (package / "big.py").write_text(big)
-    source.write_text("from mishe_tauftauf.big import x\n")
+    body = "def big():\n    return '" + "a" * (wall_patch.CONTEXT_EXCERPT_BYTES + 10) + "'\n"
+    (tmp_path / "src/mishe_tauftauf/big.py").write_text(body)
+    source.write_text("from mishe_tauftauf.big import big\nvalue = big()\n")
     record = {"runtime": str(tmp_path / "runtime"),
               "files": {"src/mishe_tauftauf/example.py": {
                   "before": None,
                   "after": {"bytes": __import__("base64").b64encode(source.read_bytes()).decode(), "mode": 0o644}}}}
-    context = wall_patch.imported_context(home, record)
-    assert context["truncated"] == ["mishe_tauftauf.big"]
-    assert len(context["modules"]["mishe_tauftauf.big"]["text"]) == wall_patch.CONTEXT_MODULE_BYTES
+    context = wall_patch.symbol_context(home, record)
+    assert context["truncated"] == ["mishe_tauftauf.big:big"]
+    assert len(context["modules"]["mishe_tauftauf.big:big"]["text"]) == wall_patch.CONTEXT_EXCERPT_BYTES
     assert context["unresolved"] == []
 
 
+def test_changed_definition_callers_reach_the_reviewer(tmp_path):
+    import base64
+    home, source, deployed = layout(tmp_path)
+    (tmp_path / "src/mishe_tauftauf/other.py").write_text("from mishe_tauftauf.example import nonblank\nprint(nonblank('x'))\n")
+    old = "def nonblank(text):\n    return text\n"
+    new = "def nonblank(text):\n    return text.strip()\n"
+    source.write_text(new)
+    record = {"runtime": str(tmp_path / "runtime"),
+              "files": {"src/mishe_tauftauf/example.py": {
+                  "before": {"bytes": base64.b64encode(old.encode()).decode(), "mode": 0o644},
+                  "after": {"bytes": base64.b64encode(new.encode()).decode(), "mode": 0o644}}}}
+    context = wall_patch.symbol_context(home, record)
+    assert "callers:nonblank" in context["modules"]
+    assert "nonblank('x')" in context["modules"]["callers:nonblank"]["text"]
+    assert context["omitted_over_limit"] == [] and context["unresolved"] == []
+
+
 def test_omitted_context_marks_the_request_incomplete(tmp_path, monkeypatch):
-    # A module dropped over the total cap must reach the reviewer as missing
+    # An excerpt dropped over the total cap must reach the reviewer as missing
     # evidence (context_complete False), never as a complete context.
     home, source, deployed = layout(tmp_path)
     (tmp_path / "src/mishe_tauftauf/helper.py").write_text("def nonblank(text):\n    return text.strip()\n")
@@ -994,18 +1010,8 @@ def test_omitted_context_marks_the_request_incomplete(tmp_path, monkeypatch):
     monkeypatch.setattr(wall_patch, "_worker", spy)
     with pytest.raises(ValueError, match="refused"):
         wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
-    assert seen["omitted"] == ["mishe_tauftauf.helper"]
+    assert "mishe_tauftauf.helper:nonblank" in seen["omitted"]
     assert seen["complete"] is False
-
-
-def test_packer_caps_cover_the_measured_closure_of_the_c41707ff_range():
-    # Measured with the caps lifted (.mishe-tauftauf/scratch/packer/uncapped.py):
-    # 17 in-package modules, 285,625 bytes total, wall 50,723 bytes. Shrinking a
-    # cap below this drops modules the moving-pin reviewer needs.
-    assert wall_patch.CONTEXT_MODULE_LIMIT >= 17
-    assert wall_patch.CONTEXT_TOTAL_BYTES >= 285_625
-    assert wall_patch.CONTEXT_MODULE_BYTES >= 50_723
-
 
 def test_check_description_reaches_the_review(tmp_path, monkeypatch):
     home, source, deployed = layout(tmp_path)
