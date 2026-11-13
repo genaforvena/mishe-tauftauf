@@ -385,7 +385,8 @@ def plan_rooms(doc):
     """Floorplan rooms in metres with per-field provenance. geo is False when any drawing number is missing."""
     out = []
     for r in doc.get("rooms", []):
-        if not isinstance(r, dict) or not r.get("id"):
+        # a room id must be a non-empty string: a list or object id is unhashable and would crash svg()
+        if not isinstance(r, dict) or not isinstance(r.get("id"), str) or not r.get("id"):
             continue
         w, wp = _field(r.get("width_m"))
         d, dp = _field(r.get("depth_m"))

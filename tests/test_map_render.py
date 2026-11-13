@@ -239,6 +239,20 @@ def test_unknown_token_is_hollow_and_halo_shows_uncertainty(tmp_path, monkeypatc
     assert "UNKNOWN" in svg
 
 
+def test_room_with_list_or_object_id_is_skipped_and_render_completes(tmp_path):
+    # an unhashable room id used to raise TypeError in svg() and stop main() before map-state.json
+    doc = json.loads(json.dumps(FLOORPLAN_FIXTURE))
+    doc["rooms"] = list(doc["rooms"]) + [
+        dict(doc["rooms"][0], id=["kitchen"]),
+        dict(doc["rooms"][0], id={"name": "hall"}),
+    ]
+    site = _site(tmp_path, _activity({}))
+    _floorplan(site, doc)
+    state, svg = _render(site)
+    assert state["floorplan"]["state"] == "ok"
+    assert "30 m²" in svg  # the valid rooms still draw
+
+
 def test_missing_floorplan_is_unknown_and_draws_no_rooms(tmp_path):
     site = _site(tmp_path, _activity({}))
     state, svg = _render(site)
