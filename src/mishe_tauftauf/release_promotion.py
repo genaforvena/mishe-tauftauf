@@ -295,7 +295,7 @@ def activate(home, repo, source, sha):
     from .release_boundary import wrapper_text
     for name in ("mishe", "mishe-tauftauf"):
         wrapper = Path(home)/"bin"/name
-        wrapper.write_text(wrapper_text(stable, sys.executable)); wrapper.chmod(0o755)
+        wrapper.write_text(wrapper_text(stable, sys.executable, home=home)); wrapper.chmod(0o755)
     config = read_json(Path(home)/"coordination-mode.json") or {}
     config["runtime"] = str(source)
     write_json(Path(home)/"coordination-mode.json", config)

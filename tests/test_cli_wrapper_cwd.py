@@ -63,3 +63,40 @@ def test_detector_flags_a_cwd_dependent_wrapper_and_passes_a_good_one(tmp_path):
     assert code == 2 and "mishe" in lines[0]
     (home / "bin" / "mishe").unlink()
     assert check.evaluate(home)[0] == 3                        # a missing wrapper is UNKNOWN, never OK
+
+
+def test_wrapper_text_without_home_is_unchanged_three_lines(tmp_path):
+    from mishe_tauftauf.release_boundary import wrapper_text
+    text = wrapper_text(tmp_path / "rel", "/usr/bin/python3")
+    assert text.count("\n") == 3 and "MISHE_SEED_HOME" not in text
+
+
+def test_wrapper_exports_its_own_site_so_a_bare_run_from_anywhere_resolves_it(tmp_path):
+    from mishe_tauftauf.release_boundary import wrapper_text
+    release = tmp_path / "release"
+    (release / "src" / "mishe_tauftauf").mkdir(parents=True)
+    (release / "src" / "mishe_tauftauf" / "__init__.py").write_text("")
+    (release / "src" / "mishe_tauftauf" / "__main__.py").write_text(
+        "import os\nprint(os.environ.get('MISHE_SEED_HOME', 'UNSET'))\n")
+    home = tmp_path / "site"
+    (home / "bin").mkdir(parents=True)
+    wrapper = home / "bin" / "mishe"
+    wrapper.write_text(wrapper_text(release, sys.executable, home=home))
+    wrapper.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "MISHE_SEED_HOME", "MISHE_TAUFTAUF_HOME")}
+    out = subprocess.run([str(wrapper)], cwd="/", capture_output=True, text=True, env=env)
+    assert out.returncode == 0 and out.stdout.strip() == str(home.resolve())
+
+
+def test_refresh_cli_keeps_the_site_export_line_and_repins_pythonpath(tmp_path, monkeypatch):
+    from mishe_tauftauf.release_boundary import wrapper_text
+    release = make_release(tmp_path)
+    home = tmp_path / "site"
+    (home / "bin").mkdir(parents=True)
+    wrapper = home / "bin" / "mishe"
+    wrapper.write_text(wrapper_text(tmp_path / "old", sys.executable, home=home))
+    refresh_cli(home, release)
+    lines = wrapper.read_text().splitlines()
+    assert len(lines) == 4
+    assert lines[1].startswith("export PYTHONPATH=") and str(release.resolve() / "src") in lines[1]
+    assert lines[2] == f"export MISHE_SEED_HOME={home.resolve()}"

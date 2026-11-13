@@ -51,5 +51,16 @@ def trigger_unit(path):
     return path.suffix in (".timer", ".path")
 
 
-def wrapper_text(source, python):
-    return "#!/bin/sh\nexport PYTHONPATH=" + shlex.quote(str(source/"src")) + "\nexec " + shlex.quote(python) + ' -m mishe_tauftauf "$@"\n'
+def wrapper_text(source, python, home=None):
+    """The POSIX operator wrapper. With ``home`` it also exports MISHE_SEED_HOME.
+
+    Without the export a bare ``mishe`` run from any directory that lacks the
+    site variables resolves a cwd-relative ``.mishe-tauftauf`` and writes nothing
+    (2026-11-13: a sync from the wrong cwd silently wrote 0 units). The export is
+    the absolute site, so the wrapper names its own home wherever it runs.
+    """
+    lines = ["#!/bin/sh", "export PYTHONPATH=" + shlex.quote(str(source/"src"))]
+    if home is not None:
+        lines.append("export MISHE_SEED_HOME=" + shlex.quote(str(Path(home).resolve())))
+    lines.append("exec " + shlex.quote(python) + ' -m mishe_tauftauf "$@"')
+    return "\n".join(lines) + "\n"
