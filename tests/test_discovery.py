@@ -7071,3 +7071,13 @@ def test_watch_wait_reads_no_tape_entry(monkeypatch, tmp_path):
     monkeypatch.setattr(discovery, "Feed", ExplodingTape)
     result = discovery._mind_watch_wait(tmp_path)
     assert result["id"] == "sense.mind.watch-wait"
+
+
+def test_scan_marks_attempt_failed_when_its_stack_dump_cannot_open(tmp_path: Path) -> None:
+    # The dump directory sits under signals/; a regular file there makes its setup raise OSError.
+    (tmp_path / "signals").write_text("not a directory", encoding="utf-8")
+    with pytest.raises(OSError):
+        scan(tmp_path)
+    attempt = discovery.scan_attempt(tmp_path)
+    assert attempt["status"] == "failed"
+    assert attempt["stage"] == "acquisition"

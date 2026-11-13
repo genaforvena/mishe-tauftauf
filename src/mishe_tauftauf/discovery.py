@@ -7490,10 +7490,12 @@ def scan(home: Path) -> Path:
     # Python thread's stack, so a blocked subprocess call is named by the timeout itself. The dump is
     # keyed by scan id and kept when the parent kills the scan; an empty one (normal completion) is removed.
     stack_path = home / "signals" / f"readings-scan-stack-{scan_id}.txt"
-    stack_path.parent.mkdir(parents=True, exist_ok=True)
-    stack_file = stack_path.open("w", encoding="utf-8")
-    faulthandler.dump_traceback_later(SCAN_STACK_DUMP_S, repeat=False, file=stack_file)
+    stack_file = None
     try:
+        # Inside the try: a failure to open the dump file must still mark the attempt failed.
+        stack_path.parent.mkdir(parents=True, exist_ok=True)
+        stack_file = stack_path.open("w", encoding="utf-8")
+        faulthandler.dump_traceback_later(SCAN_STACK_DUMP_S, repeat=False, file=stack_file)
         start = endpoint()
         snapshot = dict(sample(home))
         # Windowed AoI beside age_bounds: prior acquisition starts (observation
@@ -7534,9 +7536,10 @@ def scan(home: Path) -> Path:
         raise
     finally:
         faulthandler.cancel_dump_traceback_later()
-        stack_file.close()
-        if stack_path.stat().st_size == 0:
-            stack_path.unlink(missing_ok=True)
+        if stack_file is not None:
+            stack_file.close()
+            if stack_path.stat().st_size == 0:
+                stack_path.unlink(missing_ok=True)
     return artifact
 
 
