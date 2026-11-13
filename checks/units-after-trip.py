@@ -113,7 +113,10 @@ def evaluate(state: dict, *, now: float, latch_present: bool, run, runj, act: bo
     if latch_present:
         return 0, ["latch present: units are held by design; no episodes"], {}
     lines, dead_names, new_state, errors = [], [], {}, []
-    for name in enabled_units(run):
+    names = enabled_units(run)
+    visited = set()
+    for name in names:
+        visited.add(name)
         if name in DELIBERATE:
             continue
         # A failure on one unit must not lose the episodes already recorded for the others.
@@ -135,8 +138,10 @@ def evaluate(state: dict, *, now: float, latch_present: bool, run, runj, act: bo
                 episode["started"] = True
                 episode["started_at"] = now
                 if persist is not None:
+                    # Units not visited yet keep their saved episodes, so a kill after this save cannot forget them.
+                    carried = {k: state[k] for k in names if k not in visited and k in state}
                     try:
-                        persist(new_state)
+                        persist({**carried, **new_state})
                     except OSError as exc:
                         episode["started"] = False
                         episode.pop("started_at", None)

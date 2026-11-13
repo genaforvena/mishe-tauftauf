@@ -242,3 +242,25 @@ def test_failed_persist_skips_the_start():
     assert not any(call[:1] == ["start"] for call in host.calls)
     assert state["mishe-drill-probe.service"]["started"] is False
     assert "not started: state not saved" in lines[-1]
+
+
+def test_intermediate_save_keeps_unvisited_units_started_flags():
+    # Unit A is started first; unit B was started on an earlier run and is visited after A. A kill right after A's
+    # save must not forget B's started flag (otherwise the next run would start B again).
+    mod = _load()
+    saved = []
+    def run(args):
+        if args[:1] == ["list-unit-files"]:
+            return _Result("mishe-a.service enabled enabled\nmishe-b.service enabled enabled\n")
+        if args[:1] == ["show"]:
+            return _Result("ActiveState=inactive\nResult=success\nRestart=always\n")
+        return _Result()
+    def runj(args):
+        return _Result("unit skipped because of an unmet condition check (ConditionPathExists=!tripped)\n")
+    def persist(st):
+        saved.append(dict(st))
+    prior = {"mishe-a.service": {"dead_since": 1.0, "started": False},
+             "mishe-b.service": {"dead_since": 1.0, "started": True, "started_at": 500.0}}
+    mod.evaluate(prior, now=1300.0, latch_present=False, run=run, runj=runj, act=True, grace=120, persist=persist)
+    assert saved[0]["mishe-b.service"]["started"] is True
+    assert saved[0]["mishe-a.service"]["started"] is True
