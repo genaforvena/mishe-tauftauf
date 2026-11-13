@@ -210,7 +210,10 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         files[f"{p}-producer-{prod.name}.service"] = _file(
             f"[Unit]\nDescription=Mishe producer {prod.name}\n{failed}",
             "[Service]\nType=oneshot\nUMask=0077\n" + _env(cfg)
+            # A producer under MemoryHigh=1G stalled the root-fs fsync on 2026-11-13 (16 s stalls while
+            # reclaim throttled the slice); 1536M cleared the stalls at runtime. Persist it here.
             + f"ExecStart={' '.join(_exec_word(w) for w in prod.command)}\nTimeoutStartSec={prod.timeout}\n"
+            + "MemoryAccounting=yes\nMemoryHigh=1536M\nMemoryMax=2G\n"
             + f"Slice={cfg.plants_slice}\n" * bool(cfg.plants_slice))
         # Producers with the same period started together fire in lockstep (about 17 at one second every
         # period), a write burst that stalled the root-fs probe's fsync on 2026-11-13. A per-activation

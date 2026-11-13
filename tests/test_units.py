@@ -73,6 +73,7 @@ def test_producer_gets_timer_and_oneshot_service(cfg):
     files = units.render(cfg, ROLES, producers=producers)
     assert "OnUnitActiveSec=300" in files["mishe-producer-devto.timer"] or "OnCalendar" in files["mishe-producer-devto.timer"]
     assert "OnFailure=mishe-failed@%n.service" in files["mishe-producer-devto.service"]
+    assert "MemoryHigh=1536M" in files["mishe-producer-devto.service"]
 
 
 def test_producer_timers_are_jittered_so_equal_periods_do_not_fire_in_lockstep(cfg):
