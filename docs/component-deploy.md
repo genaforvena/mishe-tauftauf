@@ -4,7 +4,7 @@ Status: the mechanism works and has been exercised on the live site. `components
 
 ## Problem
 
-Every delivery moves one pin, `SITE_HOME/runtime/current`, that serves all code at once. A delivery holds and freezes all wakes for roughly 8 to 20 minutes, so a change to one leaf tool stalls every mind. The pin is one release, so a leaf change cannot ship without the core.
+Every delivery moves one pin, `SITE_HOME/runtime/current`, that serves all code at once. A delivery holds and freezes all wakes while the pin moves (the duration is not measured; `operating.md` records the same gap), so a change to one leaf tool stalls every mind. The pin is one release, so a leaf change cannot ship without the core.
 
 ## Layout
 
