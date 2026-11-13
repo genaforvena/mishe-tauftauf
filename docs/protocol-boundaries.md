@@ -20,10 +20,11 @@ nothing else:
 - `decode_lifecycle` reads the first line of an entry from the `seed` source only:
   `seed wake`, `seed yield` or `seed clear`. Later lines are prose, with one
   exception: a `seed yield` body may carry a line that begins `Turn settled (STATE);`.
-  The first such line sets the yield's `result`, which `seed_board.py` and
-  `discovery.py` read as the wake's settlement. Other later lines stay prose. A
-  malformed reserved control sentence from that source raises `ProtocolError`
-  instead of being read as ordinary chat.
+  The first such line sets the yield's `result`. `discovery.py` reads it as the
+  wake's settlement in the `sense.seed.settle-result-mix` reading; `seed_board.py`
+  reads it into `Work.result`, but that path has no production caller. Other
+  later lines stay prose. A malformed reserved control sentence from that source
+  raises `ProtocolError` instead of being read as ordinary chat.
 - `decode_site_sync` reads the coordinator's `[site-sync]` marker from the `sync`
   source. Its JSON payload must have exactly `target` and `core_sha`: `target` is a
   non-empty string of at most 255 characters with no CR, LF or NUL, and `core_sha` is
