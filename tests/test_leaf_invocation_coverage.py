@@ -360,6 +360,33 @@ def test_a_command_wrapped_across_a_line_break_is_still_named(
     assert record["invocations_covered"] == 2
 
 
+def test_prose_that_breaks_between_two_words_names_nothing(
+        tmp_path: Path) -> None:
+    """A line break in ordinary prose does not name a command.
+
+    Flattening the whole document would let the word 'alpha' at the end of a
+    line and 'one' at the start of the next cover the leaf, so the audit
+    would shrink its gap list without the book naming anything. Only a code
+    span is a command name.
+    """
+    release = _release(tmp_path)
+    home = _home(tmp_path, release)
+    root = _corpus(tmp_path)
+    (root / "README.md").write_text("the first command is described below\n",
+                                    encoding="utf-8")
+    (root / "docs" / "guide.md").write_text(
+        "beta is the bare top\n"
+        "the alpha\none command is described in prose\n", encoding="utf-8")
+    out = tmp_path / "coverage.json"
+
+    done = _run(home, root, out)
+
+    assert done.returncode == 0, done.stderr
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert "alpha one" in record["strict_zero"]
+    assert record["invocations_covered"] == 1
+
+
 def test_a_repository_without_a_readable_book_reads_unknown(tmp_path: Path
                                                              ) -> None:
     """An empty corpus is UNKNOWN, never a clean audit of nothing."""

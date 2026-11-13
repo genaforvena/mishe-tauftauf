@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -313,6 +314,22 @@ def committed_reader_corpus(repo: Path) -> dict[str, str]:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _code_spans(text: str) -> list[str]:
+    """Every inline code span in ``text``, with its line breaks turned into spaces.
+
+    A code span is the book's way of naming a command, and it may wrap: a
+    reader sees `mishe engine router` and the next line's `choose ROLE` as one
+    command. Ordinary prose that happens to break between two words is not a
+    command name, so only spans are flattened.
+
+    Fenced blocks are removed first: their backticks would otherwise pair with
+    the inline spans around them, and a span may not cross a blank line.
+    """
+    without_fences = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+    spans = [span.replace("\n", " ") for span in re.findall(r"`([^`]+)`", without_fences)]
+    return [span for span in spans if "\n\n" not in span]
+
+
 def audit(root: Path, src: Path, corpus: dict[str, str] | None = None) -> dict:
     """Leaf-invocation coverage of a reader corpus against the served tree.
 
@@ -333,8 +350,10 @@ def audit(root: Path, src: Path, corpus: dict[str, str] | None = None) -> dict:
     # A code span may wrap across a line break, and a reader sees it as one
     # space: `mishe engine router\nchoose ROLE` reads as `mishe engine router
     # choose ROLE`. Matching the raw bytes would call that leaf unnamed while
-    # the book names it, so the search runs over a flattened blob too.
-    flat = blob.replace("\n", " ")
+    # the book names it. Only a code span is flattened: a line break between
+    # two words of ordinary prose does not name a command, so flattening the
+    # whole document would let prose cover a leaf the book never names.
+    spans = "\n".join(_code_spans(blob))
     covered, zero = [], []
     for inv in invocations:
         # the alias form counts as covering its canonical access leaf: docs
@@ -342,14 +361,14 @@ def audit(root: Path, src: Path, corpus: dict[str, str] | None = None) -> dict:
         forms = [inv]
         if inv.startswith("access "):
             forms.append("permit " + inv[len("access "):])
-        if any(f in blob or f in flat for f in forms):
+        if any(f in blob or f in spans for f in forms):
             covered.append(inv)
         else:
             zero.append(inv)
     # bare tops too: a two-word 'top sub' can be covered while 'top' alone is
     # never named
     tops = sorted({i.split()[0] for i in invocations})
-    tops_zero = [t for t in tops if t not in covered and t not in blob and t not in flat]
+    tops_zero = [t for t in tops if t not in covered and t not in blob and t not in spans]
     return {
         "corpus_files": sorted(corpus),
         "corpus_bytes": sum(len(v) for v in corpus.values()),

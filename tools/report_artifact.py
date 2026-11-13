@@ -24,10 +24,10 @@ So a report is written under two rules:
   reads the returned status and keeps its own exit code. A missing report is
   a missing report, not a failing audit.
 
-``write_report`` returns ``(path, status)``. ``status`` is ``"written"`` when
-the stable path took the bytes, ``"sibling"`` when a dated sibling took them
-and ``"unwritten"`` when nothing could be written; the last case carries the
-reason in ``status_detail``.
+``write_report`` returns ``(path, status, detail)``. ``status`` is
+``"written"`` when the stable path took the bytes, ``"sibling"`` when a dated
+sibling took them and ``"unwritten"`` when nothing could be written; the last
+two carry the reason in ``detail``.
 """
 from __future__ import annotations
 
