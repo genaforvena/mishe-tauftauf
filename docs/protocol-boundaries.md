@@ -135,7 +135,9 @@ that composes it:
   decisions and `P` payload bodies.
 - `rust/mishe-tape-facts` (`mishe-tape-facts`, contract
   `rust/mishe-tape-facts/CONTRACT.md`) extracts byte-level tape facts from framed
-  entries; `tape_facts.read_tape_facts` composes it.
+  entries; `tape_facts.read_tape_facts` composes it. No production module imports
+  `tape_facts`; only `tests/test_tape_facts_reader.py` calls it, so the binary's
+  output is decoded by tests and not yet by a live consumer.
 - `rust/mishe-network-probe` (`mishe-network-probe`, contract
   `rust/mishe-network-probe/CONTRACT.md`) writes one probe row per run;
   `tools/network_boundary.py` decodes its JSONL rows for `tools/network_view.py`.
