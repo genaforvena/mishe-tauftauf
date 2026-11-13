@@ -1729,8 +1729,12 @@ def read_scan_acquisitions(home: Path, *, window: int = 100) -> list[tuple[datet
     discovery = home / "discovery"
     if not discovery.is_dir():
         return []
+    # Walk newest-first and stop once the window is full: the receipt directory grows without
+    # bound (1500+ files, ~400 MB), and parsing all of it per scan drove the readings producer
+    # past its memory high mark and into a 300 s timeout. Same result as parsing every file.
+    limit = window if window is not None and window > 0 else None
     pairs: list[tuple[datetime, datetime]] = []
-    for name in sorted(discovery.glob("scan-*.json")):
+    for name in reversed(sorted(discovery.glob("scan-*.json"))):
         try:
             doc = json.loads(name.read_text(encoding="utf-8"))
             created = datetime.fromisoformat(str(doc["created"]).replace("Z", "+00:00"))
@@ -1743,8 +1747,9 @@ def read_scan_acquisitions(home: Path, *, window: int = 100) -> list[tuple[datet
         if created.tzinfo is None:
             continue
         pairs.append((started, created))
-    if window is not None and window > 0 and len(pairs) > window:
-        pairs = pairs[-window:]
+        if limit is not None and len(pairs) >= limit:
+            break
+    pairs.reverse()
     return pairs
 
 
