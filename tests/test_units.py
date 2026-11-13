@@ -75,6 +75,19 @@ def test_producer_gets_timer_and_oneshot_service(cfg):
     assert "OnFailure=mishe-failed@%n.service" in files["mishe-producer-devto.service"]
 
 
+def test_producer_timers_are_jittered_so_equal_periods_do_not_fire_in_lockstep(cfg):
+    producers = [
+        units.Producer(name="fast", command=["/bin/true"], every_seconds=300, timeout=60),
+        units.Producer(name="tiny", command=["/bin/true"], every_seconds=8, timeout=60),
+        units.Producer(name="slow", command=["/bin/true"], every_seconds=3600, timeout=60),
+    ]
+    files = units.render(cfg, ROLES, producers=producers)
+    assert "RandomizedDelaySec=75" in files["mishe-producer-fast.timer"]
+    assert "RandomizedDelaySec=2" in files["mishe-producer-tiny.timer"]
+    assert "RandomizedDelaySec=120" in files["mishe-producer-slow.timer"]
+    assert "AccuracySec=5s" in files["mishe-producer-fast.timer"]
+
+
 def test_producer_execstart_keeps_a_spaced_argument_as_one_word(cfg):
     # systemd splits ExecStart on whitespace: an unquoted "living room" reached the collector as two arguments,
     # argparse rejected "room" (exit 2) and the household camera signal went RED on 2026-11-07.

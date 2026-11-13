@@ -212,9 +212,14 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
             "[Service]\nType=oneshot\nUMask=0077\n" + _env(cfg)
             + f"ExecStart={' '.join(_exec_word(w) for w in prod.command)}\nTimeoutStartSec={prod.timeout}\n"
             + f"Slice={cfg.plants_slice}\n" * bool(cfg.plants_slice))
+        # Producers with the same period started together fire in lockstep (about 17 at one second every
+        # period), a write burst that stalled the root-fs probe's fsync on 2026-11-13. A per-activation
+        # random delay breaks that lockstep; it is a quarter of the period, capped at 120 s, so short
+        # timers are not pushed far.
+        jitter = max(1, min(120, prod.every_seconds // 4))
         files[f"{p}-producer-{prod.name}.timer"] = _file(
             f"[Unit]\nDescription=Run producer {prod.name}",
-            f"[Timer]\nOnBootSec=30\nOnUnitActiveSec={prod.every_seconds}\nAccuracySec=5s\nUnit={p}-producer-{prod.name}.service",
+            f"[Timer]\nOnBootSec=30\nOnUnitActiveSec={prod.every_seconds}\nRandomizedDelaySec={jitter}\nAccuracySec=5s\nUnit={p}-producer-{prod.name}.service",
             "[Install]\nWantedBy=timers.target")
     return files
 
