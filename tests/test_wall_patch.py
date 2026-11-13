@@ -971,6 +971,26 @@ def test_excerpt_caps_size_and_names_what_it_cuts(tmp_path):
     assert context["unresolved"] == []
 
 
+def test_one_name_imported_by_two_patched_files_costs_one_excerpt(tmp_path, monkeypatch):
+    # Two patched files importing the same name must not charge the total cap
+    # twice: a single excerpt that fits the cap is complete, not omitted.
+    import base64
+    home, source, deployed = layout(tmp_path)
+    (tmp_path / "src/mishe_tauftauf/helper.py").write_text("def nonblank(text):\n    return text.strip()\n")
+    other = tmp_path / "src/mishe_tauftauf/other.py"
+    other.write_text("from mishe_tauftauf.helper import nonblank\nvalue = nonblank(' y ')\n")
+    source.write_text("from mishe_tauftauf.helper import nonblank\nvalue = nonblank(' x ')\n")
+    files = {name: {"before": None,
+                    "after": {"bytes": base64.b64encode(path.read_bytes()).decode(), "mode": 0o644}}
+             for name, path in (("src/mishe_tauftauf/example.py", source), ("src/mishe_tauftauf/other.py", other))}
+    record = {"runtime": str(tmp_path / "runtime"), "files": files}
+    one_copy = len("def nonblank(text):\n    return text.strip()\n")
+    monkeypatch.setattr(wall_patch, "CONTEXT_TOTAL_BYTES", one_copy + 1)
+    context = wall_patch.symbol_context(home, record)
+    assert list(context["modules"]) == ["mishe_tauftauf.helper:nonblank"]
+    assert context["omitted_over_limit"] == []
+
+
 def test_changed_definition_callers_reach_the_reviewer(tmp_path):
     import base64
     home, source, deployed = layout(tmp_path)

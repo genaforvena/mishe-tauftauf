@@ -462,8 +462,13 @@ def symbol_context(home, record):
             if sites > CALLER_SITES:
                 truncated.append(f"callers:{symbol}")
 
-    modules, total = {}, 0
+    modules, total, seen = {}, 0, set()
     for label, path, text in ordered:
+        # A name imported by several patched files is one excerpt: charge the
+        # budget once, or duplicates crowd out distinct context.
+        if label in seen:
+            continue
+        seen.add(label)
         if len(text) > CONTEXT_EXCERPT_BYTES:
             text = text[:CONTEXT_EXCERPT_BYTES]
             truncated.append(label)
