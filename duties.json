@@ -322,6 +322,28 @@
       "covers": "due intentions are served:RED when an intention is more than 15 minutes past due with no wake of its role since then and no GREEN budget hold explaining it; UNKNOWN when intentions, the wake ledger or a budget signal cannot be read or is stale; HELD (not a fault) when a spontaneous intention is held by a RED budget signal"
     },
     {
+      "name": "units-after-trip",
+      "command": [
+        "{python}",
+        "{repo}/checks/units-after-trip.py",
+        "--home",
+        "{home}",
+        "--act"
+      ],
+      "every": 120,
+      "timeout": 60,
+      "max_age": 300,
+      "resolver": "health",
+      "replaces": [],
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "covers": "enabled mishe-* units left dead after a containment trip: RED with the names and minutes dead while the tripped latch is absent (the drop-in's ConditionPathExists skips a restart that would otherwise succeed once the latch clears); with --act each dead unit is started once per dead episode after a 120 s grace; GREEN while the latch is present or no enabled unit is dead; UNKNOWN when systemctl or journalctl cannot be read"
+    },
+    {
       "name": "work-trial",
       "command": [
         "{python}",
