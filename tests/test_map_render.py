@@ -226,7 +226,10 @@ def test_plan_draws_floorplan_rooms_with_area_and_assumed_dashes(tmp_path):
     assert 'stroke-dasharray="8 5"' in svg  # assumed geometry is dashed, not solid
 
 
-def test_unknown_token_is_hollow_and_halo_shows_uncertainty(tmp_path):
+def test_unknown_token_is_hollow_and_halo_shows_uncertainty(tmp_path, monkeypatch):
+    # the UNKNOWN ghost is only drawn inside the assumed night prior (in_night); pin it so the
+    # assertion does not depend on the wall-clock hour the suite runs at
+    monkeypatch.setattr(mr, "in_night", lambda hour: True)
     site = _site(tmp_path, _activity({}))
     _floorplan(site)
     state, svg = _render(site)
