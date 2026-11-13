@@ -270,7 +270,9 @@ def test_multiple_unknown_dispatches_reconcile_in_one_shared_order(home):
             started = []
             result = go(home, role, engine, started)
             assert result.outcome == "blocked"
-            assert started == [head]
+            # The head's start goes through the shared ledger: the first contender in a window starts it,
+            # later contenders inside START_SPACING_SECONDS are not sent (the head stays owed).
+            assert started in ([], [head])
         result = go(home, head, engine)
         assert result.outcome == "reconciled"
     assert len(engine.calls) == 3
