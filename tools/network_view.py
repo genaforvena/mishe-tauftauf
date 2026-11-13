@@ -328,26 +328,63 @@ def router_health_line(now=None):
             f"(limit: load {LOAD_LIMIT_1M:g}, free RAM {MEM_FLOOR_MB:.0f} MB); read {ago:.0f} s ago{stale}")
 
 
-def uplink_rate_line(now=None):
-    """Receive drops on the WAN link over the last hour, from recorded counters; a router reboot restarts the span."""
-    now = time.time() if now is None else now
-    reads = [r for r in router_rows() if r.get("ok") and r.get("uplink") and r.get("uptime_s") is not None
-             and now - r["ts"] <= 3600]
-    if len(reads) < 2:
-        return "UNKNOWN (fewer than two WAN counter reads in the last hour)"
-    start = reads[0]
-    for prev, cur in zip(reads, reads[1:]):
+def _wan_drops(reads, lo, hi):
+    """Receive drops between the first and last WAN read in [lo, hi]; a reboot restarts the span.
+
+    Returns (drops, span_seconds), or None when the window holds less than 10 min of counters.
+    """
+    sel = [r for r in reads if lo <= r["ts"] <= hi]
+    if len(sel) < 2:
+        return None
+    start = sel[0]
+    for prev, cur in zip(sel, sel[1:]):
         if cur["uptime_s"] < prev["uptime_s"]:  # the router rebooted: counters restarted from zero
             start = cur
-    end = reads[-1]
+    end = sel[-1]
     span = end["ts"] - start["ts"]
     if span < 600:
-        return "UNKNOWN (less than 10 min of WAN counters since the last router boot in the last hour)"
+        return None
     drops = end["uplink"]["rx_dropped"] - start["uplink"]["rx_dropped"]
     if drops < 0:
-        return "UNKNOWN (WAN counter fell without a reboot; check the router read)"
+        return None
+    return drops, span
+
+
+def uplink_trend_phrase(reads, now):
+    """Plain comparison of this hour's drop rate with the six hours before it."""
+    earlier = []
+    for h in range(1, 7):
+        got = _wan_drops(reads, now - (h + 1) * 3600, now - h * 3600)
+        if got is not None:
+            earlier.append(got[0] * 3600 / got[1])
+    if len(earlier) < 3:
+        return "no comparison (fewer than 3 earlier hours of counters)"
+    earlier.sort()
+    med = earlier[len(earlier) // 2]
+    cur = _wan_drops(reads, now - 3600, now)
+    rate = cur[0] * 3600 / cur[1]
+    lo_txt, hi_txt = f"{earlier[0]:.0f}", f"{earlier[-1]:.0f}"
+    if rate > 1.25 * med:
+        return f"higher than the {len(earlier)} earlier hours (median {med:.0f} per hour)"
+    if rate < 0.75 * med:
+        return f"lower than the {len(earlier)} earlier hours (median {med:.0f} per hour)"
+    return f"about the same as the {len(earlier)} earlier hours ({lo_txt} to {hi_txt} per hour)"
+
+
+def uplink_rate_line(now=None):
+    """Receive drops on the WAN link over the last hour, from recorded counters, with a trend clause."""
+    now = time.time() if now is None else now
+    reads = [r for r in router_rows() if r.get("ok") and r.get("uplink") and r.get("uptime_s") is not None]
+    recent = [r for r in reads if now - r["ts"] <= 3600]
+    if len(recent) < 2:
+        return "UNKNOWN (fewer than two WAN counter reads in the last hour)"
+    got = _wan_drops(reads, now - 3600, now)
+    if got is None:
+        return ("UNKNOWN (no usable WAN counters in the last hour: under 10 min since the last router "
+                "boot, or the counter fell without a reboot)")
+    drops, span = got
     return (f"{drops} receive drops in the last {span / 60:.0f} min "
-            f"(about {drops * 3600 / span:.0f} per hour)")
+            f"(about {drops * 3600 / span:.0f} per hour), {uplink_trend_phrase(reads, now)}")
 
 
 def gateway_line(data):

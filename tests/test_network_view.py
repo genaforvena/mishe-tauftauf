@@ -174,6 +174,46 @@ def test_uplink_rate_restarts_after_a_reboot(tmp_path, monkeypatch):
     assert "30 receive drops" in view.uplink_rate_line(now)
 
 
+def _hourly_reads(now, per_hour_rates, uptime0=100000):
+    """Reads every 10 min over len(per_hour_rates) hours ending at now; rates are drops per hour, oldest first."""
+    start = now - len(per_hour_rates) * 3600
+    reads, drops, t = [], 0.0, start
+    while t <= now:
+        reads.append(_uplink_read(t, uptime0 + (t - start), int(drops)))
+        hour = min(int((t - start) // 3600), len(per_hour_rates) - 1)
+        drops += per_hour_rates[hour] * 600 / 3600
+        t += 600
+    return reads
+
+
+def _write_reads(tmp_path, monkeypatch, reads):
+    log = tmp_path / "router.jsonl"
+    log.write_text("".join(json.dumps(r) + "\n" for r in reads))
+    monkeypatch.setattr(view, "ROUTER_LOG", log)
+
+
+def test_uplink_trend_says_same_when_the_hours_are_flat(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    reads = _hourly_reads(now, [330] * 7)
+    _write_reads(tmp_path, monkeypatch, reads)
+    line = view.uplink_rate_line(now)
+    assert "about 330 per hour" in line and "about the same as the 6 earlier hours" in line
+
+
+def test_uplink_trend_says_higher_when_this_hour_jumped(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    reads = _hourly_reads(now, [100] * 6 + [600])
+    _write_reads(tmp_path, monkeypatch, reads)
+    assert "higher than the 6 earlier hours" in view.uplink_rate_line(now)
+
+
+def test_uplink_trend_needs_three_earlier_hours(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    reads = _hourly_reads(now, [330] * 2)
+    _write_reads(tmp_path, monkeypatch, reads)
+    assert "no comparison (fewer than 3 earlier hours" in view.uplink_rate_line(now)
+
+
 def test_uplink_rate_unknown_with_one_read(tmp_path, monkeypatch):
     now = 1_000_000.0
     _router_log(tmp_path, monkeypatch, _uplink_read(now, 3000, 40))
