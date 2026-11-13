@@ -1028,3 +1028,55 @@ def test_check_description_reaches_the_review(tmp_path, monkeypatch):
         wall_patch.check(home, "change", [sys.executable, "-c", "pass"], description="jitter the timers")
     assert seen["rationale"] == "jitter the timers"
     assert deployed.read_text() == "before\n"
+
+
+def test_reexported_name_is_followed_to_its_definition(tmp_path):
+    # `observations` re-exports a helper defined in `impl`; the reviewer must get
+    # the definition, not an unresolved name.
+    home, source, deployed = layout(tmp_path)
+    (tmp_path / "src/mishe_tauftauf/impl.py").write_text("def validate_slug(text):\n    return text\n")
+    (tmp_path / "src/mishe_tauftauf/facade.py").write_text("from mishe_tauftauf.impl import validate_slug\n")
+    source.write_text("from mishe_tauftauf.facade import validate_slug\nvalue = validate_slug('x')\n")
+    record = {"runtime": str(tmp_path / "runtime"),
+              "files": {"src/mishe_tauftauf/example.py": {
+                  "before": None,
+                  "after": {"bytes": __import__("base64").b64encode(source.read_bytes()).decode(), "mode": 0o644}}}}
+    context = wall_patch.symbol_context(home, record)
+    assert context["unresolved"] == []
+    assert context["modules"]["mishe_tauftauf.facade:validate_slug"]["path"] == "src/mishe_tauftauf/impl.py"
+    assert "def validate_slug" in context["modules"]["mishe_tauftauf.facade:validate_slug"]["text"]
+
+
+def test_annotated_module_constant_is_a_definition(tmp_path):
+    home, source, deployed = layout(tmp_path)
+    (tmp_path / "src/mishe_tauftauf/consts.py").write_text("KINDS: tuple[str, ...] = ('a', 'b')\n")
+    source.write_text("from mishe_tauftauf.consts import KINDS\nvalue = KINDS\n")
+    record = {"runtime": str(tmp_path / "runtime"),
+              "files": {"src/mishe_tauftauf/example.py": {
+                  "before": None,
+                  "after": {"bytes": __import__("base64").b64encode(source.read_bytes()).decode(), "mode": 0o644}}}}
+    context = wall_patch.symbol_context(home, record)
+    assert context["unresolved"] == []
+    assert "KINDS: tuple" in context["modules"]["mishe_tauftauf.consts:KINDS"]["text"]
+
+
+def test_generic_name_callers_count_only_real_references(tmp_path):
+    # A name like `run` appears in comments, strings and unrelated locals. Only
+    # files importing the changed definition, and only real references, count.
+    import base64
+    home, source, deployed = layout(tmp_path)
+    (tmp_path / "src/mishe_tauftauf/user.py").write_text(
+        "from mishe_tauftauf.example import run\n# run is mentioned in a comment\nrun()\n")
+    (tmp_path / "src/mishe_tauftauf/unrelated.py").write_text("run = 3\nprint(run)\n")
+    old = "def run():\n    return 1\n"
+    new = "def run():\n    return 2\n"
+    source.write_text(new)
+    record = {"runtime": str(tmp_path / "runtime"),
+              "files": {"src/mishe_tauftauf/example.py": {
+                  "before": {"bytes": base64.b64encode(old.encode()).decode(), "mode": 0o644},
+                  "after": {"bytes": base64.b64encode(new.encode()).decode(), "mode": 0o644}}}}
+    context = wall_patch.symbol_context(home, record)
+    text = context["modules"]["callers:run"]["text"]
+    assert "src/mishe_tauftauf/user.py:1" in text
+    assert "unrelated.py" not in text
+    assert context["truncated"] == []

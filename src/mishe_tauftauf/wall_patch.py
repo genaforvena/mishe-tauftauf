@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import ast
+import functools
 import base64
 import difflib
 from datetime import datetime, timezone
@@ -289,10 +290,11 @@ def prepare(home, identity, paths, base=None):
 # a reviewer that cannot see a caller answers unknown. So each name the patch
 # imports from the package is sent as its definition, and each changed
 # definition is sent as bounded windows around its call sites.
-CONTEXT_EXCERPT_BYTES = 8_000
+CONTEXT_EXCERPT_BYTES = 12_000
 CONTEXT_TOTAL_BYTES = 160_000
 CALLER_SITES = 12
 CALLER_RADIUS = 2
+RESOLVE_HOPS = 2
 
 
 def _definitions(text):
@@ -308,6 +310,8 @@ def _definitions(text):
                 for target in node.targets:
                     if isinstance(target, ast.Name):
                         found[target.id] = ast.get_source_segment(text, node) or ""
+            elif isinstance(node, ast.AnnAssign) and not prefix and isinstance(node.target, ast.Name):
+                found[node.target.id] = ast.get_source_segment(text, node) or ""
 
     walk(ast.parse(text).body, "")
     return found
@@ -348,6 +352,59 @@ def _changed_names(record):
     return changed
 
 
+def _resolve_export(root, src, module, alias, patched, depth=0):
+    """(repo path, definition text) for `alias` as seen through `module`.
+
+    A name the module only re-exports (`from .impl import alias`) is followed one
+    import hop at a time, up to a small depth, so the reviewer gets the definition.
+    """
+    path = module_file(src, module)
+    if path is None or path.relative_to(root).as_posix() in patched:
+        return None
+    rel = path.relative_to(root).as_posix()
+    text = decode_lossy(path.read_bytes())
+    defs = _definitions(text)
+    if alias in defs:
+        return rel, defs[alias]
+    if depth >= RESOLVE_HOPS:
+        return None
+    for next_module, next_alias in _imported_names(rel, text):
+        if next_alias == alias and next_module != module:
+            found = _resolve_export(root, src, next_module, next_alias, patched, depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
+@functools.lru_cache(maxsize=512)
+def _parsed(text):
+    try:
+        return ast.parse(text)
+    except SyntaxError:
+        return None
+
+
+def _symbol_references(text, symbol):
+    """0-based line numbers where a file that imports `symbol` from the package uses it."""
+    tree = _parsed(text)
+    if tree is None:
+        return []
+    imports = [node for node in ast.walk(tree)
+               if isinstance(node, ast.ImportFrom)
+               and any(alias.name == symbol for alias in node.names)
+               and (node.level or in_package(node.module or ""))]
+    if not imports:
+        return []
+    lines = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == symbol:
+            lines.add(node.lineno - 1)
+        elif isinstance(node, ast.Attribute) and node.attr == symbol:
+            lines.add(node.lineno - 1)
+    lines.update(node.lineno - 1 for node in imports)
+    return sorted(lines)
+
+
 def symbol_context(home, record):
     """Read-only excerpts a reviewer needs: definitions the patch imports and
     bounded call-site windows for each changed definition in the shared checkout.
@@ -371,15 +428,13 @@ def symbol_context(home, record):
             continue
         for module, alias in pairs:
             path = module_file(src, module)
-            if path is None or path.relative_to(root).as_posix() in patched:
-                # A bare package (`from . import x`) has no module file to read here;
-                # only a dotted module that is missing is flagged as unresolved.
-                if path is None and "." in module and module_file(src, f"{module}.{alias}") is None:
-                    unresolved.append(f"{module}:{alias}")
-                continue
-            defs = _definitions(decode_lossy(path.read_bytes()))
-            if alias in defs:
-                ordered.append((f"{module}:{alias}", path.relative_to(root).as_posix(), defs[alias]))
+            if path is not None and path.relative_to(root).as_posix() in patched:
+                continue  # the reviewer already has this module's after bytes
+            if path is None and "." not in module:
+                continue  # a bare package (`from . import x`) has no module file here
+            found = _resolve_export(root, src, module, alias, patched)
+            if found is not None:
+                ordered.append((f"{module}:{alias}", found[0], found[1]))
             elif module_file(src, f"{module}.{alias}") is None:
                 unresolved.append(f"{module}:{alias}")
 
@@ -389,15 +444,16 @@ def symbol_context(home, record):
             for path in sorted(base.rglob("*.py")):
                 rel = path.relative_to(root).as_posix()
                 if rel not in patched:
-                    corpus[rel] = path.read_text(errors="replace").splitlines()
+                    corpus[rel] = path.read_text(errors="replace")
     for symbol in sorted(_changed_names(record)):
-        pattern = re.compile(rf"\b{re.escape(symbol)}\b")
         windows, sites = [], 0
-        for rel, lines in corpus.items():
-            for index, line in enumerate(lines):
-                if not pattern.search(line):
-                    continue
-                sites += 1
+        for rel, text in corpus.items():
+            refs = _symbol_references(text, symbol)
+            if not refs:
+                continue
+            lines = text.splitlines()
+            sites += len(refs)
+            for index in refs:
                 if len(windows) < CALLER_SITES:
                     low, high = max(0, index - CALLER_RADIUS), index + CALLER_RADIUS + 1
                     windows.append(f"{rel}:{index + 1}\n" + "\n".join(lines[low:high]))
