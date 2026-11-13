@@ -25,6 +25,11 @@ from .wake import EngineNotStarted, EngineTimeout
 
 IDLE_GAP_S = 180.0
 """How long the output may stay unchanged before the engine counts as idle."""
+TOOL_WAIT_GRACE_S = 600.0
+"""How far past the soft deadline a silent wait on a live child may defer the idle cut.
+
+Beyond this a child-wait that prints nothing is cut as idle; the hard cap still bounds all runs.
+"""
 POLL_S = 5.0
 """How often a running engine is checked for output growth."""
 
@@ -79,14 +84,42 @@ def _kill_pids(pids: set[int]) -> None:
             continue
 
 
-def _output_size(path: Path | None) -> int | None:
-    """Bytes written to the output file so far, or None when there is no file to watch."""
-    if path is None:
-        return None
-    try:
-        return path.stat().st_size
-    except OSError:
-        return None
+HEARTBEAT_PREFIX = b'{"type":"tool_execution_update"'
+"""A wait tool's periodic update line. It re-reports a tool that is still running, so it is not progress."""
+
+
+class _ProgressReader:
+    """Cumulative bytes of engine output that is progress, read incrementally from the output file.
+
+    Heartbeat lines (see ``HEARTBEAT_PREFIX``) are left out: a mind stuck in a wait on a
+    subagent that never returns keeps writing them, and counting them kept the run alive to the
+    hard cap (docs wake 2026-11-13, cut at 3600 s). Only complete lines are counted, so a
+    half-written line is picked up on the next sample. ``poll`` returns None when there is no
+    file to watch or it cannot be read, as the plain size check did.
+    """
+
+    def __init__(self, path: Path | None):
+        self.path = path
+        self.offset = 0
+        self.progress = 0
+
+    def poll(self) -> int | None:
+        if self.path is None:
+            return None
+        try:
+            with open(self.path, "rb") as handle:
+                handle.seek(self.offset)
+                data = handle.read()
+        except OSError:
+            return None
+        end = data.rfind(b"\n")
+        if end < 0:
+            return self.progress
+        self.offset += end + 1
+        for line in data[:end + 1].splitlines(keepends=True):
+            if not line.startswith(HEARTBEAT_PREFIX):
+                self.progress += len(line)
+        return self.progress
 
 
 def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
@@ -166,8 +199,11 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
     hard_at = start + hard_timeout
     first_at = start + first_output_s if first_output_s is not None else None
     first_seen = False
-    last_size = _output_size(watched)
+    reader = _ProgressReader(watched)
+    last_size = reader.poll()
     last_growth = start
+    # A silent live child defers the idle cut only this far past the soft deadline.
+    defer_until = soft_at + TOOL_WAIT_GRACE_S
 
     def saw_first(size: int | None) -> bool:
         nonlocal first_seen
@@ -179,7 +215,7 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
         now = time.monotonic()
         if now >= hard_at:
             raise EngineTimeout(f"exceeded {hard_timeout:g}s (hard cap)")
-        size = _output_size(watched)
+        size = reader.poll()
         if size is not None and last_size is not None and size > last_size:
             last_size = size
             last_growth = now
@@ -189,7 +225,7 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
             boundary = soft_at
         else:
             if size is None or now - last_growth >= idle_gap:
-                if size is None or not _awaiting_tools(process):
+                if size is None or now >= defer_until or not _awaiting_tools(process):
                     raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
                 last_growth = now
             boundary = last_growth + idle_gap
@@ -209,7 +245,7 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
             if code is not None:
                 return code
         now = time.monotonic()
-        size = _output_size(watched)
+        size = reader.poll()
         if size is not None and last_size is not None and size > last_size:
             last_size = size
             last_growth = now
@@ -218,6 +254,6 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
         if first_at is not None and now >= first_at and not saw_first(size):
             raise EngineTimeout(f"no first output within {first_output_s:g}s")
         if now >= soft_at and (size is None or now - last_growth >= idle_gap):
-            if size is None or not _awaiting_tools(process):
+            if size is None or now >= defer_until or not _awaiting_tools(process):
                 raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
             last_growth = now
