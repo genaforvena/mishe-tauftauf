@@ -149,6 +149,19 @@ stays uncorrected, so the recurrence is routed instead of sitting in the
 ledger. The frames themselves are deleted, and the household's consent decides
 which room may be asked at all.
 
+The floor plan (`senses/map/floorplan.json`) labels every value with where it
+came from. The file's own `provenance_kinds` key defines the five words:
+`given` is stated by a person in a DM or label and is not measured by a sensor;
+`measured` is read from a sensor or a physical measurement, with its source;
+`inferred` is derived from sensing, with the method, sample count and
+uncertainty recorded; `assumed` is a drawing placeholder and is not evidence;
+`unknown` means no value yet. A field that is absent reads as `unknown`. The
+renderer (`tools/map_render.py`) draws `assumed` rooms with dashed outlines and
+the tag "assumed", and marks the blind spot as "BLIND SPOT (inferred)". Tokens
+are not part of the floor plan; the render step places them from evidence and
+they stay UNKNOWN until labelled fits pass leave-one-out (the file's note, as
+written, records 0 of 3).
+
 A wall records observations and intentions, not authority. Authors may commit
 checked scoped changes without routine permission. A broken dashboard does not
 freeze reader work. Small per-role work records distinguish ready actions from
