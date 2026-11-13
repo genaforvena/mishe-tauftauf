@@ -17,6 +17,9 @@ from mishe_tauftauf.discovery import _cpu_busy, latest, renew_scan, scan, scan_a
 from mishe_tauftauf import argv_text, discovery
 from mishe_tauftauf import proc_table
 from mishe_tauftauf.feed import Feed
+from tests.tape_binary import pin_tape_binary  # noqa: F401  (fixture)
+
+pytestmark = pytest.mark.usefixtures("pin_tape_binary")
 
 
 def test_scan_writes_real_bounded_local_evidence(tmp_path: Path) -> None:

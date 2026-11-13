@@ -12,6 +12,9 @@ import pytest
 from mishe_tauftauf import discovery
 from mishe_tauftauf import space_text
 from mishe_tauftauf.feed import Feed
+from tests.tape_binary import pin_tape_binary  # noqa: F401  (fixture)
+
+pytestmark = pytest.mark.usefixtures("pin_tape_binary")
 
 NOW = 1791368000.0
 
