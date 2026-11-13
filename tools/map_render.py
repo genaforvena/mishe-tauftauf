@@ -665,7 +665,7 @@ def main(argv=None):
         json.dump(state, fh, indent=1, ensure_ascii=False)
     print(json.dumps({p: {"room": rows[p]["room"], "confidence": rows[p]["confidence"]} for p in PEOPLE}))
     print(svg_path)
-    print(png)
+    print(png.get("path") if png.get("state") == "ok" else "png %s: %s" % (png.get("state"), png.get("reason")))
     return 0
 
 
