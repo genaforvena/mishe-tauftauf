@@ -54,6 +54,17 @@ def _retire_reoffers(home, name: str) -> None:
         intentions.remove(home, role_dir.name, f"reoffer-{name}")
 
 
+def _unit_for(name: str, incident) -> str | None:
+    """The unit a failure signal records. An incident written before ``unit`` was recorded (2026-11-13: work-trial and
+    work-watch) or with no incident file at all (dispatch) still names its unit in the signal: ``failed-mishe-producer-X-service``
+    is ``mishe-producer-X.service``. The derived name is accepted only when ``units.signal_name`` maps it back to ``name``,
+    so a lossy mapping cannot clear a different unit."""
+    unit = incident.get("unit") if isinstance(incident, dict) else None
+    if isinstance(unit, str):
+        return unit
+    return units.producer_unit_for_signal(name)
+
+
 def clear_recovered(home, *, now, last_exit=None) -> list[str]:
     """Observe GREEN every RED failure signal whose unit has since exited 0 after the RED reading.
 
@@ -88,13 +99,16 @@ def clear_recovered(home, *, now, last_exit=None) -> list[str]:
         if not (expired or (state == signal_store.OK and value == "RED")):
             continue
         incident = read_json(home / "work/incidents" / f"{name}.json")
-        unit = incident.get("unit") if isinstance(incident, dict) else None
-        if not isinstance(unit, str):
+        unit = _unit_for(name, incident)
+        if unit is None:
             continue
         exit_ = last_exit(unit)
         # A RED reading is cleared by an exit after the RED was observed; an expired one by an exit after the last failure
-        # the incident saw (its observed_at is the expiry write, which is later than the failure).
-        since = incident.get("last_seen") if expired else reading.get("observed_at")
+        # the incident saw. With no incident last_seen (missing record), the expiry write is the proxy: a clean exit after a
+        # week of standing record is the recovery the sweep looks for, and a recurrence writes a new incident.
+        last_seen = incident.get("last_seen") if isinstance(incident, dict) else None
+        since = (last_seen if isinstance(last_seen, (int, float)) else reading.get("observed_at")) if expired \
+            else reading.get("observed_at")
         if exit_ and exit_[1] and isinstance(since, (int, float)) and exit_[0] > since:
             signal_store.observe(home, name, "GREEN", now=now, source="failure-recovered")
             _retire_reoffers(home, name)

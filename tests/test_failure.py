@@ -291,3 +291,54 @@ def test_the_sweep_clears_a_recovered_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(work_boundary, "unit_last_exit", lambda u: (NOW + 100, True))
     work_state.sweep(tmp_path, repo=tmp_path, now=NOW + 120, notify=lambda *a: None)
     assert store.read(tmp_path, name, now=NOW + 120).value == "GREEN"
+
+
+def _expired_producer_failure(tmp_path, name, *, incident=None):
+    # A standing failure that expired to UNKNOWN; an incident record is optional (dispatch had none; work-trial and
+    # work-watch predate the unit field).
+    import json
+    store.register(tmp_path, name, max_age=failure.SIGNAL_MAX_AGE, subscribers=["genome"])
+    store.observe_unknown(tmp_path, name, now=NOW, reason="expired after 604800s without observation", source="test")
+    if incident is not None:
+        path = tmp_path / "work/incidents"
+        path.mkdir(parents=True, exist_ok=True)
+        (path / f"{name}.json").write_text(json.dumps(incident))
+
+
+def test_legacy_incident_without_unit_clears_on_a_clean_exit_after_last_seen(tmp_path):
+    # 2026-11-13 work-watch: the incident has no "unit", but the signal names mishe-producer-work-watch.service.
+    name = "failed-mishe-producer-work-watch-service"
+    _expired_producer_failure(tmp_path, name, incident={"count": 78, "first_seen": NOW - 9, "last_seen": NOW - 5})
+    seen = []
+    def last_exit(unit):
+        seen.append(unit)
+        return (NOW + 100, True)
+    assert failure.clear_recovered(tmp_path, now=NOW + 200, last_exit=last_exit) == [name]
+    assert seen == ["mishe-producer-work-watch.service"]
+    assert store.recorded(tmp_path, name)["value"] == "GREEN"
+
+
+def test_missing_incident_clears_on_a_clean_exit_after_the_expiry(tmp_path):
+    # 2026-11-13 dispatch: no incident file at all; the expiry write is the proxy for the last failure.
+    name = "failed-mishe-producer-dispatch-service"
+    _expired_producer_failure(tmp_path, name)
+    expired_at = store.recorded(tmp_path, name)["observed_at"]
+    assert failure.clear_recovered(tmp_path, now=expired_at + 200, last_exit=lambda u: (expired_at - 50, True)) == []
+    assert failure.clear_recovered(tmp_path, now=expired_at + 200, last_exit=lambda u: (expired_at + 100, True)) == [name]
+    assert store.recorded(tmp_path, name)["value"] == "GREEN"
+
+
+def test_a_name_that_does_not_map_back_to_its_unit_is_not_cleared(tmp_path):
+    # A non-producer failure without a unit must not guess one; the sweep never asks systemd about it.
+    name = "failed-mishe-wake-docs-service"
+    _expired_producer_failure(tmp_path, name)
+    asked = []
+    assert failure.clear_recovered(tmp_path, now=NOW + 200, last_exit=lambda u: asked.append(u) or (NOW + 100, True)) == []
+    assert asked == []
+
+
+def test_a_legacy_producer_still_failing_stays_expired(tmp_path):
+    name = "failed-mishe-producer-work-trial-service"
+    _expired_producer_failure(tmp_path, name, incident={"count": 1, "first_seen": NOW - 9, "last_seen": NOW - 5})
+    assert failure.clear_recovered(tmp_path, now=NOW + 200, last_exit=lambda u: (NOW + 100, False)) == []
+    assert store.recorded(tmp_path, name)["state"] == "UNKNOWN"

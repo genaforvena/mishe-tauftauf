@@ -229,6 +229,16 @@ def signal_name(unit: str) -> str:
     return "failed-" + re.sub(r"[^a-z0-9_-]+", "-", unit.lower()).strip("-")
 
 
+def producer_unit_for_signal(name: str) -> str | None:
+    """The producer unit whose failure signal is ``name``, or None. ``failed-mishe-producer-X-service`` is
+    ``mishe-producer-X.service``; accepted only when ``signal_name`` maps it back to ``name``, so a lossy mapping cannot
+    name a different unit (failure.clear_recovered uses this for incidents that predate the ``unit`` field)."""
+    if not (name.startswith("failed-mishe-producer-") and name.endswith("-service")):
+        return None
+    candidate = name[len("failed-"):-len("-service")] + ".service"
+    return candidate if signal_name(candidate) == name else None
+
+
 PLANT_UNIT_PREFIXES = ("mishe-wake", "mishe-producer-", "mishe-failed@", "mishe-doctor", "mishe-arm", "mishe-next-due")
 
 
