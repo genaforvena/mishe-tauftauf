@@ -1008,6 +1008,41 @@ def test_changed_definition_callers_reach_the_reviewer(tmp_path):
     assert context["omitted_over_limit"] == [] and context["unresolved"] == []
 
 
+def test_removed_symbol_callers_reach_the_reviewer(tmp_path):
+    # A patch that deletes a definition still in use elsewhere must show the
+    # surviving caller: removal is a change, not an absence to skip.
+    import base64
+    home, source, deployed = layout(tmp_path)
+    (tmp_path / "src/mishe_tauftauf/other.py").write_text("from mishe_tauftauf.example import WEDGE_LIMIT\nprint(WEDGE_LIMIT)\n")
+    old = "WEDGE_LIMIT = 3\n\ndef keep():\n    return 1\n"
+    new = "def keep():\n    return 1\n"
+    source.write_text(new)
+    record = {"runtime": str(tmp_path / "runtime"),
+              "files": {"src/mishe_tauftauf/example.py": {
+                  "before": {"bytes": base64.b64encode(old.encode()).decode(), "mode": 0o644},
+                  "after": {"bytes": base64.b64encode(new.encode()).decode(), "mode": 0o644}}}}
+    context = wall_patch.symbol_context(home, record)
+    assert "print(WEDGE_LIMIT)" in context["modules"]["callers:WEDGE_LIMIT"]["text"]
+    assert context["unresolved"] == []
+
+
+def test_removed_symbol_without_callers_records_the_search(tmp_path):
+    # With no surviving reference, the reviewer must see that the search ran
+    # (an explicit "none found" excerpt), and the context stays complete.
+    import base64
+    home, source, deployed = layout(tmp_path)
+    old = "WEDGE_LIMIT = 3\n\ndef keep():\n    return 1\n"
+    new = "def keep():\n    return 1\n"
+    source.write_text(new)
+    record = {"runtime": str(tmp_path / "runtime"),
+              "files": {"src/mishe_tauftauf/example.py": {
+                  "before": {"bytes": base64.b64encode(old.encode()).decode(), "mode": 0o644},
+                  "after": {"bytes": base64.b64encode(new.encode()).decode(), "mode": 0o644}}}}
+    context = wall_patch.symbol_context(home, record)
+    assert "no imported reference found" in context["modules"]["callers:WEDGE_LIMIT"]["text"]
+    assert context["omitted_over_limit"] == [] and context["unresolved"] == []
+
+
 def test_omitted_context_marks_the_request_incomplete(tmp_path, monkeypatch):
     # An excerpt dropped over the total cap must reach the reviewer as missing
     # evidence (context_complete False), never as a complete context.

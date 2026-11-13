@@ -337,19 +337,27 @@ def _imported_names(name, text):
     return pairs
 
 
-def _changed_names(record):
-    """Names whose definition differs between the base and the patched bytes."""
-    changed = set()
+def _definition_diff(record):
+    """(changed, removed) names between the base and the patched bytes. A removed
+    name still matters: a deleted symbol with a surviving caller is exactly what
+    the reviewer must see."""
+    changed, removed = set(), set()
     for name, values in record["files"].items():
-        if not is_python(name) or not values["after"]:
+        if not is_python(name):
             continue
         try:
-            after = _definitions(decode_b64_text(values["after"]["bytes"]))
+            after = _definitions(decode_b64_text(values["after"]["bytes"])) if values["after"] else {}
             before = _definitions(decode_b64_text(values["before"]["bytes"])) if values["before"] else {}
         except SyntaxError:
             continue  # named as unresolved by symbol_context
         changed.update(last_segment(qual) for qual, text in after.items() if before.get(qual) != text)
-    return changed
+        removed.update(last_segment(qual) for qual in before if qual not in after)
+    return changed | removed, removed
+
+
+def _changed_names(record):
+    """Names whose definition differs between the base and the patched bytes."""
+    return _definition_diff(record)[0]
 
 
 def _resolve_export(root, src, module, alias, patched, depth=0):
@@ -443,13 +451,14 @@ def symbol_context(home, record):
                 unresolved.append(f"{module}:{alias}")
 
     corpus = {}
-    for base in (src, root / "checks"):
+    for base in (src, root / "checks", root / "tests", root / "tools"):
         if base.is_dir():
             for path in sorted(base.rglob("*.py")):
                 rel = path.relative_to(root).as_posix()
                 if rel not in patched:
                     corpus[rel] = path.read_text(errors="replace")
-    for symbol in sorted(_changed_names(record)):
+    changed, removed = _definition_diff(record)
+    for symbol in sorted(changed):
         windows, sites = [], 0
         for rel, text in corpus.items():
             refs = _symbol_references(text, symbol)
@@ -465,6 +474,11 @@ def symbol_context(home, record):
             ordered.append((f"callers:{symbol}", "shared checkout", "\n---\n".join(windows)))
             if sites > CALLER_SITES:
                 truncated.append(f"callers:{symbol}")
+        elif symbol in removed:
+            # A removed name with no surviving reference is evidence, not silence:
+            # say the search ran so the reviewer does not assume unseen callers.
+            ordered.append((f"callers:{symbol}", "shared checkout",
+                            "no imported reference found in src/, checks/, tests/ or tools/"))
 
     modules, total, seen = {}, 0, set()
     for label, path, text in ordered:
