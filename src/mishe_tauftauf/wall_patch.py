@@ -390,7 +390,7 @@ def check(home, identity, command, *, activate=None, observe=None, revert_observ
         record = status(home, identity)
         # The reviewer judges intent from this field; without it an unknown
         # verdict on the same bytes is the only possible answer.
-        if description is not None and description.strip():
+        if description:
             record["description"] = description
         # A check produces no delivery verdict of its own: leave the field unset
         # so an aborted attempt is not read as a genuine non-delivery. _apply and
