@@ -373,3 +373,15 @@ def test_unresolved_start_keeps_the_forward_write_ahead_record(tmp_path):
     # A second request inside the spacing of that record waits instead of starting.
     kind, left = wake._start_once(tmp_path, ledger, "genome", lambda role: True, lambda: 1151.0)
     assert kind == "wait" and left > 0
+
+
+def test_run_wake_successor_start_goes_through_the_ledger(tmp_path):
+    # Review of 8799918d: run_wake's successor start called the raw starter, so it neither spaced
+    # against nor recorded in the shared ledger. The successor must be recorded, and a second
+    # successor start inside the spacing must not be sent.
+    calls = []
+    wake._ledger_update(tmp_path, lambda ledger: ledger.update({"other": 1.0}))
+    assert wake._ledger_start(tmp_path, "genome", lambda role: calls.append(role) or True) == "start"
+    assert wake._ledger_start(tmp_path, "genome", lambda role: calls.append(role) or True) == "wait"
+    assert calls == ["genome"]
+    assert wake._ledger_update(tmp_path, None)["genome"] > 0

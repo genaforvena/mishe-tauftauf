@@ -210,6 +210,21 @@ def _start_once(home, ledger: dict, role: str, starter, clock) -> tuple[str, flo
     return "refused", None
 
 
+def _ledger_start(home, role: str, starter) -> str:
+    """Start ``role`` only through the shared ledger: spacing check, write-ahead, record.
+
+    run_wake's successor and blocked-branch starts used to call the starter directly, so they
+    bypassed the spacing and recorded nothing (review of 8799918d: a successor start could land
+    inside 150 s of another start of the same role). A start inside the spacing is not sent: the
+    role stays owed, and the next arm or resume starts it, so nothing is dropped and nothing sleeps
+    inside a wake. Returns the _start_once outcome: "start", "wait" or "refused".
+    """
+    decision: dict = {}
+    _ledger_update(home, lambda ledger: decision.update(
+        result=_start_once(home, ledger, role, starter or systemd_starter, time.time)))
+    return decision["result"][0]
+
+
 def debounced_start(home, role: str, window: float, *, clock=time.time, sleep=time.sleep,
                     starter=None) -> float | None:
     """Wait out the coalescing window, then the start spacing, then start the wake.
@@ -366,7 +381,7 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
     # Only a record whose role is not running blocks: a running wake's open record is normal.
     opened = store.stale_open_records()
     if opened and opened[0].role != role:
-        starter(opened[0].role)
+        _ledger_start(home, opened[0].role, starter)
         return WakeResult("blocked", f"{opened[0].role} has an open dispatch to reconcile first")
     mine = store.read(role)
     try:
@@ -387,7 +402,7 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
     if result.outcome != "skipped":
         following = next_role(home, roles, now=now, exclude=role)
         if following:
-            starter(following)
+            _ledger_start(home, following, starter)
     return result
 
 
