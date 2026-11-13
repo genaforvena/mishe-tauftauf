@@ -137,6 +137,13 @@ def test_retire_removes_registration_and_files_and_keeps_reason_in_history(home,
         store.observe(home, "ci", "GREEN", now=1200.0, source="t")
 
 
+def test_retire_keeps_the_reason_as_given(home, tmp_path):
+    store.observe(home, "ci", "GREEN", now=1000.0, source="t")
+    store.retire(home, "ci", now=1100.0, reason="  experiment closed\n")
+    last = json.loads((tmp_path / "signals" / "edges.jsonl").read_text().splitlines()[-1])
+    assert last["reason"] == "  experiment closed\n"
+
+
 def test_retire_needs_a_registered_name_and_a_reason(home):
     with pytest.raises(ValueError):
         store.retire(home, "nope", now=1.0, reason="closed")

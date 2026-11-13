@@ -66,3 +66,18 @@ def test_names_sender_matches_whole_role_token_only():
     assert names_sender("ask genome about it", "genome")
     assert not names_sender("ask genome-2 about it", "genome")
     assert not names_sender("ask xgenome about it", "genome")
+
+
+def test_reviewer_model_is_trimmed_and_must_be_a_haiku_id():
+    from mishe_tauftauf.wall_text import checked_reviewer_model
+    assert checked_reviewer_model("  claude-haiku-5-5 \n", "test") == "claude-haiku-5-5"
+    with pytest.raises(ValueError):
+        checked_reviewer_model("claude-opus-5-5", "test")
+
+
+def test_reviewer_command_uses_the_checked_model_id():
+    from mishe_tauftauf import wall_review
+    cmd = wall_review.reviewer_command(" claude-haiku-5-5 ")
+    assert cmd[cmd.index("--model") + 1] == "claude-haiku-5-5"
+    with pytest.raises(ValueError):
+        wall_review.reviewer_command("claude-sonnet-5-5")
