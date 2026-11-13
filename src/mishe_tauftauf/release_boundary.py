@@ -64,3 +64,13 @@ def wrapper_text(source, python, home=None):
         lines.append("export MISHE_SEED_HOME=" + shlex.quote(str(Path(home).resolve())))
     lines.append("exec " + shlex.quote(python) + ' -m mishe_tauftauf "$@"')
     return "\n".join(lines) + "\n"
+
+
+def wrapper_shape_ok(lines):
+    """True when ``lines`` is a wrapper written by ``wrapper_text``: a PYTHONPATH line,
+    optionally followed by MISHE_SEED_HOME export lines, then the exec line."""
+    return (len(lines) in (3, 4) and lines[0] == "#!/bin/sh"
+            and lines[1].startswith("export PYTHONPATH=")
+            and all(line.startswith("export MISHE_SEED_HOME=") for line in lines[2:-1])
+            and lines[-1].startswith("exec ")
+            and lines[-1].endswith(' -m mishe_tauftauf "$@"'))

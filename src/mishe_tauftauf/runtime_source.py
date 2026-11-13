@@ -7,6 +7,8 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from .release_boundary import wrapper_shape_ok
+
 
 def python_search_path(*values: object) -> str:
     """Join path components once, preserving order.
@@ -152,9 +154,7 @@ def refresh_cli(home: Path, source: Path) -> None:
             continue
         current = cli.read_text()
         lines = current.splitlines()
-        if (len(lines) not in (3, 4) or lines[0] != "#!/bin/sh" or not lines[1].startswith("export PYTHONPATH=")
-                or not all(line.startswith("export MISHE_SEED_HOME=") for line in lines[2:-1])
-                or not lines[-1].startswith("exec ") or not lines[-1].endswith(' -m mishe_tauftauf "$@"')):
+        if not wrapper_shape_ok(lines):
             raise ValueError(f"custom runtime CLI {cli.name} must be reconciled before source refresh")
         lines[1] = f"export PYTHONPATH={shlex.quote(str(source.resolve() / 'src'))}${{PYTHONPATH:+:$PYTHONPATH}}"
         updated = "\n".join(lines) + "\n"
