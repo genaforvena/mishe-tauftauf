@@ -47,7 +47,11 @@ the planner consumes decoded values.
   `pending-decision`, `observed-only`, or `empty-shell` are skipped, and so are windows
   the registry does not list.
 - A missing window is created; a dead pane (remain-on-exit) of a restorable window is respawned.
-  It never types into a pane and never touches wake, hold or guard windows.
+  It never types into a pane. It touches only registry entries with `restore: true`. In the
+  registry as of 2026-11-13 those are the outer health, senses, senses-map, network and budget
+  views and the inner chat, git and wakes tape views. No hold or guard window is registered, so
+  the restorer cannot reach one. The `wakes` tape view is restorable, so the restorer can
+  create or respawn it.
 - A run with nothing to do prints `nothing to restore`. A run right after a successful apply
   should act on nothing, unless a restorable pane has died again.
 
