@@ -46,7 +46,9 @@ def run_systemctl(args):
 
 
 def run_journal(args):
-    return subprocess.run(["journalctl", "--user", *args], capture_output=True, text=True, timeout=30)
+    # A journal line that is not valid UTF-8 must not make the unit undecidable: decode it leniently.
+    return subprocess.run(["journalctl", "--user", *args], capture_output=True, text=True, errors="replace",
+                          timeout=30)
 
 
 def enabled_units(run):
@@ -125,7 +127,7 @@ def evaluate(state: dict, *, now: float, latch_present: bool, run, runj, act: bo
                 res = run(["start", name])
                 line += f"; started once (exit {res.returncode})"
             lines.append(line)
-        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
             errors.append(f"{name}: {exc}")
             if name in state and name not in new_state:
                 new_state[name] = state[name]

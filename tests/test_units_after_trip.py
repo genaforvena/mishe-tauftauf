@@ -104,10 +104,37 @@ def test_failure_after_a_start_does_not_repeat_the_start():
     assert sum(call[:1] == ["start"] for call in host.calls) == 1
 
     host.fail_second = False
+    host.active = False  # the unit is dead again: only the recorded started flag can stop a second start
     code, lines, state = mod.evaluate(state, now=1100.0, latch_present=False, run=host.run, runj=host.runj,
                                       act=True, grace=0)
     assert sum(call[:1] == ["start"] and call[1] == "mishe-drill-probe.service" for call in host.calls) == 1, \
         "the next run must not start the same unit again"
+
+
+def test_undecodable_journal_line_does_not_drop_an_earlier_start():
+    """A ValueError (UnicodeDecodeError) from one unit's journal read is an unknown for that unit, not a crash."""
+    mod = _load()
+
+    class _BadJournalSecond(_PostTripHost):
+        def run(self, args):
+            if args[:1] == ["list-unit-files"]:
+                return _Result("mishe-drill-probe.service enabled enabled\n"
+                               "mishe-drill-second.service enabled enabled\n")
+            if args[:1] == ["show"] and args[1] == "mishe-drill-second.service":
+                return _Result("ActiveState=inactive\nResult=success\nRestart=always\n")
+            return super().run(args)
+
+        def runj(self, args):
+            if args[-1:] == ["mishe-drill-second.service"] or "mishe-drill-second.service" in args:
+                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+            return super().runj(args)
+
+    host = _BadJournalSecond()
+    code, lines, state = mod.evaluate({}, now=1000.0, latch_present=False, run=host.run, runj=host.runj,
+                                      act=True, grace=0)
+    assert code == 3, "the unreadable second unit is UNKNOWN, not a traceback"
+    assert state["mishe-drill-probe.service"]["started"] is True, "the first unit's start survives the ValueError"
+    assert sum(call[:1] == ["start"] for call in host.calls) == 1
 
 
 def test_raising_start_still_counts_as_the_one_start():
