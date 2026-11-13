@@ -1,0 +1,36 @@
+SENSES MAP  apartment, best guess (23:50Z)
+
+
+ +: living room :::::::::+: bedroom :::::::::+
+ :////////..........C....:..D................:
+ :////////...............:...................:
+ :////////...............:...................:
+ :////////...............:...................:
+ :////////........?......?............I......:
+ :////////...............:...................:
+ :////////...............:...................:
+ :////////..........o....:................T..:
+ :////////...............:...................:
+ +:::::::::::::::::::::::+:::::::::::::::::::+
+
+
++-- status ------------------------------------------------------------
+time 2026-11-13 23:50:00Z
+camera living  [######....] 2 min (fresh)
+camera bedroom [..........] 3 h (stale)
+phone Redmi10 [##########] 15 s (status ok)
+rssi UNKNOWN, no redmi10 rssi
+map confidence LOW
+  rooms measured 0 of 2 (sizes are assumed)
+  door position UNKNOWN
+  people with a fresh label 1 of 3
+  to raise it: a fresh label, a measured wall length, a door position
++-- legend ------------------------------------------------------------
+solid = measured, dashed = assumed geometry; ? = unknown
+? door door_living_bedroom: position UNKNOWN, drawn as a placeholder at the wall
+hatch: blind spot (kitchen stall side, left 2.2 m, assumed width) the camera cannot see
+W bedroom window (given label); position on the wall UNKNOWN, placeholder
+placeholder glyphs: C couch, o beanbag, D mac_desk, T bed (positions UNKNOWN; drawn dim)
+I Ilya: fresh label, bedroom, label: bedroom_at_mac
+? Rozalia: UNKNOWN, last known living room (label 58.0 h old)
+Bruno: no place recorded (UNKNOWN)

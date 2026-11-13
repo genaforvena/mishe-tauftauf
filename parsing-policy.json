@@ -86,7 +86,8 @@
     "src/mishe_tauftauf/router_text.py",
     "tools/network_boundary.py",
     "tools/health_view.py",
-    "tools/map_view.py"
+    "tools/map_view.py",
+    "tools/map_tiles.py"
   ],
   "legacy": {
     "src/mishe_tauftauf/access.py": {

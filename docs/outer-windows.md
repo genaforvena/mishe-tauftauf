@@ -10,7 +10,7 @@ pane it draws in: 41 rows, and 170 columns for the health view, which is the wid
 | --- | --- | --- | --- |
 | health | tools/health_view.py | steward | verdict of the tending pass (guard, units, wakes, signals, delivery) |
 | senses | tools/household_view.py | senses | the apartment map and what Mishe senses |
-| senses-map | tools/map_view.py | senses | best guess per person from the apartment map, read-only (needs tools/map_render.py run first) |
+| senses-map | tools/map_view.py | senses | terminal tile map of the apartment (rooms from floorplan.json, best-guess people from map-state.json), read-only; `--once` prints one frame; needs tools/map_render.py run first |
 | network | tools/network_view.py | network | home network and connection |
 | budget | operator/budget/budget_view.py (site-local) | budget | provider quota and spend |
 

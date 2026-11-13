@@ -41,6 +41,9 @@ import re
 import sys
 import textwrap
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import map_tiles  # noqa: E402  (the terminal tile model; the text twin is drawn from it)
+
 SITE = ""          # site root, set by configure()
 HERE = ""          # output directory, set by configure()
 HH = ""            # household input directory, set by configure()
@@ -610,29 +613,11 @@ def _drop(path):
         pass
 
 
-def ascii_map(rows, rssi):
-    lines = ["+" + "-" * 62 + "+",
-             "|  living room    | hall |        bedroom          |",
-             "|                 |      |                          |",
-             "|  (sensor: cam)  |      |   (sensor: cam)          |",
-             "|  [left + kitchen stall = BLIND SPOT, camera cannot see] |",
-             "+-----------------+      +--------------------------+",
-             "|  balcony (no sensor)   | wardrobe |               |",
-             "+------------------------+----------+---------------+"]
-    out = "\n".join(lines) + "\n"
-    for person in PEOPLE:
-        r = rows[person]
-        place = ROOM_LABEL[r["room"]] if r["room"] else "UNKNOWN"
-        out += "%-8s %-22s confidence %-7s %s\n" % (person, place, r["confidence"], r["why"])
-        g = r["guess"]
-        gplace = ROOM_LABEL[g["room"]] if g["room"] else "no guess"
-        if g["room"] is None:
-            conf = "-"
-        else:
-            conf = "%.2f" % g["confidence"] if g["confidence"] >= 0.01 else "<0.01"
-        out += "         best guess: %s, confidence %s; %s\n" % (gplace, conf, g["evidence"])
-    out += rssi["text"] + "\n"
-    return out
+def tile_text(state, fp_doc, fp_error):
+    """The text twin: the same tile frame the terminal view draws (no colour)."""
+    phone = map_tiles.read_phone_row(os.path.join(HH, "phones.jsonl"))
+    model = map_tiles.build_model(fp_doc, fp_error, state, None, phone, NOW)
+    return map_tiles.frame(model, NOW, color=False)
 
 
 def main(argv=None):
@@ -656,12 +641,12 @@ def main(argv=None):
     with open(svg_path, "w", encoding="utf-8") as fh:
         fh.write(svg(rows, rooms_only, rssi, fp_doc, fp_error))
     png = write_png(svg_path, png_path)
-    with open(os.path.join(HERE, "apartment-map.txt"), "w", encoding="utf-8") as fh:
-        fh.write(ascii_map(rows, rssi))
     state = {"generated_utc": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"), "markers": rows,
              "room_activity": activity, "rssi": rssi,
              "floorplan": {"state": "ok" if fp_doc else "UNKNOWN", "reason": fp_error},
              "png": png}
+    with open(os.path.join(HERE, "apartment-map.txt"), "w", encoding="utf-8") as fh:
+        fh.write(tile_text(state, fp_doc, fp_error))
     with open(os.path.join(HERE, "map-state.json"), "w", encoding="utf-8") as fh:
         json.dump(state, fh, indent=1, ensure_ascii=False)
     print(json.dumps({p: {"room": rows[p]["room"], "confidence": rows[p]["confidence"]} for p in PEOPLE}))
