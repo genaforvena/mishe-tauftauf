@@ -1,7 +1,7 @@
 # Network window: what is promised versus built
 
 One line per promised slot in the network charter. Checked against `tools/network_view.py`
-(`draw()` and its helpers) and `tools/network_router.py`, on 2026-11-12.
+(`draw()` and its helpers) and `tools/network_router.py` and `rust/mishe-network-probe`, on 2026-11-13.
 
 Status words: **BUILT** (the window shows it with an age or UNKNOWN), **PARTLY** (some of it is
 shown), **MISSING** (not measured or not shown).
@@ -15,7 +15,7 @@ shown), **MISSING** (not measured or not shown).
 | Latency to 1.1.1.1 and 8.8.8.8 | MISSING | deliberately not used: the router answers public pings itself, so they look fast when the internet is down (note in `draw()`) |
 | Latency to a couple of regional hosts | MISSING | only two secure sites are checked (gstatic, cloudflare) |
 | Packet loss | PARTLY | loss to the router only (`loss_pct`, "worst loss"); no loss to the internet |
-| Jitter | BUILT | router jitter from the gateway pings, shown in the window (UNKNOWN when absent) |
+| Jitter | BUILT | `jitter_ms` is the mdev of the 5 gateway pings from ping's summary line (`rust/mishe-network-probe`, `ping()`/`rtt()`); it is the spread of the round-trip times, not RFC 3550 jitter. Shown as "jitter N ms" in `gateway_line()`, or "jitter UNKNOWN" when absent |
 | DNS lookup time | BUILT | `dns_ms` line with sparkline |
 | HTTPS time to stable sites | PARTLY | two sites (gstatic.com, cloudflare.com), full time and "failed in last 40" |
 
@@ -42,7 +42,7 @@ shown), **MISSING** (not measured or not shown).
 | --- | --- | --- |
 | Router uptime | BUILT | `router_facts()`: "router up N days" from `/proc/uptime` |
 | WAN link state | BUILT | `router_facts()`: "WAN up" or "UNKNOWN/down" from `ubus` |
-| Errors and drops | BUILT | WAN link errors and drops from `ip -s link`, shown as an uplink line (UNKNOWN when absent) |
+| Errors and drops | BUILT | WAN link errors and drops from `ip -s link` on the router, shown as the UPLINK line `uplink_line()`: totals since router boot, from the last recorded router read; "STALE" past 15 min, UNKNOWN when the read failed or has no WAN counters. `uplink_rate_line()` adds receive drops over the last hour, restarted by a reboot |
 | Load | BUILT | `router_facts()`: 1/5/15-minute load from `/proc/loadavg` |
 | VPN state (sing-box) | MISSING | nothing reads sing-box |
 | Tailscale exit-node path | MISSING | nothing reads tailscale; the old `egress` duty is not shown in the window |
