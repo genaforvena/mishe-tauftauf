@@ -30,6 +30,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import report_artifact  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 LEAF_CHECKER = ROOT / "tools" / "check_leaf_invocation_coverage.py"
 
@@ -185,8 +188,10 @@ def main(argv=None) -> int:
     result["corpus_source"] = "committed bytes of HEAD (what a clone receives)"
     result["dispositions_on_unshipped_pages"] = unreachable
     out = args.out or args.home / "artifacts" / "check-docs-command-names.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(result, indent=1) + "\n", encoding="utf-8")
+    out, status, detail = report_artifact.write_report(
+        out, json.dumps(result, indent=1) + "\n")
+    if status != "written":
+        print(f"note — {detail}", file=sys.stderr)
 
     print(f"served release {result['served_sha']}")
     print(f"reader corpus: {result['corpus_files']} files, {result['corpus_bytes']} bytes "

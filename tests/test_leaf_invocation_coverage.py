@@ -209,12 +209,17 @@ def parser():
     assert record["strict_zero"] == ["delivery show"]
 
 
-def test_every_uncovered_leaf_of_the_served_plant_is_dispositioned() -> None:
+def test_every_uncovered_leaf_of_the_served_plant_is_dispositioned(
+        tmp_path: Path) -> None:
     """The real audit leaves no silent gap: every uncovered leaf has a reason."""
     home = _CHECKOUT_ROOT / ".mishe-tauftauf"
     if not (home / "health" / "runtime-release.json").is_file():
         pytest.skip("no served-release record beside this checkout")
-    out = home / "artifacts" / "check-leaf-invocation-coverage.json"
+    # The report goes to a temporary path, not to the site's artifact: the
+    # site's own report path is bound as write-once evidence by an outcome,
+    # so a write there fails and the test would then assert against frozen
+    # November bytes — passing while auditing nothing.
+    out = tmp_path / "coverage.json"
 
     # The real plant is audited from its committed bytes, not from the
     # working tree: five reader pages are gitignored and checkout-local, so a
@@ -323,6 +328,36 @@ def test_a_page_the_clone_receives_names_the_command(tmp_path: Path) -> None:
     record = json.loads(out.read_text(encoding="utf-8"))
     assert "alpha two" not in record["strict_zero"]
     assert record["named_only_by_untracked_pages"] == []
+
+
+def test_a_command_wrapped_across_a_line_break_is_still_named(
+        tmp_path: Path) -> None:
+    """A code span that wraps names the command it names.
+
+    A reader sees ``mishe engine router`` and the next line's ``choose ROLE``
+    as one command. Matching raw bytes would call that leaf unnamed while the
+    book names it, so the audit would report a naming gap the book does not
+    have.
+    """
+    release = _release(tmp_path)
+    home = _home(tmp_path, release)
+    root = _corpus(tmp_path)
+    # 'alpha one' is written across a line break inside its code span, and
+    # nowhere else: the README's own mention is replaced so that only the
+    # wrapped form can cover the leaf.
+    (root / "README.md").write_text("the first command is described below\n",
+                                    encoding="utf-8")
+    (root / "docs" / "guide.md").write_text(
+        "beta is the bare top\n"
+        "run `alpha\none` for the first command\n", encoding="utf-8")
+    out = tmp_path / "coverage.json"
+
+    done = _run(home, root, out)
+
+    assert done.returncode == 0, done.stderr
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert "alpha one" not in record["strict_zero"]
+    assert record["invocations_covered"] == 2
 
 
 def test_a_repository_without_a_readable_book_reads_unknown(tmp_path: Path

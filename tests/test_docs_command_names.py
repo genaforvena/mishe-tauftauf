@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -126,3 +127,47 @@ def test_a_committed_corpus_cannot_be_emptied_into_a_clean_audit(
                        "--out", str(tmp_path / "out.json")])
 
     assert code == 2
+
+
+def test_a_bound_report_path_still_yields_its_verdict(
+        monkeypatch, tmp_path: Path) -> None:
+    """A report path bound as write-once evidence must not stop the audit.
+
+    The plant's outcome clause makes a bound artifact read-only. The
+    book-check tools publish their report at a stable path under
+    ``artifacts/``, and a wake that published that report as evidence binds
+    it. A plain write then raises PermissionError, and the tool dies before
+    it can say whether the corpus is clean — the same exit status it uses for
+    "the corpus names a command the served CLI does not have".
+
+    So the report goes to a dated sibling, the bound bytes keep their digest,
+    and the audit still returns its verdict.
+    """
+    tool = _load_tool()
+    src = tmp_path / "served" / "src"
+    checker = SimpleNamespace(
+        served_release_src=lambda home: (src.parent, "a" * 40, src),
+        reader_corpus=lambda root: {"README.md": "run `mishe wall show`\n"},
+        committed_reader_corpus=lambda repo: {"README.md": "run `mishe wall show`\n"},
+    )
+    monkeypatch.setattr(tool, "load_leaf_checker", lambda: checker)
+    monkeypatch.setattr(tool, "leaf_trie", lambda served_src: ({"wall": {"show": {}}}, {"wall"}))
+
+    home = tmp_path / "site"
+    report = home / "artifacts" / "check-docs-command-names.json"
+    report.parent.mkdir(parents=True)
+    report.write_text("published evidence\n", encoding="utf-8")
+    report.chmod(0o444)
+    bound = report.read_bytes()
+
+    code = tool.main(["--home", str(home),
+                       "--repo", str(tmp_path / "repo")])
+
+    assert code == 0
+    # The bound bytes are untouched: an outcome published that digest.
+    assert report.read_bytes() == bound
+    # The fresh reading is published next to it, not in place of it.
+    siblings = sorted(report.parent.glob("check-docs-command-names-*.json"))
+    assert len(siblings) == 1
+    assert json.loads(siblings[0].read_text(encoding="utf-8"))["undispositioned"] == []
+

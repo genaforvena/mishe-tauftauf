@@ -55,6 +55,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import report_artifact  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 HEX = frozenset("0123456789abcdef")
 GIT = "git"
@@ -138,6 +141,31 @@ DISPOSITIONS: dict[str, str] = {
     "guard restore": "operator-authorized guarded-restore steering; a repair operator's surface, not a documented reader step",
     "guard revert": "operator-authorized guarded-restore steering; a repair operator's surface, not a documented reader step",
     "disposition clear": "removes one disposition record from the in-plant ledger; an in-plant control, not a reader step",
+    # Leaves added to the CLI after the 2026-11-03 audit (which covered 77
+    # leaves; the served tree carries 88 today).  Each is dispositioned by
+    # what it is for, and the reasons are stated rather than asserted: the
+    # book's standing rule is that a reader-facing capability carries the
+    # vocabulary a reader's goal will use, so a leaf that only a plant
+    # operator or the plant's own machinery drives is not a reader step.
+    "access list": "reads the permission ledger; the operator's ledger view, and no shipped page teaches the permission ledger",
+    "disposition list": "lists recorded dispositions; the in-plant resolver ledger, not a reader step",
+    "disposition park": "declares a role intentionally absent until the record expires; a resolver's own procedure",
+    "disposition set": "records a resolver's expiring answer to a finding; a resolver's own procedure",
+    "engine accounts": "registered accounts and credential state (no provider reads); the operator's account surface, and the shipped pages teach `engine status` instead",
+    "engine router cooling": "cooled (role, candidate) pairs with their age; the router's own internals, read by `engine router ledger`",
+    "engine router publish": "recomputes the engine-routing signal; the router's own producer step, run by its timer",
+    "inbox touch": "touches a role's inbox to wake it by hand; an in-plant trigger, and the shipped pages teach the message form instead",
+    "release advance": "moves the pin to the newest ordinary commit with passing CI; the delivery path's own step, run by `mishe release consume`",
+    "release promote": "promotes a commit to a release directly; the delivery path's own step, which the shipped pages teach through `mishe release request`",
+    "release revert": "reverts a delivered release; the delivery path's recovery step, an in-plant procedure",
+    "release review": "reads one delivery request's review state; the delivery path's own reading, an in-plant procedure",
+    "signal observe": "records a signal reading by hand; the producer's own write, and the shipped pages teach `mishe signal run`",
+    "signal observe-unknown": "records that a signal could not be read; the producer's own write, and the shipped pages teach `mishe signal run`",
+    "signal register": "registers a signal with a max age; the site's own configuration step, and the shipped pages teach `duties.json` instead",
+    "signal retire": "removes a closed experiment's signal with a recorded reason; the site's own configuration step",
+    "wake-debounce": "coalesces a role's triggers into one start; the generated unit's internal step, not a reader step",
+    "work check": "checks a work receipt against its command file; the in-plant evidence check, run by the delivery path",
+    "work report": "reports wakes and attributed commits over a window; the in-plant metrics reading, an operator's surface",
 }
 
 
@@ -302,6 +330,11 @@ def audit(root: Path, src: Path, corpus: dict[str, str] | None = None) -> dict:
     if corpus is None:
         corpus = reader_corpus(root)
     blob = "\n".join(corpus.values())
+    # A code span may wrap across a line break, and a reader sees it as one
+    # space: `mishe engine router\nchoose ROLE` reads as `mishe engine router
+    # choose ROLE`. Matching the raw bytes would call that leaf unnamed while
+    # the book names it, so the search runs over a flattened blob too.
+    flat = blob.replace("\n", " ")
     covered, zero = [], []
     for inv in invocations:
         # the alias form counts as covering its canonical access leaf: docs
@@ -309,14 +342,14 @@ def audit(root: Path, src: Path, corpus: dict[str, str] | None = None) -> dict:
         forms = [inv]
         if inv.startswith("access "):
             forms.append("permit " + inv[len("access "):])
-        if any(f in blob for f in forms):
+        if any(f in blob or f in flat for f in forms):
             covered.append(inv)
         else:
             zero.append(inv)
     # bare tops too: a two-word 'top sub' can be covered while 'top' alone is
     # never named
     tops = sorted({i.split()[0] for i in invocations})
-    tops_zero = [t for t in tops if t not in covered and t not in blob]
+    tops_zero = [t for t in tops if t not in covered and t not in blob and t not in flat]
     return {
         "corpus_files": sorted(corpus),
         "corpus_bytes": sum(len(v) for v in corpus.values()),
@@ -423,11 +456,10 @@ def main(argv=None) -> int:
               "sample_time_utc": __import__("datetime").datetime.now(
                   __import__("datetime").timezone.utc).isoformat()}
     out = args.out or args.home / "artifacts" / "check-leaf-invocation-coverage.json"
-    try:
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    except OSError as exc:
-        print(f"note — artifact not written to {out}: {exc}", file=sys.stderr)
+    out, status, detail = report_artifact.write_report(
+        out, json.dumps(record, indent=2) + "\n")
+    if status != "written":
+        print(f"note — {detail}", file=sys.stderr)
 
     print(f"reader corpus: {len(result['corpus_files'])} files, "
           f"{result['corpus_bytes']} bytes ({corpus_source})")
