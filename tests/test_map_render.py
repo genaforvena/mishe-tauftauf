@@ -190,3 +190,64 @@ def test_rssi_line_without_vectors_is_unknown_not_a_room(tmp_path):
     assert "UNKNOWN" in state["rssi"]["text"]
     assert "not a room claim" not in state["rssi"]["text"]
     assert state["markers"]["ilya"]["room"] is None or state["markers"]["ilya"]["confidence"] == "UNKNOWN"
+
+
+FLOORPLAN_FIXTURE = {
+    "written_utc": "2026-11-12T19:50Z",
+    "total_area_m2": {"value": 55, "provenance": "given"},
+    "rooms": [
+        {"id": "living_room", "label": "living room",
+         "area_m2": {"value": 30, "provenance": "assumed"},
+         "width_m": {"value": 6.0, "provenance": "assumed"},
+         "depth_m": {"value": 5.0, "provenance": "assumed"},
+         "position_m": {"x": 0.0, "y": 0.0, "provenance": "assumed"}},
+        {"id": "bedroom", "label": "bedroom",
+         "area_m2": {"value": 25, "provenance": "assumed"},
+         "width_m": {"value": 5.0, "provenance": "assumed"},
+         "depth_m": {"value": 5.0, "provenance": "assumed"},
+         "position_m": {"x": 6.0, "y": 0.0, "provenance": "assumed"}},
+    ],
+}
+
+
+def _floorplan(site, doc=FLOORPLAN_FIXTURE):
+    mapdir = Path(site) / "senses" / "map"
+    mapdir.mkdir(parents=True, exist_ok=True)
+    (mapdir / "floorplan.json").write_text(json.dumps(doc))
+
+
+def test_plan_draws_floorplan_rooms_with_area_and_assumed_dashes(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _floorplan(site)
+    state, svg = _render(site)
+    assert state["floorplan"]["state"] == "ok"
+    assert "30 m²" in svg and "25 m²" in svg
+    assert "6.0 × 5.0 m [assumed]" in svg
+    assert 'stroke-dasharray="8 5"' in svg  # assumed geometry is dashed, not solid
+
+
+def test_unknown_token_is_hollow_and_halo_shows_uncertainty(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _floorplan(site)
+    state, svg = _render(site)
+    # no label ever recorded for these people: UNKNOWN, so the token must be hollow
+    assert state["markers"]["ilya"]["confidence"] == "UNKNOWN"
+    assert 'fill="none" stroke="#f2c14e"' in svg
+    assert "UNKNOWN" in svg
+
+
+def test_missing_floorplan_is_unknown_and_draws_no_rooms(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    state, svg = _render(site)
+    assert state["floorplan"]["state"] == "UNKNOWN"
+    assert "NO FLOORPLAN" in svg
+    assert "30 m²" not in svg
+
+
+def test_footer_states_leave_one_out_and_camera_coverage(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _floorplan(site)
+    _, svg = _render(site)
+    assert "Leave-one-out" in svg
+    assert "Camera coverage: not drawn" in svg
+    assert "Blind spot:" in svg
