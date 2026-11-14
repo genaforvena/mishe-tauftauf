@@ -516,6 +516,10 @@ def test_routerai_lines_read_balance_and_count_turns(tmp_path):
     assert ok["decision"]["state"] == "UNKNOWN"
     assert ok["decision"]["reason"] == "no decision_provider config at engine/decision-providers.json"
     assert ok["decision"]["kind"].startswith("System One decision models") and ok["decision"]["daily_cap"] is None
+    # LLM spend limit from operator DM 301051; spend is not readable, so it is UNKNOWN, never zero
+    assert ok["llm"]["spend_limit"] == 200
+    assert ok["llm"]["spent"] is None and ok["llm"]["spend_state"] == "UNKNOWN"
+    assert "rubles" in ok["llm"]["spend_limit_unit"]
 
 
 def test_routerai_balance_failure_is_unknown_not_zero(tmp_path):

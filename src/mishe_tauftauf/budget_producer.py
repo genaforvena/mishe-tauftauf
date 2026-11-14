@@ -526,11 +526,20 @@ def build_routerai(home: Path, now: float, fetch=fetch_routerai_credits) -> dict
         "state": "FRESH" if balance is not None else "UNKNOWN",
         "reason": None if balance is not None else f"balance unreadable: {failure}",
     }
+    # Operator DM 301051: LLM line limit 200 (stated in rubles; the balance is RouterAI credits, the
+    # rubles conversion is unverified). RouterAI exposes no per-call cost for the shared key, so spent
+    # is UNKNOWN and the RED rule (80 % spent or exhaustion inside 48 h) cannot be evaluated yet.
     llm = dict(shared, kind="text-to-text LLM (minds' engines)",
                turns_24h=routerai_turns_24h(home, now),
+               spend_limit=ROUTERAI_LLM_SPEND_LIMIT,
+               spend_limit_unit="stated as rubles by operator; balance is credits; conversion unverified",
+               spent=None, spend_remaining=None, spend_state="UNKNOWN",
+               spend_reason="RouterAI exposes no per-call cost for the shared key balance",
                spend_source="turns counted from engine/routing-ledger.jsonl; RouterAI exposes no per-call cost")
     return {"llm": llm, "decision": decision_line(home, now, shared)}
 
+
+ROUTERAI_LLM_SPEND_LIMIT = 200  # operator DM 301051; see build_routerai for the unit caveat
 
 DECISION_CONFIG = "engine/decision-providers.json"
 DECISION_PROVIDER = "routerai"
