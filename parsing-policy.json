@@ -37,6 +37,7 @@
     "src/mishe_tauftauf/quota_history_text.py",
     "src/mishe_tauftauf/redmi10_stream_text.py",
     "src/mishe_tauftauf/records.py",
+    "src/mishe_tauftauf/owner_routing.py",
     "src/mishe_tauftauf/recovery_io.py",
     "src/mishe_tauftauf/reflog_boundary.py",
     "src/mishe_tauftauf/release_boundary.py",
