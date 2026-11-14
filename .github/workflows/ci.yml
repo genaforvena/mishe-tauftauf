@@ -152,6 +152,14 @@ jobs:
       # "run" about a command.  The gate reads the program word each
       # command runs and asks the clone whether it carries that program.
       - run: python checks/shipped-book-program-paths.py --repo .
+      # A body that repeats itself is a defect a reader sees and no other gate
+      # can see: the publisher's read-back compares the bytes it sent with the
+      # bytes the server stored, so a repeated paragraph matches perfectly.
+      # Measured on this plant: article 4954898 (2026-11-14) carried its
+      # closing paragraph twice, in two different sections.  The gate runs the
+      # detector's own controlled failure, so the check that guards the write
+      # path is itself exercised here.
+      - run: python checks/pub-article-duplication.py --self-test
       - run: python -m pytest -q
 
   adapters:

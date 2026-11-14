@@ -160,6 +160,22 @@
       "covers": "DEV.to threads observed and delivered"
     },
     {
+      "name": "devto-article-duplication",
+      "command": [
+        "{python}",
+        "{repo}/checks/pub-article-duplication.py",
+        "--live",
+        "--env",
+        "{home}/pub/access/devto.env"
+      ],
+      "every": 1800,
+      "timeout": 180,
+      "max_age": 3600,
+      "resolver": "pub",
+      "replaces": [],
+      "covers": "no published DEV.to article repeats a paragraph verbatim"
+    },
+    {
       "name": "budget",
       "command": [
         "{home}/producers/budget.sh"
