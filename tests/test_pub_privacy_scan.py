@@ -77,6 +77,16 @@ def fake_subprocess(runner):
                           "TimeoutExpired": subprocess.TimeoutExpired})
 
 
+def assert_the_publish_was_attempted(runner, cli):
+    """The publish must have been tried, against the CLI this case named.
+
+    Without this, a case that asserts only an exit code cannot tell the
+    failed-publish branch from the missing-CLI branch.
+    """
+    assert runner.calls, "the publish was never attempted; the case ran another branch"
+    assert runner.calls[0][0] == str(cli), runner.calls[0]
+
+
 def test_the_check_is_committed_so_a_reviewer_can_see_its_contract():
     """A check outside the repository can never be reviewed.
 
@@ -206,6 +216,9 @@ def test_a_red_stays_red_when_the_publish_fails(tmp_path):
     # the failed-publish handling it is named for.
     cli = fake_cli(tmp_path)
     assert scan.run_all("key", report=tmp_path / "report.json", cli=cli) == 2
+    # The exit code alone cannot tell the failed publish from a missing CLI, so
+    # the branch is pinned too.
+    assert_the_publish_was_attempted(runner, cli)
 
 
 def test_a_green_that_cannot_publish_is_unknown_not_green(tmp_path):
@@ -218,6 +231,31 @@ def test_a_green_that_cannot_publish_is_unknown_not_green(tmp_path):
     scan.read_item = lambda item, key: {"title": "A note", "body": "A sentence.", "tags": "", "replies": []}
     cli = fake_cli(tmp_path)
     assert scan.run_all("key", report=tmp_path / "report.json", cli=cli) == 3
+    assert_the_publish_was_attempted(runner, cli)
+
+
+def test_a_missing_cli_and_a_failed_publish_give_the_same_exit_code(tmp_path):
+    """Why the branch has to be pinned and not only the code.
+
+    The scan cannot tell a missing CLI from a publish that failed: both make
+    ``publish_verdict`` return False, and both give the same exit code. A test
+    that asserts only the code therefore proves nothing about which branch it
+    ran, and a regression in the failed-publish handling would go unnoticed.
+    This case states that ambiguity explicitly, so the branch assertions in the
+    two cases above are load-bearing rather than decorative.
+    """
+    scan = load_scan()
+    runner = FakeRun(returncode=1, stderr="no such signal")
+    scan.subprocess = fake_subprocess(runner)
+    scan.load_terms = lambda terms_file=None: NO_TERMS
+    scan.collect = lambda key: [{"id": 1, "state": "live"}]
+    scan.read_item = lambda item, key: {"title": "A note", "body": "A sentence.", "tags": "", "replies": []}
+    failed_publish = scan.run_all("key", report=tmp_path / "a.json", cli=fake_cli(tmp_path))
+    missing_cli = scan.run_all("key", report=tmp_path / "b.json", cli=Path("/nonexistent/mishe"))
+    assert failed_publish == missing_cli == 3
+    # The two runs differ in exactly one observable: the publish was attempted
+    # in one and not in the other.
+    assert len(runner.calls) == 1
 
 
 def test_the_report_records_the_verdict_and_never_the_matched_text(tmp_path):
