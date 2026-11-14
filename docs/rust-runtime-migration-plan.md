@@ -2708,3 +2708,7 @@ pointer `runtime/current` is `releases/176c2462…`, which contains `cebf0d99`
 not a port. It belongs to that detector's author. No Rust candidate currently has
 measured headroom. Next: observe the 24 h average and the journal consumed-line
 trend, and re-run the full-fold script after the next large tape growth.
+
+### 10.40 Cross-process tape reads are not material; no cache is needed (2026-11-14)
+
+The role read already has a cross-process cache (`feed.role-cache/<role>.json`, §10.39): a warm `wall show` costs 0.11 s, a cache miss is a tail update. The remaining full read is `Feed.entries()`, used by `task` commands (`task_state.py`). It costs 5.95 s real and 5.46 CPU-s on this host. Timers do not run it; only `rust-measurement` (hourly, forced fold) does, at about 12 CPU-s per run. Wakes run about 30 per hour. Even at ten full reads per wake the upper bound is 2.9% of host CPU, under the 10% trigger. No cache is planned. Re-open if the journal's wake CPU rises, or if the count of `task` calls per wake is measured and exceeds that bound. Raw notes: `artifacts/rust-plan-20261107/tape-read-rate-20261114.md` (ignored).
