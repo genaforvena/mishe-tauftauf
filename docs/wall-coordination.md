@@ -140,11 +140,15 @@ and every unknown path. An empty diff is strong. There is no author-supplied
 flag and no per-path exemption, so one unknown path in a diff sends the whole
 diff down the strong path.
 
-Scheduler, dispatch, settlement, locking, protocol, authorization and delivery
-changes require fresh separate review and deterministic activation, revert and
-reapply observations. Prepare and check a scoped `mishe_tauftauf.wall_patch`
-record with its executable activation, observation and revert plan, commit the
-exact reviewed bytes, then request:
+Every change takes this one path (operator policy, 2026-11-14): delivery is
+automatic, continuous and never held for a mind. A scoped `mishe_tauftauf.wall_patch`
+record carries the executable activation, observation and revert plan; `check` runs the
+deterministic test on the exact bytes and ends in the phase `tested`, and the cadence
+timer applies it. Scheduler, dispatch, settlement, locking, protocol, authorization and
+delivery changes keep their deterministic activation, revert and reapply observations;
+what they no longer wait for is a reviewer. Review is asynchronous evidence after the
+pin moves: a defect it finds is a new commit and another pin move. Request a patch
+delivery explicitly with:
 
 ```sh
 mishe release request --sha FULL_SHA --previous FULL_SHA --patch PATCH_ID

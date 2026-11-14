@@ -237,8 +237,8 @@ def test_strong_failed_new_probe_needs_observed_old_consumer(plant, monkeypatch,
     assert q.admission_path(home).exists() == bad_old
 
 
-@pytest.mark.parametrize("field", ["review", "delivery_plan"])
-def test_strong_review_or_plan_drift_rejects_without_effect(plant, monkeypatch, field):
+@pytest.mark.parametrize("field", ["delivery_plan"])
+def test_strong_plan_drift_rejects_without_effect(plant, monkeypatch, field):
     from mishe_tauftauf import wall_patch
     home, *_ = plant; row, runtime = strong_request(plant, monkeypatch)
     record = wall_patch.status(home, "strong"); record[field]["changed"] = True
@@ -388,7 +388,7 @@ def test_patch_drift_before_apply_fails_without_admission_or_runtime_write(plant
     monkeypatch.setattr(q, "validate_source", lambda *a, **k: None)
     home, repo, *_ = plant; row, runtime = strong_request(plant, monkeypatch)
     record = wall_patch.status(home, "strong")
-    assert record["phase"] == "reviewed"
+    assert record["phase"] == "tested"
     name = next(iter(record["files"]))
     # A cooperating writer edits the delivered path without committing it, so the
     # reviewed bytes are in neither the checkout nor HEAD and apply must refuse before
@@ -401,7 +401,7 @@ def test_patch_drift_before_apply_fails_without_admission_or_runtime_write(plant
     assert result["state"] == "failed" and "patch changed since review" in result["error"]
     assert (runtime / "docs/page.md").read_text() == before
     assert not q.admission_path(home).exists()
-    assert wall_patch.status(home, "strong")["phase"] == "reviewed"
+    assert wall_patch.status(home, "strong")["phase"] == "tested"
 
 
 def test_interrupt_before_effect_releases_admission_and_keeps_request_queued(plant, monkeypatch):

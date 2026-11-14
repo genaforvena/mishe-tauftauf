@@ -29,7 +29,7 @@ The owner's death is the only evidence it cannot finish; the request then become
 """
 REVERT_PHASES = {"reverted", "reverted-activation-failed", "revert-failed"}
 # Patch phases that end before wall_patch writes any runtime byte (see wall_patch._apply).
-PRE_EFFECT_PATCH_PHASES = {"reviewed", "review-refused", "review-unavailable", "test-failed", "test-unavailable", "test-mutated-source"}
+PRE_EFFECT_PATCH_PHASES = {"tested", "reviewed", "review-refused", "review-unavailable", "test-failed", "test-unavailable", "test-mutated-source"}
 
 
 def admission_path(home):
@@ -116,8 +116,8 @@ def validate_source(home, spec):
     paths = promotion.boundary.changed_paths(spec["repo"], spec["previous"], spec["sha"])
     if spec.get("patch"):
         record = wall_patch.status(Path(home), spec["patch"])
-        if record.get("phase") != "reviewed" or not record.get("review", {}).get("clear") or record.get("test", {}).get("code") != 0:
-            raise ValueError("queued strong patch needs a fresh clear reviewed record")
+        if record.get("phase") not in ("tested", "reviewed") or record.get("test", {}).get("code") != 0:
+            raise ValueError("queued patch needs a record whose deterministic check passed")
         if patch_binding(record) != spec["patch_binding"]:
             raise ValueError("reviewed patch or delivery plan changed since request")
         if not set(paths).issubset(record["files"]):

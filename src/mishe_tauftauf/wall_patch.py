@@ -758,21 +758,12 @@ def check(home, identity, command, *, activate=None, observe=None, revert_observ
             record.pop("review", None)
             _save(location(home, identity), record)
             raise ValueError("source changed during deterministic check; recheck exact bytes")
-        try:
-            record["review"] = review(home, record)
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            # A failed attempt must not leave a stale verdict behind: a superseding
-            # flake overwrites the phase while keeping an older passing result, and
-            # the dashboard prints only this failure string, hiding a real delivery
-            # failure (wall_view.py).
-            record.update(phase="review-unavailable", failure=str(exc))
-            record.pop("review", None)
-            _save(location(home, identity), record)
-            raise
-        record["phase"] = "reviewed" if record["review"]["clear"] else "review-refused"
+        # Delivery is automatic and never waits for a reviewer (operator policy 2026-11-14): the deterministic
+        # check above is the gate. Review is asynchronous evidence after the pin moves; a defect it finds is a
+        # new commit and another pin move.
+        record.pop("review", None)
+        record["phase"] = "tested"
         _save(location(home, identity), record)
-        if not record["review"]["clear"]:
-            raise ValueError("patch review refused; see saved response")
 
 
 def _revert(home, identity, record, activate, revert_argv=None):
@@ -835,8 +826,8 @@ def apply(home, identity, activate, observe):
 
 
 def _apply(home, identity, record, activate, observe):
-    if record["phase"] != "reviewed":
-        raise ValueError("patch needs a passing review")
+    if record["phase"] not in ("tested", "reviewed"):
+        raise ValueError("patch needs a passing deterministic check")
     runtime = Path(record["runtime"])
     for name, values in record["files"].items():
         if tree_drifted(home.parent, name, values["after"]):

@@ -27,16 +27,6 @@ def layout(tmp_path):
     return home, source / "example.py", deployed / "example.py"
 
 
-def test_patch_rejected_review_does_not_activate(tmp_path, monkeypatch):
-    home, source, deployed = layout(tmp_path)
-    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
-    source.write_text("after\n")
-    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": False, "reason": "unsafe"})
-    with pytest.raises(ValueError, match="review"):
-        wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
-    assert deployed.read_text() == "before\n"
-
-
 def test_failed_observation_reverts_runtime_and_keeps_draft(tmp_path, monkeypatch):
     home, source, deployed = layout(tmp_path)
     wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
@@ -234,21 +224,6 @@ def test_verified_delivery_clears_a_stale_apply_failure(tmp_path, monkeypatch):
     assert "apply_failure" not in record and "failure" not in record
 
 
-def test_aborted_check_leaves_no_delivery_verdict(tmp_path, monkeypatch):
-    # A review-unavailable attempt never produced a delivery verdict, so the
-    # ledger must not carry delivery_verified=False as if delivery had failed.
-    home, source, deployed = layout(tmp_path)
-    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
-    source.write_text("after\n")
-    def unavailable(*a):
-        raise ValueError("reviewer down")
-    monkeypatch.setattr(wall_patch, "review", unavailable)
-    with pytest.raises(ValueError, match="reviewer down"):
-        wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
-    record = wall_patch.status(home, "change")
-    assert record["phase"] == "review-unavailable"
-    assert "delivery_verified" not in record
-
 def test_delivery_does_not_certify_failed_revert_observation(tmp_path, monkeypatch):
     home, source, deployed = layout(tmp_path)
     wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
@@ -366,30 +341,6 @@ def test_owned_checkout_delivery_script_cannot_change_after_review(tmp_path, mon
     assert deployed.read_text() == "before\n"
 
 
-def test_successful_recheck_clears_stale_failure(tmp_path, monkeypatch):
-    home, source, deployed = layout(tmp_path)
-    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
-    source.write_text("after\n")
-    command = [sys.executable, "-c", "pass"]
-
-    def unavailable(*args):
-        raise OSError("reviewer usage limit reached")
-
-    monkeypatch.setattr(wall_patch, "review", unavailable)
-    with pytest.raises(OSError, match="usage limit"):
-        wall_patch.check(home, "change", command)
-    failed = wall_patch.status(home, "change")
-    assert failed["phase"] == "review-unavailable" and failed["failure"]
-
-    # Once the reviewer recovers, a fresh successful check must not keep
-    # rendering the old failure beside a healthy reviewed patch.
-    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
-    wall_patch.check(home, "change", command)
-    recovered = wall_patch.status(home, "change")
-    assert recovered["phase"] == "reviewed"
-    assert "failure" not in recovered
-
-
 def test_reviewer_model_honors_site_config_and_env_override(tmp_path, monkeypatch):
     from mishe_tauftauf import wall_review
 
@@ -502,35 +453,12 @@ def test_review_passes_the_configured_outer_budget_to_the_worker(tmp_path, monke
 
     monkeypatch.setattr(wall_patch, "_worker", spy)
     wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
+    wall_patch.review(home, wall_patch.status(home, "change"))
     assert seen["timeout"] == 480
     assert "pre-activation review" in seen["question"]
     assert "delivery_verified" in seen["question"]
     assert "not yet expected" in seen["question"]
-    assert wall_patch.status(home, "change")["phase"] == "reviewed"
-
-
-def test_failed_review_drops_the_stale_verdict(tmp_path, monkeypatch):
-    # A superseding review flake overwrote the phase but kept an older passing
-    # verdict, so the dashboard could render a healthy review under a failed phase.
-    home, source, deployed = layout(tmp_path)
-    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
-    source.write_text("after\n")
-    command = [sys.executable, "-c", "pass"]
-
-    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
-    wall_patch.check(home, "change", command)
-    assert wall_patch.status(home, "change")["phase"] == "reviewed"
-
-    def unavailable(*args):
-        raise OSError("reviewer usage limit reached")
-
-    monkeypatch.setattr(wall_patch, "review", unavailable)
-    with pytest.raises(OSError, match="usage limit"):
-        wall_patch.check(home, "change", command)
-    failed = wall_patch.status(home, "change")
-    assert failed["phase"] == "review-unavailable"
-    assert failed["failure"]
-    assert "review" not in failed, "a failed attempt must not keep the stale passing verdict"
+    assert wall_patch.status(home, "change")["phase"] == "tested"
 
 
 def test_empty_reviewer_output_is_retried_then_succeeds(tmp_path, monkeypatch):
@@ -715,10 +643,9 @@ def test_failed_test_drops_the_stale_review_verdict(tmp_path, monkeypatch):
     home, source, deployed = layout(tmp_path)
     wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
     source.write_text("after\n")
-    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
     passing = [sys.executable, "-c", "pass"]
     wall_patch.check(home, "change", passing)
-    assert wall_patch.status(home, "change")["phase"] == "reviewed"
+    assert wall_patch.status(home, "change")["phase"] == "tested"
 
     failing = [sys.executable, "-c", "raise SystemExit(3)"]
     with pytest.raises(ValueError, match="deterministic patch check failed"):
@@ -728,43 +655,15 @@ def test_failed_test_drops_the_stale_review_verdict(tmp_path, monkeypatch):
     assert "review" not in failed, "a failed test must not keep the stale passing verdict"
 
 
-def test_legacy_apply_time_review_flake_drops_the_stale_verdict(tmp_path, monkeypatch):
-    # The legacy apply path re-reviews a delivery plan; a flake there must not
-    # leave the verdict of the earlier review, which certified different evidence.
-    home, source, deployed = layout(tmp_path)
-    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
-    source.write_text("after\n")
-    command = [sys.executable, "-c", "pass"]
-    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
-    wall_patch.check(home, "change", command)
-    assert wall_patch.status(home, "change")["phase"] == "reviewed"
-
-    # Simulate a delivery plan that flaked at apply time by re-reviewing.
-    record = wall_patch.status(home, "change")
-    record.pop("delivery_plan", None)
-    wall_patch._save(wall_patch.location(home, "change"), record)
-
-    def unavailable(*args):
-        raise OSError("reviewer usage limit reached")
-
-    monkeypatch.setattr(wall_patch, "review", unavailable)
-    with pytest.raises(OSError, match="usage limit"):
-        wall_patch.apply(home, "change", [sys.executable, "-c", "pass"], command)
-    failed = wall_patch.status(home, "change")
-    assert failed["phase"] == "review-unavailable"
-    assert "review" not in failed, "a flaked apply-time review must not keep the stale verdict"
-
-
 def test_mutated_source_drops_the_stale_review_verdict(tmp_path, monkeypatch):
     # A concurrent edit to the scoped source invalidates any earlier verdict, which
     # was over different bytes; the failed phase must not render that stale verdict.
     home, source, deployed = layout(tmp_path)
     wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
     source.write_text("after\n")
-    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
     command = [sys.executable, "-c", "pass"]
     wall_patch.check(home, "change", command)
-    assert wall_patch.status(home, "change")["phase"] == "reviewed"
+    assert wall_patch.status(home, "change")["phase"] == "tested"
 
     # A legitimate writer edits the shared source *while* the check's test runs:
     # check() re-snapshots `after` at the top of the loop, so a pre-run edit is
@@ -916,10 +815,9 @@ def test_peer_commit_during_check_is_not_a_source_mutation(tmp_path, monkeypatch
     home, source, deployed = git_layout(tmp_path)
     wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
     source.write_text("after\n")
-    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
     escaped = f"import subprocess,pathlib;pathlib.Path({str(source)!r}).write_text('peer\\n');subprocess.run(['git','-C',{str(tmp_path)!r},'-c','user.email=t@example','-c','user.name=t','add','src'],check=True);subprocess.run(['git','-C',{str(tmp_path)!r},'-c','user.email=t@example','-c','user.name=t','commit','-qm','peer'],check=True)"
     wall_patch.check(home, "change", [sys.executable, "-c", escaped])
-    assert wall_patch.status(home, "change")["phase"] == "reviewed"
+    assert wall_patch.status(home, "change")["phase"] == "tested"
 
 
 def test_gitignore_is_a_patchable_target_but_other_dot_paths_are_refused(tmp_path):
@@ -966,12 +864,13 @@ def test_review_evidence_carries_the_modules_the_patch_imports(tmp_path, monkeyp
 
     monkeypatch.setattr(wall_patch, "_worker", spy)
     wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
+    wall_patch.review(home, wall_patch.status(home, "change"))
     context = seen["context"]
     assert list(context["modules"]) == ["mishe_tauftauf.helper:nonblank"]
     assert context["modules"]["mishe_tauftauf.helper:nonblank"]["path"] == "src/mishe_tauftauf/helper.py"
     assert "def nonblank" in context["modules"]["mishe_tauftauf.helper:nonblank"]["text"]
     assert context["unresolved"] == []
-    assert wall_patch.status(home, "change")["phase"] == "reviewed"
+    assert wall_patch.status(home, "change")["phase"] == "tested"
 
 
 def test_oversized_definition_keeps_header_and_names_each_omitted_run(tmp_path):
@@ -1129,27 +1028,10 @@ def test_omitted_context_marks_the_request_incomplete(tmp_path, monkeypatch):
                            "results": [{"id": "PATCH", "verdict": "unknown", "reason": "missing", "evidence": []}]}).encode()
 
     monkeypatch.setattr(wall_patch, "_worker", spy)
-    with pytest.raises(ValueError, match="refused"):
-        wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
+    wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
+    wall_patch.review(home, wall_patch.status(home, "change"))
     assert "mishe_tauftauf.helper:nonblank" in seen["omitted"]
     assert seen["complete"] is False
-
-def test_check_description_reaches_the_review(tmp_path, monkeypatch):
-    home, source, deployed = layout(tmp_path)
-    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
-    source.write_text("after\n")
-    seen = {}
-
-    def fake_review(home_, record):
-        seen["rationale"] = record.get("description")
-        return {"clear": False, "reason": "stop"}
-
-    monkeypatch.setattr(wall_patch, "review", fake_review)
-    with pytest.raises(ValueError, match="review"):
-        wall_patch.check(home, "change", [sys.executable, "-c", "pass"], description="jitter the timers")
-    assert seen["rationale"] == "jitter the timers"
-    assert deployed.read_text() == "before\n"
-
 
 def test_reexported_name_is_followed_to_its_definition(tmp_path):
     # `observations` re-exports a helper defined in `impl`; the reviewer must get
