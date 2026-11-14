@@ -19,6 +19,7 @@ import signal
 import sqlite3
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 
 PROVIDERS = ('opencode-go', 'openai-codex', 'minimax-code')
 REGISTRY_STATES = ('configured', 'validated_but_not_configured')
@@ -288,3 +289,37 @@ def last_good_samples(path):
         else:
             bad = True
     return samples, 'last-good file has malformed entries' if bad else None
+
+
+ROUTERAI_TURN_PREFIX = 'omp:routerai/'
+
+
+def routerai_key(path):
+    """The RouterAI key from its key file, whitespace-stripped. Never placed in an error."""
+    return Path(path).read_text(encoding='utf-8').strip()
+
+
+def decode_routerai_credits(body):
+    """The `credits` balance from a RouterAI GET /api/v1/credits body (raw bytes).
+
+    Raises ValueError when the field is missing or is not a finite non-negative number, so
+    the caller records UNKNOWN rather than a zero balance."""
+    value = json.loads(body.decode('utf-8'))
+    credits = value['data']['credits']
+    if type(credits) not in (int, float) or not math.isfinite(credits) or credits < 0:
+        raise ValueError('credits field missing or not a non-negative number')
+    return float(credits)
+
+
+def routerai_outcome_epoch(row):
+    """Epoch seconds of an outcome row for an omp:routerai/* candidate, else None."""
+    if not isinstance(row, dict) or row.get('event') != 'outcome':
+        return None
+    key = row.get('key')
+    if not isinstance(key, str) or not key.startswith(ROUTERAI_TURN_PREFIX):
+        return None
+    try:
+        at = datetime.strptime(str(row.get('at')), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return at.timestamp()

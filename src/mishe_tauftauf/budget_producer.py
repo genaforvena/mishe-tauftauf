@@ -489,31 +489,23 @@ def fetch_routerai_credits(timeout: float = 10.0) -> float:
     the caller records UNKNOWN with the exception class only, never the key or a default."""
     import urllib.request
 
-    key = ROUTERAI_KEY_FILE.read_text(encoding="utf-8").strip()
+    from .engine_boundary import decode_routerai_credits, routerai_key
+
+    key = routerai_key(ROUTERAI_KEY_FILE)
     request = urllib.request.Request(
         ROUTERAI_CREDITS_URL, headers={"Authorization": f"Bearer {key}", "Accept": "application/json"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        body = json.loads(response.read(64_000).decode("utf-8"))
-    credits = body["data"]["credits"]
-    if type(credits) not in (int, float) or not math.isfinite(credits) or credits < 0:
-        raise ValueError("credits field missing or not a non-negative number")
-    return float(credits)
+        return decode_routerai_credits(response.read(64_000))
 
 
 def routerai_turns_24h(home: Path, now: float) -> int:
     """Outcome events for omp:routerai/* candidates in the last 24 h (routing-ledger.jsonl)."""
-    import datetime as _dt
+    from .engine_boundary import routerai_outcome_epoch
 
     turns = 0
     for row in read_jsonl_rows(home / "engine" / "routing-ledger.jsonl"):
-        key = row.get("key") if isinstance(row, dict) else None
-        if row.get("event") != "outcome" or not isinstance(key, str) or not key.startswith("omp:routerai/"):
-            continue
-        try:
-            at = _dt.datetime.strptime(str(row.get("at")), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_dt.timezone.utc)
-        except ValueError:
-            continue
-        if 0 <= now - at.timestamp() <= ROUTERAI_TURN_WINDOW_S:
+        at = routerai_outcome_epoch(row)
+        if at is not None and 0 <= now - at <= ROUTERAI_TURN_WINDOW_S:
             turns += 1
     return turns
 
