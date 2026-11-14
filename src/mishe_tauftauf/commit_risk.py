@@ -100,3 +100,53 @@ def record_new(repo: pathlib.Path, home: pathlib.Path, provider: dp.Provider | N
         record(home, sha, result)
         rows.append(dict(result, sha=sha))
     return rows
+
+
+def unanswered(repo: pathlib.Path, home: pathlib.Path, provider: dp.Provider | None, *, count: int = 50) -> list[str]:
+    """Recent commits the ledger still lacks and that no path rule settles (the model's residual)."""
+    done = recorded_shas(home)
+    pending = []
+    for sha in text.recent_shas(repo, count):
+        if sha in done:
+            continue
+        _, paths = changed_paths(repo, sha)
+        if system0(paths) is None:
+            pending.append(sha)
+    return pending
+
+
+def advisory_duty(repo: pathlib.Path, home: pathlib.Path, *, now: float | None = None) -> tuple[int, str]:
+    """The duty's observation: (exit code, one-line reason). GREEN 0, UNKNOWN 3.
+
+    UNKNOWN when the decision provider is not configured or unreadable, or when residual commits stay
+    unanswered while the day's cap has room (the service is failing). Unanswered commits with the cap
+    spent are GREEN: the cap is the declared limit, not a fault. Advisory only; nothing gates on it.
+    """
+    import datetime as _dt
+    from .budget_producer import DECISION_CONFIG, DECISION_PROVIDER
+    try:
+        provider = dp.select(dp.load_providers(pathlib.Path(home) / DECISION_CONFIG), DECISION_PROVIDER)
+    except Exception as exc:  # no key material in the reason: the class name is enough
+        return 3, f"UNKNOWN: decision provider not usable ({type(exc).__name__})"
+    try:
+        rows = record_new(pathlib.Path(repo), pathlib.Path(home), provider)
+        pending = unanswered(pathlib.Path(repo), pathlib.Path(home), provider)
+        day = _dt.datetime.fromtimestamp(time.time() if now is None else now, _dt.timezone.utc).date().isoformat()
+        calls = dp.calls_today(provider, day)
+    except Exception as exc:
+        return 3, f"UNKNOWN: advisory pass failed ({type(exc).__name__})"
+    if pending and calls < provider.daily_cap:
+        return 3, f"UNKNOWN: {len(pending)} residual commits unanswered with {calls} of {provider.daily_cap} calls used"
+    held = f", {len(pending)} held by the daily cap" if pending else ""
+    return 0, f"GREEN: {len(rows)} classified this pass{held}"
+
+
+def main(argv=None) -> int:
+    args = text.duty_args(argv)
+    code, reason = advisory_duty(args.repo, args.home)
+    print(f"mishe: commit-risk: {reason}")
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1064,6 +1064,28 @@
       "resolver": "genome",
       "covers": "the outcome of the newest pin promotion: GREEN delivered and the pointer names it, or still running; RED check-failed, check-mutated, rolled-back or UNKNOWN naming the sha, phase, failure and the last failing test line; UNKNOWN with no record, an unreadable record, a pointer that disagrees or a promotion stuck over an hour",
       "replaces": []
+    },
+    {
+      "name": "commit-risk",
+      "command": [
+        "{python}",
+        "-m",
+        "mishe_tauftauf.commit_risk",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 3600,
+      "timeout": 240,
+      "max_age": 7500,
+      "red_codes": [],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "system1",
+      "covers": "advisory commit-risk class for recent commits (path rules first, the decision model only for the mixed residual): UNKNOWN when the decision provider is not configured or residual commits stay unanswered while the daily cap has room; never gates delivery",
+      "replaces": []
     }
   ],
   "retired": [

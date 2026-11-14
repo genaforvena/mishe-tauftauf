@@ -47,3 +47,12 @@ def ledger_shas(ledger: pathlib.Path) -> set[str]:
     if not ledger.exists():
         return set()
     return {json.loads(line)["sha"] for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()}
+
+
+def duty_args(argv=None):
+    """The advisory duty's own flags: --home SITE and --repo CHECKOUT (both required)."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Advisory commit-risk pass (never gates delivery).")
+    parser.add_argument("--home", type=pathlib.Path, required=True)
+    parser.add_argument("--repo", type=pathlib.Path, required=True)
+    return parser.parse_args(argv)

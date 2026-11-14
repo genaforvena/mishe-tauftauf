@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import pathlib
 import tempfile
@@ -152,6 +153,48 @@ class RecordNewTest(unittest.TestCase):
         finally:
             cr.classify = original
         self.assertEqual(len(cr.recorded_shas(self.home)), 0)
+
+
+class AdvisoryDutyTest(unittest.TestCase):
+    """The duty's observation: UNKNOWN only for a missing provider or a service failing with cap room."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = pathlib.Path(self.tmp.name) / "repo"
+        self.home = pathlib.Path(self.tmp.name) / "home"
+        self.repo.mkdir()
+        self.home.mkdir()
+        self.fake = dataclasses.replace(_provider(self.home), daily_cap=10)
+        originals = (dp.load_providers, dp.select, dp.calls_today, cr.unanswered, cr.record_new)
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(self._restore, originals)
+
+    def _restore(self, originals):
+        dp.load_providers, dp.select, dp.calls_today, cr.unanswered, cr.record_new = originals
+
+    def _with_provider(self, calls, pending):
+        dp.load_providers = lambda path: {}
+        dp.select = lambda providers, name: self.fake
+        dp.calls_today = lambda provider, day: calls
+        cr.unanswered = lambda repo, home, provider, **kw: pending
+        cr.record_new = lambda repo, home, provider, **kw: []
+
+    def test_missing_provider_config_is_unknown(self):
+        code, reason = cr.advisory_duty(self.repo, self.home)
+        self.assertEqual(code, 3)
+        self.assertTrue(reason.startswith("UNKNOWN"))
+
+    def test_unanswered_with_cap_room_is_unknown(self):
+        self._with_provider(calls=2, pending=["abc"])
+        code, reason = cr.advisory_duty(self.repo, self.home)
+        self.assertEqual(code, 3)
+        self.assertIn("1 residual commits unanswered", reason)
+
+    def test_unanswered_with_cap_spent_is_green_held(self):
+        self._with_provider(calls=10, pending=["abc"])
+        code, reason = cr.advisory_duty(self.repo, self.home)
+        self.assertEqual(code, 0)
+        self.assertIn("held by the daily cap", reason)
 
 
 if __name__ == "__main__":
