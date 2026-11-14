@@ -894,6 +894,10 @@ def verify(home, identity):
         plan = record.get("delivery_plan", {})
         if record["phase"] != "applied" or not plan.get("revert_observe"):
             raise ValueError("verification needs applied bytes and a reviewed revert-observe plan")
+        # Same refusal as revert(): with no revert argv, _revert would re-run the
+        # new activation and re-pin the new code (a5dca7c3 verify failure).
+        if not plan.get("revert"):
+            raise ValueError("verification needs an explicit revert argv; a missing one re-runs activate")
         validate_plan(home, record, plan["activate"], plan["observe"])
         for name, values in record["files"].items():
             if snapshot(target(Path(record["runtime"]), name)) != values["after"]:

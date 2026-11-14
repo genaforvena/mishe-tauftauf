@@ -1386,3 +1386,24 @@ def test_revert_without_argv_refuses_before_bytes_move(tmp_path, monkeypatch):
         wall_patch.revert(home, "change", None)
     assert deployed.read_text() == deployed_before
     assert wall_patch.status(home, "change") == before
+
+
+def test_verify_refuses_a_plan_without_revert_argv_before_moving_bytes(tmp_path, monkeypatch):
+    # a5dca7c3: verify() reverted through the new activation because the plan had
+    # no revert argv, re-pinning the new code. It must refuse with bytes untouched.
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
+    activate = [sys.executable, "-c", "pass"]
+    observe = [sys.executable, "-c", "pass"]
+    reverted = [sys.executable, "-c", "pass"]
+    wall_patch.check(home, "change", [sys.executable, "-c", "pass"], activate=activate, observe=observe, revert_observe=reverted, revert=[sys.executable, "-c", "pass"])
+    wall_patch.apply(home, "change", activate, observe)
+    record = wall_patch.status(home, "change")
+    record["delivery_plan"].pop("revert", None)
+    wall_patch._save(wall_patch.location(home, "change"), record)
+    with pytest.raises(ValueError, match="explicit revert argv"):
+        wall_patch.verify(home, "change")
+    assert deployed.read_text() == "after\n"
+    assert "revert_activation" not in wall_patch.status(home, "change")
