@@ -2,9 +2,9 @@
 
 This adapter uses an explicitly selected OpenAI-compatible **Chat Completions**
 endpoint (`BASE/chat/completions`), not the legacy text completions endpoint.
-Native System One models use a different protocol: the TypeSafe Jev adapter
-(`env PYTHONPATH=src python3 -m mishe_tauftauf.jev_judge --self-test`) proves its own envelope
-contract offline.
+Native System One models use a different protocol and go through
+`decision_provider.py` (see `docs/decision-models.md`); its envelope contract is
+covered offline by `tests/test_decision_provider.py`.
 It has no third-party dependencies and does not change the default judge.
 The provider must support system/user messages, `response_format: json_object`,
 `temperature: 0`, and `max_tokens`. Unsupported settings fail visibly; there is
