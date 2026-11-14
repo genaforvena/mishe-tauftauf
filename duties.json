@@ -231,7 +231,7 @@
       "max_age": 7200,
       "resolver": "pub",
       "replaces": [],
-      "covers": "no live or draft DEV.to body, title, tag or reply breaks the private/public rule list"
+      "covers": "no live or draft DEV.to body, title, tag, card description, reply or the account's own published profile breaks the private/public rule list"
     },
     {
       "name": "budget",

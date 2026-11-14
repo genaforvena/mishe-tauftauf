@@ -62,6 +62,23 @@ did not do was name the field: the verdict said ``body``, which is where a
 reader would look and would not find it.  The front matter's description
 field is now read as the description it is.
 
+The account's own published profile is read too, and it was not before
+2026-11-14.  DEV prints the profile name and summary under every article's
+title and links the website and the social handles from the same byline, so a
+private term in any of them reaches a reader through every article on the
+account, and the lane read GREEN on all of them.  The account record is
+fetched once, before the items: it also says whose replies are ours, so a
+run that could not read it cannot tell our own text from a reader's either
+and ends as UNKNOWN, never a pass.
+
+One rule was wrong rather than missing.  The site-local terms file carried
+the account owner's own name in ``names`` while its own note recorded that
+Ilya's voice answer of 2026-11-12 14:45Z allows naming him.  The lane
+therefore refused bodies that named him, which contradicts the grant the rule
+was written from and pushes an author to write around it.  The allowed names
+now live in ``allowed.own_names`` in the terms file, where the scanner reads
+them; every other name stays forbidden.
+
 Whose text decides the verdict.  A rule hit in the account's own text is RED:
 we wrote it and we can correct it.  A rule hit inside a reader's comment is
 evidence, not a violation of ours: we did not write it and we cannot edit it,
@@ -182,13 +199,24 @@ def load_terms(terms_file: Path | None = None) -> dict:
     empty list that would quietly pass everything.
     """
     raw = json.loads(Path(terms_file or TERMS_FILE).read_text(encoding="utf-8"))
+    allowed = raw.get("allowed", {})
+    # The account owner's OWN name is allowed, and the rule has to say so here.
+    # Ilya's voice answer of 2026-11-12 14:45Z: "it is totally fine to mention
+    # me, mishe, mesh, all projects", recorded in operator/standing-approvals.md.
+    # The terms file used to carry "Ilya" in `names` while its own note said the
+    # opposite, so the lane REFUSED a body that named him and the site-local copy
+    # of the rule contradicted the grant it was written from.  A rule that refuses
+    # what the owner allowed is not a stricter rule: it is a wrong one, and it
+    # pushes an author to write around it instead of writing freely.
+    allowed_names = {str(n).casefold() for n in allowed.get("own_names", [])}
     out = []
     for group in ("names", "places", "devices", "projects", "handles", "household"):
         for term in raw.get(group, []):
+            if group == "names" and str(term).casefold() in allowed_names:
+                continue
             out.append(("R1", group, re.compile(r"(?<![\w-])" + re.escape(term) + r"(?![\w-])", re.I)))
     for term in raw.get("sensor", []):
         out.append(("R3", "sensor-term", re.compile(re.escape(term), re.I)))
-    allowed = raw.get("allowed", {})
     own = allowed.get("own_handle", [])
     # A dev.to link to the account's OWN posts is allowed (canonical_url decision, 2026-11-13).
     # A link to somebody else's handle is not: the pattern matches any handle EXCEPT ours.
@@ -363,14 +391,32 @@ def recover_tail(comments: list, key: str) -> list:
     return comments
 
 
-def read_owner(key: str) -> str:
-    """The username of the account the key belongs to.
+#: The profile fields DEV publishes next to every article.  Each one is shown
+#: to a reader: the name and the summary are the byline under the title, the
+#: website and the social handles are the links in the byline, and the location
+#: is printed next to them.
+PROFILE_FIELDS = ("name", "summary", "location", "website_url",
+                  "twitter_username", "github_username")
 
-    The account's own replies are the ones this lane can act on: a foreign
-    comment is a reader's text, which we can neither edit nor answer, so a
-    rule hit inside it is evidence and not a violation of ours.  Attribution
-    is read from the account itself, never from the terms file, so the scan
-    cannot lose its own replies by a term list that was edited.
+
+def read_account(key: str) -> dict:
+    """The account's own record: its username and the profile it publishes.
+
+    One read answers both.  The username says whose replies are ours: a
+    foreign comment is a reader's text, which we can neither edit nor answer,
+    so a rule hit inside it is evidence and not a violation of ours.
+    Attribution is read from the account itself, never from the terms file,
+    so the scan cannot lose its own replies by a term list that was edited.
+
+    The profile is published text the scan could not see before 2026-11-14.
+    DEV prints the profile name and summary under every article's title and
+    links the website and the social handles from the same byline, so a
+    private term in any of them reaches a reader through every article on the
+    account — and the lane read GREEN on all of them.
+
+    A field the account does not carry is empty text, which is nothing to rule
+    out.  A record that cannot be read at all raises, and the caller reports
+    UNKNOWN: an account nobody read is an account nobody can rule out.
     """
     payload = get("/users/me", key)
     if not isinstance(payload, dict):
@@ -378,7 +424,11 @@ def read_owner(key: str) -> str:
     username = payload.get("username")
     if not isinstance(username, str) or not username:
         raise ValueError("the account carries no username")
-    return username
+    profile = {}
+    for field in PROFILE_FIELDS:
+        value = payload.get(field)
+        profile[field] = value if isinstance(value, str) else ""
+    return {"username": username, "profile": profile}
 
 
 def read_item(item: dict, key: str, owner: str = "") -> dict:
@@ -471,6 +521,26 @@ def verdict_for(fields: dict, terms: list, foreign_handles: list = (), public_re
         else:
             for rule, code in scan_text(text, terms, foreign_handles, public_repo_rx):
                 violations.append(("description", rule, code))
+    # The account's own profile is published on every article page: DEV prints
+    # the name and the summary under the title and links the website and the
+    # social handles from the same byline.  It was not read before 2026-11-14,
+    # so a private term in it reached every article on the account while the
+    # lane read GREEN on all of them.
+    #
+    # A profile that could not be read never reaches this function: the
+    # account record is read once, before the items, and a record that cannot
+    # be read ends the run as UNKNOWN.  That is the honest state, because the
+    # same record says whose replies are ours, so a run that could not read it
+    # cannot tell our own text from a reader's either.
+    profile = fields.get("profile")
+    if isinstance(profile, dict):
+        for field in sorted(profile):
+            ok, text = text_or_unknown(profile[field])
+            if not ok:
+                unknown = True
+                continue
+            for rule, code in scan_text(text, terms, foreign_handles, public_repo_rx):
+                violations.append((f"profile.{field}", rule, code))
     for n, reply in enumerate(fields.get("replies") or []):
         for rule, code in scan_text(reply, terms, foreign_handles, public_repo_rx):
             violations.append((f"reply[{n}]", rule, code))
@@ -576,6 +646,14 @@ def self_test(terms_file: Path | None = None) -> int:
         "wake-id-red": ({"title": "x", "body": "Corrected in wake 1794413465868601864.", "tags": "", "replies": []}, RED),
         # a device name stays a violation
         "device-red": ({"title": "x", "body": "It ran on the mesh-home box.", "tags": "", "replies": []}, RED),
+        # the account owner's own name is allowed (2026-11-12 14:45Z, and the
+        # 2026-11-14 decision that made the rule say so)
+        "own-name-allowed": ({"title": "x", "body": "Ilya read this and approved it.", "tags": "", "replies": []}, GREEN),
+        # another person's name stays a violation
+        "other-name-red": ({"title": "x", "body": "Rozalia read this.", "tags": "", "replies": []}, RED),
+        # the account's published profile is read like any other published text
+        "profile-red": ({"title": "x", "body": "A body.", "tags": "", "replies": [],
+                         "profile": {"name": "ilya mozerov", "summary": "It ran on the mesh-home box."}}, RED),
     }
     ok = True
     for name, (fields, expected) in cases.items():
@@ -591,15 +669,25 @@ def run_all(key: str, *, terms_file: Path | None = None, report: Path | None = N
     terms = loaded["terms"]
     foreign_handles = loaded["foreign_handles"]
     public_repo_rx = loaded["public_repo_rx"]
+    # Whose replies are ours, and the profile the account publishes, are both
+    # read from the account itself, not from the terms file: the terms file can
+    # be edited, and a scan that lost its own replies through a term edit
+    # would read GREEN while checking nothing of ours.
+    #
+    # The account is read before the articles: a record that cannot be read
+    # ends the run as UNKNOWN, and there is no sense paying for 108 paced
+    # article reads to learn that.
+    account = read_account(key)
+    owner = account["username"]
+    profile = account["profile"]
     items = collect(key)
-    # Whose replies are ours is read from the account, not from the terms file:
-    # the terms file can be edited, and a scan that lost its own replies
-    # through a term edit would read GREEN while checking nothing of ours.
-    owner = read_owner(key)
     results = []
     foreign_total = 0
     for item in items:
         fields = read_item(item, key, owner)
+        # The profile is the same text on every article, so it is read once and
+        # carried on each item rather than fetched 108 times.
+        fields["profile"] = profile
         verdict, violations = verdict_for(fields, terms, foreign_handles, public_repo_rx)
         foreign = foreign_findings(fields, terms, foreign_handles, public_repo_rx)
         foreign_total += len(foreign)
@@ -612,6 +700,7 @@ def run_all(key: str, *, terms_file: Path | None = None, report: Path | None = N
     report_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"checked_at": now_iso(), "max_age_seconds": MAX_AGE_SECONDS, "overall": overall,
                "counts": counts, "items": results,
+               "profile": {"read": True},
                "foreign_findings": foreign_total}
     tmp = report_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

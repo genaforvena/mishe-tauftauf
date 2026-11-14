@@ -95,10 +95,12 @@ The foreground run measures about 4.5 minutes (108 items, paced reads), so the
 duty's timeout is 540 s and its `max_age` is 7200 s. The scan is a public-API
 read; it never writes to DEV.to.
 
-What the scan reads grew twice on 2026-11-14, both times because reading the
-check found a place it did not look. It now reads the whole comment tree and
-the tail the list endpoint withholds (below), and the **card description** of
-every live and draft article. DEV shows the description on every card and in
+What the scan reads grew three times on 2026-11-14, each time because reading
+the check found a place it did not look. It now reads the whole comment tree and
+the tail the list endpoint withholds (below), the **card description** of
+every live and draft article, and the account's own **published profile**.
+
+DEV shows the description on every card and in
 every link preview, and DEV freezes it at creation, so a corrected body keeps
 showing the sentence the description was written with; the publisher sends it
 from the article's front matter, so it is the account's own text. Before that
@@ -115,6 +117,26 @@ A description that is present but unreadable is UNKNOWN, not a pass: a
 description nobody could read is a description nobody can rule out. An
 article that publishes no description carries no text to rule out and is
 read as empty.
+
+The profile is read for the same reason. DEV prints the profile name and
+summary under every article's title and links the website and the social
+handles from the same byline, so a private term in any of them reaches a
+reader through every article on the account — and the lane read GREEN on all
+of them. The account record is fetched once, before the items, because it
+also says whose replies are ours: a run that could not read it cannot tell
+our own text from a reader's either, so a failed account read ends the run as
+UNKNOWN, never a pass. The profile is the same text on every article, so it
+is carried onto each item rather than fetched 108 times.
+
+One rule changed with it, and it was a wrong rule rather than a missing one.
+The site-local terms file carried the account owner's own name in `names`
+while its own note recorded that Ilya's voice answer of 2026-11-12 14:45Z
+allows naming him ("it is totally fine to mention me, mishe, mesh, all
+projects"). The lane therefore refused bodies that named him — a rule
+contradicting the grant it was written from, which pushes an author to write
+around it instead of writing freely. The allowed names now live in
+`allowed.own_names` in the terms file, where the scanner reads them, and
+every other name stays forbidden.
 
 One behaviour changed in the move. A RED verdict now stays RED even when the
 publish to the bus fails: a violation we observed is an observation, not a

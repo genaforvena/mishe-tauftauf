@@ -33,6 +33,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -211,7 +212,7 @@ def test_a_red_stays_red_when_the_publish_fails(tmp_path):
     scan.load_terms = lambda terms_file=None: NO_TERMS
     # The account's own username is read from the API; these cases exercise the
     # verdict path, so the lookup is stubbed rather than reaching the network.
-    scan.read_owner = lambda key: "ilya_mozerov_867dbdd91feb"
+    scan.read_account = lambda key: {"username": "ilya_mozerov_867dbdd91feb", "profile": {}}
     scan.collect = lambda key: [{"id": 1, "state": "live"}]
     scan.read_item = lambda item, key, owner="": {"title": "x", "body": "probe@example.com", "tags": "", "replies": []}
     # An existing CLI path makes publish_verdict reach the injected runner. Without
@@ -232,7 +233,7 @@ def test_a_green_that_cannot_publish_is_unknown_not_green(tmp_path):
     scan.load_terms = lambda terms_file=None: NO_TERMS
     # The account's own username is read from the API; these cases exercise the
     # verdict path, so the lookup is stubbed rather than reaching the network.
-    scan.read_owner = lambda key: "ilya_mozerov_867dbdd91feb"
+    scan.read_account = lambda key: {"username": "ilya_mozerov_867dbdd91feb", "profile": {}}
     scan.collect = lambda key: [{"id": 1, "state": "live"}]
     scan.read_item = lambda item, key, owner="": {"title": "A note", "body": "A sentence.", "tags": "", "replies": []}
     cli = fake_cli(tmp_path)
@@ -256,7 +257,7 @@ def test_a_missing_cli_and_a_failed_publish_give_the_same_exit_code(tmp_path):
     scan.load_terms = lambda terms_file=None: NO_TERMS
     # The account's own username is read from the API; these cases exercise the
     # verdict path, so the lookup is stubbed rather than reaching the network.
-    scan.read_owner = lambda key: "ilya_mozerov_867dbdd91feb"
+    scan.read_account = lambda key: {"username": "ilya_mozerov_867dbdd91feb", "profile": {}}
     scan.collect = lambda key: [{"id": 1, "state": "live"}]
     scan.read_item = lambda item, key, owner="": {"title": "A note", "body": "A sentence.", "tags": "", "replies": []}
     failed_publish = scan.run_all("key", report=tmp_path / "a.json", cli=fake_cli(tmp_path))
@@ -279,7 +280,7 @@ def test_the_report_records_the_verdict_and_never_the_matched_text(tmp_path):
     scan.load_terms = lambda terms_file=None: NO_TERMS
     # The account's own username is read from the API; these cases exercise the
     # verdict path, so the lookup is stubbed rather than reaching the network.
-    scan.read_owner = lambda key: "ilya_mozerov_867dbdd91feb"
+    scan.read_account = lambda key: {"username": "ilya_mozerov_867dbdd91feb", "profile": {}}
     scan.collect = lambda key: [{"id": 4242, "state": "live"}]
     scan.read_item = lambda item, key, owner="": {"title": "x", "body": "write to probe@example.com", "tags": "", "replies": []}
     report = tmp_path / "report.json"
@@ -398,7 +399,7 @@ def test_the_report_counts_readers_findings_without_raising_a_red(tmp_path):
     runner = FakeRun()
     scan.subprocess = fake_subprocess(runner)
     scan.load_terms = lambda terms_file=None: NO_TERMS
-    scan.read_owner = lambda key: "ilya_mozerov_867dbdd91feb"
+    scan.read_account = lambda key: {"username": "ilya_mozerov_867dbdd91feb", "profile": {}}
     scan.collect = lambda key: [{"id": 4218940, "state": "live"}]
     scan.read_item = lambda item, key, owner="": {
         "title": "A post", "body": "A body.", "tags": "", "replies": [],
@@ -520,6 +521,146 @@ def test_the_read_item_captures_the_description_the_api_answers():
     scan.get = lambda path, key=None: article
     fields = scan.read_item({"id": 4218940, "state": "live"}, "key", "owner")
     assert fields["description"] == "the card"
+
+
+# ---- the owner-name rule, contradicted by the grant, fixed 2026-11-14 ------------
+#
+# Ilya's voice answer of 2026-11-12 14:45Z says naming him is fine: "it is
+# totally fine to mention me, mishe, mesh, all projects".  The site-local terms
+# file carried "Ilya" in `names` anyway, so the lane REFUSED a body that named
+# him — the rule contradicted the grant it was written from, and pushed an
+# author to write around it.  Measured before the change: a draft naming him
+# was RED at "body:R1/names".
+
+
+def terms_file(tmp_path, names, own_names=()):
+    """A site-local terms file with the given names, for the rule to read."""
+    path = tmp_path / "privacy-terms.json"
+    path.write_text(json.dumps({"names": list(names), "allowed": {"own_names": list(own_names)}}),
+                    encoding="utf-8")
+    return path
+
+
+def test_the_owners_own_name_is_allowed_when_the_grant_allows_it(tmp_path):
+    """The rule must not refuse what the owner allowed."""
+    scan = load_scan()
+    loaded = scan.load_terms(terms_file(tmp_path, ["Ilya", "Rozalia"], own_names=["Ilya"]))
+    hits = scan.scan_text("Ilya read this and approved it.", loaded["terms"],
+                           loaded["foreign_handles"], loaded["public_repo_rx"])
+    assert hits == []
+    # The other names stay forbidden: the exemption is for the owner's own
+    # name, not for names in general.
+    hits = scan.scan_text("Rozalia read this.", loaded["terms"],
+                           loaded["foreign_handles"], loaded["public_repo_rx"])
+    assert [code for _rule, code in hits] == ["names"]
+
+
+def test_a_name_is_still_forbidden_when_the_grant_does_not_allow_it(tmp_path):
+    """Without the exemption the name rule stands."""
+    scan = load_scan()
+    loaded = scan.load_terms(terms_file(tmp_path, ["Ilya"], own_names=[]))
+    hits = scan.scan_text("Ilya read this.", loaded["terms"],
+                           loaded["foreign_handles"], loaded["public_repo_rx"])
+    assert [code for _rule, code in hits] == ["names"]
+
+
+# ---- the profile blind spot, closed 2026-11-14 ---------------------------------
+#
+# DEV prints the account's profile name and summary under every article's
+# title, and links the website and the social handles from the same byline.
+# The scan never read any of it, so a private term in the profile reached
+# every article on the account while the lane read GREEN on all of them.
+
+
+def test_a_private_identifier_in_the_profile_is_red():
+    """The profile is published text, so the rule holds it too."""
+    scan = load_scan()
+    terms = [("R1", "devices", re.compile(r"(?<![\w-])mesh-home(?![\w-])", re.I))]
+    fields = {"title": "A post", "body": "A body.", "tags": "", "replies": [],
+              "profile": {"name": "ilya mozerov", "summary": "running on mesh-home"}}
+    verdict, violations = scan.verdict_for(fields, terms=terms)
+    assert verdict == "RED"
+    assert [field for field, _rule, _code in violations] == ["profile.summary"]
+
+
+def test_an_unreadable_account_is_unknown(tmp_path):
+    """An account nobody read is an account nobody can rule out.
+
+    The account record says whose replies are ours, so a run that could not
+    read it cannot tell our own text from a reader's either.  The run is
+    UNKNOWN, never a pass.
+    """
+    scan = load_scan()
+    runner = FakeRun()
+    scan.subprocess = fake_subprocess(runner)
+
+    def refuse(path, key=None):
+        raise ValueError("the API did not answer with the account")
+
+    scan.get = refuse
+    assert scan.main(["--all", "--env", str(tmp_path / "env"), "--terms", str(tmp_path / "terms"),
+                      "--report", str(tmp_path / "report.json"), "--cli", str(fake_cli(tmp_path))]) == 3
+
+
+def test_a_clean_profile_is_green():
+    """The profile is read on every item, so a clean one changes nothing."""
+    scan = load_scan()
+    fields = {"title": "A post", "body": "A body.", "tags": "", "replies": [],
+              "profile": {"name": "ilya mozerov", "summary": "an account", "location": ""}}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "GREEN" and not violations
+
+
+def test_the_profile_is_read_from_the_account_record():
+    """The profile comes from the API, not from the terms file."""
+    scan = load_scan()
+    scan.get = lambda path, key=None: {"username": "own", "name": "ilya mozerov",
+                                       "summary": "an account", "location": "",
+                                       "website_url": "https://example.invalid",
+                                       "twitter_username": None}
+    account = scan.read_account("key")
+    assert account["username"] == "own"
+    assert account["profile"]["name"] == "ilya mozerov"
+    assert account["profile"]["twitter_username"] == ""
+    # A field the account does not carry is empty text, not a missing read.
+    assert account["profile"]["github_username"] == ""
+
+
+def test_an_account_that_cannot_be_read_is_an_error():
+    """The account record says whose replies are ours, so a failed read is fatal.
+
+    A run that could not read it cannot tell our own text from a reader's, so
+    it cannot rule anything out: the caller turns this into UNKNOWN, never a
+    pass.
+    """
+    scan = load_scan()
+
+    def refuse(path, key=None):
+        raise ValueError("the API did not answer with the account")
+
+    scan.get = refuse
+    try:
+        scan.read_account("key")
+    except ValueError:
+        return
+    raise AssertionError("an unreadable account must raise")
+
+
+def test_the_report_records_that_the_profile_was_read(tmp_path):
+    """The report says whether the profile was read, so a silent skip is visible."""
+    scan = load_scan()
+    runner = FakeRun()
+    scan.subprocess = fake_subprocess(runner)
+    scan.load_terms = lambda terms_file=None: NO_TERMS
+    scan.read_account = lambda key: {"username": "ilya_mozerov_867dbdd91feb",
+                                     "profile": {"name": "ilya mozerov", "summary": "an account"}}
+    scan.collect = lambda key: [{"id": 4242, "state": "live"}]
+    scan.read_item = lambda item, key, owner="": {"title": "x", "body": "A body.",
+                                                   "tags": "", "replies": []}
+    report = tmp_path / "report.json"
+    assert scan.run_all("key", report=report, cli=fake_cli(tmp_path)) == 0
+    written = json.loads(report.read_text(encoding="utf-8"))
+    assert written["profile"]["read"] is True
 
 
 if __name__ == "__main__":
