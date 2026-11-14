@@ -298,7 +298,7 @@ def prepare(home, identity, paths, base=None):
 # imports from the package is sent as its definition, and each changed
 # definition is sent as bounded windows around its call sites.
 CONTEXT_EXCERPT_BYTES = 12_000
-CONTEXT_TOTAL_BYTES = 256_000
+CONTEXT_TOTAL_BYTES = 384_000  # the 2facb19d candidate set is ~351 KB; 256 KB dropped the consumer_fence import
 CALLER_SITES = 40  # `check` has 18 sites and `main` 23; at 12 both stayed truncated and context_complete never held
 CALLER_RADIUS = 2
 RESOLVE_HOPS = 2
@@ -455,8 +455,15 @@ def symbol_context(home, record):
             found = _resolve_export(root, src, module, alias, patched)
             if found is not None:
                 ordered.append((f"{module}:{alias}", found[0], found[1]))
-            elif module_file(src, f"{module}.{alias}") is None:
+                continue
+            # `from . import sub` names a submodule, not an export: include its
+            # bytes instead of dropping it silently (the reviewer then lacks evidence).
+            sub = module_file(src, f"{module}.{alias}")
+            if sub is None:
                 unresolved.append(f"{module}:{alias}")
+            elif sub.relative_to(root).as_posix() not in patched:
+                ordered.append((f"{module}.{alias}", sub.relative_to(root).as_posix(),
+                                sub.read_text(errors="replace")))
 
     corpus = {}
     for base in (src, root / "checks", root / "tests", root / "tools"):

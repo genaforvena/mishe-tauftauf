@@ -1192,3 +1192,29 @@ def test_observe_timeout_outlasts_consumer_drain(tmp_path, monkeypatch):
     assert seen["timeout"] == wall_patch.OBSERVE_TIMEOUT_S
     wall_patch.run(home, "change", "activate", ["true"])
     assert seen["timeout"] == wall_patch.RUN_TIMEOUT_S == 300
+
+
+def test_review_context_includes_a_submodule_imported_from_the_package(tmp_path):
+    # `from . import consumer_fence` names a submodule, not an export; its bytes
+    # must reach the reviewer rather than being dropped without a mark.
+    import base64
+    from mishe_tauftauf import wall_patch
+
+    root = tmp_path
+    pkg = root / "src" / "mishe_tauftauf"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "consumer_fence.py").write_text("DRAIN_TIMEOUT_S = 420\n")
+    patched = "from . import consumer_fence\nX = consumer_fence.DRAIN_TIMEOUT_S\n"
+    (pkg / "patched.py").write_text(patched)
+    home = root / ".site"
+    home.mkdir()
+    after = {"bytes": base64.b64encode(patched.encode()).decode(), "mode": 0o644}
+    record = {"files": {"src/mishe_tauftauf/patched.py": {"before": None, "after": after}}}
+
+    context = wall_patch.symbol_context(home, record)
+
+    assert "mishe_tauftauf.consumer_fence" in context["modules"]
+    assert "DRAIN_TIMEOUT_S = 420" in context["modules"]["mishe_tauftauf.consumer_fence"]["text"]
+    assert "mishe_tauftauf.consumer_fence" not in context["unresolved"]
+    assert "mishe_tauftauf.consumer_fence" not in context["omitted_over_limit"]
