@@ -775,7 +775,7 @@ def check(home, identity, command, *, activate=None, observe=None, revert_observ
             raise ValueError("patch review refused; see saved response")
 
 
-def _revert(home, identity, record, activate):
+def _revert(home, identity, record, activate, revert_argv=None):
     runtime = Path(record["runtime"])
     record["delivery_verified"] = False
     try:
@@ -788,7 +788,7 @@ def _revert(home, identity, record, activate):
             restore(path, values["runtime_before"], expected=snapshot(path))
         # The plan's revert argv restores the old pin; re-running the new
         # activation would re-pin the new code and call that a revert.
-        revert_argv = (record.get("delivery_plan") or {}).get("revert") or activate
+        revert_argv = revert_argv or (record.get("delivery_plan") or {}).get("revert") or activate
         record["revert_activation"] = run(home, identity, "revert", revert_argv)
         record["phase"] = "reverted" if record["revert_activation"]["code"] == 0 else "reverted-activation-failed"
         if record["revert_activation"]["code"]:
@@ -810,13 +810,18 @@ def revert(home, identity, activate):
     with lock(home):
         check_admission(home)
         record = status(home, identity)
-        plan = record.get("delivery_plan")
-        # Re-running the plan's own activation as the revert re-pins the new code
-        # and calls it a revert (the a5dca7c3 failure). Refuse that before any
-        # runtime byte moves; a distinct explicit revert argv is still honoured.
-        if plan is not None and not plan.get("revert") and activate == plan.get("activate"):
-            raise ValueError(f"{identity}: delivery plan has no revert argv; refusing to revert by re-activating")
-        _revert(home, identity, record, activate)
+        plan = record.get("delivery_plan") or {}
+        # Resolve the argv that restores the old pin before any runtime byte
+        # moves. Re-running the new activation as the revert re-pins the new
+        # code and calls it a revert (the a5dca7c3 failure); an empty argv
+        # would move bytes and then fail in run(). Refuse both up front. A
+        # legacy record without a plan is checked against the activation it
+        # recorded.
+        revert_argv = plan.get("revert") or activate
+        reference = plan.get("activate", record.get("activate"))
+        if not revert_argv or (not plan.get("revert") and revert_argv == reference):
+            raise ValueError(f"{identity}: delivery plan has no revert argv; refusing to revert with no command or by re-activating")
+        _revert(home, identity, record, activate, revert_argv=revert_argv)
 
 
 def apply(home, identity, activate, observe):
