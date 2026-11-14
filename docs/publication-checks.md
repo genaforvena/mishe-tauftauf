@@ -42,12 +42,18 @@ account, and each covers a gap the others cannot:
   sentence and the index's URL list. It is a public-API read with no
   credentials.
 
-A correction notice's numbers are history, and a line that carries its own
-time qualifier ("at the time this draft was written") is a dated figure; the
-account-count check reads neither as a claim about today. An account that
-cannot be read is UNKNOWN, never a pass. Both Python checks take `--env` with
-the credentials file as an absolute path and `--self-test` for their own
-controlled failure.
+A correction notice's numbers are history, and a figure the line dates ("at the
+time this draft was written", "then held", "as of the 2026-11-12 refresh") is
+a dated figure; the account-count check reads neither as a claim about today.
+The qualifier dates the figure it qualifies, not the whole line: the figure's
+own sentence governs it, and another sentence governs it only when it points
+back at the figure ("the count above", "both figures", "the account size").
+This scope is measured, not guessed — the earlier whole-line rule skipped a
+live claim on article 4949922, whose bullet carried the account's size and the
+note about when it was read on one line, and mutating that figure to a stale
+count still read GREEN. An account that cannot be read is UNKNOWN, never a
+pass. Both Python checks take `--env` with the credentials file as an absolute
+path and `--self-test` for their own controlled failure.
 
 Without configuration, substantial JSON objects or arrays in new text (by breadth, depth or nesting; trivial literals pass as prose) and text with no readable words are rejected, but
 semantic questions remain explicitly **untested**. This bootstrap mode establishes

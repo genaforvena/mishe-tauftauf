@@ -121,6 +121,88 @@ def test_a_dated_figure_is_not_a_claim():
     assert failures == []
 
 
+def test_a_stale_count_beside_a_dated_note_is_found():
+    """A dated note on the line must not swallow a live figure on that line.
+
+    Article 4949922's bullet carried the account's size and the note about
+    when it was read on one line: "The published blog this account maintains
+    is 95 posts, 91 distinct titles.  The count above was read at dashboard
+    time on 2026-10-30 and read again against the live account on 2026-11-14."
+    The note says the figure was read again against the account as it is
+    now, so the figure is a claim about today.  Reading the qualifier as a
+    property of the whole line skipped the figure, so mutating it to a stale
+    count still read GREEN -- the false negative this test pins.
+    """
+    failures = _failures(bodies=dict(
+        BODIES,
+        **{"3": "The published blog this account maintains is **2 posts, 2 distinct "
+                "titles**.  The count above was read at dashboard time on "
+                "2026-10-30 and read again against the live account on "
+                "2026-11-14.\n"}))
+    assert len(failures) == 1
+    assert "holds 2 published posts" in failures[0]
+
+
+def test_a_stale_title_count_beside_a_dated_note_is_found():
+    """The distinct-title half of a figure survives a dated note on the line.
+
+    Dropping the titles half would let a half-corrected pair through: the
+    post count can be right while the title count is not.
+    """
+    failures = _failures(bodies=dict(
+        BODIES,
+        **{"3": "The published blog this account maintains is **3 posts, 4 distinct "
+                "titles**.  The count above was read at dashboard time on "
+                "2026-10-30 and read again against the live account on "
+                "2026-11-14.\n"}))
+    assert len(failures) == 1
+    assert "holds 4 distinct titles" in failures[0]
+
+
+def test_a_dated_figure_the_line_reverifies_is_a_claim():
+    """A figure re-read against the live account is a claim about today.
+
+    The bullet says the count was read at dashboard time AND read again
+    against the live account.  The second read is a claim about now, so a
+    stale figure there is drift even though the same sentence also dates the
+    earlier read.
+    """
+    claims = check.claims_in_line(
+        "The published blog this account maintains is **3 posts, 2 distinct "
+        "titles**.  The count above was read at dashboard time on 2026-10-30 "
+        "and read again against the live account on 2026-11-14.")
+    assert claims == [("total with titles", 3, 2)]
+
+
+def test_a_figure_dated_by_when_it_was_read_is_not_a_claim():
+    """A figure the line says when it was read is a dated figure.
+
+    "The count above was read at dashboard time on 2026-10-30" tells a reader
+    the number describes the account on that day, so it is history rather
+    than a claim about today.  Flagging it would cry wolf on the corpus: the
+    account's own pages are full of figures that carry their read date.
+    """
+    claims = check.claims_in_line(
+        "The published blog this account maintains is **3 posts, 2 distinct "
+        "titles**.  The count above was read at dashboard time on "
+        "2026-10-30.")
+    assert claims == []
+
+
+def test_a_qualifier_aimed_at_another_quantity_does_not_date_this_figure():
+    """A qualifier reaches only the figure it names.
+
+    "The comment count above was read at dashboard time" is about the comment
+    count, not the account's size, so the account size on that line stays a
+    claim.
+    """
+    claims = check.claims_in_line(
+        "The published blog this account maintains is **3 posts, 2 distinct "
+        "titles**.  The comment count above was read at dashboard time on "
+        "2026-10-30.")
+    assert claims == [("total with titles", 3, 2)]
+
+
 def test_a_correction_notice_is_not_a_claim():
     """A correction notice's numbers are history, not a claim.
 

@@ -34,15 +34,24 @@ would cry wolf on the corpus it is measured against:
 * a correction notice line.  A correction trail is a record of what the
   account held on past dates; those numbers are history and are meant to
   disagree with today.
-* a line that carries its own time qualifier -- "at the time this draft was
-  written", "then held", "before that", "as of the 2026-11-12 refresh".  A
-  figure the line itself dates is a dated figure, and the account's count
-  today is not what it claims to be.
+* a figure the line dates.  "at the time this draft was written", "then
+  held", "before that", "as of the 2026-11-12 refresh" place a figure in a
+  past time, and the account's count today is not what it claims to be.
+
+A qualifier dates the figure it qualifies, not the whole line.  The figure's
+own sentence governs it, and another sentence on the line governs it only
+when it points back at the figure ("the count above", "both figures", "the
+account size").  This scope is measured, not guessed: the earlier whole-line
+rule skipped a live claim on article 4949922, whose bullet carries the
+figure and the note "The count above was read at dashboard time on
+2026-10-30 and read again against the live account on 2026-11-14" on one
+line, and mutating that figure to a stale one still read GREEN.  A figure
+whose governing sentence says it was read against the live account is a
+claim about today even when the same sentence also dates an earlier read.
 
 The threshold is measured, not guessed: over the 95 live bodies captured on
-2026-11-14 this rule finds exactly one false claim, article 4949922's
-"The published blog this account maintains is 62 posts, 58 distinct titles",
-and leaves the three true claims alone.  Every qualifier phrase it knows was
+2026-11-14 this rule reads exactly three figures as claims, all of them
+true, and leaves the dated ones alone.  Every qualifier phrase it knows was
 taken from a live line.
 
 Verdicts: GREEN when every claim matches, RED when one does not, UNKNOWN when
@@ -66,14 +75,51 @@ UNKNOWN = "UNKNOWN"
 NOTICE = re.compile(r"^\s*(>\s*)?\**\s*(correction|update|earlier correction|superseded)\b", re.I)
 """A correction or update notice.  Its numbers are history, not a claim."""
 
-QUALIFIED = re.compile(
-    r"at the time|then (?:held|read|had)|historically|before that|"
-    r"before an earlier|earlier correction|was written|had published|"
-    r"now reads|count(?:ed)? now|had been|has since been published|"
-    r"the count (?:below|above|then|now)|as of the \d{4}-\d{2}-\d{2} refresh|"
+DATED = re.compile(
+    r"at the time|at dashboard time|first read at|then (?:held|read|had)|"
+    r"historically|before that|before an earlier|earlier correction|"
+    r"was written|had published|now reads|count(?:ed)? now|had been|"
+    r"has since been published|as of the \d{4}-\d{2}-\d{2} refresh|"
     r"refresh was read|was read again|in the \d{4}-\d{2}-\d{2} refresh|"
-    r"earlier refresh", re.I)
-"""A line that dates its own figure.  A dated figure is not a claim about today."""
+    r"earlier refresh|as they stood", re.I)
+"""A phrase that places a figure in a past time.
+
+A dated figure is a record of what the account held then, not a claim about
+what it holds now.  The phrase dates the figure it belongs to, not every
+figure on the line.
+"""
+
+PROVENANCE = re.compile(
+    r"was read at|read at dashboard time|first read at|"
+    r"refresh was read|was read again|was read against|was re-read|"
+    r"verified against", re.I)
+"""A phrase that says when a figure was obtained.
+
+Reading a number on a given day does not make the number a claim about
+today: it describes the account as it was on that day, unless the same
+sentence says it was read against the account as it is now.  A figure that
+carries a provenance phrase and no fresh read is dated by it.
+"""
+
+POINTER = re.compile(
+    r"the count (?:below|above|then|now)|"
+    r"(?:the|these|those|both|that|either)\s+"
+    r"(?:counts?|figures?|account size|account counts)\b", re.I)
+"""A phrase that points at a figure elsewhere on the line.
+
+"The count above was read at dashboard time" says when THAT figure was read;
+it says nothing about a different figure on the same line.
+"""
+
+CURRENT = re.compile(
+    r"against the live account|against the account|"
+    r"verified against a live list|fresh read of /articles/me/all|"
+    r"re-read against", re.I)
+"""A phrase that says the figure was read against the account as it is now.
+
+A page that says so has re-verified the figure, so the figure is a claim
+about today even when the same sentence also dates an earlier read.
+"""
 
 ACCOUNT = re.compile(r"\b(?:account|blog|index|page|list|publication)\b", re.I)
 """The subject of the claim.  A line that names none of these is not about
@@ -105,26 +151,88 @@ def content_lines(body: str) -> list[str]:
     return [line for line in body.splitlines() if line.strip()]
 
 
+SENTENCE = re.compile(r"(?<=[.!?;])\s+")
+"""A sentence boundary inside one line of prose."""
+
+
+def sentence_spans(line: str) -> list[tuple[int, int]]:
+    """The line's sentences, as (start, end) offsets."""
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for match in SENTENCE.finditer(line):
+        spans.append((start, match.start()))
+        start = match.end()
+    spans.append((start, len(line)))
+    return spans
+
+
+def figures_in_line(line: str) -> list[tuple[str, int, int | None, list[int]]]:
+    """The account figures one line states.
+
+    Returns (kind, posts, titles, positions) quadruples.  ``titles`` is None
+    when the line states no distinct-title count.  ``positions`` are the
+    offsets of the figures inside the line, so a rule can tell which sentence
+    holds which figure.
+    """
+    pair = PAIR.search(line)
+    if pair:
+        return [("total with titles", int(pair.group(1)), int(pair.group(2)),
+                 [pair.start(1), pair.start(2)])]
+    total = TOTAL.search(line)
+    if total:
+        titles = TITLES.search(line)
+        positions = [total.start(1)]
+        if titles:
+            positions.append(titles.start(1))
+        return [("total", int(total.group(1)),
+                 int(titles.group(1)) if titles else None, positions)]
+    return []
+
+
 def claims_in_line(line: str) -> list[tuple[str, int, int | None]]:
     """The account claims one line states.
 
     Returns a list of (kind, posts, titles) triples.  ``titles`` is None when
     the line states no distinct-title count.
+
+    A qualifier dates the figure it qualifies, not the whole line.  The
+    figure's own sentence governs it; a sentence elsewhere on the line governs
+    it only when it points back at the figure ("the count above", "both
+    figures", "the account size").  A figure the governing sentences say was
+    read against the account as it is now is a claim about today even when
+    the same sentence also dates an earlier read of it.
+
+    This matters because the whole-line rule missed a live claim: on
+    2026-11-14 the bullet on article 4949922 read "the published blog this
+    account maintains is 95 posts, 91 distinct titles.  The count above was
+    read at dashboard time on 2026-10-30 and read again against the live
+    account on 2026-11-14", and mutating that figure to a stale one still
+    read GREEN, because the dated note swallowed the whole line.
     """
-    if NOTICE.match(line) or QUALIFIED.search(line):
+    if NOTICE.match(line):
         return []
     if not ACCOUNT.search(line):
         return []
+    spans = sentence_spans(line)
     found: list[tuple[str, int, int | None]] = []
-    pair = PAIR.search(line)
-    if pair:
-        found.append(("total with titles", int(pair.group(1)), int(pair.group(2))))
-        return found
-    total = TOTAL.search(line)
-    if total:
-        titles = TITLES.search(line)
-        found.append(("total", int(total.group(1)),
-                      int(titles.group(1)) if titles else None))
+    for kind, posts, titles, positions in figures_in_line(line):
+        own = [span for span in spans
+               if any(span[0] <= position < span[1] for position in positions)]
+        governing = [line[start:end] for start, end in own]
+        for start, end in spans:
+            if any((start, end) == span for span in own):
+                continue
+            text = line[start:end]
+            if POINTER.search(text):
+                governing.append(text)
+        if any(CURRENT.search(text) for text in governing):
+            found.append((kind, posts, titles))
+            continue
+        if any(DATED.search(text) for text in governing):
+            continue
+        if any(PROVENANCE.search(text) for text in governing):
+            continue
+        found.append((kind, posts, titles))
     return found
 
 
@@ -262,6 +370,15 @@ def _self_test() -> int:
          dict(bodies, **{"3": "The count-correction history of this blog -- this account "
                                "has published **2 posts** at the time this draft was "
                                "written -- is itself the ledger.\n"}),
+         descriptions),
+        # The wake-22 gap: a live figure and a dated note on one line.  The
+        # note dates the figure it points at, so it must not swallow a
+        # different figure that the same line states and re-verifies.
+        ("a stale count beside a dated note on the same line",
+         dict(bodies, **{"3": "The published blog this account maintains is **2 posts, "
+                               "2 distinct titles**.  The count above was read at "
+                               "dashboard time on 2026-10-30 and read again against the "
+                               "live account on 2026-11-14.\n"}),
          descriptions),
     ]
     for label, mutated, descs in mutations:
