@@ -258,6 +258,12 @@ def _ledger_count(path: pathlib.Path, current_day: str) -> int:
     return count if stored_day == current_day else 0
 
 
+def calls_today(provider: Provider, current_day: str) -> int:
+    """Decision calls already reserved for current_day on this provider's ledger (0 when no ledger yet).
+    Raises ValueError when the ledger exists but is unreadable; callers report that as UNKNOWN."""
+    return _ledger_count(provider.budget_file, current_day)
+
+
 def reserve_call(provider: Provider, current_day: str) -> str:
     """Reserve one call before HTTP. Returns '' when reserved, else the reason. A failed request still spends one."""
     path = provider.budget_file

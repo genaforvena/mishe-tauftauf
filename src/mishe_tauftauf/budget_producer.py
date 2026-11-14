@@ -537,9 +537,39 @@ def build_routerai(home: Path, now: float, fetch=fetch_routerai_credits) -> dict
     llm = dict(shared, kind="text-to-text LLM (minds' engines)",
                turns_24h=routerai_turns_24h(home, now),
                spend_source="turns counted from engine/routing-ledger.jsonl; RouterAI exposes no per-call cost")
-    decision = dict(shared, state="UNKNOWN", kind="System One decision models (judges)",
-                    reason=shared["reason"] or "no decision_provider config in the site engine/; system1 owns it")
-    return {"llm": llm, "decision": decision}
+    return {"llm": llm, "decision": decision_line(home, now, shared)}
+
+
+DECISION_CONFIG = "engine/decision-providers.json"
+DECISION_PROVIDER = "routerai"
+
+
+def decision_line(home: Path, now: float, shared: dict) -> dict:
+    """The decision-model budget line (System One choice questions), separate from the LLM line.
+    Calls and the daily cap come from the decision provider's own ledger; price per 1M input tokens is
+    not read here, so it is null. Missing or unreadable config or ledger is UNKNOWN, never a default cap."""
+    import datetime as _dt
+    from . import decision_provider as dp
+
+    kind = "System One decision models (choice questions; not LLMs)"
+    base = dict(shared, kind=kind, model=None, daily_cap=None, calls_today=None, calls_remaining=None,
+                price_per_1m_input=None, price_source="not read: decision model price list is not fetched")
+    config = home / DECISION_CONFIG
+    if not config.exists():
+        return dict(base, state="UNKNOWN", reason=f"no decision_provider config at {DECISION_CONFIG}")
+    try:
+        provider = dp.select(dp.load_providers(config), DECISION_PROVIDER)
+    except Exception as exc:  # the config reason carries no key material; the class name is enough here
+        return dict(base, state="UNKNOWN", reason=f"decision config unreadable: {type(exc).__name__}")
+    day = _dt.datetime.fromtimestamp(now, _dt.timezone.utc).date().isoformat()
+    try:
+        calls = dp.calls_today(provider, day)
+    except ValueError as exc:
+        return dict(base, model=provider.model, daily_cap=provider.daily_cap, state="UNKNOWN",
+                    reason=f"decision ledger unreadable: {type(exc).__name__}")
+    return dict(base, model=provider.model, daily_cap=provider.daily_cap, calls_today=calls,
+                calls_remaining=max(provider.daily_cap - calls, 0), state="FRESH", reason=None,
+                balance_note="shared RouterAI key balance; /credits exposes no split per budget")
 
 
 def main(home: Path, out: Path | None = None) -> int:

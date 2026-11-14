@@ -513,7 +513,9 @@ def test_routerai_lines_read_balance_and_count_turns(tmp_path):
     assert ok["llm"]["state"] == "FRESH" and ok["llm"]["balance"] == 325.5
     # only the 2026-11-14 10:00Z deepseek row is within 24 h of 12:00Z; the 11-13 09:00Z row is 27 h old
     assert ok["llm"]["turns_24h"] == 1
-    assert ok["decision"]["state"] == "UNKNOWN" and "system1" in ok["decision"]["reason"]
+    assert ok["decision"]["state"] == "UNKNOWN"
+    assert ok["decision"]["reason"] == "no decision_provider config at engine/decision-providers.json"
+    assert ok["decision"]["kind"].startswith("System One decision models") and ok["decision"]["daily_cap"] is None
 
 
 def test_routerai_balance_failure_is_unknown_not_zero(tmp_path):
@@ -523,4 +525,53 @@ def test_routerai_balance_failure_is_unknown_not_zero(tmp_path):
     for line in out.values():
         assert line["state"] == "UNKNOWN"
         assert line["balance"] is None
-        assert line["reason"] == "balance unreadable: OSError"
+    assert out["llm"]["reason"] == "balance unreadable: OSError"
+
+
+def _decision_home(tmp_path, cap=10, ledger=None, config=None):
+    import datetime as _dt
+    import json as _json
+    engine = tmp_path / "engine"
+    engine.mkdir(exist_ok=True)
+    budget = tmp_path / "decision-budget.json"
+    if ledger is not None:
+        budget.write_text(_json.dumps(ledger), encoding="utf-8")
+        budget.chmod(0o600)
+    if config is None:
+        key = tmp_path / "routerai.key"
+        key.write_text("ROUTERAI_API_KEY=unused\n", encoding="utf-8")
+        key.chmod(0o600)
+        config = {"providers": {"routerai": {
+            "protocol": "systemone", "base_url": "https://routerai.ru", "key_file": str(key),
+            "model": "typesafe/jev-1.14", "daily_cap": cap, "timeout": 30, "budget_file": str(budget)}}}
+    (engine / "decision-providers.json").write_text(_json.dumps(config), encoding="utf-8")
+    now = _dt.datetime(2026, 11, 14, 12, 0, tzinfo=_dt.timezone.utc).timestamp()
+    return now
+
+
+def test_decision_line_reports_cap_and_today_calls(tmp_path):
+    now = _decision_home(tmp_path, cap=10, ledger={"date": "2026-11-14", "count": 3})
+    line = bp.decision_line(tmp_path, now, {"balance": 1.0})
+    assert line["state"] == "FRESH" and line["reason"] is None
+    assert line["daily_cap"] == 10 and line["calls_today"] == 3 and line["calls_remaining"] == 7
+    assert line["model"] == "typesafe/jev-1.14" and line["price_per_1m_input"] is None
+
+
+def test_decision_line_yesterday_ledger_counts_zero(tmp_path):
+    now = _decision_home(tmp_path, cap=10, ledger={"date": "2026-11-13", "count": 9})
+    line = bp.decision_line(tmp_path, now, {"balance": 1.0})
+    assert line["state"] == "FRESH" and line["calls_today"] == 0 and line["calls_remaining"] == 10
+
+
+def test_decision_line_corrupt_ledger_is_unknown_not_zero(tmp_path):
+    now = _decision_home(tmp_path, cap=10, ledger={"date": "2026-11-14", "count": -1})
+    line = bp.decision_line(tmp_path, now, {"balance": 1.0})
+    assert line["state"] == "UNKNOWN" and line["calls_today"] is None
+    assert line["reason"].startswith("decision ledger unreadable")
+
+
+def test_decision_line_bad_config_is_unknown_not_default(tmp_path):
+    now = _decision_home(tmp_path, config={"providers": {"routerai": {"protocol": "other"}}})
+    line = bp.decision_line(tmp_path, now, {"balance": 1.0})
+    assert line["state"] == "UNKNOWN" and line["daily_cap"] is None
+    assert line["reason"].startswith("decision config unreadable")
