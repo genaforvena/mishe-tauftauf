@@ -76,6 +76,10 @@ def _budget_state(home: Path, role: str, now: float):
     """(state, value, reason) of the role's budget signal; state is OK, RED or UNKNOWN."""
     try:
         config = _read_json(home / "engines" / f"{role}.json")
+    except FileNotFoundError:
+        # No engine file: engines.for_role runs the role on the default claude engine and owed._budget_green
+        # gates it on the default budget signal. Read it the same way instead of calling the role unreadable.
+        config = {}
     except (OSError, ValueError) as exc:
         return "UNKNOWN", None, f"engine config for {role} unreadable: {str(exc)[:80]}"
     name = config.get("budget_signal", DEFAULT_BUDGET_SIGNAL) if isinstance(config, dict) else None

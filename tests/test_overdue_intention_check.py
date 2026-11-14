@@ -144,6 +144,19 @@ def test_no_hold_still_red_when_green_budget_and_no_wake(tmp_path):
     assert check.evaluate(home, NOW)[0] == 2
 
 
+def test_role_without_engine_file_is_gated_by_default_budget_signal(tmp_path):
+    # system1 has no engines/system1.json: it runs on the default engine, gated by the default "budget" signal.
+    home = _site(tmp_path, engine=False)
+    _write(home / "signals" / "budget.json", _budget("OK", "RED"))
+    seen_path = home / "signals" / "budget.seen"
+    seen_path.touch()
+    os.utime(seen_path, (NOW - 10, NOW - 10))
+    code, lines = check.evaluate(home, NOW)
+    assert not any("unreadable" in line for line in lines)
+    assert any("budget signal budget RED" in line for line in lines)
+    assert code == 0
+
+
 @pytest.mark.parametrize("payload", [["not", "an", "object"], "text", None])
 def test_non_object_budget_signal_is_unknown_not_a_crash(tmp_path, payload):
     home = _site(tmp_path)
