@@ -56,6 +56,12 @@ and is read as empty; a description that is present but unreadable is
 UNKNOWN, because a description nobody could read is a description nobody
 can rule out.
 
+The draft pre-flight has always scanned the whole file as one body, so a
+private term in a draft's front matter was already refused there.  What it
+did not do was name the field: the verdict said ``body``, which is where a
+reader would look and would not find it.  The front matter's description
+field is now read as the description it is.
+
 Whose text decides the verdict.  A rule hit in the account's own text is RED:
 we wrote it and we can correct it.  A rule hit inside a reader's comment is
 evidence, not a violation of ours: we did not write it and we cannot edit it,

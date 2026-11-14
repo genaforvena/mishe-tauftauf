@@ -103,9 +103,13 @@ every link preview, and DEV freezes it at creation, so a corrected body keeps
 showing the sentence the description was written with; the publisher sends it
 from the article's front matter, so it is the account's own text. Before that
 change a private identifier in a description was published and the lane read
-GREEN, while the same text in the body was RED. The draft pre-flight reads
-the same front matter field, so a draft whose card would ship a private term
-is refused before the write.
+GREEN, while the same text in the body was RED.
+
+The draft pre-flight has always scanned the whole file as one body, so a
+private term in a draft's front matter was already refused there; what it did
+not do was name the field, so the verdict said `body` and a reader would look
+there and not find it. The front matter's description field is now read as the
+description it is.
 
 A description that is present but unreadable is UNKNOWN, not a pass: a
 description nobody could read is a description nobody can rule out. An

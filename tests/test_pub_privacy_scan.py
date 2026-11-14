@@ -474,11 +474,15 @@ def test_an_unreadable_description_is_unknown():
     assert verdict == "UNKNOWN" and not violations
 
 
-def test_the_draft_preflight_reads_the_description_the_publisher_will_send():
-    """The pre-flight reads the same front matter field the write path publishes.
+def test_the_draft_preflight_names_the_description_the_publisher_will_send():
+    """The pre-flight reports the description as the description.
 
-    The publisher sends `description:` from the front matter; a pre-flight that
-    ignored it would clear a draft whose card would ship a private term.
+    The publisher sends `description:` from the front matter, so the
+    pre-flight has to read that field and say so in its verdict.  The file
+    mode has always scanned the whole file as one body, so a private term in
+    the front matter was already refused; what was missing was the
+    attribution, and a verdict that names no field cannot say where the
+    violation was.
     """
     scan = load_scan()
     draft = ('---\ntitle: A post\ndescription: "the card says probe@example.com"\n'
@@ -489,6 +493,7 @@ def test_the_draft_preflight_reads_the_description_the_publisher_will_send():
     verdict, violations = scan.verdict_for(fields, **NO_TERMS)
     assert verdict == "RED"
     assert any(code == "email" for _field, _rule, code in violations)
+    assert "description" in [field for field, _rule, _code in violations]
 
 
 def test_a_draft_that_names_no_description_publishes_none():
