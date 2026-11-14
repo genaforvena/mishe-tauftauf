@@ -19,6 +19,36 @@ duty in `duties.json`, which replaced the older `pub-devto-freshness` timer chec
 That duty is a liveness signal for observations, not the publication preflight
 described above; missing or stale observations remain UNKNOWN.
 
+## Counts the account publishes about itself
+
+Three checks read the account's published pages for claims that must match the
+account, and each covers a gap the others cannot:
+
+- `checks/pub-index-self-claims.py` (duty `pub-index-self-claims`) reads the
+  index page, DEV 4893597, and compares every count it states about itself
+  against the account: the post and title counts, the correction-notice counts
+  under two windows, the conversation counts, the per-post reader counts in the
+  list, and the order the list claims.
+- `checks/pub-account-count-claims.py` (duty `pub-account-count-claims`) reads
+  every published body and every card description, and compares each count
+  about the account against the account. It covers the pages the index check
+  does not read: on 2026-11-14 article 4894878 published "this account has
+  published 78 posts" while the account held 95, and article 4949922 published
+  "the published blog this account maintains is 62 posts, 58 distinct titles"
+  while the account held 95 and 91. Both passed the index check and the count
+  parity check, which read the count pages' first correction sentence rather
+  than the sentence in the body.
+- `pub/bin/devto-count-parity` reads the two count pages' first correction
+  sentence and the index's URL list. It is a public-API read with no
+  credentials.
+
+A correction notice's numbers are history, and a line that carries its own
+time qualifier ("at the time this draft was written") is a dated figure; the
+account-count check reads neither as a claim about today. An account that
+cannot be read is UNKNOWN, never a pass. Both Python checks take `--env` with
+the credentials file as an absolute path and `--self-test` for their own
+controlled failure.
+
 Without configuration, substantial JSON objects or arrays in new text (by breadth, depth or nesting; trivial literals pass as prose) and text with no readable words are rejected, but
 semantic questions remain explicitly **untested**. This bootstrap mode establishes
 no semantic clearance. A configured checker has no fail-open override: suspicious,
