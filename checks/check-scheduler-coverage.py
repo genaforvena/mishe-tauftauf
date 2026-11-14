@@ -521,7 +521,11 @@ def run_check(repo: Path, name: str, home: Path) -> tuple[int, str]:
     with tempfile.TemporaryDirectory() as directory:
         script = Path(directory) / name
         script.write_bytes(blob.stdout)
-        result = subprocess.run([sys.executable, str(script), "--home", str(home)],
+        # A check that takes a shared checkout (release-lag.py requires it)
+        # declares --repo in its source; pass it only to those, so checks that
+        # take only --home still run with the arguments they accept.
+        extra = ["--repo", str(repo)] if b"--repo" in blob.stdout else []
+        result = subprocess.run([sys.executable, str(script), "--home", str(home), *extra],
                                 capture_output=True, text=True, timeout=300)
     output = (result.stdout + result.stderr).strip()
     tail = output.splitlines()
