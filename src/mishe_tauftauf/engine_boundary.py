@@ -31,6 +31,9 @@ AUTH_SCHEMA_VERSION = 8
 
 
 HEARTBEAT_PREFIX = b'{"type":"tool_execution_update"'
+THINKING_PREFIX = b'{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta"'
+"""Reasoning-stream deltas. A model thinking without acting is not progress (health wake
+1794674035779401832 streamed ~32k of these for 14 min past its soft deadline, then hit the hard cap)."""
 
 
 def progress_bytes(data):
@@ -38,14 +41,15 @@ def progress_bytes(data):
 
     Only complete lines count: the consumed figure stops at the last newline, so a
     half-written line is picked up on the next read. Heartbeat lines (``HEARTBEAT_PREFIX``)
-    re-report a running wait tool and are not progress.
+    re-report a running wait tool and are not progress; reasoning deltas (``THINKING_PREFIX``)
+    are not progress either, so a model that only thinks cannot extend a wake past its deadline.
     """
     end = data.rfind(b'\n')
     if end < 0:
         return 0, 0
     progress = 0
     for line in data[:end + 1].splitlines(keepends=True):
-        if not line.startswith(HEARTBEAT_PREFIX):
+        if not line.startswith((HEARTBEAT_PREFIX, THINKING_PREFIX)):
             progress += len(line)
     return progress, end + 1
 
