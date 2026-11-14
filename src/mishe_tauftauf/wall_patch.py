@@ -298,9 +298,9 @@ def prepare(home, identity, paths, base=None):
 # a reviewer that cannot see a caller answers unknown. So each name the patch
 # imports from the package is sent as its definition, and each changed
 # definition is sent as bounded windows around its call sites.
-CONTEXT_EXCERPT_BYTES = 12_000
-CONTEXT_TOTAL_BYTES = 384_000  # the 2facb19d candidate set is ~351 KB; 256 KB dropped the consumer_fence import
-CALLER_SITES = 40  # `check` has 18 sites and `main` 23; at 12 both stayed truncated and context_complete never held
+CONTEXT_EXCERPT_BYTES = 64_000  # at 12 000 twelve call-path modules were cut; at 48 000 wall.py still was
+CONTEXT_TOTAL_BYTES = 640_000  # 7b705c2e's full context measured 565 KB with every entry whole
+CALLER_SITES = 60  # `check` has 18 sites and `main` 23; callers:UNKNOWN stayed truncated at 40
 CALLER_RADIUS = 2
 RESOLVE_HOPS = 2
 
