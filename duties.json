@@ -259,6 +259,24 @@
       "covers": "budget accounts consistency and freshness"
     },
     {
+      "name": "root-fs-stall",
+      "command": [
+        "{python}",
+        "{repo}/checks/root-fs-stall.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 120,
+      "timeout": 60,
+      "max_age": 600,
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "health",
+      "replaces": [],
+      "covers": "root-drive fsync stalls of 5 s or more in the last 900 s, from the dual-probe mirror; the signal was registered with no producer and went UNKNOWN on 2026-11-14 11:01Z"
+    },
+    {
       "name": "host-capacity",
       "command": [
         "{home}/producers/host-capacity.sh"
