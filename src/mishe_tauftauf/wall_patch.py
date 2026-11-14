@@ -424,6 +424,71 @@ def _symbol_references(text, symbol):
     return sorted(lines)
 
 
+def _statement_names(node):
+    names = set()
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name):
+            names.add(child.id)
+        elif isinstance(child, ast.Attribute):
+            names.add(child.attr)
+    return names
+
+
+def _reduce_definition(text, wanted):
+    """(text, kept_bytes, cut_bytes, hard_cut) for one imported definition.
+
+    A definition within the excerpt cap is sent whole. An oversized one keeps its
+    header (signature and docstring) and each body statement that names something
+    the patch changes or imports; every other run of statements becomes a one-line
+    note with its line range and byte count, so the reviewer sees what was left
+    out. Only a definition that still does not fit after that is hard-cut, and that
+    cut is named as truncated.
+    """
+    if len(text) <= CONTEXT_EXCERPT_BYTES:
+        return text, len(text.encode()), 0, False
+    tree = _parsed(text)
+    if tree is None or not tree.body or not isinstance(tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        cut = text[:CONTEXT_EXCERPT_BYTES]
+        return cut, len(cut.encode()), len(text.encode()) - len(cut.encode()), True
+    lines = text.splitlines(keepends=True)
+    body = tree.body[0].body
+    # Header: signature plus docstring when the first statement is one.
+    statements = list(body)
+    header_end = len(lines)
+    if body:
+        first = body[0]
+        is_doc = (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                  and isinstance(first.value.value, str))
+        if is_doc:
+            header_end = first.end_lineno
+            statements = body[1:]
+        else:
+            header_end = first.lineno - 1
+    kept = ["".join(lines[:header_end])]
+    run = []  # consecutive omitted statements: (first line, last line, bytes)
+    def flush():
+        if run:
+            first_line, last_line = run[0][0], run[-1][1]
+            size = sum(item[2] for item in run)
+            kept.append(f"    # omitted lines {first_line}-{last_line} ({size} bytes): no name the patch changes or imports\n")
+            run.clear()
+    for stmt in statements:
+        segment = "".join(lines[stmt.lineno - 1:stmt.end_lineno])
+        if _statement_names(stmt) & wanted:
+            flush()
+            kept.append(segment)
+        else:
+            run.append((stmt.lineno, stmt.end_lineno, len(segment.encode())))
+    flush()
+    result = "".join(kept)
+    kept_bytes = len(result.encode())
+    cut = max(len(text.encode()) - kept_bytes, 0)
+    if len(result) > CONTEXT_EXCERPT_BYTES:
+        result = result[:CONTEXT_EXCERPT_BYTES]
+        return result, len(result.encode()), len(text.encode()) - len(result.encode()), True
+    return result, kept_bytes, cut, False
+
+
 def symbol_context(home, record):
     """Read-only excerpts a reviewer needs: definitions the patch imports and
     bounded call-site windows for each changed definition in the shared checkout.
@@ -437,6 +502,8 @@ def symbol_context(home, record):
     unresolved, truncated, omitted = [], [], []
     ordered = []  # imported definitions, (label, path, text), before the total cap
     callers = []  # changed-definition call sites: the reviewer's cheapest must-have, budgeted first
+    changed, removed = _definition_diff(record)
+    wanted = set(changed)  # names a reduced definition must keep: changed here or imported by the patch
 
     for name, values in record["files"].items():
         if not is_python(name) or not values["after"]:
@@ -446,6 +513,7 @@ def symbol_context(home, record):
         except SyntaxError:
             unresolved.append(f"syntax:{name}")
             continue
+        wanted.update(alias for _, alias in pairs)
         for module, alias in pairs:
             path = module_file(src, module)
             if path is not None and path.relative_to(root).as_posix() in patched:
@@ -472,7 +540,6 @@ def symbol_context(home, record):
                 rel = path.relative_to(root).as_posix()
                 if rel not in patched:
                     corpus[rel] = path.read_text(errors="replace")
-    changed, removed = _definition_diff(record)
     for symbol in sorted(changed):
         windows, sites = [], 0
         for rel, text in corpus.items():
@@ -495,8 +562,15 @@ def symbol_context(home, record):
             callers.append((f"callers:{symbol}", "shared checkout",
                             "no imported reference found in src/, checks/, tests/ or tools/"))
 
-    modules, total, seen = {}, 0, set()
-    for label, path, text in callers + ordered:
+    cut_bytes, reduced = {}, []
+    for label, path, text in ordered:
+        text, _kept, cut, hard = _reduce_definition(text, wanted)
+        if hard:
+            truncated.append(label)
+        cut_bytes[label] = cut
+        reduced.append((label, path, text))
+    modules, total, seen, budget = {}, 0, set(), {}
+    for label, path, text in callers + reduced:
         # A name imported by several patched files is one excerpt: charge the
         # budget once, or duplicates crowd out distinct context.
         if label in seen:
@@ -510,8 +584,10 @@ def symbol_context(home, record):
             continue
         total += len(text)
         modules[label] = {"path": path, "text": text}
+        budget[label] = {"kept_bytes": len(text.encode()), "cut_bytes": cut_bytes.get(label, 0)}
     return {"modules": modules, "truncated": sorted(set(truncated)),
             "omitted_over_limit": sorted(set(omitted)), "unresolved": sorted(set(unresolved)),
+            "budget": budget,
             "source": "shared checkout at review time; patch files use their after bytes"}
 
 

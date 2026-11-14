@@ -956,19 +956,47 @@ def test_review_evidence_carries_the_modules_the_patch_imports(tmp_path, monkeyp
     assert wall_patch.status(home, "change")["phase"] == "reviewed"
 
 
-def test_excerpt_caps_size_and_names_what_it_cuts(tmp_path):
+def test_oversized_definition_keeps_header_and_names_each_omitted_run(tmp_path):
+    # An oversized definition is reduced, not hard-cut: its signature and docstring
+    # stay, a statement the patch does not touch becomes a one-line note with its
+    # line range and byte count, and nothing is marked truncated.
+    import base64
     home, source, deployed = layout(tmp_path)
-    body = "def big():\n    return '" + "a" * (wall_patch.CONTEXT_EXCERPT_BYTES + 10) + "'\n"
+    body = ('def big():\n    """Contract."""\n    return \'' + "a" * (wall_patch.CONTEXT_EXCERPT_BYTES + 10) + '\'\n')
     (tmp_path / "src/mishe_tauftauf/big.py").write_text(body)
     source.write_text("from mishe_tauftauf.big import big\nvalue = big()\n")
     record = {"runtime": str(tmp_path / "runtime"),
               "files": {"src/mishe_tauftauf/example.py": {
                   "before": None,
-                  "after": {"bytes": __import__("base64").b64encode(source.read_bytes()).decode(), "mode": 0o644}}}}
+                  "after": {"bytes": base64.b64encode(source.read_bytes()).decode(), "mode": 0o644}}}}
     context = wall_patch.symbol_context(home, record)
-    assert context["truncated"] == ["mishe_tauftauf.big:big"]
-    assert len(context["modules"]["mishe_tauftauf.big:big"]["text"]) == wall_patch.CONTEXT_EXCERPT_BYTES
+    entry = context["modules"]["mishe_tauftauf.big:big"]
+    assert context["truncated"] == []
+    assert '"""Contract."""' in entry["text"]
+    assert "omitted lines 3-3" in entry["text"]
+    assert len(entry["text"]) <= wall_patch.CONTEXT_EXCERPT_BYTES
+    assert context["budget"]["mishe_tauftauf.big:big"]["cut_bytes"] > 10_000
     assert context["unresolved"] == []
+
+
+def test_oversized_definition_keeps_statements_that_touch_patch_names(tmp_path):
+    import base64
+    home, source, deployed = layout(tmp_path)
+    (tmp_path / "src/mishe_tauftauf/helper.py").write_text("def helper(x):\n    return x + 1\n")
+    filler = "    _pad = '" + "a" * (wall_patch.CONTEXT_EXCERPT_BYTES + 10) + "'\n"
+    body = "from mishe_tauftauf.helper import helper\n\ndef big(x):\n" + filler + "    return helper(x)\n"
+    (tmp_path / "src/mishe_tauftauf/big.py").write_text(body)
+    # The patch itself imports helper, so a statement naming it is one the patch uses.
+    source.write_text("from mishe_tauftauf.big import big\nfrom mishe_tauftauf.helper import helper\nvalue = big(1) + helper(2)\n")
+    record = {"runtime": str(tmp_path / "runtime"),
+              "files": {"src/mishe_tauftauf/example.py": {
+                  "before": None,
+                  "after": {"bytes": base64.b64encode(source.read_bytes()).decode(), "mode": 0o644}}}}
+    context = wall_patch.symbol_context(home, record)
+    text = context["modules"]["mishe_tauftauf.big:big"]["text"]
+    assert "return helper(x)" in text
+    assert "omitted lines 2-2" in text
+    assert context["truncated"] == []
 
 
 def test_one_name_imported_by_two_patched_files_costs_one_excerpt(tmp_path, monkeypatch):
