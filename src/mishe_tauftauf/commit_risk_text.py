@@ -27,6 +27,7 @@ def changed_paths(repo, sha: str) -> tuple[str, list[str]]:
     """Return ``(subject, changed paths)`` for one commit."""
     subject = subprocess.run(["git", "-C", str(repo), "show", "-s", "--format=%s", sha], check=True,
                              capture_output=True, text=True).stdout.strip()
-    files = subprocess.run(["git", "-C", str(repo), "show", "--format=", "--name-only", sha], check=True,
-                           capture_output=True, text=True).stdout.split()
-    return subject, files
+    # -z keeps paths with spaces or newlines intact; split on NUL, not whitespace.
+    files = subprocess.run(["git", "-C", str(repo), "show", "-z", "--format=", "--name-only", sha], check=True,
+                           capture_output=True, text=True).stdout.split("\0")
+    return subject, [path for path in files if path]
