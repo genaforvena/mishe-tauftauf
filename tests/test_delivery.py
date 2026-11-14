@@ -7,6 +7,11 @@ import pytest
 
 from mishe_tauftauf import delivery, task_state
 from mishe_tauftauf.feed import Feed
+from tests.records_binary import pin_records_binary  # noqa: F401  (fixture)
+from tests.tape_binary import pin_tape_binary  # noqa: F401  (fixture)
+
+# Delivery reads the feed through the mishe-tape framer and mishe-records; pin both (or skip with the reason).
+pytestmark = pytest.mark.usefixtures("pin_tape_binary", "pin_records_binary")
 
 
 def git(repo, *args):
