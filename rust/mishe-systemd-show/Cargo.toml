@@ -1,0 +1,11 @@
+[package]
+name = "mishe-systemd-show"
+version = "0.1.0"
+edition = "2021"
+description = "Decode systemctl show KEY=VALUE text into deduplicated KEY=VALUE lines (byte-exact Rust counterpart of unit_psi_text.parse_systemd_show)"
+license = "CC0-1.0"
+
+[dependencies]
+
+[profile.release]
+debug = false
