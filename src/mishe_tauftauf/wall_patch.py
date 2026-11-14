@@ -120,6 +120,8 @@ def target(root, name):
 
 
 RUN_TIMEOUT_S = 300
+TEST_TIMEOUT_S = 1500
+"""The deterministic check is the whole suite on the exact bytes (about 8 minutes), not a sample."""
 # Observe commands drain old in-memory consumers (consumer_fence.drain waits up to DRAIN_TIMEOUT_S) and then start the
 # new one. A 300 s kill here reverted a correct delivery (review of moving-pin-5d3c6729): the bound must exceed the drain.
 OBSERVE_TIMEOUT_S = consumer_fence.DRAIN_TIMEOUT_S + 180
@@ -731,7 +733,7 @@ def check(home, identity, command, *, activate=None, observe=None, revert_observ
         for name, values in record["files"].items():
             values["after"] = snapshot(target(home.parent, name))
         try:
-            record["test"] = run(home, identity, "test", command)
+            record["test"] = run(home, identity, "test", command, timeout=TEST_TIMEOUT_S)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             # A failed test must not keep a verdict from an earlier review of the
             # same record, or the phase falls while the dashboard still reads it.

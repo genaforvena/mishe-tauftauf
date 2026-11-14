@@ -1022,6 +1022,27 @@
       "resolver": "rust-plan",
       "covers": "an initiative owned by rust-plan in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
       "replaces": []
+    },
+    {
+      "name": "pin-lag",
+      "command": [
+        "{python}",
+        "{repo}/checks/pin-lag.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 300,
+      "timeout": 60,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "genome",
+      "covers": "the running pin trails committed main: GREEN under 60 minutes, AMBER to 3 hours, RED beyond, with the stage and reason of the newest delivery run; UNKNOWN when the pin is missing or not a commit of this clone",
+      "replaces": []
     }
   ],
   "retired": [
