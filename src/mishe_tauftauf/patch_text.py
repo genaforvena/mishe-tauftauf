@@ -138,6 +138,11 @@ def split_lines(text: str) -> list[str]:
     return text.splitlines()
 
 
+def split_lines_keepends(text: str) -> list[str]:
+    """The lines of a text body, each keeping its own line ending."""
+    return text.splitlines(keepends=True)
+
+
 def last_segment(dotted: str) -> str:
     """The final dotted segment of a qualified name."""
     return dotted.rsplit(".", 1)[-1]

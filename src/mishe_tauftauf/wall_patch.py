@@ -20,7 +20,8 @@ import subprocess
 from . import consumer_fence
 from .argv_text import decode_argv
 from .patch_text import (decode_b64_text, decode_lossy, import_candidates, in_package,
-                         is_python, last_segment, module_file, source_parts, split_lines)
+                         is_python, last_segment, module_file, source_parts, split_lines,
+                         split_lines_keepends)
 from .git_base_text import committed_snapshot
 from .observations import validate_slug
 from .post_check import _save, _worker
@@ -450,7 +451,7 @@ def _reduce_definition(text, wanted):
     if tree is None or not tree.body or not isinstance(tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         cut = text[:CONTEXT_EXCERPT_BYTES]
         return cut, len(cut.encode()), len(text.encode()) - len(cut.encode()), True
-    lines = text.splitlines(keepends=True)
+    lines = split_lines_keepends(text)
     body = tree.body[0].body
     # Header: signature plus docstring when the first statement is one.
     statements = list(body)
