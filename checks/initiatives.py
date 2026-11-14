@@ -80,15 +80,16 @@ def evaluate(check, home, repo):
         if not isinstance(grep, str) or not grep or not _number(since):
             return UNKNOWN, "commit check needs grep text and an epoch since"
         try:
-            done = subprocess.run(["git", "-C", str(repo), "log", "--fixed-strings", f"--grep={grep}",
-                                   f"--since={int(since)}", "--format=%h", "-n", "1"],
+            # subjects only: git --grep also searches bodies, so a commit that merely mentions the text would pass
+            done = subprocess.run(["git", "-C", str(repo), "log", f"--since={int(since)}", "--format=%s"],
                                   capture_output=True, text=True, timeout=30,
                                   env={"GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "PATH": "/usr/bin:/bin"})
         except (OSError, subprocess.SubprocessError) as exc:
             return UNKNOWN, f"git failed: {exc}"
         if done.returncode != 0:
             return UNKNOWN, "git log failed"
-        return (DONE if done.stdout.strip() else OPEN), f"no commit with {grep!r} since the start"
+        hit = any(grep in subject for subject in done.stdout.splitlines())
+        return (DONE if hit else OPEN), f"no commit subject with {grep!r} since the start"
     return UNKNOWN, f"unknown check kind {kind!r}"
 
 

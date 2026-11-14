@@ -95,3 +95,12 @@ def test_commit_check_finds_subject_text(tmp_path, capsys):
     (home / "initiatives.json").write_text(json.dumps({"initiatives": [
         _item(check={"kind": "commit", "grep": "no such subject", "since": 0})]}), encoding="utf-8")
     assert _run(home, "health", capsys)[0] == 2
+
+
+def test_commit_check_ignores_body_text(tmp_path, capsys):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-q",
+                    "--allow-empty", "-m", "unrelated subject", "-m", "mentions footprint in the body only"],
+                   check=True)
+    home = _site(tmp_path, [_item(check={"kind": "commit", "grep": "footprint", "since": 0})])
+    assert _run(home, "health", capsys)[0] == 2
