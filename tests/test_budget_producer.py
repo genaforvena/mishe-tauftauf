@@ -494,3 +494,33 @@ def test_retired_routerai_candidates_are_listed_retired_not_unclassified(tmp_pat
     assert "omp:routerai/deepseek/deepseek-v4.1-flash:-" in ledger["retired_models"]
     assert ledger["retired_models"]["omp:routerai/deepseek/deepseek-v4.1-flash:-"]["verdict"] == "RETIRED"
     assert ledger["unclassified_models"] == {}
+
+
+def test_routerai_lines_read_balance_and_count_turns(tmp_path):
+    import json as _json
+    import datetime as _dt
+    now = _dt.datetime(2026, 11, 14, 12, 0, tzinfo=_dt.timezone.utc).timestamp()
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    rows = [
+        {"at": "2026-11-14T10:00:00Z", "event": "outcome", "key": "omp:routerai/deepseek/deepseek-v4.1-flash:-", "outcome": "yielded"},
+        {"at": "2026-11-13T09:00:00Z", "event": "outcome", "key": "omp:routerai/deepseek/deepseek-v4.1-flash:-", "outcome": "yielded"},
+        {"at": "2026-11-10T09:00:00Z", "event": "outcome", "key": "omp:routerai/deepseek/deepseek-v4.1-flash:-", "outcome": "yielded"},
+        {"at": "2026-11-14T10:00:00Z", "event": "outcome", "key": "claude:claude-haiku-5-5:-", "outcome": "yielded"},
+    ]
+    (engine / "routing-ledger.jsonl").write_text("\n".join(_json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    ok = bp.build_routerai(tmp_path, now, fetch=lambda: 325.5)
+    assert ok["llm"]["state"] == "FRESH" and ok["llm"]["balance"] == 325.5
+    # only the 2026-11-14 10:00Z deepseek row is within 24 h of 12:00Z; the 11-13 09:00Z row is 27 h old
+    assert ok["llm"]["turns_24h"] == 1
+    assert ok["decision"]["state"] == "UNKNOWN" and "system1" in ok["decision"]["reason"]
+
+
+def test_routerai_balance_failure_is_unknown_not_zero(tmp_path):
+    def boom():
+        raise OSError("unreachable")
+    out = bp.build_routerai(tmp_path, 1794700000.0, fetch=boom)
+    for line in out.values():
+        assert line["state"] == "UNKNOWN"
+        assert line["balance"] is None
+        assert line["reason"] == "balance unreadable: OSError"

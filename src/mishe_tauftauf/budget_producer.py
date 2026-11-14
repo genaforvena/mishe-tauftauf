@@ -479,6 +479,69 @@ def _read_json(path: Path):
         return None
 
 
+ROUTERAI_KEY_FILE = Path.home() / ".mesh" / "routerai.key"
+ROUTERAI_CREDITS_URL = "https://routerai.ru/api/v1/credits"
+ROUTERAI_TURN_WINDOW_S = 24 * 3600.0
+
+
+def fetch_routerai_credits(timeout: float = 10.0) -> float:
+    """The balance RouterAI exposes for the key (GET /api/v1/credits). Raises on any failure;
+    the caller records UNKNOWN with the exception class only, never the key or a default."""
+    import urllib.request
+
+    key = ROUTERAI_KEY_FILE.read_text(encoding="utf-8").strip()
+    request = urllib.request.Request(
+        ROUTERAI_CREDITS_URL, headers={"Authorization": f"Bearer {key}", "Accept": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        body = json.loads(response.read(64_000).decode("utf-8"))
+    credits = body["data"]["credits"]
+    if type(credits) not in (int, float) or not math.isfinite(credits) or credits < 0:
+        raise ValueError("credits field missing or not a non-negative number")
+    return float(credits)
+
+
+def routerai_turns_24h(home: Path, now: float) -> int:
+    """Outcome events for omp:routerai/* candidates in the last 24 h (routing-ledger.jsonl)."""
+    import datetime as _dt
+
+    turns = 0
+    for row in read_jsonl_rows(home / "engine" / "routing-ledger.jsonl"):
+        key = row.get("key") if isinstance(row, dict) else None
+        if row.get("event") != "outcome" or not isinstance(key, str) or not key.startswith("omp:routerai/"):
+            continue
+        try:
+            at = _dt.datetime.strptime(str(row.get("at")), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_dt.timezone.utc)
+        except ValueError:
+            continue
+        if 0 <= now - at.timestamp() <= ROUTERAI_TURN_WINDOW_S:
+            turns += 1
+    return turns
+
+
+def build_routerai(home: Path, now: float, fetch=fetch_routerai_credits) -> dict:
+    """The two RouterAI budget lines. Both draw on one key balance, so both show it; the
+    balance unit is RouterAI's `credits`, not confirmed as rubles. A failed read is UNKNOWN."""
+    try:
+        balance, failure = fetch(), None
+    except Exception as exc:  # any failure is UNKNOWN; the reason carries no key material
+        balance, failure = None, type(exc).__name__
+    shared = {
+        "provider": "routerai",
+        "balance": balance,
+        "balance_unit": "credits (RouterAI /api/v1/credits; not confirmed as rubles)",
+        "balance_source": "routerai GET /api/v1/credits",
+        "observed_at": now if balance is not None else None,
+        "state": "FRESH" if balance is not None else "UNKNOWN",
+        "reason": None if balance is not None else f"balance unreadable: {failure}",
+    }
+    llm = dict(shared, kind="text-to-text LLM (minds' engines)",
+               turns_24h=routerai_turns_24h(home, now),
+               spend_source="turns counted from engine/routing-ledger.jsonl; RouterAI exposes no per-call cost")
+    decision = dict(shared, state="UNKNOWN", kind="System One decision models (judges)",
+                    reason=shared["reason"] or "no decision_provider config in the site engine/; system1 owns it")
+    return {"llm": llm, "decision": decision}
+
+
 def main(home: Path, out: Path | None = None) -> int:
     """Produce the accounts section from the site home. Dry-run (stdout) unless `out` is given.
     The argv entrypoint is `mishe budget-produce` in runtime_cli, which owns argument parsing."""
@@ -497,6 +560,7 @@ def main(home: Path, out: Path | None = None) -> int:
     payload["retired_models"] = ledger["retired_models"]
     payload["per_mind"] = ledger["per_mind"]
     payload["ledger"] = ledger["ledger"]
+    payload["routerai"] = build_routerai(home, now)
     payload["unknowns"] = payload["unknowns"] + ledger["ledger_unknowns"]
     if out:
         write_atomic(Path(out), payload)
