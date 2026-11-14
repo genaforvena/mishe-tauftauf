@@ -210,7 +210,7 @@ def strong_request(plant, monkeypatch, *, bad_new=False, bad_old=False):
         return [sys.executable, "-c", f"from pathlib import Path; assert Path({str(runtime / 'docs/page.md')!r}).read_text() == {expected!r}; assert {not bad!r}"]
     wall_patch.check(home, "strong", [sys.executable, "-c", "assert True"],
                      activate=[sys.executable, "-c", "pass"], observe=probe("new", bad_new),
-                     revert_observe=probe("old", bad_old))
+                     revert_observe=probe("old", bad_old), revert=[sys.executable, "-c", "pass"])
     key = "wake-docs-strong"
     write_json(yielding.snapshot_path(home, key), dict(role="docs", snapshot=owed.Snapshot().to_json()))
     row = q.enqueue(home, repo, sha, previous=old, role="docs", key=key, patch="strong")
