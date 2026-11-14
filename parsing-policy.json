@@ -45,7 +45,6 @@
     "src/mishe_tauftauf/render_admission.py",
     "src/mishe_tauftauf/revive_boundary.py",
     "src/mishe_tauftauf/rollout_boundary.py",
-    "src/mishe_tauftauf/routerai_systemone.py",
     "src/mishe_tauftauf/runtime_cli.py",
     "src/mishe_tauftauf/slice_throttle.py",
     "src/mishe_tauftauf/space_text.py",
