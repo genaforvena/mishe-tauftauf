@@ -1043,6 +1043,27 @@
       "resolver": "genome",
       "covers": "the running pin trails committed main: GREEN under 60 minutes, AMBER to 3 hours, RED beyond, with the stage and reason of the newest delivery run; UNKNOWN when the pin is missing or not a commit of this clone",
       "replaces": []
+    },
+    {
+      "name": "pin-delivery",
+      "command": [
+        "{python}",
+        "{repo}/checks/pin-delivery.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 120,
+      "timeout": 30,
+      "max_age": 600,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "genome",
+      "covers": "the outcome of the newest pin promotion: GREEN delivered and the pointer names it, or still running; RED check-failed, check-mutated, rolled-back or UNKNOWN naming the sha, phase, failure and the last failing test line; UNKNOWN with no record, an unreadable record, a pointer that disagrees or a promotion stuck over an hour",
+      "replaces": []
     }
   ],
   "retired": [
