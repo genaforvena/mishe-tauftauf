@@ -111,10 +111,16 @@ def _age_s_at(now, generated_utc, age_s):
     return age_s + max(0.0, (now - gen).total_seconds())
 
 
-def _camera_age(activity, now):
-    """Age now of a room's newest usable camera bucket: from age_s, else from last_usable_utc."""
+def _camera_age(activity, now, generated_utc):
+    """Age now of a room's newest usable camera bucket.
+
+    age_s is measured when map-state.json was rendered, so the time since then is added
+    (the same adjustment the phone path makes from its collector time). Without a render
+    time an age_s is UNKNOWN rather than an understated number. Without age_s the age is
+    counted from last_usable_utc.
+    """
     if _num(activity.get("age_s")):
-        return activity["age_s"]
+        return _age_s_at(now, generated_utc, activity["age_s"])
     try:
         when = datetime.datetime.fromisoformat(str(activity.get("last_usable_utc")))
     except ValueError:
@@ -327,7 +333,7 @@ def _status(m, floor, state, state_reason, phone, now):
     act = (state or {}).get("room_activity") or {}
     for rid in ("living_room", "bedroom"):
         a = act.get(rid) or {}
-        age = _camera_age(a, now) if state else None
+        age = _camera_age(a, now, gen) if state else None
         frac = _fresh_fraction(age, CAMERA_FRESH_S[rid])
         cam_lines.append("camera %-7s [%s] %s%s" % (
             "living" if rid == "living_room" else "bedroom", _bar(frac), _age_text(age),

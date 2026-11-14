@@ -136,6 +136,22 @@ def test_camera_age_is_derived_from_last_usable_bucket_when_no_age_field():
     assert lines and "2 min" in lines[0] and "fresh" in lines[0]
 
 
+def test_camera_age_field_adds_time_since_render():
+    # age_s was measured when the state was rendered 10 min before NOW; the living camera
+    # limit is 5 min, so the bucket is 11 min old now and must be tagged stale, not fresh.
+    rooms = {"living_room": {"last_usable_utc": "2026-11-13T23:48:00+00:00",
+                             "activity": 0.01, "age_s": 60.0},
+             "bedroom": {"last_usable_utc": "2026-11-13T20:00:00+00:00",
+                         "activity": 0.02, "age_s": None}}
+    state = _state(FRESH_ILYA, generated="2026-11-13T23:40:00Z", rooms=rooms)
+    model = _model(state)
+    living = [s for s in model["status"] if s.startswith("camera living")][0]
+    assert "11 min" in living and "(stale)" in living and "(fresh)" not in living
+    assert mt._camera_age(rooms["living_room"], NOW, None) is None   # no render time: UNKNOWN
+    assert mt._camera_age(rooms["living_room"], NOW, "2026-11-13T23:55:00Z") == 60.0  # clamped
+    assert model["sprites"], "sprites stay until the map state is 30 min old"
+
+
 def test_every_frame_line_fits_one_hundred_columns():
     long_state = _state({"ilya": {"room": "bedroom", "confidence": "medium", "why": "x" * 400,
                                   "age_h": 0.1, "guess": {}}})
