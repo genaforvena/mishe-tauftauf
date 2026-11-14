@@ -55,10 +55,35 @@ def _replacement_lock(lock: Path | None):
         yield
 
 
+def _retry_due_within_window(now: float) -> bool:
+    """True when a pending next-due timer already fires within the overdue retry window.
+
+    Parsed from ``systemctl list-timers`` NEXT column (``Sat 2026-11-14 05:10:58 UTC``).
+    An unparseable line is skipped, so the caller falls back to replacing the timer.
+    """
+    listed = subprocess.run(["systemctl", "--user", "list-timers", "--all", "--plain", "--no-legend",
+                             TIMER_GLOB], check=False, capture_output=True, text=True).stdout
+    for line in listed.splitlines():
+        tokens = line.split()
+        if len(tokens) < 5:
+            continue
+        try:
+            nxt = datetime.strptime(" ".join(tokens[:4]), "%a %Y-%m-%d %H:%M:%S %Z")
+        except ValueError:
+            continue
+        if nxt.replace(tzinfo=timezone.utc).timestamp() <= now + OVERDUE_RETRY_SECONDS:
+            return True
+    return False
+
+
 def systemd_scheduler(epoch: float | None, *, command: list[str],
                       lock: Path | None = None) -> None:
     """Replace the transient next-due timer. ``None`` just removes it."""
     with _replacement_lock(lock):
+        # An overdue target already has a retry pending inside the backoff window: keep it.
+        # Replacing it on every arm pushed the retry out again and it never fired (2026-11-14 churn).
+        if epoch is not None and epoch <= time.time() and _retry_due_within_window(time.time()):
+            return
         for timer in _pending_timers():
             subprocess.run(["systemctl", "--user", "stop", timer],
                            check=False, capture_output=True)
