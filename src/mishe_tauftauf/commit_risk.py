@@ -16,11 +16,10 @@ from __future__ import annotations
 
 import json
 import pathlib
-import re
-import subprocess
 import time
 
 from . import decision_provider as dp
+from .commit_risk_text import changed_paths, path_label  # changed_paths is re-exported for callers
 
 QUESTION = "commit-risk-class"
 THRESHOLD = 0.7
@@ -31,13 +30,6 @@ CRITERIA = {
     "delivery-path": "changes release, promotion, pin, delivery, heal or rollback behaviour",
     "dispatch-path": "changes wake admission, scheduling, locking, authorization or failure routing",
 }
-RULES = (
-    ("dispatch-path", re.compile(r"^src/mishe_tauftauf/(wake|engine_policy|engine_router|engine_usage|owed|access|"
-                                 r"delivery_requests|work_state|dispositions|failure|host_capacity)\w*\.py$")),
-    ("delivery-path", re.compile(r"^(src/mishe_tauftauf/(release|deliver|delivery|heal|promotion|pin)\w*\.py"
-                                 r"|scripts/.*(deliver|heal|release)\S*)")),
-    ("routine", re.compile(r"^(docs/|tests/|.*\.md$)")),
-)
 MAX_STATE_CHARS = 2000
 
 
@@ -47,7 +39,7 @@ def system0(paths: list[str]) -> str | None:
         return None
     labels = set()
     for path in paths:
-        hit = next((label for label, rx in RULES if rx.search(path)), None)
+        hit = path_label(path)
         if hit is None:
             return None
         labels.add(hit)
@@ -69,14 +61,6 @@ def classify(subject: str, paths: list[str], provider: dp.Provider | None, *, po
         return {"label": decision.choice, "source": "system1", "confidence": decision.confidence,
                 "reason": decision.reason}
     return {"label": None, "source": "escalate", "confidence": decision.confidence, "reason": decision.reason}
-
-
-def changed_paths(repo: pathlib.Path, sha: str) -> tuple[str, list[str]]:
-    subject = subprocess.run(["git", "-C", str(repo), "show", "-s", "--format=%s", sha], check=True,
-                             capture_output=True, text=True).stdout.strip()
-    files = subprocess.run(["git", "-C", str(repo), "show", "--format=", "--name-only", sha], check=True,
-                           capture_output=True, text=True).stdout.split()
-    return subject, files
 
 
 def record(home: pathlib.Path, sha: str, result: dict, *, now: float | None = None) -> None:
