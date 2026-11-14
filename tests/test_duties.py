@@ -98,3 +98,28 @@ def test_committed_duty_manifest_and_script_use_release_but_repo_argument_stays_
     found=duties.declared(repo,tmp_path/"home",source=source)
     assert found[0]["command"][1]==str(source/"checks/example.py")
     assert found[0]["command"][-1]==str(repo)
+
+
+def test_privacy_scan_runs_on_a_timer_with_the_site_credentials():
+    """The privacy scan had no duty, so its signal aged to UNKNOWN between hand runs.
+
+    A duty that runs the scanner without the site credentials would read every item as
+    unreadable, and a duty that forgot the RED and UNKNOWN exit codes would turn a
+    violation into a GREEN. Both are pinned here: the credentials reach the scanner
+    through MESH_DEVTO_ENV, and a scan that cannot read its input stays UNKNOWN.
+    """
+    item = next(d for d in ALL if d["name"] == "pub-privacy-scan")
+    assert item["resolver"] == "pub"
+    assert item["red_codes"] == [2] and item["unknown_codes"] == [3]
+    assert item["command"][:2] == ["env", f"MESH_DEVTO_ENV={{home}}/pub/access/devto.env"]
+    assert item["command"][-2:] == ["{home}/pub/bin/pub-privacy-scan", "--all"]
+    # The scan paces its reads: a foreground run measures about 4.5 minutes, so the
+    # duty's timeout must outlast it and its max_age must outlast one whole period.
+    assert item["timeout"] >= 540 and item["every"] == 3600 and item["max_age"] == 7200
+
+
+def test_privacy_scan_duty_expires_to_unknown_when_it_stops_running(tmp_path):
+    """A duty that stops running must leave UNKNOWN, not a standing GREEN."""
+    item = next(i for i in declared(tmp_path) if i["name"] == "pub-privacy-scan")
+    assert producers.run(tmp_path, item["name"], [PY, "-c", "raise SystemExit(1)"], now=NOW, timeout=10) == 2
+    assert store.read(tmp_path, item["name"], now=NOW).state == "UNKNOWN"

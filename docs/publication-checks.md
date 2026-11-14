@@ -60,6 +60,25 @@ semantic questions remain explicitly **untested**. This bootstrap mode establish
 no semantic clearance. A configured checker has no fail-open override: suspicious,
 unknown, unavailable, skipped questions, malformed output and timeouts refuse.
 
+## The privacy scan's own duty
+
+`pub/bin/pub-privacy-scan --all` is the check that reads every live and draft
+article, title, tag and reply against the private/public rule list Ilya confirmed
+on 2026-11-12 13:46Z. It was the one check of the four that had no duty: it was
+run by hand, so its signal `pub-privacy-scan` aged to UNKNOWN between runs even
+when nothing was wrong — a missing monitor read the same as a broken one.
+
+Duty `pub-privacy-scan` in `duties.json` runs it on an hourly timer, with the
+site's own credentials (`MESH_DEVTO_ENV` pointing at `pub/access/devto.env`,
+passed as an absolute path) and the scanner's exit codes mapped to the bus:
+exit 2 is RED, exit 3 is UNKNOWN. A scan that cannot read its input stays
+UNKNOWN rather than passing; the scanner publishes its own verdict to the bus,
+so the timer run and a hand run leave the same reading.
+
+The foreground run measures about 4.5 minutes (108 items, paced reads), so the
+duty's timeout is 540 s and its `max_age` is 7200 s. The scan is a public-API
+read; it never writes to DEV.to.
+
 `SITE/publication-check.json` is an object with `command` (nonempty argv list) and
 `timeout_seconds` (finite positive seconds, at most 300). Example command:
 

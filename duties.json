@@ -206,6 +206,27 @@
       "covers": "every count a published page states about the DEV account matches the account"
     },
     {
+      "name": "pub-privacy-scan",
+      "command": [
+        "env",
+        "MESH_DEVTO_ENV={home}/pub/access/devto.env",
+        "{home}/pub/bin/pub-privacy-scan",
+        "--all"
+      ],
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "every": 3600,
+      "timeout": 540,
+      "max_age": 7200,
+      "resolver": "pub",
+      "replaces": [],
+      "covers": "no live or draft DEV.to body, title, tag or reply breaks the private/public rule list"
+    },
+    {
       "name": "budget",
       "command": [
         "{home}/producers/budget.sh"
