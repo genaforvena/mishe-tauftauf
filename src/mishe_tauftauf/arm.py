@@ -68,13 +68,38 @@ def _retry_due_within_window(now: float) -> bool:
                for nxt in decode_listed_next_instants(listed))
 
 
+def _source_root() -> str:
+    return str(Path(__file__).resolve().parent.parent)
+
+
+def _armed_by_this_release(timers: list[str]) -> bool:
+    """True when every pending next-due timer's service runs this release's source.
+
+    A timer keeps the PYTHONPATH of the release that armed it until it fires, so after a pin move
+    an old-release timer would run old code. A retry in the window is only kept when it is ours.
+    """
+    root = _source_root()
+    for timer in timers:
+        service = subprocess.run(["systemctl", "--user", "show", timer, "-p", "Triggers", "--value"],
+                                 check=False, capture_output=True, text=True).stdout.strip()
+        if not service:
+            continue  # no such unit under that name
+        env = subprocess.run(["systemctl", "--user", "show", service, "-p", "Environment", "--value"],
+                             check=False, capture_output=True, text=True).stdout.split()
+        if f"PYTHONPATH={root}" not in env:
+            return False
+    return True
+
+
 def systemd_scheduler(epoch: float | None, *, command: list[str],
                       lock: Path | None = None) -> None:
     """Replace the transient next-due timer. ``None`` just removes it."""
     with _replacement_lock(lock):
         # An overdue target already has a retry pending inside the backoff window: keep it.
         # Replacing it on every arm pushed the retry out again and it never fired (2026-11-14 churn).
-        if epoch is not None and epoch <= time.time() and _retry_due_within_window(time.time()):
+        # Only when that retry was armed by this release: an old-pin timer must be replaced (c14bac1f move observe failure).
+        if (epoch is not None and epoch <= time.time() and _retry_due_within_window(time.time())
+                and _armed_by_this_release(_pending_timers())):
             return
         for timer in _pending_timers():
             subprocess.run(["systemctl", "--user", "stop", timer],

@@ -189,10 +189,14 @@ def _row(seconds_from_now, name):
 
 
 class TimerListing:
-    """Answers list-timers with a canned listing and records every other call."""
+    """Answers list-timers with a canned listing and records every other call.
 
-    def __init__(self, listing):
+    ``env`` is the PYTHONPATH the pending timers' services report (default: this release's source).
+    """
+
+    def __init__(self, listing, env=None):
         self.listing = listing
+        self.env = env if env is not None else "PYTHONPATH=" + arm._source_root()
         self.calls = []
 
     def __call__(self, argv, **kwargs):
@@ -207,6 +211,10 @@ class TimerListing:
         elif argv[:4] == ["systemctl", "--user", "list-units", "--type=timer"]:
             done.stdout = "".join(line.split()[-1] + " loaded active waiting\n"
                                   for line in self.listing.splitlines() if line.strip())
+        elif argv[:3] == ["systemctl", "--user", "show"] and "Triggers" in argv:
+            done.stdout = argv[3].replace(".timer", ".service")
+        elif argv[:3] == ["systemctl", "--user", "show"] and "Environment" in argv:
+            done.stdout = self.env
         else:
             done.stdout = ""
         return done
@@ -219,6 +227,17 @@ def test_overdue_target_keeps_a_retry_already_due_in_the_window(monkeypatch):
     arm.systemd_scheduler(time.time() - 3600, command=["python", "due"])
     assert not any(c[:3] == ["systemctl", "--user", "stop"] for c in fake.calls)
     assert not any(c[0] == "systemd-run" for c in fake.calls)
+
+
+def test_overdue_target_replaces_an_in_window_retry_armed_by_an_older_release(monkeypatch):
+    # The c14bac1f move observe failed on this: a retry due in the window, armed under the old pin, was kept.
+    import time
+    fake = TimerListing(_listing(_row(60, "mishe-next-due-9bb6d573d265.timer")),
+                        env="PYTHONPATH=/home/x/releases/422912216/src MISHE_WORKLOAD_SLICE=mishe-plants.slice")
+    monkeypatch.setattr(arm.subprocess, "run", fake)
+    arm.systemd_scheduler(time.time() - 3600, command=["python", "due"])
+    assert ["systemctl", "--user", "stop", "mishe-next-due-9bb6d573d265.timer"] in fake.calls
+    assert any(c[0] == "systemd-run" for c in fake.calls)
 
 
 def test_overdue_target_replaces_a_retry_later_than_the_window(monkeypatch):
