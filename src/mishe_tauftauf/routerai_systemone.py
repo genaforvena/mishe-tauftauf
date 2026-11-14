@@ -41,6 +41,7 @@ import pathlib
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -75,10 +76,25 @@ class Decision:
         return self.choice is not None and self.choice != UNCLEAR
 
 
+class KeyFileError(ValueError):
+    """The key file exists but is not safe to read. The message never contains the key."""
+
+
 def resolve_key(path: str | None = None) -> str | None:
-    """Read the bearer key from a private key file. Never returns it in a message."""
+    """Read the bearer key from a private key file. Never returns it in a message.
+
+    Refuses (KeyFileError) a file readable by group or others, or not owned by this user.
+    """
     raw = path or os.environ.get("ROUTERAI_KEY_FILE") or DEFAULT_KEY_FILE
     key_path = pathlib.Path(raw).expanduser()
+    try:
+        status = key_path.stat()
+    except OSError:
+        return None
+    if status.st_mode & 0o077:
+        raise KeyFileError("RouterAI key file is readable by group or others; make it mode 600")
+    if hasattr(os, "getuid") and status.st_uid != os.getuid():
+        raise KeyFileError("RouterAI key file is not owned by this user")
     try:
         text = key_path.read_text(encoding="utf-8")
     except OSError:
@@ -99,8 +115,12 @@ def resolve_key(path: str | None = None) -> str | None:
 
 def base_url() -> str:
     url = os.environ.get("ROUTERAI_BASE_URL", "").strip() or DEFAULT_BASE_URL
-    if not url.startswith(("http://", "https://")):
-        raise ValueError("ROUTERAI_BASE_URL must be an http(s) URL")
+    parsed = urllib.parse.urlsplit(url)
+    local = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+    allowed_schemes = {"https", "http"} if local else {"https"}
+    if (not parsed.hostname or parsed.scheme not in allowed_schemes or parsed.username is not None
+            or parsed.password is not None or parsed.query or parsed.fragment):
+        raise ValueError("ROUTERAI_BASE_URL requires https (http only on loopback), without credentials, query or fragment")
     return url.rstrip("/")
 
 
@@ -168,7 +188,10 @@ def decide(
         return _log(log_path, _unknown(question, "threshold must be in [0, 1]"))
     if len(state) > MAX_STATE_CHARS:
         return _log(log_path, _unknown(question, f"state has {len(state)} chars, limit is {MAX_STATE_CHARS}"))
-    key = resolve_key(key_file)
+    try:
+        key = resolve_key(key_file)
+    except KeyFileError as exc:
+        return _log(log_path, _unknown(question, str(exc)))
     if not key:
         return _log(log_path, _unknown(question, "RouterAI key file is missing or empty"))
     try:
@@ -234,6 +257,13 @@ def decide(
     return _log(log_path, Decision(question, choice, probabilities, confidence, "decided"))
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects so the bearer header is never re-sent to a redirect target."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url if req else "", code, "redirect refused", headers, fp)
+
+
 def _post(url: str, body: bytes, key: str) -> bytes:
     request = urllib.request.Request(
         url,
@@ -246,7 +276,8 @@ def _post(url: str, body: bytes, key: str) -> bytes:
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+    opener = urllib.request.build_opener(_NoRedirect())
+    with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
         return response.read()
 
 
