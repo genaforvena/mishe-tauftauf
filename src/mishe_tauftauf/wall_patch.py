@@ -506,11 +506,15 @@ def symbol_context(home, record):
     changed, removed = _definition_diff(record)
     wanted = set(changed)  # names a reduced definition must keep: changed here or imported by the patch
 
-    for name, values in record["files"].items():
-        if not is_python(name) or not values["after"]:
-            continue
+    # Patched files and the delivery scripts that apply them are both reviewed
+    # bytes: an import either one makes must resolve, or the reviewer cannot judge.
+    scripts = (record.get("delivery_plan") or {}).get("artifacts") or {}
+    sources = [(name, values["after"]["bytes"]) for name, values in record["files"].items()
+               if values["after"] and is_python(name)]
+    sources += [(name, values["bytes"]) for name, values in scripts.items() if is_python(name)]
+    for name, encoded in sources:
         try:
-            pairs = _imported_names(name, decode_b64_text(values["after"]["bytes"]))
+            pairs = _imported_names(name, decode_b64_text(encoded))
         except SyntaxError:
             unresolved.append(f"syntax:{name}")
             continue

@@ -1246,3 +1246,25 @@ def test_review_context_includes_a_submodule_imported_from_the_package(tmp_path)
     assert "DRAIN_TIMEOUT_S = 420" in context["modules"]["mishe_tauftauf.consumer_fence"]["text"]
     assert "mishe_tauftauf.consumer_fence" not in context["unresolved"]
     assert "mishe_tauftauf.consumer_fence" not in context["omitted_over_limit"]
+
+
+def test_delivery_script_imports_reach_the_reviewer(tmp_path):
+    # The delivery scripts are reviewed bytes too: an import they make must
+    # resolve to excerpts, or the reviewer says the plan cannot be judged.
+    import base64
+    home, source, deployed = layout(tmp_path)
+    (tmp_path / "src/mishe_tauftauf/helper.py").write_text("def nonblank(text):\n    return text.strip()\n")
+    script = home / "operator/plans/delivery/activate.py"
+    script.parent.mkdir(parents=True)
+    script_text = "from mishe_tauftauf.helper import nonblank\nprint(nonblank(' x '))\n"
+    script.write_text(script_text)
+    source.write_text("before\n")
+    record = {"runtime": str(tmp_path / "runtime"),
+              "files": {"src/mishe_tauftauf/example.py": {
+                  "before": {"bytes": base64.b64encode(b"before\n").decode(), "mode": 0o644},
+                  "after": {"bytes": base64.b64encode(b"before\n").decode(), "mode": 0o644}}},
+              "delivery_plan": {"artifacts": {str(script): {
+                  "bytes": base64.b64encode(script_text.encode()).decode(), "mode": 0o755}}}}
+    context = wall_patch.symbol_context(home, record)
+    assert "mishe_tauftauf.helper:nonblank" in context["modules"]
+    assert context["unresolved"] == []
