@@ -16,7 +16,7 @@ RULES = (
                                  r"delivery_requests|work_state|dispositions|failure|host_capacity)\w*\.py$")),
     ("delivery-path", re.compile(r"^(src/mishe_tauftauf/(release|deliver|delivery|heal|promotion|pin)\w*\.py"
                                  r"|scripts/.*(deliver|heal|release)\S*)")),
-    ("routine", re.compile(r"^(docs/|tests/|.*\.md$)")),
+    ("routine", re.compile(r"^(docs/|tests/|checks/|.*\.md$)")),
 )
 
 

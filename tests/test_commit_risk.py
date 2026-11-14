@@ -41,6 +41,7 @@ class CommitRiskTests(unittest.TestCase):
 
     def test_path_rules_decide_pure_commits_without_a_model(self):
         self.assertEqual(cr.system0(["docs/a.md", "tests/test_x.py"]), "routine")
+        self.assertEqual(cr.system0(["checks/initiative.py", "tests/test_initiative_check.py"]), "routine")
         self.assertEqual(cr.system0(["src/mishe_tauftauf/release_promotion.py"]), "delivery-path")
         self.assertEqual(cr.system0(["src/mishe_tauftauf/owed.py"]), "dispatch-path")
 
