@@ -545,7 +545,8 @@ def decision_line(home: Path, now: float, shared: dict) -> dict:
 
     kind = "System One decision models (choice questions; not LLMs)"
     base = dict(shared, kind=kind, model=None, daily_cap=None, calls_today=None, calls_remaining=None,
-                price_per_1m_input=None, price_source="not read: decision model price list is not fetched")
+                spend_limit=None, spent=None, spend_remaining=None,
+                price_per_1m_input=None, price_source="config price_per_token (RouterAI /models, 2026-11-14)")
     config = home / DECISION_CONFIG
     if not config.exists():
         return dict(base, state="UNKNOWN", reason=f"no decision_provider config at {DECISION_CONFIG}")
@@ -556,11 +557,16 @@ def decision_line(home: Path, now: float, shared: dict) -> dict:
     day = _dt.datetime.fromtimestamp(now, _dt.timezone.utc).date().isoformat()
     try:
         calls = dp.calls_today(provider, day)
+        spent = dp.spent_total(provider, day)
     except ValueError as exc:
-        return dict(base, model=provider.model, daily_cap=provider.daily_cap, state="UNKNOWN",
+        return dict(base, model=provider.model, daily_cap=provider.daily_cap, spend_limit=provider.spend_limit,
+                    price_per_1m_input=provider.price_per_token * 1e6, state="UNKNOWN",
                     reason=f"decision ledger unreadable: {type(exc).__name__}")
     return dict(base, model=provider.model, daily_cap=provider.daily_cap, calls_today=calls,
-                calls_remaining=max(provider.daily_cap - calls, 0), state="FRESH", reason=None,
+                calls_remaining=max(provider.daily_cap - calls, 0), spend_limit=provider.spend_limit,
+                spent=round(spent, 6), spend_remaining=round(max(provider.spend_limit - spent, 0.0), 6),
+                price_per_1m_input=provider.price_per_token * 1e6,
+                state="FRESH", reason=None,
                 balance_note="shared RouterAI key balance; /credits exposes no split per budget")
 
 

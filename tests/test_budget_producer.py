@@ -543,28 +543,31 @@ def _decision_home(tmp_path, cap=10, ledger=None, config=None):
         key.chmod(0o600)
         config = {"providers": {"routerai": {
             "protocol": "systemone", "base_url": "https://routerai.ru", "key_file": str(key),
-            "model": "typesafe/jev-1.14", "daily_cap": cap, "timeout": 30, "budget_file": str(budget)}}}
+            "model": "typesafe/jev-1.14", "daily_cap": cap, "spend_limit": 50,
+            "price_per_token": 4.48547736e-06, "timeout": 30, "budget_file": str(budget)}}}
     (engine / "decision-providers.json").write_text(_json.dumps(config), encoding="utf-8")
     now = _dt.datetime(2026, 11, 14, 12, 0, tzinfo=_dt.timezone.utc).timestamp()
     return now
 
 
 def test_decision_line_reports_cap_and_today_calls(tmp_path):
-    now = _decision_home(tmp_path, cap=10, ledger={"date": "2026-11-14", "count": 3})
+    now = _decision_home(tmp_path, cap=10, ledger={"date": "2026-11-14", "count": 3, "spent": 0.25})
     line = bp.decision_line(tmp_path, now, {"balance": 1.0})
     assert line["state"] == "FRESH" and line["reason"] is None
     assert line["daily_cap"] == 10 and line["calls_today"] == 3 and line["calls_remaining"] == 7
-    assert line["model"] == "typesafe/jev-1.14" and line["price_per_1m_input"] is None
+    assert line["spend_limit"] == 50 and line["spent"] == 0.25 and line["spend_remaining"] == 49.75
+    assert line["model"] == "typesafe/jev-1.14" and abs(line["price_per_1m_input"] - 4.48547736) < 1e-9
 
 
-def test_decision_line_yesterday_ledger_counts_zero(tmp_path):
-    now = _decision_home(tmp_path, cap=10, ledger={"date": "2026-11-13", "count": 9})
+def test_decision_line_yesterday_ledger_counts_zero_but_keeps_total(tmp_path):
+    now = _decision_home(tmp_path, cap=10, ledger={"date": "2026-11-13", "count": 9, "spent": 12.5})
     line = bp.decision_line(tmp_path, now, {"balance": 1.0})
     assert line["state"] == "FRESH" and line["calls_today"] == 0 and line["calls_remaining"] == 10
+    assert line["spent"] == 12.5 and line["spend_remaining"] == 37.5
 
 
 def test_decision_line_corrupt_ledger_is_unknown_not_zero(tmp_path):
-    now = _decision_home(tmp_path, cap=10, ledger={"date": "2026-11-14", "count": -1})
+    now = _decision_home(tmp_path, cap=10, ledger={"date": "2026-11-14", "count": -1, "spent": 0})
     line = bp.decision_line(tmp_path, now, {"balance": 1.0})
     assert line["state"] == "UNKNOWN" and line["calls_today"] is None
     assert line["reason"].startswith("decision ledger unreadable")

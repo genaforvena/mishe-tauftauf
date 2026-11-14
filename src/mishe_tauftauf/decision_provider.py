@@ -1,8 +1,9 @@
 """One decision-provider path for every System One question.
 
 A provider is configuration, not code: a name, a protocol, a base URL, a key
-file, a model, a daily call cap and a timeout, read from a JSON file. Adding a
-model or a provider is a config line. This module owns the one transport (https
+file, a model, a daily call cap, a total spend limit, the model's price per
+prompt token and a timeout, read from a JSON file. Adding a model or a provider
+is a config line. This module owns the one transport (https
 only, loopback http allowed, redirects refused, the key read from a private file
 and never placed in a message, argument or reason), the one daily ledger and the
 one error model: every failure is an unknown answer with a reason, never a
@@ -20,8 +21,15 @@ path that is not built.
 Config file shape:
     {"providers": {"routerai": {"protocol": "systemone",
         "base_url": "https://routerai.ru", "key_file": "/abs/path/routerai.key",
-        "model": "typesafe/jev-1.14", "daily_cap": 100, "timeout": 30}}}
+        "model": "typesafe/jev-1.14", "daily_cap": 37, "spend_limit": 50,
+        "price_per_token": 4.48547736e-06, "timeout": 30}}}
 An optional "budget_file" (absolute) overrides the default ledger path.
+
+Spend: each call reserves an upper-bound cost before HTTP, estimated as
+(instructions + state + criteria characters / 2) x price_per_token, and the
+ledger keeps the running total. A call that would take the total past
+spend_limit is refused with a reason, never sent. spend_limit is total, not
+per day; daily_cap paces the calls.
 
 Secrets: the bearer key is read from key_file and only ever placed in the HTTP
 Authorization header. Reasons, logs and exceptions never carry it.
@@ -51,6 +59,7 @@ PROTOCOLS = frozenset({"systemone"})
 UNCLEAR = "unclear"
 UNCLEAR_CRITERION = "none of the above fits, or the state does not decide it"
 MAX_STATE_CHARS = 20_000
+CHARS_PER_TOKEN = 2  # conservative for Cyrillic and mixed text: estimates tokens high, so spend is never under-reserved
 MAX_RESPONSE_BYTES = 64_000
 MAX_DAILY_CAP = 1000
 MAX_TIMEOUT_SECONDS = 30.0
@@ -60,7 +69,8 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 mishe-tauftauf-decision"
 )
 _NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
-_FIELDS = frozenset({"protocol", "base_url", "key_file", "model", "daily_cap", "timeout", "budget_file"})
+_FIELDS = frozenset({"protocol", "base_url", "key_file", "model", "daily_cap", "spend_limit",
+                     "price_per_token", "timeout", "budget_file"})
 _REQUIRED = _FIELDS - {"budget_file"}
 
 Post = Callable[[str, bytes, str, float], bytes]
@@ -82,6 +92,8 @@ class Provider:
     key_file: pathlib.Path
     model: str
     daily_cap: int
+    spend_limit: float
+    price_per_token: float
     timeout: float
     budget_file: pathlib.Path
 
@@ -134,6 +146,13 @@ def _provider(name: str, entry: object) -> Provider:
     cap = entry["daily_cap"]
     if isinstance(cap, bool) or not isinstance(cap, int) or not 0 <= cap <= MAX_DAILY_CAP:
         raise ProviderConfigError(f"provider {name!r} daily_cap must be an integer in [0, {MAX_DAILY_CAP}]")
+    spend_limit = entry["spend_limit"]
+    if isinstance(spend_limit, bool) or not isinstance(spend_limit, (int, float)) \
+            or not math.isfinite(spend_limit) or spend_limit < 0:
+        raise ProviderConfigError(f"provider {name!r} spend_limit must be a finite number >= 0")
+    price = entry["price_per_token"]
+    if isinstance(price, bool) or not isinstance(price, (int, float)) or not math.isfinite(price) or price < 0:
+        raise ProviderConfigError(f"provider {name!r} price_per_token must be a finite number >= 0")
     timeout = entry["timeout"]
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) \
             or not 0 < timeout <= MAX_TIMEOUT_SECONDS:
@@ -145,7 +164,8 @@ def _provider(name: str, entry: object) -> Provider:
         budget = state_home / "mishe-tauftauf" / f"decision-{name}-budget.json"
     if not budget.is_absolute():
         raise ProviderConfigError(f"provider {name!r} budget_file must be an absolute path")
-    return Provider(name, entry["protocol"], base_url, key_file, model.strip(), cap, float(timeout), budget)
+    return Provider(name, entry["protocol"], base_url, key_file, model.strip(), cap, float(spend_limit),
+                    float(price), float(timeout), budget)
 
 
 def load_providers(path: pathlib.Path) -> dict[str, Provider]:
@@ -226,11 +246,12 @@ def _private_regular(fd: int) -> bool:
     return stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600 and info.st_uid == os.getuid()
 
 
-def _ledger_count(path: pathlib.Path, current_day: str) -> int:
+def _ledger_state(path: pathlib.Path, current_day: str) -> tuple[int, float]:
+    """(calls reserved today, credits spent in total). The total survives day rollover; a missing ledger is (0, 0.0)."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     except FileNotFoundError:
-        return 0
+        return 0, 0.0
     try:
         if not _private_regular(fd):
             raise ValueError("budget state is not a private regular file")
@@ -243,11 +264,13 @@ def _ledger_count(path: pathlib.Path, current_day: str) -> int:
         state = json.loads(raw)
     except (UnicodeError, ValueError) as exc:
         raise ValueError("budget state is corrupt") from exc
-    if not isinstance(state, dict) or set(state) != {"date", "count"}:
+    if not isinstance(state, dict) or set(state) != {"date", "count", "spent"}:
         raise ValueError("budget state has invalid fields")
-    stored_day, count = state["date"], state["count"]
+    stored_day, count, spent = state["date"], state["count"], state["spent"]
     if not isinstance(stored_day, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", stored_day) \
-            or type(count) is not int or count < 0:
+            or type(count) is not int or count < 0 \
+            or isinstance(spent, bool) or not isinstance(spent, (int, float)) \
+            or not math.isfinite(spent) or spent < 0:
         raise ValueError("budget state has invalid values")
     try:
         date.fromisoformat(stored_day)
@@ -255,17 +278,23 @@ def _ledger_count(path: pathlib.Path, current_day: str) -> int:
         raise ValueError("budget state has invalid date") from exc
     if stored_day > current_day:
         raise ValueError("budget state is dated in the future")
-    return count if stored_day == current_day else 0
+    return (count if stored_day == current_day else 0), float(spent)
 
 
 def calls_today(provider: Provider, current_day: str) -> int:
     """Decision calls already reserved for current_day on this provider's ledger (0 when no ledger yet).
     Raises ValueError when the ledger exists but is unreadable; callers report that as UNKNOWN."""
-    return _ledger_count(provider.budget_file, current_day)
+    return _ledger_state(provider.budget_file, current_day)[0]
 
 
-def reserve_call(provider: Provider, current_day: str) -> str:
-    """Reserve one call before HTTP. Returns '' when reserved, else the reason. A failed request still spends one."""
+def spent_total(provider: Provider, current_day: str) -> float:
+    """Credits reserved in total on this provider's ledger. Raises ValueError when unreadable."""
+    return _ledger_state(provider.budget_file, current_day)[1]
+
+
+def reserve_call(provider: Provider, current_day: str, cost: float) -> str:
+    """Reserve one call of estimated cost (credits) before HTTP. Returns '' when reserved, else the reason.
+    A failed request still spends its reservation."""
     path = provider.budget_file
     try:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -275,16 +304,20 @@ def reserve_call(provider: Provider, current_day: str) -> str:
             if not _private_regular(lock_fd):
                 raise ValueError("budget lock is not a private regular file")
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            count = _ledger_count(path, current_day)
+            count, spent = _ledger_state(path, current_day)
             if count >= provider.daily_cap:
-                return f"{provider.name} daily budget exhausted"
+                return f"{provider.name} daily call cap reached ({provider.daily_cap} calls today); call refused"
+            if spent + cost > provider.spend_limit + 1e-12:
+                return (f"{provider.name} spend limit reached: {spent:.4f} of {provider.spend_limit:g} credits "
+                        f"spent in total; call refused")
             temporary = None
             try:
                 with tempfile.NamedTemporaryFile("w", dir=path.parent, prefix=".decision-budget-",
                                                  encoding="utf-8", delete=False) as stream:
                     temporary = pathlib.Path(stream.name)
                     os.fchmod(stream.fileno(), 0o600)
-                    json.dump({"date": current_day, "count": count + 1}, stream, separators=(",", ":"))
+                    json.dump({"date": current_day, "count": count + 1, "spent": round(spent + cost, 10)},
+                              stream, separators=(",", ":"))
                     stream.write("\n")
                     stream.flush()
                     os.fsync(stream.fileno())
@@ -344,9 +377,12 @@ def _call(provider: Provider, question: str, instructions: str, state: str, opti
         return None, str(exc)
     if not key:
         return None, f"{provider.name} key file is missing or empty"
-    spent = reserve_call(provider, datetime.now(timezone.utc).date().isoformat())
-    if spent:
-        return None, spent
+    chars = len(question) + len(instructions) + len(state) + sum(len(k) + len(v) for k, v in options.items()) \
+        + len(UNCLEAR) + len(UNCLEAR_CRITERION)
+    cost = (chars / CHARS_PER_TOKEN) * provider.price_per_token
+    refused = reserve_call(provider, datetime.now(timezone.utc).date().isoformat(), cost)
+    if refused:
+        return None, refused
     body = _systemone_body(provider, question, instructions, state, options)
     try:
         raw = (post or _post)(f"{provider.base_url}/api/v1/systemone", body, key, provider.timeout)

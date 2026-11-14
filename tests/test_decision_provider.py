@@ -53,6 +53,8 @@ class ProviderTests(unittest.TestCase):
             "key_file": str(self.key),
             "model": "typesafe/jev-1.14",
             "daily_cap": 10,
+            "spend_limit": 50,
+            "price_per_token": 4.48547736e-06,
             "timeout": 5,
             "budget_file": str(self.budget),
         }
@@ -183,8 +185,40 @@ class ProviderTests(unittest.TestCase):
         first = dp.decide(provider, "q", "x", "s", CRITERIA, threshold=0.5, post=failing)
         second = dp.decide(provider, "q", "x", "s", CRITERIA, threshold=0.5, post=failing)
         self.assertIn("request failed", first.reason)
-        self.assertIn("daily budget exhausted", second.reason)
+        self.assertIn("daily call cap reached", second.reason)
         self.assertEqual(len(failing.calls), 1)
+
+    def test_spend_limit_refuses_before_http_and_names_the_total(self):
+        provider = self.provider(spend_limit=0.0001, price_per_token=1e-06)
+        fake = _Fake(b"{}")
+        # 1,000 characters is about 500 estimated tokens: 0.0005 credits, above the 0.0001 limit
+        decision = dp.decide(provider, "q", "x", "s" * 1000, CRITERIA, threshold=0.5, post=fake)
+        self.assertFalse(decision.decided)
+        self.assertIn("spend limit reached", decision.reason)
+        self.assertIn("0.0000 of 0.0001 credits", decision.reason)
+        self.assertEqual(fake.calls, [])
+
+    def test_spend_accumulates_in_the_ledger_across_days(self):
+        provider = self.provider(spend_limit=1.0, price_per_token=1e-06)
+        fake = _Fake(b"{}")
+        dp.decide(provider, "q", "x", "s" * 100, CRITERIA, threshold=0.5, post=fake)
+        dp.decide(provider, "q", "x", "s" * 100, CRITERIA, threshold=0.5, post=fake)
+        spent = dp.spent_total(provider, "2026-11-14")
+        self.assertGreater(spent, 0.0)
+        # a later day resets the call count but keeps the total
+        self.assertEqual(dp.calls_today(provider, "2026-11-15"), 0)
+        self.assertAlmostEqual(dp.spent_total(provider, "2026-11-15"), spent)
+        self.assertEqual(len(fake.calls), 2)
+
+    def test_spend_limit_is_checked_against_the_total_not_one_day(self):
+        provider = self.provider(spend_limit=0.0002, price_per_token=1e-06)
+        ledger = {"date": "2026-11-13", "count": 0, "spent": 0.00019}
+        self.budget.write_text(json.dumps(ledger), encoding="utf-8")
+        self.budget.chmod(0o600)
+        fake = _Fake(b"{}")
+        decision = dp.decide(provider, "q", "x", "s" * 100, CRITERIA, threshold=0.5, post=fake)
+        self.assertIn("spend limit reached", decision.reason)
+        self.assertEqual(fake.calls, [])
 
     def test_http_client_failures_are_unknown_and_keep_the_call(self):
         provider = self.provider(daily_cap=5)
@@ -198,7 +232,7 @@ class ProviderTests(unittest.TestCase):
     def test_zero_cap_never_calls(self):
         fake = _Fake(b"{}")
         decision = dp.decide(self.provider(daily_cap=0), "q", "x", "s", CRITERIA, threshold=0.5, post=fake)
-        self.assertIn("daily budget exhausted", decision.reason)
+        self.assertIn("daily call cap reached", decision.reason)
         self.assertEqual(fake.calls, [])
 
     def test_missing_key_is_unknown_without_spending_budget(self):
