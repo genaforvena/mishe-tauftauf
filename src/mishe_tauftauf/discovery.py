@@ -1674,7 +1674,13 @@ a new delivery-outcome phase legitimately carries a boolean dv.
 
 
 def _patch_records(home: Path) -> tuple[list[dict], list[str]]:
-    """Readable patch records and unreadable patch file names under the site home."""
+    """Readable patch records and unreadable patch file names under the site home.
+
+    Each record is projected to the fields the ledger readings use: ``phase``,
+    ``delivery_verified`` and ``verified_dict`` (whether ``verification`` is a
+    dict). The store is about 670 MB of JSON; keeping whole records pushed the
+    readings child past its 1G limit, so the full bodies are dropped per file.
+    """
     records: list[dict] = []
     unreadable: list[str] = []
     for path in sorted((home / "patches").glob("*.json")):
@@ -1684,7 +1690,9 @@ def _patch_records(home: Path) -> tuple[list[dict], list[str]]:
             unreadable.append(path.name)
             continue
         if isinstance(record, dict):
-            records.append(record)
+            records.append({"phase": record.get("phase"),
+                            "delivery_verified": record.get("delivery_verified"),
+                            "verified_dict": isinstance(record.get("verification"), dict)})
         else:
             unreadable.append(path.name)
     return records, unreadable
@@ -1763,7 +1771,7 @@ def _ledger_dv_binding(home: Path) -> dict:
     bool_dv = [r for r in records if isinstance(r.get("delivery_verified"), bool)]
     unbound = [r for r in bool_dv
                if r.get("delivery_verified") is True
-               and not isinstance(r.get("verification"), dict)]
+               and not r.get("verified_dict")]
     if not records or unreadable:
         if not (home / "patches").is_dir():
             sample = "patch store unavailable"
