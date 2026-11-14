@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 CHECK = Path(__file__).resolve().parents[1] / "checks" / "initiatives.py"
@@ -104,3 +105,85 @@ def test_commit_check_ignores_body_text(tmp_path, capsys):
                    check=True)
     home = _site(tmp_path, [_item(check={"kind": "commit", "grep": "footprint", "since": 0})])
     assert _run(home, "health", capsys)[0] == 2
+
+
+# --- argv acceptance (ported from the retired checks/initiative.py drill tests) ---
+
+def _exit_with(code):
+    return [sys.executable, "-c", f"import sys; sys.exit({code})"]
+
+
+def _argv_item(argv, **over):
+    return _item(check={"kind": "argv", "argv": argv}, **over)
+
+
+def _eval(home, argv, repo=None, timeout=None):
+    check_dict = {"kind": "argv", "argv": argv}
+    if timeout is not None:
+        check_dict["timeout"] = timeout
+    return check.evaluate(check_dict, home, repo or home)
+
+
+def test_argv_done_is_done(tmp_path):
+    assert _eval(tmp_path, _exit_with(0))[0] == check.DONE
+
+
+def test_argv_open_is_open(tmp_path):
+    assert _eval(tmp_path, _exit_with(1))[0] == check.OPEN
+
+
+def test_argv_open_past_due_is_red_and_names_owner_and_escalation(tmp_path, capsys):
+    home = _site(tmp_path, [_argv_item(_exit_with(1), id="pin-at-head", owner="health")])
+    code, err = _run(home, "health", capsys)
+    assert code == 2 and "pin-at-head" in err and "escalate to steward" in err and "1.0 h past due" in err
+
+
+def test_argv_unknown_exit_status_is_unknown_not_green(tmp_path):
+    status, detail = _eval(tmp_path, _exit_with(7))
+    assert status == check.UNKNOWN and "exited 7" in detail
+
+
+def test_argv_missing_program_is_unknown(tmp_path):
+    status, detail = _eval(tmp_path, ["/nonexistent/definitely-not-a-program"])
+    assert status == check.UNKNOWN and "cannot run" in detail
+
+
+def test_argv_timeout_is_unknown(tmp_path):
+    status, detail = _eval(tmp_path, [sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.2)
+    assert status == check.UNKNOWN and "timed out" in detail
+
+
+def test_argv_not_a_list_is_unknown(tmp_path):
+    status, detail = _eval(tmp_path, "echo done")
+    assert status == check.UNKNOWN and "argv" in detail
+
+
+def test_argv_bad_timeout_is_unknown(tmp_path):
+    assert _eval(tmp_path, _exit_with(0), timeout=0)[0] == check.UNKNOWN
+
+
+def test_argv_home_and_repo_tokens_substituted(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "marker.txt").write_text("x", encoding="utf-8")
+    probe = [sys.executable, "-c", "import os,sys; sys.exit(0 if os.path.exists(sys.argv[1]) else 1)",
+             "{home}/marker.txt"]
+    assert _eval(home, probe)[0] == check.DONE
+
+
+def test_argv_repo_token_is_the_checkout(tmp_path):
+    (tmp_path / "repo-marker").write_text("x", encoding="utf-8")
+    probe = [sys.executable, "-c", "import os,sys; sys.exit(0 if os.path.exists(sys.argv[1]) else 1)",
+             "{repo}/repo-marker"]
+    assert _eval(tmp_path / "home", probe, repo=tmp_path)[0] == check.DONE
+
+
+def test_argv_python_token_is_the_running_interpreter(tmp_path):
+    assert _eval(tmp_path, ["{python}", "-c", "import sys; sys.exit(0)"])[0] == check.DONE
+
+
+def test_argv_has_no_shell(tmp_path):
+    # a shell metacharacter in one argv element is a literal argument, not a pipeline
+    status, _ = _eval(tmp_path, [sys.executable, "-c", "import sys; sys.exit(0 if sys.argv[1]=='a;exit 3' else 1)",
+                                 "a;exit 3"])
+    assert status == check.DONE

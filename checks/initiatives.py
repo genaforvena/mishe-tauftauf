@@ -13,18 +13,24 @@ Register entry: {"id", "owner", "goal", "due", "escalation", "check"}; ``check``
   {"kind": "path", "path": P}                       P (relative to the site home) exists
   {"kind": "json", "file": F, "key": [..], "equals": V | "min": X | "max": X}
   {"kind": "commit", "grep": TEXT, "since": EPOCH}  a commit on main since EPOCH has TEXT in its subject
+  {"kind": "argv", "argv": [...], "timeout": N}     acceptance command: no shell, run in the repo, with
+                                                    {repo}, {home} and {python} substituted; exit 0 done,
+                                                    1 open, anything else, a timeout or a missing program
+                                                    UNKNOWN. ``timeout`` is optional (default 20 s).
 
 Exit: 0 GREEN (everything done, or open and not yet due), 2 RED (a check says not done past its due),
 3 UNKNOWN (register missing or invalid, owner has no charter, or a check cannot be evaluated).
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 DONE, OPEN, UNKNOWN = "done", "open", "unknown"
+ARGV_TIMEOUT_S = 20
 
 
 def _read(path):
@@ -90,7 +96,37 @@ def evaluate(check, home, repo):
             return UNKNOWN, "git log failed"
         hit = any(grep in subject for subject in done.stdout.splitlines())
         return (DONE if hit else OPEN), f"no commit subject with {grep!r} since the start"
+    if kind == "argv":
+        return _argv(check, home, repo)
     return UNKNOWN, f"unknown check kind {kind!r}"
+
+
+def _argv(check, home, repo):
+    """Run an acceptance argv: no shell, a timeout, and exit 0/1 as the only verdicts."""
+    argv = check.get("argv")
+    if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
+        return UNKNOWN, "argv check needs a non-empty list of strings"
+    timeout = check.get("timeout", ARGV_TIMEOUT_S)
+    if not _number(timeout) or timeout <= 0:
+        return UNKNOWN, "argv timeout must be a positive number"
+    tokens = {"{repo}": str(repo), "{home}": str(home), "{python}": sys.executable}
+    cmd = []
+    for arg in argv:
+        for token, value in tokens.items():
+            arg = arg.replace(token, value)
+        cmd.append(arg)
+    try:
+        run = subprocess.run(cmd, capture_output=True, timeout=timeout, cwd=str(repo),
+                             env={**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"})
+    except subprocess.TimeoutExpired:
+        return UNKNOWN, f"acceptance timed out after {timeout} s"
+    except OSError as exc:
+        return UNKNOWN, f"acceptance cannot run: {exc}"
+    if run.returncode == 0:
+        return DONE, "acceptance exited 0"
+    if run.returncode == 1:
+        return OPEN, "acceptance exited 1"
+    return UNKNOWN, f"acceptance exited {run.returncode}"
 
 
 def main(argv=None):
