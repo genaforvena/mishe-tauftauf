@@ -477,3 +477,13 @@ def test_producer_unit_for_signal_round_trips_or_is_none():
     assert units.producer_unit_for_signal("failed-mishe-producer-work.trial-service") is None
     assert units.producer_unit_for_signal("failed-mishe-wake-docs-service") is None
     assert units.producer_unit_for_signal("failed-mishe-producer-X-service") is None
+
+
+def test_sync_reloads_systemd_once_not_once_per_enabled_trigger(cfg):
+    units.sync(cfg, ROLES, runner=lambda c: None, enable=False)       # the held install
+    calls = []
+    units.sync(cfg, ROLES, runner=calls.append)                       # nothing to write, all enabled
+    reloads = [c for c in calls if "daemon-reload" in c]
+    enables = [c for c in calls if "enable" in c]
+    assert len(reloads) == 1
+    assert enables and all("--no-reload" in c for c in enables)

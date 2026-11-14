@@ -371,14 +371,17 @@ def sync(cfg: Config, roles, *, producers=(), runner=None, uninstall: bool = Fal
     for rel in stale:
         (cfg.unit_dir / rel).unlink()
         report.removed.append(rel)
-    if runner is not None and (report.written or report.removed):
+    # One explicit reload per sync. `enable` without --no-reload logs its own reload request,
+    # so the per-unit enable loop below would otherwise issue one reload per trigger
+    # (2026-11-14: ~58 reloads from one sync).
+    if runner is not None and (report.written or report.removed or enable):
         runner(["systemctl", "--user", "daemon-reload"])
     if runner is not None and enable:
         for rel in sorted(expected):                 # desired state, not the diff: idempotent
             if rel.endswith((".path", ".timer")):
-                runner(["systemctl", "--user", "enable", "--now", rel])
+                runner(["systemctl", "--user", "enable", "--now", "--no-reload", rel])
             elif rel.endswith("-arm.service"):
-                runner(["systemctl", "--user", "enable", rel])      # re-arms the next-due timer at boot
+                runner(["systemctl", "--user", "enable", "--no-reload", rel])  # re-arms the next-due timer at boot
     marker = cfg.home / "units-installed"
     if uninstall or not enable:
         marker.unlink(missing_ok=True)
