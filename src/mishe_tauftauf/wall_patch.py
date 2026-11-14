@@ -435,6 +435,17 @@ def _statement_names(node):
     return names
 
 
+def _defined_names(node):
+    """Names a top-level statement defines: a def, a class, or plain assignment targets."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return {node.name}
+    if isinstance(node, ast.Assign):
+        return {target.id for target in node.targets if isinstance(target, ast.Name)}
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return {node.target.id}
+    return set()
+
+
 def _reduce_definition(text, wanted):
     """(text, kept_bytes, cut_bytes, hard_cut) for one imported definition.
 
@@ -448,14 +459,19 @@ def _reduce_definition(text, wanted):
     if len(text) <= CONTEXT_EXCERPT_BYTES:
         return text, len(text.encode()), 0, False
     tree = _parsed(text)
-    if tree is None or not tree.body or not isinstance(tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+    if tree is None or not tree.body:
         cut = text[:CONTEXT_EXCERPT_BYTES]
         return cut, len(cut.encode()), len(text.encode()) - len(cut.encode()), True
     lines = split_lines_keepends(text)
-    body = tree.body[0].body
+    # A definition is reduced inside its body. A whole module (a submodule imported with
+    # `from . import sub`, which is never one definition) is reduced at its top level,
+    # so an import or a docstring first statement no longer forces a hard cut.
+    owner = tree.body[0]
+    module = not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    body, indent = (tree.body, "") if module else (owner.body, "    ")
     # Header: signature plus docstring when the first statement is one.
     statements = list(body)
-    header_end = len(lines)
+    header_end = 0 if module else len(lines)
     if body:
         first = body[0]
         is_doc = (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
@@ -463,19 +479,33 @@ def _reduce_definition(text, wanted):
         if is_doc:
             header_end = first.end_lineno
             statements = body[1:]
-        else:
+        elif not module:
             header_end = first.lineno - 1
-    kept = ["".join(lines[:header_end])]
+    head = lines[:header_end]
+    head_budget = CONTEXT_EXCERPT_BYTES // 4
+    head_bytes = sum(len(item.encode()) for item in head)
+    if head_bytes > head_budget:
+        # An oversized header (a long docstring) keeps its first lines within a quarter of
+        # the excerpt cap and names the rest, so the statements the patch uses still fit.
+        used, keep = 0, 0
+        while keep < len(head) and used + len(head[keep].encode()) <= head_budget:
+            used += len(head[keep].encode())
+            keep += 1
+        head = head[:keep] + [f"{indent}# header lines {keep + 1}-{header_end} ({head_bytes - used} bytes) omitted: documentation beyond the excerpt budget\n"]
+    kept = ["".join(head)]
     run = []  # consecutive omitted statements: (first line, last line, bytes)
     def flush():
         if run:
             first_line, last_line = run[0][0], run[-1][1]
             size = sum(item[2] for item in run)
-            kept.append(f"    # omitted lines {first_line}-{last_line} ({size} bytes): no name the patch changes or imports\n")
+            kept.append(f"{indent}# omitted lines {first_line}-{last_line} ({size} bytes): no name the patch changes or imports\n")
             run.clear()
     for stmt in statements:
         segment = "".join(lines[stmt.lineno - 1:stmt.end_lineno])
-        if _statement_names(stmt) & wanted:
+        # Inside a whole module a statement is kept when it defines a wanted name; a function
+        # that merely calls one is not the definition the reviewer needs. Inside a definition,
+        # a statement that names a wanted name is kept as before.
+        if isinstance(stmt, (ast.Import, ast.ImportFrom)) or _defined_names(stmt) & wanted or (not module and _statement_names(stmt) & wanted):
             flush()
             kept.append(segment)
         else:
@@ -490,6 +520,20 @@ def _reduce_definition(text, wanted):
     return result, kept_bytes, cut, False
 
 
+def _attribute_uses(sources, alias):
+    """Attribute names the patch reads through `alias` (`alias.name`), across its sources."""
+    names = set()
+    for _, encoded in sources:
+        try:
+            tree = ast.parse(decode_b64_text(encoded))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == alias:
+                names.add(node.attr)
+    return names
+
+
 def symbol_context(home, record):
     """Read-only excerpts a reviewer needs: definitions the patch imports and
     bounded call-site windows for each changed definition in the shared checkout.
@@ -501,6 +545,7 @@ def symbol_context(home, record):
     src = root / "src"
     patched = set(record["files"])
     unresolved, truncated, omitted = [], [], []
+    submodules = {}  # label -> alias, for a whole submodule named by `from . import sub`
     ordered = []  # imported definitions, (label, path, text), before the total cap
     callers = []  # changed-definition call sites: the reviewer's cheapest must-have, budgeted first
     changed, removed = _definition_diff(record)
@@ -537,6 +582,7 @@ def symbol_context(home, record):
             elif sub.relative_to(root).as_posix() not in patched:
                 ordered.append((f"{module}.{alias}", sub.relative_to(root).as_posix(),
                                 sub.read_text(errors="replace")))
+                submodules[f"{module}.{alias}"] = alias
 
     corpus = {}
     for base in (src, root / "checks", root / "tests", root / "tools"):
@@ -569,7 +615,13 @@ def symbol_context(home, record):
 
     cut_bytes, reduced = {}, []
     for label, path, text in ordered:
-        text, _kept, cut, hard = _reduce_definition(text, wanted)
+        # A whole submodule the patch does not change keeps only the statements that name
+        # what the patch reads through it (`alias.attr`). Common import names (json, Path)
+        # and other modules' changed names must not pull in every function of a 400 KB module.
+        scope = wanted
+        if label in submodules:
+            scope = _attribute_uses(sources, submodules[label])
+        text, _kept, cut, hard = _reduce_definition(text, scope)
         if hard:
             truncated.append(label)
         cut_bytes[label] = cut

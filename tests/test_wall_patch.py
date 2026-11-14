@@ -1268,3 +1268,62 @@ def test_delivery_script_imports_reach_the_reviewer(tmp_path):
     context = wall_patch.symbol_context(home, record)
     assert "mishe_tauftauf.helper:nonblank" in context["modules"]
     assert context["unresolved"] == []
+
+
+def test_oversized_submodule_is_reduced_at_module_level_not_hard_cut(tmp_path):
+    # `from . import discovery` names a whole submodule. Its top level (a docstring,
+    # imports, a large assignment, a def) is the unit: the large assignment becomes a
+    # note, the import stays, and the module is not hard-cut and marked truncated.
+    import base64
+    from mishe_tauftauf import wall_patch
+
+    root = tmp_path
+    pkg = root / "src" / "mishe_tauftauf"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    big = ('"""Discovery scans."""\nimport os\nPAD = "' + "a" * (wall_patch.CONTEXT_EXCERPT_BYTES + 10)
+           + '"\n\ndef scan(home):\n    return os.path.join(home, "x")\n')
+    (pkg / "discovery.py").write_text(big)
+    patched = "from . import discovery\nX = discovery.scan('/tmp')\n"
+    (pkg / "patched.py").write_text(patched)
+    home = root / ".site"
+    home.mkdir()
+    after = {"bytes": base64.b64encode(patched.encode()).decode(), "mode": 0o644}
+    record = {"files": {"src/mishe_tauftauf/patched.py": {"before": None, "after": after}}}
+
+    context = wall_patch.symbol_context(home, record)
+
+    assert "mishe_tauftauf.discovery" in context["modules"]
+    assert "mishe_tauftauf.discovery" not in context["truncated"]
+    text = context["modules"]["mishe_tauftauf.discovery"]["text"]
+    assert "import os" in text
+    assert "omitted lines" in text
+    assert len(text) <= wall_patch.CONTEXT_EXCERPT_BYTES
+
+
+def test_oversized_module_docstring_is_named_not_filling_the_excerpt(tmp_path):
+    # A long module docstring is header, not a definition: it keeps its first lines and
+    # names the rest with a byte count, so the statements the patch uses still fit.
+    import base64
+    from mishe_tauftauf import wall_patch
+
+    root = tmp_path
+    pkg = root / "src" / "mishe_tauftauf"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    doc = '"""Scans.\n\n' + "\n".join("doc line %d %s" % (i, "x" * 200) for i in range(400)) + '\n"""\n'
+    (pkg / "discovery.py").write_text(doc + "def scan(home):\n    return home\n")
+    patched = "from . import discovery\nX = discovery.scan('/tmp')\n"
+    (pkg / "patched.py").write_text(patched)
+    home = root / ".site"
+    home.mkdir()
+    after = {"bytes": base64.b64encode(patched.encode()).decode(), "mode": 0o644}
+    record = {"files": {"src/mishe_tauftauf/patched.py": {"before": None, "after": after}}}
+
+    context = wall_patch.symbol_context(home, record)
+
+    text = context["modules"]["mishe_tauftauf.discovery"]["text"]
+    assert "mishe_tauftauf.discovery" not in context["truncated"]
+    assert "def scan(home):" in text
+    assert "header lines" in text and "omitted" in text
+    assert len(text) <= wall_patch.CONTEXT_EXCERPT_BYTES
