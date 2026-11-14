@@ -113,6 +113,28 @@ class ProviderTests(unittest.TestCase):
     def test_key_file_reads_the_named_line(self):
         self.assertEqual(dp.read_key(self.key), SECRET)
 
+    def test_fetch_uses_the_one_key_reader_and_a_get_without_a_body(self):
+        seen = {}
+
+        def fake(url, body, key, timeout):
+            seen.update(url=url, body=body, key=key)
+            return b"{}"
+
+        original = dp._post
+        dp._post = fake
+        try:
+            self.assertEqual(dp.fetch("https://example.invalid/api/v1/credits", self.key, 5.0), b"{}")
+        finally:
+            dp._post = original
+        self.assertEqual((seen["body"], seen["key"]), (None, SECRET))
+
+    def test_fetch_refuses_an_unsafe_or_missing_key_file(self):
+        os.chmod(self.key, 0o644)
+        with self.assertRaises(dp.KeyFileError):
+            dp.fetch("https://example.invalid/x", self.key, 5.0)
+        with self.assertRaises(dp.KeyFileError):
+            dp.fetch("https://example.invalid/x", self.root / "absent.key", 5.0)
+
     def test_missing_key_file_reads_as_none(self):
         self.assertIsNone(dp.read_key(self.root / "absent.key"))
 

@@ -487,15 +487,10 @@ ROUTERAI_TURN_WINDOW_S = 24 * 3600.0
 def fetch_routerai_credits(timeout: float = 10.0) -> float:
     """The balance RouterAI exposes for the key (GET /api/v1/credits). Raises on any failure;
     the caller records UNKNOWN with the exception class only, never the key or a default."""
-    import urllib.request
+    from .decision_provider import fetch
+    from .engine_boundary import decode_routerai_credits
 
-    from .engine_boundary import decode_routerai_credits, routerai_key
-
-    key = routerai_key(ROUTERAI_KEY_FILE)
-    request = urllib.request.Request(
-        ROUTERAI_CREDITS_URL, headers={"Authorization": f"Bearer {key}", "Accept": "application/json"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return decode_routerai_credits(response.read(64_000))
+    return decode_routerai_credits(fetch(ROUTERAI_CREDITS_URL, ROUTERAI_KEY_FILE, timeout))
 
 
 def routerai_turns_24h(home: Path, now: float) -> int:

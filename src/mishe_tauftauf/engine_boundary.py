@@ -294,11 +294,6 @@ def last_good_samples(path):
 ROUTERAI_TURN_PREFIX = 'omp:routerai/'
 
 
-def routerai_key(path):
-    """The RouterAI key from its key file, whitespace-stripped. Never placed in an error."""
-    return Path(path).read_text(encoding='utf-8').strip()
-
-
 def decode_routerai_credits(body):
     """The `credits` balance from a RouterAI GET /api/v1/credits body (raw bytes).
 

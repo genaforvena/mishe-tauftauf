@@ -221,24 +221,26 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise urllib.error.HTTPError(req.full_url if req else "", code, "redirect refused", headers, fp)
 
 
-def _post(url: str, body: bytes, key: str, timeout: float) -> bytes:
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": USER_AGENT,
-        },
-        method="POST",
-    )
+def _post(url: str, body: bytes | None, key: str, timeout: float) -> bytes:
+    """The one authenticated transport: a POST with a body, a GET without one. No redirects, size-capped."""
+    headers = {"Authorization": f"Bearer {key}", "Accept": "application/json", "User-Agent": USER_AGENT}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST" if body is not None else "GET")
     opener = urllib.request.build_opener(_NoRedirect())
     with opener.open(request, timeout=timeout) as response:
         raw = response.read(MAX_RESPONSE_BYTES + 1)
     if len(raw) > MAX_RESPONSE_BYTES:
         raise ValueError("response exceeds the size limit")
     return raw
+
+
+def fetch(url: str, key_file: pathlib.Path, timeout: float) -> bytes:
+    """GET with the provider key (same key reader and transport as decisions); raises on a missing or unsafe key."""
+    key = read_key(key_file)
+    if key is None:
+        raise KeyFileError("key file missing or empty")
+    return _post(url, None, key, timeout)
 
 
 def _private_regular(fd: int) -> bool:
