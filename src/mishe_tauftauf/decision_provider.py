@@ -30,6 +30,7 @@ Authorization header. Reasons, logs and exceptions never carry it.
 from __future__ import annotations
 
 import fcntl
+import http.client
 import json
 import math
 import os
@@ -104,7 +105,10 @@ class Decision:
 
 def _checked_base_url(raw: str) -> str:
     url = raw.strip().rstrip("/")
-    parsed = urllib.parse.urlsplit(url)
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError as exc:
+        raise ProviderConfigError(f"base_url is not a valid URL: {exc}") from exc
     local = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
     allowed = {"https", "http"} if local else {"https"}
     if (not parsed.hostname or parsed.scheme not in allowed or parsed.username is not None
@@ -343,7 +347,7 @@ def _call(provider: Provider, question: str, instructions: str, state: str, opti
     except urllib.error.HTTPError as exc:
         detail = exc.read(200).decode("utf-8", errors="replace").replace("\n", " ")
         return None, f"HTTP {exc.code}: {detail}"
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
         return None, f"request failed: {exc}"
     try:
         payload = json.loads(raw)

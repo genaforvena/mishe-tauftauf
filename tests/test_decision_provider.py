@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import pathlib
@@ -113,6 +114,10 @@ class ProviderTests(unittest.TestCase):
     def test_missing_key_file_reads_as_none(self):
         self.assertIsNone(dp.read_key(self.root / "absent.key"))
 
+    def test_malformed_ipv6_base_url_is_a_config_error(self):
+        with self.assertRaises(dp.ProviderConfigError):
+            dp._checked_base_url("https://[::1")
+
     def test_redirects_are_refused(self):
         request = urllib.request.Request("https://routerai.ru/api/v1/systemone")
         with self.assertRaises(urllib.error.HTTPError):
@@ -180,6 +185,15 @@ class ProviderTests(unittest.TestCase):
         self.assertIn("request failed", first.reason)
         self.assertIn("daily budget exhausted", second.reason)
         self.assertEqual(len(failing.calls), 1)
+
+    def test_http_client_failures_are_unknown_and_keep_the_call(self):
+        provider = self.provider(daily_cap=5)
+        for error in (http.client.IncompleteRead(b"partial"), http.client.BadStatusLine("junk")):
+            failing = _Fake(error)
+            decision = dp.decide(provider, "q", "x", "s", CRITERIA, threshold=0.5, post=failing)
+            self.assertFalse(decision.decided)
+            self.assertIn("request failed", decision.reason)
+            self.assertEqual(len(failing.calls), 1)
 
     def test_zero_cap_never_calls(self):
         fake = _Fake(b"{}")
