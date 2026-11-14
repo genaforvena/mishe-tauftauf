@@ -59,9 +59,15 @@ does not read it.
   window at 60% or 80% used still classifies as healthy and admission depends
   on the remaining fraction alone.
 
-RouterAI is the backup in practice: `engine/routes.json` lists its candidates
-after the subscription providers for every role, so it is reached when the
-earlier candidates are not admitted rather than chosen first.
+RouterAI is not a mind route any more. It was removed from every role in
+`engine/routes.json` on 2026-11-12 (operator DM 300461) and now sits in that
+file's `retired` list, so no role may select it and no wake falls back to it:
+a wake whose subscription candidates are not admitted falls through to that
+role's other candidates. `engine/budget.json` keeps the two retired RouterAI
+candidates in a `retired_models` section; the budget pane does not draw that
+section yet, so a retired candidate is absent from the pane rather than
+counted in it. RouterAI is the pay-as-you-go provider for decision questions
+(System One), which is a different path from a wake.
 
 The operator decision of 2026-11-11, recorded in the operator notes:
 
@@ -70,3 +76,8 @@ The operator decision of 2026-11-11, recorded in the operator notes:
   decision does not route to the human owner.
 - RouterAI is the backup when the subscription providers fail, not a primary route.
 - Alerts about budget do not ask the human for anything.
+
+Corrected on 2026-11-14: the third bullet described the mind routes as they
+stood on 2026-11-11. On 2026-11-12 RouterAI left every role in
+`engine/routes.json` (operator DM 300461) and became the pay-as-you-go provider
+for decision questions instead, so today no wake falls back to it.

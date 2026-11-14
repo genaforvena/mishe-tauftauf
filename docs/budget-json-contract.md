@@ -5,8 +5,10 @@ section from the engine status and the native Claude tap (`mishe budget-produce 
 `checks/budget-consistency.py` judges it. The router migration (step 4) has shipped:
 `engine_router.live_status()` reads the accounts section and the router no longer reads
 `engine_usage.status` or refetches stale readings. The producer also writes the cooling,
-ledger (`free_models`, `paid_models`, `unclassified_models`, `per_mind`, `ledger`) sections,
-committed but not yet observed on the pinned bytes. Each fresh window also carries `burn_h` (used
+ledger (`free_models`, `paid_models`, `unclassified_models`, `retired_models`,
+`per_mind`, `ledger`) sections, observed on the pinned bytes since 2026-11-12:
+the `budget` timer writes them and the live file carries all of them.
+Each fresh window also carries `burn_h` (used
 fraction per hour over the rate history, at least 1500 s of span, same reset only) and `eta_s` (seconds
 to 100% at that burn); a non-fresh window gets null for both. `burn_source` says where a burn came from: `history` (a measured
 rate reading) or `window-elapsed` (estimate: used / hours elapsed in a 5h or 7d window, used only when history has no
@@ -18,8 +20,8 @@ rather than the previous tick's. Observed on the timer 2026-11-11
 (`produced_at` 05:18:05Z → 05:28:06Z, next fire 05:38:04Z). With a 600 s period inside the
 900 s `MAX_AGE_S`, the file stays fresh with ~300 s of margin, so a role whose candidate
 reads an account window no longer routes on no evidence. The checkout declares a separate
-`budget-consistency` duty below; its live installation and observation must be verified after
-delivery. Roles whose candidates are all free models or the Claude safety net read no window
+`budget-consistency` duty below; it is installed and its signal is GREEN on a fresh run.
+Roles whose candidates are all free models or the Claude safety net read no window
 and are unaffected.
 Owner of the model/account mapping: `engine/routes.json`. Owner of this contract: steward.
 
@@ -104,6 +106,16 @@ only that file and computes nothing itself.
       "pending": 0
     }
   },
+  "retired_models": {
+    "omp:routerai/deepseek/deepseek-v4.1-flash:-": {
+      "free": null, "account": null, "in_routes": false, "verdict": "RETIRED",
+      "note": "retired from routes.json: no role selects it",
+      "turns_1h": 0, "turns_24h": 0, "out_1h": null, "out_24h": null,
+      "in_1h": null, "in_24h": null,
+      "last_outcome": {"role": "rust-plan", "outcome": "yielded", "at": "2026-11-11T08:41:39Z"},
+      "pending": 0
+    }
+  },
   "per_mind": {
     "genome": {
       "omp:longcat-2.5-free": {"turns_1h": 2, "out_1h": 20, "in_1h": 30,
@@ -151,6 +163,16 @@ only that file and computes nothing itself.
   `in_routes: false` and `verdict: UNKNOWN`, with the same turns/pending/last-outcome fields.
   Their last outcome is kept whatever its age, including older than 24 h, so a retired
   candidate stays visible. They also appear in `per_mind` and are named in `unknowns`.
+- **`retired_models`** are the candidates named in the `retired` list of `routes.json`
+  — removed from every role, so no role may select them. Each row carries `free: null`,
+  `account: null`, `in_routes: false`, `verdict: RETIRED` and the note
+  "retired from routes.json: no role selects it", with the same turns/pending/last-outcome
+  fields. A retired candidate keeps its last outcome whatever its age, so its spend stays
+  visible; its rows are **not** named in `unknowns`, because a retired candidate is known,
+  not unclassified. Retired and unclassified are different things: the two RouterAI
+  candidates in the site's `retired` list read as retired, while a candidate that only
+  appears in the ledger (an older model, a model since removed without a `retired` entry)
+  reads as unclassified.
 - **`ledger`** is the meta block for the ledger sections: `present`, `events` (rows read as
   events), `malformed_skipped` (lines that were not valid UTF-8 or not a JSON object, plus
   select/outcome/fallback rows with no role or key string; all are excluded from the counts
@@ -179,8 +201,9 @@ is 900 s.
 The checkout declares a `budget-consistency` duty in `duties.json`: every 300 s, timeout
 60 s, signal max age 900 s, resolver **senses**. Exit 2 routes RED and exit 3 records UNKNOWN
 immediately; a missing or stale observation is UNKNOWN. The check covers only the accounts section; the
-ledger and router checks remain `not_checked`. This declaration requires the scheduler's
-reviewed delivery and a live timer observation before it is considered active. The existing
+ledger and router checks remain `not_checked`. The duty is installed and running: the
+`mishe-producer-budget-consistency.timer` fires every 300 s, the unit runs the check from the
+pinned release, and the `budget-consistency` signal reads GREEN on a fresh run. The existing
 `budget` duty runs the producer, not this judge.
 
 RED when any of:
