@@ -97,13 +97,13 @@ keeps the release it started from. No mind moves the pin by hand.
 `wall_patch` checks and applies a patch against. It does not decide what the units
 run.
 
-The strong gate binds the reviewed bytes to the committed release. The patch
-record keeps each reviewed path's after-bytes; the check captures them from the
+The strong gate binds the checked bytes to the committed release. The patch
+record keeps each path's after-bytes; the check captures them from the
 shared checkout, and the consumer compares them with the release worktree
-materialized at the commit. A release tree that differs from the reviewed bytes
+materialized at the commit. A release tree that differs from those bytes
 is refused as `committed release differs from reviewed bytes`.
 
-The shared checkout is not that byte source. A peer who commits to a reviewed
+The shared checkout is not that byte source. A peer who commits to a checked
 path during the check window moves the checkout and `HEAD` together, and that is
 not drift: the delivered artifact is the commit the release is materialized
 from. Only an uncommitted local write is drift, and it is refused before any
@@ -162,12 +162,13 @@ any runtime byte moves: re-pinning the new release is not a revert. Without this
 delivery once logged "activated 38e28e3d" as its revert and the pin stayed on the new
 release.
 
-The consumer binds every changed committed path to reviewed bytes and binds the
-reviewed delivery plan. It performs the strong apply and recovery exercise after
-the engine exits and the dispatch settles. A changed review, command artifact,
-source tree or uncovered committed path is refused. Patch `check` runs the
-supplied test command and review; use tests with no live activation effects.
-`status` reads the retained patch evidence without applying it.
+The consumer binds every changed committed path to the checked bytes and binds the
+delivery plan. It performs the strong apply and recovery exercise after the
+engine exits and the dispatch settles. A changed command artifact, source tree
+or uncovered committed path is refused. Patch `check` runs the supplied test
+command on the exact bytes and ends in the phase `tested`; use tests with no live
+activation effects. `status` reads the retained patch evidence without applying
+it.
 
 ## Observing and recovering delivery
 
@@ -186,7 +187,7 @@ The `delivery-requests` signal expires after ten minutes (`max_age` 600 in `duti
 observing; missing, stale or malformed monitoring never establishes success.
 
 The site's moving-pin script (`SITE_HOME/operator/plans/moving-pin-20261105/delivery/deliver.sh`)
-re-runs the strong check and review before applying. A manual delivery driver
+re-runs the strong deterministic check before applying. A manual delivery driver
 must run in a separately supervised service under the existing containment,
 with retained logs and an explicit result. `setsid` and `nohup` do not escape a
 wake service's systemd control group: when the wake exits, systemd kills those
@@ -195,7 +196,7 @@ descendants. Prefer the queued request above for authored delivery.
 The driver holds new wakes, waits for dispatch exclusion, applies and exercises
 recovery. Its exit trap releases the hold; an interruption can still leave an
 UNKNOWN effect requiring reconciliation. A reverted patch or changed observer
-needs a fresh checked and reviewed record before another apply. Installed
+needs a fresh checked record before another apply. Installed
 consumer files and transient timer consumers have different contracts: check
 loaded installed pins against disk, and retain invocation/cgroup draining and
 future-pin checks for active or pending transients.

@@ -1,6 +1,6 @@
 # Per-component deploy
 
-Status: the mechanism works and has been exercised on the live site. `components.py` and the `mishe component` commands exist (see "Who promotes"), and four components have been promoted and verified there. What is still missing is the duty detector that keeps them watched: no `components` signal is registered, so a component that goes RED after a promotion is not reported to anyone. Promotion touches the delivery mechanism, so it keeps its separate fresh review.
+Status: the mechanism works and has been exercised on the live site. `components.py` and the `mishe component` commands exist (see "Who promotes"), and four components have been promoted and verified there. What is still missing is the duty detector that keeps them watched: no `components` signal is registered, so a component that goes RED after a promotion is not reported to anyone. Promotion touches the delivery mechanism, so it keeps its own check against the promoted bytes and its rollback path; review follows it rather than gating it.
 
 ## Problem
 
@@ -17,7 +17,7 @@ SITE_HOME/components/NAME/
 ```
 
 - Consumers call `components/NAME/current/bin/NAME`, a stable path, never a release path. This is the intended end state; no consumer calls it yet (see "Order of work").
-- The core (scheduler, dispatch, settlement, locking, delivery) stays on `runtime/current` with the strong gate and fresh review. It is not a component.
+- The core (scheduler, dispatch, settlement, locking, delivery) stays on `runtime/current` with the strong gate and its deterministic activation, revert and reapply checks. It is not a component.
 
 ## Rules
 

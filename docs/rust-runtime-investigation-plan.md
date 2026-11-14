@@ -197,8 +197,8 @@ resident services, IPC frameworks and speculative refactoring.
   Distinguish build reproducibility from merely recording source provenance.
 - [ ] Apply existing ordinary versus strong-change policy. Scheduler, dispatch,
   settlement, locking, protocol, authorization and delivery/bootstrap changes
-  require separate fresh review and deterministic activation/revert/reapply
-  checks. Define these future checks without executing or weakening them.
+  require deterministic activation/revert/reapply checks and a fresh review
+  after delivery. Define these future checks without executing or weakening them.
 
 ### 5. Review and finish the planning deliverable
 
@@ -234,9 +234,10 @@ Python where justified and reject unsafe or unhelpful migration candidates.
 
 The owner would like a running first Rust core slice within one day. Treat this
 as a planning target, not a guaranteed deadline or permission to skip baseline,
-fresh review, containment or activation/revert/reapply checks. Define precisely
-what that first slice owns; do not imply a full runtime rewrite. Include a
-24-hour critical path with effort estimates, prerequisites, actual-consumer
-acceptance and rollback, plus an explicit go/no-go if the evidence does not
-support safe delivery in that time. This investigation remains planning only;
-implementation requires a separate assignment after the proposal.
+containment or activation/revert/reapply checks, or the fresh review that
+follows delivery. Define precisely what that first slice owns; do not imply a
+full runtime rewrite. Include a 24-hour critical path with effort estimates,
+prerequisites, actual-consumer acceptance and rollback, plus an explicit
+go/no-go if the evidence does not support safe delivery in that time. This
+investigation remains planning only; implementation requires a separate
+assignment after the proposal.

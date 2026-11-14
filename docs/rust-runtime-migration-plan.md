@@ -263,17 +263,17 @@ Reading:
 | Change | Class | Reason |
 |---|---|---|
 | S0 hoisting | Ordinary if verification rules are unchanged (proved by the byte-identical test); otherwise strong | Touches `feed.py` and `records.py`, which are in `parsing-policy.json`. |
-| S1 derived file | Ordinary if verification and lock are unchanged | Touches the feed reader; a fresh reviewer is still recommended. |
-| S2 `readings` cadence | Strong | Scheduler change (`duties.json` `every`/`max_age`). Needs fresh review and activation, revert and reapply checks. |
+| S1 derived file | Ordinary if verification and lock are unchanged | Touches the feed reader; a fresh reviewer is still recommended after delivery. |
+| S2 `readings` cadence | Strong | Scheduler change (`duties.json` `every`/`max_age`). Needs activation, revert and reapply checks, plus a fresh review after delivery. |
 | S3 doctor diagnosis | Ordinary (diagnosis only) | No behaviour change until cause is known. |
 | T1 `mishe-tape` | **Strong** | Protocol boundary, verification, durable verified store, delivery of a binary. |
 
 For any strong change, the required checks cannot be compressed or skipped:
-1. A fresh reviewer who did not author the change reviews it. The author cannot review it.
-2. Deterministic activation check: the new path is the one the real consumer calls, shown by observation, not by a unit test.
-3. Deterministic revert check: the pin revert returns the consumer to the predecessor, and the consumer's output is unchanged.
-4. Deterministic reapply check: reapplying the same pin reproduces the same observed behaviour.
-5. Only then promotion, and automatic rollback on failed observation.
+1. Deterministic activation check: the new path is the one the real consumer calls, shown by observation, not by a unit test.
+2. Deterministic revert check: the pin revert returns the consumer to the predecessor, and the consumer's output is unchanged.
+3. Deterministic reapply check: reapplying the same pin reproduces the same observed behaviour.
+4. Promotion follows those checks, with automatic rollback on failed observation.
+5. A fresh reviewer who did not author the change examines it after delivery. The author cannot review it, and a defect it finds is a new commit and another pin move.
 
 These checks are defined here, not executed. The owner's one-day target does not waive them.
 
@@ -299,7 +299,7 @@ These checks are defined here, not executed. The owner's one-day target does not
 
 1. Single-authority: T1 must own verification for both `entries()` (44 callers) and `role_entries()` (4 callers). Moving only one path leaves two live verifiers. Owning both means a whole-tape handoff from Rust to Python for `entries()`, and the serialization cost of that is UNKNOWN (2.6).
 2. Verified-store coupling: verification uses `records.py` sqlite (`records.py:229-323`) and sha256 envelopes (`records.py:208`). T1 must own that store or leave Python doing per-record sqlite calls, which the profile identifies as a large share.
-3. Strong change: T1 is a protocol and verification boundary. The required fresh review and activation, revert and reapply checks (5.1) cannot be compressed.
+3. Strong change: T1 is a protocol and verification boundary. The required activation, revert and reapply checks and the post-delivery fresh review (5.1) cannot be compressed.
 4. Toolchain not pinned: no `rust-toolchain.toml`, no `Cargo.lock`. Pinning them and resolving the offline graph is a build step, which is not authorized now.
 5. Byte-identical acceptance on 298,161 entries has not been exercised by anything.
 
@@ -1070,8 +1070,8 @@ the pass *structure* is what remains.
    `pending` batch, one store flush at the end, the same verification rules and
    the same store. It is a `feed.py` change, so it is a strong change
    (`parsing-policy.json` names `feed.py` and `records.py` as boundaries), and
-   it needs a fresh reviewer who did not author it plus the activation, revert
-   and reapply checks (5.1).
+   it needs the activation, revert and reapply checks plus the post-delivery
+   fresh review by a reviewer who did not author it (5.1).
 
    The expected prize is the per-entry overhead the profile attributes:
    ~5.6 CPU-s of `records._directory`, ~6.8 CPU-s of `check_pass_directory`
@@ -1197,7 +1197,7 @@ boundaries; 561 existing legacy sites remain".
 
 **State: committed, not yet activated.** The plant's moving-pin driver
 (`deliver.sh` → `rerun.sh`) is the strong path for this range; it re-runs the
-check and the fresh review itself. At the time of writing it refused because
+deterministic check itself. At the time of writing it refused because
 the shared checkout carried another mind's uncommitted edits to
 `src/mishe_tauftauf/engine_omp.py`, `engine_router.py` and `wake.py`. Those
 edits are not mine and were left alone. The live status is therefore UNKNOWN
@@ -1731,12 +1731,12 @@ recurring cost is the readings scan: ~20 CPU-s and ~0.9 GB peak every 10 min.
 new consumer whose tape work dominates its own run or an R2-class port of a whole
 reading, not another small program. The cheaper lever is S2.3 (cadence 600 s →
 900 s): it is a scheduler change on a duty whose resolver is `senses`, so it takes
-the strong path (fresh review, deterministic activation, revert and reapply) and
-needs one measurement first — how fast the readings' inputs actually change, so
-that a longer interval does not age a reading into UNKNOWN. `readings` is
-registered `every=600, timeout=300, max_age=900`, so 600+300 already equals the
-bound; any larger `every` has to raise `max_age` with it, which changes what
-subscribers may treat as fresh.
+the strong path (deterministic activation, revert and reapply, plus a fresh
+review after delivery) and needs one measurement first — how fast the readings'
+inputs actually change, so that a longer interval does not age a reading into
+UNKNOWN. `readings` is registered `every=600, timeout=300, max_age=900`, so
+600+300 already equals the bound; any larger `every` has to raise `max_age` with
+it, which changes what subscribers may treat as fresh.
 
 **The site-local install record.** It said "Not yet consumed by a live caller"
 until §10.33 rewrote it at 08:07Z; the binary has been live since the 02:47:28Z
@@ -1953,8 +1953,8 @@ consumes, deleting the Python scan over 299 k entries and the 196 k record-head
 peeks. It is **not** the per-file digest loop, and **not** `_classify_amendment`.
 Two caveats keep it honest: (a) it moves the outcome-eligibility decode across
 the parsing boundary, so it is a protocol change and takes the **strong path** —
-a fresh reviewer who did not author it, plus deterministic activation, revert
-and reapply checks — a slice for its own wake, not this one; (b) `eligible_evidence_path`
+deterministic activation, revert and reapply checks, plus a fresh reviewer who
+did not author it after delivery — a slice for its own wake, not this one; (b) `eligible_evidence_path`
 (0.58 CPU-s over 4,763 calls, ~122 µs each) is mostly filesystem resolve work,
 so a Rust path check saves less than its share; it stays a lower-value alternate.
 The exact payoff of the scan slice is measured only after it is built (predicted

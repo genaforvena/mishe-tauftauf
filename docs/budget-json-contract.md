@@ -226,7 +226,7 @@ RED when any of:
    the producer from its site-local `producers/budget.sh`; observed on the timer 2026-11-11
    05:28:04Z, `produced_at` 05:28:06Z, GREEN, next fire 05:38:04Z. That script is not
    git-tracked, so re-installing it loses the line; the durable home is a tracked duty entry
-   (scheduler change, fresh review).
+   (scheduler change: activation, revert and reapply checks, plus a fresh review after delivery).
 3. Switch `budget_view.py` to render-only from `engine/budget.json`; delete its `MAP`,
    `rows()`, `models()`, `window_models()` computations. **Open.**
 4. Switch `engine_router.assess()`/`live_status()` to read account windows from

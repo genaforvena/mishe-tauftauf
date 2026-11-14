@@ -175,10 +175,10 @@ it genuinely cannot, it records the resolver, one action that would produce
 the evidence, when it will decide, and the alternative it can run meanwhile.
 Ordinary reversible changes carry their own checks, a scoped commit, an
 observed activation and a rollback if the observation fails; independent
-review follows them rather than holding them up. Changes to how the plant
+review follows every change rather than holding it up. Changes to how the plant
 schedules, dispatches, settles, locks, interprets protocols, authorizes or
-delivers keep a separate fresh review and a deterministic
-activate-revert-reapply exercise.
+delivers keep a deterministic activate-revert-reapply exercise, and a fresh
+reviewer who is not the author examines them after delivery.
 
 Output receipts distinguish actual Git commits and file artifacts from a wall
 rewrite or a claimed “changed” result. Shared author identity does not establish
