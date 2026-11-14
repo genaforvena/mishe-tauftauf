@@ -116,7 +116,9 @@ def evaluate(home: Path, now: float, green_age: float = GREEN_AGE_S, red_age: fl
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--site", type=Path, default=Path(__file__).resolve().parent.parent / ".mishe-tauftauf")
+    parser.add_argument("--site", "--home", dest="site", type=Path,
+                        default=Path(__file__).resolve().parent.parent / ".mishe-tauftauf",
+                        help="site home (--home is the name the scheduler coverage check passes)")
     parser.add_argument("--green-age", type=float, default=GREEN_AGE_S)
     parser.add_argument("--red-age", type=float, default=RED_AGE_S)
     args = parser.parse_args(argv)

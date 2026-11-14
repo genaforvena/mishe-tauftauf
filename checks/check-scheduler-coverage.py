@@ -524,7 +524,11 @@ def run_check(repo: Path, name: str, home: Path) -> tuple[int, str]:
         # A check that takes a shared checkout (release-lag.py requires it)
         # declares --repo in its source; pass it only to those, so checks that
         # take only --home still run with the arguments they accept.
-        extra = ["--repo", str(repo)] if b"--repo" in blob.stdout else []
+        # The declaration is matched, not the bare text: a docstring that
+        # mentions --repo must not pass it, because argparse reads an unknown
+        # "--repo" as a prefix of "--report-max-age" and rejects the path.
+        declares_repo = b'add_argument("--repo"' in blob.stdout or b"add_argument('--repo'" in blob.stdout
+        extra = ["--repo", str(repo)] if declares_repo else []
         result = subprocess.run([sys.executable, str(script), "--home", str(home), *extra],
                                 capture_output=True, text=True, timeout=300)
     output = (result.stdout + result.stderr).strip()
