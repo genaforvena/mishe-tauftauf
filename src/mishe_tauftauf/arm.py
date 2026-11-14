@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime, timezone
 
 from . import intentions, signal_store, units
+from .timestamp_text import decode_listed_next_instants
 
 TIMER_UNIT = "mishe-next-due"
 # Each arm gets its own transient unit name. The due handler is itself a running
@@ -63,17 +64,8 @@ def _retry_due_within_window(now: float) -> bool:
     """
     listed = subprocess.run(["systemctl", "--user", "list-timers", "--all", "--plain", "--no-legend",
                              TIMER_GLOB], check=False, capture_output=True, text=True).stdout
-    for line in listed.splitlines():
-        tokens = line.split()
-        if len(tokens) < 5:
-            continue
-        try:
-            nxt = datetime.strptime(" ".join(tokens[:4]), "%a %Y-%m-%d %H:%M:%S %Z")
-        except ValueError:
-            continue
-        if nxt.replace(tzinfo=timezone.utc).timestamp() <= now + OVERDUE_RETRY_SECONDS:
-            return True
-    return False
+    return any(nxt.timestamp() <= now + OVERDUE_RETRY_SECONDS
+               for nxt in decode_listed_next_instants(listed))
 
 
 def systemd_scheduler(epoch: float | None, *, command: list[str],
