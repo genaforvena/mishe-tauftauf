@@ -191,6 +191,21 @@
       "covers": "the DEV.to index page's published counts match the account"
     },
     {
+      "name": "pub-account-count-claims",
+      "command": [
+        "{python}",
+        "{repo}/checks/pub-account-count-claims.py",
+        "--env",
+        "{home}/pub/access/devto.env"
+      ],
+      "every": 3600,
+      "timeout": 300,
+      "max_age": 7200,
+      "resolver": "pub",
+      "replaces": [],
+      "covers": "every count a published page states about the DEV account matches the account"
+    },
+    {
       "name": "budget",
       "command": [
         "{home}/producers/budget.sh"

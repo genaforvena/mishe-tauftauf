@@ -170,6 +170,17 @@ jobs:
       # failure, so the check that guards the index page is itself exercised
       # here.
       - run: python checks/pub-index-self-claims.py --self-test
+      # A count the account publishes about itself, anywhere, must be the
+      # account's count.  Measured on this plant: article 4894878 said
+      # "this account has published 78 posts" while the account held 95, and
+      # article 4949922 said "the published blog this account maintains is 62
+      # posts, 58 distinct titles" while the account held 95 and 91 -- both
+      # published, both the author's own.  The index check reads one page and
+      # the count-parity check reads each count page's first correction
+      # sentence, so all three numbers passed.  The gate runs the checker's
+      # own controlled failure, so the check that reads every published page
+      # is itself exercised here.
+      - run: python checks/pub-account-count-claims.py --self-test
       - run: python -m pytest -q
 
   adapters:
