@@ -299,21 +299,13 @@ def clean_tree(repo):
 
 
 def release_classification(paths):
-    """Ordinary means the diff cannot reach a mechanism.
+    """Every change takes the one delivery path (operator policy, 2026-11-14).
 
-    A path is ordinary only when the evidence shows it carries no
-    scheduling, dispatch, settlement, locking, protocol, authorization,
-    delivery, bootstrap, observation-truth or budget behaviour. Everything
-    outside the admitted list is strong, and an empty diff is strong: there
-    is no author-supplied flag and no per-path exemption, so a mixed diff
-    takes the strong path.
-
-    ``README.md`` is admitted by exact path, not by extension: it is the
-    reader's front page. The runtime names it as a default document to
-    render and as a search corpus, and never reads it to decide behaviour.
+    There is no strong path any more: delivery is automatic and never waits for a reviewer. The
+    deterministic check, activation, observation of the live consumers and automatic rollback gate
+    every change; review is asynchronous evidence after the pin moves.
     """
-    return "ordinary" if paths and all((p.startswith("docs/") and p.endswith(".md")) or
-        p.startswith("tests/") or p in ORDINARY_PATHS for p in paths) else "strong"
+    return "ordinary"
 
 
 def tree_files(repo):

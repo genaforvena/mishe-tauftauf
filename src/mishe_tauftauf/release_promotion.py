@@ -30,48 +30,15 @@ def advance_candidates(repo, pin, head=None):
     return boundary.commits_after(repo, pin, head)
 
 
-def ordinary_prefix(repo, pin, commits):
-    """Newest commit whose whole ``pin..sha`` diff is ordinary, and where the walk stopped.
+def advance_target(repo, pin, *, commits=None, head=None):
+    """The commit ``mishe release advance`` points the pin at: the newest commit after ``pin``.
 
-    Returns ``(sha, paths, stopped_by)``: ``sha`` is the newest ordinary commit
-    reachable from ``pin`` (``pin`` itself when the first commit is strong),
-    ``paths`` the cumulative changed paths from ``pin`` to ``sha``, and
-    ``stopped_by`` the first strong-class commit sha, or ``None`` when the whole
-    range is ordinary. A strong commit is never stepped over: the ordinary
-    commits before it advance, and it waits for its own fresh review instead of
-    blocking them (plan pin-flow-20261108 item 1).
-    """
-    previous, paths = pin, []
-    for commit in commits:
-        changed = boundary.changed_paths(repo, previous, commit)
-        if classification(changed) == "strong":
-            return previous, paths, commit
-        paths.extend(changed)
-        previous = commit
-    return previous, paths, None
-
-
-def advance_target(repo, pin, *, ci_state, commits=None, head=None):
-    """The commit ``mishe release advance`` may point the pin at, and why nothing newer.
-
-    Walks the ordinary prefix newest-first and returns the newest commit whose
-    exact-SHA CI passed; earlier ordinary commits ride along in one atomic point.
-    ``ci_state(sha)`` is ``"pass"``/``"fail"``/``"pending"``/``"unknown"`` and
-    anything but ``"pass"`` is ineligible, so UNKNOWN CI never advances a commit.
-    Returns ``(sha, reason)`` with ``sha`` ``None`` when nothing may advance and
-    ``reason`` naming the first blocker for a reader.
+    Delivery builds that commit fresh from git, runs the whole suite on it and observes the live
+    consumers, so neither the remote CI result nor a path classification decides what may advance.
+    Returns ``(sha, reason)``; ``sha`` is ``None`` with ``reason`` ``pin-is-head`` when nothing is newer.
     """
     commits = advance_candidates(repo, pin, head) if commits is None else list(commits)
-    target, _paths, stopped = ordinary_prefix(repo, pin, commits)
-    if target == pin:
-        return None, ("blocked-by-strong:" + stopped) if stopped else "pin-is-head"
-    prefix = commits[:commits.index(target) + 1]
-    for commit in reversed(prefix):
-        if ci_state(commit) == "pass":
-            if stopped:
-                return commit, "advance-stops-before-strong:" + stopped
-            return commit, (None if commit == target else "newest-ordinary-commit-ci-not-passing")
-    return None, "no-ordinary-commit-with-passing-ci"
+    return (commits[-1], None) if commits else (None, "pin-is-head")
 
 
 def current_link(home):
@@ -132,9 +99,13 @@ def bind_reviewed_source(source, record):
             raise ValueError(f"committed release differs from reviewed bytes: {name}")
 
 
-def run(argv, *, cwd, env):
+CHECK_TIMEOUT_S = 1500
+"""The delivery check is the whole suite on the release tree (about 8 minutes)."""
+
+
+def run(argv, *, cwd, env, timeout=900):
     try:
-        result = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
         return dict(argv=argv, code=result.returncode, output=result.stdout + result.stderr, at=time.time())
     except (OSError, subprocess.SubprocessError) as exc:
         return dict(argv=argv, code=None, output=str(exc), at=time.time())
@@ -365,7 +336,7 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
         from .roles import declared
         attributed_owner = boundary.commit_role(repo, sha)
         record["owner"] = attributed_owner if attributed_owner in declared(home) else "genome"
-        record["check"] = run(check, cwd=source, env=env)
+        record["check"] = run(check, cwd=source, env=env, timeout=CHECK_TIMEOUT_S)
         if record["check"]["code"] != 0:
             record["phase"]="check-failed"; save(); return record
         closure(source, env)
@@ -380,6 +351,8 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
         try:
             record["activation_started_at"] = time.time(); save()
             switch(source,sha); record["activated"]=True; record["events"].append("activated"); save()
+            # the probe drains consumer invocations that started before this instant (pin_observation)
+            env = dict(env, MISHE_PIN_CUTOFF_US=str(time.monotonic_ns() // 1000))
             if activate is None:
                 record["consumer_invocation"] = boundary.invoke_arm_consumer(source/"src")
             record["observe"] = probe(observe,cwd=source,env=env)

@@ -22,6 +22,11 @@ DRAIN_MARGIN_S = 90
 DRAIN_TIMEOUT_S = CONSUMER_MAX_RUN_S + DRAIN_MARGIN_S
 
 
+def is_transient(error):
+    """True when a pending_old error is mid-start evidence a drain may retry, not a failure."""
+    return str(error).split(':')[0] in TRANSIENT_UNKNOWN
+
+
 def command(argv, timeout=10):
     return subprocess.check_output(argv, text=True, timeout=timeout)
 
@@ -117,7 +122,7 @@ def drain(home, directory, label, timeout=DRAIN_TIMEOUT_S, sleep=time.sleep):
                 pending = pending_old(record, rows)
             except ValueError as exc:
                 # Transient mid-start evidence: retry until the same deadline, then fail closed with the last error.
-                if str(exc).split(':')[0] in TRANSIENT_UNKNOWN and time.monotonic() < until:
+                if is_transient(exc) and time.monotonic() < until:
                     samples.append(dict(at=time.time(), transient=str(exc), invocations=rows))
                     sleep(RETRY_INTERVAL_S)
                     continue

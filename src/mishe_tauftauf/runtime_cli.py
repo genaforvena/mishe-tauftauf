@@ -214,15 +214,12 @@ def run(args) -> int:
             print(json.dumps(result, indent=2))
             return 0
         if args.release_command == "advance":
-            from . import ci_watch
             if args.repo is None:
                 raise ValueError("release advance needs --repo")
             pin = promotion.current_link(home).resolve().name
             if len(pin) != 40 or any(c not in "0123456789abcdef" for c in pin):
                 raise ValueError("release advance: runtime/current does not name a release")
-            def ci_state(sha):
-                return ci_watch.read(home, workspace=args.repo, sha=sha, branch="main")["state"]
-            target, reason = promotion.advance_target(args.repo, pin, ci_state=ci_state, head=args.sha)
+            target, reason = promotion.advance_target(args.repo, pin, head=args.sha)
             if args.plan or target is None:
                 print(json.dumps(dict(pin=pin, target=target, reason=reason), indent=2))
                 return 0

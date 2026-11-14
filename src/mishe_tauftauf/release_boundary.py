@@ -74,3 +74,18 @@ def wrapper_shape_ok(lines):
             and all(line.startswith("export MISHE_SEED_HOME=") for line in lines[2:-1])
             and lines[-1].startswith("exec ")
             and lines[-1].endswith(' -m mishe_tauftauf "$@"'))
+
+
+def unit_properties(text):
+    """``systemctl show`` output (external text, decoded at this boundary) as {property: value}."""
+    return dict(line.split("=", 1) for line in str(text).splitlines() if "=" in line)
+
+
+def unit_file_pins(text):
+    """PYTHONPATH assignments an installed unit file declares (``Environment=PYTHONPATH=...`` lines)."""
+    return [line[len("Environment="):] for line in str(text).splitlines() if line.startswith("Environment=PYTHONPATH=")]
+
+
+def loaded_pins(environment_text):
+    """PYTHONPATH assignments in a loaded ``Environment`` property, as ``PYTHONPATH=value`` words."""
+    return [word for word in str(environment_text).split() if word.startswith("PYTHONPATH=")]

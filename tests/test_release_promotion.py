@@ -50,25 +50,13 @@ def test_admitted_paths_are_ordinary(path):
 
 
 @pytest.mark.parametrize("path", ["AGENTS.md", "src/mishe_tauftauf/seed_agent_contract.md",
-                                  "src/mishe_tauftauf/seed_doctrine.md", "src/mishe_tauftauf/owed.py",
-                                  "src/mishe_tauftauf/wake.py", "src/mishe_tauftauf/work_state.py",
-                                  "src/mishe_tauftauf/delivery_requests.py",
-                                  "src/mishe_tauftauf/release_promotion.py", "duties.json",
-                                  "unknown/new.py", "README.markdown", "docs/page.txt",
-                                  "src/mishe_tauftauf/producers.py.bak"])
-def test_mechanism_and_unknown_paths_are_strong(path):
+                                  "src/mishe_tauftauf/wake.py", "src/mishe_tauftauf/release_promotion.py",
+                                  "duties.json", "unknown/new.py", "README.markdown", "docs/page.txt"])
+def test_there_is_no_strong_path_every_change_is_ordinary(path):
     from mishe_tauftauf import work_boundary as b
-    assert b.release_classification([path]) == "strong"
-
-
-def test_empty_diff_is_strong():
-    from mishe_tauftauf import work_boundary as b
-    assert b.release_classification([]) == "strong"
-
-
-def test_mixed_readme_and_mechanism_is_strong():
-    from mishe_tauftauf import work_boundary as b
-    assert b.release_classification(["README.md", "src/mishe_tauftauf/wake.py"]) == "strong"
+    assert b.release_classification([path]) == "ordinary"
+    assert b.release_classification(["README.md", path]) == "ordinary"
+    assert b.release_classification([]) == "ordinary"
 
 
 def test_every_admitted_path_is_exact_not_by_extension():
@@ -102,38 +90,6 @@ def test_readme_only_release_delivers_with_review_pending(tree):
     assert r["classification"]=="ordinary"
     assert r["review_pending"]
     assert r["tests_passed"] and r["observed"]
-
-
-def test_readme_plus_scheduler_cannot_use_the_ordinary_path(tree):
-    repo,home,old,sha=tree
-    (repo/"README.md").write_text("reader front page")
-    target=repo/"src/mishe_tauftauf/wake.py";target.parent.mkdir(parents=True);target.write_text("pass")
-    git(repo,"add",".");git(repo,"commit","-qm","readme and scheduler")
-    with pytest.raises(ValueError, match="strong"):
-        p.promote(home,repo,git(repo,"rev-parse","HEAD"),check=["check"],observe=["probe"],previous=old)
-
-
-def test_readme_plus_scheduler_is_refused_without_reviewed_strong_evidence(tree):
-    from mishe_tauftauf import wall_patch
-    repo,home,old,sha=tree
-    (repo/"README.md").write_text("reader front page")
-    target=repo/"src/mishe_tauftauf/wake.py";target.parent.mkdir(parents=True);target.write_text("pass")
-    git(repo,"add",".");git(repo,"commit","-qm","readme and scheduler")
-    runtime=home/"runtime";(runtime/"src/mishe_tauftauf").mkdir(parents=True)
-    write_json(home/"coordination-mode.json", dict(runtime=str(runtime)))
-    wall_patch.prepare(home,"unreviewed",["README.md"])
-    with pytest.raises(ValueError, match="recovery exercise"):
-        p.promote(home,repo,git(repo,"rev-parse","HEAD"),check=["check"],observe=["probe"],
-                  previous=old,strong_patch="unreviewed")
-    assert not (home/"work/releases").exists() or not list((home/"work/releases").glob("*.json"))
-
-
-def test_high_impact_cannot_use_ordinary_path(tree):
-    repo,home,old,sha=tree
-    target=repo/"src/mishe_tauftauf/owed.py";target.parent.mkdir(parents=True);target.write_text("pass")
-    git(repo,"add",".");git(repo,"commit","-qm","scheduler")
-    with pytest.raises(ValueError, match="strong"):
-        p.promote(home,repo,git(repo,"rev-parse","HEAD"),check=["check"],observe=["probe"],previous=old)
 
 
 def test_dirty_untracked_module_cannot_enter_release(tree):
@@ -538,41 +494,16 @@ def _advance_tree(tmp_path):
     return repo, pin, c1, c2
 
 
-def test_advance_target_takes_newest_ordinary_commit_with_passing_ci(tmp_path):
+def test_advance_target_takes_the_newest_commit_whatever_ci_or_paths_say(tmp_path):
     repo, pin, c1, c2 = _advance_tree(tmp_path)
     assert p.advance_candidates(repo, pin) == [c1, c2]
-    assert p.advance_target(repo, pin, ci_state=lambda s: "pass") == (c2, None)
-
-
-def test_advance_target_falls_back_when_newest_ordinary_ci_is_pending(tmp_path):
-    repo, pin, c1, c2 = _advance_tree(tmp_path)
-    target, reason = p.advance_target(repo, pin, ci_state=lambda s: "pass" if s == c1 else "pending")
-    assert (target, reason) == (c1, "newest-ordinary-commit-ci-not-passing")
-
-
-def test_advance_target_never_advances_without_a_passing_ci(tmp_path):
-    repo, pin, _c1, _c2 = _advance_tree(tmp_path)
-    assert p.advance_target(repo, pin, ci_state=lambda s: "unknown") == (None, "no-ordinary-commit-with-passing-ci")
+    assert p.advance_target(repo, pin) == (c2, None)
+    (repo / "duties.json").write_text("{}"); git(repo, "add", "."); git(repo, "commit", "-qm", "mechanism")
+    assert p.advance_target(repo, pin) == (git(repo, "rev-parse", "HEAD"), None)
 
 
 def test_advance_target_is_pin_when_pin_is_head(tmp_path):
     repo, _pin, _c1, c2 = _advance_tree(tmp_path)
-    assert p.advance_target(repo, c2, ci_state=lambda s: "pass") == (None, "pin-is-head")
+    assert p.advance_target(repo, c2) == (None, "pin-is-head")
 
 
-def test_advance_target_stops_before_a_strong_commit(tmp_path):
-    repo, pin, c1, c2 = _advance_tree(tmp_path)
-    (repo / "duties.json").write_text("{}"); git(repo, "add", "."); git(repo, "commit", "-qm", "strong")
-    strong = git(repo, "rev-parse", "HEAD")
-    target, reason = p.advance_target(repo, pin, ci_state=lambda s: "pass")
-    assert target == c2
-    assert reason == "advance-stops-before-strong:" + strong
-
-
-def test_advance_target_blocked_when_the_first_commit_is_strong(tmp_path):
-    repo = tmp_path / "r2"; repo.mkdir()
-    git(repo, "init", "-q"); git(repo, "config", "user.name", "t"); git(repo, "config", "user.email", "t@e.org")
-    (repo / "README.md").write_text("x"); git(repo, "add", "."); git(repo, "commit", "-qm", "base"); pin = git(repo, "rev-parse", "HEAD")
-    (repo / "duties.json").write_text("{}"); git(repo, "add", "."); git(repo, "commit", "-qm", "strong")
-    strong = git(repo, "rev-parse", "HEAD")
-    assert p.advance_target(repo, pin, ci_state=lambda s: "pass") == (None, "blocked-by-strong:" + strong)
