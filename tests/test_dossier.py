@@ -42,10 +42,66 @@ def test_broken_previous_receipt_is_explicit_unknown(tmp_path):
 
 
 def test_dossier_states_the_wake_time_budget(tmp_path):
+    """Without a routes file the engine is the legacy flat-deadline one: the soft deadline is the cut."""
     out = dossier.build(tmp_path, "docs", owed.Snapshot(), key="budget", now=100, mail=[], timeout=1800)
     assert "## Time budget" in out
     assert "cut at 30 minutes" in out
     assert "by minute 25" in out
+
+
+def test_dossier_states_the_default_hard_cap_for_a_routed_site(tmp_path):
+    """A routed site with no explicit cap still gets the engine's default cap (3600 s)."""
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "engine" / "routes.json").write_text(json.dumps(
+        {"version": 1, "roles": {"docs": [{"engine": "claude", "model": "claude-haiku-5-5"}]}}))
+    out = dossier.build(tmp_path, "docs", owed.Snapshot(), key="budget", now=100, mail=[], timeout=1800)
+    assert "cut at 60 minutes" in out
+    assert "plan against 60, not 30" in out
+
+
+def test_dossier_states_the_sites_hard_cap_not_only_the_soft_deadline(tmp_path):
+    """The cut a wake must plan for is the engine's hard cap, not the soft deadline it is passed.
+
+    A run that keeps producing output is carried from the soft deadline to the cap
+    (docs and senses wakes, 2026-11-14: both ran the full 3600 s cap and threw away
+    finished work). A dossier that states only the soft deadline paces the mind to
+    half its real budget.
+    """
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "engine" / "routes.json").write_text(json.dumps(
+        {"version": 1, "roles": {"docs": [{"engine": "claude", "model": "claude-haiku-5-5"}]},
+         "hard_timeout_s": 5400}))
+    out = dossier.build(tmp_path, "docs", owed.Snapshot(), key="budget", now=100, mail=[], timeout=1800)
+    assert "cut at 90 minutes" in out
+    assert "plan against 90, not 30" in out
+
+
+def test_dossier_uses_the_earliest_cut_a_candidate_can_impose(tmp_path):
+    """The router applies a candidate's cap only when it is above the soft deadline.
+
+    A candidate whose own cap is below the soft deadline does not extend the run, so
+    the wake is cut at the soft deadline; one with a cap above it is carried to that
+    cap. The dossier must state the earliest cut any candidate can impose.
+    """
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "engine" / "routes.json").write_text(json.dumps(
+        {"version": 1, "hard_timeout_s": 3600, "roles": {"docs": [
+            {"engine": "omp", "model": "m", "account": "a", "hard_timeout_s": 1200},
+            {"engine": "claude", "model": "claude-haiku-5-5"}]}}))
+    out = dossier.build(tmp_path, "docs", owed.Snapshot(), key="budget", now=100, mail=[], timeout=1800)
+    assert "cut at 30 minutes" in out
+    assert "plan against" not in out
+
+
+def test_dossier_falls_back_to_the_soft_deadline_without_a_routes_file(tmp_path):
+    out = dossier.build(tmp_path, "docs", owed.Snapshot(), key="budget", now=100, mail=[], timeout=1800)
+    assert "cut at 30 minutes" in out
+
+
+def test_dossier_gives_the_wake_a_clock_to_count_its_minutes_from(tmp_path):
+    out = dossier.build(tmp_path, "docs", owed.Snapshot(), key="budget", now=1000, mail=[], timeout=1800)
+    assert "1970-01-01T00:16:40Z" in out
+    assert "date -u" in out
 
 
 def _record(key, state="unknown", detail="engine timed out: exceeded 1800s"):

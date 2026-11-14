@@ -6,6 +6,7 @@ its wall, why it was woken, what changed, and the commands to end the wake.
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 
 from . import intentions, signal_store, state_files
@@ -81,17 +82,64 @@ def git_delta(repo: Path | None, since: str | None) -> str:
     return out.stdout or "(no new commits)"
 
 
+def engine_ceiling(home, role: str, timeout: float) -> float:
+    """The real cut of one wake, in seconds.
+
+    The soft deadline a wake unit passes is not the cut: the router lets a run that
+    is still producing output continue to the hard cap (3600 s by default). A mind
+    told only the soft deadline paces itself to half its real budget and is cut
+    mid-work (docs and senses wakes, 2026-11-14: both ran the full 3600 s cap and
+    threw away 16.5 MB and 9.2 MB of finished work).
+
+    The router applies a candidate's cap only when it is above the soft deadline
+    (``RoutedEngine.hard_cap``); otherwise the run is cut at the soft deadline. So
+    the cut is the larger of the two, and a candidate with its own smaller cap cuts
+    the wake earlier. The earliest cut any candidate can impose is what a mind must
+    plan against.
+    """
+    from . import engine_router
+    try:
+        routes = engine_router.load_routes(home)
+    except ValueError:
+        routes = None
+    soft = float(timeout)
+    if not routes:
+        return soft
+    site_cap = routes.get("hard_timeout_s")
+    if not isinstance(site_cap, (int, float)) or isinstance(site_cap, bool) or site_cap <= 0:
+        site_cap = engine_router.DEFAULT_HARD_TIMEOUT_S
+    candidates = routes.get("roles", {}).get(role)
+    if not candidates:
+        return soft
+    cuts = []
+    for cand in candidates:
+        own = cand.get("hard_timeout_s")
+        cap = min(float(site_cap), float(own)) if isinstance(own, (int, float)) and own > 0 else float(site_cap)
+        cuts.append(max(soft, cap))
+    return min(cuts)
+
+
 def build(home, role: str, snap, *, key: str, now: float, mail: list, reconcile_of=None,
           repo: Path | None = None, since: str | None = None, timeout: float | None = None) -> str:
     home = Path(home)
     out = [f"# Wake {key} for {role}", ""]
     if timeout:
-        minutes = max(1, int(timeout // 60))
+        ceiling = engine_ceiling(home, role, timeout)
+        minutes = max(1, int(ceiling // 60))
+        soft_minutes = max(1, int(timeout // 60))
+        started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
         out += ["## Time budget", "",
                 f"This wake is cut at {minutes} minutes of engine time, and a cut wake loses everything it learned "
                 "that is not in its wall or yield. So: write your wall checkpoint (plate, evidence so far, next "
                 f"command) within the first {max(1, minutes // 3)} minutes, keep to one incident or one bounded "
-                f"change per wake, and yield by minute {max(1, minutes - 5)} at the latest.", ""]
+                f"change per wake, and yield by minute {max(1, minutes - 5)} at the latest.", "",
+                f"Your clock: this wake started at {started} UTC. Read it with `date -u` and count from {started}. "
+                "A wake that reads no clock cannot tell which minute it is on, and it is cut with its work "
+                "unfinished."]
+        if minutes > soft_minutes:
+            out += [f"The engine's soft deadline is minute {soft_minutes}, but a run that keeps producing output "
+                    f"is carried to minute {minutes} (the hard cap): plan against {minutes}, not {soft_minutes}."]
+        out += [""]
     if reconcile_of is not None:
         out += ["## RECONCILE FIRST", "",
                 f"An earlier wake ({reconcile_of.key}, attempt {reconcile_of.attempt}) ended {reconcile_of.state.name} "
