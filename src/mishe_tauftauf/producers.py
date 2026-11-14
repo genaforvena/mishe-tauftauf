@@ -17,10 +17,10 @@ import sys
 import time
 from pathlib import Path
 
-from . import signal_store, units
+from . import signal_store, units, wake_memory
 from .core.state import DispatchStore
 from .engine_process import run_bounded
-from .state_files import read_json
+from .state_files import read_json, write_json
 from .wake import EngineNotStarted, EngineTimeout
 
 DECLARED_REOFFER_SECONDS = 3600
@@ -30,6 +30,34 @@ DETAIL_BYTES = 4000
 
 def _utc(epoch: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
+
+
+def _restore_memory_floor(home, name: str) -> dict:
+    """Restore this producer's own memory floor and record what the unit ran under.
+
+    A protected host drop-in shadows the generated unit's ``MemoryHigh`` with a
+    lower value, and at that throttle the producer stalls instead of finishing
+    (2026-11-13/14: 15 slow readings runs peaked at exactly 1.0G, 8 of them
+    EngineTimeout, each blocked on I/O at cpu/elapsed 0.03). The floor is applied
+    to the running unit from inside the producer, so the protected drop-in is not
+    edited and no systemd reload is needed.
+    """
+    unit = wake_memory.running_unit_name()
+    if unit is None:
+        record = {"unit": None, "before": None, "after": None, "applied": False,
+                  "reason": "not running in a named unit"}
+    else:
+        record = wake_memory.ensure_memory_high(unit, floor=units.PRODUCER_MEMORY_HIGH_BYTES)
+        path = wake_memory.memory_high_path(unit)
+        throttle = None
+        if path is not None:
+            try:
+                throttle = (path / "memory.high").read_text(encoding="utf-8")
+            except OSError:
+                throttle = None
+        record["memory_high"] = throttle
+    write_json(Path(home) / "signals" / f"{name}.memory.json", record)
+    return record
 
 
 def run(home, name: str, command: list, *, now: float, timeout: float, red_codes=(2,), unknown_codes=()) -> int:
@@ -43,6 +71,7 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
         print(f"mishe: {name}: ran start={_utc(started)} end={_utc(time.time())} "
               f"elapsed={time.monotonic() - clock:.1f}s limit={timeout:g}s outcome={outcome}", file=sys.stderr)
 
+    _restore_memory_floor(home, name)
     try:
         code = run_bounded(command, env=dict(os.environ), cwd=Path(home), timeout=timeout, stdout_to=scratch)
     except (EngineNotStarted, EngineTimeout) as exc:

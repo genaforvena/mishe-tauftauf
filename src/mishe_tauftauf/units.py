@@ -48,6 +48,15 @@ def wake_debounce_seconds(role: str) -> int:
 WAKE_MEMORY_HIGH = "1536M"
 WAKE_MEMORY_HIGH_BYTES = 1536 * 1024 * 1024
 
+# The producer's own memory throttle. The protected host drop-in shadows the
+# generated value with ``MemoryHigh=1G``, so the declared value alone never
+# takes effect: a producer pinned at 1 GiB stalls instead of finishing
+# (2026-11-13/14: 15 slow runs peaked at exactly 1.0G, 8 of them EngineTimeout,
+# each blocked on I/O at cpu/elapsed 0.03). The producer restores its own floor
+# at run start, the way a wake does (``wake_memory``).
+PRODUCER_MEMORY_HIGH = "1536M"
+PRODUCER_MEMORY_HIGH_BYTES = 1536 * 1024 * 1024
+
 
 @dataclass
 class Config:
@@ -215,8 +224,10 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
             # A producer under MemoryHigh=1G stalled the root-fs fsync on 2026-11-13 (16 s stalls while
             # reclaim throttled the slice); 1536M cleared the stalls at runtime. Persist it here. Only the
             # soft MemoryHigh throttle is set: a hard MemoryMax kill has no evidence behind it.
+            # The declared value is not the effective one: a protected host drop-in shadows it with 1G,
+            # so the producer restores its own floor at run start (producers._restore_memory_floor).
             + f"ExecStart={' '.join(_exec_word(w) for w in prod.command)}\nTimeoutStartSec={prod.timeout}\n"
-            + "MemoryAccounting=yes\nMemoryHigh=1536M\n"
+            + f"MemoryAccounting=yes\nMemoryHigh={PRODUCER_MEMORY_HIGH}\n"
             + f"Slice={cfg.plants_slice}\n" * bool(cfg.plants_slice))
         # Producers with the same period started together fire in lockstep (about 17 at one second every
         # period), a write burst that stalled the root-fs probe's fsync on 2026-11-13. A per-activation
