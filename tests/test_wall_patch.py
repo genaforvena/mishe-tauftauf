@@ -122,6 +122,24 @@ def test_explicit_revert_returns_failure_when_consumer_restart_fails(tmp_path, m
     assert wall_patch.status(home, "change")["phase"] == "revert-failed"
 
 
+def test_revert_refuses_a_plan_without_revert_argv_and_moves_no_bytes(tmp_path, monkeypatch):
+    # Re-running activation as a revert re-pins the new code (a5dca7c3). A record
+    # whose delivery_plan has no revert argv must be refused, bytes untouched.
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
+    wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
+    wall_patch.apply(home, "change", [sys.executable, "-c", "pass"], [sys.executable, "-c", "pass"])
+    record = wall_patch.status(home, "change")
+    record["delivery_plan"].pop("revert", None)
+    wall_patch._save(wall_patch.location(home, "change"), record)
+    with pytest.raises(ValueError, match="no revert argv"):
+        wall_patch.revert(home, "change", [sys.executable, "-c", "pass"])
+    assert deployed.read_text() == "after\n"
+    assert wall_patch.status(home, "change")["phase"] != "reverted"
+
+
 def test_successful_revert_clears_stale_rollback_failure(tmp_path, monkeypatch):
     # A failed revert leaves `rollback_failure`; a later successful revert must
     # not keep the old failure beside a healthy reverted record. The verified
@@ -137,7 +155,7 @@ def test_successful_revert_clears_stale_rollback_failure(tmp_path, monkeypatch):
         wall_patch.revert(home, "change", [sys.executable, "-c", "raise SystemExit(1)"])
     failed = wall_patch.status(home, "change")
     assert failed["phase"] == "revert-failed" and failed["rollback_failure"]
-    wall_patch.revert(home, "change", [sys.executable, "-c", "pass"])
+    wall_patch.revert(home, "change", [sys.executable, "-c", "print('restored')"])
     recovered = wall_patch.status(home, "change")
     assert recovered["phase"] == "reverted"
     assert "rollback_failure" not in recovered

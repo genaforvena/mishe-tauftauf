@@ -810,6 +810,12 @@ def revert(home, identity, activate):
     with lock(home):
         check_admission(home)
         record = status(home, identity)
+        plan = record.get("delivery_plan")
+        # Re-running the plan's own activation as the revert re-pins the new code
+        # and calls it a revert (the a5dca7c3 failure). Refuse that before any
+        # runtime byte moves; a distinct explicit revert argv is still honoured.
+        if plan is not None and not plan.get("revert") and activate == plan.get("activate"):
+            raise ValueError(f"{identity}: delivery plan has no revert argv; refusing to revert by re-activating")
         _revert(home, identity, record, activate)
 
 
