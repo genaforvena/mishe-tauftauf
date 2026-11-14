@@ -336,10 +336,10 @@ def test_recovery_observation_timeout_stays_unknown_without_replay(plant, monkey
     from mishe_tauftauf import wall_patch
     home, *_ = plant; strong_request(plant, monkeypatch, bad_new=True)
     original = wall_patch.run
-    def timeout_recovery(home, identity, label, command):
+    def timeout_recovery(home, identity, label, command, timeout=None):
         if label == "request-recovery-observe":
             raise subprocess.TimeoutExpired(command, 300)
-        return original(home, identity, label, command)
+        return original(home, identity, label, command, timeout=timeout)
     monkeypatch.setattr(wall_patch, "run", timeout_recovery)
     result = q.consume(home)[0]
     assert result["state"] == "UNKNOWN"
