@@ -87,7 +87,9 @@ def _env(cfg: Config) -> str:
     return (f"Environment=PYTHONPATH={cfg.pythonpath}\n"
             f"Environment=MISHE_SEED_HOME={cfg.home}\n"
             f"Environment=MISHE_REPO={cfg.repo}\n"
-            "Environment=PATH=/home/mesh-home/.local/bin:/usr/local/bin:/usr/bin:/bin\n")
+            # The site bin holds the `mishe` wrapper: a wake mind that types bare
+            # `mishe yield` must find it, or its wake ends without a yield.
+            f"Environment=PATH={cfg.home}/bin:/home/mesh-home/.local/bin:/usr/local/bin:/usr/bin:/bin\n")
 
 
 def _cmd(cfg: Config, *words: str) -> str:
