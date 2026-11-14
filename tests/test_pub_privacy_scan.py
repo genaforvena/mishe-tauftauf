@@ -180,6 +180,13 @@ def test_the_structural_rules_hold_on_their_own():
     assert "raw-json" in codes('the state file was {"paxos": {"ballot": 1}, "last_chosen": "blue"}')
 
 
+def fake_cli(tmp_path):
+    """An existing stand-in for the mishe CLI, so publish_verdict calls the runner."""
+    cli = tmp_path / "mishe"
+    cli.write_text("#!/bin/sh\n", encoding="utf-8")
+    return cli
+
+
 def test_a_red_stays_red_when_the_publish_fails(tmp_path):
     """A violation we observed is an observation, not a missing one.
 
@@ -194,7 +201,11 @@ def test_a_red_stays_red_when_the_publish_fails(tmp_path):
     scan.load_terms = lambda terms_file=None: NO_TERMS
     scan.collect = lambda key: [{"id": 1, "state": "live"}]
     scan.read_item = lambda item, key: {"title": "x", "body": "probe@example.com", "tags": "", "replies": []}
-    assert scan.run_all("key", report=tmp_path / "report.json") == 2
+    # An existing CLI path makes publish_verdict reach the injected runner. Without
+    # it the test would pass through the missing-CLI branch and never exercise
+    # the failed-publish handling it is named for.
+    cli = fake_cli(tmp_path)
+    assert scan.run_all("key", report=tmp_path / "report.json", cli=cli) == 2
 
 
 def test_a_green_that_cannot_publish_is_unknown_not_green(tmp_path):
@@ -205,7 +216,8 @@ def test_a_green_that_cannot_publish_is_unknown_not_green(tmp_path):
     scan.load_terms = lambda terms_file=None: NO_TERMS
     scan.collect = lambda key: [{"id": 1, "state": "live"}]
     scan.read_item = lambda item, key: {"title": "A note", "body": "A sentence.", "tags": "", "replies": []}
-    assert scan.run_all("key", report=tmp_path / "report.json") == 3
+    cli = fake_cli(tmp_path)
+    assert scan.run_all("key", report=tmp_path / "report.json", cli=cli) == 3
 
 
 def test_the_report_records_the_verdict_and_never_the_matched_text(tmp_path):
@@ -221,7 +233,7 @@ def test_the_report_records_the_verdict_and_never_the_matched_text(tmp_path):
     scan.collect = lambda key: [{"id": 4242, "state": "live"}]
     scan.read_item = lambda item, key: {"title": "x", "body": "write to probe@example.com", "tags": "", "replies": []}
     report = tmp_path / "report.json"
-    assert scan.run_all("key", report=report) == 2
+    assert scan.run_all("key", report=report, cli=fake_cli(tmp_path)) == 2
     written = json.loads(report.read_text(encoding="utf-8"))
     assert written["overall"] == "RED"
     assert written["counts"]["RED"] == 1
