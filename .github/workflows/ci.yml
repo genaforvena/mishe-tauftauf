@@ -179,7 +179,9 @@ jobs:
       # the count-parity check reads each count page's first correction
       # sentence, so all three numbers passed.  The gate runs the checker's
       # own controlled failure, so the check that reads every published page
-      # is itself exercised here.
+      # is itself exercised here.  Its controlled failure also carries the
+      # case where a dated note on the same line used to swallow a live
+      # figure, so that gap stays closed.
       - run: python checks/pub-account-count-claims.py --self-test
       - run: python -m pytest -q
 
