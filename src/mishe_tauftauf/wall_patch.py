@@ -17,6 +17,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from . import consumer_fence
 from .argv_text import decode_argv
 from .patch_text import (decode_b64_text, decode_lossy, import_candidates, in_package,
                          is_python, last_segment, module_file, source_parts, split_lines)
@@ -117,10 +118,16 @@ def target(root, name):
     return path
 
 
-def run(home, identity, label, command):
+RUN_TIMEOUT_S = 300
+# Observe commands drain old in-memory consumers (consumer_fence.drain waits up to DRAIN_TIMEOUT_S) and then start the
+# new one. A 300 s kill here reverted a correct delivery (review of moving-pin-5d3c6729): the bound must exceed the drain.
+OBSERVE_TIMEOUT_S = consumer_fence.DRAIN_TIMEOUT_S + 180
+
+
+def run(home, identity, label, command, timeout=RUN_TIMEOUT_S):
     if not command or not all(isinstance(x, str) for x in command):
         raise ValueError("command must be a nonempty argument list")
-    result = subprocess.run(command, cwd=home.parent, capture_output=True, timeout=300)
+    result = subprocess.run(command, cwd=home.parent, capture_output=True, timeout=timeout)
     out = home / "patches" / f"{identity}-{label}.log"
     out.write_bytes(result.stdout + b"\nSTDERR\n" + result.stderr)
     return {"command": command, "code": result.returncode, "log": str(out)}
@@ -705,7 +712,7 @@ def _apply(home, identity, record, activate, observe):
         for name, values in record["files"].items():
             restore(target(runtime, name), values["after"], expected=values["runtime_before"])
         record["activation"] = run(home, identity, "activate", activate)
-        record["observation"] = run(home, identity, "observe", observe)
+        record["observation"] = run(home, identity, "observe", observe, timeout=OBSERVE_TIMEOUT_S)
         if record["activation"]["code"] or record["observation"]["code"]:
             raise ValueError("live patch activation/observation failed")
         for name, values in record["files"].items():
@@ -739,7 +746,7 @@ def verify(home, identity):
         _revert(home, identity, record, plan["activate"])
         restored_consumer_observed = False
         try:
-            record["revert_observation"] = run(home, identity, "revert-observe", plan["revert_observe"])
+            record["revert_observation"] = run(home, identity, "revert-observe", plan["revert_observe"], timeout=OBSERVE_TIMEOUT_S)
             if record["revert_observation"]["code"]:
                 raise ValueError("revert observation failed; delivery remains incomplete")
             restored_consumer_observed = True

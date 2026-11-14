@@ -82,10 +82,10 @@ def test_rollback_timeout_is_saved_as_visible_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
     wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
     original = wall_patch.run
-    def failing_run(home, identity, label, command):
+    def failing_run(home, identity, label, command, **kwargs):
         if label == "revert":
             raise subprocess.TimeoutExpired(command, 300)
-        return original(home, identity, label, command)
+        return original(home, identity, label, command, **kwargs)
     monkeypatch.setattr(wall_patch, "run", failing_run)
     with pytest.raises(subprocess.TimeoutExpired):
         wall_patch.apply(home, "change", [sys.executable, "-c", "pass"], [sys.executable, "-c", "raise SystemExit(1)"])
@@ -199,10 +199,10 @@ def test_verified_delivery_clears_a_stale_apply_failure(tmp_path, monkeypatch):
     reverted = [sys.executable, "-c", f"from pathlib import Path; assert Path({str(deployed)!r}).read_text() == 'before\\n'"]
     wall_patch.check(home, "change", command, activate=command, observe=observe, revert_observe=reverted)
     original = wall_patch.run
-    def failed_observe(home_, identity, label, cmd):
+    def failed_observe(home_, identity, label, cmd, **kwargs):
         if label == "observe":
             return {"code": 1, "output": "boom"}
-        return original(home_, identity, label, cmd)
+        return original(home_, identity, label, cmd, **kwargs)
     monkeypatch.setattr(wall_patch, "run", failed_observe)
     with pytest.raises(ValueError, match="observation"):
         wall_patch.apply(home, "change", command, observe)
@@ -317,10 +317,10 @@ def test_failed_reapply_preserves_accurate_recovered_phase(tmp_path, monkeypatch
     wall_patch.check(home, "change", command, activate=command, observe=command, revert_observe=command)
     wall_patch.apply(home, "change", command, command)
     original = wall_patch.run
-    def failed_reapply(home, identity, label, command):
+    def failed_reapply(home, identity, label, command, **kwargs):
         if label == "activate":
-            return original(home, identity, label, [sys.executable, "-c", "raise SystemExit(1)"])
-        return original(home, identity, label, command)
+            return original(home, identity, label, [sys.executable, "-c", "raise SystemExit(1)"], **kwargs)
+        return original(home, identity, label, command, **kwargs)
     monkeypatch.setattr(wall_patch, "run", failed_reapply)
     with pytest.raises(ValueError, match="activation/observation"):
         wall_patch.verify(home, "change")
@@ -1171,3 +1171,24 @@ def test_broken_dependency_module_is_named_unresolved_not_raised(tmp_path):
     context = wall_patch.symbol_context(home, record)
     assert context["modules"] == {}
     assert "mishe_tauftauf.broken:nonblank" in context["unresolved"]
+
+
+def test_observe_timeout_outlasts_consumer_drain(tmp_path, monkeypatch):
+    # Regression: a 300 s observe kill (uncaught as TimeoutExpired) reverted a correct delivery whose
+    # old consumer legitimately drained for up to DRAIN_TIMEOUT_S. The observe bound must exceed that drain.
+    from mishe_tauftauf import consumer_fence
+    assert wall_patch.OBSERVE_TIMEOUT_S > consumer_fence.DRAIN_TIMEOUT_S
+    assert wall_patch.OBSERVE_TIMEOUT_S > wall_patch.RUN_TIMEOUT_S
+    seen = {}
+
+    def spy(command, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        return type("R", (), {"returncode": 0, "stdout": b"", "stderr": b""})()
+
+    monkeypatch.setattr(wall_patch.subprocess, "run", spy)
+    home = tmp_path / ".mishe-tauftauf"
+    (home / "patches").mkdir(parents=True)
+    wall_patch.run(home, "change", "observe", ["true"], timeout=wall_patch.OBSERVE_TIMEOUT_S)
+    assert seen["timeout"] == wall_patch.OBSERVE_TIMEOUT_S
+    wall_patch.run(home, "change", "activate", ["true"])
+    assert seen["timeout"] == wall_patch.RUN_TIMEOUT_S == 300
