@@ -872,6 +872,156 @@
       "resolver": "steward",
       "covers": "the human's Sonnet ban (re-imposed 2026-11-12 ~01:10Z by Ilya, open-ended until he lifts it): RED when a live engine config, a routes.json candidate or a recent (6 h) routing-ledger selection names a Sonnet model a wake could use or used, UNKNOWN when the configs or ledger cannot be read; retire the duty when Ilya lifts the ban",
       "replaces": []
+    },
+    {
+      "name": "initiatives-health",
+      "command": [
+        "{python}",
+        "{repo}/checks/initiatives.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}",
+        "--owner",
+        "health"
+      ],
+      "every": 900,
+      "timeout": 60,
+      "max_age": 2700,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "health",
+      "covers": "an initiative owned by health in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "replaces": []
+    },
+    {
+      "name": "initiatives-senses",
+      "command": [
+        "{python}",
+        "{repo}/checks/initiatives.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}",
+        "--owner",
+        "senses"
+      ],
+      "every": 900,
+      "timeout": 60,
+      "max_age": 2700,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "senses",
+      "covers": "an initiative owned by senses in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "replaces": []
+    },
+    {
+      "name": "initiatives-steward",
+      "command": [
+        "{python}",
+        "{repo}/checks/initiatives.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}",
+        "--owner",
+        "steward"
+      ],
+      "every": 900,
+      "timeout": 60,
+      "max_age": 2700,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "steward",
+      "covers": "an initiative owned by steward in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "replaces": []
+    },
+    {
+      "name": "initiatives-system1",
+      "command": [
+        "{python}",
+        "{repo}/checks/initiatives.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}",
+        "--owner",
+        "system1"
+      ],
+      "every": 900,
+      "timeout": 60,
+      "max_age": 2700,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "system1",
+      "covers": "an initiative owned by system1 in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "replaces": []
+    },
+    {
+      "name": "initiatives-genome",
+      "command": [
+        "{python}",
+        "{repo}/checks/initiatives.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}",
+        "--owner",
+        "genome"
+      ],
+      "every": 900,
+      "timeout": 60,
+      "max_age": 2700,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "genome",
+      "covers": "an initiative owned by genome in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "replaces": []
+    },
+    {
+      "name": "initiatives-rust-plan",
+      "command": [
+        "{python}",
+        "{repo}/checks/initiatives.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}",
+        "--owner",
+        "rust-plan"
+      ],
+      "every": 900,
+      "timeout": 60,
+      "max_age": 2700,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "rust-plan",
+      "covers": "an initiative owned by rust-plan in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "replaces": []
     }
   ],
   "retired": [
