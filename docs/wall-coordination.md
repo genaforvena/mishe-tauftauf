@@ -143,12 +143,20 @@ diff down the strong path.
 Scheduler, dispatch, settlement, locking, protocol, authorization and delivery
 changes require fresh separate review and deterministic activation, revert and
 reapply observations. Prepare and check a scoped `mishe_tauftauf.wall_patch`
-record with its executable activation and observation plan, commit the exact
-reviewed bytes, then request:
+record with its executable activation, observation and revert plan, commit the
+exact reviewed bytes, then request:
 
 ```sh
 mishe release request --sha FULL_SHA --previous FULL_SHA --patch PATCH_ID
 ```
+
+The plan names four commands: `activate` restarts the affected consumers,
+`observe` checks the live ones afterwards, `revert_observe` checks the restored
+consumer, and `revert` restores the old consumer pin. `check` refuses a plan with no
+`revert` argv, and a revert that would only re-run the activation is refused before
+any runtime byte moves: re-pinning the new release is not a revert. Without this, a
+delivery once logged "activated 38e28e3d" as its revert and the pin stayed on the new
+release.
 
 The consumer binds every changed committed path to reviewed bytes and binds the
 reviewed delivery plan. It performs the strong apply and recovery exercise after

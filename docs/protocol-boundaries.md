@@ -161,7 +161,11 @@ digest. That digest covers the record's `files`, `runtime`, `test`, `review` and
 live in the patch record, not in the request. Submission checks that the record is
 reviewed, has a clear review and a passing test, that its delivery plan has the
 `activate`, `observe` and `revert_observe` steps, and that every changed path is in
-the reviewed file list. An ordinary request instead carries its `check` and `observe`
+the reviewed file list. The plan the gate records also carries `revert`, the separate
+argv that restores the old consumer pin. `check` refuses a plan without one, and
+`revert` refuses a plan whose only restore path is its own activation, before any
+runtime byte moves, because re-running the activation re-pins the new release and is
+not a revert. An ordinary request instead carries its `check` and `observe`
 commands and a `command_artifacts` map — each command script's bytes and mode —
 which the request's own identity digest covers and which is compared byte-for-byte
 again when the request is executed.
