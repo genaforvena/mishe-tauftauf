@@ -1035,13 +1035,14 @@
       "timeout": 60,
       "max_age": 900,
       "red_codes": [
+        1,
         2
       ],
       "unknown_codes": [
         3
       ],
       "resolver": "genome",
-      "covers": "the running pin trails committed main: GREEN under 60 minutes, AMBER to 3 hours, RED beyond, with the stage and reason of the newest delivery run; UNKNOWN when the pin is missing or not a commit of this clone",
+      "covers": "the running pin trails committed main: GREEN under 60 minutes; AMBER (exit 1, 60 min to 3 h) and RED (exit 2, beyond) both read RED so a lagging pin wakes its resolver early, with the stage and reason of the newest delivery run; UNKNOWN when the pin is missing or not a commit of this clone",
       "replaces": []
     },
     {
