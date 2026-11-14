@@ -5,7 +5,7 @@ No legacy delivery_verified flag is minted here. A promotion affects only
 future consumers, under the same lock held across a running wake.
 """
 from __future__ import annotations
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import fcntl
 import hashlib
 import json
@@ -135,6 +135,40 @@ def delivery_lock(home):
 
 class DeliveryBusy(ValueError):
     """No effect: the existing dispatch exclusion is owned elsewhere."""
+
+
+@contextmanager
+def held_delivery_lock(home, wait_s, *, sleep=time.sleep):
+    """The dispatch lock, waited for under a short hold of new wakes (``wait_s`` > 0), or taken at once (0).
+
+    A wake can run for many minutes and holds the lock for its whole run. With ``wait_s`` the site's ``hold``
+    file stops new wakes starting, the running ones settle, the lock is taken and the hold is released (and
+    wakes that arrived meanwhile resume) when the block ends, whatever happened inside it.
+    """
+    if not wait_s:
+        with delivery_lock(home):
+            yield
+        return
+    hold = Path(home) / "hold"
+    hold.write_text("promotion: short activation hold; wakes resume automatically\n")
+    stack = ExitStack()
+    try:
+        deadline = time.monotonic() + wait_s
+        while True:
+            try:
+                stack.enter_context(delivery_lock(home))
+                break
+            except DeliveryBusy:
+                if time.monotonic() >= deadline:
+                    raise
+                sleep(5)
+        yield
+    finally:
+        stack.close()
+        hold.unlink(missing_ok=True)
+        from . import wake
+        from .roles import declared
+        wake.resume_owed(home, declared(home), now=time.time())
 
 
 def config_paths(home):
@@ -301,7 +335,7 @@ def review_queue_path(home, record):
 
 
 def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=run,
-            reviewer=None, closure=closure, strong_patch=None, request_id=None):
+            reviewer=None, closure=closure, strong_patch=None, request_id=None, wait_s=0):
     home, repo = Path(home), Path(repo)
     boundary.full_sha(repo, sha); boundary.full_sha(repo, previous)
     paths = boundary.changed_paths(repo, previous, sha)
@@ -312,7 +346,7 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
         if not wall_patch.verified_delivery(strong): raise ValueError("strong patch has not passed recovery exercise")
         for path in paths:
             if path not in strong["files"]: raise ValueError(f"strong review does not cover {path}")
-    with delivery_lock(home):
+    with ExitStack() as stack:
         if activate is None:
             from .runtime_cli import default_pythonpath
             if Path(default_pythonpath()).resolve() != (home/"releases"/previous/"src").resolve():
@@ -345,6 +379,9 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
         if commands != wall_patch.command_artifacts(home,[check,observe]):
             record["phase"]="check-mutated-command"; save(); raise ValueError("command changed during check")
         record["tests_passed"]=True
+        # Only now the dispatch lock: the check above ran the whole suite without holding wakes back.
+        record["phase"]="waiting-for-wakes"; save()
+        stack.enter_context(held_delivery_lock(home, wait_s)); record["phase"]="activating"; save()
         configs = {str(p):wall_patch.snapshot(p) for p in config_paths(home)} if activate is None else {}
         record["config_before"]=configs; record["rollback_available"]=True; save()
         switch = activate or (lambda root, target: globals()["activate"](home,repo,root,target))

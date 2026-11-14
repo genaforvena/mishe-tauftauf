@@ -111,7 +111,8 @@ def test_running_wake_retains_pin(tree):
     repo,home,old,sha=tree
     with p.delivery_lock(home):
         with pytest.raises(ValueError,match="dispatch lock"):
-            p.promote(home,repo,sha,check=["check"],observe=["probe"],previous=old)
+            p.promote(home,repo,sha,check=[sys.executable,"-c","pass"],observe=["probe"],previous=old,
+                      activate=lambda *a:None,closure=lambda *a:None)
 
 
 def test_default_review_enqueue_uses_sha_and_retains_pending(tree, monkeypatch):
@@ -507,3 +508,64 @@ def test_advance_target_is_pin_when_pin_is_head(tmp_path):
     assert p.advance_target(repo, c2) == (None, "pin-is-head")
 
 
+
+
+def _hold_dispatch_lock(home):
+    import fcntl
+    from mishe_tauftauf.core.state import DispatchStore
+    path = DispatchStore(home / "dispatch").lock_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    return handle
+
+
+def test_held_lock_with_no_wait_refuses_at_once_while_a_wake_holds_the_lock(tmp_path):
+    handle = _hold_dispatch_lock(tmp_path)
+    try:
+        with pytest.raises(p.DeliveryBusy):
+            with p.held_delivery_lock(tmp_path, 0):
+                pass
+    finally:
+        handle.close()
+    assert not (tmp_path / "hold").exists()
+
+
+def test_held_lock_waits_under_a_hold_for_the_running_wake_and_releases_the_hold(tmp_path):
+    handle = _hold_dispatch_lock(tmp_path)
+    seen = {"hold_while_waiting": None, "sleeps": 0}
+
+    def sleep(_):
+        seen["sleeps"] += 1
+        seen["hold_while_waiting"] = (tmp_path / "hold").exists()
+        handle.close()   # the wake settles
+
+    from mishe_tauftauf import wake
+    resumed = []
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    mp.setattr(wake, "resume_owed", lambda *a, **k: resumed.append(True))
+    mp.setattr("mishe_tauftauf.roles.declared", lambda home: [])
+    try:
+        with p.held_delivery_lock(tmp_path, 60, sleep=sleep):
+            assert (tmp_path / "hold").exists()
+    finally:
+        mp.undo()
+    assert seen["sleeps"] == 1 and seen["hold_while_waiting"] is True
+    assert not (tmp_path / "hold").exists() and resumed == [True]
+
+
+def test_held_lock_gives_up_when_the_wake_never_settles_and_still_releases_the_hold(tmp_path):
+    handle = _hold_dispatch_lock(tmp_path)
+    from mishe_tauftauf import wake
+    mp = pytest.MonkeyPatch()
+    mp.setattr(wake, "resume_owed", lambda *a, **k: None)
+    mp.setattr("mishe_tauftauf.roles.declared", lambda home: [])
+    try:
+        with pytest.raises(p.DeliveryBusy):
+            with p.held_delivery_lock(tmp_path, 0.01, sleep=lambda s: None):
+                pass
+    finally:
+        mp.undo()
+        handle.close()
+    assert not (tmp_path / "hold").exists()

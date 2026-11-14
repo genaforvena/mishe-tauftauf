@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 FAILED = {"check-failed", "check-mutated-source", "check-mutated-command", "rolled-back", "UNKNOWN"}
-RUNNING = {"checking"}
+RUNNING = {"checking", "waiting-for-wakes", "activating"}
 
 
 def newest(directory):
