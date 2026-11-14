@@ -13,7 +13,6 @@ from pathlib import Path
 from .checks import HealthPublishBusy, run_check
 from . import access, discovery
 from .feed import Feed, FeedError, parse_feed, utc_now
-from .judges import QUESTIONS, classify, controls, document, run_external
 
 from .observations import (FOOTER_WAKE_LABEL, compose_frame, discover, executable,
                            validate_home, validate_home_binding, validate_slug)
@@ -446,77 +445,6 @@ def _repair_handoffs(home: Path, entries) -> list[str]:
 
 
 
-
-def _live_check(label: str, call, failures_box: list, verbose: bool) -> bool:
-    """Run the paired smoke controls for one System One adapter.
-
-    A control that does not separate is a visible failure, never a weakened
-    threshold: mishe-tauftauf never reports an unexercised judge as healthy.
-    """
-    started = time.monotonic()
-    for question, pair in controls().items():
-        for expected, evidence in (("yes", pair[0]), ("no", pair[1])):
-            request = document(question, "control", "CONTROL TOP PAIN", evidence)
-            try:
-                probability, reason = call(request)
-            except Exception as exc:
-                probability, reason = None, str(exc)
-            outcome = classify(question, probability)
-            if verbose:
-                preview = evidence if len(evidence) <= 120 else evidence[:117] + "..."
-                print(
-                    f"CONTROL {question} expected={expected} "
-                    f"probability={probability if probability is not None else 'unknown'} "
-                    f"outcome={outcome} input={preview}"
-                )
-            if outcome != expected:
-                failures_box.append((question, expected, outcome))
-    huge_request = document("publish", "control", "CONTROL", "x " * 1_000_000)
-    try:
-        probability, reason = call(huge_request)
-    except Exception as exc:
-        probability, reason = None, str(exc)
-    outcome = classify("publish", probability)
-    if verbose:
-        print(f"OVERSIZED outcome={outcome} reason={reason}")
-    if outcome != "unknown":
-        failures_box.append(("oversized", "unknown", outcome))
-    if verbose:
-        print(f"MODEL {label} elapsed={time.monotonic()-started:.3f}s")
-    return False
-
-
-def _laya_call(request: str) -> tuple[float | None, str]:
-    from .laya_judge import judge as laya_judge
-
-    return laya_judge(request)
-
-
-def _jev_call(request: str) -> tuple[float | None, str]:
-    """Invoke the optional hosted Jev adapter through its own text protocol."""
-    import subprocess as _subprocess
-    import sys as _sys
-
-    result = _subprocess.run(
-        [_sys.executable or "python3", "-m", "mishe_tauftauf.jev_judge"],
-        input=request.encode("utf-8"),
-        capture_output=True,
-        timeout=120,
-    )
-    if result.returncode != 0:
-        return None, f"adapter exit {result.returncode}"
-    output = result.stdout.decode("utf-8", "replace").rstrip("\n")
-    if output.startswith("unknown "):
-        return None, output[len("unknown "):]
-    if not output.startswith("probability "):
-        return None, "adapter returned no result line"
-    try:
-        value = float(output[len("probability "):])
-    except ValueError:
-        return None, "adapter returned a non-numeric probability"
-    if value != value or not 0.0 <= value <= 1.0:
-        return None, f"adapter probability outside [0,1]: {value}"
-    return value, ""
 
 def _prog_name() -> str:
     """Report the name the launcher was actually invoked as in help output."""
