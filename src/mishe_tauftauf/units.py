@@ -266,6 +266,20 @@ def user_timer_names(glob: str) -> list[str]:
     return [line.split()[0] for line in listed.splitlines() if line.strip()]
 
 
+def timers_run_release(timers: list[str], root: str) -> bool:
+    """True when every timer's service runs the release at ``root`` (PYTHONPATH decoded here)."""
+    for timer in timers:
+        service = subprocess.run(["systemctl", "--user", "show", timer, "-p", "Triggers", "--value"],
+                                 check=False, capture_output=True, text=True).stdout.strip()
+        if not service:
+            continue  # no such unit under that name
+        env = subprocess.run(["systemctl", "--user", "show", service, "-p", "Environment", "--value"],
+                             check=False, capture_output=True, text=True).stdout.split()
+        if f"PYTHONPATH={root}" not in env:
+            return False
+    return True
+
+
 def manager_error(result) -> str:
     """A short manager error from a failed systemd-run/ctl call, decoded here."""
     text = (result.stderr or result.stdout or b"")

@@ -78,17 +78,7 @@ def _armed_by_this_release(timers: list[str]) -> bool:
     A timer keeps the PYTHONPATH of the release that armed it until it fires, so after a pin move
     an old-release timer would run old code. A retry in the window is only kept when it is ours.
     """
-    root = _source_root()
-    for timer in timers:
-        service = subprocess.run(["systemctl", "--user", "show", timer, "-p", "Triggers", "--value"],
-                                 check=False, capture_output=True, text=True).stdout.strip()
-        if not service:
-            continue  # no such unit under that name
-        env = subprocess.run(["systemctl", "--user", "show", service, "-p", "Environment", "--value"],
-                             check=False, capture_output=True, text=True).stdout.split()
-        if f"PYTHONPATH={root}" not in env:
-            return False
-    return True
+    return units.timers_run_release(timers, _source_root())
 
 
 def systemd_scheduler(epoch: float | None, *, command: list[str],
