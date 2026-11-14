@@ -719,6 +719,10 @@ def check(home, identity, command, *, activate=None, observe=None, revert_observ
         if activate is not None or observe is not None or revert_observe is not None:
             if not activate or not observe or not revert_observe:
                 raise ValueError("check requires activate, observe and revert-observe together")
+            # Without an explicit revert the revert re-runs the new activation and
+            # re-pins the new code (a5dca7c3: "activated 38e28e3d" in its revert log).
+            if revert is None:
+                raise ValueError("check requires an explicit revert argv; a missing one re-runs activate")
             record["delivery_plan"] = delivery_plan(home, activate, observe, revert_observe, revert=revert)
             # An unresolvable command is refused before tests or review are spent on it.
             preflight(home, record["delivery_plan"])

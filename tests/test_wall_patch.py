@@ -167,7 +167,7 @@ def test_delivery_requires_successful_revert_observation_and_reapply(tmp_path, m
     activate = [sys.executable, "-c", "pass"]
     observe = [sys.executable, "-c", f"from pathlib import Path; assert Path({str(deployed)!r}).read_text() == 'after\\n'"]
     reverted = [sys.executable, "-c", f"from pathlib import Path; assert Path({str(deployed)!r}).read_text() == 'before\\n'"]
-    wall_patch.check(home, "change", [sys.executable, "-c", "pass"], activate=activate, observe=observe, revert_observe=reverted)
+    wall_patch.check(home, "change", [sys.executable, "-c", "pass"], activate=activate, observe=observe, revert_observe=reverted, revert=[sys.executable, "-c", "pass"])
     wall_patch.apply(home, "change", activate, observe)
     assert not wall_patch.status(home, "change").get("delivery_verified")
     wall_patch.verify(home, "change")
@@ -197,7 +197,7 @@ def test_verified_delivery_clears_a_stale_apply_failure(tmp_path, monkeypatch):
     command = [sys.executable, "-c", "pass"]
     observe = [sys.executable, "-c", f"from pathlib import Path; assert Path({str(deployed)!r}).read_text() == 'after\\n'"]
     reverted = [sys.executable, "-c", f"from pathlib import Path; assert Path({str(deployed)!r}).read_text() == 'before\\n'"]
-    wall_patch.check(home, "change", command, activate=command, observe=observe, revert_observe=reverted)
+    wall_patch.check(home, "change", command, activate=command, observe=observe, revert_observe=reverted, revert=[sys.executable, "-c", "pass"])
     original = wall_patch.run
     def failed_observe(home_, identity, label, cmd, **kwargs):
         if label == "observe":
@@ -208,7 +208,7 @@ def test_verified_delivery_clears_a_stale_apply_failure(tmp_path, monkeypatch):
         wall_patch.apply(home, "change", command, observe)
     assert wall_patch.status(home, "change")["apply_failure"]
     monkeypatch.setattr(wall_patch, "run", original)
-    wall_patch.check(home, "change", command, activate=command, observe=observe, revert_observe=reverted)
+    wall_patch.check(home, "change", command, activate=command, observe=observe, revert_observe=reverted, revert=[sys.executable, "-c", "pass"])
     wall_patch.apply(home, "change", command, observe)
     wall_patch.verify(home, "change")
     record = wall_patch.status(home, "change")
@@ -238,7 +238,7 @@ def test_delivery_does_not_certify_failed_revert_observation(tmp_path, monkeypat
     monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
     command = [sys.executable, "-c", "pass"]
     wall_patch.check(home, "change", command, activate=command, observe=command,
-                     revert_observe=[sys.executable, "-c", "raise SystemExit(1)"])
+                     revert_observe=[sys.executable, "-c", "raise SystemExit(1)"], revert=command)
     wall_patch.apply(home, "change", command, command)
     with pytest.raises(ValueError, match="revert observation"):
         wall_patch.verify(home, "change")
@@ -286,7 +286,7 @@ def test_reviewed_delivery_script_cannot_change_before_apply(tmp_path, monkeypat
     monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
     activate = [sys.executable, str(script)]
     command = [sys.executable, "-c", "pass"]
-    wall_patch.check(home, "change", command, activate=activate, observe=command, revert_observe=command)
+    wall_patch.check(home, "change", command, activate=activate, observe=command, revert_observe=command, revert=[sys.executable, "-c", "pass"])
     script.write_text("raise SystemExit(1)\n")
     with pytest.raises(ValueError, match="delivery command"):
         wall_patch.apply(home, "change", activate, command)
@@ -299,7 +299,7 @@ def test_changed_live_bytes_cannot_be_certified(tmp_path, monkeypatch):
     source.write_text("after\n")
     monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
     command = [sys.executable, "-c", "pass"]
-    wall_patch.check(home, "change", command, activate=command, observe=command, revert_observe=command)
+    wall_patch.check(home, "change", command, activate=command, observe=command, revert_observe=command, revert=[sys.executable, "-c", "pass"])
     wall_patch.apply(home, "change", command, command)
     deployed.write_text("another writer\n")
     with pytest.raises(ValueError, match="runtime"):
@@ -314,7 +314,7 @@ def test_failed_reapply_preserves_accurate_recovered_phase(tmp_path, monkeypatch
     source.write_text("after\n")
     monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
     command = [sys.executable, "-c", "pass"]
-    wall_patch.check(home, "change", command, activate=command, observe=command, revert_observe=command)
+    wall_patch.check(home, "change", command, activate=command, observe=command, revert_observe=command, revert=[sys.executable, "-c", "pass"])
     wall_patch.apply(home, "change", command, command)
     original = wall_patch.run
     def failed_reapply(home, identity, label, command, **kwargs):
@@ -341,7 +341,7 @@ def test_owned_checkout_delivery_script_cannot_change_after_review(tmp_path, mon
     monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
     activate = [sys.executable, str(script)]
     command = [sys.executable, "-c", "pass"]
-    wall_patch.check(home, "change", command, activate=activate, observe=command, revert_observe=command)
+    wall_patch.check(home, "change", command, activate=activate, observe=command, revert_observe=command, revert=[sys.executable, "-c", "pass"])
     script.write_text("raise SystemExit(1)\n")
     with pytest.raises(ValueError, match="delivery command"):
         wall_patch.apply(home, "change", activate, command)
@@ -1327,3 +1327,20 @@ def test_oversized_module_docstring_is_named_not_filling_the_excerpt(tmp_path):
     assert "def scan(home):" in text
     assert "header lines" in text and "omitted" in text
     assert len(text) <= wall_patch.CONTEXT_EXCERPT_BYTES
+
+
+def test_check_refuses_activation_without_explicit_revert(tmp_path, monkeypatch):
+    # A plan with activate/observe/revert-observe but no revert argv would make
+    # the revert re-run activate, re-pinning the new code. Refuse before any write.
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    monkeypatch.setattr(wall_patch, "review", lambda *a: {"clear": True})
+    before = wall_patch.status(home, "change")
+    with pytest.raises(ValueError, match="explicit revert"):
+        wall_patch.check(home, "change", [sys.executable, "-c", "pass"],
+                         activate=[sys.executable, "-c", "pass"],
+                         observe=[sys.executable, "-c", "pass"],
+                         revert_observe=[sys.executable, "-c", "pass"])
+    assert wall_patch.status(home, "change") == before
+    assert "delivery_plan" not in wall_patch.status(home, "change")
