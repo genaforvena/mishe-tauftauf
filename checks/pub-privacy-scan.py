@@ -30,6 +30,30 @@ Verdicts: GREEN when every item was read and none violated a rule, RED when
 one did, UNKNOWN when an item could not be read.  A text that cannot be read
 is UNKNOWN, never a pass.  Exit codes: 0 GREEN, 2 RED, 3 UNKNOWN.
 
+What the scan reads, and what it did not read before 2026-11-14.  The comment
+list endpoint answers a tree, and this scan used to read only its top level.
+On this account that meant 18 comments out of 98: the other 80 are nested
+replies, and every one of the 47 replies the account itself wrote is nested.
+So the rule that is supposed to hold our own published replies had never held
+one of them, while the lane read GREEN on every run.  The list endpoint also
+withholds the newest tail of a long thread — the busiest thread here holds 54
+comments and the list returned 50 — and those withheld comments were never
+fetched.
+
+Both are read now: the whole tree, and the tail recovered through
+``/api/comments/<id_code>``.  A thread that is still short of the account's
+own comment count after that recovery is UNKNOWN, because a comment nobody
+read is a comment nobody can rule out.
+
+Whose text decides the verdict.  A rule hit in the account's own text is RED:
+we wrote it and we can correct it.  A rule hit inside a reader's comment is
+evidence, not a violation of ours: we did not write it and we cannot edit it,
+so it is counted and reported and never makes this lane RED.  Without that
+separation, reading the full tree would turn the lane RED on a reader's own
+sha256 attestation — a fact about the reader, not about us.  The account's
+username is read from the API, not from the terms file, so an edit of the
+terms cannot make the scan lose sight of our own replies.
+
 The verdict reaches the plant bus as well as the report file, because a scan
 whose result lives only in a file is invisible to the bus.  On 2026-11-13 the
 report file said GREEN at 22:25Z while the signal still said RED from 20:35Z,
@@ -250,22 +274,131 @@ def collect(key: str) -> list[dict]:
     return items
 
 
-def read_item(item: dict, key: str) -> dict:
-    """Fetch body, title, tags and replies for one article. Unreadable parts → UNKNOWN."""
+def flatten_comments(nodes: list, acc: list | None = None) -> list:
+    """Every comment in a thread, nested replies included.
+
+    The list endpoint answers a tree: each comment carries its replies in a
+    ``children`` array.  Reading only the top level of that tree sees the
+    comments nobody replied to and none of the conversation.  On this account
+    18 comments are top-level and 80 are nested, and every reply the account
+    itself wrote is nested, so the top level alone never saw one of ours.
+    """
+    acc = [] if acc is None else acc
+    for node in nodes or []:
+        acc.append(node)
+        flatten_comments(node.get("children") or [], acc)
+    return acc
+
+
+def deepest_leaf(nodes: list):
+    """The first leaf of a comment tree, where the withheld tail continues."""
+    leaf = None
+    for node in nodes or []:
+        children = node.get("children") or []
+        if children:
+            deeper = deepest_leaf(children)
+            if deeper is not None:
+                leaf = deeper
+        if leaf is None:
+            leaf = node
+    return leaf
+
+
+def recover_tail(comments: list, key: str) -> list:
+    """Recover the comments the list endpoint withheld.
+
+    ``/api/comments?a_id=`` answers with the first fifty comments of a thread.
+    The busiest thread on this account holds fifty-four, and the four withheld
+    ones are the newest: a reader reply that no scan has ever read.  The
+    single-comment endpoint answers a node with its children in full, so the
+    tail is reached by walking down from the deepest node the list did return.
+
+    A node that cannot be read stops the walk.  The caller compares the thread
+    with the account's own count and reads a shortfall as UNKNOWN.
+    """
+    tail = deepest_leaf(comments)
+    if tail is None or not tail.get("id_code"):
+        return comments
+    queue, seen = [tail], set()
+    while queue:
+        parent = queue.pop(0)
+        code = parent.get("id_code")
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        try:
+            node = get(f"/comments/{code}", key)
+        except (urllib.error.URLError, ValueError, TypeError):
+            break
+        time.sleep(0.4)
+        if not isinstance(node, dict):
+            break
+        known = {c.get("id_code") for c in parent.get("children") or []}
+        added = [c for c in node.get("children") or []
+                 if c.get("id_code") not in known]
+        parent.setdefault("children", []).extend(added)
+        queue.extend(added)
+    return comments
+
+
+def read_owner(key: str) -> str:
+    """The username of the account the key belongs to.
+
+    The account's own replies are the ones this lane can act on: a foreign
+    comment is a reader's text, which we can neither edit nor answer, so a
+    rule hit inside it is evidence and not a violation of ours.  Attribution
+    is read from the account itself, never from the terms file, so the scan
+    cannot lose its own replies by a term list that was edited.
+    """
+    payload = get("/users/me", key)
+    if not isinstance(payload, dict):
+        raise ValueError("the API did not answer with the account")
+    username = payload.get("username")
+    if not isinstance(username, str) or not username:
+        raise ValueError("the account carries no username")
+    return username
+
+
+def read_item(item: dict, key: str, owner: str = "") -> dict:
+    """Fetch body, title, tags and the account's own replies for one article.
+
+    Unreadable parts are UNKNOWN, never a pass.  The thread is read in full:
+    every nested reply, and the tail the list endpoint withheld.
+    """
     fields: dict[str, object] = {}
+    expected = None
     try:
         art = item["row"] if "row" in item else get(f"/articles/{item['id']}", key)
         fields["title"] = art.get("title")
         fields["body"] = art.get("body_markdown")
         fields["tags"] = " ".join(art.get("tag_list") or []) if isinstance(art.get("tag_list"), list) else art.get("tag_list")
+        if isinstance(art.get("comments_count"), int):
+            expected = art["comments_count"]
     except (urllib.error.URLError, ValueError, KeyError, TypeError) as err:
         fields["_read_error"] = type(err).__name__
     time.sleep(0.4)
-    replies = []
+    own: list[str] = []
+    foreign: list[str] = []
     try:
-        for c in get(f"/comments?a_id={item['id']}"):
-            replies.append(html.unescape(re.sub(r"<[^>]+>", " ", c.get("body_html") or "")))
-        fields["replies"] = replies
+        tree = get(f"/comments?a_id={item['id']}")
+        if not isinstance(tree, list):
+            raise ValueError("the comments of article %r are not a list" % item["id"])
+        every = flatten_comments(tree)
+        if expected is not None and len(every) < expected:
+            tree = recover_tail(tree, key)
+            every = flatten_comments(tree)
+        for comment in every:
+            text = html.unescape(re.sub(r"<[^>]+>", " ", comment.get("body_html") or ""))
+            username = (comment.get("user") or {}).get("username")
+            if username == owner:
+                own.append(text)
+            else:
+                foreign.append(text)
+        fields["replies"] = own
+        fields["foreign_replies"] = foreign
+        if expected is not None and len(every) < expected:
+            # A comment nobody read is a comment nobody can rule out.
+            fields["_reply_shortfall"] = expected - len(every)
     except (urllib.error.URLError, ValueError, TypeError) as err:
         fields["_reply_error"] = type(err).__name__
     time.sleep(0.4)
@@ -273,12 +406,22 @@ def read_item(item: dict, key: str) -> dict:
 
 
 def verdict_for(fields: dict, terms: list, foreign_handles: list = (), public_repo_rx: list = ()) -> tuple[str, list[tuple[str, str, str]]]:
-    """Return (verdict, violations) where violations are (field, rule, code)."""
+    """Return (verdict, violations) where violations are (field, rule, code).
+
+    A violation in the account's OWN text is RED: we wrote it and we can
+    correct it.  A rule hit inside a reader's comment is evidence, not a
+    violation of ours: we did not write it and we cannot edit it, so it is
+    recorded and counted, but it does not make this lane RED.  Without that
+    separation, reading the full tree would turn the lane RED on a reader's
+    own sha256 attestation, which is a fact about the reader and not about us.
+    """
     violations: list[tuple[str, str, str]] = []
     unknown = False
     if "_read_error" in fields:
         unknown = True
     if "_reply_error" in fields:
+        unknown = True
+    if "_reply_shortfall" in fields:
         unknown = True
     for name in ("title", "body", "tags"):
         ok, text = text_or_unknown(fields.get(name))
@@ -295,6 +438,21 @@ def verdict_for(fields: dict, terms: list, foreign_handles: list = (), public_re
     if unknown:
         return UNKNOWN, []
     return GREEN, []
+
+
+def foreign_findings(fields: dict, terms: list, foreign_handles: list = (), public_repo_rx: list = ()) -> list[tuple[str, str, str]]:
+    """The rule hits inside other authors' comments, for the record.
+
+    These are reported, counted and never RED.  A reader who posts a device
+    name or a digest in their own comment has not leaked anything of ours, and
+    the account cannot edit or retract it; the honest response is to know it
+    and to say so, not to raise a RED the account cannot clear.
+    """
+    found: list[tuple[str, str, str]] = []
+    for n, reply in enumerate(fields.get("foreign_replies") or []):
+        for rule, code in scan_text(reply, terms, foreign_handles, public_repo_rx):
+            found.append((f"foreign[{n}]", rule, code))
+    return found
 
 
 def now_iso() -> str:
@@ -393,22 +551,31 @@ def run_all(key: str, *, terms_file: Path | None = None, report: Path | None = N
     foreign_handles = loaded["foreign_handles"]
     public_repo_rx = loaded["public_repo_rx"]
     items = collect(key)
+    # Whose replies are ours is read from the account, not from the terms file:
+    # the terms file can be edited, and a scan that lost its own replies
+    # through a term edit would read GREEN while checking nothing of ours.
+    owner = read_owner(key)
     results = []
+    foreign_total = 0
     for item in items:
-        fields = read_item(item, key)
+        fields = read_item(item, key, owner)
         verdict, violations = verdict_for(fields, terms, foreign_handles, public_repo_rx)
+        foreign = foreign_findings(fields, terms, foreign_handles, public_repo_rx)
+        foreign_total += len(foreign)
         results.append({"id": item["id"], "state": item["state"], "verdict": verdict,
-                        "violations": [{"field": f, "rule": r, "code": c} for f, r, c in violations]})
+                        "violations": [{"field": f, "rule": r, "code": c} for f, r, c in violations],
+                        "foreign_findings": [{"field": f, "rule": r, "code": c} for f, r, c in foreign]})
     counts = {v: sum(1 for r in results if r["verdict"] == v) for v in (GREEN, RED, UNKNOWN)}
     overall = RED if counts[RED] else (UNKNOWN if counts[UNKNOWN] else GREEN)
     report_path = Path(report or REPORT)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"checked_at": now_iso(), "max_age_seconds": MAX_AGE_SECONDS, "overall": overall,
-               "counts": counts, "items": results}
+               "counts": counts, "items": results,
+               "foreign_findings": foreign_total}
     tmp = report_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, report_path)
-    print(f"pub-privacy-scan {overall} items={len(results)} {counts}")
+    print(f"pub-privacy-scan {overall} items={len(results)} {counts} foreign={foreign_total}")
     # The bus must carry this verdict, not only the report file. When it cannot, the run
     # is UNKNOWN rather than a silent GREEN: the signal keeps its old reading and ages
     # to UNKNOWN on its own, which is the honest state for "we scanned but could not

@@ -209,8 +209,11 @@ def test_a_red_stays_red_when_the_publish_fails(tmp_path):
     runner = FakeRun(returncode=1, stderr="no such signal")
     scan.subprocess = fake_subprocess(runner)
     scan.load_terms = lambda terms_file=None: NO_TERMS
+    # The account's own username is read from the API; these cases exercise the
+    # verdict path, so the lookup is stubbed rather than reaching the network.
+    scan.read_owner = lambda key: "ilya_mozerov_867dbdd91feb"
     scan.collect = lambda key: [{"id": 1, "state": "live"}]
-    scan.read_item = lambda item, key: {"title": "x", "body": "probe@example.com", "tags": "", "replies": []}
+    scan.read_item = lambda item, key, owner="": {"title": "x", "body": "probe@example.com", "tags": "", "replies": []}
     # An existing CLI path makes publish_verdict reach the injected runner. Without
     # it the test would pass through the missing-CLI branch and never exercise
     # the failed-publish handling it is named for.
@@ -227,8 +230,11 @@ def test_a_green_that_cannot_publish_is_unknown_not_green(tmp_path):
     runner = FakeRun(returncode=1, stderr="no such signal")
     scan.subprocess = fake_subprocess(runner)
     scan.load_terms = lambda terms_file=None: NO_TERMS
+    # The account's own username is read from the API; these cases exercise the
+    # verdict path, so the lookup is stubbed rather than reaching the network.
+    scan.read_owner = lambda key: "ilya_mozerov_867dbdd91feb"
     scan.collect = lambda key: [{"id": 1, "state": "live"}]
-    scan.read_item = lambda item, key: {"title": "A note", "body": "A sentence.", "tags": "", "replies": []}
+    scan.read_item = lambda item, key, owner="": {"title": "A note", "body": "A sentence.", "tags": "", "replies": []}
     cli = fake_cli(tmp_path)
     assert scan.run_all("key", report=tmp_path / "report.json", cli=cli) == 3
     assert_the_publish_was_attempted(runner, cli)
@@ -248,8 +254,11 @@ def test_a_missing_cli_and_a_failed_publish_give_the_same_exit_code(tmp_path):
     runner = FakeRun(returncode=1, stderr="no such signal")
     scan.subprocess = fake_subprocess(runner)
     scan.load_terms = lambda terms_file=None: NO_TERMS
+    # The account's own username is read from the API; these cases exercise the
+    # verdict path, so the lookup is stubbed rather than reaching the network.
+    scan.read_owner = lambda key: "ilya_mozerov_867dbdd91feb"
     scan.collect = lambda key: [{"id": 1, "state": "live"}]
-    scan.read_item = lambda item, key: {"title": "A note", "body": "A sentence.", "tags": "", "replies": []}
+    scan.read_item = lambda item, key, owner="": {"title": "A note", "body": "A sentence.", "tags": "", "replies": []}
     failed_publish = scan.run_all("key", report=tmp_path / "a.json", cli=fake_cli(tmp_path))
     missing_cli = scan.run_all("key", report=tmp_path / "b.json", cli=Path("/nonexistent/mishe"))
     assert failed_publish == missing_cli == 3
@@ -268,8 +277,11 @@ def test_the_report_records_the_verdict_and_never_the_matched_text(tmp_path):
     runner = FakeRun()
     scan.subprocess = fake_subprocess(runner)
     scan.load_terms = lambda terms_file=None: NO_TERMS
+    # The account's own username is read from the API; these cases exercise the
+    # verdict path, so the lookup is stubbed rather than reaching the network.
+    scan.read_owner = lambda key: "ilya_mozerov_867dbdd91feb"
     scan.collect = lambda key: [{"id": 4242, "state": "live"}]
-    scan.read_item = lambda item, key: {"title": "x", "body": "write to probe@example.com", "tags": "", "replies": []}
+    scan.read_item = lambda item, key, owner="": {"title": "x", "body": "write to probe@example.com", "tags": "", "replies": []}
     report = tmp_path / "report.json"
     assert scan.run_all("key", report=report, cli=fake_cli(tmp_path)) == 2
     written = json.loads(report.read_text(encoding="utf-8"))
@@ -290,6 +302,115 @@ def test_the_self_test_passes_against_the_site_terms():
         return
     scan = load_scan()
     assert scan.self_test(TERMS) == 0
+
+
+# ---- the reply blind spot, closed 2026-11-14 --------------------------------------
+#
+# The scan used to read only the top level of each comment tree.  On this
+# account that meant 18 comments out of 98, and every one of the 47 replies
+# the account itself wrote was nested, so the rule had never held our own
+# published replies.  It also never fetched the tail the list endpoint
+# withholds from a long thread.  Both are read now, and these cases hold the
+# behaviour down.
+
+
+def comment(username, body, children=(), id_code="c1"):
+    """One comment as the API answers it."""
+    return {"id_code": id_code, "body_html": "<p>%s</p>" % body,
+            "user": {"username": username}, "children": list(children)}
+
+
+def test_the_whole_comment_tree_is_read_not_only_its_top_level():
+    """A nested reply of ours is read, and a violation in it is RED.
+
+    Before 2026-11-14 the scan read only the top level of the tree, so a
+    reply the account itself wrote could never be scanned.
+    """
+    scan = load_scan()
+    tree = [comment("ilya_mozerov_867dbdd91feb", "a top-level note",
+                    children=[comment("ilya_mozerov_867dbdd91feb",
+                                      "write to probe@example.com", id_code="c2")])]
+    assert len(scan.flatten_comments(tree)) == 2
+    fields = {"title": "x", "body": "a body", "tags": "",
+              "replies": [scan.flatten_comments(tree)[1]["body_html"]]}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "RED" and any(code == "email" for _f, _r, code in violations)
+
+
+def test_a_readers_own_text_is_evidence_and_never_a_red():
+    """A rule hit in a reader's comment must not make this lane RED.
+
+    The account cannot edit or retract a reader's comment, so a hit inside it
+    is a fact about the reader.  It is counted and reported; the lane stays on
+    the account's own text.
+    """
+    scan = load_scan()
+    fields = {"title": "x", "body": "a body", "tags": "",
+              "replies": [], "foreign_replies": ["the digest is 19a674ad01efeb22e3e68925ea93d09f3f4bf0882894d282d8615028a0606bdf"]}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "GREEN" and not violations
+    found = scan.foreign_findings(fields, **NO_TERMS)
+    assert [code for _f, _r, code in found] == ["sha-or-digest"]
+
+
+def test_a_thread_still_short_of_its_own_count_is_unknown():
+    """A comment nobody read is a comment nobody can rule out.
+
+    When the tail cannot be recovered and the thread is still short of the
+    account's own comment count, the item is UNKNOWN, never GREEN.
+    """
+    scan = load_scan()
+    fields = {"title": "x", "body": "a body", "tags": "", "replies": [],
+              "_reply_shortfall": 4}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "UNKNOWN" and not violations
+
+
+def test_the_withheld_tail_is_recovered_and_scanned():
+    """The comments the list endpoint withholds are fetched and read.
+
+    The busiest thread on this account holds 54 comments and the list returned
+    50.  The four withheld ones are the newest, and they were never scanned.
+    """
+    scan = load_scan()
+    hidden = comment("ilya_mozerov_867dbdd91feb", "write to probe@example.com", id_code="tail")
+    listed = [comment("ilya_mozerov_867dbdd91feb", "first", children=[], id_code="top")]
+
+    def fake_get(path, key=None):
+        if path.startswith("/comments/top"):
+            return {"id_code": "top", "children": [hidden]}
+        return []
+
+    scan.get = fake_get
+    recovered = scan.recover_tail(listed, "key")
+    assert len(scan.flatten_comments(recovered)) == 2
+    assert scan.flatten_comments(recovered)[1]["id_code"] == "tail"
+
+
+def test_the_report_counts_readers_findings_without_raising_a_red(tmp_path):
+    """The report records what was found in readers' text, and stays GREEN.
+
+    A reader's own sha256 attestation is a fact about the reader.  It is
+    counted in the report so the account knows it is there, and it does not
+    make the lane RED.
+    """
+    scan = load_scan()
+    runner = FakeRun()
+    scan.subprocess = fake_subprocess(runner)
+    scan.load_terms = lambda terms_file=None: NO_TERMS
+    scan.read_owner = lambda key: "ilya_mozerov_867dbdd91feb"
+    scan.collect = lambda key: [{"id": 4218940, "state": "live"}]
+    scan.read_item = lambda item, key, owner="": {
+        "title": "A post", "body": "A body.", "tags": "", "replies": [],
+        "foreign_replies": ["corpus cdc1f375da45565ad658bf468af7a040e53879d342623b09028fa760b2655098"]}
+    report = tmp_path / "report.json"
+    assert scan.run_all("key", report=report, cli=fake_cli(tmp_path)) == 0
+    written = json.loads(report.read_text(encoding="utf-8"))
+    assert written["overall"] == "GREEN"
+    assert written["foreign_findings"] == 1
+    assert written["items"][0]["foreign_findings"][0]["code"] == "sha-or-digest"
+    # The report never carries the matched text.
+    assert "cdc1f375da45565ad658bf468af7a040e53879d342623b09028fa760b2655098" not in report.read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":
