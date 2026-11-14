@@ -413,5 +413,109 @@ def test_the_report_counts_readers_findings_without_raising_a_red(tmp_path):
     assert "cdc1f375da45565ad658bf468af7a040e53879d342623b09028fa760b2655098" not in report.read_text(encoding="utf-8")
 
 
+# ---- the card-description blind spot, closed 2026-11-14 -------------------------
+#
+# The scan read the title, the body, the tags and the replies.  It never read
+# the card description, which DEV shows on every card and in every link
+# preview, and which the publisher sends from the article's front matter.
+# A private term in that description was published and the lane read GREEN.
+
+
+def test_a_private_identifier_in_the_card_description_is_red():
+    """The description is published text, so the rule holds it too.
+
+    Before 2026-11-14 the same text was RED in the body and GREEN in the
+    description.
+    """
+    scan = load_scan()
+    fields = {"title": "A post", "body": "A body.", "tags": "", "replies": [],
+              "description": "Write to probe@example.com about it."}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "RED"
+    assert [field for field, _rule, _code in violations] == ["description"]
+
+
+def test_the_same_text_is_red_in_the_body_and_in_the_description():
+    """One rule, two published places.
+
+    The point of the gap was that the rule's reach depended on where the
+    text sat, so the same private identifier is judged the same way in the
+    body and on the card.
+    """
+    scan = load_scan()
+    text = "Write to probe@example.com about it."
+    in_body = scan.verdict_for({"title": "t", "body": text, "tags": "",
+                                 "replies": []}, **NO_TERMS)
+    in_card = scan.verdict_for({"title": "t", "body": "clean", "tags": "",
+                                "replies": [], "description": text}, **NO_TERMS)
+    assert in_body[0] == "RED" and in_card[0] == "RED"
+
+
+def test_an_article_without_a_description_is_not_unknown():
+    """No description published is no text to rule out.
+
+    An item must not be made UNKNOWN by a field that simply does not exist.
+    """
+    scan = load_scan()
+    fields = {"title": "A post", "body": "A body.", "tags": "", "replies": []}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "GREEN" and not violations
+
+
+def test_an_unreadable_description_is_unknown():
+    """A description that is present but not readable is UNKNOWN, never a pass.
+
+    A description nobody could read is a description nobody can rule out.
+    """
+    scan = load_scan()
+    fields = {"title": "A post", "body": "A body.", "tags": "", "replies": [],
+              "description": {"unexpected": "shape"}}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "UNKNOWN" and not violations
+
+
+def test_the_draft_preflight_reads_the_description_the_publisher_will_send():
+    """The pre-flight reads the same front matter field the write path publishes.
+
+    The publisher sends `description:` from the front matter; a pre-flight that
+    ignored it would clear a draft whose card would ship a private term.
+    """
+    scan = load_scan()
+    draft = ('---\ntitle: A post\ndescription: "the card says probe@example.com"\n'
+             'tags: one\n---\n\nThe body is clean.\n')
+    assert scan.draft_description(draft) == "the card says probe@example.com"
+    fields = {"title": "A post", "body": draft, "tags": "",
+              "replies": [], "description": scan.draft_description(draft)}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "RED"
+    assert any(code == "email" for _field, _rule, code in violations)
+
+
+def test_a_draft_that_names_no_description_publishes_none():
+    """A front matter without a description field publishes no description."""
+    scan = load_scan()
+    draft = "---\ntitle: A post\ntags: one\n---\n\nThe body is clean.\n"
+    assert scan.draft_description(draft) == ""
+    fields = {"title": "A post", "body": draft, "tags": "",
+              "replies": [], "description": scan.draft_description(draft)}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "GREEN" and not violations
+
+
+def test_the_read_item_captures_the_description_the_api_answers():
+    """The description is read from the article record, not left out.
+
+    The scan has to fetch it; a fetch that forgot the field would report a
+    clean item while the card carried the term.
+    """
+    scan = load_scan()
+    article = {"title": "A post", "body_markdown": "A body.",
+               "tag_list": ["one"], "description": "the card",
+               "comments_count": 0}
+    scan.get = lambda path, key=None: article
+    fields = scan.read_item({"id": 4218940, "state": "live"}, "key", "owner")
+    assert fields["description"] == "the card"
+
+
 if __name__ == "__main__":
     sys.exit(0)

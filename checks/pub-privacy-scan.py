@@ -45,6 +45,17 @@ Both are read now: the whole tree, and the tail recovered through
 own comment count after that recovery is UNKNOWN, because a comment nobody
 read is a comment nobody can rule out.
 
+The card description is read as well, and it was not before 2026-11-14.
+DEV shows the description on every card and in every link preview, so a
+private term in it is published as surely as one in the body, and DEV
+freezes the description at creation: correcting the body does not correct
+the card.  The publisher sends the description from the article's front
+matter whenever the front matter names one, so the text is the account's
+own.  An article that publishes no description carries no text to rule out
+and is read as empty; a description that is present but unreadable is
+UNKNOWN, because a description nobody could read is a description nobody
+can rule out.
+
 Whose text decides the verdict.  A rule hit in the account's own text is RED:
 we wrote it and we can correct it.  A rule hit inside a reader's comment is
 evidence, not a violation of ours: we did not write it and we cannot edit it,
@@ -107,6 +118,11 @@ ENV_FILE = Path(os.environ.get("MESH_DEVTO_ENV", str(SITE / "pub" / "access" / "
 
 #: The operator CLI used to publish the verdict.
 CLI = SITE / "bin" / "mishe"
+
+#: A draft's front matter, and the description field inside it.  The publisher
+#: reads the same field, so the pre-flight reads what the write will publish.
+FRONT_MATTER = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.S)
+FRONT_DESCRIPTION = re.compile(r"^description:\s*(.+)$", re.M)
 
 
 # ---- R2/R3/R4 structural patterns (no private terms here) -------------------------
@@ -360,10 +376,16 @@ def read_owner(key: str) -> str:
 
 
 def read_item(item: dict, key: str, owner: str = "") -> dict:
-    """Fetch body, title, tags and the account's own replies for one article.
+    """Fetch body, title, tags, card description and the account's own replies.
 
     Unreadable parts are UNKNOWN, never a pass.  The thread is read in full:
     every nested reply, and the tail the list endpoint withheld.
+
+    The card description is read too.  DEV shows it on every card and in every
+    link preview, and it is frozen at creation, so a corrected body keeps
+    showing the sentence the description was written with.  It is our own
+    text: the publisher sends it from the front matter whenever the front
+    matter names one.
     """
     fields: dict[str, object] = {}
     expected = None
@@ -372,6 +394,7 @@ def read_item(item: dict, key: str, owner: str = "") -> dict:
         fields["title"] = art.get("title")
         fields["body"] = art.get("body_markdown")
         fields["tags"] = " ".join(art.get("tag_list") or []) if isinstance(art.get("tag_list"), list) else art.get("tag_list")
+        fields["description"] = art.get("description")
         if isinstance(art.get("comments_count"), int):
             expected = art["comments_count"]
     except (urllib.error.URLError, ValueError, KeyError, TypeError) as err:
@@ -430,6 +453,18 @@ def verdict_for(fields: dict, terms: list, foreign_handles: list = (), public_re
             continue
         for rule, code in scan_text(text, terms, foreign_handles, public_repo_rx):
             violations.append((name, rule, code))
+    # The card description is published text too: DEV shows it on every card
+    # and in every link preview.  An article that publishes no description
+    # carries no text to rule out and is read as empty; a description that is
+    # present but unreadable is UNKNOWN, because a description nobody could
+    # read is a description nobody can rule out.
+    if fields.get("description") is not None:
+        ok, text = text_or_unknown(fields.get("description"))
+        if not ok:
+            unknown = True
+        else:
+            for rule, code in scan_text(text, terms, foreign_handles, public_repo_rx):
+                violations.append(("description", rule, code))
     for n, reply in enumerate(fields.get("replies") or []):
         for rule, code in scan_text(reply, terms, foreign_handles, public_repo_rx):
             violations.append((f"reply[{n}]", rule, code))
@@ -591,6 +626,27 @@ def run_all(key: str, *, terms_file: Path | None = None, report: Path | None = N
     return {GREEN: 0, RED: 2, UNKNOWN: 3}[overall]
 
 
+def draft_description(text: str) -> str:
+    """The card description a draft's front matter names, or "" when it names none.
+
+    The publisher reads ``description:`` out of the front matter and sends it
+    to DEV, so the pre-flight has to read the same field the write path will
+    publish.  A front matter that names none publishes none, which is nothing
+    to rule out.
+    """
+    match = FRONT_MATTER.match(text)
+    if not match:
+        return ""
+    head = match.group(1)
+    found = FRONT_DESCRIPTION.search(head)
+    if not found:
+        return ""
+    value = found.group(1).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+        value = value[1:-1]
+    return value
+
+
 def scan_file(path: str, terms_file: Path | None = None) -> int:
     loaded = load_terms(terms_file)
     try:
@@ -598,7 +654,8 @@ def scan_file(path: str, terms_file: Path | None = None) -> int:
     except (OSError, UnicodeDecodeError):
         print("UNKNOWN: draft unreadable")
         return 3
-    fields = {"title": text.splitlines()[0] if text else "", "body": text, "tags": "", "replies": []}
+    fields = {"title": text.splitlines()[0] if text else "", "body": text, "tags": "",
+              "replies": [], "description": draft_description(text)}
     verdict, violations = verdict_for(fields, loaded["terms"], loaded["foreign_handles"], loaded["public_repo_rx"])
     print(f"{verdict} " + " ".join(f"{f}:{r}/{c}" for f, r, c in violations))
     return {GREEN: 0, RED: 2, UNKNOWN: 3}[verdict]

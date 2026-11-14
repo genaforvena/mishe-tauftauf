@@ -95,6 +95,23 @@ The foreground run measures about 4.5 minutes (108 items, paced reads), so the
 duty's timeout is 540 s and its `max_age` is 7200 s. The scan is a public-API
 read; it never writes to DEV.to.
 
+What the scan reads grew twice on 2026-11-14, both times because reading the
+check found a place it did not look. It now reads the whole comment tree and
+the tail the list endpoint withholds (below), and the **card description** of
+every live and draft article. DEV shows the description on every card and in
+every link preview, and DEV freezes it at creation, so a corrected body keeps
+showing the sentence the description was written with; the publisher sends it
+from the article's front matter, so it is the account's own text. Before that
+change a private identifier in a description was published and the lane read
+GREEN, while the same text in the body was RED. The draft pre-flight reads
+the same front matter field, so a draft whose card would ship a private term
+is refused before the write.
+
+A description that is present but unreadable is UNKNOWN, not a pass: a
+description nobody could read is a description nobody can rule out. An
+article that publishes no description carries no text to rule out and is
+read as empty.
+
 One behaviour changed in the move. A RED verdict now stays RED even when the
 publish to the bus fails: a violation we observed is an observation, not a
 missing one, and the duty maps exit 2 onto the bus itself. The site-local copy
