@@ -6,6 +6,8 @@ values. Adding a rule means editing ``RULES`` here.
 """
 from __future__ import annotations
 
+import json
+import pathlib
 import re
 import subprocess
 
@@ -31,3 +33,17 @@ def changed_paths(repo, sha: str) -> tuple[str, list[str]]:
     files = subprocess.run(["git", "-C", str(repo), "show", "-z", "--format=", "--name-only", sha], check=True,
                            capture_output=True, text=True).stdout.split("\0")
     return subject, [path for path in files if path]
+
+
+def recent_shas(repo, count: int) -> list[str]:
+    """Up to ``count`` commit SHAs reachable from HEAD, oldest first."""
+    out = subprocess.run(["git", "-C", str(repo), "rev-list", "--reverse", f"-n{int(count)}", "HEAD"], check=True,
+                         capture_output=True, text=True).stdout
+    return [sha for sha in out.split() if sha]
+
+
+def ledger_shas(ledger: pathlib.Path) -> set[str]:
+    """SHAs already answered in a commit-risk ledger; an absent ledger has none."""
+    if not ledger.exists():
+        return set()
+    return {json.loads(line)["sha"] for line in ledger.read_text(encoding="utf-8").splitlines() if line.strip()}

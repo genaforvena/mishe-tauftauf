@@ -87,5 +87,72 @@ class CommitRiskTests(unittest.TestCase):
         self.assertIsNone(row["outcome"])
 
 
+class RecordNewTest(unittest.TestCase):
+    def setUp(self):
+        import subprocess
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = pathlib.Path(self.tmp.name) / "repo"
+        self.home = pathlib.Path(self.tmp.name) / "home"
+        self.repo.mkdir()
+        self.git = lambda *a: subprocess.run(["git", "-C", str(self.repo), *a], check=True,
+                                             capture_output=True, text=True).stdout
+        self.git("init", "-q")
+        self.git("config", "user.email", "t@example.invalid")
+        self.git("config", "user.name", "t")
+        self._commit(["docs/a.md"], "docs: a")
+        self._commit(["src/mishe_tauftauf/release_x.py"], "release: x")
+        # Residual: one path from each of two rules, so no System 0 answer. The space checks -z parsing.
+        self._commit(["tests/t one.py", "src/mishe_tauftauf/wake.py"], "mixed: residual")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _commit(self, paths, subject):
+        for path in paths:
+            target = self.repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(subject + path, encoding="utf-8")
+            self.git("add", "--", path)
+        self.git("commit", "-q", "-m", subject)
+
+    def test_no_provider_records_system0_only_then_idempotent(self):
+        rows = cr.record_new(self.repo, self.home, None)
+        self.assertEqual([r["label"] for r in rows], ["routine", "delivery-path"])
+        self.assertEqual({r["source"] for r in rows}, {"system0"})
+        self.assertEqual(cr.record_new(self.repo, self.home, None), [])
+        self.assertEqual(len(cr.recorded_shas(self.home)), 2)
+
+    def test_residual_is_answered_when_a_provider_exists(self):
+        cr.record_new(self.repo, self.home, None)
+        seen = {}
+
+        def stub(subject, paths, provider, *, post=None, threshold=cr.THRESHOLD):
+            seen["subject"], seen["paths"] = subject, paths
+            return {"label": "dispatch-path", "source": "system1", "confidence": 0.9, "reason": "stub"}
+
+        original = cr.classify
+        cr.classify = stub
+        try:
+            rows = cr.record_new(self.repo, self.home, object())
+        finally:
+            cr.classify = original
+        self.assertEqual([r["label"] for r in rows], ["dispatch-path"])
+        self.assertEqual(seen["subject"], "mixed: residual")
+        self.assertIn("tests/t one.py", seen["paths"])
+        self.assertEqual(len(cr.recorded_shas(self.home)), 3)
+
+    def test_unanswered_commit_is_not_recorded_so_a_later_pass_asks_again(self):
+        def refused(subject, paths, provider, *, post=None, threshold=cr.THRESHOLD):
+            return {"label": None, "source": "escalate", "confidence": None, "reason": "call refused"}
+
+        original = cr.classify
+        cr.classify = refused
+        try:
+            self.assertEqual(cr.record_new(self.repo, self.home, object()), [])
+        finally:
+            cr.classify = original
+        self.assertEqual(len(cr.recorded_shas(self.home)), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,7 @@ import pathlib
 import time
 
 from . import decision_provider as dp
+from . import commit_risk_text as text
 from .commit_risk_text import changed_paths, path_label  # changed_paths is re-exported for callers
 
 QUESTION = "commit-risk-class"
@@ -70,3 +71,32 @@ def record(home: pathlib.Path, sha: str, result: dict, *, now: float | None = No
     row = dict(sha=sha, at=time.time() if now is None else now, outcome=None, **result)
     with ledger.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def recorded_shas(home: pathlib.Path) -> set[str]:
+    """SHAs already answered in the ledger, so a pass never classifies one twice."""
+    return text.ledger_shas(pathlib.Path(home) / "decision-log" / "commit-risk.jsonl")
+
+
+def record_new(repo: pathlib.Path, home: pathlib.Path, provider: dp.Provider | None, *, count: int = 50,
+               post=None) -> list[dict]:
+    """Advisory pass: classify each recent commit not yet in the ledger and append its row.
+
+    Runs outside delivery and never gates it. A commit that needs the model is left unrecorded
+    when no decision service is configured, and a commit the service did not answer (refused, failed)
+    is left unrecorded too, so a later pass asks again.
+    """
+    done = recorded_shas(home)
+    rows = []
+    for sha in text.recent_shas(repo, count):
+        if sha in done:
+            continue
+        subject, paths = changed_paths(repo, sha)
+        if provider is None and system0(paths) is None:
+            continue
+        result = dict(classify(subject, paths, provider, post=post), subject=subject, n_paths=len(paths))
+        if result["confidence"] is None:
+            continue  # the service gave no answer (refused, failed or unconfigured): ask again on a later pass
+        record(home, sha, result)
+        rows.append(dict(result, sha=sha))
+    return rows
