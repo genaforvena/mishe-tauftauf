@@ -208,10 +208,17 @@
     {
       "name": "pub-privacy-scan",
       "command": [
-        "env",
-        "MESH_DEVTO_ENV={home}/pub/access/devto.env",
-        "{home}/pub/bin/pub-privacy-scan",
-        "--all"
+        "{python}",
+        "{repo}/checks/pub-privacy-scan.py",
+        "--all",
+        "--env",
+        "{home}/pub/access/devto.env",
+        "--terms",
+        "{home}/pub/privacy-terms.json",
+        "--report",
+        "{home}/pub/privacy-scan.json",
+        "--cli",
+        "{home}/bin/mishe"
       ],
       "red_codes": [
         2

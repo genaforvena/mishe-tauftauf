@@ -62,22 +62,45 @@ unknown, unavailable, skipped questions, malformed output and timeouts refuse.
 
 ## The privacy scan's own duty
 
-`pub/bin/pub-privacy-scan --all` is the check that reads every live and draft
+`checks/pub-privacy-scan.py --all` is the check that reads every live and draft
 article, title, tag and reply against the private/public rule list Ilya confirmed
 on 2026-11-12 13:46Z. It was the one check of the four that had no duty: it was
 run by hand, so its signal `pub-privacy-scan` aged to UNKNOWN between runs even
 when nothing was wrong — a missing monitor read the same as a broken one.
 
 Duty `pub-privacy-scan` in `duties.json` runs it on an hourly timer, with the
-site's own credentials (`MESH_DEVTO_ENV` pointing at `pub/access/devto.env`,
-passed as an absolute path) and the scanner's exit codes mapped to the bus:
-exit 2 is RED, exit 3 is UNKNOWN. A scan that cannot read its input stays
-UNKNOWN rather than passing; the scanner publishes its own verdict to the bus,
-so the timer run and a hand run leave the same reading.
+site's own credentials and rule terms named as absolute paths (`--env`
+`pub/access/devto.env`, `--terms` `pub/privacy-terms.json`) and the scanner's
+exit codes mapped to the bus: exit 2 is RED, exit 3 is UNKNOWN. A scan that
+cannot read its input stays UNKNOWN rather than passing; the scanner publishes
+its own verdict to the bus, so the timer run and a hand run leave the same
+reading.
+
+The check is a committed file, not a site-local script. It used to live at
+`SITE_HOME/pub/bin/pub-privacy-scan`, outside the repository, and the delivery
+gate's reviewer could not see it: on 2026-11-14 the review of the duty that
+runs it refused with "insufficient context to assess deeper defects", naming
+the scanner's exit-code contract as missing evidence. A reviewer can only judge
+bytes it is given, so a check whose contract lives outside the repository can
+never be reviewed. Its three siblings — `pub-index-self-claims.py`,
+`pub-account-count-claims.py` and `pub-article-duplication.py` — are all
+committed under `checks/`, and this one is now the fourth.
+
+What stays site-local is the rule *terms*: the names, places, devices and
+handles live in `SITE_HOME/pub/privacy-terms.json` and are never committed.
+The committed file holds the structural patterns and the rule logic, which is
+exactly what a reviewer needs to see.
 
 The foreground run measures about 4.5 minutes (108 items, paced reads), so the
 duty's timeout is 540 s and its `max_age` is 7200 s. The scan is a public-API
 read; it never writes to DEV.to.
+
+One behaviour changed in the move. A RED verdict now stays RED even when the
+publish to the bus fails: a violation we observed is an observation, not a
+missing one, and the duty maps exit 2 onto the bus itself. The site-local copy
+returned UNKNOWN for every verdict whose publish failed, including a RED, which
+masked a real violation behind a transport failure — the lane would read
+"nothing known" instead of "something wrong".
 
 `SITE/publication-check.json` is an object with `command` (nonempty argv list) and
 `timeout_seconds` (finite positive seconds, at most 300). Example command:
