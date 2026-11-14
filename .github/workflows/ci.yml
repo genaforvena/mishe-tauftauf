@@ -160,6 +160,16 @@ jobs:
       # detector's own controlled failure, so the check that guards the write
       # path is itself exercised here.
       - run: python checks/pub-article-duplication.py --self-test
+      # A page that publishes a count about the account must publish the
+      # account's count.  Measured on this plant: the index page (DEV 4893597)
+      # said twenty-five posts carry a correction notice within their first
+      # three lines and the account had twenty-eight, and it called its
+      # conversation list "biggest first" while the list was not in that
+      # order -- both published, both the author's own.  Nothing checked the
+      # page against the account.  The gate runs the checker's own controlled
+      # failure, so the check that guards the index page is itself exercised
+      # here.
+      - run: python checks/pub-index-self-claims.py --self-test
       - run: python -m pytest -q
 
   adapters:

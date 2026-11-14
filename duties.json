@@ -176,6 +176,21 @@
       "covers": "no published DEV.to article repeats a paragraph verbatim"
     },
     {
+      "name": "pub-index-self-claims",
+      "command": [
+        "{python}",
+        "{repo}/checks/pub-index-self-claims.py",
+        "--env",
+        "{home}/pub/access/devto.env"
+      ],
+      "every": 3600,
+      "timeout": 300,
+      "max_age": 7200,
+      "resolver": "pub",
+      "replaces": [],
+      "covers": "the DEV.to index page's published counts match the account"
+    },
+    {
       "name": "budget",
       "command": [
         "{home}/producers/budget.sh"
