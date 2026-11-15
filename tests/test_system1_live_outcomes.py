@@ -100,3 +100,59 @@ def test_shadow_missing_ledger_is_open_and_corrupt_is_unknown(tmp_path):
     code = subprocess.run([sys.executable, "-I", str(SCRIPT), "--home", str(tmp_path), "--check", "shadow"],
                           capture_output=True).returncode
     assert code == mod.UNKNOWN
+
+
+def _main(tmp_path, check, now=NOW, budget=None):
+    """Exit code through main(), the real path that turns malformed evidence into UNKNOWN."""
+    args = ["--home", str(tmp_path), "--check", check, "--now", str(now),
+            "--budget", str(budget or tmp_path / "budget.json")]
+    return mod.main(args)
+
+
+def _budget(tmp_path, spent=1):
+    budget = tmp_path / "budget.json"
+    budget.write_text(json.dumps({"date": "2026-11-15", "count": 3, "spent": spent}))
+    return budget
+
+
+def test_decision_future_stamp_is_unknown_not_done(tmp_path):
+    # Reviewer counterexample: a decided row stamped after now plus spent=1 must not pass.
+    _write(tmp_path / mod.DECISION_LOG, [{"source": "system1", "reason": "decided", "at": 2_000_000_000}])
+    assert _main(tmp_path, "decision", 1_800_000_000.0, _budget(tmp_path)) == mod.UNKNOWN
+
+
+def test_wake_gate_future_stamp_is_unknown_not_done(tmp_path):
+    _write(tmp_path / mod.WAKE_GATE_LIVE_LOG, [{"gate": "live", "action": "wake", "at": 2_000_000_000}])
+    assert _main(tmp_path, "wake-gate", 1_800_000_000.0) == mod.UNKNOWN
+
+
+def test_nonfinite_stamps_are_unknown_not_done(tmp_path):
+    # Python json accepts NaN and Infinity; the ledger must still be rejected, never GREEN.
+    for literal in ("NaN", "Infinity", "-Infinity"):
+        path = tmp_path / mod.DECISION_LOG
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"source": "system1", "reason": "decided", "at": %s}\n' % literal)
+        assert _main(tmp_path, "decision", NOW, _budget(tmp_path)) == mod.UNKNOWN, literal
+        gate = tmp_path / mod.WAKE_GATE_LIVE_LOG
+        gate.write_text('{"gate": "live", "action": "skip", "at": %s}\n' % literal)
+        assert _main(tmp_path, "wake-gate") == mod.UNKNOWN, literal
+
+
+def test_nonfinite_spend_is_unknown_not_done(tmp_path):
+    _write(tmp_path / mod.DECISION_LOG, [{"source": "system1", "reason": "decided", "at": NOW - 10}])
+    budget = tmp_path / "budget.json"
+    budget.write_text('{"spent": Infinity}')
+    assert _main(tmp_path, "decision", NOW, budget) == mod.UNKNOWN
+
+
+def test_valid_window_still_passes_and_old_rows_do_not_count(tmp_path):
+    # Valid historical evidence in the window still counts; a stale live action alone does not.
+    _write(tmp_path / mod.DECISION_LOG, [
+        {"source": "system1", "reason": "decided", "at": NOW - 3 * 86400},
+        {"source": "system1", "reason": "decided", "at": NOW - 300},
+    ])
+    assert mod.decision_check(tmp_path, NOW, _budget(tmp_path))[0] == mod.DONE
+    _write(tmp_path / mod.WAKE_GATE_LIVE_LOG, [{"gate": "live", "action": "skip", "at": NOW - 2 * 86400}])
+    assert mod.wake_gate_check(tmp_path, NOW)[0] == mod.OPEN
+    _write(tmp_path / mod.WAKE_GATE_LIVE_LOG, [{"gate": "live", "action": "skip", "at": NOW + 0}])
+    assert mod.wake_gate_check(tmp_path, NOW)[0] == mod.DONE

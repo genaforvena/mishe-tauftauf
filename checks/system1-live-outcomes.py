@@ -18,6 +18,7 @@ ledger is OPEN, not UNKNOWN, because nothing has run yet; a corrupt one is UNKNO
 """
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -32,6 +33,11 @@ SHADOW_LOG = "decision-log/wake-gate.jsonl"
 SHADOW_MIN = 50
 
 
+def _reject_constant(name):
+    # Python's json accepts NaN/Infinity by default; they are not evidence, so the ledger is corrupt.
+    raise ValueError(f"non-finite JSON constant {name}")
+
+
 def _rows(path):
     """Parsed JSON rows, [] when the file is missing; raises ValueError when it is corrupt."""
     try:
@@ -43,9 +49,9 @@ def _rows(path):
         if not line.strip():
             continue
         try:
-            row = json.loads(line)
+            row = json.loads(line, parse_constant=_reject_constant)
         except ValueError as exc:
-            raise ValueError(f"{path.name} line {number} is not JSON") from exc
+            raise ValueError(f"{path.name} line {number} is not finite JSON") from exc
         if not isinstance(row, dict):
             raise ValueError(f"{path.name} line {number} is not an object")
         rows.append(row)
@@ -53,7 +59,15 @@ def _rows(path):
 
 
 def _number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _age(at, now):
+    """Seconds since evidence stamped `at`. A stamp in the future is malformed evidence: ValueError."""
+    age = now - at
+    if age < 0:
+        raise ValueError(f"evidence stamped in the future ({at!r} is after now)")
+    return age
 
 
 def decision_check(home, now, budget_path):
@@ -63,9 +77,11 @@ def decision_check(home, now, budget_path):
                and _number(r.get("at"))]
     if not decided:
         return OPEN, "no decided System One answer in the commit-risk ledger"
-    newest = max(r["at"] for r in decided)
-    if now - newest > WINDOW_S:
-        return OPEN, f"newest decided answer is {(now - newest) / 3600:.1f} h old"
+    # Every decided stamp must be a real past time; one future stamp makes the ledger untrustworthy.
+    ages = [_age(r["at"], now) for r in decided]
+    newest_age = min(ages)
+    if newest_age > WINDOW_S:
+        return OPEN, f"newest decided answer is {newest_age / 3600:.1f} h old"
     try:
         budget_raw = json.loads(Path(budget_path).read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -77,14 +93,15 @@ def decision_check(home, now, budget_path):
         return UNKNOWN, "decision budget ledger has no numeric spent"
     if spent <= 0:
         return OPEN, "decision budget shows no spend"
-    return DONE, f"{len(decided)} decided System One answers, newest {(now - newest) / 3600:.1f} h old, spent {spent:.4f}"
+    return DONE, f"{len(decided)} decided System One answers, newest {newest_age / 3600:.1f} h old, spent {spent:.4f}"
 
 
 def wake_gate_check(home, now):
     """(code, detail) for a wake gate that has acted live."""
     rows = _rows(home / WAKE_GATE_LIVE_LOG)
-    live = [r for r in rows if r.get("gate") == "live" and r.get("action") in ("skip", "wake")
-            and _number(r.get("at")) and now - r["at"] <= WINDOW_S]
+    candidates = [r for r in rows if r.get("gate") == "live" and r.get("action") in ("skip", "wake")
+                  and _number(r.get("at"))]
+    live = [r for r in candidates if _age(r["at"], now) <= WINDOW_S]
     if not live:
         return OPEN, "no live wake-gate action in the last 24 h (the shadow log does not count)"
     return DONE, f"{len(live)} live wake-gate actions in the last 24 h"
