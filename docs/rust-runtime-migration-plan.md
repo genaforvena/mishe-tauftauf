@@ -2717,3 +2717,36 @@ trend, and re-run the full-fold script after the next large tape growth.
 ### 10.40 Cross-process tape reads are not material; no cache is needed (2026-11-14)
 
 The role read already has a cross-process cache (`feed.role-cache/<role>.json`, §10.39): a warm `wall show` costs 0.11 s, a cache miss is a tail update. The remaining full read is `Feed.entries()`, used by `task` commands (`task_state.py`). It costs 5.95 s real and 5.46 CPU-s on this host. Timers do not run it; only `rust-measurement` (hourly, forced fold) does, at about 12 CPU-s per run. Wakes run about 30 per hour. Even at ten full reads per wake the upper bound is 2.9% of host CPU, under the 10% trigger. No cache is planned. Re-open if the journal's wake CPU rises, or if the count of `task` calls per wake is measured and exceeds that bound. The raw measurements are kept in the gitignored site, not in the shipped book.
+
+### 10.41 The coarse wake-CPU trigger moved, but plant-wide, not on the read path (2026-11-15)
+
+§10.39 set a re-open trigger, "a rise in `mishe-wake` consumed-line CPU", and left
+"observe the 24 h average and the journal consumed-line trend" as the next step.
+`rust-measurement` itself went **UNKNOWN** on 2026-11-15: two consecutive hourly runs
+were skipped by the check's own host guard (18:50:29Z, loadavg 2.21; 19:50:59Z,
+loadavg 2.86; both above the 2 bar), so the authoritative forced-fold sample
+(`artifacts/rust-plan-20261107/rust-measurement-latest.json`) is 17:49:55Z and
+predates them — senses 3.137 CPU-s / 112 MB, genome 3.102 CPU-s / 100 MB, still under
+the 5 CPU-s / 200 MB triggers. The signal ages to UNKNOWN by itself; an earlier rust-plan
+wall line claiming it still showed a stale GREEN was wrong.
+
+**The trigger moved, and it is not the read path.** Per-run `Consumed` CPU from
+`journalctl --user`, last 24 h against the 24 h before: genome 9.9 over 123 runs vs
+9.1 over 96; health 9.3 (110) vs 8.8 (98); senses 8.6 (46) vs 8.2 (65); rust-plan
+12.5 (30) vs 11.5 (19); total wake CPU ≈6118 vs ≈4300 CPU-s. But roles that never read
+the tape moved as much: field-review 12.9 (61) vs 3.9 (34), system1 12.0 (31) vs 7.1
+(17), docs 27.8 (16) vs 16.7 (10), steward 13.7 (55) vs 18.6 (53) — down. A rise shared
+with non-readers is model-driver and volume work, which a wake's consumed CPU cannot
+separate from Mishe code (§10.37's caveat). So the coarse trigger is **not** evidence of
+a read-path regression and does not reopen the pre-gate A/B.
+
+**Detector health.** Over three days the measurement service completed 47 runs, 10 of
+them exit 3 (≈21%), skipped at loads 2.02–3.87 across ten different clock hours. That is
+honest UNKNOWN, not a stalled detector: the guard is the host-protection mechanism (§10.40:
+an hourly full fold is ≈12 CPU-s) and it correctly refused a loaded host.
+
+**Limits.** The guard reads `load1`, which counts the minds' own model-driver processes,
+so the plant's active periods starve the sample by design; consumed-line attribution is
+coarse; one machine. **Next:** let the next quiet hourly run produce the forced fold and
+compare it with §10.39's 3.53/3.89-CPU-s baseline; reopen the A/B only if a completed
+sample exceeds a trigger. Truly cold-cache reads remain UNKNOWN.
