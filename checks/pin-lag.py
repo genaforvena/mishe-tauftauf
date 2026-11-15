@@ -27,6 +27,7 @@ from pathlib import Path
 GREEN_AGE_S = 60 * 60.0
 RED_AGE_S = 3 * 3600.0
 DELIVERY_DIR = Path("operator/plans/moving-pin-20261105/delivery")
+DELIVERY_RECORDS = Path("work/releases")
 STAGE_PATTERNS = [
     ("verify", re.compile(r"verify exit|verify did not|delivery not verified")),
     ("apply", re.compile(r"apply exit|apply\b")),
@@ -43,6 +44,7 @@ FAILURE_PATTERN = re.compile(r"exit [1-9]|not clear|refused|failed|unavailable|s
 # (the exit-code legend is not). Map what the record says to the reported stage and failure reason.
 PHASE_STAGE = {
     "checking": "check", "check-failed": "check",
+    "waiting-for-wakes": "activate", "activating": "activate",
     "review": "review", "review-failed": "review",
     "applying": "apply", "applied": "apply", "apply-failed": "apply",
     "verified": "verify", "delivered": "verify", "rolled-back": "verify", "verify-failed": "verify",
@@ -93,18 +95,57 @@ def promote_record(text: str) -> dict | None:
     return record if isinstance(record, dict) and "phase" in record else None
 
 
-def last_stage_and_failure(log: Path | None) -> tuple[str, str]:
+def record_stage_and_failure(record: dict) -> tuple[str, str]:
+    phase = record.get("phase")
+    failure = PHASE_FAILURE.get(phase, "")
+    sha = str(record.get("sha") or "")
+    if failure and sha:
+        failure = f"{failure} ({sha[:8]})"
+    return PHASE_STAGE.get(phase, "unknown"), failure[:200]
+
+
+def newest_record(home: Path) -> dict | None:
+    """The newest promote result record, or None. Its ``phase`` is the run's live state: a
+    promote that is still running has already written ``checking``/``waiting-for-wakes`` while
+    its wrapper log stays empty (the record JSON is printed only when the run returns)."""
+    best: tuple[float, dict] | None = None
+    for path in (home / DELIVERY_RECORDS).glob("*.json"):
+        try:
+            record = json.loads(path.read_text(errors="replace"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, dict) or "phase" not in record:
+            continue
+        created = record.get("created_at")
+        if not isinstance(created, (int, float)):
+            try:
+                created = path.stat().st_mtime
+            except OSError:
+                continue
+        if best is None or created > best[0]:
+            best = (created, record)
+    return best[1] if best else None
+
+
+def last_stage_and_failure(home: Path, log: Path | None) -> tuple[str, str]:
     if log is None:
         return "unknown", "no delivery run log"
     text = log.read_text(errors="replace")
     record = promote_record(text)
     if record is not None:
-        phase = record.get("phase")
-        failure = PHASE_FAILURE.get(phase, "")
-        sha = str(record.get("sha") or "")
-        if failure and sha:
-            failure = f"{failure} ({sha[:8]})"
-        return PHASE_STAGE.get(phase, "unknown"), failure[:200]
+        return record_stage_and_failure(record)
+    # The wrapper log is empty until the run returns, so a still-running promote has no record
+    # in it: read the live record the promote path already wrote for this run — a record created
+    # at or after the log started belongs to it, an older one is a previous, already-reported run.
+    try:
+        started = log.stat().st_mtime
+    except OSError:
+        started = None
+    live = newest_record(home)
+    if live is not None and started is not None:
+        created = live.get("created_at")
+        if isinstance(created, (int, float)) and created >= started:
+            return record_stage_and_failure(live)
     # A legacy (retired deliver.sh) or still-running log has no record: scan its own lines, skipping
     # the exit-code legend the wrapper prints last (it names every code, not this run's result).
     stage = "unknown"
@@ -143,7 +184,7 @@ def evaluate(home: Path, now: float, green_age: float = GREEN_AGE_S, red_age: fl
     if not times:
         return 0, [f"pin {pin[:8]} has no unreleased commit"]
     age = now - times[0]
-    stage, failure = last_stage_and_failure(newest_run_log(home / DELIVERY_DIR))
+    stage, failure = last_stage_and_failure(home, newest_run_log(home / DELIVERY_DIR))
     detail = [
         f"pin {pin[:8]} trails HEAD {head[:8]} by {len(times)} commit(s); oldest unreleased is {age / 60:.0f} min old",
         f"last delivery stage: {stage}",

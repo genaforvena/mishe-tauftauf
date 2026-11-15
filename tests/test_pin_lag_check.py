@@ -1,6 +1,12 @@
-"""checks/pin-lag.py: the newest run log's stage and failure are the run's own outcome, not the wrapper's legend."""
+"""checks/pin-lag.py: the newest run log's stage and failure are the run's own outcome, not the wrapper's legend.
+
+A promote that is still running has no record in its (empty, until return) wrapper log, so the
+check must read the live ``work/releases`` record it has already written rather than report
+"unknown" while a delivery is actively working.
+"""
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -18,37 +24,62 @@ def record(phase, sha='b0cec3c75de7ade970827bb19ef671e0cd7257cc'):
     return json.dumps({'version': 1, 'phase': phase, 'sha': sha, 'activated': False}) + '\n'
 
 
+def write_live_record(home, phase, *, created_at, sha='180073379418e235ecede094a69f34a8df4c6a66'):
+    root = home / 'work' / 'releases'
+    root.mkdir(parents=True, exist_ok=True)
+    (root / f'{sha}-{int(created_at)}.json').write_text(json.dumps(
+        {'version': 1, 'id': f'{sha}-{int(created_at)}', 'phase': phase, 'sha': sha, 'created_at': created_at}))
+    return root / f'{sha}-{int(created_at)}.json'
+
+
+def log_at(path, text, *, mtime):
+    path.write_text(text)
+    os.utime(path, (mtime, mtime))
+    return path
+
+
 def test_a_check_failed_promote_reports_the_record_phase_not_the_legend(tmp_path):
     log = tmp_path / 'deliver-run-1.log'
     log.write_text(record('check-failed') + PROMOTE_LEGEND + '\n')
-    assert lag.last_stage_and_failure(log) == ('check', 'check failed (b0cec3c7)')
+    assert lag.last_stage_and_failure(tmp_path, log) == ('check', 'check failed (b0cec3c7)')
 
 
 def test_a_delivered_promote_has_no_failure(tmp_path):
     log = tmp_path / 'deliver-run-2.log'
     log.write_text(record('delivered') + '[promote exit 0: legend — 0 delivered, 6 inside a wake]\n')
-    assert lag.last_stage_and_failure(log) == ('verify', '')
+    assert lag.last_stage_and_failure(tmp_path, log) == ('verify', '')
 
 
 def test_a_rolled_back_promote_names_the_rollback(tmp_path):
     log = tmp_path / 'deliver-run-3.log'
     log.write_text(record('rolled-back', sha='5d608cd9779fadd1f425852eca74fd45588d1f11') + PROMOTE_LEGEND + '\n')
-    assert lag.last_stage_and_failure(log) == ('verify', 'observation failed, rolled back (5d608cd9)')
+    assert lag.last_stage_and_failure(tmp_path, log) == ('verify', 'observation failed, rolled back (5d608cd9)')
 
 
-def test_a_still_running_promote_is_unknown(tmp_path):
-    log = tmp_path / 'deliver-run-4.log'
-    log.write_text('')
-    assert lag.last_stage_and_failure(log) == ('unknown', '')
+def test_a_still_running_promote_reports_the_live_record_phase(tmp_path):
+    log = log_at(tmp_path / 'deliver-run-4.log', '', mtime=1_000.0)
+    write_live_record(tmp_path, 'waiting-for-wakes', created_at=1_010.0)
+    assert lag.last_stage_and_failure(tmp_path, log) == ('activate', '')
+
+
+def test_a_still_running_promote_with_no_record_is_unknown(tmp_path):
+    log = log_at(tmp_path / 'deliver-run-4b.log', '', mtime=1_000.0)
+    assert lag.last_stage_and_failure(tmp_path, log) == ('unknown', '')
+
+
+def test_an_older_record_is_not_attributed_to_the_current_run(tmp_path):
+    log = log_at(tmp_path / 'deliver-run-4c.log', '', mtime=2_000.0)
+    write_live_record(tmp_path, 'check-failed', created_at=1_000.0)
+    assert lag.last_stage_and_failure(tmp_path, log) == ('unknown', '')
 
 
 def test_the_legend_alone_is_never_a_failure(tmp_path):
     log = tmp_path / 'deliver-run-5.log'
     log.write_text(DELIVER_LEGEND + '\n')
-    assert lag.last_stage_and_failure(log) == ('unknown', '')
+    assert lag.last_stage_and_failure(tmp_path, log) == ('unknown', '')
 
 
 def test_a_legacy_log_still_scans_its_own_lines(tmp_path):
     log = tmp_path / 'deliver-run-6.log'
     log.write_text('check started\nverify exit 5')  # no JSON record: the retired deliver.sh path
-    assert lag.last_stage_and_failure(log) == ('verify', 'verify exit 5')
+    assert lag.last_stage_and_failure(tmp_path, log) == ('verify', 'verify exit 5')
