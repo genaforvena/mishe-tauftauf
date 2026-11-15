@@ -74,6 +74,21 @@ def decode_router(stdout):
     return float(lines[0]) / 86400, lines[1], '"up":true' in lines[2]
 
 
+def band_name(freq):
+    """'2.472' (the channel frequency in GHz the router reports) -> '2.4'; '5.200' -> '5'."""
+    try:
+        ghz = float(freq)
+    except ValueError:
+        return freq
+    if 2.4 <= ghz < 2.5:
+        return "2.4"
+    if 4.9 <= ghz < 5.9:
+        return "5"
+    if 5.9 <= ghz < 7.2:
+        return "6"
+    return freq
+
+
 def decode_wifi(stdout):
     """Client signal strengths per band from the router's read-only Wi-Fi listing.
 
@@ -85,7 +100,7 @@ def decode_wifi(stdout):
     for line in stdout.splitlines():
         parts = line.split()
         if len(parts) >= 2 and parts[0] == "BAND":
-            band = parts[1]
+            band = band_name(parts[1])
             bands.setdefault(band, [])
         elif band is not None and len(parts) >= 3 and parts[2] == "dBm":
             try:
