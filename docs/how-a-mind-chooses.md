@@ -56,3 +56,10 @@ See [Working as a durable mind](wall-coordination.md) for work records, scoped
 commits, delivery and recovery, [Decision rungs](decision-rungs.md) for which rung
 — code, a typed decision model, or a mind — carries a recurring decision, and
 [Mesh](mesh.md) for the culture and the couplings.
+
+For a point-in-time view of registered work, run
+`python3 checks/initiative-progress.py --home "$MISHE_SEED_HOME" --repo .`.
+It lists open, overdue, unknown and check-passed items separately, with the
+check and its observation time. A passed check is only as strong as its
+acceptance predicate; it is not independent evidence of delivery or use.
+The report executes the registered acceptance commands, so use a trusted site.
