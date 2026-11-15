@@ -309,6 +309,34 @@ def activate(home, repo, source, sha):
     reload_units()
 
 
+OUTCOME_SIGNAL = "moving-pin-delivery"
+
+
+def publish_outcome(home, record):
+    """Publish the promotion outcome as the ``moving-pin-delivery`` signal: VERIFIED when delivered, FAILED otherwise.
+
+    The sha is the event, so a second delivery with the same reading is still an edge and wakes its subscribers
+    (field-review reviews every pin move). A missing registration or write error is recorded on the record, never raised.
+    """
+    from . import signal_store
+    phase = record.get("phase")
+    value = "VERIFIED" if phase == "delivered" else "FAILED"
+    try:
+        signal_store.observe(home, OUTCOME_SIGNAL, value, now=time.time(), source="release_promotion",
+                             event=f"{record.get('sha', '')}:{phase}")
+    except (OSError, ValueError) as exc:
+        record["signal_error"] = f"{type(exc).__name__}: {exc}"
+    return record
+
+
+def promote(home, repo, sha, **kwargs):
+    """Promote ``sha`` as the one pin (see ``_promote``) and publish the outcome signal."""
+    record = _promote(home, repo, sha, **kwargs)
+    publish_outcome(Path(home), record)
+    write_json(Path(home) / "work/releases" / f"{record['id']}.json", record)
+    return record
+
+
 def enqueue_review(home, record):
     root = Path(home)/"work/reviews"; root.mkdir(parents=True, exist_ok=True)
     path = review_queue_path(home, record)
@@ -337,7 +365,7 @@ def review_queue_path(home, record):
     return Path(home)/"work/reviews"/f"{key}.json"
 
 
-def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=run,
+def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=run,
             reviewer=None, closure=closure, strong_patch=None, request_id=None, wait_s=0):
     home, repo = Path(home), Path(repo)
     boundary.full_sha(repo, sha); boundary.full_sha(repo, previous)

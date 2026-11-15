@@ -582,3 +582,32 @@ def test_held_lock_gives_up_when_the_wake_never_settles_and_still_releases_the_h
         mp.undo()
         handle.close()
     assert not (tmp_path / "hold").exists()
+
+
+def test_a_delivered_promotion_publishes_the_outcome_signal_as_an_edge_per_sha(tree):
+    from mishe_tauftauf import signal_store
+    repo,home,old,sha=tree
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"])
+    r=p.promote(home,repo,sha,check=[sys.executable,"-c","assert True"],observe=["probe"],
+        previous=old,activate=lambda *a:None,probe=lambda *a,**k:dict(code=0,output="ok"),
+        reviewer=lambda *a:None,closure=lambda *a:None)
+    reading=signal_store.recorded(home, "moving-pin-delivery")
+    assert r["phase"]=="delivered" and reading["value"]=="VERIFIED" and reading["event"]==sha+":delivered"
+    (repo/"docs/page2.md").write_text("two"); git(repo,"add","."); git(repo,"commit","-qm","two")
+    second=git(repo,"rev-parse","HEAD")
+    p.promote(home,repo,second,check=[sys.executable,"-c","assert True"],observe=["probe"],
+        previous=sha,activate=lambda *a:None,probe=lambda *a,**k:dict(code=0,output="ok"),
+        reviewer=lambda *a:None,closure=lambda *a:None)
+    assert signal_store.recorded(home, "moving-pin-delivery")["event"]==second+":delivered"
+
+
+def test_a_failed_check_publishes_failed_and_a_missing_signal_never_raises(tree):
+    from mishe_tauftauf import signal_store
+    repo,home,old,sha=tree
+    r=p.promote(home,repo,sha,check=[sys.executable,"-c","raise SystemExit(3)"],observe=["probe"],
+        previous=old,activate=lambda *a:None,closure=lambda *a:None)
+    assert r["phase"]=="check-failed" and "signal_error" in r        # not registered: recorded, not raised
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"])
+    p.promote(home,repo,sha,check=[sys.executable,"-c","raise SystemExit(3)"],observe=["probe"],
+        previous=old,activate=lambda *a:None,closure=lambda *a:None)
+    assert signal_store.recorded(home, "moving-pin-delivery")["value"]=="FAILED"
