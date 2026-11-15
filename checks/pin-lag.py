@@ -17,6 +17,7 @@ Exit status:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -30,10 +31,29 @@ STAGE_PATTERNS = [
     ("verify", re.compile(r"verify exit|verify did not|delivery not verified")),
     ("apply", re.compile(r"apply exit|apply\b")),
     ("review", re.compile(r"review not clear|gate check: phase=|review-unavailable")),
-    ("check", re.compile(r"check started|waiting up to|retarget|check failed")),
+    ("check", re.compile(r"check started|waiting up to|retarget|check failed|check-failed|\"phase\": \"checking\"")),
 ]
 LEGEND_MARK = "verified-or-nothing-to-do"
+# The delivery wrapper prints a one-line exit-code legend as the run log's last line, e.g.
+# "[promote exit 0: 0 delivered, 2 could not start, 3 not delivered ...]". It names what each exit
+# code means, not this run's result, so it must not be read as the stage or the failure reason.
+LEGEND_PATTERN = re.compile(r"^\[(?:promote|deliver(?:\.sh)?) exit \d")
 FAILURE_PATTERN = re.compile(r"exit [1-9]|not clear|refused|failed|unavailable|still busy|did not deliver")
+# The single promote path writes its result as a JSON record; its "phase" is the run's own outcome
+# (the exit-code legend is not). Map what the record says to the reported stage and failure reason.
+PHASE_STAGE = {
+    "checking": "check", "check-failed": "check",
+    "review": "review", "review-failed": "review",
+    "applying": "apply", "applied": "apply", "apply-failed": "apply",
+    "verified": "verify", "delivered": "verify", "rolled-back": "verify", "verify-failed": "verify",
+}
+PHASE_FAILURE = {
+    "check-failed": "check failed",
+    "review-failed": "review not clear",
+    "apply-failed": "apply failed",
+    "verify-failed": "verify failed",
+    "rolled-back": "observation failed, rolled back",
+}
 
 
 def git(repo: Path, *args: str, timeout: float = 30.0) -> tuple[int, str]:
@@ -61,15 +81,37 @@ def newest_run_log(delivery: Path) -> Path | None:
     return logs[0] if logs else None
 
 
+def promote_record(text: str) -> dict | None:
+    """The JSON result record the single promote path prints, or None for a legacy or empty log."""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        record = json.loads(text[start:end + 1])
+    except ValueError:
+        return None
+    return record if isinstance(record, dict) and "phase" in record else None
+
+
 def last_stage_and_failure(log: Path | None) -> tuple[str, str]:
     if log is None:
         return "unknown", "no delivery run log"
+    text = log.read_text(errors="replace")
+    record = promote_record(text)
+    if record is not None:
+        phase = record.get("phase")
+        failure = PHASE_FAILURE.get(phase, "")
+        sha = str(record.get("sha") or "")
+        if failure and sha:
+            failure = f"{failure} ({sha[:8]})"
+        return PHASE_STAGE.get(phase, "unknown"), failure[:200]
+    # A legacy (retired deliver.sh) or still-running log has no record: scan its own lines, skipping
+    # the exit-code legend the wrapper prints last (it names every code, not this run's result).
     stage = "unknown"
     failure = ""
-    for raw in log.read_text(errors="replace").splitlines():
+    for raw in text.splitlines():
         ln = raw.strip()
-        # The exit-code legend printed at the end of every run names every stage; it is not a fact of this run.
-        if not ln or LEGEND_MARK in ln:
+        if not ln or LEGEND_MARK in ln or LEGEND_PATTERN.match(ln):
             continue
         for name, pat in STAGE_PATTERNS:
             if pat.search(ln):
