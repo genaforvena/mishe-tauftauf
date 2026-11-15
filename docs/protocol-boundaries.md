@@ -149,12 +149,25 @@ that composes it:
   `SystemdShowUnknown` when the binary is missing, mismatched or failing. There is
   no Python fallback: the retired Python decoder survives only as the oracle in
   `tests/test_rust_systemd_show.py`.
+- `rust/mishe-signal-samples` (`mishe-signal-sample`, contract
+  `rust/mishe-signal-samples/CONTRACT.md`) owns the append-only signal sample
+  store: `SITE/samples/<name>/` holds TSV segments of five fields — timestamp in
+  milliseconds, name, state, value, source — and the binary appends a batch or
+  reads it back in one pass. `signal_samples.append_samples` and
+  `signal_samples.read_samples` compose it, and the `memory-samples` producer
+  writes two rows (memory PSI and anonymous memory) every three minutes into
+  `SITE/samples/memory/`. A gap is a gap: no record means no sample, never a
+  zero and never a carried-forward value. `read_samples` has no production
+  caller — only `tests/test_signal_samples.py` calls it — so the store is written
+  live and nothing reads it back yet. There is no Python fallback: a missing
+  binary raises `SignalSampleUnknown`, which the caller must report as UNKNOWN.
 
 A change to any of these binaries' input, output, exit statuses or fault text is a
 change to a protocol boundary: update its `CONTRACT.md` in the same commit and run
 its contract test (`tests/test_mishe_tape_frames.py`,
 `tests/test_mishe_records_verify.py`, `tests/test_mishe_tape_facts.py`,
-`tests/test_mishe_network_probe.py`, `tests/test_rust_systemd_show.py`).
+`tests/test_mishe_network_probe.py`, `tests/test_rust_systemd_show.py`,
+`tests/test_signal_samples.py`).
 
 A delivery request's spec holds the repository, the exact commit and its previous
 commit. The author role and the originating wake key are not in the spec; they
