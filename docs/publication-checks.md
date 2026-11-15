@@ -215,8 +215,9 @@ an hourly timer.
 
 ### Both gates refuse when a rule cannot be applied
 
-The write path has two gates, and the fourth question above exists because
-they did not agree about what "the rule could not be applied" means.
+The write path has two gates, and the fifth question above — the
+paragraph-duplication detector that cannot be found — exists because they did
+not agree about what "the rule could not be applied" means.
 
 The privacy gate refused when the rule check was missing. The **duplication**
 gate did not: its whole block was guarded by "if the detector is there", so a
