@@ -295,6 +295,10 @@ PUBLISHED = {
                           "237db71f63d99e2df370418a6b599ed8537efb84"},
     "published_paths": {"docs/new-senses.md"},
     "published_refs": ["refs/remotes/origin/main"],
+    # A fixture has no remote to ask, so it states what the remote would
+    # answer.  The live path asks the remote itself.
+    "reachable": {"20c65d7309ed4c617913d5317d661912dd23ec56",
+                  "237db71f63d99e2df370418a6b599ed8537efb84"},
 }
 """The published tree the fixture plant reports: two commits, one path."""
 
@@ -366,3 +370,20 @@ def test_a_pointer_the_plant_cannot_read_is_undecidable():
     assert failures == []
     assert len(undecidable) == 1
     assert "could not be read" in undecidable[0]
+
+
+def test_a_clone_that_lacks_the_published_head_is_undecidable():
+    """No local tree for the remote head: UNKNOWN, not a pass and not a failure.
+
+    The remote is the authority on reachability, but paths are read from the
+    clone.  A clone that does not hold the remote head cannot say whether the
+    path exists there, and guessing either way would be a false verdict.
+    """
+    published = dict(PUBLISHED)
+    published["published_paths"] = None
+    failures, undecidable = _pointer_failures(
+        "The direction is public at `docs/new-senses.md` (commit `237db71f`).\n",
+        published)
+    assert failures == []
+    assert len(undecidable) == 1
+    assert "does not hold the published head" in undecidable[0]

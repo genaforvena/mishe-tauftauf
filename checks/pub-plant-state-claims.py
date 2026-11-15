@@ -464,7 +464,15 @@ def check(bodies: dict[str, str], live: dict[str, object],
                         continue
                     path, _, sha = raw.partition("@")
                     commits = published.get("published_commits") or set()
-                    paths = published.get("published_paths") or set()
+                    paths = published.get("published_paths")
+                    if paths is None:
+                        # The remote's head is not in this clone, so whether
+                        # the path exists there is undecided.  A missing
+                        # answer is never a pass and never a failure.
+                        undecidable.append(
+                            "article %s: the body points at %s, and this clone does not hold the published head"
+                            % (identifier, raw))
+                        continue
                     if path.rstrip("/") not in paths:
                         # The path is not in the published repository at all,
                         # so the pointer is wrong about where the source
@@ -474,10 +482,32 @@ def check(bodies: dict[str, str], live: dict[str, object],
                             "article %s: the body points at %s, which the public repository does not carry"
                             % (identifier, path))
                         continue
-                    if not any(str(item).lower().startswith(sha.lower()) for item in commits):
-                        failures.append(
-                            "article %s: the body points at commit %s, which no published ref of the public repository reaches"
-                            % (identifier, sha))
+                    if any(str(item).lower().startswith(sha.lower()) for item in commits):
+                        continue
+                    # The named commit is older than every published head, so
+                    # the path is right but the commit is not at the tip.  It
+                    # is still a pointer a reader can follow when some
+                    # published ref reaches it -- a commit 1761 behind `main`
+                    # is exactly that, and failing it would cry wolf on the
+                    # corpus's real shape.  Reachability is asked of the
+                    # remote, which is the only authority on it.
+                    repo = live.get("source_pointer_repo")
+                    if repo is None:
+                        # A fixture, not the plant: no remote to ask, so the
+                        # fixture states reachability itself.
+                        reachable = sha.lower() in published.get("reachable", set())
+                    else:
+                        reachable = reaches(repo, sha)
+                    if reachable is None:
+                        undecidable.append(
+                            "article %s: the body points at %s, and whether a published ref reaches it could not be read"
+                            % (identifier, raw))
+                        continue
+                    if reachable:
+                        continue
+                    failures.append(
+                        "article %s: the body points at commit %s, which no published ref of the public repository reaches"
+                        % (identifier, sha))
                     continue
                 if value is None:
                     undecidable.append(
@@ -655,36 +685,52 @@ def read_field_review(repo: Path) -> dict[str, object]:
 
 
 def read_published_tree(repo: Path) -> dict[str, object] | None:
-    """The commits and paths the public repository publishes, or None.
+    """The heads and paths the public repository publishes, or None.
 
-    "Published" means the refs a reader can see on the public remote: the
-    remote's heads, not local preservation refs or worktree branches.  A
-    pointer a post gives -- a path in this repository and the commit to read
-    it at -- is followed by cloning the public repository and checking that
-    commit out, so a commit no published ref reaches is a pointer a reader
-    cannot follow.  A tree that cannot be read is None, which the check
-    reports as UNKNOWN, never a pass.
+    "Published" means what the *remote* answers, not what this clone's
+    ``refs/remotes/origin`` mirror happens to hold.  A pointer a post gives --
+    a path in this repository and the commit to read it at -- is followed by
+    cloning the public repository and checking that commit out, so a commit no
+    published ref reaches is a pointer a reader cannot follow.
+
+    The remote is asked directly because a stale mirror answers confidently
+    about a tree that has moved.  On 2026-11-15 the checkout's own
+    ``origin/main`` was nine commits behind ``main``; the mirror was internally
+    consistent, so a mirror-only reading would have called those commits
+    unreachable for the wrong reason and called the remote's real head
+    reachable when it was not this clone's.  ``push-lag`` already reports that
+    divergence; this check must not depend on the fetch being fresh.
+
+    Paths come from the local ref that matches the remote head, because the
+    remote serves commits, not trees.  When the clone does not have the remote
+    head, paths are None and a pointer claim is UNKNOWN rather than a pass.
     """
-    code, out = git(repo, "for-each-ref", "--format=%(refname)", "refs/remotes/origin")
+    code, out = git(repo, "ls-remote", "--heads", "origin")
     if code != 0:
         return None
     refs = [line.strip() for line in out.splitlines() if line.strip()]
     if not refs:
         return None
-    commits: set[str] = set()
-    paths: set[str] = set()
-    for ref in refs:
-        code, out = git(repo, "rev-list", ref)
-        if code != 0:
-            return None
-        commits.update(line.strip() for line in out.splitlines() if line.strip())
-        code, out = git(repo, "ls-tree", "-r", "--name-only", ref)
+    heads: dict[str, str] = {}
+    for line in refs:
+        sha, _, name = line.partition("\t")
+        if name:
+            heads[name.strip()] = sha.strip()
+    commits: set[str] = set(heads.values())
+    paths: set[str] | None = set()
+    for name, sha in heads.items():
+        local = "refs/remotes/origin/" + name[len("refs/heads/"):]
+        if git(repo, "rev-parse", "--verify", "--quiet", local + "^{commit}")[0] != 0:
+            paths = None
+            continue
+        code, out = git(repo, "ls-tree", "-r", "--name-only", local)
         if code != 0:
             return None
         paths.update(line.strip().rstrip("/") for line in out.splitlines() if line.strip())
     if not commits:
         return None
-    return {"published_commits": commits, "published_paths": paths, "published_refs": refs}
+    return {"published_commits": commits, "published_paths": paths,
+            "published_refs": sorted(heads)}
 
 
 def read_live(home: Path, repo: Path, unit_dir: Path) -> dict[str, object]:
@@ -708,8 +754,54 @@ def read_live(home: Path, repo: Path, unit_dir: Path) -> dict[str, object]:
         live["producer_units_naming_release"] = units
     published = read_published_tree(repo)
     if published is not None:
+        # A pointer may name a commit older than every published head.  Whether
+        # a published ref still reaches it is asked of the remote, once, only
+        # when a pointer claim actually needs it -- the common case (a commit
+        # at the tip) is decided from the heads already read.
         live["source_pointer"] = published
+        live["source_pointer_repo"] = repo
     return live
+
+
+def reaches(repo: Path, sha: str) -> bool | None:
+    """Does the public repository serve ``sha`` to a reader?
+
+    Asked of the remote, which is the only authority on it.  The public
+    repository serves any commit a ref reaches, so a one-commit fetch is the
+    same question a reader who follows the pointer asks, and the answer is
+    observed rather than inferred.
+
+    Local ancestry cannot answer it.  This checkout is a shallow clone whose
+    floor is ``237db71f`` (``.git/shallow`` names it), so ``merge-base
+    --is-ancestor`` answers "no" for every older commit -- and the corpus's
+    pointer is exactly such a commit, 1761 behind ``origin/main``.  A
+    mirror-only walk was worse still: ``origin/main`` itself stood nine commits
+    behind ``main`` on 2026-11-15, so it would have called the checkout's own
+    head unreachable for a reason that has nothing to do with the post.
+
+    The fetch writes objects and moves no branch or tag.  It is a no-op when
+    the object is already present.  A remote that refuses the commit answers
+    False -- that is precisely the 404 a reader gets.  None is reserved for a
+    remote that cannot be read at all.
+    """
+    code, out = git(repo, "ls-remote", "--heads", "origin")
+    if code != 0:
+        return None
+    if not [line for line in out.splitlines() if line.strip()]:
+        return None
+    # The remote serves object names, not abbreviations, so a short sha the
+    # clone knows is expanded first.  One it does not know is already the
+    # answer: a reader pasting that abbreviation gets "not our ref" too.
+    code, full = git(repo, "rev-parse", "--verify", "--quiet", "%s^{commit}" % sha)
+    if code != 0:
+        return False
+    code, out = git(repo, "fetch", "--quiet", "--no-tags", "--depth", "1", "origin", full)
+    if code == 0:
+        return True
+    text = (out or "").lower()
+    if "not our ref" in text or "couldn't find remote ref" in text or "not found" in text:
+        return False
+    return None
 
 
 def _self_test() -> int:
@@ -726,7 +818,11 @@ def _self_test() -> int:
                 "published_commits": {"20c65d7309ed4c617913d5317d661912dd23ec56",
                                       "237db71f63d99e2df370418a6b599ed8537efb84"},
                 "published_paths": {"docs/new-senses.md"},
-                "published_refs": ["refs/remotes/origin/main"]},
+                "published_refs": ["refs/remotes/origin/main"],
+                # A fixture has no remote to ask, so it states reachability
+                # directly: the head itself and one commit behind it.
+                "reachable": {"20c65d7309ed4c617913d5317d661912dd23ec56",
+                              "237db71f63d99e2df370418a6b599ed8537efb84"}},
             "field_review_fields": 32, "field_review_cells": 192,
             "field_review_landed": 383, "field_review_pending": 0}
     bodies = {
