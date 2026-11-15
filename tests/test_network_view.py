@@ -56,6 +56,14 @@ def test_band_name_maps_channel_frequency_to_band():
     assert nb.band_name("junk") == "junk"
 
 
+def test_window_band_labels_match_the_router_rows():
+    # The window's "2.4 GHz" / "5 GHz" labels and the band field in router.jsonl must be the same
+    # strings: the window reads both, and a label drift would split one band into two in the view.
+    import network_router as nr
+    assert view.nb.band_name("2.472") == nr.BANDS["ra0"]
+    assert view.nb.band_name("5.200") == nr.BANDS["rax0"]
+
+
 def test_wifi_decode_rejects_empty_listing():
     import pytest
     with pytest.raises(ValueError):
