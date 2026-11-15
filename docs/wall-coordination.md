@@ -95,8 +95,13 @@ book explanations belong in tracked files.
 
 Commit tested paths without routine permission. Include `Mishe-Wake: KEY` and
 `Mishe-Role: ROLE` together in the final contiguous Git trailer block, alongside
-any coauthor trailer. Use the actual wake environment values. Shared author names
-and commit timestamps do not prove attribution.
+any coauthor trailer. Leave a blank line between the last body paragraph and that
+block: Git reads trailers only from the final paragraph, so a commit whose body and
+trailers are one paragraph parses no trailers and is recorded observed but
+unattributed (`git interpret-trailers --parse` prints nothing). Check with
+`git log -1 --format=%B | git interpret-trailers --parse`. Use the actual wake
+environment values. Shared author names and commit timestamps do not prove
+attribution.
 
 Running code comes from committed snapshots, through one pin. `SITE_HOME/runtime/current`
 is a symlink to the committed release that running code uses. The units name only
