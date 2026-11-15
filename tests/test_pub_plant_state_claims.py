@@ -171,3 +171,19 @@ def test_the_scope_dates_of_a_body_are_read_per_line():
 def test_the_self_test_passes():
     """The check's own controlled failure runs and passes."""
     assert check._self_test() == 0
+
+
+def test_the_corpus_word_order_for_landed_reviews_is_read():
+    """'N landed reviews' is read as the landed count, as the corpus writes it."""
+    failures, _ = check.check({"6": "383 landed reviews, 0 pending of 192 cells.\n"},
+                              {"field_review_landed": 380, "field_review_pending": 0})
+    assert len(failures) == 1
+    assert "the plant reads 380" in failures[0]
+
+
+def test_the_corpus_word_order_for_pending_cells_is_read():
+    """'N of M cells are pending' is read as the pending count, as the corpus writes it."""
+    failures, _ = check.check({"6": "383 reviews landed; 55 of 192 cells are pending.\n"},
+                              {"field_review_landed": 383, "field_review_pending": 0})
+    assert len(failures) == 1
+    assert "the plant reads 0" in failures[0]

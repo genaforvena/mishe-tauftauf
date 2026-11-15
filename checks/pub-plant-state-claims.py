@@ -172,13 +172,13 @@ REGISTRY = (
     },
     {
         "name": "field-review-landed",
-        "pattern": re.compile(r"([0-9]+)\s+reviews landed\b", re.I),
+        "pattern": re.compile(r"\b([0-9]+)(?=\s+(?:reviews landed|landed reviews|reviews had landed)\b)", re.I),
         "reading": "the reviews the branch carries",
         "value": "field_review_landed",
     },
     {
         "name": "field-review-pending",
-        "pattern": re.compile(r"([0-9]+)\s+pending of\s+[0-9]+\s+cells\b", re.I),
+        "pattern": re.compile(r"\b([0-9]+)(?=\s+(?:pending of\s+[0-9]+\s+cells|of\s+[0-9]+\s+cells\s+(?:were|are)\s+pending)\b)", re.I),
         "reading": "the cells with no landed review",
         "value": "field_review_pending",
     },
