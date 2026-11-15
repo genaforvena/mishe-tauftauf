@@ -500,6 +500,11 @@ def read_field_review(repo: Path) -> dict[str, object]:
     from the lane's ``coverage`` command, so this check and the lane cannot
     disagree about what a landed review is.  A reading that cannot be taken
     is left out, which the check reports as UNKNOWN.
+
+    "Reviews landed" is the count of committed ``.md`` files under
+    research/field-review/reviews on HEAD (383), which is what the registry
+    wording means; the covered-cell count is a different figure and is read
+    separately as the pending count.
     """
     live: dict[str, object] = {}
     fields_file = repo / "research" / "field-review" / "fields.json"
