@@ -113,7 +113,9 @@ them. Updated 2026-11-15 after the operator DM 301336.
 2. **Signal edge append and freshness read** (`src/mishe_tauftauf/signal_store.py`,
    `read`, `observe`, `expire`; 279 lines). Measured 2026-11-15 on a copy of the
    live home: 111 signals, 20 sweeps of `read` = 0.46 CPU-s, about 0.023 CPU-s
-   per full sweep (script `.mishe-tauftauf/artifacts/rust-plan-20261107/signal-read-measure.py`).
+   per full sweep (method: 20 sweeps of `signal_store.read` over every registered
+   signal, timed with `resource.getrusage` CPU deltas; the 16-line script is
+   site-local and not shipped, so this line names no path).
    The CPU gain would not pay, so no binary is built. It stays a candidate for
    architecture only and is re-opened if a sweep exceeds 1 CPU-s.
 
