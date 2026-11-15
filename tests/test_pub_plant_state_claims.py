@@ -15,6 +15,7 @@ A test that cannot name one is not pinning anything.
 from __future__ import annotations
 
 import importlib.util
+from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
@@ -107,8 +108,12 @@ def test_a_checkout_commit_in_the_corpus_wording_is_found():
     uses was invisible: a stale commit in that wording read GREEN.  The
     fixture is the corpus's own sentence shape.
     """
+    # The run date is the detector's own rule ("<day> <Month>" of today's UTC
+    # date); a hardcoded day made this fixture pass only on that one date.
+    today = datetime.now(timezone.utc).date()
+    run_day = "%d %s" % (today.day, today.strftime("%B"))
     body = ("- The checkout is arborescent - it stood at `51a5e68` when this "
-            "was written on 29 October, and read again on 15 November it "
+            "was written on 29 October, and read again on " + run_day + " it "
             "stands at `20c65d7309ed4c617913d5317d661912dd23ec56`.\n")
     failures, undecidable = _failures({"4": body})
     assert undecidable == []
