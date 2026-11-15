@@ -47,6 +47,15 @@ resolving or removing the wait stops the escalation. A lost or corrupt record
 returns the escalation rather than muting it, and a failed notification is
 offered again on the next sweep.
 
+## Commands a mind or operator runs by hand
+
+- `mishe sync` regenerates the units from the charters, engines, duties and
+  signal registry; it is also the way a new unit or drop-in takes effect.
+- `mishe inbox touch ROLE` wakes a role if it is owed a wake.
+- `mishe signal observe NAME VALUE` records a reading for a declared signal.
+- `mishe release revert --id ID` moves the pin back to the previous committed
+  release, for a delivered promotion record `ID`; see [Recovery](recovery.md).
+
 ## Messages and outcomes
 
 `mishe wall dm --source ROLE --to OTHER --text TEXT` appends addressed chat and
