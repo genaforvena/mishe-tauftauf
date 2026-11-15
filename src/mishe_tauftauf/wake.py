@@ -14,7 +14,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import delivery_requests, dossier, feed, owed, wake_memory, work_receipts, yielding
+from . import delivery_requests, dossier, feed, owed, wake_gate_log, wake_memory, work_receipts, yielding
 from .wall import addressed
 from .core.dispatch_record import process_alive
 from .core.interfaces import RECONCILED, STARTED, UNKNOWN, WorkerResult
@@ -308,7 +308,19 @@ def _restore_memory_floor(home, role, key) -> dict:
 
 
 def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, timeout, on_start=None):
-    """Write the wake's files, run the engine, report whether it yielded."""
+    """Write the wake's files, run the engine, report whether it yielded.
+
+    The shadow wake-gate log (wake_gate_log) records one start row and one end row around the
+    run. It never raises and never changes the outcome returned here.
+    """
+    wake_gate_log.record_start(home, role, key, snap=snap, mail=mail, now=now)
+    state, detail = _execute_engine(home, role, key, engine=engine, now=now, snap=snap, mail=mail,
+                                    reconcile_of=reconcile_of, repo=repo, timeout=timeout, on_start=on_start)
+    wake_gate_log.record_end(home, role, key, state=state, detail=detail)
+    return state, detail
+
+
+def _execute_engine(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, timeout, on_start=None):
     snap.tape_seq = max([owed.tape_cursor(home, role)] + [seq for seq, _ in mail])
     yielding.wakes_dir(home).mkdir(parents=True, exist_ok=True)
     write_json(yielding.snapshot_path(home, key), {"role": role, "snapshot": snap.to_json()})
