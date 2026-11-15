@@ -114,7 +114,12 @@ WORDS = {
     "forty-four": 44, "forty-five": 45, "forty-six": 46, "forty-seven": 47,
     "forty-eight": 48, "forty-nine": 49, "fifty": 50,
 }
-"""Number words the posts use for the figures they state."""
+for _tens_name, _tens in (("sixty", 60), ("seventy", 70), ("eighty", 80), ("ninety", 90)):
+    WORDS[_tens_name] = _tens
+    for _unit_name, _unit in (("one", 1), ("two", 2), ("three", 3), ("four", 4), ("five", 5),
+                              ("six", 6), ("seven", 7), ("eight", 8), ("nine", 9)):
+        WORDS["%s-%s" % (_tens_name, _unit_name)] = _tens + _unit
+"""Number words the posts use for the figures they state (up to ninety-nine)."""
 
 REGISTRY = (
     {
@@ -152,6 +157,30 @@ REGISTRY = (
         "pattern": re.compile(r"you are on `([0-9a-f]{7,40})`", re.I),
         "reading": "the commit the checkout stands on",
         "value": "checkout_head",
+    },
+    {
+        "name": "field-review-fields",
+        "pattern": re.compile(r"grid of ([0-9]+|[a-z-]+) fields\b", re.I),
+        "reading": "the fields in the literature grid",
+        "value": "field_review_fields",
+    },
+    {
+        "name": "field-review-cells",
+        "pattern": re.compile(r"(?:\bof|angles\s*[—–-]|angles,)\s+([0-9]+|[a-z-]+)\s+cells\b", re.I),
+        "reading": "the cells in the literature grid",
+        "value": "field_review_cells",
+    },
+    {
+        "name": "field-review-landed",
+        "pattern": re.compile(r"([0-9]+)\s+reviews landed\b", re.I),
+        "reading": "the reviews the branch carries",
+        "value": "field_review_landed",
+    },
+    {
+        "name": "field-review-pending",
+        "pattern": re.compile(r"([0-9]+)\s+pending of\s+[0-9]+\s+cells\b", re.I),
+        "reading": "the cells with no landed review",
+        "value": "field_review_pending",
     },
 )
 """The plant readings a published figure can name, and the live value of each."""
@@ -464,10 +493,46 @@ def read_units_naming_release(unit_dir: Path) -> int | None:
     return sum(1 for unit in units if re.search(r"releases/[0-9a-f]{8,40}", unit.read_text(encoding="utf-8", errors="replace")))
 
 
+def read_field_review(repo: Path) -> dict[str, object]:
+    """The literature grid's live readings, from the lane's own tool and the branch.
+
+    The grid's size comes from fields.json; the covered and total cells come
+    from the lane's ``coverage`` command, so this check and the lane cannot
+    disagree about what a landed review is.  A reading that cannot be taken
+    is left out, which the check reports as UNKNOWN.
+    """
+    live: dict[str, object] = {}
+    fields_file = repo / "research" / "field-review" / "fields.json"
+    tool = repo / "research" / "field-review" / "field_review.py"
+    try:
+        grid = json.loads(fields_file.read_text(encoding="utf-8"))
+        fields, angles = len(grid["fields"]), len(grid["angles"])
+        live["field_review_fields"] = fields
+        live["field_review_cells"] = fields * angles
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    try:
+        done = subprocess.run(
+            [sys.executable, "-I", str(tool), "--repo", str(repo), "coverage"],
+            capture_output=True, text=True, timeout=120)
+        match = re.search(r"covered (\d+) of (\d+) cells", done.stdout)
+        if done.returncode == 0 and match:
+            covered, total = int(match.group(1)), int(match.group(2))
+            live["field_review_cells"] = total
+            live["field_review_pending"] = total - covered
+    except (OSError, subprocess.SubprocessError):
+        pass
+    code, out = git(repo, "ls-tree", "-r", "--name-only", "HEAD", "--", "research/field-review/reviews")
+    if code == 0:
+        live["field_review_landed"] = sum(1 for line in out.splitlines() if line.endswith(".md"))
+    return live
+
+
 def read_live(home: Path, repo: Path, unit_dir: Path) -> dict[str, object]:
     """Every live value the registry needs, read from the plant."""
     live: dict[str, object] = {}
     live.update(read_ledger(home))
+    live.update(read_field_review(repo))
 
     code, out = git(repo, "rev-parse", "HEAD")
     if code == 0 and out:
@@ -494,8 +559,12 @@ def _self_test() -> int:
     """
     live = {"ledger_permanent_loss": 126, "ledger_owed": 75, "pin_gap": 3,
             "producer_units_naming_release": 41,
-            "checkout_head": "20c65d7309ed4c617913d5317d661912dd23ec56"}
+            "checkout_head": "20c65d7309ed4c617913d5317d661912dd23ec56",
+            "field_review_fields": 32, "field_review_cells": 192,
+            "field_review_landed": 383, "field_review_pending": 0}
     bodies = {
+        "5": "The literature lane is a grid of 32 fields by six angles - 192 cells.\n",
+        "6": "`research/field-review`: 383 reviews landed, 0 pending of 192 cells.\n",
         "1": "The current ledger scan finds 126 rows whose original evidence is permanently lost.\n",
         "2": "The repository's current commit is 3 commits ahead of the release the running services are pinned to.\n",
         "3": "Forty-one producer units still name a release directly.\n",
@@ -522,6 +591,14 @@ def _self_test() -> int:
          {"3": "Nineteen producer units still name a release directly.\n"}),
         ("a stale checkout commit",
          {"4": "The checkout is arborescent (you are on `51a5e68f6b2103170bfe5fdd415c0ea4c4c923ee`).\n"}),
+        ("a stale field count",
+         {"5": "The literature lane is a grid of twelve fields by six angles - 192 cells.\n"}),
+        ("a stale cell count",
+         {"5": "The literature lane is a grid of 32 fields by six angles - seventy-two cells.\n"}),
+        ("a stale landed count",
+         {"6": "`research/field-review`: 17 reviews landed, 0 pending of 192 cells.\n"}),
+        ("a stale pending count",
+         {"6": "`research/field-review`: 383 reviews landed, 55 pending of 192 cells.\n"}),
     ]
     for label, mutated in mutations:
         failures, _ = check(mutated, live)
