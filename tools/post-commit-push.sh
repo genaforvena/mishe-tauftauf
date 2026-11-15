@@ -3,9 +3,11 @@
 # Installed as .git/hooks/post-commit by tools/install-post-commit-push.sh (a symlink to this file).
 # Never blocks or fails a commit: it always exits 0, skips when HEAD is not on main, and bounds the push
 # with a timeout. Outcomes append one line to .mishe-tauftauf/push-hook.log (gitignored site directory).
-# A failed push is visible in that log and to checks/push-lag.py (local main ahead of origin/main).
-# Wake-end check: a commit made as a wake ends is published only if its sha appears as "ok" in push-hook.log
-# and origin/main holds it in the next wake; the detached transient unit is what keeps the push alive.
+# A failed push is visible in that log and to checks/push-lag.py, which goes RED when local main is ahead of
+# origin/main: that check is the code detector, and nothing else reads push-hook.log. Publishing itself does
+# not depend on the log. At wake end a mind confirms a last-seconds commit is published by reading the log
+# for that sha as "ok" and checking origin/main in the next wake; the detached transient unit is what keeps
+# the push alive.
 set -u
 
 branch=$(git symbolic-ref --short -q HEAD 2>/dev/null) || exit 0
