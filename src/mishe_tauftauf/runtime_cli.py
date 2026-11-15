@@ -471,13 +471,34 @@ def run_units(args, home: Path, now: float) -> int:
             report.problems.append(f"chat.log: feed-corrupt: {exc}")
     if "doctor" in signal_store.registry(home):
         # The meta-signal: a doctor that stops running ages out to UNKNOWN on schedule.
+        # A RED carries its cause: the flap clears in minutes, so a subscriber woken by the edge
+        # must be able to read why from the signal alone (the dossier, the pane and `signal show`
+        # all print this reason) instead of re-deriving a transient that is already gone.
         signal_store.observe(home, "doctor", "GREEN" if report.state == "GREEN" else "RED",
-                             now=now, source="doctor")
+                             now=now, source="doctor", reason=doctor_reason(report))
         armmod_arm(home)
     print(report.state)
     for problem in report.problems:
         print(f"  {problem}")
     return {"GREEN": 0, "RED": 1}.get(report.state, 3)
+
+
+DOCTOR_REASON_LIMIT = 400
+
+
+def doctor_reason(report) -> str:
+    """The cause behind a doctor reading, bounded; "" when GREEN.
+
+    A doctor RED is usually transient — the condition is gone by the time the woken subscriber
+    looks — so the reading itself must carry the cause. Without it every flap arrives as a bare
+    ``doctor: OK 'RED'`` with nothing to act on.
+    """
+    if report.state == "GREEN" or not report.problems:
+        return ""
+    text = "; ".join(report.problems)
+    if len(text) <= DOCTOR_REASON_LIMIT:
+        return text
+    return text[:DOCTOR_REASON_LIMIT] + "…"
 
 
 def armmod_arm(home: Path) -> None:

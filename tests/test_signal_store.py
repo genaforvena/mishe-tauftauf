@@ -44,6 +44,21 @@ def test_changed_value_is_an_edge_and_bumps_rev(home):
     assert store.rev(home, "ci") == 2
 
 
+def test_observe_records_the_reason_behind_a_not_ok_reading(home):
+    store.observe(home, "ci", "GREEN", now=1000.0, source="t")
+    assert store.observe(home, "ci", "RED", now=1001.0, source="t",
+                         reason="unit drift: mishe-wake-genome.path") is True
+    assert store.read(home, "ci", now=1002.0).reason == "unit drift: mishe-wake-genome.path"
+    # A reason does not make an edge of its own: only the value that carries it does.
+    assert store.observe(home, "ci", "RED", now=1003.0, source="t", reason="different cause") is False
+    assert store.read(home, "ci", now=1004.0).reason == "unit drift: mishe-wake-genome.path"
+
+
+def test_observe_defaults_to_no_reason(home):
+    store.observe(home, "ci", "GREEN", now=1000.0, source="t")
+    assert store.read(home, "ci", now=1001.0).reason == ""
+
+
 def test_silent_source_expires_to_unknown(home):
     store.observe(home, "ci", "GREEN", now=1000.0, source="t")
     sig = store.read(home, "ci", now=1061.0)

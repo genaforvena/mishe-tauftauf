@@ -147,12 +147,16 @@ def _append_edge(home, edge: dict) -> None:
         handle.write(json.dumps(edge, sort_keys=True, ensure_ascii=False) + "\n")
 
 
-def observe(home, name: str, value, *, now: float, source: str, event=None) -> bool:
+def observe(home, name: str, value, *, now: float, source: str, event=None, reason: str = "") -> bool:
     """Record a successful observation. True when it is an edge (json replaced).
 
     ``event`` names the occurrence behind a reading (a pin's patch id). The same value under a new
     event is an edge too, so a repeated VERIFIED for the next pin wakes subscribers; without one,
     an unchanged reading stays silent.
+
+    ``reason`` carries the cause behind a not-OK reading (``doctor``'s problem list, for one). It is
+    part of the stored reading and the dossier prints it, so a subscriber woken by the edge can read
+    why without re-deriving it. A changed reason alone is not an edge: the value that carries it is.
 
     A value that names a state ("OK", "UNKNOWN", "STALE") is refused: it reports that the input
     was not readable, which is ``observe_unknown``'s meaning, and ``observe`` would store it as
@@ -170,7 +174,7 @@ def observe(home, name: str, value, *, now: float, source: str, event=None) -> b
     edge = not (current and current.get("state") == OK and current.get("value") == value
                 and current.get("event") == event)
     if edge:
-        _store(home, name, value=value, state=OK, reason="", at=now, source=source, event=event)
+        _store(home, name, value=value, state=OK, reason=reason, at=now, source=source, event=event)
     _touch_seen(home, name, now)
     return edge
 
@@ -228,7 +232,12 @@ def retire(home, name: str, *, now: float, reason: str) -> None:
 
 
 def read(home, name: str, *, now: float) -> Signal:
-    """The current reading. Missing, corrupt or expired input is UNKNOWN."""
+    """The current reading. Missing, corrupt or expired input is UNKNOWN.
+
+    An OK reading keeps whatever cause was recorded with its value: a value may itself name a
+    failure (``doctor`` stores RED while the observation succeeded), and that cause is the only
+    thing a subscriber woken by the edge has to act on once the transient has cleared.
+    """
     max_age = _entry(home, name)["max_age"]
     data = _load(home, name)
     seen = _seen(home, name)
@@ -239,7 +248,8 @@ def read(home, name: str, *, now: float) -> Signal:
                       data.get("reason") or "")
     if now - seen > max_age:
         return Signal(None, seen, name, UNKNOWN, f"expired after {max_age:g}s (age {now - seen:.1f}s)")
-    return Signal(data.get("value"), seen, data.get("source") or name, OK)
+    return Signal(data.get("value"), seen, data.get("source") or name, OK,
+                  data.get("reason") or "")
 
 
 def expire(home, *, now: float) -> list[str]:

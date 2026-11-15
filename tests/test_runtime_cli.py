@@ -119,7 +119,12 @@ def test_doctor_red_on_drift_exits_nonzero_and_records_red(site, tmp_path):
     cli("sync", "--unit-dir", str(units_dir), "--no-systemctl")
     (units_dir / "mishe-wake-genome.path").write_text("# mishe-generated: observation runtime (edit nothing here; run `mishe sync`)\nx\n")
     assert cli("doctor", "--unit-dir", str(units_dir)) == 1
-    assert store.read(site, "doctor", now=__import__("time").time()).value == "RED"
+    sig = store.read(site, "doctor", now=__import__("time").time())
+    assert sig.value == "RED"
+    # The flap clears in minutes, so the reading itself must name the cause a woken subscriber
+    # could otherwise only re-derive while the transient is still live.
+    assert "mishe-wake-genome.path" in sig.reason
+    assert "drift" in sig.reason
 
 
 def test_a_silent_doctor_reads_unknown(site, tmp_path):
@@ -127,6 +132,17 @@ def test_a_silent_doctor_reads_unknown(site, tmp_path):
     cli("doctor", "--unit-dir", str(tmp_path / "u"))
     later = __import__("time").time() + 3600
     assert store.read(site, "doctor", now=later).state == "UNKNOWN"
+
+
+def test_doctor_reason_is_empty_when_green_and_bounded_when_red():
+    from mishe_tauftauf.units import DoctorReport
+    assert runtime_cli.doctor_reason(DoctorReport("GREEN")) == ""
+    assert runtime_cli.doctor_reason(DoctorReport("RED", [])) == ""      # no cause to name
+    report = DoctorReport("RED", [f"unit-{i}: drift from generated content" for i in range(50)])
+    text = runtime_cli.doctor_reason(report)
+    assert text.startswith("unit-0: drift")
+    assert len(text) == runtime_cli.DOCTOR_REASON_LIMIT + 1               # truncated, not dropped
+    assert text.endswith("…")
 
 
 def test_failed_command_reports_to_resolver(site, monkeypatch):
