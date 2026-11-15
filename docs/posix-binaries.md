@@ -138,8 +138,13 @@ them. Updated 2026-11-15 after the operator DM 301336.
    iterations of two reads and a readline) and the records-child `write` (three
    pipe writes per entry). Coalescing the three writes into one was A/B-tested and
    refuted: 2.29 vs 2.15 CPU-s median over three alternating runs, so no change.
-   The next probe is the framer loop, not the writes (artifacts
-   `feed-entries-profile-1047.txt`, `feed-write-ab-1048.txt`).
+   Framer-loop probe (2026-11-15, two alternating runs each, live tape): the
+   framer alone takes 0.88-0.91 CPU-s; the full streamed iteration takes
+   0.89-0.90 CPU-s in the parent plus that framer cost. Only the Python share above
+   pure draining of the pipe (about 0.75 CPU-s) is the loop, about 36% of the
+   2.1 CPU-s `entries(facts=True)` read. That is below the 50% trigger, so candidate
+   4 is parked: no Rust framer that returns parsed records. Artifacts:
+   `framer-share-probe.py` (site-local).
 
 5. **Role fold and record verification** (`src/mishe_tauftauf/feed.py` fold;
    verification in Python). Ordinary candidate under the whole-system target. Cut
@@ -161,6 +166,6 @@ them. Updated 2026-11-15 after the operator DM 301336.
   path on 2026-11-14.
 - Candidate 2 is measured and does not pay on CPU (see above). Candidate 3 is
   measured (not per-run, 4.5 ms at generation) and not built.
-- Next: probe the framer loop in `_iter_streamed_feed` (candidate 4) with a
-  bounded A/B before any rewrite. If it does not pay, candidate 4 is parked.
+- Candidate 4 (feed remaining scan) is parked: the framer-loop share measured
+  about 36%, below the 50% trigger. Reopen it only if a live read crosses that line.
 - Keep this ranking updated when a candidate is built or retired.
