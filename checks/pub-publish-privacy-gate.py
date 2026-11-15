@@ -117,9 +117,22 @@ def draft(title: str, body: str = "A controlled probe. Nothing private in this b
 
 
 def run_publisher(publisher: Path, env_file: Path, home: Path, article: Path,
-                  terms: Path,
+                  terms: Path, repo: Path,
                   extra: dict | None = None) -> subprocess.CompletedProcess:
     """Run the installed publisher against a draft, with the API unreachable.
+
+    ``repo`` binds ``MISHE_REPO`` to the checkout whose COMMITTED sibling
+    detectors the write path must run -- ``checks/pub-article-duplication.py``
+    and ``checks/pub-privacy-scan.py``.  The publisher resolves those from
+    ``MISHE_REPO``, or failing that from ``dirname(MISHE_SEED_HOME)/checks``.
+    A probe replaces ``MISHE_SEED_HOME`` with a disposable home to control the
+    terms file, so without this binding the publisher cannot find either
+    detector -- measured 2026-11-15: the duplication pre-flight refused first
+    with "the paragraph-duplication check could not be found", the privacy
+    rule was never reached, and this check read its own probe as RED (or, with
+    the older publisher that passed open, as a vacuous GREEN).  Binding
+    ``MISHE_REPO`` to the checkout this check already resolved makes the
+    probe depend on committed bytes, not on the ambient environment.
 
     ``extra`` sets variables for one run.  It is how a probe asks the
     publisher a specific question: pointing ``MESH_DEVTO_PRIVACY_CHECK`` at
@@ -132,6 +145,7 @@ def run_publisher(publisher: Path, env_file: Path, home: Path, article: Path,
         "MESH_DEVTO_API": DEAD_API,
         "MISHE_SEED_HOME": str(home),
         "MISHE_TAUFTAUF_HOME": str(home),
+        "MISHE_REPO": str(repo),
     })
     if extra:
         environment.update(extra)
@@ -213,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
                          encoding="utf-8")
 
         try:
-            red = run_publisher(publisher, env_file, home, broken, terms_file)
+            red = run_publisher(publisher, env_file, home, broken, terms_file, repo)
         except subprocess.TimeoutExpired:
             print("UNKNOWN: the publisher did not answer on the refusing draft")
             return 3
@@ -231,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
         try:
-            green = run_publisher(publisher, env_file, home, clean, terms_file)
+            green = run_publisher(publisher, env_file, home, clean, terms_file, repo)
         except (subprocess.TimeoutExpired, OSError) as error:
             print(f"UNKNOWN: the publisher did not answer on the clean draft ({error})")
             return 3
@@ -249,7 +263,7 @@ def main(argv: list[str] | None = None) -> int:
         (empty_home / "pub").mkdir(parents=True)
         (empty_home / PUBLISHER).parent.mkdir(parents=True, exist_ok=True)
         try:
-            unknown = run_publisher(publisher, env_file, empty_home, clean, terms_file)
+            unknown = run_publisher(publisher, env_file, empty_home, clean, terms_file, repo)
         except (subprocess.TimeoutExpired, OSError) as error:
             print(f"UNKNOWN: the publisher did not answer on the unreadable-terms draft ({error})")
             return 3
@@ -276,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
         # is what a reader of the log should see, and a traceback is not one.
         # A gate whose refusal path is untested is a gate whose refusal path
         # is unknown.
-        missing = run_publisher(publisher, env_file, home, clean, terms_file,
+        missing = run_publisher(publisher, env_file, home, clean, terms_file, repo,
                                 extra={"MESH_DEVTO_PRIVACY_CHECK":
                                        str(work_dir / "no-such-check.py")})
         missing_output = (missing.stdout or "") + (missing.stderr or "")
@@ -298,7 +312,7 @@ def main(argv: list[str] | None = None) -> int:
         # reader twice, in a paragraph the author read and approved once.
         # Measured 2026-11-15 with MESH_DEVTO_DUP_CHECK pointing at a path
         # that does not exist: the tool went straight to the API stage.
-        missing_dup = run_publisher(publisher, env_file, home, clean, terms_file,
+        missing_dup = run_publisher(publisher, env_file, home, clean, terms_file, repo,
                                     extra={"MESH_DEVTO_DUP_CHECK":
                                            str(work_dir / "no-such-detector.py")})
         missing_dup_output = (missing_dup.stdout or "") + (missing_dup.stderr or "")
