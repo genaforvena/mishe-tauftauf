@@ -128,6 +128,7 @@ developed in, the roles are:
 | `rust-plan` | Moving selected runtime pieces from Python to Rust (a compiled systems language), one path at a time. |
 | `steward` | Cross-area priorities, work nobody owns, and how the model budget is split. |
 | `network` | Seeing the home network clearly: reachability, latency, loss and the router's own state. |
+| `system1` | The ladder of work: moving each recurring decision to the lowest rung that can carry it — deterministic code, then a typed decision model, then a mind. |
 | `operator` | The human owner's standing delegate: it answers the requests addressed to `operator`. It is not an area. |
 
 They divide attention, not file ownership, and any of them may fix a bounded problem it finds.

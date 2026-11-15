@@ -78,7 +78,9 @@ useful experiments; Steward owns cross-area priorities and budget allocation;
 Network owns seeing the home network clearly. A dedicated
 migration mind, `rust-plan`, carries the Rust runtime move alongside them rather than owning
 an area. A further role, `operator`, is the human owner's standing delegate: it
-answers the requests addressed to it and is not an area.
+answers the requests addressed to it and is not an area. Another role, `system1`,
+owns the ladder of work: it moves each recurring decision to the lowest rung that
+can carry it — deterministic code, then a typed decision model, then a mind.
 Each carries initiatives through checks, delivery and observation. Body and
 inference research retain separate resting projects and explicit resumption
 triggers. An area's dashboard is rendered on demand by
@@ -102,7 +104,7 @@ in the session named in the site's `presentation.json`. The prefix is `Ctrl-a`, 
 `Ctrl-a [` scrolls. Attach through the `mishe` window of the outer `plants` session, or
 point `tmux -S` at the socket directly.
 
-This plant runs ten role windows — one for each of the eight durable areas plus `rust-plan` and `operator` — alongside the three shared windows below, for thirteen windows in total. A resting role still has its window; it simply shows no running wake.
+This plant runs eleven role windows — one for each of the eight durable areas plus `rust-plan`, `operator` and `system1` — alongside the three shared windows below, for fourteen windows in total. A resting role still has its window; it simply shows no running wake.
 
 - **Role windows.** Each active or resting role has a window named after the role, with
   two panes stacked vertically. The top pane is the dashboard described above: it redraws
