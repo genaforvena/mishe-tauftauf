@@ -24,7 +24,7 @@ from . import recovery_io as recovery
 GUARD_MAX_AGE = 180
 
 
-def decide(previous, observation, *, now, stable_seconds=120, max_gap=20):
+def decide(previous, observation, *, now, stable_seconds=120, max_gap=20, anon_reading=False):
     old = previous or {}
     row = {"version": 1, "checked_at": now, "max_age": 20,
            "observation": observation, "managed_units": old.get("managed_units", []),
@@ -46,7 +46,11 @@ def decide(previous, observation, *, now, stable_seconds=120, max_gap=20):
             raise ValueError("invalid OOM counter")
         before = old.get("observation") or {}
         row["oom_delta"] = max(0, count - before.get("events", {}).get("oom_kill", count))
-        critical = current >= maximum * .9 or available < .06 or memory >= 25 or row["oom_delta"] > 0
+        # Near-max CRITICAL depends on the reading. The raw cgroup current includes reclaimable cache, so
+        # near max alone is not a stall: it needs memory pressure (avg60 full >= 5). The anon reading (genome,
+        # 2026-11-15) is anon itself, so near max alone stays CRITICAL: anon at memory.max is the 2026-11-01 blocker.
+        near_max = current >= maximum * (.9 if anon_reading else .97)
+        critical = memory >= 25 or available < .06 or row["oom_delta"] > 0 or (near_max and (anon_reading or memory >= 5))
         overloaded = critical or current >= high * .9 or available < .12 or memory >= 5 or io >= 40
         # Clear band 0.85*high: the steady working set of this slice sits at ~0.80-0.82*high,
         # so a 0.8 cut reset the stability timer on every ordinary sample (2026-11-01 flap).

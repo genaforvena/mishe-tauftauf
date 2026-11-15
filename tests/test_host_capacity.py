@@ -9,14 +9,14 @@ from mishe_tauftauf import host_capacity as host
 from mishe_tauftauf import recovery_io as recovery
 
 
-def sample(current=1, oom=0):
-    return {"memory_full": 0., "io_full": 0., "available_ratio": .5,
+def sample(current=1, oom=0, memory=0.):
+    return {"memory_full": memory, "io_full": 0., "available_ratio": .5,
             "current": current, "high": 1000, "max": 1200,
             "events": {"oom_kill": oom, "high": 0}}
 
 
 def test_pressure_closes_admission_and_requires_continuous_recovery():
-    row = host.decide(None, sample(current=1150), now=100, stable_seconds=20)
+    row = host.decide(None, sample(current=1180, memory=6.), now=100, stable_seconds=20)
     assert row["state"] == "CRITICAL" and row["slots"] == 0
     row = host.decide(row, sample(), now=105, stable_seconds=20)
     assert row["limited"]
@@ -30,7 +30,7 @@ def test_pressure_closes_admission_and_requires_continuous_recovery():
 def test_clear_hold_completes_at_production_timer_cadence():
     # The producer timer fires every 120 s. The hold must survive that cadence and clear after
     # stable_seconds of clear samples; with the 20 s default gap it never could.
-    row = host.decide(None, sample(current=1150), now=0, stable_seconds=120, max_gap=host.GUARD_MAX_AGE)
+    row = host.decide(None, sample(current=1180, memory=6.), now=0, stable_seconds=120, max_gap=host.GUARD_MAX_AGE)
     now = 0
     for _ in range(3):
         now += 120
@@ -40,7 +40,7 @@ def test_clear_hold_completes_at_production_timer_cadence():
 
 
 def test_default_gap_still_breaks_clear_hold_at_long_intervals():
-    row = host.decide(None, sample(current=1150), now=0, stable_seconds=120)
+    row = host.decide(None, sample(current=1180, memory=6.), now=0, stable_seconds=120)
     row = host.decide(row, sample(), now=5, stable_seconds=120)
     row = host.decide(row, sample(), now=125, stable_seconds=120)
     assert row["limited"], "a 120 s gap is not contiguous under the default 20 s bound"
@@ -72,7 +72,7 @@ def test_shared_admission_cannot_use_local_normal_when_host_is_critical(tmp_path
     from mishe_tauftauf import render_admission
     shared = tmp_path / "shared"
     shared.mkdir()
-    recovery.save(shared / "host-capacity.json", host.decide(None, sample(current=1150), now=100))
+    recovery.save(shared / "host-capacity.json", host.decide(None, sample(current=1180, memory=6.), now=100))
     for role in ("health", "genome"):
         site = tmp_path / role
         (site / "recovery").mkdir(parents=True)
@@ -100,7 +100,7 @@ def test_reduction_restores_only_units_it_actually_stopped(tmp_path, monkeypatch
         return {"ok": True, "stdout": "", "stderr": ""}
     monkeypatch.setattr(host, "unit_action", act)
     cfg = {"optional_units": ["owned-optional.service", "already-down.service"]}
-    row = host.decide(None, sample(current=1150), now=100)
+    row = host.decide(None, sample(current=1180, memory=6.), now=100)
     reduced = host.reconcile(tmp_path, row, cfg)
     assert reduced["managed_units"] == ["owned-optional.service"]
     normal = host.decide(reduced, sample(), now=105, stable_seconds=0)
@@ -112,7 +112,7 @@ def test_reduction_restores_only_units_it_actually_stopped(tmp_path, monkeypatch
 def test_failed_stop_does_not_claim_restore_ownership(tmp_path, monkeypatch):
     monkeypatch.setattr(host, "unit_states", lambda names: {n: "active" for n in names})
     monkeypatch.setattr(host, "unit_action", lambda *a: {"ok": False, "stderr": "rejected"})
-    row = host.reconcile(tmp_path, host.decide(None, sample(current=1150), now=100),
+    row = host.reconcile(tmp_path, host.decide(None, sample(current=1180, memory=6.), now=100),
                          {"optional_units": ["optional.service"]})
     assert not row["managed_units"]
     assert row.get("action_error")
@@ -138,7 +138,7 @@ def test_interrupted_stop_does_not_authorize_blind_restore(tmp_path, monkeypatch
 
 
 def test_critical_admission_stays_closed_when_action_or_guard_fails(tmp_path, monkeypatch):
-    monkeypatch.setattr(host, "observe", lambda _: sample(current=1150))
+    monkeypatch.setattr(host, "observe", lambda _: sample(current=1180, memory=6.))
     monkeypatch.setattr(host, "reconcile", lambda *a: (_ for _ in ()).throw(ValueError("controlled failure")))
     row = host.tick(tmp_path, {"slice_path": "unused", "optional_units": []}, now=100)
     assert row["state"] == "UNKNOWN" and row["slots"] == 0
@@ -222,7 +222,7 @@ def test_reconciliation_drops_managed_units_without_mutating_the_set_it_walks(tm
 
 def test_steady_plateau_below_clear_band_clears_after_stable_window():
     # 2026-11-01 flap: the working set oscillated 0.79-0.82*high; the old 0.8 cut reset the timer every sample.
-    row = host.decide(None, sample(current=1150), now=100, stable_seconds=120)
+    row = host.decide(None, sample(current=1180, memory=6.), now=100, stable_seconds=120)
     assert row["state"] == "CRITICAL"
     row = host.decide(row, sample(current=1000 * .82 - 1), now=110, stable_seconds=120)
     assert row["limited"]
@@ -233,7 +233,7 @@ def test_steady_plateau_below_clear_band_clears_after_stable_window():
 
 
 def test_clear_band_still_reholds_at_overload_threshold():
-    row = host.decide(None, sample(current=1150), now=100, stable_seconds=20)
+    row = host.decide(None, sample(current=1180, memory=6.), now=100, stable_seconds=20)
     for now in (105, 110):
         row = host.decide(row, sample(current=860), now=now, stable_seconds=20)
     assert row["limited"] and row["state"] == "LIMITED"
@@ -245,7 +245,7 @@ def test_in_band_plateau_below_overload_keeps_clear_timer_running():
     # 2026-11-01 measured plateau (six 5 s samples, fraction of high): 0.858 0.863 0.842 0.841 0.857 0.862.
     # Samples above the 0.85 clear cut but below the 0.9 overload line must not reset a running clear
     # timer, otherwise the plateau latches LIMITED forever.
-    row = host.decide(None, sample(current=1150), now=100, stable_seconds=120)
+    row = host.decide(None, sample(current=1180, memory=6.), now=100, stable_seconds=120)
     row = host.decide(row, sample(current=860), now=105, stable_seconds=120)
     plateau = [.858, .863, .842, .841, .857, .862]
     now = 110
@@ -256,7 +256,7 @@ def test_in_band_plateau_below_overload_keeps_clear_timer_running():
 
 
 def test_in_band_sample_does_not_start_a_clear_timer():
-    row = host.decide(None, sample(current=1150), now=100, stable_seconds=120)
+    row = host.decide(None, sample(current=1180, memory=6.), now=100, stable_seconds=120)
     row = host.decide(row, sample(current=860), now=105, stable_seconds=120)
     assert row["clear_since"] is None
 
@@ -319,3 +319,13 @@ def test_huge_but_finite_checked_at_is_a_rejected_guard_not_an_overflow_in_the_d
     for value in (10**300, 1e300, -10**300, 10**15):
         verdict = host.guard_diagnostic({"checked_at": value, "state": "FRESH", "capacity": "NORMAL", "scope": host.GUARD_SCOPE}, 100.0)
         assert verdict["fresh"] is False and "checked_at" in verdict["failed"] and verdict["age"] is None
+
+
+def test_near_max_cache_only_is_limited_not_critical():
+    # 2026-11-15 counter-check: current near max with no memory pressure is cache, not a stall.
+    row = host.decide(None, sample(current=1180), now=100, stable_seconds=20)
+    assert row["state"] == "LIMITED" and row["slots"] == 1
+    row = host.decide(None, sample(current=1180, memory=6.), now=100, stable_seconds=20)
+    assert row["state"] == "CRITICAL" and row["slots"] == 0
+    row = host.decide(None, sample(current=1000, memory=30.), now=100, stable_seconds=20)
+    assert row["state"] == "CRITICAL", "memory_full >= 25 stays critical at any current"

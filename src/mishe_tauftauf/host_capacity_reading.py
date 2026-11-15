@@ -71,10 +71,13 @@ def controller_observation(sample: dict, *, at: float, now: float, max_age: floa
     return obs
 
 
-def decide_anon(previous, sample: dict, *, at: float, now: float, max_age: float = 60.0):
-    """host_capacity.decide on the anon reading. Missing or stale input yields UNKNOWN."""
+def decide_anon(previous, sample: dict, *, at: float, now: float, max_age: float = 60.0, anon_reading: bool = True):
+    """host_capacity.decide on the anon reading. Missing or stale input yields UNKNOWN.
+
+    anon_reading=False is for a caller that passes a raw-current sample (the legacy dashboard rule).
+    """
     obs = controller_observation(sample, at=at, now=now, max_age=max_age)
-    return host_capacity.decide(previous, obs, now=now)
+    return host_capacity.decide(previous, obs, now=now, anon_reading=anon_reading)
 
 
 def _ratio(part, high):
@@ -96,7 +99,8 @@ def dashboard_frame(sample: dict, *, previous_current, previous_signal, at: floa
         line = "UNKNOWN — host capacity signal unavailable: " + ", ".join(missing)
         return line, None, None
     high = fresh["limits"].value[0]
-    legacy = decide_anon(previous_current, dict(sample, anon=sample["current"]), at=at, now=now, max_age=max_age)
+    legacy = decide_anon(previous_current, dict(sample, anon=sample["current"]), at=at, now=now, max_age=max_age,
+                         anon_reading=False)
     signal = decide_anon(previous_signal, sample, at=at, now=now, max_age=max_age)
     line = (f"HOST CAPACITY — anon/high {_ratio(fresh['anon'].value, high)} "
             f"file/high {_ratio(fresh['file'].value, high)} "
