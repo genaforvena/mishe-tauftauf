@@ -67,6 +67,7 @@
     "tools/check_leaf_invocation_coverage.py",
     "tools/check_parsing.py",
     "tools/check_session_watch_routing.py",
+    "tools/commit-msg-attribution.py",
     "tools/guard-activation/check-activation.py",
     "tools/audio_hint.py",
     "tools/audio_listener.py",
