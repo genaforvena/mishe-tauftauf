@@ -5,6 +5,8 @@ straight into the body paragraph, so ``git interpret-trailers --parse`` prints n
 and ``work_boundary.new_commits`` records them observed but unattributed.
 """
 import importlib.util
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -81,3 +83,31 @@ def test_prose_that_merely_names_the_trailers_is_not_hoisted():
             "Mishe-Role: field-review\n")
     assert parse_trailers(text) == ["Mishe-Wake: wake-field-review-1", "Mishe-Role: field-review"]
     assert module.normalize(text, "", "") == (text, False)
+
+
+def test_git_commit_runs_the_installed_hook_and_lands_attributed(tmp_path):
+    """The production path, not just ``normalize``: in a checkout that carries the
+    hook, a real ``git commit`` with the sloppy message must come out attributed.
+    This is the recurrence detector for the failure the guard exists for -- the
+    hook missing or not discovered (``.git/hooks`` unused, a foreign hook in
+    place) leaves commits unattributed even though ``normalize`` is correct."""
+    env = {**os.environ, "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e",
+           "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e",
+           "MISHE_WAKE_KEY": "", "MISHE_ROLE": ""}
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, env=env, check=True)
+    # Stage the two files a checkout has, so the installer runs as written.
+    (tmp_path / "tools").mkdir()
+    for name in ("commit-msg-attribution.py", "install-commit-msg-attribution.sh"):
+        shutil.copy(ROOT / "tools" / name, tmp_path / "tools" / name)
+    subprocess.run([str(tmp_path / "tools" / "install-commit-msg-attribution.sh")],
+                   cwd=tmp_path, env=env, check=True)
+    msg = tmp_path / "msg"
+    msg.write_text(NO_BLANK_LINE)
+    (tmp_path / "f").write_text("x")
+    subprocess.run(["git", "add", "f"], cwd=tmp_path, env=env, check=True)
+    subprocess.run(["git", "commit", "-q", "-F", str(msg)], cwd=tmp_path, env=env, check=True)
+
+    body = subprocess.run(["git", "log", "-1", "--format=%B"], cwd=tmp_path,
+                          env=env, capture_output=True, text=True, check=True).stdout
+    assert parse_trailers(body) == ["Mishe-Wake: wake-genome-123", "Mishe-Role: genome",
+                                    "Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>"]
