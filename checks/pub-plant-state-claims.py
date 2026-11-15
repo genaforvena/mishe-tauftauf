@@ -33,7 +33,11 @@ would cry wolf on the corpus it is measured against:
 * a figure the text dates.  "On 31 October, the repository's commit was 990
   commits ahead of the release", "the ledger scan read at 05:04Z on 15
   November found 126 rows", "Checked against the running system on 11
-  November" -- these report a reading, not the plant's state.
+  November" -- these report a reading, not the plant's state.  The one
+  exception is a clause that says the reading was taken on the run date
+  ("read again on 15 November" on 15 November): that is a live claim, and
+  it does not date the figures after it.  An earlier "read again on" date
+  stays history.
 
 Scope is measured per clause, not per line and not per body.  A qualifier
 dates the figure it qualifies: the figure's own clause governs it, the first
