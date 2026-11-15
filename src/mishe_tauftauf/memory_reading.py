@@ -28,6 +28,22 @@ def psi_some_avg10(text: str) -> float | None:
     return None
 
 
+def charged_kib(text: str) -> int | None:
+    """Charged memory in KiB: page cache (Cached) plus kernel slab (Slab), the 12.6 GiB split Ilya asked about."""
+    cached = meminfo_kib(text, "Cached")
+    slab = meminfo_kib(text, "Slab")
+    if cached is None or slab is None:
+        return None
+    return cached + slab
+
+
+def read_charged(proc: Path = Path("/proc")) -> int | None:
+    try:
+        return charged_kib((proc / "meminfo").read_text(encoding="utf-8"))
+    except OSError:
+        return None
+
+
 def read_memory(proc: Path = Path("/proc")) -> tuple[float | None, int | None]:
     """(memory PSI some avg10, AnonPages in KiB); each None when its file cannot be read."""
     try:

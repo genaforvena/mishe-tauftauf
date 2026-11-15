@@ -17,10 +17,17 @@ def test_parsers_read_the_kernel_shapes():
     assert _meminfo_kb("MemTotal: 1 kB\n", "AnonPages") is None
 
 
+def test_charged_is_cached_plus_slab_and_gaps_when_either_is_missing():
+    meminfo = "MemTotal: 100 kB\nCached:  8600000 kB\nSlab:  4000000 kB\n"
+    assert memory_reading.charged_kib(meminfo) == 12600000
+    assert memory_reading.charged_kib("Cached: 1 kB\n") is None
+
+
 def test_gap_writes_no_row_for_an_unreadable_reading(tmp_path, monkeypatch):
     seen = []
     monkeypatch.setattr(signal_samples, "append_samples", lambda d, lines, **kw: seen.append(lines) or len(lines))
     monkeypatch.setattr(memory_reading, "read_memory", lambda proc=None: (None, 2398200))
+    monkeypatch.setattr(memory_reading, "read_charged", lambda proc=None: None)
     out = producers.memory_samples(tmp_path, now=time.time())
     assert out == "samples=1"
     assert len(seen[0]) == 1 and "memory.anon.kib" in seen[0][0]

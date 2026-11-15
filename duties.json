@@ -1144,7 +1144,7 @@
       "max_age": 600,
       "resolver": "rust-plan",
       "replaces": [],
-      "covers": "memory PSI avg10 and anon memory, one row every three minutes in the signal sample store (a 60 s timer hit the host StartLimitBurst=3 per 5 min and failed on the fourth start); a gap is a gap, UNKNOWN when the store or the reading fails"
+      "covers": "memory PSI avg10, anon memory and charged memory (Cached + Slab), one row every three minutes in the signal sample store (a 60 s timer hit the host StartLimitBurst=3 per 5 min and failed on the fourth start); a gap is a gap, UNKNOWN when the store or the reading fails"
     }
   ],
   "retired": [
