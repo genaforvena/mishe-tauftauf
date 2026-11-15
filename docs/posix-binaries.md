@@ -2,13 +2,13 @@
 
 Status: contract and ranking (rust-plan, 2026-11-14). Step 1 of operator DM
 301098. No new binary is built by this document; the first candidate is step 2.
-Updated 2026-11-15: two candidates have since been built (candidate 1,
-`mishe-systemd-show`, and the signal sample store), so the crate count and the
-table below are current.
+Updated 2026-11-15: three candidates have since been built (candidate 1,
+`mishe-systemd-show`, the signal sample store, and `mishe-signal-freshness`), so
+the crate count and the table below are current.
 
 ## Why this exists
 
-Mishe's Python runtime is about 49,500 lines. Six Rust crates (about 3,000
+Mishe's Python runtime is about 49,500 lines. Seven Rust crates (about 3,100
 lines) already sit beside it, each one a small program with a stdin/argument
 and stdout/exit-code boundary. This document says what counts as a Mishe binary,
 which existing seams already meet that bar, and which responsibilities come next.
@@ -62,11 +62,14 @@ owner changes that decision (see the constraint below).
 
 `mishe-tape` and `mishe-records` use 0/1/2. `mishe-network-probe` adds 3 for
 "could not run", which is why an unreachable helper is not mistaken for a quiet
-network. The two later binaries keep the same convention with their own
-meanings: `mishe-systemd-show` uses 0/1/2 (2 is a data fault), and
+network. The three later binaries keep the same convention with their own
+meanings: `mishe-systemd-show` uses 0/1/2 (2 is a data fault),
 `mishe-signal-sample` uses 0/1/2 with 2 for a malformed or torn record — on
 `read` the valid records are still emitted and the caller marks the window
-UNKNOWN for the faulted segments.
+UNKNOWN for the faulted segments — and `mishe-signal-freshness` uses 0/1/2 with
+0 FRESH, 1 EXPIRED and 2 for an argument count or number outside the contract.
+It writes nothing to stdout: the verdict is the exit status, so the caller
+reads no output at all.
 
 ## Seams that already are binaries
 
@@ -77,10 +80,12 @@ UNKNOWN for the faulted segments.
 | `mishe-tape-facts` | One-pass byte-level facts for a disposition reading | Built and installed, differential-tested, **not wired into a live consumer**: its contract says so. Counts as a binary, not as live migration yet |
 | `mishe-network-probe` | One network probe row | Live: the `network-probe` duty runs it |
 | `mishe-systemd-show` | `systemctl show` text decoding | Live since candidate 1: `unit_psi_text.parse_systemd_show` runs it and `discovery.py` reads the result through `read_unit_psi`. The retired Python decoder is deleted; its recorded answers are GOLDEN in `tests/test_rust_systemd_show.py` |
-| `mishe-signal-sample` | The append-only signal sample store | Live on the write side: the `memory-samples` duty appends two rows every three minutes into `SITE/samples/memory/`. `read_samples` has no production caller yet, so nothing reads the store back |
+| `mishe-signal-sample` | The append-only signal sample store | Live on both sides: the `memory-samples` duty appends up to three rows every three minutes into `SITE/samples/memory/`, and the `footprint` duty reads the last 15 minutes of that store back |
+| `mishe-signal-freshness` | The freshness verdict of one signal observation | Built and differential-tested, **not wired into a live consumer**: `signal_store.read` still compares in Python, and the binary is not installed as a component |
 
 `mishe-tape-facts` is the honest gap: its consumer is not yet running it. The
-signal sample store is the narrower one: it is written live and not yet read.
+signal sample store has both a writer and a reader. The freshness binary is the
+narrower one: it is built and tested, and nothing runs it yet.
 
 ## Whole-system target
 
@@ -116,8 +121,12 @@ them. Updated 2026-11-15 after the operator DM 301336.
    per full sweep (method: 20 sweeps of `signal_store.read` over every registered
    signal, timed with `resource.getrusage` CPU deltas; the 16-line script is
    site-local and not shipped, so this line names no path).
-   The CPU gain would not pay, so no binary is built. It stays a candidate for
-   architecture only and is re-opened if a sweep exceeds 1 CPU-s.
+   The CPU gain would not pay, so the append half has no binary. The freshness
+   half now has one: `rust/mishe-signal-freshness` computes exactly the
+   `now - seen > max_age` comparison `signal_store.read` makes, and it is built
+   and differential-tested against it, but `signal_store.read` still compares in
+   Python. The candidate stays open for the append half and is re-opened if a
+   sweep exceeds 1 CPU-s.
 
 3. **Duty runner** (`src/mishe_tauftauf/duties.py`, 44 lines, plus the producer
    launch path). Input: `duties.json` and a duty name. Output: the producer's
@@ -164,8 +173,10 @@ them. Updated 2026-11-15 after the operator DM 301336.
   named `SystemdShowUnknown` error when the binary is missing, the Python parse
   path was deleted (2026-11-15 its answers became GOLDEN in the test), and it was delivered through the ordinary
   path on 2026-11-14.
-- Candidate 2 is measured and does not pay on CPU (see above). Candidate 3 is
-  measured (not per-run, 4.5 ms at generation) and not built.
+- Candidate 2 is measured and does not pay on CPU for the append half (see
+  above). Its freshness half is built as `rust/mishe-signal-freshness` and
+  differential-tested against the Python comparison, but nothing runs it yet.
+  Candidate 3 is measured (not per-run, 4.5 ms at generation) and not built.
 - Candidate 4 (feed remaining scan) is parked: the framer-loop share measured
   about 36%, below the 50% trigger. Reopen it only if a live read crosses that line.
 - Keep this ranking updated when a candidate is built or retired.

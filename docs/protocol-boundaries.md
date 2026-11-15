@@ -175,13 +175,24 @@ that composes it:
   any of the three series has no recent `ok` sample, so the signal ages to UNKNOWN
   rather than showing a carried value. There is no Python fallback: a missing
   binary raises `SignalSampleUnknown`, which the caller must report as UNKNOWN.
+- `rust/mishe-signal-freshness` (`mishe-signal-freshness`, contract
+  `rust/mishe-signal-freshness/CONTRACT.md`) owns the freshness verdict of one
+  signal observation: `now - seen > max_age`, the comparison
+  `signal_store.read` makes. The verdict is the exit status — 0 FRESH, 1 EXPIRED,
+  2 for an argument count or number outside the contract — so the binary writes
+  nothing to stdout and the caller reads no output. `signal_freshness.verdict`
+  is the reader; it maps every other outcome (a missing binary, exit 2, a
+  timeout, a spawn failure) to `FreshnessUnknown` and has no Python fallback, so
+  a broken binary cannot make a stale signal look fresh. Not yet on a live path:
+  `signal_store.read` still compares in Python, and no production module
+  imports the reader, so only `tests/test_signal_freshness.py` calls it.
 
 A change to any of these binaries' input, output, exit statuses or fault text is a
 change to a protocol boundary: update its `CONTRACT.md` in the same commit and run
 its contract test (`tests/test_mishe_tape_frames.py`,
 `tests/test_mishe_records_verify.py`, `tests/test_mishe_tape_facts.py`,
 `tests/test_mishe_network_probe.py`, `tests/test_rust_systemd_show.py`,
-`tests/test_signal_samples.py`).
+`tests/test_signal_samples.py`, `tests/test_signal_freshness.py`).
 
 A delivery request's spec holds the repository, the exact commit and its previous
 commit. The author role and the originating wake key are not in the spec; they
