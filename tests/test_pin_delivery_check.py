@@ -72,3 +72,38 @@ def test_running_is_green_until_stuck_then_unknown(tmp_path, capsys):
 def test_no_record_is_unknown(tmp_path, capsys):
     (tmp_path / "work" / "releases").mkdir(parents=True)
     assert _run(tmp_path, capsys)[0] == 3
+
+
+def test_a_corrupt_newest_record_is_unknown_not_green(tmp_path, capsys):
+    """A record that cannot be parsed is not skipped in silence.
+
+    This is the defect the review of the 2026-11-14 release named on
+    2026-11-15: ``newest()`` skipped any record that failed to parse, so a
+    corrupt or torn record was passed over and an OLDER record answered
+    instead.  With the older record saying "delivered" and the pointer
+    naming that same sha, the check reported GREEN -- a healthy pin, while
+    the record of the promotion that actually happened was unreadable.
+
+    The newest promotion is then UNKNOWN.  Which record is newest cannot be
+    known from a file that does not parse, so the check must not pass on the
+    ones it can read.
+    """
+    home = _site(tmp_path, [_rec("delivered", created_at=NOW - 7200)])
+    (home / "work" / "releases" / "9.json").write_text(
+        '{"sha": "bbbb", "phase": "delivered", "created_at":', encoding="utf-8")
+    code, out = _run(home, capsys)
+    assert code == 3
+    assert "could not be read" in out.err
+
+
+def test_a_corrupt_record_alongside_a_good_newest_is_unknown(tmp_path, capsys):
+    """A corrupt record is UNKNOWN even when a readable record is newer.
+
+    A corrupt record cannot be ordered against a readable one, so the
+    check cannot claim the readable one is the newest promotion.
+    """
+    home = _site(tmp_path, [_rec("delivered", created_at=NOW - 60)])
+    (home / "work" / "releases" / "9.json").write_text("{not json", encoding="utf-8")
+    code, out = _run(home, capsys)
+    assert code == 3
+    assert "could not be read" in out.err
