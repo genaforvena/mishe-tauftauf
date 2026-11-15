@@ -6,7 +6,8 @@ the read rule. It runs no producer, reads no config, holds no state between runs
 and writes only inside the sample directory it was given. It never fills a gap:
 no record means no sample, and no value is ever invented for a missing time.
 
-The directory is `SITE/signals/samples/` by convention; the caller passes it.
+The directory is `SITE/samples/<name>/` by convention (one subdirectory per
+sample series, e.g. `SITE/samples/memory/`); the caller passes it.
 
 ## Record format
 
