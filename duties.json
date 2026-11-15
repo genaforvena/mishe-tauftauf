@@ -1115,6 +1115,25 @@
       "replaces": []
     },
     {
+      "name": "delivery-cadence",
+      "command": [
+        "{python}",
+        "{repo}/checks/delivery-cadence.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 600,
+      "timeout": 120,
+      "max_age": 1800,
+      "red_codes": [],
+      "unknown_codes": [],
+      "resolver": "genome",
+      "covers": "the automatic moving-pin cadence runs: it starts one promotion when the pin trails a settled HEAD, skips while a delivery, heal or patch gate is running, and honours the settle and retry bounds; the signal is GREEN while the cadence keeps running and ages to UNKNOWN if it stops, so a stalled cadence is observed rather than silent",
+      "replaces": []
+    },
+    {
       "name": "commit-risk",
       "command": [
         "{python}",
