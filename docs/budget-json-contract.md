@@ -215,7 +215,13 @@ RED when any of:
 3. The router's `routing.roles[role].selected` is a candidate whose row is exhausted, or
    the router skipped a candidate the file marks ok for an exhaustion reason (either
    direction).
-4. Any number in the file is older than its max age but shown `FRESH`.
+4. Any number in the file is older than its max age but shown `FRESH`, judged at the file's own
+   `produced_at`: a window's `FRESH` label must hold when the producer writes it (observed within
+   `MAX_AGE_S`, reset still ahead). A window whose reset merely passes while the file ages is not a
+   violation, because the producer period (600 s) is longer than the time to a reset it captured
+   close to the boundary and every consumer re-ages the window against its own clock
+   (`yielding.spare_budget`, `engine_router.live_status`, `provider_budget.rows_from_engine_budget`);
+   the whole file is still rejected as UNKNOWN once `produced_at` is older than `MAX_AGE_S`.
 
 ## Migration checklist
 

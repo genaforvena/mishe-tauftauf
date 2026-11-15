@@ -91,6 +91,29 @@ def test_window_shown_fresh_past_max_age_is_red(tmp_path: Path):
     assert any("shown FRESH" in p for p in result["problems"])
 
 
+def test_window_whose_reset_passes_after_production_is_not_red(tmp_path: Path):
+    # The producer labelled the window FRESH at produced_at; the reset passes while the file ages
+    # (producer period 600 s inside max_age 900 s, so this happens at every window boundary). Every
+    # consumer re-ages the window itself, so a correctly written snapshot is not a producer fault.
+    window = {"used": 0.42, "remaining": 0.58, "reset_at": NOW - 10, "observed_at": NOW - 25, "state": "FRESH"}
+    budget = {"schema": 1, "produced_at": NOW - 20,
+              "accounts": {"codex-a": {"state": "FRESH", "windows": {"5h": dict(window), "7d": dict(window)}}}}
+    code, result = bc.run(_home_with(tmp_path, budget), 900.0, NOW, None)
+    assert code == bc.GREEN, result["problems"]
+
+
+def test_window_fresh_with_reset_already_past_at_production_is_red(tmp_path: Path):
+    # A producer (or hand-edited file) that writes FRESH for a window whose reset had already passed
+    # at produced_at is a real fault, and stays RED.
+    window = {"used": 0.42, "remaining": 0.58, "reset_at": NOW - 60, "observed_at": NOW - 5, "state": "FRESH"}
+    budget = {"schema": 1, "produced_at": NOW,
+              "accounts": {"codex-a": {"state": "FRESH", "windows": {"5h": dict(window)}}}}
+    home = _home_with(tmp_path, budget)
+    code, result = bc.run(home, 900.0, NOW, home / "engine" / "budget.json")
+    assert code == bc.RED
+    assert any("shown FRESH" in p for p in result["problems"])
+
+
 def test_account_fresh_over_a_non_fresh_window_is_red(tmp_path: Path):
     budget = bp.build_budget(_status("UNKNOWN"), None, NOW)
     budget["accounts"]["codex-a"]["state"] = "FRESH"

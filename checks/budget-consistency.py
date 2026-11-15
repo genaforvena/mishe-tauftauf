@@ -8,7 +8,11 @@ shipped yet; they are not judged here and are named in the output as not_checked
 
 Checks (RED when any fails):
   - a window marked FRESH whose observed_at is older than --max-age, or whose reset_at is not in
-    the future (the number is old but shown FRESH: contract rule 4)
+    the future, judged at the file's own produced_at (the number is old but shown FRESH: contract
+    rule 4). The file is a snapshot the producer labelled at its own now; a window whose reset
+    merely passes while the file ages is not a producer fault, because every consumer re-ages the
+    window itself (yielding.spare_budget, engine_router.live_status, provider_budget) and the
+    file is separately rejected as UNKNOWN once produced_at is older than --max-age.
   - a window with a non-numeric used/remaining/reset_at/observed_at field
   - an account whose state disagrees with its windows (FRESH needs every window FRESH and at
     least one window; UNREADABLE needs no windows; otherwise STALE)
@@ -18,7 +22,8 @@ Checks (RED when any fails):
     and windows, age 0..900 s and within 3600 s, reset ahead, floor met). No pin, or a pin that cannot be run, is UNKNOWN.
 
 Exit status:
-  0  GREEN: every account row matches its windows and no window is shown FRESH past its age
+  0  GREEN: every account row matches its windows and, at the file's own produced_at, no window is
+     shown FRESH past its age or ahead of its reset
   2  RED: one of the checks above fails
   3  UNKNOWN: file missing, unreadable, not schema 1, produced_at older than --max-age, or no runnable pinned
      scheduler (a stale file or an unobserved decision cannot prove anything)
@@ -49,8 +54,12 @@ def _num(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def check_window(account: str, name: str, w, now: float, max_age: float, problems: list) -> str | None:
-    """Return the window's state as shown in the file, or None when the window is malformed."""
+def check_window(account: str, name: str, w, produced_at: float, max_age: float, problems: list) -> str | None:
+    """Return the window's state as shown in the file, or None when the window is malformed.
+
+    The FRESH label is judged at the file's own ``produced_at`` (the clock the producer labels with),
+    not at the read time: a window that was fresh when the file was written and whose reset merely
+    passes afterwards is not a fault. Consumers re-age the window against their own clock."""
     if not isinstance(w, dict):
         problems.append(f"{account}.{name}: window is not an object")
         return None
@@ -63,16 +72,16 @@ def check_window(account: str, name: str, w, now: float, max_age: float, problem
         problems.append(f"{account}.{name}: state {shown!r} is not a window state the producer writes")
         return None
     observed_at, reset_at = w["observed_at"], w["reset_at"]
-    really_fresh = now - max_age <= observed_at <= now + 5 and reset_at > now
+    really_fresh = produced_at - max_age <= observed_at <= produced_at + 5 and reset_at > produced_at
     if shown == "FRESH" and not really_fresh:
         problems.append(
-            f"{account}.{name}: shown FRESH but age {now - observed_at:.0f}s "
-            f"(max {max_age:.0f}s) or reset_at {reset_at:.0f} not in the future"
+            f"{account}.{name}: shown FRESH but at produced_at age {produced_at - observed_at:.0f}s "
+            f"(max {max_age:.0f}s) or reset_at {reset_at:.0f} not ahead"
         )
     return shown
 
 
-def check_accounts(data: dict, now: float, max_age: float) -> tuple[list, list, dict]:
+def check_accounts(data: dict, produced_at: float, max_age: float) -> tuple[list, list, dict]:
     problems: list[str] = []
     exhausted: list[str] = []
     summary: dict[str, str] = {}
@@ -94,7 +103,7 @@ def check_accounts(data: dict, now: float, max_age: float) -> tuple[list, list, 
             continue
         shown = []
         for name, w in windows.items():
-            s = check_window(account, name, w, now, max_age, problems)
+            s = check_window(account, name, w, produced_at, max_age, problems)
             if s is not None:
                 shown.append(s)
             if isinstance(w, dict) and _num(w.get("used")) and _num(w.get("remaining")):
@@ -221,7 +230,7 @@ def run(home: Path, max_age: float, now: float, path: Path | None) -> tuple[int,
             "verdict": "UNKNOWN",
             "reason": f"file is {now - produced_at:.0f}s old, older than max_age {max_age:.0f}s",
         }
-    problems, exhausted, summary = check_accounts(data, now, max_age)
+    problems, exhausted, summary = check_accounts(data, produced_at, max_age)
     if path is None:
         # The scheduler reads home/engine/budget.json itself, so the decision is only comparable for the live file.
         adm_problems, admission = check_admission(home, data, now)
