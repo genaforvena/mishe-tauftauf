@@ -39,3 +39,13 @@ def test_missing_store_raises_unknown_not_zero(tmp_path, monkeypatch):
     monkeypatch.delenv("MISHE_TAUFTAUF_HOME", raising=False)
     with pytest.raises(signal_samples.SignalSampleUnknown):
         producers.memory_samples(tmp_path, now=time.time())
+
+
+def test_no_reading_at_all_is_unknown_not_a_green_zero(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(signal_samples, "append_samples", lambda d, lines, **kw: seen.append(lines) or len(lines))
+    monkeypatch.setattr(memory_reading, "read_memory", lambda proc=None: (None, None))
+    monkeypatch.setattr(memory_reading, "read_charged", lambda proc=None: None)
+    with pytest.raises(signal_samples.SignalSampleUnknown):
+        producers.memory_samples(tmp_path, now=time.time())
+    assert seen == []

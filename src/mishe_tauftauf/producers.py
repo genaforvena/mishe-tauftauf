@@ -214,6 +214,9 @@ def memory_samples(home, *, now: float, **_) -> str:
         rows.append(signal_samples.format_record(ts_ms, "memory.anon.kib", "ok", str(anon), "memory-samples"))
     if charged is not None:
         rows.append(signal_samples.format_record(ts_ms, "memory.charged.kib", "ok", str(charged), "memory-samples"))
+    if not rows:
+        # No reading at all is no sample: the unit fails and the signal reads UNKNOWN, never a GREEN with nothing taken.
+        raise signal_samples.SignalSampleUnknown("no memory reading could be taken: /proc pressure and meminfo unreadable")
     written = signal_samples.append_samples(Path(home) / "samples" / "memory", rows)
     return f"samples={written}"
 
