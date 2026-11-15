@@ -73,7 +73,12 @@ def _append(home, row: dict) -> None:
 
 
 def same_dossier_verdict(rows: list, role: str, digest: str) -> bool:
-    """True when this role's last start had the same hash and that wake yielded verified."""
+    """True when this role's last start had the same hash and that wake yielded verified.
+
+    A verified receipt alone is not enough: an engine can write its receipt and then raise,
+    and that end row carries state ``unknown`` with result ``verified``. Only a wake whose
+    engine settled normally (state ``yielded``) counts.
+    """
     last_start = None
     for row in rows:
         if row.get("kind") == "start" and row.get("role") == role:
@@ -82,7 +87,7 @@ def same_dossier_verdict(rows: list, role: str, digest: str) -> bool:
         return False
     for row in reversed(rows):
         if row.get("kind") == "end" and row.get("key") == last_start.get("key"):
-            return row.get("result") == "verified"
+            return row.get("state") == "yielded" and row.get("result") == "verified"
     return False
 
 

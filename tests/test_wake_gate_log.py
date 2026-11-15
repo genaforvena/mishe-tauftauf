@@ -134,3 +134,39 @@ def test_unprintable_engine_exception_is_preserved_and_logged(tmp_path, monkeypa
     assert [row["kind"] for row in rows] == ["start", "end"]
     assert rows[1]["state"] == "unknown"
     assert "UnprintableError" in rows[1]["detail"]
+
+
+def test_receipt_then_raise_is_not_the_same_dossier_verdict(tmp_path):
+    # Reviewed counterexample (field-review 909f3b90): the engine writes a verified receipt and
+    # then raises. The end row is state unknown with result verified; it must not count as a
+    # verified wake for the next start's same_dossier verdict.
+    snap = _snap(["inbox"])
+    wake_gate_log.record_start(tmp_path, "system1", "k1", snap=snap, mail=[], now=1.0)
+    _settle(tmp_path, "k1", "verified")
+    wake_gate_log.record_end(tmp_path, "system1", "k1", state="unknown", detail="RuntimeError")
+    wake_gate_log.record_start(tmp_path, "system1", "k2", snap=snap, mail=[], now=2.0)
+    start = [r for r in _rows(tmp_path) if r["kind"] == "start"][-1]
+    assert start["key"] == "k2" and start["same_dossier_as_last"] is False
+
+
+def test_engine_receipt_then_raise_end_row_blocks_same_dossier(tmp_path, monkeypatch):
+    # Caller-level version: the real _execute path with an engine that settles verified and raises.
+    import pytest
+    from mishe_tauftauf import wake
+
+    snap = _snap(["inbox"])
+
+    def settle_then_boom(home, role, key, **kwargs):
+        _settle(home, key, "verified")
+        raise RuntimeError("engine exploded after receipt")
+
+    monkeypatch.setattr(wake, "_execute_engine", settle_then_boom)
+    with pytest.raises(RuntimeError):
+        wake._execute(tmp_path, "system1", "k-a", engine=None, now=1000.0, snap=snap,
+                      mail=[], reconcile_of=None, repo=None, timeout=1, on_start=None)
+    monkeypatch.undo()
+    wake_gate_log.record_start(tmp_path, "system1", "k-b", snap=snap, mail=[], now=2000.0)
+    end = [r for r in _rows(tmp_path) if r["kind"] == "end"][0]
+    assert end["state"] == "unknown" and end["result"] == "verified"
+    start = [r for r in _rows(tmp_path) if r["kind"] == "start"][-1]
+    assert start["key"] == "k-b" and start["same_dossier_as_last"] is False
