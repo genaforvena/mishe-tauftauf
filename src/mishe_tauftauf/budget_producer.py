@@ -598,7 +598,7 @@ def main(home: Path, out: Path | None = None) -> int:
     # codex-a windows come from the codex CLI's own rollouts (read-only, no credential); they replace
     # the omp status row, which is UNREADABLE while its stored login is dead.
     from . import codex_usage
-    probed = codex_usage.refresh(now)
+    probed = codex_usage.refresh(now, home=home)
     codex = codex_usage.account_row(max(now, time.time()) if probed else now)
     if codex is not None:
         status = dict(status or {}, accounts=dict((status or {}).get("accounts") or {}, **{codex_usage.CODEX_ALIAS: codex}))

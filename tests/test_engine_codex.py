@@ -115,3 +115,79 @@ def test_refresh_probes_only_when_the_reading_is_old(tmp_path, monkeypatch):
     monkeypatch.setattr(codex_usage.shutil, "which", lambda name: None)
     assert codex_usage.refresh(2_000_000.0, sessions=tmp_path, run=run) is False  # no CLI: nothing runs
     assert len(calls) == 1
+
+
+def test_a_probe_that_yields_no_reading_does_not_repeat_within_the_cooldown(tmp_path, monkeypatch):
+    """A probe that produces no reading must not become a stream of model calls.
+
+    Six probes ran in four minutes on 2026-11-15 because nothing remembered that the
+    previous probe had already failed; each one is a real call on the codex-a account.
+    """
+    calls = []
+    monkeypatch.setattr(codex_usage.shutil, "which", lambda name: "/bin/codex")
+    run = lambda argv, **kw: calls.append((argv, kw))
+    monkeypatch.setattr(codex_usage, "latest_reading", lambda sessions=None, **k: None)
+    home = tmp_path / "site"
+    home.mkdir()
+    now = 1_000_000.0
+    assert codex_usage.refresh(now, sessions=tmp_path, run=run, home=home) is True   # first probe runs
+    assert codex_usage.refresh(now + 60.0, sessions=tmp_path, run=run, home=home) is False  # cooled down
+    assert codex_usage.refresh(now + 60.0, sessions=tmp_path, run=run, home=home) is False
+    assert len(calls) == 1
+    # The cooldown expires: the next tick may probe again.
+    assert codex_usage.refresh(now + codex_usage.PROBE_COOLDOWN_S + 1.0, sessions=tmp_path, run=run, home=home) is True
+    assert len(calls) == 2
+
+
+def test_a_probe_that_yields_a_reading_is_not_held_by_the_cooldown(tmp_path, monkeypatch):
+    """A reading that did arrive must not be re-probed: the freshness rule alone decides."""
+    calls = []
+    monkeypatch.setattr(codex_usage.shutil, "which", lambda name: "/bin/codex")
+    run = lambda argv, **kw: calls.append((argv, kw))
+    now = 1_000_000.0
+    readings = [{"at": now - 10_000.0, "rate_limits": {}}]   # old enough to probe
+    monkeypatch.setattr(codex_usage, "latest_reading", lambda sessions=None, **k: readings[0])
+    home = tmp_path / "site"
+    home.mkdir()
+
+    def probe(argv, **kw):
+        calls.append((argv, kw))
+        readings[0] = {"at": now, "rate_limits": {}}         # the probe produced a reading
+
+    assert codex_usage.refresh(now, sessions=tmp_path, run=probe, home=home) is True
+    assert codex_usage.refresh(now + 10.0, sessions=tmp_path, run=probe, home=home) is False  # reading is fresh
+    assert len(calls) == 1
+
+
+def test_the_cooldown_state_survives_the_producer_process(tmp_path, monkeypatch):
+    """The producer exits after each tick; the cooldown must not be process-local."""
+    calls = []
+    monkeypatch.setattr(codex_usage.shutil, "which", lambda name: "/bin/codex")
+    run = lambda argv, **kw: calls.append((argv, kw))
+    monkeypatch.setattr(codex_usage, "latest_reading", lambda sessions=None, **k: None)
+    home = tmp_path / "site"
+    home.mkdir()
+    now = 1_000_000.0
+    codex_usage.refresh(now, sessions=tmp_path, run=run, home=home)
+    state = json.loads((home / codex_usage.PROBE_STATE).read_text())
+    assert state["at"] == now and state["reading"] is False
+    assert codex_usage.refresh(now + 5.0, sessions=tmp_path, run=run, home=home) is False
+    assert len(calls) == 1
+
+
+def test_a_failed_probe_still_starts_the_cooldown(tmp_path, monkeypatch):
+    """A probe that raises must not be retried on every tick either."""
+    calls = []
+
+    def boom(argv, **kw):
+        calls.append((argv, kw))
+        raise OSError("codex is not installed")
+
+    monkeypatch.setattr(codex_usage.shutil, "which", lambda name: "/bin/codex")
+    monkeypatch.setattr(codex_usage, "latest_reading", lambda sessions=None, **k: None)
+    home = tmp_path / "site"
+    home.mkdir()
+    now = 1_000_000.0
+    assert codex_usage.refresh(now, sessions=tmp_path, run=boom, home=home) is False
+    assert codex_usage.refresh(now + 5.0, sessions=tmp_path, run=boom, home=home) is False
+    assert len(calls) == 1

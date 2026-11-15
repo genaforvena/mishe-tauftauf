@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from mishe_tauftauf import engine_claude, engine_omp, engine_process as proc, engines, wake
+from mishe_tauftauf import engine_claude, engine_codex, engine_omp, engine_process as proc, engines, wake
 
 
 def test_missing_binary_is_not_started():
@@ -56,6 +56,22 @@ def test_engine_choice_defaults_and_rejects_unsupported(tmp_path):
     (tmp_path / "engines" / "genome.json").write_text('{"engine":"bogus"}')
     with pytest.raises(ValueError):
         engines.for_role(tmp_path, "genome")
+
+
+def test_a_codex_role_without_a_model_gets_a_usable_model(tmp_path):
+    """A config of {"engine":"codex"} used to build a ``-m None`` argv.
+
+    ``subprocess.Popen`` raises TypeError for it (not OSError), so the crash escaped the
+    wake instead of being recorded as a failure: review finding on release bcd536a3.
+    """
+    (tmp_path / "engines").mkdir()
+    (tmp_path / "engines" / "p.json").write_text('{"engine":"codex"}')
+    engine = engines.for_role(tmp_path, "p")
+    assert engine.name == "codex"
+    assert engine.model == engines.DEFAULT_CODEX_MODEL
+    argv = engine_codex.command(engine.model, tmp_path)
+    assert argv[argv.index("-m") + 1] == engines.DEFAULT_CODEX_MODEL
+    assert all(isinstance(part, str) for part in argv)
 
 
 def test_claude_tools_can_be_narrowed_per_role(tmp_path):

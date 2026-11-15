@@ -8,6 +8,14 @@ from .engine_omp import OmpEngine
 from .state_files import read_json
 
 DEFAULT_CLAUDE_MODEL = "claude-haiku-5-5"
+DEFAULT_CODEX_MODEL = "gpt-6-luna"
+"""The codex model a role gets when its config names the engine but no model.
+
+A config of ``{"engine": "codex"}`` used to build a ``-m None`` argv, and the
+``TypeError`` from ``subprocess.Popen`` escaped the wake as an uncaught crash
+(review finding on release bcd536a3, 2026-11-15). The claude branch has had a
+default all along; codex now has one too.
+"""
 
 
 def for_role(home, role: str):
@@ -25,5 +33,5 @@ def for_role(home, role: str):
         return OmpEngine(config.get("model"), env, config.get("thinking"))
     if kind == "codex":
         from .engine_codex import CodexEngine
-        return CodexEngine(config.get("model"), env, config.get("thinking"))
+        return CodexEngine(config.get("model") or DEFAULT_CODEX_MODEL, env, config.get("thinking"))
     raise ValueError(f"unsupported engine {kind!r} for {role!r}; use claude, omp or codex")

@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 from . import budget_producer, codex_text
+from .state_files import read_json, write_json
 
 CODEX_ALIAS = "codex-a"
 """The registry alias of the one ChatGPT login the codex CLI holds."""
@@ -102,19 +103,60 @@ def account_row(now: float, sessions: Path = SESSIONS) -> dict | None:
 PROBE_MODEL = "gpt-6-luna"
 PROBE_AFTER_S = 480.0      # a reading older than this is refreshed (the producer's freshness rule is 900 s)
 PROBE_TIMEOUT_S = 90
+PROBE_COOLDOWN_S = 1800.0
+"""How long a probe that produced no reading blocks the next probe.
+
+The probe is a real model call on the codex-a account. Without a cooldown a probe
+that cannot produce a reading is repeated on every producer tick, so the account pays
+for calls that yield nothing (review finding on release 751ce3d2, 2026-11-15: six
+probes in four minutes on 2026-11-15, two of them with an unsupported model and no
+reading at all). One cooldown bounds the rate to one probe per half hour, whatever
+the producer's cadence.
+"""
+PROBE_STATE = "engine/codex-probe.json"
+"""Where the last probe attempt is remembered, so the cooldown survives the producer's exit."""
 
 
-def refresh(now: float, sessions: Path = SESSIONS, *, run=subprocess.run) -> bool:
+def _probe_state_path(home: Path) -> Path:
+    return Path(home) / PROBE_STATE
+
+
+def _last_probe(home: Path) -> float | None:
+    """When the last probe ran, or None when no probe has run or the state is unreadable."""
+    try:
+        value = read_json(_probe_state_path(home))
+    except (OSError, ValueError):
+        return None
+    at = value.get("at") if isinstance(value, dict) else None
+    return float(at) if isinstance(at, (int, float)) and not isinstance(at, bool) else None
+
+
+def _remember_probe(home: Path, now: float, *, reading: bool) -> None:
+    """Record the probe attempt so the cooldown applies to the next producer tick."""
+    path = _probe_state_path(home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(path, {"at": float(now), "reading": bool(reading)})
+
+
+def refresh(now: float, sessions: Path = SESSIONS, *, run=subprocess.run, home: Path | None = None) -> bool:
     """Write a fresh rate_limits reading by one tiny ``codex exec`` when the newest one is old.
 
     The router skips an account whose window is not FRESH, so without a reader an idle codex-a would stay
     STALE for ever and no codex wake could start. The probe sends one word, uses a read-only sandbox in an
     empty directory and lets the CLI write its own rollout; no credential is read or copied. Returns True when
     a probe ran. A missing CLI or a failed probe changes nothing: the account then stays STALE, never FRESH.
+
+    A probe that produced no reading starts a cooldown, so a probe that keeps failing cannot become a
+    stream of model calls. The cooldown is remembered in the site home, because the producer exits after
+    each tick and the next tick is a new process.
     """
     reading = latest_reading(sessions)
     if reading is not None and now - reading["at"] < PROBE_AFTER_S:
         return False
+    if home is not None:
+        last = _last_probe(home)
+        if last is not None and now - last < PROBE_COOLDOWN_S:
+            return False
     cli = shutil.which("codex")
     if cli is None:
         return False
@@ -123,5 +165,11 @@ def refresh(now: float, sessions: Path = SESSIONS, *, run=subprocess.run) -> boo
             run([cli, "exec", "--skip-git-repo-check", "-s", "read-only", "-m", PROBE_MODEL, "--json", "-C", empty, "-"],
                 input="Reply with the single word ok.", text=True, capture_output=True, timeout=PROBE_TIMEOUT_S)
         except (OSError, subprocess.SubprocessError):
+            if home is not None:
+                _remember_probe(home, now, reading=False)
             return False
+    produced = latest_reading(sessions)
+    got_reading = produced is not None and (reading is None or produced["at"] > reading["at"])
+    if home is not None:
+        _remember_probe(home, now, reading=got_reading)
     return True
