@@ -248,6 +248,11 @@ A `--when` that names no `--again` still gets a six-hour deadline of its own, so
 sits forever. A `--when` that names a signal the site has not registered cannot fire,
 and the yield says so: a signal that is not registered never fires, so such a wait is
 dead from the moment it is written.
+A `--when` whose condition already holds fires on the next check — the test is whether
+the signal matches now, not whether it just changed — so a wait on a value that persists
+does not wait at all: `pin-delivery` stays `GREEN` from a delivery until the next
+promotion. When the condition you want is already true, wait with `--again`; reserve
+`--when` for a value the signal does not yet hold.
 
 A yield also sets the idle pace. The default idle initiative returns in two hours, but a
 role with a ready lane in its work record and fresh spare budget returns in thirty
