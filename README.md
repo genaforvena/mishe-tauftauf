@@ -94,7 +94,7 @@ and a provisional daily rhythm:
 You need Linux with a user systemd manager, Python 3.10+, Git, and an installed, signed-in coding
 agent: Claude Code (`claude`) or `omp`. Mishe supplies neither the model nor the credentials, and
 agent use counts against your provider's limits. A third engine, `codex`, is known to the code but
-is routed by no plant by default. The GitHub CLI (`gh`), with access to the
+no route names it. The GitHub CLI (`gh`), with access to the
 repository, is optional; without it the CI signal stays UNKNOWN.
 
 ```bash
