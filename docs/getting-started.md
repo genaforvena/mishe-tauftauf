@@ -9,9 +9,9 @@ a model until you release the hold.
 
 - Linux with a working user systemd manager (`systemctl --user status`), Python 3.10+
   and Git.
-- At least one authenticated coding agent: **`claude`** (Claude Code) and/or **`omp`**.
+- At least one authenticated coding agent: **`claude`** (Claude Code), **`omp`**, or
+  **`codex`** (the `codex` CLI's own login).
   Mishe supplies neither the model nor credentials; usage counts against your plan.
-  The code knows a third engine, `codex`; nothing routes it by default.
 - Optional: GitHub CLI `gh` with repository access, for the CI reading. Without it
   the CI signal stays UNKNOWN.
 
@@ -41,11 +41,11 @@ By default a role wakes on `claude` with `claude-haiku-5-5`. To change one, writ
 `SITE_HOME/engines/ROLE.json` (for example `{"engine": "claude", "model": "claude-haiku-5-5"}` or `{"engine": "omp", "model": "..."}`). Three engines exist: `claude`, `omp` and `codex`.
 
 `codex` runs the `codex` CLI (`codex exec`) with the login that CLI already holds; Mishe
-copies no credential into an engine store. It is flagged off: the routes file is
-site-local, and no route names `codex`, so a plant runs it only if you write one in
-`engine/routes.json` — and that choice also settles its sandbox mode, which is still an
-open decision for the owner (the code's default, `workspace-write`, is narrower than a
-mind's work needs). Its account window is read from the codex CLI's own rollout files,
+copies no credential into an engine store. A plant runs it only where its own
+`engine/routes.json` names `codex` — this plant's does, on the `codex-a` account — and that
+choice also settles its sandbox mode, which is still an open decision for the owner (the
+code's default, `workspace-write`, is narrower than a mind's work needs). Its account
+window is read from the codex CLI's own rollout files,
 so an account that has not run lately reads STALE and the router skips it.
 
 A site can instead list ordered candidates per role in

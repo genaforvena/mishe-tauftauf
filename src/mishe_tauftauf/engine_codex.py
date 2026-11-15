@@ -4,7 +4,8 @@ Mishe drives the ``codex`` CLI that already holds the ChatGPT login. It never co
 the OAuth tokens into an omp store: two clients sharing one rotating refresh token can
 invalidate both (operator DM 15:20Z, 2026-11-15).
 
-Built flagged off: no route in ``engine/routes.json`` names ``codex`` yet. The sandbox
+Built defensively: nothing enables it by itself, so it runs only where a site's
+``engine/routes.json`` names ``codex`` (the live plant's does, on ``codex-a``). The sandbox
 mode is a security decision still open with the operator (minds commit, run systemctl and
 tmux and push), so :data:`SANDBOX` is a named default, not a settled policy.
 """
