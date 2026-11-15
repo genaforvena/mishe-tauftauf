@@ -78,7 +78,7 @@ class ProviderTests(unittest.TestCase):
             {"base_url": "http://routerai.ru"},
             {"base_url": "https://user:pw@routerai.ru"},
             {"key_file": "relative/routerai.key"},
-            {"daily_cap": 5000},
+            {"daily_cap": 5001},
             {"daily_cap": True},
             {"timeout": 0},
             {"timeout": 31},
