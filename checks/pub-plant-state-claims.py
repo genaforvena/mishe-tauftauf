@@ -175,6 +175,27 @@ REGISTRY = (
         "value": "producer_units_naming_release",
     },
     {
+        # A path in this repository, named together with the commit that
+        # carries it.  This is the corpus's own shape for pointing a reader
+        # at a source: "`docs/new-senses.md` (commit `35f7cb4`)".  Such a
+        # pointer is a claim about the public repository: the reader is told
+        # to go and read something there.
+        #
+        # A bare backticked id is NOT a claim.  The corpus is full of them and
+        # they mean different things: a process id ("rows from `41945` and
+        # `4176129`"), the head of the retired repository ("`d67bd016`"), and
+        # ids a post itself says are no longer reachable from a published
+        # branch.  Reading every hex string as a commit made the detector
+        # fail on the corpus it is measured against, which is how a detector
+        # stops being acted on.
+        "name": "source-pointer",
+        "pattern": re.compile(
+            r"`(?P<path>[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+)`[^\n]{0,80}?"
+            r"\(commit `(?P<sha>[0-9a-f]{7,40})`\)"),
+        "reading": "a source in the public repository",
+        "value": "source_pointer",
+    },
+    {
         # The corpus names the checkout's commit in more than one way.  The
         # correction notice quotes the original wording ("you are on"), and
         # the sentence it corrected now says the checkout "stands at" a
@@ -320,6 +341,13 @@ def figures_in_line(line: str) -> list[tuple[str, str, int, int]]:
     found: list[tuple[str, str, int, int]] = []
     for entry in REGISTRY:
         for match in entry["pattern"].finditer(line):
+            if entry["name"] == "source-pointer":
+                # The claim is the pair: the path the reader is sent to and
+                # the commit they are told to read it at.
+                found.append((entry["name"],
+                              "%s@%s" % (match.group("path"), match.group("sha")),
+                              match.start(), match.end()))
+                continue
             raw = match.group(1)
             if entry["name"] == "checkout-head":
                 found.append((entry["name"], raw, match.start(1), match.end(1)))
@@ -421,6 +449,36 @@ def check(bodies: dict[str, str], live: dict[str, object],
             for name, raw, clause in live_figures(line, today=run_day):
                 entry = next(e for e in REGISTRY if e["name"] == name)
                 value = live.get(entry["value"])
+                if entry["value"] == "source_pointer":
+                    # A pointer a post gives the reader: a path in the public
+                    # repository and the commit to read it at.  The reader
+                    # clones the public repository and checks that commit
+                    # out, so a commit no published ref reaches is a pointer
+                    # that leads nowhere.  A tree the plant cannot read
+                    # leaves the claim undecided.
+                    published = value if isinstance(value, dict) else None
+                    if published is None:
+                        undecidable.append(
+                            "article %s: the body points at %s, and the published tree could not be read"
+                            % (identifier, raw))
+                        continue
+                    path, _, sha = raw.partition("@")
+                    commits = published.get("published_commits") or set()
+                    paths = published.get("published_paths") or set()
+                    if path.rstrip("/") not in paths:
+                        # The path is not in the published repository at all,
+                        # so the pointer is wrong about where the source
+                        # lives.  This is the retired repository's shape --
+                        # its paths are not published here.
+                        failures.append(
+                            "article %s: the body points at %s, which the public repository does not carry"
+                            % (identifier, path))
+                        continue
+                    if not any(str(item).lower().startswith(sha.lower()) for item in commits):
+                        failures.append(
+                            "article %s: the body points at commit %s, which no published ref of the public repository reaches"
+                            % (identifier, sha))
+                    continue
                 if value is None:
                     undecidable.append(
                         "article %s: %s states %s %s, and the plant publishes no live reading for it"
@@ -596,6 +654,39 @@ def read_field_review(repo: Path) -> dict[str, object]:
     return live
 
 
+def read_published_tree(repo: Path) -> dict[str, object] | None:
+    """The commits and paths the public repository publishes, or None.
+
+    "Published" means the refs a reader can see on the public remote: the
+    remote's heads, not local preservation refs or worktree branches.  A
+    pointer a post gives -- a path in this repository and the commit to read
+    it at -- is followed by cloning the public repository and checking that
+    commit out, so a commit no published ref reaches is a pointer a reader
+    cannot follow.  A tree that cannot be read is None, which the check
+    reports as UNKNOWN, never a pass.
+    """
+    code, out = git(repo, "for-each-ref", "--format=%(refname)", "refs/remotes/origin")
+    if code != 0:
+        return None
+    refs = [line.strip() for line in out.splitlines() if line.strip()]
+    if not refs:
+        return None
+    commits: set[str] = set()
+    paths: set[str] = set()
+    for ref in refs:
+        code, out = git(repo, "rev-list", ref)
+        if code != 0:
+            return None
+        commits.update(line.strip() for line in out.splitlines() if line.strip())
+        code, out = git(repo, "ls-tree", "-r", "--name-only", ref)
+        if code != 0:
+            return None
+        paths.update(line.strip().rstrip("/") for line in out.splitlines() if line.strip())
+    if not commits:
+        return None
+    return {"published_commits": commits, "published_paths": paths, "published_refs": refs}
+
+
 def read_live(home: Path, repo: Path, unit_dir: Path) -> dict[str, object]:
     """Every live value the registry needs, read from the plant."""
     live: dict[str, object] = {}
@@ -615,6 +706,9 @@ def read_live(home: Path, repo: Path, unit_dir: Path) -> dict[str, object]:
     units = read_units_naming_release(unit_dir)
     if units is not None:
         live["producer_units_naming_release"] = units
+    published = read_published_tree(repo)
+    if published is not None:
+        live["source_pointer"] = published
     return live
 
 
@@ -628,6 +722,11 @@ def _self_test() -> int:
     live = {"ledger_permanent_loss": 126, "ledger_owed": 75, "pin_gap": 3,
             "producer_units_naming_release": 41,
             "checkout_head": "20c65d7309ed4c617913d5317d661912dd23ec56",
+            "source_pointer": {
+                "published_commits": {"20c65d7309ed4c617913d5317d661912dd23ec56",
+                                      "237db71f63d99e2df370418a6b599ed8537efb84"},
+                "published_paths": {"docs/new-senses.md"},
+                "published_refs": ["refs/remotes/origin/main"]},
             "field_review_fields": 32, "field_review_cells": 192,
             "field_review_landed": 383, "field_review_pending": 0}
     bodies = {
@@ -676,6 +775,14 @@ def _self_test() -> int:
          {"6": "`research/field-review`: 17 reviews landed, 0 pending of 192 cells.\n"}),
         ("a stale pending count",
          {"6": "`research/field-review`: 383 reviews landed, 55 pending of 192 cells.\n"}),
+        # The corpus's own pointer shape: a path in the public repository and
+        # the commit to read it at.  A commit no published ref reaches is a
+        # pointer a reader cannot follow, and that is the defect the live
+        # posts carried until 2026-11-15.
+        ("a pointer to a commit no published ref reaches",
+         {"8": "The direction is public at `docs/new-senses.md` (commit `35f7cb4`).\n"}),
+        ("a pointer to a path the public repository does not carry",
+         {"8": "The direction is public at `docs/reviews` (commit `20c65d73`).\n"}),
     ]
     for label, mutated in mutations:
         failures, _ = check(mutated, live, today=CORPUS_DATE)

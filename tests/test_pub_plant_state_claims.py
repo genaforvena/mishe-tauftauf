@@ -288,3 +288,81 @@ def test_the_corpus_word_order_for_pending_cells_is_read():
                             {"field_review_landed": 383, "field_review_pending": 0})
     assert len(failures) == 1
     assert "the plant reads 0" in failures[0]
+
+
+PUBLISHED = {
+    "published_commits": {"20c65d7309ed4c617913d5317d661912dd23ec56",
+                          "237db71f63d99e2df370418a6b599ed8537efb84"},
+    "published_paths": {"docs/new-senses.md"},
+    "published_refs": ["refs/remotes/origin/main"],
+}
+"""The published tree the fixture plant reports: two commits, one path."""
+
+
+def _pointer_failures(body, published=PUBLISHED):
+    live = dict(LIVE)
+    live["source_pointer"] = published
+    return check.check({"1": body}, live, today=CORPUS_DATE)
+
+
+def test_a_pointer_to_a_commit_no_published_ref_reaches_is_found():
+    """A source pointer whose commit no published ref reaches is a failure.
+
+    This is the defect three live posts carried until 2026-11-15: each said
+    the direction it answers is public at `docs/new-senses.md` (commit
+    `35f7cb4`), and that commit was gone from the public repository, so a
+    reader who followed the pointer got a 404.  The registry knew nothing
+    about pointers, so the corpus read GREEN.
+    """
+    failures, undecidable = _pointer_failures(
+        "The direction is public at `docs/new-senses.md` (commit `35f7cb4`).\n")
+    assert failures and "35f7cb4" in failures[0]
+    assert "no published ref" in failures[0]
+    assert undecidable == []
+
+
+def test_a_pointer_to_a_path_the_public_repository_does_not_carry_is_found():
+    """A pointer to a path the public repository lacks is a failure.
+
+    The retired repository's paths are not published here, so a pointer that
+    sends a reader to one of them leads nowhere either.
+    """
+    failures, _ = _pointer_failures(
+        "The direction is public at `docs/reviews` (commit `20c65d73`).\n")
+    assert failures and "docs/reviews" in failures[0]
+    assert "does not carry" in failures[0]
+
+
+def test_a_pointer_that_resolves_is_quiet():
+    """A pointer the public repository can satisfy reads GREEN."""
+    failures, undecidable = _pointer_failures(
+        "The direction is public at `docs/new-senses.md` (commit `237db71f`).\n")
+    assert failures == []
+    assert undecidable == []
+
+
+def test_a_bare_backticked_id_is_not_a_pointer():
+    """A backticked hex string that is not a source pointer is not a claim.
+
+    The corpus is full of them and they mean different things: a process id
+    ("rows from `41945` and `4176129`"), the head of the retired repository
+    ("`d67bd016`"), and ids a post itself says are no longer reachable.  A
+    rule that read every one of them as a commit failed on the corpus it was
+    measured against, which is how a detector stops being acted on.
+    """
+    failures, undecidable = _pointer_failures(
+        "Rows from `41945` and `4176129` in the same table; this box wraps around four million.\n")
+    assert failures == []
+    assert undecidable == []
+
+
+def test_a_pointer_the_plant_cannot_read_is_undecidable():
+    """A published tree the plant cannot read is UNKNOWN, never a pass."""
+    live = dict(LIVE)
+    live["source_pointer"] = None
+    failures, undecidable = check.check(
+        {"1": "The direction is public at `docs/new-senses.md` (commit `35f7cb4`).\n"},
+        live, today=CORPUS_DATE)
+    assert failures == []
+    assert len(undecidable) == 1
+    assert "could not be read" in undecidable[0]
