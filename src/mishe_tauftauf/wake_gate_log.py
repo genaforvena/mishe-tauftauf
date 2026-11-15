@@ -49,11 +49,27 @@ def _rows(home) -> list:
     return state_files.read_json_lines(log_path(home))
 
 
+def _torn_tail(path: Path) -> bool:
+    """True when the file is non-empty and its last byte is not a newline (a torn write)."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            if handle.tell() == 0:
+                return False
+            handle.seek(-1, 2)
+            return handle.read(1) != b"\n"
+    except FileNotFoundError:
+        return False
+
+
 def _append(home, row: dict) -> None:
     path = log_path(home)
     path.parent.mkdir(parents=True, exist_ok=True)
+    # A torn earlier write leaves a fragment with no newline; close it first so the new
+    # row starts on its own line instead of being concatenated onto the fragment.
+    prefix = "\n" if _torn_tail(path) else ""
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row, sort_keys=True) + "\n")
+        handle.write(prefix + json.dumps(row, sort_keys=True) + "\n")
 
 
 def same_dossier_verdict(rows: list, role: str, digest: str) -> bool:

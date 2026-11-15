@@ -61,3 +61,31 @@ def test_logging_failure_never_raises(tmp_path):
     blocker.write_text("not a directory")          # makes the append fail
     wake_gate_log.record_start(tmp_path, "system1", "k1", snap=None, mail=[], now=1.0)
     wake_gate_log.record_end(tmp_path, "system1", "k1", state="failed", detail="x")
+
+
+def test_row_after_torn_fragment_starts_on_its_own_line(tmp_path):
+    # A crash mid-write leaves a fragment without a newline; the next append must not
+    # concatenate onto it, or both the fragment and the new row are lost.
+    path = wake_gate_log.log_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"kind": "sta')
+    snap = _snap(["inbox"])
+    wake_gate_log.record_start(tmp_path, "system1", "k1", snap=snap, mail=[], now=1.0)
+    rows = wake_gate_log._rows(tmp_path)
+    assert [r["kind"] for r in rows] == ["start"]
+    assert rows[0]["key"] == "k1"
+
+
+def test_torn_fragment_is_skipped_and_later_rows_still_pair(tmp_path):
+    path = wake_gate_log.log_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"kind": "start", "ro')
+    snap = _snap(["inbox"])
+    wake_gate_log.record_start(tmp_path, "system1", "k1", snap=snap, mail=[], now=1.0)
+    _settle(tmp_path, "k1", "verified")
+    wake_gate_log.record_end(tmp_path, "system1", "k1", state="yielded", detail="")
+    rows = wake_gate_log._rows(tmp_path)
+    assert [r["kind"] for r in rows] == ["start", "end"]
+    assert rows[1]["result"] == "verified"
+    wake_gate_log.record_start(tmp_path, "system1", "k2", snap=snap, mail=[], now=2.0)
+    assert wake_gate_log._rows(tmp_path)[-1]["key"] == "k2"
