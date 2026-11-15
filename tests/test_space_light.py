@@ -1009,3 +1009,40 @@ def test_fresh_sample_is_not_retained_as_a_null_observation(tmp_path):
     row = discovery._space_light_read(tmp_path)
     assert row["state"] == "verified"
     assert not (tmp_path / "discovery" / "space-light-stream.json").exists()
+
+
+def _sampler_home(tmp_path: Path, wall_ts, light=None) -> Path:
+    folder = tmp_path / "spatial" / "work" / "household"
+    folder.mkdir(parents=True)
+    row = {"wall_ts": wall_ts, "sensors": {"light": light or {
+        "status": "ok", "age_s": 0.1, "values": [0.0, 2300.0, 0.0]}}}
+    (folder / "note3_samples_run_unit.jsonl").write_text(
+        json.dumps({"wall_ts": 1.0}) + "\n" + json.dumps(row) + "\n")
+    return tmp_path
+
+
+def test_adb_sampler_fresh_row_is_raw_and_never_verified(tmp_path: Path):
+    home = _sampler_home(tmp_path, NOW - 5)
+    row = discovery._note3_adb_sampler_read(home, now=NOW)
+    assert row["id"] == "sense.space.light.adb-sampler"
+    assert row["state"] == "unknown"
+    assert row["reason"] == "raw-channels-lux-unverified"
+    assert "[0,2300,0]" in row["sample"] and "lux not verified" in row["sample"]
+
+
+def test_adb_sampler_stale_future_and_light_not_ok_stay_unknown(tmp_path: Path):
+    stale = _sampler_home(tmp_path / "stale", NOW - 3600)
+    assert discovery._note3_adb_sampler_read(stale, now=NOW)["reason"] == "sampler-stale"
+    future = _sampler_home(tmp_path / "future", NOW + 3600)
+    assert discovery._note3_adb_sampler_read(future, now=NOW)["reason"] == "sampler-clock-future"
+    bad = _sampler_home(tmp_path / "bad", NOW - 5, light={"status": "unknown", "values": None})
+    assert discovery._note3_adb_sampler_read(bad, now=NOW)["reason"] == "sampler-light-not-ok"
+
+
+def test_adb_sampler_absent_and_malformed_are_unknown(tmp_path: Path):
+    assert discovery._note3_adb_sampler_read(tmp_path, now=NOW)["reason"] == "sampler-absent"
+    folder = tmp_path / "spatial" / "work" / "household"
+    folder.mkdir(parents=True)
+    (folder / "note3_samples_run_unit.jsonl").write_text("{not json\n")
+    row = discovery._note3_adb_sampler_read(tmp_path, now=NOW)
+    assert row["state"] == "unknown" and row["reason"] == "sampler-malformed"

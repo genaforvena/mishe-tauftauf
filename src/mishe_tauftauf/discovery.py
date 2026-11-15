@@ -6733,6 +6733,64 @@ def _space_light_read(home: Path) -> dict:
     return row
 
 
+NOTE3_SAMPLER_FRESH_S = 900
+
+
+def _note3_adb_sampler_read(home: Path, now: float | None = None) -> dict:
+    """Name the live adb sampler's newest Note3 light row beside the queue reading.
+
+    The queue reading (``sense.space.light``) can freeze while the adb sampler
+    keeps writing raw sensor channels. This row shows the sampler's newest light
+    channel with its own age. It never reports lux: the sampler's light channel
+    is raw and unverified, so the state is always UNKNOWN. Absent, malformed or
+    older-than-``NOTE3_SAMPLER_FRESH_S`` samples stay UNKNOWN with their reason.
+    """
+    now = time.time() if now is None else now
+    identity = "sense.space.light.adb-sampler"
+    path = home / "spatial" / "work" / "household" / "note3_samples_run_unit.jsonl"
+    row = {"id": identity, "kind": "read", "state": "unknown",
+           "reason": "sampler-absent",
+           "sample": f"Note3 adb light UNKNOWN: sampler-absent; file={path}"}
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - 8192))
+            tail = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return row
+    lines = [line for line in tail.splitlines() if line.strip()]
+    if not lines:
+        return row
+    try:
+        sample = json.loads(lines[-1])
+        wall = float(sample["wall_ts"])
+        light = sample["sensors"]["light"]
+        channels = light["values"]
+        light_status = light["status"]
+    except (ValueError, TypeError, KeyError):
+        row.update(reason="sampler-malformed",
+                   sample=f"Note3 adb light UNKNOWN: sampler-malformed; file={path}")
+        return row
+    age = now - wall
+    if wall > now + 60:
+        row.update(reason="sampler-clock-future",
+                   sample=f"Note3 adb light UNKNOWN: sampler-clock-future; file={path}")
+    elif age > NOTE3_SAMPLER_FRESH_S:
+        row.update(reason="sampler-stale", sample=(
+            f"Note3 adb light UNKNOWN: sampler-stale age={_space_age(age)}; file={path}"))
+    elif light_status != "ok" or not isinstance(channels, list):
+        row.update(reason="sampler-light-not-ok", sample=(
+            f"Note3 adb light UNKNOWN: sampler-light-not-ok status={light_status}"
+            f" age={_space_age(age)}"))
+    else:
+        raw = "[" + ",".join(f"{float(value):g}" for value in channels) + "]"
+        row.update(reason="raw-channels-lux-unverified", sample=(
+            f"Note3 adb light raw {raw} age={_space_age(age)};"
+            " raw channels, lux not verified; provenance=adb dumpsys sensorservice"))
+    return row
+
+
 def _space_new_event(previous: dict | None, current: dict) -> bool:
     """Baseline, restart and recovery seed history instead of replaying events."""
     return bool(previous and previous.get("state") == current.get("state") == "verified"
@@ -7148,6 +7206,7 @@ def sample(home: Path) -> dict[str, object]:
     observed.append(_head_rewinds(home))
     observed.append(_disk_trend(home))
     observed.append(_space_light_read(home))
+    observed.append(_note3_adb_sampler_read(home))
     observed.append(read_redmi10(home))
     observed.append(read_redmi10_light(home))
     observed.append(read_redmi10_delivery_gaps(home))
