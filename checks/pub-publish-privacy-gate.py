@@ -20,7 +20,7 @@ the privacy pre-flight is really in front of the write.
 **What it asks, behaviourally.**  A shape check would answer "the file mentions
 a privacy check"; this one answers "the write is refused".  It runs the
 installed publisher against a controlled draft with the DEV API pointed at a
-dead port, so no request can reach the account, and it asks three questions:
+dead port, so no request can reach the account, and it asks five questions:
 
 * a draft whose TITLE carries a private term is REFUSED, with the refusal
   naming the rule (this is the case the gap is about: a title is a published
@@ -32,7 +32,12 @@ dead port, so no request can reach the account, and it asks three questions:
 * a draft whose rule CHECK cannot be found at all is REFUSED too, because
   that branch of the publisher is a different branch, and a gate whose
   "cannot find the rule" path is untested is a gate whose behaviour on that
-  path is unknown.
+  path is unknown;
+* a draft whose paragraph-DUPLICATION detector cannot be found is REFUSED,
+  because that is the sibling gate on the same write path and it failed OPEN:
+  its block was guarded by "if the detector is there", so a missing detector
+  meant no check at all on the body.  Two gates on one write path must not
+  disagree about what "the rule could not be applied" means.
 
 The refusal is distinguished from the API failure by the message, not by the
 exit code: both are non-zero, and a publisher with no gate at all still fails
@@ -43,6 +48,11 @@ Exit status:
   2  the publisher does not refuse, or refuses a clean draft
   3  the question could not be decided: the publisher, the terms file or the
      privacy check could not be read or run
+
+The five refusals it looks for are the privacy rule (a rule break, unreadable
+terms, a missing privacy check) and the paragraph-duplication gate (a missing
+detector).  Each refusal is read by the words it uses, because a publisher
+without a gate still fails on the dead port.
 """
 from __future__ import annotations
 
