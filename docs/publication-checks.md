@@ -206,10 +206,11 @@ The publisher is installed under the site home, which is gitignored, so the
 change is not reviewable bytes on its own. `checks/pub-publish-privacy-gate.py`
 is the reviewable form: it reads the INSTALLED publisher and asks whether the
 write is refused, with the DEV API redirected to a dead port so a run of the
-check cannot reach the account. It asks four questions — a draft whose title
+check cannot reach the account. It asks five questions — a draft whose title
 carries a private term is refused, a clean draft is not refused by the gate, a
-draft whose rule terms cannot be read is refused, and a draft whose rule check
-cannot be found at all is refused. Duty `pub-publish-privacy-gate` runs it on
+draft whose rule terms cannot be read is refused, a draft whose rule check
+cannot be found at all is refused, and a draft whose paragraph-duplication
+detector cannot be found is refused. Duty `pub-publish-privacy-gate` runs it on
 an hourly timer.
 
 ### Both gates refuse when a rule cannot be applied
