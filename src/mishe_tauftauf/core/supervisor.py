@@ -33,6 +33,18 @@ class SupervisorError(RuntimeError):
     """The supervisor refused to act, and says why."""
 
 
+def describe_exception(exc: BaseException) -> str:
+    """Type and message of a raised exception, never raising itself.
+
+    An exception whose __str__ fails must not replace the original error or
+    leave its dispatch record open, so the message falls back to the type.
+    """
+    try:
+        return f"{type(exc).__name__}: {exc}"
+    except BaseException:
+        return f"{type(exc).__name__}: <message could not be formatted>"
+
+
 class DispatchBusy(SupervisorError):
     """Another process holds the dispatch lock."""
 
@@ -237,7 +249,7 @@ class Supervisor:
                 current = self.store.read(role)
                 record = DispatchRecord(role=role, key=key, state=UNKNOWN,
                                         detail=(f"{current.detail}; " if current and current.detail else "")
-                                               + f"worker raised: {exc}",
+                                               + f"worker raised: {describe_exception(exc)}",
                                         pid=current.pid if current is not None else None,
                                         attempt=attempt)
                 self.store.write(record)

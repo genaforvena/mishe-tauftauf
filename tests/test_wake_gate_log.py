@@ -108,7 +108,7 @@ def test_engine_raise_still_writes_the_end_row_and_propagates(tmp_path, monkeypa
     rows = _rows(tmp_path)
     assert [r["kind"] for r in rows] == ["start", "end"]
     assert rows[1]["key"] == "k-raise"
-    assert rows[1]["state"] == "failed"
+    assert rows[1]["state"] == "unknown"
     assert "RuntimeError" in rows[1]["detail"]
 
 
@@ -132,5 +132,5 @@ def test_unprintable_engine_exception_is_preserved_and_logged(tmp_path, monkeypa
     assert caught.value is original
     rows = _rows(tmp_path)
     assert [row["kind"] for row in rows] == ["start", "end"]
-    assert rows[1]["state"] == "failed"
+    assert rows[1]["state"] == "unknown"
     assert "UnprintableError" in rows[1]["detail"]

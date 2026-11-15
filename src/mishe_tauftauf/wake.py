@@ -20,6 +20,7 @@ from .core.dispatch_record import process_alive
 from .core.interfaces import RECONCILED, STARTED, UNKNOWN, WorkerResult
 from .core.registry import StaticRoleRegistry
 from .core.state import DispatchRecord, DispatchStore
+from .core import supervisor
 from .core.supervisor import DispatchBusy, Supervisor, SupervisorError
 from .state_files import read_json, write_json
 
@@ -319,11 +320,8 @@ def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, ti
                                         reconcile_of=reconcile_of, repo=repo, timeout=timeout, on_start=on_start)
     except BaseException as exc:
         # Close the shadow pair on every exit, then let the wake see the same exception.
-        try:
-            detail = f"{type(exc).__name__}: {exc}"
-        except BaseException:
-            detail = f"{type(exc).__name__}: <exception formatting failed>"
-        wake_gate_log.record_end(home, role, key, state="failed", detail=detail)
+        # A raised engine's effect is unknown, not absent, matching the supervisor's UNKNOWN.
+        wake_gate_log.record_end(home, role, key, state="unknown", detail=supervisor.describe_exception(exc))
         raise
     wake_gate_log.record_end(home, role, key, state=state, detail=detail)
     return state, detail

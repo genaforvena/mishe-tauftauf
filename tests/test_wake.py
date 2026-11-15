@@ -335,3 +335,24 @@ def test_a_wake_restores_its_memory_floor_and_records_the_reading(home, monkeypa
     record = json.loads(records[0].read_text())
     assert record["applied"] is True and record["before"] == 1073741824
 
+
+
+def test_unprintable_engine_error_keeps_the_original_and_closes_the_dispatch(home):
+    """Caller-level: the supervisor's UNKNOWN write must not format the error into a new exception."""
+    class UnprintableError(Exception):
+        def __str__(self):
+            raise ValueError("cannot format")
+
+    original = UnprintableError()
+    owed.touch_inbox(home, "genome")
+
+    def boom(p, e):
+        raise original
+
+    with pytest.raises(UnprintableError) as caught:
+        go(home, "genome", FakeEngine(boom))
+    assert caught.value is original
+    record = DispatchStore(home / "dispatch").read("genome")
+    assert record.state.name == "unknown"
+    assert "UnprintableError" in record.detail
+    assert owed.check(home, "genome", now=NOW).reasons == ["inbox"]   # cursor unmoved: no silent replay
