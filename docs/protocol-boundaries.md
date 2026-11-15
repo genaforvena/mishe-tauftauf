@@ -125,6 +125,17 @@ existing debt, and the budget must not be widened to let a change through. A
 missing or malformed record remains UNKNOWN or RED. Preserve the original bytes;
 do not silently replace evidence with a successful default.
 
+Git's own output is read by two adapters. `reflog_boundary` decodes the reset-origin
+evidence — `git reflog --date=unix --format=%H|%gd|%gs`, `git fsck --unreachable
+--no-reflogs` and `git log --no-walk=unsorted --format=%H|%P|%ct|%s` — and returns
+None for a malformed line rather than guessing. `git_base_text` owns the tree and
+commit text: `committed_snapshot` reads a file's bytes and mode at a base ref from
+`git ls-tree` and `git show`, and `commit_intent_text` drops the attribution trailer
+block from a `git log` body so a release reviewer reads the author's stated intent
+rather than provenance. `wall_patch.base_snapshot` and `committed_or_none` compose
+the first; `release_promotion` composes the second. A ref that cannot be read, a
+non-blob path or an unsafe ref name raises rather than returning empty bytes.
+
 Rust binaries carry several of these protocol pieces, so `tools/check_parsing.py`
 does not scan them; each names its own protocol contract and the Python caller
 that composes it:
