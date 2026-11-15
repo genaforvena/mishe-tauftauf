@@ -114,7 +114,7 @@ def make_tree(tmp_path: Path, pages: dict[str, str]) -> Path:
     package.mkdir(parents=True, exist_ok=True)
     (package / "__init__.py").write_text('"""Plantable mishe-tauftauf runtime core."""\n',
                                          encoding="utf-8")
-    for module in ("host_capacity", "completions_judge"):
+    for module in ("host_capacity",):
         (package / f"{module}.py").write_text('"""Module."""\n', encoding="utf-8")
     return tree
 

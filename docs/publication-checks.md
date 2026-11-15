@@ -244,7 +244,7 @@ and it fails RED on a publisher with either defect.
 `timeout_seconds` (finite positive seconds, at most 300). Example command:
 
 ```json
-{"command": ["/path/to/laya/venv/bin/python", "-m", "mishe_tauftauf.laya_review", "--model-path", "/path/to/checkpoint/55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851/typed-decisions"], "timeout_seconds": 60}
+{"command": ["/path/to/mishe/.venv/bin/python", "-m", "mishe_tauftauf.codex_review", "--cli", "/path/to/codex", "--runtime-config", "/path/to/codex/config.toml", "--probe-report", "/path/to/probe.json", "--timeout-seconds", "290"], "timeout_seconds": 295}
 ```
 
 The worker reads a versioned JSON request on stdin with `input_hash`, `body`,

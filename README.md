@@ -181,7 +181,6 @@ to know whether a monitor is alive.
 | Read the runtime design | [Core runtime](src/mishe_tauftauf/core/README.md) |
 | Ship a leaf tool without a full release | [Per-component deploy](docs/component-deploy.md) |
 | Set up the optional analysis advisor | [Observable analysis advice](docs/analysis-advisor.md) |
-| Use an external judge provider | [Completion judge adapter](docs/completions-judge.md) |
 | Preflight a draft before publishing it | [Publication checks](docs/publication-checks.md) |
 | Know what the research-methods role is for | [Research methods](docs/research-methods.md) |
 
