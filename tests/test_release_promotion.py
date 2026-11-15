@@ -617,7 +617,7 @@ def test_held_lock_waits_under_a_hold_for_the_running_wake_and_releases_the_hold
     mp.setattr(wake, "resume_owed", lambda *a, **k: resumed.append(True))
     mp.setattr("mishe_tauftauf.roles.declared", lambda home: [])
     try:
-        with p.held_delivery_lock(tmp_path, 60, sleep=sleep):
+        with p.held_delivery_lock(tmp_path, 60, sleep=sleep, patience_s=0):
             assert (tmp_path / "hold").exists()
     finally:
         mp.undo()
@@ -633,7 +633,7 @@ def test_held_lock_gives_up_when_the_wake_never_settles_and_still_releases_the_h
     mp.setattr("mishe_tauftauf.roles.declared", lambda home: [])
     try:
         with pytest.raises(p.DeliveryBusy):
-            with p.held_delivery_lock(tmp_path, 0.01, sleep=lambda s: None):
+            with p.held_delivery_lock(tmp_path, 0.01, sleep=lambda s: None, patience_s=0):
                 pass
     finally:
         mp.undo()
@@ -684,3 +684,46 @@ def test_a_failed_promotion_writes_the_outcome_detail_and_a_delivered_one_clears
         previous=old,activate=lambda *a:None,probe=lambda *a,**k:dict(code=0,output="ok"),
         reviewer=lambda *a:None,closure=lambda *a:None)
     assert not detail.exists()                                       # a fresh VERIFIED is not shown a stale failure
+
+
+def test_a_quiet_gap_inside_the_patience_window_is_taken_without_ever_holding_wakes(tmp_path):
+    handle = _hold_dispatch_lock(tmp_path)
+    seen = {"sleeps": 0, "hold_ever": False}
+
+    def sleep(_):
+        seen["sleeps"] += 1
+        seen["hold_ever"] = seen["hold_ever"] or (tmp_path / "hold").exists()
+        if seen["sleeps"] == 3:
+            handle.close()   # the running wake ends: a gap
+
+    with p.held_delivery_lock(tmp_path, 60, sleep=sleep, patience_s=600):
+        assert not (tmp_path / "hold").exists()
+    assert seen["sleeps"] == 3 and seen["hold_ever"] is False
+    assert not (tmp_path / "hold").exists()
+
+
+def test_with_no_gap_the_hold_starts_only_after_the_patience_window(tmp_path):
+    handle = _hold_dispatch_lock(tmp_path)
+    now = {"t": 0.0}
+    seen = {"hold_at": None}
+
+    def clock():
+        return now["t"]
+
+    def sleep(_):
+        now["t"] += 100.0
+        if (tmp_path / "hold").exists() and seen["hold_at"] is None:
+            seen["hold_at"] = now["t"]
+            handle.close()
+
+    from mishe_tauftauf import wake
+    mp = pytest.MonkeyPatch()
+    mp.setattr(wake, "resume_owed", lambda *a, **k: None)
+    mp.setattr("mishe_tauftauf.roles.declared", lambda home: [])
+    try:
+        with p.held_delivery_lock(tmp_path, 3000, sleep=sleep, patience_s=300, clock=clock):
+            pass
+    finally:
+        mp.undo()
+    assert seen["hold_at"] is not None and seen["hold_at"] >= 300.0
+    assert not (tmp_path / "hold").exists()

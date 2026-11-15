@@ -139,37 +139,44 @@ class DeliveryBusy(ValueError):
 
 
 @contextmanager
-def held_delivery_lock(home, wait_s, *, sleep=time.sleep):
-    """The dispatch lock, waited for under a short hold of new wakes (``wait_s`` > 0), or taken at once (0).
+def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=600, clock=time.monotonic):
+    """The dispatch lock: first a quiet gap without holding anything, then (``wait_s`` > 0) under a short hold of new wakes.
 
-    A wake can run for many minutes and holds the lock for its whole run. With ``wait_s`` the site's ``hold``
-    file stops new wakes starting, the running ones settle, the lock is taken and the hold is released (and
-    wakes that arrived meanwhile resume) when the block ends, whatever happened inside it.
+    Wakes are short (median under a minute, p90 about 7 min) and at most a few run at once, so the lock is usually free
+    for a moment. For ``patience_s`` seconds it is tried every second WITHOUT touching the hold, so a delivery that finds
+    a gap costs no wake any delay. Only when no gap appears does the site's ``hold`` file stop new wakes, the running ones
+    settle (the site hard cap bounds them), the lock is taken and the hold is released (owed wakes resume) when the block
+    ends, whatever happened inside it. ``wait_s`` 0 takes the lock at once or raises DeliveryBusy.
     """
     if not wait_s:
         with delivery_lock(home):
             yield
         return
-    hold = Path(home) / "hold"
-    hold.write_text("promotion: short activation hold; wakes resume automatically\n")
     stack = ExitStack()
+    hold = Path(home) / "hold"
+    held = False
     try:
-        deadline = time.monotonic() + wait_s
+        patience_until = clock() + patience_s
         while True:
             try:
                 stack.enter_context(delivery_lock(home))
                 break
             except DeliveryBusy:
-                if time.monotonic() >= deadline:
+                if not held and clock() >= patience_until:
+                    hold.write_text("promotion: short activation hold; wakes resume automatically\n")
+                    held = True
+                    deadline = clock() + wait_s
+                if held and clock() >= deadline:
                     raise
-                sleep(5)
+                sleep(1 if not held else 5)
         yield
     finally:
         stack.close()
-        hold.unlink(missing_ok=True)
-        from . import wake
-        from .roles import declared
-        wake.resume_owed(home, declared(home), now=time.time())
+        if held:
+            hold.unlink(missing_ok=True)
+            from . import wake
+            from .roles import declared
+            wake.resume_owed(home, declared(home), now=time.time())
 
 
 def config_paths(home):
