@@ -935,10 +935,13 @@ def read_published_tree(repo: Path) -> dict[str, object] | None:
     paths: set[str] | None = set()
     for name, sha in heads.items():
         local = "refs/remotes/origin/" + name[len("refs/heads/"):]
-        if git(repo, "rev-parse", "--verify", "--quiet", local + "^{commit}")[0] != 0:
+        code, resolved = git(repo, "rev-parse", "--verify", "--quiet", local + "^{commit}")
+        if code != 0 or resolved.strip() != sha:
             paths = None
             continue
-        code, out = git(repo, "ls-tree", "-r", "--name-only", local)
+        if paths is None:
+            continue
+        code, out = git(repo, "ls-tree", "-r", "--name-only", sha)
         if code != 0:
             return None
         paths.update(line.strip().rstrip("/") for line in out.splitlines() if line.strip())

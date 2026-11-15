@@ -393,3 +393,35 @@ def test_a_clone_that_lacks_the_published_head_is_undecidable():
     assert failures == []
     assert len(undecidable) == 1
     assert "does not hold the published head" in undecidable[0]
+
+
+def test_published_tree_with_missing_first_head_keeps_other_claims_readable(monkeypatch, tmp_path):
+    def git(repo, *args):
+        if args[0] == "ls-remote":
+            return 0, "aaa\trefs/heads/unmirrored\nbbb\trefs/heads/main\n"
+        if args[0] == "rev-parse":
+            return (1, "") if "unmirrored" in args[-1] else (0, "bbb\n")
+        if args[0] == "ls-tree":
+            return 0, "docs/example.md\n"
+        raise AssertionError(args)
+
+    monkeypatch.setattr(check, "git", git)
+    result = check.read_published_tree(tmp_path)
+    assert result["published_commits"] == {"aaa", "bbb"}
+    assert result["published_paths"] is None
+
+
+def test_published_tree_does_not_trust_a_stale_local_ref(monkeypatch, tmp_path):
+    def git(repo, *args):
+        if args[0] == "ls-remote":
+            return 0, "new\trefs/heads/main\n"
+        if args[0] == "rev-parse":
+            return 0, "old\n"
+        if args[0] == "ls-tree":
+            return 0, "obsolete.md\n"
+        raise AssertionError(args)
+
+    monkeypatch.setattr(check, "git", git)
+    result = check.read_published_tree(tmp_path)
+    assert result["published_commits"] == {"new"}
+    assert result["published_paths"] is None
