@@ -234,6 +234,29 @@
       "covers": "no live or draft DEV.to body, title, tag, card description, reply or the account's own published profile breaks the private/public rule list"
     },
     {
+      "name": "pub-publish-privacy-gate",
+      "command": [
+        "{python}",
+        "{repo}/checks/pub-publish-privacy-gate.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "every": 3600,
+      "timeout": 300,
+      "max_age": 7200,
+      "resolver": "pub",
+      "replaces": [],
+      "covers": "the DEV write path refuses a draft that breaks the private/public rule before the write"
+    },
+    {
       "name": "budget",
       "command": [
         "{home}/producers/budget.sh"

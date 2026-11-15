@@ -182,6 +182,35 @@ returned UNKNOWN for every verdict whose publish failed, including a RED, which
 masked a real violation behind a transport failure — the lane would read
 "nothing known" instead of "something wrong".
 
+## The write path refuses a rule break
+
+The rule above was enforced in one place only: the standing lane, over what was
+ALREADY published, on an hourly timer. The write path itself had one pre-flight
+— paragraph duplication — and not the other, even though the same check has a
+per-file mode (`--file`) that reads the title, the tags, the description, the
+canonical URL, the cover image and the body as the fields the publisher sends
+them. So a draft naming a device reached every reader first and the lane
+noticed it afterwards.
+
+The publisher now runs that pre-flight before the write, exactly as it runs
+the committed bytes of the duplication detector: `git show
+HEAD:checks/pub-privacy-scan.py`, so an uncommitted edit to the rule cannot
+change what the write path enforces. The rule terms stay site-local
+(`SITE_HOME/pub/privacy-terms.json`): they are the names, not the rule.
+
+The gate refuses the write and never edits the body. A RED is a real violation
+in our own text. An UNKNOWN is refused too: "no rule was applied" is not "no
+rule was broken". A clean draft passes the gate and goes on to the write.
+
+The publisher is installed under the site home, which is gitignored, so the
+change is not reviewable bytes on its own. `checks/pub-publish-privacy-gate.py`
+is the reviewable form: it reads the INSTALLED publisher and asks whether the
+write is refused, with the DEV API redirected to a dead port so a run of the
+check cannot reach the account. It asks three questions — a draft whose title
+carries a private term is refused, a clean draft is not refused by the gate, and
+a draft whose rule terms cannot be read is refused. Duty
+`pub-publish-privacy-gate` runs it on an hourly timer.
+
 `SITE/publication-check.json` is an object with `command` (nonempty argv list) and
 `timeout_seconds` (finite positive seconds, at most 300). Example command:
 
