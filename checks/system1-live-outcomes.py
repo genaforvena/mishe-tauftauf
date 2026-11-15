@@ -62,6 +62,14 @@ def _number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+def _stamp(row, what):
+    """The row's ``at`` stamp; a relevant row whose stamp is missing, non-numeric or non-finite is malformed."""
+    at = row.get("at")
+    if not _number(at):
+        raise ValueError(f"{what} row has a missing, non-numeric or non-finite stamp ({at!r})")
+    return at
+
+
 def _age(at, now):
     """Seconds since evidence stamped `at`. A stamp in the future is malformed evidence: ValueError."""
     age = now - at
@@ -73,12 +81,12 @@ def _age(at, now):
 def decision_check(home, now, budget_path):
     """(code, detail) for the first System One live decision."""
     rows = _rows(home / DECISION_LOG)
-    decided = [r for r in rows if r.get("source") == "system1" and r.get("reason") == "decided"
-               and _number(r.get("at"))]
+    decided = [r for r in rows if r.get("source") == "system1" and r.get("reason") == "decided"]
     if not decided:
         return OPEN, "no decided System One answer in the commit-risk ledger"
-    # Every decided stamp must be a real past time; one future stamp makes the ledger untrustworthy.
-    ages = [_age(r["at"], now) for r in decided]
+    # Every decided row must carry a finite stamp in the past; one bad stamp makes the ledger untrustworthy,
+    # even when other rows are valid (a silently dropped row would hide it).
+    ages = [_age(_stamp(r, "decided commit-risk"), now) for r in decided]
     newest_age = min(ages)
     if newest_age > WINDOW_S:
         return OPEN, f"newest decided answer is {newest_age / 3600:.1f} h old"
@@ -99,9 +107,8 @@ def decision_check(home, now, budget_path):
 def wake_gate_check(home, now):
     """(code, detail) for a wake gate that has acted live."""
     rows = _rows(home / WAKE_GATE_LIVE_LOG)
-    candidates = [r for r in rows if r.get("gate") == "live" and r.get("action") in ("skip", "wake")
-                  and _number(r.get("at"))]
-    live = [r for r in candidates if _age(r["at"], now) <= WINDOW_S]
+    candidates = [r for r in rows if r.get("gate") == "live" and r.get("action") in ("skip", "wake")]
+    live = [r for r in candidates if _age(_stamp(r, "live wake-gate"), now) <= WINDOW_S]
     if not live:
         return OPEN, "no live wake-gate action in the last 24 h (the shadow log does not count)"
     return DONE, f"{len(live)} live wake-gate actions in the last 24 h"

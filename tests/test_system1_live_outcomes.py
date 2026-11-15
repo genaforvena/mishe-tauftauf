@@ -156,3 +156,45 @@ def test_valid_window_still_passes_and_old_rows_do_not_count(tmp_path):
     assert mod.wake_gate_check(tmp_path, NOW)[0] == mod.OPEN
     _write(tmp_path / mod.WAKE_GATE_LIVE_LOG, [{"gate": "live", "action": "skip", "at": NOW + 0}])
     assert mod.wake_gate_check(tmp_path, NOW)[0] == mod.DONE
+
+
+def test_mixed_overflow_stamp_is_unknown_even_with_valid_recent_row(tmp_path):
+    # Steward counterexample (DM 301607): json parses 1e999 to inf; a valid recent row must not hide it.
+    path = tmp_path / mod.DECISION_LOG
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"source": "system1", "reason": "decided", "at": 1e999}\n'
+                    '{"source": "system1", "reason": "decided", "at": %r}\n' % (NOW - 60))
+    assert _main(tmp_path, "decision", NOW, _budget(tmp_path)) == mod.UNKNOWN
+    gate = tmp_path / mod.WAKE_GATE_LIVE_LOG
+    gate.parent.mkdir(parents=True, exist_ok=True)
+    gate.write_text('{"gate": "live", "action": "skip", "at": 1e999}\n'
+                    '{"gate": "live", "action": "wake", "at": %r}\n' % (NOW - 60))
+    assert _main(tmp_path, "wake-gate", NOW) == mod.UNKNOWN
+
+
+def test_malformed_stamp_on_relevant_row_is_unknown(tmp_path):
+    # A decided row with a missing or string stamp is malformed evidence, not a row to skip silently.
+    _write(tmp_path / mod.DECISION_LOG, [
+        {"source": "system1", "reason": "decided", "at": NOW - 60},
+        {"source": "system1", "reason": "decided"},
+    ])
+    assert _main(tmp_path, "decision", NOW, _budget(tmp_path)) == mod.UNKNOWN
+    _write(tmp_path / mod.DECISION_LOG, [
+        {"source": "system1", "reason": "decided", "at": NOW - 60},
+        {"source": "system1", "reason": "decided", "at": "yesterday"},
+    ])
+    assert _main(tmp_path, "decision", NOW, _budget(tmp_path)) == mod.UNKNOWN
+    _write(tmp_path / mod.WAKE_GATE_LIVE_LOG, [
+        {"gate": "live", "action": "skip", "at": NOW - 60},
+        {"gate": "live", "action": "wake", "at": True},
+    ])
+    assert _main(tmp_path, "wake-gate", NOW) == mod.UNKNOWN
+
+
+def test_irrelevant_rows_with_bad_stamps_do_not_block(tmp_path):
+    # Only decided System One rows and live wake-gate actions are evidence; other rows are not judged.
+    path = tmp_path / mod.DECISION_LOG
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"source": "system0", "reason": "path rule", "at": 1e999}\n'
+                    '{"source": "system1", "reason": "decided", "at": %r}\n' % (NOW - 60))
+    assert _main(tmp_path, "decision", NOW, _budget(tmp_path)) == mod.DONE
