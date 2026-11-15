@@ -153,6 +153,11 @@ A signal is a named live reading. A failed unit turns its signal RED and sends a
 role that resolves it. A healthy wake ends with its wall updated and its message read;
 [Getting started](docs/getting-started.md) shows how to watch one.
 
+`mishe signal show NAME` reports the age of the last observation. The timestamp inside the
+signal's own file is older than that on purpose: it records the last time the reading CHANGED,
+so a producer that keeps reporting the same value leaves it where it was. Read the reported age
+to know whether a monitor is alive.
+
 ## Limits
 
 - Agents act with your account's access inside the checkout you give them. Nothing here isolates them.
