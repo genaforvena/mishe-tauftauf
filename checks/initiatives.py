@@ -27,6 +27,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 DONE, OPEN, UNKNOWN = "done", "open", "unknown"
@@ -87,7 +88,11 @@ def evaluate(check, home, repo):
             return UNKNOWN, "commit check needs grep text and an epoch since"
         try:
             # subjects only: git --grep also searches bodies, so a commit that merely mentions the text would pass
-            done = subprocess.run(["git", "-C", str(repo), "log", f"--since={int(since)}", "--format=%s"],
+            # An explicit ISO-8601 UTC timestamp, not the bare epoch: git reads a small bare number as a
+            # relative offset ("--since=0" means now, not 1970), so a register since of 0 or a few seconds
+            # silently matched nothing and this check was timing-flaky (observed 2026-11-15 in CI).
+            since_iso = datetime.fromtimestamp(int(since), timezone.utc).isoformat()
+            done = subprocess.run(["git", "-C", str(repo), "log", f"--since={since_iso}", "--format=%s"],
                                   capture_output=True, text=True, timeout=30,
                                   env={"GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "PATH": "/usr/bin:/bin"})
         except (OSError, subprocess.SubprocessError) as exc:

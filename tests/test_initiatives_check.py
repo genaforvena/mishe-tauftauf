@@ -1,6 +1,7 @@
 """Controlled-failure tests for checks/initiatives.py (stdlib only, run from the committed check file)."""
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -96,6 +97,20 @@ def test_commit_check_finds_subject_text(tmp_path, capsys):
     (home / "initiatives.json").write_text(json.dumps({"initiatives": [
         _item(check={"kind": "commit", "grep": "no such subject", "since": 0})]}), encoding="utf-8")
     assert _run(home, "health", capsys)[0] == 2
+
+
+def test_commit_check_since_zero_is_the_epoch_not_now(tmp_path, capsys):
+    """git reads a bare ``--since=0`` as now, not 1970, so the check must send an unambiguous timestamp.
+
+    A commit dated 2000 with a register since of 0 must be found; while the check passed the bare
+    epoch, ``--since=0`` meant now and this was timing-flaky (the CI failure of 2026-11-15).
+    """
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    dated = {**os.environ, "GIT_AUTHOR_DATE": "2000-01-01T00:00:00Z", "GIT_COMMITTER_DATE": "2000-01-01T00:00:00Z"}
+    subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-q",
+                    "--allow-empty", "-m", "footprint signal lands"], check=True, env=dated)
+    home = _site(tmp_path, [_item(check={"kind": "commit", "grep": "footprint signal", "since": 0})])
+    assert _run(home, "health", capsys)[0] == 0
 
 
 def test_commit_check_ignores_body_text(tmp_path, capsys):
