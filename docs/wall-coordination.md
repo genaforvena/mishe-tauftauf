@@ -174,6 +174,9 @@ with a `review_state` of `clear` or `action-needed`, and a non-clear finding on 
 delivered release raises an intention due within six hours for the owner to decide
 a concrete fix or a revert. The review reads the scoped release diff for concrete
 source defects; it is evidence after the pin has moved, never a gate that holds it.
+An already-delivered ordinary release is reviewed against its retained recovery
+evidence (the previous release, the observation argv and the explicit revert
+command), not the pre-activation delivery plan it does not carry.
 
 The plan names four commands: `activate` restarts the affected consumers,
 `observe` checks the live ones afterwards, `revert_observe` checks the restored
