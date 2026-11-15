@@ -164,14 +164,25 @@ def test_missing_provider_report_is_unknown_not_healthy(tmp_path):
     assert (row['state'], row['reason']) == ('UNKNOWN', 'no provider report')
 
 
+def test_sample_within_the_source_refresh_window_is_live_not_stale(tmp_path):
+    """The OMP store reuses a provider report while its fetchedAt is within OMP's ~5 min refresh
+    window, so a correctly-working reading is often minutes old. Judging it STALE sooner flapped the
+    account and excluded it from routing, so a sample inside that window must read FRESH."""
+    home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
+    omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go', fetched=NOW - 400_000))))
+    row = dashboard(home, omp)['accounts']['go-a']
+    assert row['state'] == 'FRESH'
+    assert row['age_seconds'] == 400.0
+
+
 def test_cached_old_provider_sample_stays_stale_under_fresh_aggregate(tmp_path):
     home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
-    old = NOW - 400_000
+    old = NOW - usage.REPORT_TTL_MS - 100_000
     omp = fake_omp(tmp_path, json.dumps(usage_doc(report('opencode-go', fetched=old))))
     result = dashboard(home, omp)
     assert result['omp_generated_at'][RESIDENT] is not None
     assert result['accounts']['go-a']['state'] == 'STALE'
-    assert result['accounts']['go-a']['age_seconds'] == 400.0
+    assert result['accounts']['go-a']['age_seconds'] == (usage.REPORT_TTL_MS + 100_000) / 1000
     assert result['state'] != 'FRESH'
 
 

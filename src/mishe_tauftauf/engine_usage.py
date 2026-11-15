@@ -24,9 +24,16 @@ import tempfile
 import time
 
 from . import engine_boundary as boundary
+from . import budget_producer
 from . import engine_policy as policy
 
-REPORT_TTL_MS = 180_000
+# The OMP store caches each provider's usage report and reuses it while its fetchedAt is
+# within OMP's own refresh window (~5 min), so a correctly-working engine reading is often
+# minutes old between refreshes. A TTL tighter than that window (this was 180 s) judged a
+# live source STALE on every OMP cycle: budget.json then carried STALE windows, the budget
+# signal flapped RED, and the router excluded the account. Align to the site's one freshness
+# rule (budget_producer.MAX_AGE_S, also applied by the router at decision time).
+REPORT_TTL_MS = int(budget_producer.MAX_AGE_S * 1000)
 FUTURE_SKEW_MS = 5_000
 ERROR_LOG = 'usage-errors.jsonl'
 LAST_GOOD = 'last-good.json'
