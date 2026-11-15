@@ -47,7 +47,8 @@ def check_pointer(home: Path, release: Path) -> Path:
     return stable
 
 
-def check_units(home: Path, stable: Path, show=_show, *, sleep=time.sleep, retries: int = 3) -> list[str]:
+def check_units(home: Path, stable: Path, show=_show, *, sleep=time.sleep, retries: int = 3,
+                reload=rp.reload_units) -> list[str]:
     """Every owned installed service is loaded as its file says; pinned ones are oneshot on the stable path."""
     checked = []
     expected = "PYTHONPATH=" + str(stable / "src")
@@ -60,6 +61,13 @@ def check_units(home: Path, stable: Path, show=_show, *, sleep=time.sleep, retri
             if fields.get("NeedDaemonReload") == "no":
                 break
             sleep(2)
+            fields = show(unit_path.name, "Type", "Environment", "FragmentPath", "NeedDaemonReload", "LoadState")
+        if fields.get("NeedDaemonReload") != "no":
+            # Another sync (a mind repairing generated-unit drift) rewrote the file after the activation's reload. A reload only
+            # makes the loaded configuration equal to the files; what this probe judges is that the loaded pins equal the files
+            # and the stable path, which is checked right after.
+            reload()
+            sleep(1)
             fields = show(unit_path.name, "Type", "Environment", "FragmentPath", "NeedDaemonReload", "LoadState")
         if fields.get("LoadState") != "loaded":
             raise ValueError(f"owned installed service is not loaded: {unit_path.name}")

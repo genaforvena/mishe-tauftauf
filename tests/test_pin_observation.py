@@ -99,4 +99,37 @@ def test_a_reload_that_never_clears_is_a_failure(tmp_path, monkeypatch):
                 "Environment": "PYTHONPATH=" + str(stable / "src")}
 
     with pytest.raises(ValueError, match="pending daemon-reload"):
-        po.check_units(home, stable, show=show, sleep=lambda s: None)
+        po.check_units(home, stable, show=show, sleep=lambda s: None, reload=lambda: None)
+
+
+def test_a_persistent_pending_reload_is_cleared_by_one_reload_then_judged_on_the_pins(tmp_path, monkeypatch):
+    home, release = _site(tmp_path)
+    stable = home / "runtime" / "current"
+    unit = home / "u" / "mishe-x.service"
+    unit.parent.mkdir()
+    unit.write_text("[Service]\nEnvironment=PYTHONPATH=" + str(stable / "src") + "\n")
+    monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
+    reloaded = []
+
+    def show(name, *props):
+        return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot",
+                "NeedDaemonReload": "no" if reloaded else "yes", "Environment": "PYTHONPATH=" + str(stable / "src")}
+
+    assert po.check_units(home, stable, show=show, sleep=lambda s: None, reload=lambda: reloaded.append(1)) == ["mishe-x.service"]
+    assert reloaded == [1]
+
+
+def test_after_a_reload_a_wrong_loaded_pin_is_still_a_failure(tmp_path, monkeypatch):
+    home, release = _site(tmp_path)
+    stable = home / "runtime" / "current"
+    unit = home / "u" / "mishe-x.service"
+    unit.parent.mkdir()
+    unit.write_text("[Service]\nEnvironment=PYTHONPATH=" + str(stable / "src") + "\n")
+    monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
+
+    def show(name, *props):
+        return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot", "NeedDaemonReload": "no",
+                "Environment": "PYTHONPATH=/elsewhere/src"}
+
+    with pytest.raises(ValueError, match="loaded pin differs"):
+        po.check_units(home, stable, show=show, sleep=lambda s: None, reload=lambda: None)
