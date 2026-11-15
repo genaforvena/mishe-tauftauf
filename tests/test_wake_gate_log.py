@@ -110,3 +110,27 @@ def test_engine_raise_still_writes_the_end_row_and_propagates(tmp_path, monkeypa
     assert rows[1]["key"] == "k-raise"
     assert rows[1]["state"] == "failed"
     assert "RuntimeError" in rows[1]["detail"]
+
+
+def test_unprintable_engine_exception_is_preserved_and_logged(tmp_path, monkeypatch):
+    import pytest
+    from mishe_tauftauf import wake
+
+    class UnprintableError(Exception):
+        def __str__(self):
+            raise ValueError("cannot format")
+
+    original = UnprintableError()
+
+    def boom(*args, **kwargs):
+        raise original
+
+    monkeypatch.setattr(wake, "_execute_engine", boom)
+    with pytest.raises(UnprintableError) as caught:
+        wake._execute(tmp_path, "system1", "k-unprintable", engine=None, now=1000.0,
+                      snap=_snap(["inbox"]), mail=[], reconcile_of=None, repo=None, timeout=1)
+    assert caught.value is original
+    rows = _rows(tmp_path)
+    assert [row["kind"] for row in rows] == ["start", "end"]
+    assert rows[1]["state"] == "failed"
+    assert "UnprintableError" in rows[1]["detail"]

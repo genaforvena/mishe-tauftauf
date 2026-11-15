@@ -319,7 +319,11 @@ def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, ti
                                         reconcile_of=reconcile_of, repo=repo, timeout=timeout, on_start=on_start)
     except BaseException as exc:
         # Close the shadow pair on every exit, then let the wake see the same exception.
-        wake_gate_log.record_end(home, role, key, state="failed", detail=f"{type(exc).__name__}: {exc}")
+        try:
+            detail = f"{type(exc).__name__}: {exc}"
+        except BaseException:
+            detail = f"{type(exc).__name__}: <exception formatting failed>"
+        wake_gate_log.record_end(home, role, key, state="failed", detail=detail)
         raise
     wake_gate_log.record_end(home, role, key, state=state, detail=detail)
     return state, detail
