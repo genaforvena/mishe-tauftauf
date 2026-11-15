@@ -6,13 +6,20 @@ drive on 2026-10-31 because the root drive's fsync stalls (up to 10 s, probe
 A/B in operator/dual-probe.jsonl) tripped the whole plant eleven times in 17
 hours. Moving the probe stopped the trips; it must not also stop anyone seeing
 the stalls. SITE/operator/dual_probe.py keeps probing a root-filesystem
-directory every second and mirrors its log to SITE/operator/dual-probe.jsonl.
-This check reads that log.
+directory every second. It appends every probe to /dev/shm/dual-probe.jsonl (its
+full history) and mirrors only the last hour into SITE/operator/dual-probe.jsonl
+(the mirror trims each minute so it does not put a truncate-and-rewrite flush on
+the root drive).
+
+This check reads both: the window verdict comes from whichever log is freshest,
+and recurrence is counted over the union, so the "last 24 h" recurrence claim is
+backed by the probe's whole history while the tmpfs log is alive, and still by the
+durable mirror after it is gone.
 
 Exit status:
   0  the probe is fresh and no root probe in the window reached STALL_S
   2  a root-filesystem probe took STALL_S or longer inside the window
-  3  undecidable: the log is missing, stale, or holds no root probes
+  3  undecidable: the logs are missing, stale, or hold no root probes
 """
 from __future__ import annotations
 
@@ -27,6 +34,8 @@ RECURRENCE_S = 86400.0
 STALE_S = 300.0
 STALL_S = 5.0
 TARGET = "root"
+LIVE_LOG = "/dev/shm/dual-probe.jsonl"
+"""The probe's full, volatile log (tmpfs). Read with the durable mirror, never alone."""
 
 
 def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
@@ -52,27 +61,34 @@ def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
     return 0, [line]
 
 
-def load(path: Path) -> list[dict]:
-    out = []
-    for line in path.read_text().splitlines():
+def load(paths: list[Path]) -> list[dict]:
+    """Union of the probe logs; a later file wins per (at, dir, event). Unreadable files are skipped."""
+    out: dict[tuple, dict] = {}
+    for path in paths:
         try:
-            record = json.loads(line)
-        except ValueError:
+            text = path.read_text()
+        except OSError:
             continue
-        if isinstance(record, dict):
-            out.append(record)
-    return out
+        for line in text.splitlines():
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict):
+                out[(record.get("at"), record.get("dir"), record.get("event"))] = record
+    return list(out.values())
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", required=True)
+    parser.add_argument("--live-log", default=LIVE_LOG,
+                        help="the probe's full-history log; read together with the durable mirror")
     args = parser.parse_args(argv)
-    path = Path(args.home) / "operator" / "dual-probe.jsonl"
-    try:
-        records = load(path)
-    except OSError as exc:
-        print(f"UNKNOWN: cannot read {path}: {exc}")
+    paths = [Path(args.live_log), Path(args.home) / "operator" / "dual-probe.jsonl"]
+    records = load(paths)
+    if not records:
+        print(f"UNKNOWN: no readable probe log among {', '.join(str(p) for p in paths)}")
         return 3
     code, lines = evaluate(records, time.time())
     print({0: "OK", 2: "FAIL", 3: "UNKNOWN"}[code] + ": " + "; ".join(lines))

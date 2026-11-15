@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import time
 from pathlib import Path
 
 SPEC = importlib.util.spec_from_file_location("root_fs_stall", Path(__file__).parent.parent / "checks" / "root-fs-stall.py")
@@ -52,7 +54,27 @@ def test_stale_probe_is_unknown_not_ok():
 
 
 def test_missing_or_garbled_log(tmp_path):
-    assert mod.main(["--home", str(tmp_path)]) == 3
+    missing = tmp_path / "absent.jsonl"
+    assert mod.main(["--home", str(tmp_path), "--live-log", str(missing)]) == 3
     (tmp_path / "operator").mkdir()
     (tmp_path / "operator" / "dual-probe.jsonl").write_text("not json\n")
-    assert mod.main(["--home", str(tmp_path)]) == 3
+    assert mod.main(["--home", str(tmp_path), "--live-log", str(missing)]) == 3
+
+
+def test_load_unions_logs_and_the_later_file_wins(tmp_path):
+    live = tmp_path / "live.jsonl"
+    mirror = tmp_path / "mirror.jsonl"
+    live.write_text(json.dumps(rec(event="slow", at=NOW - 60, total=9.9)) + "\n"
+                    + json.dumps(rec(at=NOW, total=1.0)) + "\n")
+    mirror.write_text("garbage\n" + json.dumps(rec(at=NOW, total=1.0)) + "\n")
+    records = mod.load([live, mirror])
+    assert len(records) == 2                                  # shared (at,dir,event) deduped, garbage skipped
+    assert mod.evaluate(records, NOW)[0] == 2                 # the live-log-only stall is seen
+
+
+def test_main_reads_the_live_log(tmp_path):
+    live = tmp_path / "live.jsonl"
+    now = time.time()
+    live.write_text(json.dumps({"dir": "root", "event": "slow", "at": now - 60, "total": 9.9}) + "\n"
+                    + json.dumps({"dir": "root", "event": "minute", "at": now, "total": 1.0}) + "\n")
+    assert mod.main(["--home", str(tmp_path), "--live-log", str(live)]) == 2
