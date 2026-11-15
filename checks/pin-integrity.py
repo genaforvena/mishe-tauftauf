@@ -4,7 +4,9 @@
 Incident 2026-11-10: a mind hand-edited runtime/current from a stale wall note and
 moved the whole plant ~2 days back. The only writers of the pin are the delivery
 path (mishe-deliver, deliver.sh, heal.sh). The truth for "what should the pin be"
-is the newest patches/moving-pin-<id>.json with delivery_verified true.
+is the newest verified delivery: a work/releases/<sha>-<id>.json record with
+phase=delivered and observed/activated true (what the live path writes), or a
+legacy patches/moving-pin-<id>.json with delivery_verified true.
 
 Exit status:
   0  pin equals the last verified delivery's release (or a delivery is in progress)
@@ -23,6 +25,11 @@ from pathlib import Path
 
 IN_PROGRESS_S = 7200.0
 PENDING = {"prepared", "tested", "reviewed", "activating", "applying"}
+# Phases the live path writes under work/releases while it still holds the pin:
+# after activate() moves the pointer the record stays "activating" until the
+# observe step passes and phase becomes "delivered". Without these the detector
+# fired during that window and printed a restore command that regressed the plant.
+IN_FLIGHT = {"checking", "waiting-for-wakes", "activating", "reverting"}
 
 
 def _ts(text) -> float | None:
@@ -90,6 +97,16 @@ def in_progress(home: Path, now: float) -> bool:
             continue
         at = _ts(data.get("prepared_at"))
         if data.get("phase") in PENDING and at and now - at <= IN_PROGRESS_S:
+            return True
+    # The live path writes ordinary deliveries under work/releases, not patches/.
+    # A record in an in-flight phase means the delivery path still owns the pin.
+    for path in (home / "work" / "releases").glob("*.json"):
+        try:
+            data = json.loads(path.read_text())
+            at = path.stat().st_mtime
+        except (OSError, ValueError):
+            continue
+        if data.get("phase") in IN_FLIGHT and now - at <= IN_PROGRESS_S:
             return True
     return False
 

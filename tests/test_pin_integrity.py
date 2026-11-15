@@ -79,3 +79,29 @@ def test_rolled_back_ordinary_record_does_not_set_the_pin(tmp_path, capsys):
     (home / "releases" / ("dddddddd" + "0" * 32)).mkdir()
     _ordinary(home, "dddddddd" + "0" * 32, 2000000000.0, phase="rolled-back")
     assert run(home, capsys)[0] == 0
+
+
+def test_ordinary_delivery_in_flight_is_ok(tmp_path, capsys):
+    # After activate() moves the pin the record stays "activating" until the
+    # observe step passes and it becomes "delivered". The pin legitimately
+    # disagrees with the last verified delivery in that window; firing there
+    # printed a restore command that would regress the plant mid-delivery.
+    home = site(tmp_path, "cccccccc")
+    (home / "releases" / ("cccccccc" + "0" * 32)).mkdir()
+    _ordinary(home, "cccccccc" + "0" * 32, None, phase="activating")
+    assert run(home, capsys)[0] == 0
+
+
+def test_stale_in_flight_ordinary_record_still_fires(tmp_path, capsys):
+    # An in-flight record older than the window no longer excuses a mismatch:
+    # a stuck "activating" record must not hide a hand-edited pin forever.
+    import os
+    import time
+    home = site(tmp_path, "cccccccc")
+    (home / "releases" / ("cccccccc" + "0" * 32)).mkdir()
+    _ordinary(home, "cccccccc" + "0" * 32, None, phase="activating")
+    stale = (home / "work" / "releases" / ("cccccccc" + "0" * 32 + "-1.json"))
+    old = time.time() - mod.IN_PROGRESS_S - 60
+    os.utime(stale, (old, old))
+    code, out = run(home, capsys)
+    assert code == 2 and "ln -sfn" in out
