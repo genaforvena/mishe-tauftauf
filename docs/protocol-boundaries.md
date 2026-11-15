@@ -89,8 +89,24 @@ nothing else:
 `checked_reviewer_model` is the one function here that reads configuration rather
 than wall text. It accepts a reviewer model id only when the id starts with
 `claude-haiku-`, and `wall_review.py` calls it on the configured id.
-
 Everything the adapters do not name stays opaque.
+
+The engine-account text adapters decode the four external provider text formats the
+router consumes:
+
+- `omp_usage_text.py` — one OMP wake's per-message usage records from
+  `wake-<key>.prompt.out.jsonl`; decides whether a `message_end` record is countable
+  and with what token values.
+- `router_text.py` — the engine router's own stream and the wake-concurrency JSON
+  files: retry-after-ms extraction, JSON-lines event streams, routing ledger events,
+  and cooling-key splitting.
+- `codex_text.py` — the codex CLI's session rollouts under `~/.codex/sessions`
+  (rate_limits readings) and the JSONL event stream of a `codex exec` run.
+- `claude_quota_text.py` — Claude Code's native zero-inference `/usage` report
+  (five-hour and seven-day windows, percentage used and reset times).
+
+`claude_quota_text.py` is the only one currently named in a shipped reader page
+(`docs/claude-quota.md`). The other three are not yet named in any shipped page.
 
 The policy lists approved adapters and frozen legacy sites. For executable
 Python changes run:
