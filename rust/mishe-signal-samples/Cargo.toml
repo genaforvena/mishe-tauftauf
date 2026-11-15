@@ -1,0 +1,15 @@
+[package]
+name = "mishe-signal-samples"
+version = "0.1.0"
+edition = "2021"
+description = "Append-only segmented sample store for Mishe signals: one-pass TSV writer and reader (binary: mishe-signal-sample)"
+license = "CC0-1.0"
+
+[[bin]]
+name = "mishe-signal-sample"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+debug = false
