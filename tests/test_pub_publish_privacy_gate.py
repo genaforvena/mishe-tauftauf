@@ -164,8 +164,15 @@ def test_a_missing_publisher_is_unknown_not_green(tmp_path, capsys):
     """
     home = tmp_path / "site"
     (home / "pub" / "access").mkdir(parents=True)
-    shutil.copy(TERMS, home / "pub" / "privacy-terms.json")
-    shutil.copy(CREDENTIALS, home / "pub" / "access" / "devto.env")
+    # Only the publisher is meant to be absent.  The terms and credentials are
+    # written here rather than copied from the site, because the site home is
+    # gitignored: a copy would fail this test on CI, where the site file is not
+    # there and the publisher is missing anyway, so the branch under test (missing
+    # publisher -> UNKNOWN) never needed the site's own rule data.
+    (home / "pub" / "privacy-terms.json").write_text(
+        json.dumps({"names": ["a private name"]}), encoding="utf-8")
+    (home / "pub" / "access" / "devto.env").write_text(
+        "DEVTO_API_KEY=controlled-probe\n", encoding="utf-8")
     code = check.main(["--home", str(home), "--repo", str(ROOT)])
     assert code == 3
     assert "UNKNOWN" in capsys.readouterr().out
@@ -259,13 +266,29 @@ def test_a_publisher_whose_duplication_gate_fails_open_is_red(tmp_path, capsys):
     assert "duplication" in capsys.readouterr().out
 
 
-def test_the_check_names_a_term_the_rule_list_actually_forbids():
+def test_the_check_reads_the_probe_term_from_the_rule_file(tmp_path):
     """The probe term comes from the rule list, not from the check.
 
-    The terms are site-local and never committed, so the check reads the file
-    the rule itself reads.  A term from the allowed groups would make the
-    probe pass for the wrong reason.
+    A term baked into the check would ignore the file it is handed; this fixture
+    names one term and the check must return exactly it.
     """
+    fixture = tmp_path / "privacy-terms.json"
+    fixture.write_text(json.dumps({"devices": ["a controlled forbidden device"]}),
+                       encoding="utf-8")
+    assert check.a_private_term(fixture) == "a controlled forbidden device"
+
+
+def test_the_check_names_a_term_the_rule_list_actually_forbids():
+    """The site's own probe term is one the rule forbids, not one it allows.
+
+    The terms are site-local and never committed, so this holds the real file
+    the rule itself reads: a term from the allowed groups would make the probe
+    pass for the wrong reason.  The file is absent on CI, so this reports that it
+    cannot decide rather than testing nothing.
+    """
+    if not TERMS.is_file():
+        import pytest
+        pytest.skip("the site-local rule terms are not on this host")
     raw = json.loads(TERMS.read_text(encoding="utf-8"))
     allowed = {str(n).casefold() for n in raw.get("allowed", {}).get("own_names", [])}
     term = check.a_private_term(TERMS)
