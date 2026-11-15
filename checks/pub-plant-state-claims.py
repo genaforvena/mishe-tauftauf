@@ -61,12 +61,24 @@ import re
 import subprocess
 import sys
 import urllib.request
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 GREEN = "GREEN"
 RED = "RED"
 UNKNOWN = "UNKNOWN"
+
+CORPUS_DATE = date(2026, 11, 15)
+"""The day the corpus's own sentence names.
+
+The sentence the 2026-11-15 correction left in place reads "read again on
+15 November it stands at `<sha>`".  A "read again on <date>" clause is a
+live claim only when that date is the run date, so a fixture naming a fixed
+calendar day is a live claim on that day and a dated record on every other.
+The check therefore reads that sentence against this fixed date: the fixture
+keeps the corpus's own shape and the check stops depending on the wall
+clock.
+"""
 
 SENSE_ID = "sense.ledger.evidence-binding"
 """The plant's own published reading of the evidence ledger."""
@@ -380,16 +392,23 @@ def live_figures(line: str, today: date | None = None) -> list[tuple[str, str, s
     return found
 
 
-def check(bodies: dict[str, str], live: dict[str, object]) -> tuple[list[str], list[str]]:
+def check(bodies: dict[str, str], live: dict[str, object],
+          today: date | None = None) -> tuple[list[str], list[str]]:
     """Every live claim the published bodies make, checked against the plant.
 
     Returns (failures, undecidable).  A failure names the post, the figure it
     states and the live value that contradicts it.  An undecidable entry
     names a figure whose live value could not be read; a check that cannot
     read a reading it needs is UNKNOWN, never a pass.
+
+    ``today`` is the day a "read again on <date>" clause names when it is to
+    count as a live claim.  It defaults to the run date; a caller that reads
+    a fixed corpus pins it, so a fixture naming a calendar day does not stop
+    being a live claim the day after.
     """
     failures: list[str] = []
     undecidable: list[str] = []
+    run_day = today or datetime.now(timezone.utc).date()
     for identifier in sorted(bodies, key=lambda value: (len(value), value)):
         body = bodies[identifier] or ""
         marked = notice_lines(body)
@@ -399,7 +418,7 @@ def check(bodies: dict[str, str], live: dict[str, object]) -> tuple[list[str], l
                 continue
             if scoped[index]:
                 continue
-            for name, raw, clause in live_figures(line):
+            for name, raw, clause in live_figures(line, today=run_day):
                 entry = next(e for e in REGISTRY if e["name"] == name)
                 value = live.get(entry["value"])
                 if value is None:
@@ -625,7 +644,7 @@ def _self_test() -> int:
               "`20c65d7309ed4c617913d5317d661912dd23ec56`.\n"),
     }
 
-    failures, undecidable = check(bodies, live)
+    failures, undecidable = check(bodies, live, today=CORPUS_DATE)
     if failures or undecidable:
         print("self-test FAILED: a corpus whose claims hold was read RED:")
         for failure in failures:
@@ -659,7 +678,7 @@ def _self_test() -> int:
          {"6": "`research/field-review`: 383 reviews landed, 55 pending of 192 cells.\n"}),
     ]
     for label, mutated in mutations:
-        failures, _ = check(mutated, live)
+        failures, _ = check(mutated, live, today=CORPUS_DATE)
         if not failures:
             print("self-test FAILED: %s was read GREEN" % label)
             return 1
@@ -667,7 +686,12 @@ def _self_test() -> int:
     # "Read again on <run date>" is a claim about the plant now: a stale
     # figure beside it must read RED.  An earlier date is history and stays
     # GREEN, so the claim does not turn into a permanent live claim.
-    today = datetime.now(timezone.utc).date()
+    #
+    # The fixtures here name the corpus's own calendar day and are read
+    # against it, not against the wall clock: a self-test that reads a fixed
+    # date against the day it happens to run breaks on a date, not on a
+    # defect.
+    today = CORPUS_DATE
     run_day = "%d %s" % (today.day, today.strftime("%B"))
     run_day_true = [
         ("the run-date landed figure, right",
@@ -676,7 +700,7 @@ def _self_test() -> int:
          {"5": "it is now a grid of 32 fields by six angles — 192 cells as read on %s.\n" % run_day}),
     ]
     for label, mutated in run_day_true:
-        failures, undecidable = check(mutated, live)
+        failures, undecidable = check(mutated, live, today=today)
         if failures or undecidable:
             print("self-test FAILED: %s was read as a stale claim" % label)
             for failure in failures + undecidable:
@@ -691,7 +715,7 @@ def _self_test() -> int:
          {"5": "it is now a grid of twenty-nine fields by six angles — 192 cells as read on %s.\n" % run_day}),
     ]
     for label, mutated in run_day_stale:
-        failures, _ = check(mutated, live)
+        failures, _ = check(mutated, live, today=today)
         if not failures:
             print("self-test FAILED: %s was read GREEN" % label)
             return 1
@@ -700,10 +724,31 @@ def _self_test() -> int:
          {"6": "Read again on 11 November the branch carried 17 landed reviews, 0 of 192 cells are pending.\n"}),
     ]
     for label, mutated in old_date:
-        failures, _ = check(mutated, live)
+        failures, _ = check(mutated, live, today=today)
         if failures:
             print("self-test FAILED: %s was read as a live claim" % label)
             return 1
+
+    # The corpus's own sentence is a live claim on the day it names and a
+    # dated record on every other day.  Both readings are checked here: a
+    # fixture that is a live claim only on the day the check happens to run
+    # is a fixture that stops being a live claim tomorrow.
+    corpus_sentence = {
+        "7": ("- The checkout is arborescent - it stood at `51a5e68` when this was "
+              "written on 29 October, and read again on %s it stands at "
+              "`f5f7c10b94807b5db97b26d45bf6bad2c295fca0`.\n" % run_day),
+    }
+    failures, _ = check(corpus_sentence, live, today=today)
+    if not failures:
+        print("self-test FAILED: a stale commit in the corpus's own wording was read GREEN")
+        return 1
+    later = today + timedelta(days=14)
+    failures, _ = check(corpus_sentence, live, today=later)
+    if failures:
+        print("self-test FAILED: a reading dated by an earlier date was read as a live claim")
+        for failure in failures:
+            print("  " + failure)
+        return 1
 
     # A figure the text dates is a record of a reading, not a claim.
     dated = [
@@ -721,7 +766,7 @@ def _self_test() -> int:
          {"2": "The gap was 3 commits ahead of the release the running services are pinned to.\n"}),
     ]
     for label, mutated in dated:
-        failures, _ = check(mutated, live)
+        failures, _ = check(mutated, live, today=today)
         if failures:
             print("self-test FAILED: %s was read as a claim" % label)
             for failure in failures:

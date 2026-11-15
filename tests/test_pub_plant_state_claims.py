@@ -15,7 +15,7 @@ A test that cannot name one is not pinning anything.
 from __future__ import annotations
 
 import importlib.util
-from datetime import datetime, timezone
+from datetime import date, datetime
 import sys
 from pathlib import Path
 
@@ -31,6 +31,12 @@ def _load(name: str, relative: str):
 
 
 check = _load("pub_plant_state_claims", "checks/pub-plant-state-claims.py")
+
+# The day the corpus's own sentence names.  A "read again on <date>" clause
+# is a live claim only when that date is the day the check is read against,
+# so a fixture naming a calendar day is read against that day, not against
+# the wall clock: otherwise the test breaks on a date, not on a defect.
+CORPUS_DATE = check.CORPUS_DATE
 
 # The live readings the fixture plant reports, so a claim that drifts is one
 # number away.
@@ -50,9 +56,18 @@ BODIES = {
 }
 
 
-def _failures(bodies=None, live=None):
+def _failures(bodies=None, live=None, today=None):
     return check.check(bodies if bodies is not None else BODIES,
-                       live if live is not None else LIVE)
+                       live if live is not None else LIVE,
+                       today=today if today is not None else CORPUS_DATE)
+
+
+def _clock(day):
+    """A datetime class whose now() is the given UTC day."""
+    return type("FrozenDatetime", (datetime,), {
+        "now": classmethod(lambda cls, tz=None: datetime(day.year, day.month,
+                                                         day.day, 12, 0, 0,
+                                                         tzinfo=tz))})
 
 
 def test_claims_that_hold_are_quiet():
@@ -108,10 +123,12 @@ def test_a_checkout_commit_in_the_corpus_wording_is_found():
     uses was invisible: a stale commit in that wording read GREEN.  The
     fixture is the corpus's own sentence shape.
     """
-    # The run date is the detector's own rule ("<day> <Month>" of today's UTC
-    # date); a hardcoded day made this fixture pass only on that one date.
-    today = datetime.now(timezone.utc).date()
-    run_day = "%d %s" % (today.day, today.strftime("%B"))
+    # The run date is the detector's own rule ("<day> <Month>" of the day the
+    # check reads the body against).  A hardcoded day made this fixture pass
+    # only on that one date, and the wall clock as the reference made it
+    # depend on the day the suite happens to run.  The corpus names 15
+    # November, so the fixture names 15 November and is read against it.
+    run_day = "%d %s" % (CORPUS_DATE.day, CORPUS_DATE.strftime("%B"))
     body = ("- The checkout is arborescent - it stood at `51a5e68` when this "
             "was written on 29 October, and read again on " + run_day + " it "
             "stands at `20c65d7309ed4c617913d5317d661912dd23ec56`.\n")
@@ -123,6 +140,42 @@ def test_a_checkout_commit_in_the_corpus_wording_is_found():
     failures, _ = _failures({"4": stale})
     assert len(failures) == 1
     assert "the checkout is on 20c65d73" in failures[0]
+
+
+def test_the_run_date_clause_is_a_live_claim_on_the_day_it_names(monkeypatch):
+    """A "read again on <today>" clause is a live claim on the day it names.
+
+    The check reads the wall clock when no day is given, so the sentence must
+    name the day the check reads.  The check is run here with the clock
+    frozen on several days: on each of them the clause is a live claim and a
+    stale commit in it reads RED.
+    """
+    for probe in (date(2026, 11, 15), date(2026, 11, 16), date(2026, 12, 1),
+                  date(2027, 1, 1)):
+        monkeypatch.setattr(check, "datetime", _clock(probe))
+        run_day = "%d %s" % (probe.day, probe.strftime("%B"))
+        body = ("- The checkout is arborescent - it stood at `51a5e68` when this "
+                "was written on 29 October, and read again on " + run_day + " it "
+                "stands at `20c65d7309ed4c617913d5317d661912dd23ec56`.\n")
+        stale = body.replace("20c65d7309ed4c617913d5317d661912dd23ec56", "f5f7c10b")
+        failures, _ = check.check({"4": stale}, LIVE)
+        assert len(failures) == 1, "stale commit read GREEN on %s" % probe
+        assert "the checkout is on 20c65d73" in failures[0]
+
+
+def test_a_clause_naming_another_day_is_history(monkeypatch):
+    """A "read again on <another day>" clause is a dated record, not a claim.
+
+    The corpus's own sentence names 15 November.  Read on any other day it
+    reports a past reading, so it is history and the detector does not claim
+    the plant is still on that commit.
+    """
+    monkeypatch.setattr(check, "datetime", _clock(date(2026, 11, 20)))
+    body = ("- The checkout is arborescent - it stood at `51a5e68` when this "
+            "was written on 29 October, and read again on 15 November it "
+            "stands at `20c65d7309ed4c617913d5317d661912dd23ec56`.\n")
+    failures, _ = check.check({"4": body}, LIVE)
+    assert failures == []
 
 
 def test_a_figure_the_sentence_dates_is_not_a_claim():
@@ -185,7 +238,7 @@ def test_a_checkout_head_compares_regardless_of_case():
 
 def test_a_figure_the_plant_publishes_no_reading_for_is_undecidable():
     """A reading the plant cannot supply is UNKNOWN, never a pass."""
-    failures, undecidable = check.check(
+    failures, undecidable = _failures(
         {"1": "The current ledger scan finds 123 rows whose original evidence "
               "is permanently lost.\n"},
         {"ledger_owed": 75})
@@ -197,7 +250,8 @@ def test_a_figure_the_plant_publishes_no_reading_for_is_undecidable():
 def test_a_number_the_text_cannot_read_is_not_a_claim():
     """A figure that is neither a digit nor a known number word is not read."""
     assert check.live_figures("The current ledger scan finds many rows whose "
-                              "original evidence is permanently lost.\n") == []
+                               "original evidence is permanently lost.\n",
+                               today=CORPUS_DATE) == []
 
 
 def test_a_number_word_is_read():
@@ -222,15 +276,15 @@ def test_the_self_test_passes():
 
 def test_the_corpus_word_order_for_landed_reviews_is_read():
     """'N landed reviews' is read as the landed count, as the corpus writes it."""
-    failures, _ = check.check({"6": "383 landed reviews, 0 pending of 192 cells.\n"},
-                              {"field_review_landed": 380, "field_review_pending": 0})
+    failures, _ = _failures({"6": "383 landed reviews, 0 pending of 192 cells.\n"},
+                            {"field_review_landed": 380, "field_review_pending": 0})
     assert len(failures) == 1
     assert "the plant reads 380" in failures[0]
 
 
 def test_the_corpus_word_order_for_pending_cells_is_read():
     """'N of M cells are pending' is read as the pending count, as the corpus writes it."""
-    failures, _ = check.check({"6": "383 reviews landed; 55 of 192 cells are pending.\n"},
-                              {"field_review_landed": 383, "field_review_pending": 0})
+    failures, _ = _failures({"6": "383 reviews landed; 55 of 192 cells are pending.\n"},
+                            {"field_review_landed": 383, "field_review_pending": 0})
     assert len(failures) == 1
     assert "the plant reads 0" in failures[0]
