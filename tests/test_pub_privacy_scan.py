@@ -866,5 +866,80 @@ def test_a_draft_that_names_no_cover_image_publishes_none():
     assert verdict == "GREEN" and not violations
 
 
+# The pre-flight reads the file mode.  It used to read the whole file as one
+# body, so the title and the tags were never fields of their own: a private
+# term in a title was found only because the same term also appeared in the
+# body, and it was reported as `body`.  A draft whose title named a device and
+# whose body did not passed the pre-flight, and the live run of the same
+# article would have been RED at `title`.
+def test_the_draft_preflight_names_the_title_the_publisher_will_send():
+    """The pre-flight reads the title from the front matter and names it.
+
+    The publisher sends `title:` from the front matter, so the pre-flight has
+    to read that field as the title, exactly as the live run reads it.
+    """
+    scan = load_scan()
+    draft = ('---\ntitle: "A post about probe@example.com"\ntags: one\n---\n\n'
+             'The body is clean.\n')
+    assert scan.draft_field(draft, "title") == "A post about probe@example.com"
+    assert scan.draft_body(draft).strip() == "The body is clean."
+
+
+def test_a_private_term_in_a_draft_title_is_red_at_the_title():
+    """A title that names a private term is RED, and the verdict names the title.
+
+    The body is clean, so the pre-flight can only find this by reading the
+    title as a field of its own.
+    """
+    scan = load_scan()
+    draft = "---\ntitle: \"A post about probe@example.com\"\ntags: one\n---\n\nThe body is clean.\n"
+    fields = {"title": scan.draft_field(draft, "title"), "body": scan.draft_body(draft),
+              "tags": scan.draft_field(draft, "tags"), "replies": []}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "RED"
+    assert [field for field, _rule, _code in violations] == ["title"]
+
+
+def test_a_private_term_in_a_draft_tag_is_red_at_the_tags():
+    """A tag that names a private term is RED, and the verdict names the tags."""
+    scan = load_scan()
+    draft = "---\ntitle: A post\ntags: one, probe@example.com\n---\n\nThe body is clean.\n"
+    fields = {"title": scan.draft_field(draft, "title"), "body": scan.draft_body(draft),
+              "tags": scan.draft_field(draft, "tags"), "replies": []}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "RED"
+    assert [field for field, _rule, _code in violations] == ["tags"]
+
+
+def test_the_draft_preflight_agrees_with_the_live_verdict_on_the_same_article():
+    """The pre-flight and the live run name the same field for the same text.
+
+    The two paths read the same published fields, so a term in the title is
+    `title` in both.  They used to disagree: the live run named `title` and the
+    pre-flight named `body`.
+    """
+    scan = load_scan()
+    draft = ("---\ntitle: \"A post about probe@example.com\"\ntags: one\n"
+             "description: \"clean\"\n---\n\nThe body is clean.\n")
+    draft_fields = {"title": scan.draft_field(draft, "title"), "body": scan.draft_body(draft),
+                    "tags": scan.draft_field(draft, "tags"), "replies": [],
+                    "description": scan.draft_field(draft, "description")}
+    live_fields = {"title": "A post about probe@example.com", "body": "The body is clean.",
+                   "tags": "one", "replies": [], "description": "clean"}
+    assert scan.verdict_for(draft_fields, **NO_TERMS) == scan.verdict_for(live_fields, **NO_TERMS)
+
+
+def test_a_file_without_front_matter_is_still_read_for_the_term():
+    """A file with no front matter is read whole, so the pre-flight cannot pass it.
+
+    The publisher refuses such a file, but the pre-flight is the last gate
+    before a publish: reading nothing there would pass a file that carries the
+    term.
+    """
+    scan = load_scan()
+    text = "A body naming probe@example.com with no front matter\n"
+    assert scan.draft_body(text) == text
+
+
 if __name__ == "__main__":
     sys.exit(0)

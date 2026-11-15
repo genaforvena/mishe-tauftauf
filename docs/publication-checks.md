@@ -99,7 +99,9 @@ What the scan reads grew five times on 2026-11-14, each time because reading
 the check found a place it did not look. It now reads the whole comment tree and
 the tail the list endpoint withholds (below), the **card description** of
 every live and draft article, the account's own **published profile**, and the
-**canonical URL** and **cover image** of every article.
+**canonical URL** and **cover image** of every article. On 2026-11-15 the draft
+pre-flight stopped reading the whole file as one body, so it reads the title
+and the tags as the fields they are.
 
 DEV shows the description on every card and in
 every link preview, and DEV freezes it at creation, so a corrected body keeps
@@ -114,6 +116,16 @@ not do was name the field, so the verdict said `body` and a reader would look
 there and not find it. The front matter's description field is now read as the
 description it is, and the front matter's canonical URL as the canonical URL
 it is.
+
+The title and the tags are read as fields of their own in the pre-flight too,
+because the publisher sends both from the front matter and the live run reads
+both. Reading the whole file as one body hid a real gap: a term in a draft's
+title or in a tag was found only because the same term also appeared in the
+body, and it was reported as `body`. A draft whose title named a device and
+whose body did not passed the pre-flight, while the live run of that same
+article was RED at `title`. The pre-flight now reads the title, the tags and
+the body separately, so it names the field the violation is in and agrees with
+the live verdict on the same article.
 
 A description that is present but unreadable is UNKNOWN, not a pass: a
 description nobody could read is a description nobody can rule out. An

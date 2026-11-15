@@ -813,6 +813,19 @@ def draft_description(text: str) -> str:
     return draft_field(text, "description")
 
 
+def draft_body(text: str) -> str:
+    """The body a draft's front matter precedes: everything after the front matter.
+
+    The publisher sends the text after the front matter as the body, so the
+    pre-flight has to read the same text.  A file with no front matter is not a
+    publishable draft (the publisher refuses it), but the whole file is still
+    read as the body here: a pre-flight that read nothing would pass a file
+    that carries the term, and a pre-flight is the last gate before a publish.
+    """
+    match = FRONT_MATTER.match(text)
+    return match.group(2) if match else text
+
+
 def scan_file(path: str, terms_file: Path | None = None) -> int:
     loaded = load_terms(terms_file)
     try:
@@ -820,7 +833,17 @@ def scan_file(path: str, terms_file: Path | None = None) -> int:
     except (OSError, UnicodeDecodeError):
         print("UNKNOWN: draft unreadable")
         return 3
-    fields = {"title": text.splitlines()[0] if text else "", "body": text, "tags": "",
+    # The title and the tags are published fields, exactly as they are in the
+    # live run, and the publisher sends both from the front matter.  The file
+    # mode used to read the whole file as one body, so a private term in the
+    # title or in a tag was found only because the same term also happened to
+    # appear in the body, and it was reported as `body`: a draft whose title
+    # named a device and whose body did not passed the pre-flight while the
+    # live run of the same article would have been RED at `title`.  The fields
+    # are read separately here, so the pre-flight names the field the violation
+    # is in and agrees with the live verdict on the same article.
+    fields = {"title": draft_field(text, "title"), "body": draft_body(text),
+              "tags": draft_field(text, "tags"),
               "replies": [], "description": draft_description(text),
               # The canonical URL is published the same way the description is:
               # the publisher sends it from the front matter, and DEV renders it
