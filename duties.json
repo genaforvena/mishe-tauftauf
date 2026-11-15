@@ -1094,29 +1094,6 @@
       "replaces": []
     },
     {
-      "name": "release-lag",
-      "command": [
-        "{python}",
-        "{repo}/checks/release-lag.py",
-        "--home",
-        "{home}",
-        "--repo",
-        "{repo}"
-      ],
-      "every": 300,
-      "timeout": 60,
-      "max_age": 900,
-      "red_codes": [
-        2
-      ],
-      "unknown_codes": [
-        3
-      ],
-      "resolver": "genome",
-      "covers": "committed main is released to the running pin within 30 minutes: GREEN when the pin is HEAD or its oldest unreleased commit is younger than 30 minutes; RED when it is older; UNKNOWN when the pin is missing, not a commit of this clone, or not an ancestor of HEAD",
-      "replaces": []
-    },
-    {
       "name": "pin-delivery",
       "command": [
         "{python}",
