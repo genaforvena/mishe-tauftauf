@@ -1,0 +1,11 @@
+[package]
+name = "mishe-signal-freshness"
+version = "0.1.0"
+edition = "2021"
+description = "Freshness verdict for Mishe signal observations (contract: CONTRACT.md)"
+license = "CC0-1.0"
+
+[dependencies]
+
+[profile.release]
+debug = false
