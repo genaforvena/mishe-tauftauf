@@ -53,20 +53,35 @@ def normalize(text, wake, role):
     if _already_attributed(text):
         return text, False
 
+    lines = text.splitlines()
+    # Git reads a trailer's continuation lines only from the final paragraph, so
+    # that is the only place a whitespace-prefixed line *is* a continuation. Mark
+    # the final paragraph (the run after the last blank line, trailing blanks
+    # ignored): a matched line inside it takes its continuation lines; a matched
+    # line outside it still moves, but alone, and the indented line after it stays
+    # in the body -- Git would not have folded it there.
+    last_content = len(lines)
+    while last_content and not lines[last_content - 1].strip():
+        last_content -= 1
+    final_start = 0
+    for index in range(last_content):
+        if not lines[index].strip():
+            final_start = index + 1
+
     # Every matched trailer, in order, as a ``[key, value, raw_lines]`` unit. A
-    # whitespace-prefixed line immediately after a trailer is that trailer's
-    # value *continuation* (git folds it into the value), so it travels with the
-    # trailer instead of being stranded in the body. This keeps both a repeated
-    # ``Co-Authored-By`` and a multi-line value intact.
+    # whitespace-prefixed line immediately after a trailer inside the final
+    # paragraph travels with it (Git folds it into the value), so the value is not
+    # truncated. This keeps a repeated ``Co-Authored-By`` and a multi-line value
+    # intact without hoisting an unrelated indented body line.
     units = []
     body_lines = []
     last = None
-    for line in text.splitlines():
+    for index, line in enumerate(lines):
         match = _TRAILER_LINE.match(line)
         if match:
             units.append([match.group(1), match.group(2).strip(), [line]])
             last = units[-1]
-        elif last is not None and line[:1] in (" ", "\t"):
+        elif last is not None and index >= final_start and line[:1] in (" ", "\t"):
             last[2].append(line)
         else:
             body_lines.append(line)

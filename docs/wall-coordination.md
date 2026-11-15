@@ -105,8 +105,10 @@ attribution. A `commit-msg` hook, installed in this checkout by
 `tools/install-commit-msg-attribution.sh`, moves the Mishe-Wake/Mishe-Role/coauthor
 lines into the final trailer block at commit time and fills them from
 `MISHE_WAKE_KEY`/`MISHE_ROLE` when the message carries none, so a hand-typed
-message cannot land unattributed; it never blocks a commit, and it keeps a
-trailer's continuation lines with its value rather than stranding them in the body.
+message cannot land unattributed; it never blocks a commit, and inside the final
+paragraph it keeps a trailer's continuation lines with its value rather than
+stranding them in the body (outside that paragraph a following indented line is
+body text and stays put, as Git does not fold it there).
 
 Running code comes from committed snapshots, through one pin. `SITE_HOME/runtime/current`
 is a symlink to the committed release that running code uses. The units name only

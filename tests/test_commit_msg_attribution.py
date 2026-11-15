@@ -121,6 +121,24 @@ def test_normalize_is_idempotent():
     assert module.normalize(new, "", "") == (new, False)
 
 
+def test_a_midbody_trailer_does_not_absorb_a_following_indented_line():
+    """Git folds a continuation only inside the final paragraph. A matched
+    trailer line elsewhere in the body is relocated by itself; the indented line
+    after it is separate body text and must not become part of the value. The
+    ``83d25263`` hook moved both, so the relocated value read
+    ``Co-Authored-By: A <a@x> indented code``."""
+    text = ("subject\n\n"
+            "Co-Authored-By: A <a@x>\n"
+            "    indented code\n"
+            "\n"
+            "fixes thing\n")
+    new, changed = module.normalize(text, "wake-x-1", "field-review")
+    assert changed is True
+    assert parse_trailers(new) == ["Mishe-Wake: wake-x-1", "Mishe-Role: field-review",
+                                   "Co-Authored-By: A <a@x>"]
+    assert "    indented code" in new.split("Mishe-Wake:")[0]
+
+
 def test_prose_that_merely_names_the_trailers_is_not_hoisted():
     """A commit about this format (like 5869b8eb) keeps its prose."""
     text = ("docs: a commit trailer block needs a blank line\n"
