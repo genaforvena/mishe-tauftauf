@@ -158,8 +158,8 @@ that composes it:
   `rust/mishe-systemd-show/CONTRACT.md`) decodes `systemctl show` text;
   `unit_psi_text.parse_systemd_show` composes it and fails closed with
   `SystemdShowUnknown` when the binary is missing, mismatched or failing. There is
-  no Python fallback: the retired Python decoder survives only as the oracle in
-  `tests/test_rust_systemd_show.py`.
+  no Python fallback: the retired Python decoder is deleted, and its recorded
+  answers are GOLDEN in `tests/test_rust_systemd_show.py`.
 - `rust/mishe-signal-samples` (`mishe-signal-sample`, contract
   `rust/mishe-signal-samples/CONTRACT.md`) owns the append-only signal sample
   store: `SITE/samples/<name>/` holds TSV segments of five fields — timestamp in

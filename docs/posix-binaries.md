@@ -76,19 +76,27 @@ UNKNOWN for the faulted segments.
 | `mishe-records` | Record verification and the verified store | Live since the 2026-11-11 cutover, run by `feed._RecordsChild` |
 | `mishe-tape-facts` | One-pass byte-level facts for a disposition reading | Built and installed, differential-tested, **not wired into a live consumer**: its contract says so. Counts as a binary, not as live migration yet |
 | `mishe-network-probe` | One network probe row | Live: the `network-probe` duty runs it |
-| `mishe-systemd-show` | `systemctl show` text decoding | Live since candidate 1: `unit_psi_text.parse_systemd_show` runs it and `discovery.py` reads the result through `read_unit_psi`. The retired Python decoder survives only as the oracle in `tests/test_rust_systemd_show.py` |
+| `mishe-systemd-show` | `systemctl show` text decoding | Live since candidate 1: `unit_psi_text.parse_systemd_show` runs it and `discovery.py` reads the result through `read_unit_psi`. The retired Python decoder is deleted; its recorded answers are GOLDEN in `tests/test_rust_systemd_show.py` |
 | `mishe-signal-sample` | The append-only signal sample store | Live on the write side: the `memory-samples` duty appends two rows every three minutes into `SITE/samples/memory/`. `read_samples` has no production caller yet, so nothing reads the store back |
 
 `mishe-tape-facts` is the honest gap: its consumer is not yet running it. The
 signal sample store is the narrower one: it is written live and not yet read.
 
-## Constraint kept
+## Whole-system target
 
-Role fold and record verification stay Python until Ilya changes that decision
-(his earlier decision, carried into the 2026-11-14 DM). The Rust scope is
-byte-level: framing, UTF-8 and performance on byte work. Verification is
-Python-side logic and so is not a candidate for rewriting here, although
-`mishe-records` already performs the byte-level part of it.
+The owner's bound from 2026-11-14 (role fold and record verification stay Python)
+is lifted. The target is the whole runtime as small POSIX programs composed by
+arguments, files, streams and exit statuses, with exactly one authoritative
+implementation per responsibility and no shadow copy kept behind a flag. Python
+remains where it is simpler, and it composes the binaries. Where a responsibility
+moves to Rust, the Python path is deleted once the binary is the only path (the
+systemctl-show decoder is the first case: its Python copy survives only as recorded
+golden answers in `tests/test_rust_systemd_show.py`).
+
+Role fold and record verification are ordinary candidates again. They are ranked
+below by seam stability, not excluded. Their byte-level parts (framing, UTF-8,
+hashing) are the first pieces to cut; the fold's policy stays a Python call on
+those outputs until a contract for it exists.
 
 ## Ranked next candidates
 
@@ -96,45 +104,42 @@ Ranking criteria: seam stability (the input and output are fixed bytes, not a
 moving set of readings), testability (a fixture can be checked differentially
 without a live plant), and then the measured Python cost. Costs marked UNKNOWN
 have not been measured; the named measurement is the step that would produce
-them.
+them. Updated 2026-11-15 after the operator DM 301336.
 
-1. **systemctl show decoding** (`src/mishe_tauftauf/unit_psi_text.py`,
-   `parse_systemd_show`). Input: `systemctl show` text on stdin. Output: the
-   key/value map as JSON, or exit 2 on a malformed line. Stable: the format is
-   `Key=value` lines fixed by systemd. Testable: a fixture per property set.
-   Measured Python cost: UNKNOWN (expected negligible; it is a small pure parse).
-   Its gain is architectural: it is the smallest complete binary and the template
-   for the rest. **Built and live** as `rust/mishe-systemd-show/` (2026-11-14);
-   kept here because it is the template the other candidates follow.
+1. **systemctl show decoding.** Built and live as `rust/mishe-systemd-show/`
+   (2026-11-14). The Python decoder is deleted from `src/`; its answers are kept
+   as GOLDEN in the test. Done.
 
 2. **Signal edge append and freshness read** (`src/mishe_tauftauf/signal_store.py`,
-   `observe`, `_append_edge`, `read`, `expire`; 279 lines). Input: the signal
-   home and a `now` value. Output: the signal state and age as JSON. Stable: the
-   edge file is append-only JSONL. Testable: fixture homes with known edges and
-   times. Measured Python cost: UNKNOWN. Measurement to take: time `read` and
-   `expire` over the live signal home, with the same `scancount`-style harness.
+   `read`, `observe`, `expire`; 279 lines). Measured 2026-11-15 on a copy of the
+   live home: 111 signals, 20 sweeps of `read` = 0.46 CPU-s, about 0.023 CPU-s
+   per full sweep (script `.mishe-tauftauf/artifacts/rust-plan-20261107/signal-read-measure.py`).
+   The CPU gain would not pay, so no binary is built. It stays a candidate for
+   architecture only and is re-opened if a sweep exceeds 1 CPU-s.
 
 3. **Duty runner** (`src/mishe_tauftauf/duties.py`, 44 lines, plus the producer
    launch path). Input: `duties.json` and a duty name. Output: the producer's
    status and its `timeout`-bounded exit. Stable: the file format is fixed.
-   Testable: a fixture duties file with a stub producer. Less stable than 1–2
-   because it launches other programs and depends on their statuses. Measured
-   Python cost: UNKNOWN; the cost is mostly child processes, not Python CPU.
+   Testable: a fixture duties file with a stub producer. Its cost is mostly the
+   child processes, so the next measurement is wall and child CPU per duty, not
+   Python CPU. Next to take.
 
-4. **Feed reader, the remaining scan** (`src/mishe_tauftauf/feed.py`, 1,782 lines;
-   `discovery.py` readings). Measured: one full scan 11.63 CPU-s, 674 MB RSS
-   (scan-20261114T224141Z); `Feed(home).entries(facts=True)` 2.25 CPU-s, 668 MB.
-   Most of the byte work already runs through `mishe-tape` and `mishe-records`.
-   What remains in Python is the role fold and the readings that consume the
-   shared snapshot, so this candidate is large and less stable. The next step
-   here is a measurement, not a rewrite: per-reading CPU and whether the snapshot
-   can stream without a contract change.
+4. **Scheduler arm and feed remaining scan** (`src/mishe_tauftauf/feed.py`,
+   1,782 lines; `discovery.py` readings). Measured: one full scan 11.63 CPU-s,
+   674 MB RSS (scan-20261114T224141Z). Most byte work already runs through
+   `mishe-tape` and `mishe-records`; what remains is the role fold and the
+   readings that consume the shared snapshot. The next step is per-reading CPU,
+   not a rewrite.
 
-5. **Dossier cut** (`src/mishe_tauftauf/dossier.py`, 191 lines). Input: the
+5. **Role fold and record verification** (`src/mishe_tauftauf/feed.py` fold;
+   verification in Python). Ordinary candidate under the whole-system target. Cut
+   its byte part first (framing, UTF-8, hashing into `mishe-records`); keep the
+   policy call in Python until a contract exists.
+
+6. **Dossier cut** (`src/mishe_tauftauf/dossier.py`, 191 lines). Input: the
    readings a wake needs. Output: the dossier sections. Least stable: it composes
-   many readings and changes with each of them. Testable only as a whole.
-   Measured Python cost: UNKNOWN. Last in the ranking until the readings it
-   composes are binaries.
+   many readings and changes with each of them. Testable only as a whole. Last in
+   the ranking until the readings it composes are binaries.
 
 ## Next steps
 
@@ -142,7 +147,8 @@ them.
   layout as `mishe-tape` (locked build, `CONTRACT.md`, tests, a
   `MISHE_SYSTEMD_SHOW_BIN` override), `unit_psi_text.py` was wired to it with a
   named `SystemdShowUnknown` error when the binary is missing, the Python parse
-  path was retired to the test oracle, and it was delivered through the ordinary
+  path was deleted (2026-11-15 its answers became GOLDEN in the test), and it was delivered through the ordinary
   path on 2026-11-14.
-- Measure candidates 2 and 3 before choosing them; record the numbers here.
+- Candidate 2 is measured and does not pay on CPU (see above). Measure candidate 3
+  next and record the numbers here before building anything.
 - Keep this ranking updated when a candidate is built or retired.

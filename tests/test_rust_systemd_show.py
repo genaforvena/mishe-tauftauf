@@ -1,9 +1,10 @@
-"""Differential test: mishe-systemd-show against the retired Python decoder.
+"""Golden test: mishe-systemd-show against answers recorded from the retired Python decoder.
 
-The Python reference below is the decoder the Rust binary replaces, kept here only
-as the oracle. The binary is found through MISHE_SYSTEMD_SHOW_BIN or the site
-install; if neither resolves, the differential tests are skipped with the reason,
-so a checkout without a built binary still runs the rest of the suite.
+The Python decoder the Rust binary replaced is gone; its answers for CASES were
+recorded once into GOLDEN (a literal per case) and the decoder copy was deleted, so
+there is one implementation (the binary) and no shadow. The binary is found through
+MISHE_SYSTEMD_SHOW_BIN or the site install; if neither resolves, the golden tests are
+skipped with the reason, so a checkout without a built binary still runs the rest.
 """
 from __future__ import annotations
 
@@ -15,18 +16,6 @@ import pytest
 
 import mishe_tauftauf.unit_psi_text as text_mod
 from mishe_tauftauf.unit_psi_text import SystemdShowUnknown, parse_systemd_show
-
-
-def _python_reference(raw: str) -> dict[str, str]:
-    """The retired Python decoder, verbatim in behaviour (oracle only)."""
-    props: dict[str, str] = {}
-    for line in raw.splitlines():
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        if key:
-            props[key] = value
-    return props
 
 
 def _resolve() -> str | None:
@@ -55,13 +44,25 @@ CASES = [
     "Unicode=тест ✓ 日本\nZ=ok\n",
     "Trailing=no newline",
 ]
+# Answers recorded from the retired Python decoder (line split on str.splitlines, first '='
+# splits key from value, empty keys dropped, last duplicate wins in dict form) for CASES[i].
+GOLDEN = [
+    {},
+    {"ActiveState": "active", "SubState": "running", "LoadState": "loaded", "UnitFileState": "enabled"},
+    {"ActiveState": "active"},
+    {"Description": "a=b=c", "Empty": ""},
+    {"Key With Space": "ok"},
+    {"A": "1", "B": "2", "C": "3", "D": "4", "E": "5", "F": "6", "G": "7", "H": "8", "I": "9", "J": "10", "K": "11"},
+    {"Unicode": "тест ✓ 日本", "Z": "ok"},
+    {"Trailing": "no newline"},
+]
 
 
 @needs_binary
-@pytest.mark.parametrize("raw", CASES)
-def test_binary_matches_python_reference(monkeypatch, raw):
+@pytest.mark.parametrize("index", range(len(CASES)))
+def test_binary_matches_recorded_golden(monkeypatch, index):
     monkeypatch.setenv("MISHE_SYSTEMD_SHOW_BIN", BINARY)
-    assert parse_systemd_show(raw) == _python_reference(raw)
+    assert parse_systemd_show(CASES[index]) == GOLDEN[index]
 
 
 @needs_binary
