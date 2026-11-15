@@ -6,7 +6,7 @@ Site file ``engine/routes.json`` (one file, the only place candidates live)::
      "roles": {"health": [{"engine": "omp", "model": "opencode-go/beam-free", "account": "go-a"},
                           {"engine": "claude", "model": "claude-haiku-5-5", "account": null}]}}
 
-A candidate is ``engine`` (``claude`` or ``omp``), ``model`` and ``account`` (a
+A candidate is ``engine`` (``claude``, ``omp`` or ``codex``), ``model`` and ``account`` (a
 registry alias, or null for the Claude subscription safety net, which has no
 window reading in this router). A candidate may also carry ``max_parallel``: the
 number of wakes that may use it at once. The router counts the candidate's
@@ -60,7 +60,7 @@ DEFAULT_HARD_TIMEOUT_S = 3600     # total runtime a wake may reach when it is st
 DEFAULT_RATE_LIMIT_COOL_OFF_S = 300   # a rate limit waits minutes, not the site-wide window
 MAX_RETRY_AFTER_COOL_OFF_S = 28800   # cap for a provider-stated retry-after, 8 h
 MAX_RATE_LIMIT_COOL_OFF_S = 1800    # ceiling of the self-computed doubling backoff, the site-wide window
-ENGINES = ("claude", "omp")
+ENGINES = ("claude", "omp", "codex")
 STALE_STATES = ("STALE", "UNKNOWN", "UNATTRIBUTED", "UNREADABLE")
 
 
@@ -496,6 +496,9 @@ class RoutedEngine:
         from .engine_omp import OmpEngine
         if cand["engine"] == "claude":
             return ClaudeEngine(cand["model"])
+        if cand["engine"] == "codex":
+            from .engine_codex import CodexEngine
+            return CodexEngine(cand["model"], thinking=cand.get("thinking"))
         return OmpEngine(cand["model"], thinking=cand.get("thinking"))
 
     def _cool(self, cand: dict, now_ms: float, *, role_only: bool = False, off_ms: float | None = None) -> None:

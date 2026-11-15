@@ -53,7 +53,7 @@ def test_engine_choice_defaults_and_rejects_unsupported(tmp_path):
     (tmp_path / "engines").mkdir()
     (tmp_path / "engines" / "genome.json").write_text('{"engine":"omp","model":"x"}')
     assert engines.for_role(tmp_path, "genome").name == "omp"
-    (tmp_path / "engines" / "genome.json").write_text('{"engine":"codex"}')
+    (tmp_path / "engines" / "genome.json").write_text('{"engine":"bogus"}')
     with pytest.raises(ValueError):
         engines.for_role(tmp_path, "genome")
 

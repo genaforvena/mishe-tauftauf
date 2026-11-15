@@ -594,6 +594,12 @@ def main(home: Path, out: Path | None = None) -> int:
     now = time.time()
     status = _read_json(home / "operator" / "budget" / "quota.json")
     tap = _read_json(home / "operator" / "budget" / "claude-native-quota.json")
+    # codex-a windows come from the codex CLI's own rollouts (read-only, no credential); they replace
+    # the omp status row, which is UNREADABLE while its stored login is dead.
+    from . import codex_usage
+    codex = codex_usage.account_row(now)
+    if codex is not None:
+        status = dict(status or {}, accounts=dict((status or {}).get("accounts") or {}, **{codex_usage.CODEX_ALIAS: codex}))
     payload = build_budget(status, tap, now, load_burn_history(home, now))
     payload["routing"] = build_routing(home, payload, now)
     payload["cooling"] = build_cooling(home, now)

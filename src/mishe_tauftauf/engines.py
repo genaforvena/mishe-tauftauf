@@ -23,4 +23,7 @@ def for_role(home, role: str):
         return ClaudeEngine(config.get("model", DEFAULT_CLAUDE_MODEL), env, tools)
     if kind == "omp":
         return OmpEngine(config.get("model"), env, config.get("thinking"))
-    raise ValueError(f"unsupported engine {kind!r} for {role!r}; use claude or omp")
+    if kind == "codex":
+        from .engine_codex import CodexEngine
+        return CodexEngine(config.get("model"), env, config.get("thinking"))
+    raise ValueError(f"unsupported engine {kind!r} for {role!r}; use claude, omp or codex")

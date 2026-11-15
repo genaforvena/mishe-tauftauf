@@ -134,7 +134,7 @@ def test_assess_unknown_when_a_windowed_candidates_account_is_unreadable():
 
 def test_load_routes_rejects_bad_engine_and_missing_file(tmp_path):
     assert router.load_routes(tmp_path) is None
-    routes_file(tmp_path, {"health": [{"engine": "codex", "model": "x", "account": None}]})
+    routes_file(tmp_path, {"health": [{"engine": "bogus", "model": "x", "account": None}]})
     with pytest.raises(ValueError):
         router.load_routes(tmp_path)
 
