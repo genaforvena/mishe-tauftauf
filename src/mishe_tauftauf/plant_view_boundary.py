@@ -73,6 +73,48 @@ def stream_tail(text: str, limit: int) -> str:
     return token + '\n' + text[offset:]
 
 
+CODEX_QUIET = {'thread.started', 'turn.started'}
+
+
+def _codex_error(event: dict) -> str:
+    error = event.get('error')
+    text = error.get('message') if isinstance(error, dict) else error if isinstance(error, str) else event.get('message')
+    return str(text or event.get('type'))[:300]
+
+
+def _codex_item(kind: str, item) -> str:
+    """One codex ``exec --json`` item as the renderer lines the omp decoder already produces ('' = nothing to show)."""
+    if not isinstance(item, dict) or not isinstance(item.get('type'), str):
+        raise ValueError('codex item missing')
+    what = item['type']
+    if what == 'agent_message':
+        text = item.get('text')
+        return '[assistant] ' + text if kind == 'item.completed' and isinstance(text, str) and text else ''
+    if what == 'command_execution':
+        if kind == 'item.started':
+            return '[tool bash] ' + str(item.get('command', ''))
+        if kind == 'item.completed':
+            failed = item.get('exit_code') not in (0, None)
+            body = item.get('aggregated_output')
+            return ('[tool error] ' if failed else '[tool output] ') + (body if isinstance(body, str) and body else '[no output]')
+        return ''
+    if what == 'file_change':
+        if kind != 'item.completed':
+            return ''
+        changes = item.get('changes') if isinstance(item.get('changes'), list) else []
+        paths = ', '.join(f"{c.get('kind', '?')} {c.get('path', '?')}" for c in changes if isinstance(c, dict))
+        return '[tool file_change] ' + (paths or '(no paths listed)')
+    if what == 'mcp_tool_call':
+        return '[tool mcp] ' + f"{item.get('server', '?')}.{item.get('tool', '?')}" if kind == 'item.started' else ''
+    if what == 'web_search':
+        return '[tool web_search] ' + str(item.get('query', '')) if kind == 'item.started' else ''
+    if what == 'error':
+        return '[provider notice] ' + str(item.get('message', 'codex notice'))[:300] if kind == 'item.completed' else ''
+    if what in ('reasoning', 'todo_list'):
+        return ''
+    raise ValueError(f'codex item type {what!r} is not decoded')
+
+
 def stream_text(text: str) -> str:
     """Decode OMP JSON-lines at the literal output boundary, never as actions."""
     out, pending = [], ''
@@ -143,6 +185,16 @@ def stream_text(text: str) -> str:
             elif kind == 'auto_retry_end':
                 out.append('[provider retry succeeded]' if event.get('success') is True
                            else '[provider error] ' + str(event.get('finalError', 'retry failed')).splitlines()[0][:300])
+            elif kind in CODEX_QUIET:
+                continue
+            elif kind == 'turn.completed':
+                out.append('[agent_end]')
+            elif kind in ('turn.failed', 'error'):
+                out.append('[provider error] ' + _codex_error(event))
+            elif kind in ('item.started', 'item.updated', 'item.completed'):
+                decoded = _codex_item(kind, event.get('item'))
+                if decoded:
+                    out.append(decoded)
             elif kind in quiet:
                 continue
             elif kind in lifecycle:
