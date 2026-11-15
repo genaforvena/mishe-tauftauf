@@ -17,7 +17,8 @@ def declared(home):
     items = duties.declared(REPO, home)
     for item in items:
         store.register(home, item["name"], max_age=item["signal"]["max_age"],
-                       subscribers=item["signal"]["subscribers"])
+                       subscribers=item["signal"]["subscribers"],
+                       wake_on=item["signal"].get("wake_on", "change"))
     return items
 
 
@@ -41,6 +42,15 @@ def test_no_unit_is_both_replaced_and_retired_or_kept():
 def test_red_reaches_the_resolver(tmp_path, name, monkeypatch):
     item = next(i for i in declared(tmp_path) if i["name"] == name)
     resolver = item["signal"]["subscribers"][0]
+    if item["signal"].get("wake_on") == "state":
+        # A reading signal (footprint) carries no RED state: its fault channel is UNKNOWN (silence or a
+        # failed read), covered by test_silence_ages_to_unknown_and_wakes_the_resolver and by the
+        # failed-producer signal. A value drift must NOT wake its resolver.
+        if item.get("builtin"):
+            monkeypatch.setitem(producers.BUILTIN, name, lambda home, now, **kw: "anon=1.00GiB charged=2.00GiB psi_avg10=0.00")
+            producers.produce(tmp_path, name, now=NOW)
+        assert f"signal:{name}" not in owed.check(tmp_path, resolver, now=NOW).reasons
+        return
     if item.get("builtin"):
         monkeypatch.setitem(producers.BUILTIN, name, lambda home, now, **kw: "RED")
         producers.produce(tmp_path, name, now=NOW)

@@ -28,8 +28,10 @@ def _expand(word: str, home, repo, source=None) -> str:
 def declared(repo, home, *, source=None) -> list:
     out = []
     for duty in load(source or repo):
+        spec = duty.get("signal", {})
         item = {"name": duty["name"], "every": duty["every"], "timeout": duty["timeout"],
-                "signal": {"max_age": duty["max_age"], "subscribers": [duty["resolver"]]}}
+                "signal": {"max_age": duty["max_age"], "subscribers": [duty["resolver"]],
+                           "wake_on": spec.get("wake_on", "change")}}
         if duty.get("builtin"):
             item["builtin"] = True
         else:

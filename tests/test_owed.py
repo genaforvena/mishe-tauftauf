@@ -36,6 +36,36 @@ def test_signal_edge_owes_subscriber_only(home):
     assert owed.check(home, "docs", now=100.0).reasons == []
 
 
+def test_state_wake_signal_ignores_a_reading_drift_but_wakes_on_unknown(tmp_path):
+    """A signal whose value is a drifting reading must not wake its resolver on every sample.
+
+    footprint rewrites every ~3 min with new memory numbers; waking health on each is a storm. It
+    wakes only when the reading is not OK (silence, expiry or a failed read).
+    """
+    store.register(tmp_path, "footprint", max_age=600, subscribers=["health"], wake_on="state")
+    store.observe(tmp_path, "footprint", "anon=1.00GiB charged=2.00GiB psi_avg10=0.00", now=100.0, source="t")
+    owed.advance(tmp_path, "health", owed.check(tmp_path, "health", now=100.0))
+    store.observe(tmp_path, "footprint", "anon=1.02GiB charged=2.00GiB psi_avg10=0.00", now=101.0, source="t")
+    assert owed.check(tmp_path, "health", now=101.0).reasons == []
+    owed.advance(tmp_path, "health", owed.check(tmp_path, "health", now=101.0))
+    store.expire(tmp_path, now=800.0)
+    assert owed.check(tmp_path, "health", now=800.0).reasons == ["signal:footprint"]
+
+
+def test_change_wake_signal_still_owes_on_a_value_change(tmp_path):
+    """The default is unchanged: a state-valued signal wakes its resolver on any value change."""
+    store.register(tmp_path, "ci", max_age=60, subscribers=["genome"])
+    store.observe(tmp_path, "ci", "GREEN", now=100.0, source="t")
+    owed.advance(tmp_path, "genome", owed.check(tmp_path, "genome", now=100.0))
+    store.observe(tmp_path, "ci", "RED", now=101.0, source="t")
+    assert owed.check(tmp_path, "genome", now=101.0).reasons == ["signal:ci"]
+
+
+def test_register_refuses_an_unknown_wake_on(home):
+    with pytest.raises(ValueError):
+        store.register(home, "x", max_age=10, subscribers=[], wake_on="sometimes")
+
+
 def test_seen_refresh_does_not_owe(home):
     store.observe(home, "ci", "GREEN", now=100.0, source="t")
     owed.advance(home, "genome", owed.check(home, "genome", now=100.0))

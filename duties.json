@@ -1153,9 +1153,9 @@
       "timeout": 30,
       "max_age": 600,
       "resolver": "health",
-      "signal": {"max_age": 600, "subscribers": ["health"]},
+      "signal": {"max_age": 600, "subscribers": ["health"], "wake_on": "state"},
       "replaces": [],
-      "covers": "honest footprint: latest anon and charged memory and PSI avg10 read from the sample store beside each other, with the newest sample's age; UNKNOWN when any of the three has no sample in the last 15 minutes"
+      "covers": "honest footprint: latest anon and charged memory and PSI avg10 read from the sample store beside each other, with the newest sample's age; UNKNOWN when any of the three has no sample in the last 15 minutes. wake_on=state: the reading drifts every sample, so it wakes health only when the reading is not OK (silence, expiry or a failed read), never on the drift itself"
     }
   ],
   "retired": [

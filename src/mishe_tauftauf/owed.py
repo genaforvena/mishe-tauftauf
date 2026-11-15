@@ -120,7 +120,13 @@ def check(home, role: str, *, now: float) -> Snapshot:
         if role in entry.get("subscribers", []):
             snap.signal_revs[name] = signal_store.rev(home, name)
             if snap.signal_revs[name] > cursor.get("signals", {}).get(name, 0):
-                snap.reasons.append(f"signal:{name}")
+                # Most signals carry a state word (GREEN/RED), so any value change is a state change
+                # worth a wake. A signal registered ``wake_on="state"`` carries a drifting reading
+                # (footprint: bytes of anon/charged memory, rewritten every sample); waking its
+                # resolver on every sample is a storm, and the wake would find nothing owed. It wakes
+                # only when the reading is actionable (not OK: silence, expiry or a failed read).
+                if entry.get("wake_on", "change") != "state" or signal_store.read(home, name, now=now).state != "OK":
+                    snap.reasons.append(f"signal:{name}")
     green = None
     for item in intentions.list_(home, role):
         if not intentions.is_met(home, item, now=now):

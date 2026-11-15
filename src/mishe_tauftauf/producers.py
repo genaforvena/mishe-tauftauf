@@ -266,7 +266,8 @@ def load(home, *, python: str, declared=None) -> list:
         # reoffer a standing fault woke its resolver once and then nothing returned it (yielding.py re-offers only
         # signals registered with reoffer).
         signal_store.register(home, name, max_age=spec["max_age"], subscribers=spec.get("subscribers", []),
-                              reoffer=spec.get("reoffer", DECLARED_REOFFER_SECONDS))
+                              reoffer=spec.get("reoffer", DECLARED_REOFFER_SECONDS),
+                              wake_on=spec.get("wake_on", "change"))
         timeout = item.get("timeout", 120)
         red = ",".join(str(c) for c in item.get("red_codes", [2])) or "none"
         unknown = ",".join(str(c) for c in item.get("unknown_codes", [])) or "none"

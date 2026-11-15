@@ -60,15 +60,24 @@ def registry(home) -> dict:
 
 
 def register(home, name: str, *, max_age: float, subscribers=(), reoffer: float | None = None,
-             now: float | None = None) -> None:
+             wake_on: str = "change", now: float | None = None) -> None:
+    """Declare or refresh a signal's registration.
+
+    ``wake_on`` decides when a subscriber is woken by an edge: ``"change"`` (the default) on any
+    change to the stored value, the rule that fits a signal whose value is a state word; ``"state"``
+    only when the reading is not OK (silence, expiry or a failed read), for a signal whose value is a
+    drifting measurement (``footprint``) that must never wake its resolver on every sample.
+    """
     _check_name(name)
     if not max_age > 0:
         raise ValueError("max_age must be positive")
+    if wake_on not in ("change", "state"):
+        raise ValueError("wake_on must be 'change' or 'state'")
     data = registry(home)
     previous = data.get(name) or {}
     registered_at = previous.get("registered_at", time.time() if now is None else now)
     data[name] = {"max_age": float(max_age), "subscribers": sorted(set(subscribers)),
-                  "registered_at": float(registered_at)}
+                  "registered_at": float(registered_at), "wake_on": wake_on}
     if reoffer is not None:
         data[name]["reoffer"] = float(reoffer)
     write_json(_dir(home) / "registry.json", data)
