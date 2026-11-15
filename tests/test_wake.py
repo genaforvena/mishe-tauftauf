@@ -243,6 +243,26 @@ def test_due_offers_the_first_owed_role_only(home):
     assert started == ["health"]          # roles are checked in the order given; the wake chain does the rest
 
 
+def test_due_respects_the_start_spacing_ledger(home):
+    # The due handler is the timer that retries every OVERDUE_RETRY_SECONDS (120 s, under the 150 s
+    # spacing). A raw start here bypassed the spacing; for a continuously owed role it restarted the
+    # wake faster than a path-triggered debounce could win the slot, starving the debounce into its
+    # systemd TimeoutStartSec (RED failed-mishe-wake-debounce-genome-service, 2026-11-15). It must go
+    # through the shared ledger like every other path.
+    owed.touch_inbox(home, "health")
+    started = []
+
+    def starter(role):
+        started.append(role)
+        return True
+
+    arm.due(home, now=NOW, scheduler=lambda t: None, roles=["health"], starter=starter)
+    assert started == ["health"]          # nothing recent: the owed role is started
+    started.clear()
+    arm.due(home, now=NOW + 1, scheduler=lambda t: None, roles=["health"], starter=starter)
+    assert started == []                  # the first start was recorded: inside the spacing nothing is sent
+
+
 def test_dossier_carries_the_doctrine_and_the_yield_command(home):
     owed.touch_inbox(home, "genome")
     engine = FakeEngine(do_yield)

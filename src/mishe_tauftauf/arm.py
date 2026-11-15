@@ -126,10 +126,16 @@ def due(home, *, now: float, scheduler, roles=(), starter=None) -> list[str]:
     work_state.sweep(home, repo=Path(home).parent, now=now)
     changed = signal_store.expire(home, now=now)
     if starter is not None:
-        from . import owed
+        from . import owed, wake
         for role in roles:
             if owed.check(home, role, now=now).reasons:
-                starter(role)
+                # Start through the shared ledger, not the raw starter: this handler is the timer that
+                # fires every OVERDUE_RETRY_SECONDS (120 s, under the 150 s spacing). A raw start here
+                # bypassed the spacing and, when a role stays owed, restarted it faster than the spacing
+                # so a path-triggered debounce waiting on the same spacing never won the slot and was
+                # killed at its TimeoutStartSec (RED failed-mishe-wake-debounce-genome-service,
+                # 2026-11-15 22:19Z). The role stays owed when the spacing forbids the start.
+                wake._ledger_start(home, role, starter)
                 break
     arm(home, scheduler=scheduler)
     return changed
