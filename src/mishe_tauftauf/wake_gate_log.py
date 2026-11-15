@@ -20,7 +20,7 @@ import json
 import time
 from pathlib import Path
 
-from . import yielding
+from . import state_files, yielding
 
 LOG_NAME = "wake-gate.jsonl"
 
@@ -46,17 +46,7 @@ def dossier_hash(inputs: dict) -> str:
 
 
 def _rows(home) -> list:
-    try:
-        lines = log_path(home).read_text(encoding="utf-8").splitlines()
-    except FileNotFoundError:
-        return []
-    rows = []
-    for line in lines:
-        try:
-            rows.append(json.loads(line))
-        except ValueError:
-            continue            # a torn line must not hide the rows after it
-    return rows
+    return state_files.read_json_lines(log_path(home))
 
 
 def _append(home, row: dict) -> None:
@@ -101,9 +91,9 @@ def record_end(home, role: str, key: str, *, state: str, detail: str) -> None:
     """Append the end row with the yield result when the engine left one. Never raises."""
     try:
         result = None
-        receipt = yielding.receipt_path(home, key)
-        if receipt.exists():
-            result = json.loads(receipt.read_text(encoding="utf-8")).get("result")
+        receipt = state_files.read_json(yielding.receipt_path(home, key))
+        if receipt is not None:
+            result = receipt.get("result")
         _append(home, {"kind": "end", "role": role, "key": key, "ts": int(time.time()),
                        "state": state, "result": result, "detail": (detail or "")[:200]})
     except Exception:  # noqa: BLE001 - shadow logging must not affect the wake

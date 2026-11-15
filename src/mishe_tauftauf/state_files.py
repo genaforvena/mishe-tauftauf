@@ -25,6 +25,24 @@ def read_json(path: Path):
         raise ValueError(f"{path.name} is not valid JSON: {exc}") from exc
 
 
+def read_json_lines(path: Path) -> list:
+    """Decoded rows of an append-only JSONL file; absent is empty.
+
+    A torn or non-JSON line is skipped so it cannot hide the rows after it.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    rows = []
+    for line in lines:
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            continue
+    return rows
+
+
 def write_json(path: Path, payload) -> None:
     """Replace ``path`` atomically; a crash leaves the old or the new file."""
     path.parent.mkdir(parents=True, exist_ok=True)
