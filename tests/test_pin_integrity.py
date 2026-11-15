@@ -58,3 +58,24 @@ def test_no_records_is_unknown(tmp_path, capsys):
     (tmp_path / "patches").mkdir()
     (tmp_path / "runtime").mkdir()
     assert run(tmp_path, capsys)[0] == 3
+
+
+def _ordinary(home, sha, at, phase="delivered"):
+    (home / "work" / "releases").mkdir(parents=True, exist_ok=True)
+    (home / "work" / "releases" / f"{sha}-1.json").write_text(json.dumps(
+        {"phase": phase, "observed": True, "activated": True, "sha": sha, "delivered_at": at}))
+
+
+def test_newer_ordinary_delivery_sets_the_pin(tmp_path, capsys):
+    # The live path records ordinary deliveries under work/releases, not patches/.
+    home = site(tmp_path, "cccccccc")
+    (home / "releases" / ("cccccccc" + "0" * 32)).mkdir()
+    _ordinary(home, "cccccccc" + "0" * 32, 2000000000.0)
+    assert run(home, capsys)[0] == 0
+
+
+def test_rolled_back_ordinary_record_does_not_set_the_pin(tmp_path, capsys):
+    home = site(tmp_path, "bbbbbbbb")
+    (home / "releases" / ("dddddddd" + "0" * 32)).mkdir()
+    _ordinary(home, "dddddddd" + "0" * 32, 2000000000.0, phase="rolled-back")
+    assert run(home, capsys)[0] == 0

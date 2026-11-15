@@ -32,6 +32,26 @@ def _ts(text) -> float | None:
         return None
 
 
+def _ordinary_verified(home: Path):
+    """Ordinary deliveries (work/releases/<sha>-<id>.json) written by the live path.
+
+    The live path no longer writes patches/moving-pin-*.json for ordinary commits;
+    it records phase=delivered with observed and activated true (review may still
+    be pending, which does not hold a rollout). Without reading them the detector
+    named the previous legacy release as the pin and called the live pin RED.
+    """
+    for path in (home / "work" / "releases").glob("*.json"):
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        at = data.get("delivered_at")
+        sha = data.get("sha")
+        if (data.get("phase") == "delivered" and data.get("observed") is True
+                and data.get("activated") is True and isinstance(at, (int, float)) and sha):
+            yield float(at), str(sha)
+
+
 def expected_release(home: Path) -> tuple[str, str]:
     """Return (record id, release dir name) of the newest verified delivery.
 
@@ -48,6 +68,9 @@ def expected_release(home: Path) -> tuple[str, str]:
             sha = path.stem.removeprefix("moving-pin-").split(".", 1)[0]
             if best is None or at > best[0]:
                 best = (at, sha)
+    for at, sha in _ordinary_verified(home):
+        if best is None or at > best[0]:
+            best = (at, sha)
     if best is None:
         raise ValueError("no verified moving-pin record")
     sha = best[1]
