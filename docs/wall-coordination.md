@@ -54,7 +54,8 @@ offered again on the next sweep.
 - `mishe inbox touch ROLE` wakes a role if it is owed a wake.
 - `mishe signal observe NAME VALUE` records a reading for a declared signal.
 - `mishe release revert --id ID` moves the pin back to the previous committed
-  release, for a delivered promotion record `ID`; see [Recovery](recovery.md).
+  release, for a delivered promotion record `ID`; the local recovery notes
+  describe the procedure (that file is not shipped).
 
 ## Messages and outcomes
 
