@@ -128,8 +128,14 @@ them. Updated 2026-11-15 after the operator DM 301336.
    1,782 lines; `discovery.py` readings). Measured: one full scan 11.63 CPU-s,
    674 MB RSS (scan-20261114T224141Z). Most byte work already runs through
    `mishe-tape` and `mishe-records`; what remains is the role fold and the
-   readings that consume the shared snapshot. The next step is per-reading CPU,
-   not a rewrite.
+   readings that consume the shared snapshot. Measured 2026-11-15 on the live feed
+   (301,336 entries): one `entries(facts=True)` read is 2.1-2.2 CPU-s. A profile
+   puts the cost in the per-entry Python loop of `_iter_streamed_feed` (about 300k
+   iterations of two reads and a readline) and the records-child `write` (three
+   pipe writes per entry). Coalescing the three writes into one was A/B-tested and
+   refuted: 2.29 vs 2.15 CPU-s median over three alternating runs, so no change.
+   The next probe is the framer loop, not the writes (artifacts
+   `feed-entries-profile-1047.txt`, `feed-write-ab-1048.txt`).
 
 5. **Role fold and record verification** (`src/mishe_tauftauf/feed.py` fold;
    verification in Python). Ordinary candidate under the whole-system target. Cut
