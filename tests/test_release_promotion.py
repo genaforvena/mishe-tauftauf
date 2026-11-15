@@ -193,6 +193,31 @@ def test_async_review_cannot_overwrite_completed_revert(tree,monkeypatch):
     assert final["review"]["clear"] is True
 
 
+def test_ordinary_review_supplies_retained_recovery_evidence(tree,monkeypatch):
+    # Measured cause: reviewers answered "unknown" for clean ordinary releases
+    # (8ad57e3f, ac94997b) because the request asked for a pre-activation delivery
+    # plan the ordinary path never carries. Supply the retained recovery evidence.
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha);p.materialize(home,repo,old)
+    identity="recovery-evidence"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",
+        source=str(source),paths=["docs/page.md"],check=dict(output="pass",code=0),
+        observe_argv=["probe"],observe=dict(code=0,output="ok"),rollback_available=True,review_pending=True))
+    seen={}
+    def reviewer(home_arg,patch):
+        seen["patch"]=patch;return dict(clear=True,response={})
+    monkeypatch.setattr(p.wall_patch,"review",reviewer)
+    monkeypatch.setattr(p,"config_paths",lambda *a:[])
+    p.review(home,identity)
+    recovery=seen["patch"]["recovery"]
+    assert recovery["previous"]==old
+    assert recovery["observation_argv"]==["probe"]
+    assert recovery["observation_code"]==0
+    assert recovery["rollback_available"] is True
+    assert recovery["revert_argv"][-2:]==["--id",identity]
+    assert "delivery_plan" not in seen["patch"]
+
+
 def test_revert_rereads_review_completed_before_lock_acquisition(tree,monkeypatch):
     from contextlib import contextmanager
     from mishe_tauftauf.state_files import write_json

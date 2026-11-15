@@ -650,6 +650,51 @@ def symbol_context(home, record):
             "source": "shared checkout at review time; patch files use their after bytes"}
 
 
+_PRE_ACTIVATION_QUESTION = (
+    "This is a pre-activation review of code, deterministic tests and the executable "
+    "delivery/recovery plan. Live activation and recovery results are not yet expected: "
+    "apply runs only after this review passes, and verify independently exercises "
+    "revert/reapply before delivery_verified can become true. Assess whether the supplied "
+    "plan can safely produce that evidence; do not treat this review as verified delivery. "
+    "Do the supplied patch bytes and test result support this bounded change under its "
+    "stated cooperating-writer scope? Check code correctness, visible failures and scoped "
+    "runtime recovery. Activation commands are required to restart consumers without "
+    "editing source or performing irreversible external actions; arbitrary shell side "
+    "effects and hostile concurrent writers are outside this scope. Do not require "
+    "task/receipt/branch machinery or whole-system transactions. Suspicious for a concrete "
+    "code defect under these preconditions; unknown for missing essential evidence.")
+
+#: An ordinary release is already delivered when it is reviewed; asking for a
+#: pre-activation plan it does not carry made reviewers answer ``unknown`` for clean
+#: patches (measured on ``8ad57e3f`` and ``ac94997b``, 2026-11-15). For that path the
+#: question names the retained recovery evidence instead of a plan that never exists.
+_POST_DELIVERY_QUESTION = (
+    "This is an asynchronous post-delivery review of an already-activated ordinary scoped "
+    "release. Live activation already ran and required a passing functional observation, "
+    "rolling back automatically on failure; the retained release evidence in context is "
+    "the recovery path, not a plan to be applied. Assess whether the supplied patch bytes, "
+    "test result and retained recovery evidence support this bounded change under its "
+    "stated cooperating-writer scope; do not treat this review as verified delivery. Check "
+    "code correctness, visible failures and scoped runtime recovery. Recovery commands are "
+    "required to restore consumers without editing source or performing irreversible "
+    "external actions; arbitrary shell side effects and hostile concurrent writers are "
+    "outside this scope. Do not require task/receipt/branch machinery or whole-system "
+    "transactions. Suspicious for a concrete code defect under these preconditions; unknown "
+    "for missing essential evidence.")
+
+
+def review_question(record):
+    """The question for the review path the record belongs to.
+
+    The pre-activation gate (``check`` then ``review`` before ``apply``) asks
+    whether a delivery/recovery plan can produce its evidence. The ordinary async
+    review examines an already-delivered release, whose recovery is retained
+    evidence rather than a plan to run; ``release_promotion`` marks that path with
+    ``review_kind = "ordinary-post-delivery"``.
+    """
+    return _POST_DELIVERY_QUESTION if record.get("review_kind") == "ordinary-post-delivery" else _PRE_ACTIVATION_QUESTION
+
+
 def review(home, record):
     from .codex_review import validate_response
     config_path = home / "patch-review.json"
@@ -674,6 +719,8 @@ def review(home, record):
             difflib.unified_diff(texts["runtime_before"].splitlines(True), texts["after"].splitlines(True), fromfile=name+" running before", tofile=name+" after"))
         evidence["files"][name] = changes
     evidence["gate_source"] = Path(__file__).read_text()
+    if "recovery" in record:
+        evidence["recovery"] = record["recovery"]
     if "delivery_plan" in record:
         plan = record["delivery_plan"]
         evidence["delivery_plan"] = {key: value for key, value in plan.items() if key != "artifacts"}
@@ -690,7 +737,7 @@ def review(home, record):
     body = json.dumps(evidence, sort_keys=True)
     reference = "exact scoped patch bytes and test result"
     request = {"version": 1, "input_hash": hashlib.sha256(body.encode()).hexdigest(), "body": "Review the complete scoped patch and test evidence supplied in context.",
-        "questions": [{"id": "PATCH", "question": "This is a pre-activation review of code, deterministic tests and the executable delivery/recovery plan. Live activation and recovery results are not yet expected: apply runs only after this review passes, and verify independently exercises revert/reapply before delivery_verified can become true. Assess whether the supplied plan can safely produce that evidence; do not treat this review as verified delivery. Do the supplied patch bytes and test result support this bounded change under its stated cooperating-writer scope? Check code correctness, visible failures and scoped runtime recovery. Activation commands are required to restart consumers without editing source or performing irreversible external actions; arbitrary shell side effects and hostile concurrent writers are outside this scope. Do not require task/receipt/branch machinery or whole-system transactions. Suspicious for a concrete code defect under these preconditions; unknown for missing essential evidence."}],
+        "questions": [{"id": "PATCH", "question": review_question(record)}],
         "context": {"context_complete": context_complete, "evidence_references": [reference], "patch": evidence}}
     # The outer budget must exceed the reviewer's own model-call budget, or the
     # gate kills a reviewer that would have finished and reports a false refusal.

@@ -461,6 +461,44 @@ def test_review_passes_the_configured_outer_budget_to_the_worker(tmp_path, monke
     assert wall_patch.status(home, "change")["phase"] == "tested"
 
 
+def test_review_question_matches_the_review_path():
+    # The pre-activation gate (check then review before apply) asks about a
+    # delivery/recovery plan; the ordinary async review of an already-delivered
+    # release asks about retained evidence. Measured cause: clean ordinary releases
+    # 8ad57e3f and ac94997b drew "unknown" because they were asked for a plan the
+    # ordinary path never carries.
+    assert "pre-activation review" in wall_patch.review_question({})
+    ordinary = wall_patch.review_question({"review_kind": "ordinary-post-delivery"})
+    assert "post-delivery review" in ordinary
+    assert "delivery_verified" not in ordinary
+
+
+def test_review_includes_retained_recovery_evidence(tmp_path, monkeypatch):
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    (home / "patch-review.json").write_text(json.dumps({"command": [sys.executable, "-c", "pass"]}))
+    seen = {}
+
+    def spy(command, encoded, timeout):
+        seen["request"] = json.loads(encoded.decode())
+        raise RuntimeError("stop after capture")
+
+    monkeypatch.setattr(wall_patch, "_worker", spy)
+    record = wall_patch.status(home, "change")
+    import base64
+    for name, values in record["files"].items():
+        values["after"] = {"bytes": base64.b64encode(b"after\n").decode(), "mode": 0o644}
+    record["test"] = {"log": str(tmp_path / "test.log")}
+    (tmp_path / "test.log").write_text("ok\n")
+    record["recovery"] = {"previous": "old", "observation_argv": ["probe"], "revert_argv": ["revert"]}
+    record["review_kind"] = "ordinary-post-delivery"
+    with pytest.raises(RuntimeError, match="stop after capture"):
+        wall_patch.review(home, record)
+    assert seen["request"]["context"]["patch"]["recovery"] == record["recovery"]
+    assert "post-delivery review" in seen["request"]["questions"][0]["question"]
+
+
 def test_empty_reviewer_output_is_retried_then_succeeds(tmp_path, monkeypatch):
     # A reviewer can exit 0 with empty stdout, which json.loads turned into an
     # unattributable JSONDecodeError. Empty output must be retried, not fatal.

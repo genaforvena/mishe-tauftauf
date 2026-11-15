@@ -509,6 +509,19 @@ def review(home, identity):
         before=wall_patch.snapshot(old/name); after=wall_patch.snapshot(source/name)
         patch["files"][name]=dict(before=before,runtime_before=before,after=after)
     patch["rationale"]="Asynchronous ordinary scoped release review. Tests passed and actual caller probe succeeded. Review for concrete source defects; recovery configuration and probe evidence are retained."
+    patch["review_kind"]="ordinary-post-delivery"
+    # The review question asks about the release's recovery path, so supply the
+    # retained evidence it names rather than only asserting it is retained: the
+    # previous release, the observation argv actually run, the automatic rollback
+    # flag and the explicit revert command that restores config, re-points the pin
+    # and re-runs the probe.
+    patch["recovery"]=dict(
+        previous=record["previous"],
+        rollback_available=record.get("rollback_available"),
+        observation_argv=record.get("observe_argv"),
+        observation_code=(record.get("observe") or {}).get("code"),
+        revert_argv=[sys.executable,"-m","mishe_tauftauf","--home",str(home),"release","revert","--id",identity],
+    )
     try:
         result = dict(review=wall_patch.review(Path(home),patch))
     except (OSError,ValueError,subprocess.SubprocessError) as exc:
