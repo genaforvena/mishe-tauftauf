@@ -56,3 +56,57 @@ def duty_args(argv=None):
     parser.add_argument("--home", type=pathlib.Path, required=True)
     parser.add_argument("--repo", type=pathlib.Path, required=True)
     return parser.parse_args(argv)
+
+
+def load_rows(ledger: pathlib.Path) -> list[dict]:
+    """Ledger rows as dicts; an absent ledger has none."""
+    rows = []
+    if not ledger.exists():
+        return rows
+    for line in ledger.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            rows.append(json.loads(line))
+    return rows
+
+
+_MARK = "COMMIT\x00"
+FIX_PREFIXES = ("fix", "revert")
+
+
+def is_fix(subject: str) -> bool:
+    """True when a commit subject is a fix or a revert."""
+    return subject.lower().startswith(FIX_PREFIXES)
+
+
+def parse_git_log(text: str) -> list[dict]:
+    """Parse ``git log --name-only`` output written with the ``_MARK`` format."""
+    commits: list[dict] = []
+    current: dict | None = None
+    for line in text.splitlines():
+        if line.startswith(_MARK):
+            _, sha, ct, subject = line.split("\x00", 3)
+            current = {"sha": sha, "ct": int(ct), "subject": subject, "paths": set()}
+            commits.append(current)
+        elif line.strip() and current is not None:
+            current["paths"].add(line.strip())
+    return commits
+
+
+def git_commits(repo: pathlib.Path) -> list[dict]:
+    """Every commit in the checkout with its changed paths, parsed from git log."""
+    out = subprocess.run(
+        ["git", "log", "--all", "--name-only",
+         "--format=COMMIT%x00%H%x00%ct%x00%s"],
+        cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout
+    return parse_git_log(out)
+
+
+def outcome_args(argv=None):
+    """The measurement's flags: --repo CHECKOUT and --ledger PATH (both required), optional --now."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Read-only commit-risk ground-truth measurement.")
+    parser.add_argument("--repo", required=True, type=pathlib.Path)
+    parser.add_argument("--ledger", required=True, type=pathlib.Path)
+    parser.add_argument("--now", type=float, default=None)
+    return parser.parse_args(argv)

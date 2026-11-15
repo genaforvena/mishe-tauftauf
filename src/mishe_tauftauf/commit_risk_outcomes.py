@@ -9,48 +9,24 @@ The proxy is weak on purpose: a fix-up is a sign that a commit needed follow-up 
 not proof that it was risky. A row whose commit is missing from git, or a window that
 has not yet elapsed, is counted as missing or pending, never as clean. With no aged row
 the state is UNKNOWN.
+
+Parsing (ledger JSON, ``git log`` output, command-line flags) lives in
+``commit_risk_text``; this module works on plain values only.
 """
 from __future__ import annotations
 
-import json
-import pathlib
-import subprocess
 import sys
 import time
 
+from mishe_tauftauf import commit_risk_text as text
+
 WINDOW = 72 * 3600
-FIX_PREFIXES = ("fix", "revert")
-_MARK = "COMMIT\x00"
-
-
-def load_rows(ledger: pathlib.Path) -> list[dict]:
-    rows = []
-    if not ledger.exists():
-        return rows
-    for line in ledger.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            rows.append(json.loads(line))
-    return rows
-
-
-def parse_git_log(text: str) -> list[dict]:
-    """Parse ``git log --name-only`` output written with the ``_MARK`` format."""
-    commits: list[dict] = []
-    current: dict | None = None
-    for line in text.splitlines():
-        if line.startswith(_MARK):
-            _, sha, ct, subject = line.split("\x00", 3)
-            current = {"sha": sha, "ct": int(ct), "subject": subject, "paths": set()}
-            commits.append(current)
-        elif line.strip() and current is not None:
-            current["paths"].add(line.strip())
-    return commits
 
 
 def follow_ups(rows: list[dict], commits: list[dict], now: float, *, window: int = WINDOW) -> list[dict]:
-    """Classify each ledger row as ``missing``, ``pending``, ``clean`` or ``followed``."""
+    """Classify each ledger row as ``missing``, ``pending``, ``clean``, ``followed`` or ``unscored``."""
     by_sha = {c["sha"]: c for c in commits}
-    fixes = [c for c in commits if c["subject"].lower().startswith(FIX_PREFIXES)]
+    fixes = [c for c in commits if text.is_fix(c["subject"])]
     results = []
     for row in rows:
         sha = row.get("sha")
@@ -91,25 +67,10 @@ def summary(results: list[dict]) -> tuple[str, str]:
     return "MEASURED", f"{followed} of {len(aged)} rows aged {WINDOW // 3600} h had a later fix or revert on their paths{note}"
 
 
-def git_commits(repo: pathlib.Path) -> list[dict]:
-    out = subprocess.run(
-        ["git", "log", "--all", "--name-only",
-         "--format=COMMIT%x00%H%x00%ct%x00%s"],
-        cwd=repo, capture_output=True, text=True, check=True,
-    ).stdout
-    return parse_git_log(out)
-
-
 def main(argv=None) -> int:
-    import argparse
-
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--repo", required=True, type=pathlib.Path)
-    ap.add_argument("--ledger", required=True, type=pathlib.Path)
-    ap.add_argument("--now", type=float, default=None)
-    args = ap.parse_args(argv)
+    args = text.outcome_args(argv)
     now = time.time() if args.now is None else args.now
-    results = follow_ups(load_rows(args.ledger), git_commits(args.repo), now)
+    results = follow_ups(text.load_rows(args.ledger), text.git_commits(args.repo), now)
     state, line = summary(results)
     print(f"commit-risk-outcomes: {state} {line}")
     return 0

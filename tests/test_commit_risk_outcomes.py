@@ -1,4 +1,5 @@
 from mishe_tauftauf import commit_risk_outcomes as cro
+from mishe_tauftauf import commit_risk_text as crt
 
 H = 3600
 NOW = 1_000_000 * H
@@ -16,7 +17,7 @@ def test_parse_git_log_reads_subject_and_paths():
         "COMMIT\x00bbb\x00200\x00docs\n"
         "README.md\n"
     )
-    commits = cro.parse_git_log(text)
+    commits = crt.parse_git_log(text)
     assert [c["sha"] for c in commits] == ["aaa", "bbb"]
     assert commits[0]["paths"] == {"src/a.py"}
     assert commits[1]["subject"] == "docs"
