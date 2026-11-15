@@ -9,6 +9,9 @@ codex account that has not run lately is STALE and the router skips it.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 from . import budget_producer, codex_text
@@ -94,3 +97,31 @@ def account_row(now: float, sessions: Path = SESSIONS) -> dict | None:
         return None
     state = "FRESH" if all(v["state"] == "FRESH" for v in windows.values()) else "STALE"
     return {"provider": "openai-codex", "state": state, "observed_at": reading["at"], "windows": windows}
+
+
+PROBE_MODEL = "gpt-6-luna"
+PROBE_AFTER_S = 480.0      # a reading older than this is refreshed (the producer's freshness rule is 900 s)
+PROBE_TIMEOUT_S = 90
+
+
+def refresh(now: float, sessions: Path = SESSIONS, *, run=subprocess.run) -> bool:
+    """Write a fresh rate_limits reading by one tiny ``codex exec`` when the newest one is old.
+
+    The router skips an account whose window is not FRESH, so without a reader an idle codex-a would stay
+    STALE for ever and no codex wake could start. The probe sends one word, uses a read-only sandbox in an
+    empty directory and lets the CLI write its own rollout; no credential is read or copied. Returns True when
+    a probe ran. A missing CLI or a failed probe changes nothing: the account then stays STALE, never FRESH.
+    """
+    reading = latest_reading(sessions)
+    if reading is not None and now - reading["at"] < PROBE_AFTER_S:
+        return False
+    cli = shutil.which("codex")
+    if cli is None:
+        return False
+    with tempfile.TemporaryDirectory(prefix="codex-probe-") as empty:
+        try:
+            run([cli, "exec", "--skip-git-repo-check", "-s", "read-only", "-m", PROBE_MODEL, "--json", "-C", empty, "-"],
+                input="Reply with the single word ok.", text=True, capture_output=True, timeout=PROBE_TIMEOUT_S)
+        except (OSError, subprocess.SubprocessError):
+            return False
+    return True

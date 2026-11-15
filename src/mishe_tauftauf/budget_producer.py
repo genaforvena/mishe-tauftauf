@@ -19,6 +19,7 @@ import json
 import math
 import os
 import tempfile
+import time
 from pathlib import Path
 
 from mishe_tauftauf.quota_history_text import read_jsonl_rows, split_quota_label
@@ -597,7 +598,8 @@ def main(home: Path, out: Path | None = None) -> int:
     # codex-a windows come from the codex CLI's own rollouts (read-only, no credential); they replace
     # the omp status row, which is UNREADABLE while its stored login is dead.
     from . import codex_usage
-    codex = codex_usage.account_row(now)
+    probed = codex_usage.refresh(now)
+    codex = codex_usage.account_row(max(now, time.time()) if probed else now)
     if codex is not None:
         status = dict(status or {}, accounts=dict((status or {}).get("accounts") or {}, **{codex_usage.CODEX_ALIAS: codex}))
     payload = build_budget(status, tap, now, load_burn_history(home, now))

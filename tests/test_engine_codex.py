@@ -100,3 +100,18 @@ def test_other_limit_ids_and_missing_sessions_give_no_row(tmp_path):
     _rollout(tmp_path, "b", [_token_count("2026-11-15T14:00:00.000Z", 1.0, 1.0, now + 60, now + 60, limit="other")])
     assert codex_usage.account_row(now, sessions=tmp_path) is None
     assert codex_usage.account_row(now, sessions=tmp_path / "missing") is None
+
+
+def test_refresh_probes_only_when_the_reading_is_old(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(codex_usage.shutil, "which", lambda name: "/bin/codex")
+    run = lambda argv, **kw: calls.append((argv, kw))
+    assert codex_usage.refresh(1_000_000.0, sessions=tmp_path, run=run) is True  # no reading at all
+    cmd, kw = calls[0]
+    assert cmd[:2] == ["/bin/codex", "exec"] and "read-only" in cmd and cmd[cmd.index("-m") + 1] == "gpt-6-luna"
+    assert kw["input"] and kw["timeout"] == codex_usage.PROBE_TIMEOUT_S
+    monkeypatch.setattr(codex_usage, "latest_reading", lambda sessions=None, **k: {"at": 999_900.0, "rate_limits": {}})
+    assert codex_usage.refresh(1_000_000.0, sessions=tmp_path, run=run) is False  # fresh enough
+    monkeypatch.setattr(codex_usage.shutil, "which", lambda name: None)
+    assert codex_usage.refresh(2_000_000.0, sessions=tmp_path, run=run) is False  # no CLI: nothing runs
+    assert len(calls) == 1
