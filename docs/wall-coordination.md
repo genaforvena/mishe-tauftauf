@@ -151,6 +151,15 @@ delivery explicitly with:
 mishe release request --sha FULL_SHA --previous FULL_SHA --patch PATCH_ID
 ```
 
+An ordinary delivery enqueues that review itself. Once the pin has moved, the
+ordinary path starts a transient unit that runs `mishe release review --id
+RELEASE_ID`, and the periodic `mishe work poll` merges the verdict into the
+delivery record (`merge_reviews`). The record then reads `review_pending: false`
+with a `review_state` of `clear` or `action-needed`, and a non-clear finding on a
+delivered release raises an intention due within six hours for the owner to decide
+a concrete fix or a revert. The review reads the scoped release diff for concrete
+source defects; it is evidence after the pin has moved, never a gate that holds it.
+
 The plan names four commands: `activate` restarts the affected consumers,
 `observe` checks the live ones afterwards, `revert_observe` checks the restored
 consumer, and `revert` restores the old consumer pin. `check` refuses a plan with no

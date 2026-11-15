@@ -169,7 +169,8 @@ check passed — the phase is `tested` or `reviewed` — that its test exited 0,
 delivery plan has the `activate`, `observe` and `revert_observe` steps, and that
 every changed path is in the record's file list. It does not require a review
 verdict: the deterministic check is the gate, and review is asynchronous evidence
-after the pin moves. The plan the gate records also carries `revert`, the separate
+after the pin moves (an ordinary delivery enqueues that review once the pin has
+moved; see [Working as a durable mind](wall-coordination.md)). The plan the gate records also carries `revert`, the separate
 argv that restores the old consumer pin. `check` refuses a plan without one, and
 `revert` refuses a plan whose only restore path is its own activation, before any
 runtime byte moves, because re-running the activation re-pins the new release and is
