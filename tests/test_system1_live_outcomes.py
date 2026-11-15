@@ -63,3 +63,40 @@ def test_wake_gate_shadow_rows_never_count(tmp_path):
 def test_wake_gate_live_action_counts(tmp_path):
     _write(tmp_path / mod.WAKE_GATE_LIVE_LOG, [{"gate": "live", "action": "skip", "at": NOW - 60}])
     assert mod.wake_gate_check(tmp_path, NOW)[0] == mod.DONE
+
+
+def _start(decision=None):
+    return {"kind": "start", "role": "pub", "key": "k", "ts": 1, "decision": decision}
+
+
+def test_shadow_null_rows_never_pass_on_count(tmp_path):
+    # Counterexample from the register audit: 263 rows, every start decision null, passed a row count.
+    rows = [_start() for _ in range(263)]
+    _write(tmp_path / "decision-log" / "wake-gate.jsonl", rows)
+    code, detail = mod.shadow_check(tmp_path)
+    assert code == mod.OPEN
+    assert "0 of 263" in detail
+
+
+def test_shadow_answered_rows_pass_at_fifty(tmp_path):
+    answered = [_start({"choice": "wake", "confidence": 0.9}) for _ in range(50)]
+    _write(tmp_path / "decision-log" / "wake-gate.jsonl", answered + [_start() for _ in range(20)])
+    assert mod.shadow_check(tmp_path)[0] == mod.DONE
+    _write(tmp_path / "decision-log" / "wake-gate.jsonl", answered[:49])
+    assert mod.shadow_check(tmp_path)[0] == mod.OPEN
+
+
+def test_shadow_empty_choice_and_end_rows_do_not_count(tmp_path):
+    rows = [_start({"choice": ""}) for _ in range(30)] + [_start({"choice": None}) for _ in range(30)]
+    rows += [{"kind": "end", "decision": {"choice": "wake"}} for _ in range(30)]
+    _write(tmp_path / "decision-log" / "wake-gate.jsonl", rows)
+    assert mod.shadow_check(tmp_path)[0] == mod.OPEN
+
+
+def test_shadow_missing_ledger_is_open_and_corrupt_is_unknown(tmp_path):
+    assert mod.shadow_check(tmp_path)[0] == mod.OPEN
+    (tmp_path / "decision-log").mkdir()
+    (tmp_path / "decision-log" / "wake-gate.jsonl").write_text("{bad\n")
+    code = subprocess.run([sys.executable, "-I", str(SCRIPT), "--home", str(tmp_path), "--check", "shadow"],
+                          capture_output=True).returncode
+    assert code == mod.UNKNOWN

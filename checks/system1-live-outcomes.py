@@ -7,6 +7,8 @@ A caller in the source tree proves wiring, not use. These checks read the ledger
                was actually decided (not escalated or escaped), the newest one within 24 h, and the
                decision budget ledger (XDG state, ``decision-routerai-budget.json``) records credits spent
                on decisions. A shadow or unrun caller never passes.
+``shadow``     the P0 shadow log has >= 50 wake starts carrying a System One answer (decision.choice);
+               a row count alone never passes, because starts written with ``decision: null`` are not answers.
 ``wake-gate``  a wake gate that acts is live: SITE/decision-log/wake-gate-live.jsonl has a row with
                ``gate == "live"`` and ``action`` in {"skip", "wake"} within 24 h. The shadow log
                (wake-gate.jsonl, ``decision`` null, no action) never counts.
@@ -26,6 +28,8 @@ WINDOW_S = 24 * 3600
 DECISION_LOG = "decision-log/commit-risk.jsonl"
 WAKE_GATE_LIVE_LOG = "decision-log/wake-gate-live.jsonl"
 BUDGET_NAME = "decision-routerai-budget.json"
+SHADOW_LOG = "decision-log/wake-gate.jsonl"
+SHADOW_MIN = 50
 
 
 def _rows(path):
@@ -86,10 +90,27 @@ def wake_gate_check(home, now):
     return DONE, f"{len(live)} live wake-gate actions in the last 24 h"
 
 
+def shadow_check(home):
+    """(code, detail) for the P0 shadow log: 50 wake starts that carry a System One answer.
+
+    A row count alone is not evidence: start rows written before any model answer exist have
+    ``decision: null`` and must not count. Only a start row whose ``decision`` is an object with a
+    non-empty ``choice`` string is a shadow answer.
+    """
+    rows = _rows(home / SHADOW_LOG)
+    starts = [r for r in rows if r.get("kind") == "start"]
+    answered = [r for r in starts if isinstance(r.get("decision"), dict)
+                and isinstance(r["decision"].get("choice"), str) and r["decision"]["choice"]]
+    detail = f"{len(answered)} of {len(starts)} wake starts carry a System One answer (need 50)"
+    if len(answered) >= SHADOW_MIN:
+        return DONE, detail
+    return OPEN, detail
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--home", type=Path, required=True)
-    ap.add_argument("--check", choices=("decision", "wake-gate"), required=True)
+    ap.add_argument("--check", choices=("decision", "wake-gate", "shadow"), required=True)
     ap.add_argument("--budget", type=Path, default=None,
                     help="decision budget ledger (default: XDG state dir, decision-routerai-budget.json)")
     ap.add_argument("--now", type=float, default=None)
@@ -100,6 +121,8 @@ def main(argv=None):
             state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
             budget = a.budget or state / "mishe-tauftauf" / BUDGET_NAME
             code, detail = decision_check(a.home, now, budget)
+        elif a.check == "shadow":
+            code, detail = shadow_check(a.home)
         else:
             code, detail = wake_gate_check(a.home, now)
     except (OSError, ValueError) as exc:
