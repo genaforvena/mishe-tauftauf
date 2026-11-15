@@ -93,7 +93,10 @@ def loaded_pins(environment_text):
 
 def crate_binaries(manifest_text):
     """Binary names a Cargo.toml (external text, decoded at this boundary) builds: its [[bin]] names, else the package name."""
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10: tomllib arrived in 3.11
+        import tomli as tomllib
     manifest = tomllib.loads(manifest_text)
     named = [entry["name"] for entry in manifest.get("bin", []) if isinstance(entry, dict) and entry.get("name")]
     return named or [manifest["package"]["name"]]
