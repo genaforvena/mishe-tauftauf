@@ -66,8 +66,10 @@ def saw_provider_output(stream: Path) -> bool:
     return False
 
 
-# Provider text for an account that cannot pay for another call (MiniMax 402 "Token Plan usage limit ... insufficient_balance").
-QUOTA_MARKERS = ("insufficient_balance", "usage limit has been reached", "usage limit", "status 402", "402 ")
+# Provider text for an account that cannot pay for another call (MiniMax 402 "Token Plan usage limit ... insufficient_balance";
+# Qianfan 403 "Access denied due to overdue account" (param=account_overdue), a paywall the account clears only when paid).
+QUOTA_MARKERS = ("insufficient_balance", "usage limit has been reached", "usage limit", "status 402", "402 ",
+                 "account_overdue", "overdue account")
 
 
 def is_quota_error(error: str | None) -> bool:

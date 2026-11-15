@@ -396,7 +396,15 @@ def test_quota_error_text_is_distinguished_from_model_refusal(tmp_path):
         '"errorMessage":"Token Plan usage limit has been reached (2067) (type=insufficient_balance_error)"}}\n')
     error = engine_omp.refused_before_effect(quota)
     assert engine_omp.is_quota_error(error)
+    overdue = tmp_path / "overdue.out.jsonl"
+    overdue.write_text(
+        '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error",'
+        '"errorMessage":"403 Access denied due to overdue account '
+        '(type=access_denied param=account_overdue)"}}\n')
+    assert engine_omp.is_quota_error(engine_omp.refused_before_effect(overdue))
     assert not engine_omp.is_quota_error("400 This Go model is hosted outside Europe")
+    # a generic access denial is not a paywall: only the overdue-account strings cool the account
+    assert not engine_omp.is_quota_error("403 access_denied: model not enabled for this key")
     assert not engine_omp.is_quota_error(None)
 
 
