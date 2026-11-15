@@ -63,6 +63,10 @@ def _site_copy(tmp_path: Path, publisher_source: str) -> Path:
     tool.chmod(0o755)
     shutil.copy(TERMS, home / "pub" / "privacy-terms.json")
     shutil.copy(CREDENTIALS, home / "pub" / "access" / "devto.env")
+    # The live site keeps the committed privacy check beside pub/ (SITE/checks/),
+    # and the publisher finds its pre-flight there.  Mirror that layout.
+    (home / "checks").mkdir()
+    shutil.copy(ROOT / "checks" / "pub-privacy-scan.py", home / "checks" / "pub-privacy-scan.py")
     return home
 
 
