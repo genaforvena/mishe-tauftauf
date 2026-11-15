@@ -75,8 +75,14 @@ sample older than this is not used: comparing a published figure against a
 stale counter would report drift where there is only an old sample.
 """
 
-NOTICE = re.compile(r"^\s*(>\s*)?\**\s*(correction|update|earlier correction|superseded)\b", re.I)
-"""A correction or update notice.  Its numbers are history, not a claim."""
+NOTICE = re.compile(r"^\s*(>\s*)?\**\s*(correction|earlier correction)\b", re.I)
+"""A correction notice.  Its numbers are history, not a claim.
+
+Only a correction opens a notice.  An "Update:" or "Superseded:" line is an
+ordinary sentence, and a figure in it about the plant now is a claim; the
+reviewer's finding on release f5f7c10b showed that matching those words hid
+live claims from the detector.
+"""
 
 BULLET = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
 """A list item."""

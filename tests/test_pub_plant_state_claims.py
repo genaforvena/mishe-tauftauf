@@ -136,6 +136,13 @@ def test_a_figure_inside_a_correction_notice_is_not_a_claim():
     assert failures == []
 
 
+def test_an_update_line_is_not_a_notice_so_its_live_figure_is_checked():
+    """An 'Update:' opener is an ordinary sentence; its live figure is a claim."""
+    failures, _ = _failures({"1": "Update: the current ledger scan finds 123 rows whose "
+                                 "original evidence is permanently lost.\n"})
+    assert failures and "123" in failures[0]
+
+
 def test_a_figure_the_plant_publishes_no_reading_for_is_undecidable():
     """A reading the plant cannot supply is UNKNOWN, never a pass."""
     failures, undecidable = check.check(
