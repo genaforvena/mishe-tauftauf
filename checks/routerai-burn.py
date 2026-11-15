@@ -79,11 +79,16 @@ def main(argv=None) -> int:
     p.add_argument("--min-span-h", type=float, default=1.0)
     p.add_argument("--max-age", type=float, default=900.0)
     p.add_argument("--now", type=float, default=None)
+    p.add_argument("--as-initiative", action="store_true",
+                   help="acceptance exit codes for checks/initiatives.py: 0 done, 1 open (was RED), 3 unknown")
     args = p.parse_args(argv)
     now = args.now if args.now is not None else time.time()
     rows = read_rows(args.home / HISTORY)
     code, report = judge(rows, now, args.limit, args.window_h, args.band, args.min_span_h, args.max_age)
     print(json.dumps(report, sort_keys=True))
+    if args.as_initiative and code == 2:
+        # RED is "not done and past due" for an initiative: the initiatives detector reads only 0/1/else.
+        return 1
     return code
 
 

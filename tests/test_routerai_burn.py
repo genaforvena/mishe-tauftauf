@@ -44,3 +44,16 @@ def test_burn_check_verdicts(tmp_path):
     assert burn.judge(short, now, 200, 24, 0.25, 1.0, 900)[0] == 3
     stale = [(now - 10 * 3600, 200.0), (now - 3 * 3600, 180.0)]
     assert burn.judge(stale, now, 200, 24, 0.25, 1.0, 900)[0] == 3
+
+
+def test_as_initiative_maps_red_to_open_and_keeps_unknown(tmp_path, capsys):
+    # Burn RED is "not done" for the initiative (exit 1 = open); UNKNOWN must stay UNKNOWN (3).
+    mod = _load_check()
+    home = tmp_path
+    (home / "engine").mkdir()
+    rows = [{"epoch": 1000.0 + i * 3600, "balance": 200.0 - 14.0 * i} for i in range(4)]
+    (home / "engine" / "routerai-balance.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    now = rows[-1]["epoch"] + 60
+    assert mod.main(["--home", str(home), "--now", str(now)]) == 2
+    assert mod.main(["--home", str(home), "--now", str(now), "--as-initiative"]) == 1
+    assert mod.main(["--home", str(tmp_path / "empty"), "--now", str(now), "--as-initiative"]) == 3
