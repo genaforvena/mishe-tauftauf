@@ -261,12 +261,18 @@ def test_a_number_word_is_read():
     assert "the plant reads 41" in failures[0]
 
 
-def test_the_scope_dates_of_a_body_are_read_per_line():
-    """A dated scope covers the lines under it and not the lines above."""
+def test_the_scope_of_a_body_is_read_per_line():
+    """The scope that governs a line covers the lines under it, not above."""
     body = "## Checked on 11 November\n\n- Nineteen units still name a release directly.\n"
-    dated = check.scope_dates(body)
-    assert dated[0] is True
-    assert dated[2] is True
+    scope = check.scope_lines(body)
+    assert "Checked on 11 November" in scope[0]
+    assert "Checked on 11 November" in scope[1]
+    assert "Checked on 11 November" in scope[2]
+    # A scope governs what comes after it, so the paragraph above it is not
+    # governed by it.
+    body = "- Nineteen units still name a release directly.\n\n## Checked on 11 November\n"
+    scope = check.scope_lines(body)
+    assert "Checked on 11 November" not in scope[0]
 
 
 def test_the_self_test_passes():

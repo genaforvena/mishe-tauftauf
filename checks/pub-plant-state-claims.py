@@ -47,6 +47,19 @@ its section.  A figure whose own clause is in the past tense ("the gap was 3
 commits", "the scan found 126 rows") is a record of a reading, so it is not a
 claim about the plant now.
 
+The same reasoning separates the corpus's third kind of figure.  A post that
+says "at `d67bd016` the retired repository carries 377 files under
+`docs/reviews/`" is not describing this plant at all.  It names a *frozen*
+tree in another repository, so its figures cannot drift as the plant moves --
+but they can drift when a later author corrects one and gets the tree wrong,
+and nothing read them.  Nine published bodies state such figures, so the rule
+is registered against that tree: each entry carries ``retired`` and is scoped
+to a body that names it (``RETIRED_SCOPE``), and ``read_retired_tree`` is the
+live reading.  Because a frozen tree cannot change, a past-tense verb around
+one of its figures describes the tree rather than a past reading, so the
+past-tense guard does not apply to these entries.  A retired-repository figure
+the tree cannot answer is UNKNOWN, never a pass.
+
 Verdicts: GREEN when every live claim matches, RED when one does not,
 UNKNOWN when a reading the plant publishes cannot be read.  Exit codes:
 0 GREEN, 2 RED, 3 UNKNOWN.  A detector that cannot read its input answers
@@ -143,6 +156,17 @@ for _tens_name, _tens in (("sixty", 60), ("seventy", 70), ("eighty", 80), ("nine
         WORDS["%s-%s" % (_tens_name, _unit_name)] = _tens + _unit
 """Number words the posts use for the figures they state (up to ninety-nine)."""
 
+RETIRED_SCOPE = re.compile(
+    r"\bretired\b|d67bd016|lte-workstation", re.I)
+"""How a body says it is talking about the retired repository.
+
+A figure about a tree that has stopped moving is only a retired-repository
+figure when the sentence, its clause, or the paragraph or section around it
+names that tree.  Without this bound the rule would read any "N files under
+`docs/reviews/`" anywhere in the corpus as a claim about a tree no post is
+discussing -- the same overreach that made the broad hex rule cry wolf.
+"""
+
 REGISTRY = (
     {
         "name": "ledger-permanent-loss",
@@ -230,6 +254,146 @@ REGISTRY = (
         "reading": "the cells with no landed review",
         "value": "field_review_pending",
     },
+    # A figure about a tree that has stopped moving.  A post that says "at
+    # `d67bd016` the retired repository carries 377 files under
+    # `docs/reviews/`" is not describing this plant at all: it names a
+    # *frozen* tree in another repository, so its figures cannot drift as
+    # the plant moves -- but they can drift when a later author corrects one
+    # and gets the tree wrong, and nothing read them.  Each rule below is
+    # scoped to a body that names that tree (``RETIRED_SCOPE``) and reads
+    # its value from the commit the posts cite.
+    #
+    # A retired figure is *always* a claim about the frozen tree, whatever
+    # its tense: "carried", "named" and "left" describe a tree that has
+    # stopped moving, not a past reading of the live plant, so the
+    # past-tense guard that turns a stale live figure into history does not
+    # apply to these entries.  The scope bound is the guard instead.  Each
+    # pattern is written to a wording the corpus actually carries, and the
+    # self-test pins those wordings so a pattern that stops matching is
+    # caught.
+    {
+        # "docs/reviews holds 377 entries of which 376 are markdown" and the
+        # direct form "377 files under `docs/reviews/`".  The count is of
+        # directory entries, not of markdown files: the directory holds one
+        # `.json` beside the markdown.
+        "name": "retired-reviews-entries",
+        "pattern": re.compile(
+            r"([0-9]+|[a-z-]+)\s+(?:entries\b|files?\s+under\s+"
+            r"`?docs/reviews/)", re.I),
+        "reading": "the entries in the retired repository's docs/reviews",
+        "value": "retired_reviews_entries",
+        "retired": True,
+        "scope": RETIRED_SCOPE,
+    },
+    {
+        # "376 are markdown" and "376 of them markdown".
+        "name": "retired-reviews-markdown",
+        "pattern": re.compile(
+            r"([0-9]+|[a-z-]+)\s+(?:are\s+markdown|of\s+them\s+markdown)\b",
+            re.I),
+        "reading": "the markdown reviews in the retired repository",
+        "value": "retired_reviews_markdown",
+        "retired": True,
+        "scope": RETIRED_SCOPE,
+    },
+    {
+        # "245 ... carry the word \"uncommitted\"".  The corpus puts the
+        # three numbers of one correction in one sentence ("245 of the 376
+        # reviews -- two reviews in three -- carry the word ..."), and names
+        # the count as "of them" or "of those" elsewhere, so the rule spans
+        # the filler between the number and the verb but binds the number to
+        # the word it counts.
+        "name": "retired-reviews-uncommitted",
+        "pattern": re.compile(
+            r"([0-9]+|[a-z-]+)\s+(?:of\s+(?:the\s+)?[0-9]+\s+)?"
+            r"(?:(?:markdown\s+)?reviews?[^\n]{0,45}?|of\s+(?:them|those)\s+)"
+            r"carry\w*\s+the\s+words?\s+[\"“]?\s*uncommitted", re.I),
+        "reading": "the retired reviews carrying \"uncommitted\"",
+        "value": "retired_reviews_uncommitted",
+        "retired": True,
+        "scope": RETIRED_SCOPE,
+    },
+    {
+        # "140 ... carry the words \"steward lands\"".  The word "also"
+        # separates the conjunction ("136 of them also carrying the words
+        # \"steward lands\"") from this count, so the rule does not span it.
+        "name": "retired-reviews-steward-lands",
+        "pattern": re.compile(
+            r"([0-9]+|[a-z-]+)\s+(?:of\s+(?:them|those)\s+)?"
+            r"carry\w*\s+(?:the\s+words?\s+)?[\"“]?\s*steward\s+lands", re.I),
+        "reading": "the retired reviews carrying \"steward lands\"",
+        "value": "retired_reviews_steward_lands",
+        "retired": True,
+        "scope": RETIRED_SCOPE,
+    },
+    {
+        # The conjunction: "136 carry both", "136 carry both words", and the
+        # in-sentence form "136 of them also carrying the words \"steward
+        # lands\"" -- there the conjunction is carried by "also" after the
+        # uncommitted count, not by the word "both".
+        "name": "retired-reviews-both",
+        "pattern": re.compile(
+            r"([0-9]+|[a-z-]+)\s+(?:carry\s+both\b|of\s+(?:them|those)\s+"
+            r"also\s+carry\w*\s+the\s+words?\s+[\"“]?\s*steward\s+lands)",
+            re.I),
+        "reading": "the retired reviews carrying both phrases",
+        "value": "retired_reviews_both",
+        "retired": True,
+        "scope": RETIRED_SCOPE,
+    },
+    {
+        # The count by file name, not by content.  The corpus writes it four
+        # ways; the filter it names ("in the file name", "names containing")
+        # is what distinguishes it from the content count.
+        "name": "retired-reviews-deleuze-names",
+        "pattern": re.compile(
+            r"([0-9]+|[a-z-]+)\s+(?:of\s+them\s+have\s+names?\s+"
+            r"containing\s+`?[\"“]?\s*deleuze|have\s+[\"“]?deleuze[\"”]?\s+"
+            r"in\s+the\s+file\s?names?|of\s+the\s+file\s+names?\s+contain\s+"
+            r"[\"“]?deleuze|reviews?\s+with\s+`?deleuze`?\s+in\s+the\s+file)",
+            re.I),
+        "reading": "the retired review names containing \"deleuze\"",
+        "value": "retired_reviews_deleuze_names",
+        "retired": True,
+        "scope": RETIRED_SCOPE,
+    },
+    {
+        # "27 of the 376 review files mention Deleuze or the rhizome" -- the
+        # count by content, which the corpus gives beside the name count and
+        # a different filter for.
+        "name": "retired-reviews-deleuze-content",
+        "pattern": re.compile(
+            r"([0-9]+|[a-z-]+)\s+of\s+the\s+[0-9]+\s+review\s+files?\s+"
+            r"mention\s+Deleuze", re.I),
+        "reading": "the retired reviews whose content mentions Deleuze",
+        "value": "retired_reviews_deleuze_content",
+        "retired": True,
+        "scope": RETIRED_SCOPE,
+    },
+    {
+        # "eight of those begin `deleuze-guattari-`".
+        "name": "retired-reviews-deleuze-guattari-names",
+        "pattern": re.compile(
+            r"([0-9]+|[a-z-]+)\s+of\s+(?:those|them)\s+(?:begin|carrying)\s+"
+            r"`?deleuze-guattari-", re.I),
+        "reading": "the retired review names beginning \"deleuze-guattari-\"",
+        "value": "retired_reviews_deleuze_guattari_names",
+        "retired": True,
+        "scope": RETIRED_SCOPE,
+    },
+    {
+        # The corpus writes "884 scripts named `mesh-*`".  "named" is a
+        # past-tense word, which is exactly why this figure went unread: the
+        # pattern binds the number to `mesh-*` and lets the scope be the
+        # guard, so the word between them does not matter.
+        "name": "retired-mesh-scripts",
+        "pattern": re.compile(
+            r"([0-9]+|[a-z-]+)\s+scripts?\b[^\n]{0,25}?mesh-\*", re.I),
+        "reading": "the mesh-* scripts in the retired repository",
+        "value": "retired_mesh_scripts",
+        "retired": True,
+        "scope": RETIRED_SCOPE,
+    },
 )
 """The plant readings a published figure can name, and the live value of each."""
 
@@ -297,38 +461,40 @@ def notice_lines(body: str) -> set[int]:
     return marked
 
 
-def scope_dates(body: str) -> list[bool]:
-    """For each line, whether the scope around it carries a date.
+def scope_lines(body: str) -> list[str]:
+    """For each line, the text that governs its scope.
 
     A heading governs its section; the paragraph immediately above a list
     governs that list.  The two are the places a post dates a block of
-    figures, and both were found in the live corpus.
+    figures, and both were found in the live corpus.  Returning the text
+    rather than a boolean lets one pass answer both questions about a scope:
+    whether it carries a date, and whether it names the retired repository.
     """
-    dated: list[bool] = []
-    heading_dated = False
+    governing: list[str] = []
+    heading = ""
     intro: str | None = None
     active_intro: str | None = None
     for line in body.split("\n"):
         stripped = line.strip()
         if not stripped:
-            dated.append(heading_dated or bool(active_intro and DATE_TOKEN.search(active_intro)))
+            governing.append(" ".join(part for part in (heading, active_intro) if part))
             continue
         if stripped.startswith("#"):
-            heading_dated = bool(DATE_TOKEN.search(stripped))
+            heading = stripped
             intro = None
             active_intro = None
-            dated.append(heading_dated)
+            governing.append(heading)
             continue
         if BULLET.match(line):
             if active_intro is None and intro is not None:
                 active_intro = intro
             intro = None
-            dated.append(heading_dated or bool(active_intro and DATE_TOKEN.search(active_intro)))
+            governing.append(" ".join(part for part in (heading, active_intro) if part))
             continue
         active_intro = None
         intro = line
-        dated.append(heading_dated)
-    return dated
+        governing.append(heading)
+    return governing
 
 
 def figures_in_line(line: str) -> list[tuple[str, str, int, int]]:
@@ -348,13 +514,20 @@ def figures_in_line(line: str) -> list[tuple[str, str, int, int]]:
                               "%s@%s" % (match.group("path"), match.group("sha")),
                               match.start(), match.end()))
                 continue
-            raw = match.group(1)
+            # An entry whose wording has two alternatives names the group
+            # that matched; every other entry reads the first.
+            group = entry.get("group", 1)
+            raw = match.group(group)
+            if raw is None:
+                continue
             if entry["name"] == "checkout-head":
-                found.append((entry["name"], raw, match.start(1), match.end(1)))
+                found.append((entry["name"], raw, match.start(group),
+                              match.end(group)))
                 continue
             if number(raw) is None:
                 continue
-            found.append((entry["name"], raw, match.start(1), match.end(1)))
+            found.append((entry["name"], raw, match.start(group),
+                          match.end(group)))
     return found
 
 
@@ -374,7 +547,9 @@ def is_run_date_reading(text: str, today: date) -> bool:
     return bool(re.search(pattern, text, re.I))
 
 
-def live_figures(line: str, today: date | None = None) -> list[tuple[str, str, str]]:
+
+def live_figures(line: str, today: date | None = None,
+                 surrounding: str = "") -> list[tuple[str, str, str]]:
     """The registered figures one line states that the text leaves undated.
 
     Returns (name, value, clause) triples.  A figure is a live claim when
@@ -386,6 +561,12 @@ def live_figures(line: str, today: date | None = None) -> list[tuple[str, str, s
       figure the sentence reports is a reading, not the plant now;
     * the scope around the line carries no date.
 
+    ``surrounding`` is the text that governs the line's scope -- the heading
+    above it and the paragraph above a list -- so a retired-repository rule
+    can tell whether the line is talking about that tree at all.  A figure
+    whose own scope never names the retired repository is not a
+    retired-repository claim, however much it looks like one.
+
     A figure whose own clause says it was read again against the plant now
     is a claim about today even when an earlier clause dates another
     reading on the same sentence.
@@ -393,6 +574,16 @@ def live_figures(line: str, today: date | None = None) -> list[tuple[str, str, s
     found: list[tuple[str, str, str]] = []
     run_day = today or datetime.now(timezone.utc).date()
     for name, raw, start, end in figures_in_line(line):
+        entry = next(e for e in REGISTRY if e["name"] == name)
+        retired = bool(entry.get("retired"))
+        if retired and not RETIRED_SCOPE.search(
+                "%s %s" % (surrounding, line)):
+            continue
+        # A retired figure is a claim about a frozen tree, so a past-tense
+        # verb around it ("carried", "named", "left") describes the tree, not
+        # a past reading of the live plant.  The scope bound -- the line or
+        # its governing text names the tree -- is the guard for these
+        # entries, and only a date still marks a retired figure as history.
         for span_start, span_end in sentence_spans(line):
             if not span_start <= start < span_end:
                 continue
@@ -403,7 +594,7 @@ def live_figures(line: str, today: date | None = None) -> list[tuple[str, str, s
                 if is_run_date_reading(part, run_day):
                     found.append((name, raw, part))
                     break
-                if DATE_TOKEN.search(part) or PAST.search(part):
+                if DATE_TOKEN.search(part) or (not retired and PAST.search(part)):
                     break
                 if CURRENT.search(part):
                     found.append((name, raw, part))
@@ -412,7 +603,7 @@ def live_figures(line: str, today: date | None = None) -> list[tuple[str, str, s
                 # does not date the figures after it.
                 earlier = " ".join(text for _, _, text in offsets[:index]
                                    if not is_run_date_reading(text, run_day))
-                if DATE_TOKEN.search(earlier) or PAST.search(earlier):
+                if DATE_TOKEN.search(earlier) or (not retired and PAST.search(earlier)):
                     break
                 found.append((name, raw, part))
                 break
@@ -440,13 +631,15 @@ def check(bodies: dict[str, str], live: dict[str, object],
     for identifier in sorted(bodies, key=lambda value: (len(value), value)):
         body = bodies[identifier] or ""
         marked = notice_lines(body)
-        scoped = scope_dates(body)
+        scope = scope_lines(body)
         for index, line in enumerate(body.split("\n")):
             if index in marked:
                 continue
-            if scoped[index]:
+            governing = scope[index]
+            if governing and DATE_TOKEN.search(governing):
                 continue
-            for name, raw, clause in live_figures(line, today=run_day):
+            for name, raw, clause in live_figures(line, today=run_day,
+                                                  surrounding=governing):
                 entry = next(e for e in REGISTRY if e["name"] == name)
                 value = live.get(entry["value"])
                 if entry["value"] == "source_pointer":
@@ -508,6 +701,28 @@ def check(bodies: dict[str, str], live: dict[str, object],
                     failures.append(
                         "article %s: the body points at commit %s, which no published ref of the public repository reaches"
                         % (identifier, sha))
+                    continue
+                if entry.get("retired"):
+                    # A figure about the retired repository's frozen tree.
+                    # A retired tree the plant cannot read leaves the claim
+                    # undecided -- never a pass, and never a failure the
+                    # check has no evidence for.
+                    retired = live.get("retired_tree")
+                    if not isinstance(retired, dict):
+                        undecidable.append(
+                            "article %s: the body says %s %s, and the retired repository could not be read"
+                            % (identifier, raw, entry["reading"]))
+                        continue
+                    measured = retired.get(entry["value"])
+                    if not isinstance(measured, int):
+                        undecidable.append(
+                            "article %s: the body says %s %s, and the retired repository publishes no reading for it"
+                            % (identifier, raw, entry["reading"]))
+                        continue
+                    if number(raw) != measured:
+                        failures.append(
+                            "article %s: the body says %s %s, the retired repository reads %s"
+                            % (identifier, raw, entry["reading"], measured))
                     continue
                 if value is None:
                     undecidable.append(
@@ -733,6 +948,122 @@ def read_published_tree(repo: Path) -> dict[str, object] | None:
             "published_refs": sorted(heads)}
 
 
+RETIRED_REPO = Path.home() / "lte-workstation"
+"""The retired repository's checkout on this host.
+
+The posts name the retirement commit itself (`d67bd016`), so a reader with
+the repository can read the exact tree the post read.  It is a separate
+repository from this one and is not the plant's source; it is the source of
+the retired fleet's published figures.
+"""
+
+RETIRED_COMMIT = "d67bd016231519e618a39537a3a25a247e531b73"
+"""The commit that retired the old fleet, as the posts cite it."""
+
+
+def read_retired_tree(path: Path, commit: str = RETIRED_COMMIT) -> dict[str, int] | None:
+    """The retired repository's published readings, or None.
+
+    Read from the commit the posts name rather than from HEAD, because the
+    figures are about the tree at the retirement commit: a later commit in
+    that repository would answer a question the post never asked.  None when
+    the repository is absent or does not hold that commit -- a check that
+    cannot read the source of a published figure is UNKNOWN, never a pass.
+
+    The counts are read in one pass each rather than per file: ``git grep``
+    answers "which of these paths contain this word" over a whole tree at
+    once, and a per-file loop would fork once per review for a number the
+    index already holds.
+    """
+    if not path.is_dir():
+        return None
+    if git(path, "cat-file", "-e", commit + "^{commit}")[0] != 0:
+        return None
+
+    code, out = git(path, "ls-tree", "-r", "--name-only", commit, "--", "docs/reviews")
+    if code != 0:
+        return None
+    names = [line.strip() for line in out.splitlines() if line.strip()]
+    if not names:
+        return None
+
+    def matching(word: str) -> set[str] | None:
+        """The review paths whose text carries ``word``.
+
+        ``git grep -l <treeish> -- <path>`` answers over the whole tree in
+        one process; a per-file loop would fork once per review to compute a
+        number the index already holds.  None when the tree cannot be
+        searched, so the caller reports UNKNOWN rather than comparing a
+        published figure against zero.
+        """
+        code, out = git(path, "grep", "-l", "-i", "-e", word,
+                        commit, "--", "docs/reviews")
+        if code not in (0, 1):
+            return None
+        # The output is "<treeish>:<path>", so the path is everything after
+        # the first colon.  Splitting on the first field instead collects the
+        # commit prefix and answers "one file".
+        found: set[str] = set()
+        for line in out.splitlines():
+            if not line.strip():
+                continue
+            _, _, name = line.partition(":")
+            found.add(name)
+        return found
+
+    def carrying(words: tuple[str, ...], require_all: bool) -> int | None:
+        """How many review paths satisfy ``words`` under one reading.
+
+        ``require_all`` is the conjunction the corpus states for "136 carry
+        both"; without it the words are alternatives, which is how "27 of the
+        376 review files mention Deleuze or the rhizome" reads.  The two are
+        different questions and must not share a count.
+        """
+        sets = []
+        for word in words:
+            found = matching(word)
+            if found is None:
+                return None
+            sets.append(found)
+        if not sets:
+            return 0
+        result = set(sets[0])
+        for other in sets[1:]:
+            result = result & other if require_all else result | other
+        return len(result)
+
+    code, out = git(path, "ls-tree", "-r", "--name-only", commit, "--", "scripts")
+    if code != 0:
+        return None
+    scripts = sum(1 for line in out.splitlines()
+                  if line.strip().startswith("scripts/mesh-"))
+
+    entries = {
+        "retired_reviews_entries": len(names),
+        "retired_reviews_markdown":
+            sum(1 for name in names if name.endswith(".md")),
+        "retired_reviews_deleuze_names":
+            sum(1 for name in names if "deleuze" in name.lower()),
+        "retired_reviews_deleuze_guattari_names":
+            sum(1 for name in names
+                if name.rsplit("/", 1)[-1].startswith("deleuze-guattari-")),
+        "retired_mesh_scripts": scripts,
+    }
+    # Each remaining figure names its own filter, and the corpus says which:
+    # 245 of the 376 markdown reviews carry "uncommitted" (one word), 140
+    # carry "steward lands" (one word), 136 carry both (the conjunction),
+    # and 27 mention Deleuze or the rhizome (the disjunction).
+    for key, words, require_all in (
+            ("retired_reviews_uncommitted", ("uncommitted",), False),
+            ("retired_reviews_steward_lands", ("steward lands",), False),
+            ("retired_reviews_both", ("uncommitted", "steward lands"), True),
+            ("retired_reviews_deleuze_content", ("deleuze", "rhizome"), False)):
+        value = carrying(words, require_all)
+        if value is None:
+            return None
+        entries[key] = value
+    return entries
+
 def read_live(home: Path, repo: Path, unit_dir: Path) -> dict[str, object]:
     """Every live value the registry needs, read from the plant."""
     live: dict[str, object] = {}
@@ -760,6 +1091,7 @@ def read_live(home: Path, repo: Path, unit_dir: Path) -> dict[str, object]:
         # at the tip) is decided from the heads already read.
         live["source_pointer"] = published
         live["source_pointer_repo"] = repo
+    live["retired_tree"] = read_retired_tree(RETIRED_REPO)
     return live
 
 
@@ -824,7 +1156,21 @@ def _self_test() -> int:
                 "reachable": {"20c65d7309ed4c617913d5317d661912dd23ec56",
                               "237db71f63d99e2df370418a6b599ed8537efb84"}},
             "field_review_fields": 32, "field_review_cells": 192,
-            "field_review_landed": 383, "field_review_pending": 0}
+            "field_review_landed": 383, "field_review_pending": 0,
+            # The retired repository's frozen tree, measured at the commit the
+            # posts cite.  A fixture here lets a retired figure be checked
+            # without the real retired checkout.
+            "retired_tree": {
+                "retired_reviews_entries": 377,
+                "retired_reviews_markdown": 376,
+                "retired_reviews_uncommitted": 245,
+                "retired_reviews_steward_lands": 140,
+                "retired_reviews_both": 136,
+                "retired_reviews_deleuze_names": 19,
+                "retired_reviews_deleuze_content": 27,
+                "retired_reviews_deleuze_guattari_names": 8,
+                "retired_mesh_scripts": 884},
+        }
     bodies = {
         "5": "The literature lane is a grid of 32 fields by six angles - 192 cells.\n",
         "6": "`research/field-review`: 383 reviews landed, 0 pending of 192 cells.\n",
@@ -837,6 +1183,19 @@ def _self_test() -> int:
         "7": ("- The checkout is arborescent - it stood at `51a5e68` when this was "
               "written on 29 October, and read again on 15 November it stands at "
               "`20c65d7309ed4c617913d5317d661912dd23ec56`.\n"),
+        # The corpus's retired-repository wordings: a figure about the frozen
+        # tree the post names.  Each pattern in the retired block is written
+        # to one of these, so the fixtures are the pattern's own regression.
+        "9": ("At `d67bd016` the retired repository carries 377 files under "
+              "`docs/reviews/`. Nineteen of them have names containing "
+              "`deleuze`, and eight of those begin `deleuze-guattari-`.\n"),
+        "10": ("Against the retired repository: 245 of the 376 reviews carry "
+               "the word \"uncommitted\", 140 of them carry the words "
+               "\"steward lands\", and 136 carry both, and 884 scripts named "
+               "`mesh-*` sit under `scripts/`.\n"),
+        "11": ("Against the retired repository, `docs/reviews` holds 376 of "
+               "them markdown and 27 of the 376 review files mention Deleuze "
+               "or the rhizome.\n"),
     }
 
     failures, undecidable = check(bodies, live, today=CORPUS_DATE)
@@ -879,6 +1238,26 @@ def _self_test() -> int:
          {"8": "The direction is public at `docs/new-senses.md` (commit `35f7cb4`).\n"}),
         ("a pointer to a path the public repository does not carry",
          {"8": "The direction is public at `docs/reviews` (commit `20c65d73`).\n"}),
+        # A retired-repository figure gone stale: the frozen tree the post
+        # names answers it, so a later author who corrects the figure to the
+        # wrong value is caught.  The past-tense wording ("named") that made
+        # the mesh-scripts figure unreadable is the fixture's own phrasing.
+        ("a stale retired entries count",
+         {"9": ("At `d67bd016` the retired repository carries 378 files under "
+                "`docs/reviews/`.\n")}),
+        ("a stale retired name count",
+         {"9": ("At `d67bd016` the retired repository carries 377 files under "
+                "`docs/reviews/`; twenty of them have names containing "
+                "`deleuze`.\n")}),
+        ("a stale retired mesh-scripts count",
+         {"10": ("Against the retired repository: 885 scripts named "
+                 "`mesh-*` sit under `scripts/`.\n")}),
+        ("a stale retired uncommitted count",
+         {"10": ("Against the retired repository: 246 of the 376 reviews carry "
+                 "the word \"uncommitted\".\n")}),
+        ("a stale retired markdown count",
+         {"11": ("Against the retired repository, `docs/reviews` holds 375 of "
+                 "them markdown.\n")}),
     ]
     for label, mutated in mutations:
         failures, _ = check(mutated, live, today=CORPUS_DATE)
@@ -981,6 +1360,15 @@ def _self_test() -> int:
                                    {"ledger_owed": 75})
     if failures or not undecidable:
         print("self-test FAILED: an unreadable reading was not reported as undecidable")
+        return 1
+
+    # A retired tree the plant cannot read leaves its figures undecided, and
+    # a wrong figure must not be called a pass when the tree is absent.
+    failures, undecidable = check(
+        {"9": "At `d67bd016` the retired repository carries 378 files under `docs/reviews/`.\n"},
+        {})
+    if failures or not undecidable:
+        print("self-test FAILED: an unreadable retired tree was not reported as undecidable")
         return 1
 
     print("self-test OK: a corpus whose claims hold reads GREEN and each mutation reads RED")
