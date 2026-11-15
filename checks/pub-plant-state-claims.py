@@ -163,8 +163,13 @@ REGISTRY = (
         "value": "producer_units_naming_release",
     },
     {
+        # The corpus names the checkout's commit in more than one way.  The
+        # correction notice quotes the original wording ("you are on"), and
+        # the sentence it corrected now says the checkout "stands at" a
+        # commit.  A registry that only knows the first phrasing cannot see
+        # the claim the corpus actually makes.
         "name": "checkout-head",
-        "pattern": re.compile(r"you are on `([0-9a-f]{7,40})`", re.I),
+        "pattern": re.compile(r"(?:you are on|stands at)\s*`([0-9a-f]{7,40})`", re.I),
         "reading": "the commit the checkout stands on",
         "value": "checkout_head",
     },
@@ -613,6 +618,11 @@ def _self_test() -> int:
         "2": "The repository's current commit is 3 commits ahead of the release the running services are pinned to.\n",
         "3": "Forty-one producer units still name a release directly.\n",
         "4": "The checkout is arborescent (you are on `20c65d7309ed4c617913d5317d661912dd23ec56`).\n",
+        # The corpus's own wording: the sentence the 2026-11-15 correction
+        # left in place says the checkout "stands at" a commit.
+        "7": ("- The checkout is arborescent - it stood at `51a5e68` when this was "
+              "written on 29 October, and read again on 15 November it stands at "
+              "`20c65d7309ed4c617913d5317d661912dd23ec56`.\n"),
     }
 
     failures, undecidable = check(bodies, live)
@@ -635,6 +645,10 @@ def _self_test() -> int:
          {"3": "Nineteen producer units still name a release directly.\n"}),
         ("a stale checkout commit",
          {"4": "The checkout is arborescent (you are on `51a5e68f6b2103170bfe5fdd415c0ea4c4c923ee`).\n"}),
+        ("a stale checkout commit in the corpus's own wording",
+         {"7": ("- The checkout is arborescent - it stood at `51a5e68` when this was "
+                "written on 29 October, and read again on 15 November it stands at "
+                "`f5f7c10b94807b5db97b26d45bf6bad2c295fca0`.\n")}),
         ("a stale field count",
          {"5": "The literature lane is a grid of twelve fields by six angles - 192 cells.\n"}),
         ("a stale cell count",

@@ -100,6 +100,26 @@ def test_a_stale_checkout_commit_is_found():
     assert "the checkout is on 20c65d73" in failures[0]
 
 
+def test_a_checkout_commit_in_the_corpus_wording_is_found():
+    """The corpus says the checkout 'stands at' a commit; that is a claim too.
+
+    The registry only knew "you are on", so the wording the corpus actually
+    uses was invisible: a stale commit in that wording read GREEN.  The
+    fixture is the corpus's own sentence shape.
+    """
+    body = ("- The checkout is arborescent - it stood at `51a5e68` when this "
+            "was written on 29 October, and read again on 15 November it "
+            "stands at `20c65d7309ed4c617913d5317d661912dd23ec56`.\n")
+    failures, undecidable = _failures({"4": body})
+    assert undecidable == []
+    assert failures == []
+
+    stale = body.replace("20c65d7309ed4c617913d5317d661912dd23ec56", "f5f7c10b")
+    failures, _ = _failures({"4": stale})
+    assert len(failures) == 1
+    assert "the checkout is on 20c65d73" in failures[0]
+
+
 def test_a_figure_the_sentence_dates_is_not_a_claim():
     """A figure its own sentence places in the past is a reading, not a claim."""
     failures, _ = _failures({"1": "On 11 November, the ledger scan found 123 rows "
