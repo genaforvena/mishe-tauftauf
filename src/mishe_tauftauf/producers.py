@@ -227,12 +227,7 @@ def footprint(home, *, now: float, **_) -> str:
     from . import signal_samples
     since = int((now - 900) * 1000)
     result = signal_samples.read_samples(Path(home) / "samples" / "memory", since_ms=since)
-    latest = {}
-    for line in result.records:
-        ts, name, state, value, _source = (line.split("\t") + ["", "", "", "", ""])[:5]
-        if state == "ok" and name in ("memory.anon.kib", "memory.charged.kib", "memory.psi.avg10"):
-            if name not in latest or int(ts) >= latest[name][0]:
-                latest[name] = (int(ts), value)
+    latest = result.latest_ok(("memory.anon.kib", "memory.charged.kib", "memory.psi.avg10"))
     missing = [n for n in ("memory.anon.kib", "memory.charged.kib", "memory.psi.avg10") if n not in latest]
     if missing:
         raise signal_samples.SignalSampleUnknown(f"no recent sample for {', '.join(missing)}")

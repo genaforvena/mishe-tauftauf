@@ -28,6 +28,16 @@ class ReadResult:
     def complete(self) -> bool:
         return not self.faults
 
+    def latest_ok(self, names: tuple[str, ...]) -> dict[str, tuple[int, str]]:
+        """Newest ``ok`` (ts_ms, value) per name. A name with no ``ok`` record is absent, never zero."""
+        latest: dict[str, tuple[int, str]] = {}
+        for line in self.records:
+            ts, name, state, value, _source = (line.split("\t") + ["", "", "", "", ""])[:5]
+            if state == "ok" and name in names:
+                if name not in latest or int(ts) >= latest[name][0]:
+                    latest[name] = (int(ts), value)
+        return latest
+
 
 def _binary() -> str:
     override = os.environ.get("MISHE_SIGNAL_SAMPLE_BIN")

@@ -154,12 +154,15 @@ that composes it:
   store: `SITE/samples/<name>/` holds TSV segments of five fields — timestamp in
   milliseconds, name, state, value, source — and the binary appends a batch or
   reads it back in one pass. `signal_samples.append_samples` and
-  `signal_samples.read_samples` compose it, and the `memory-samples` producer
-  writes two rows (memory PSI and anonymous memory) every three minutes into
-  `SITE/samples/memory/`. A gap is a gap: no record means no sample, never a
-  zero and never a carried-forward value. `read_samples` has no production
-  caller — only `tests/test_signal_samples.py` calls it — so the store is written
-  live and nothing reads it back yet. There is no Python fallback: a missing
+  `signal_samples.read_samples` compose it. The `memory-samples` producer runs
+  every three minutes and appends one row each for memory PSI avg10 and anonymous
+  memory, plus charged memory (Cached and Slab) when it can be read, into
+  `SITE/samples/memory/`; a reading that cannot be taken writes no row for it. A gap
+  is a gap: no record means no sample, never a zero and never a carried-forward
+  value. The `footprint` duty, also every three minutes, is the production reader:
+  it reads the last 15 minutes of that store and raises `SignalSampleUnknown` when
+  any of the three series has no recent `ok` sample, so the signal ages to UNKNOWN
+  rather than showing a carried value. There is no Python fallback: a missing
   binary raises `SignalSampleUnknown`, which the caller must report as UNKNOWN.
 
 A change to any of these binaries' input, output, exit statuses or fault text is a
