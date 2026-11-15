@@ -1110,6 +1110,16 @@
       "resolver": "system1",
       "covers": "advisory commit-risk class for recent commits (path rules first, the decision model only for the mixed residual): UNKNOWN when the decision provider is not configured or residual commits stay unanswered while the daily cap has room; never gates delivery",
       "replaces": []
+    },
+    {
+      "name": "memory-samples",
+      "builtin": true,
+      "every": 60,
+      "timeout": 30,
+      "max_age": 300,
+      "resolver": "rust-plan",
+      "replaces": [],
+      "covers": "memory PSI avg10 and anon memory, one row a minute in the signal sample store; a gap is a gap, UNKNOWN when the store or the reading fails"
     }
   ],
   "retired": [

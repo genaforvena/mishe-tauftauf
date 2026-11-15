@@ -196,7 +196,26 @@ def delivery_requests(home, *, now: float) -> str:
     return "RED" if requests.standing_problem(home, now) else "GREEN"
 
 
-BUILTIN = {"dispatch": dispatch, "ci": ci, "tape-lock": tape_lock, "delivery-requests": delivery_requests}
+def memory_samples(home, *, now: float, **_) -> str:
+    """Append one row each for memory PSI avg10 and anon memory to the signal sample store.
+
+    Gaps stay gaps: a reading that cannot be taken writes no row for it, and a missing store
+    binary raises (the unit fails, the signal ages to UNKNOWN). Nothing is filled or carried.
+    """
+    from . import memory_reading, signal_samples
+    ts_ms = int(now * 1000)
+    rows = []
+    psi, anon = memory_reading.read_memory()
+    if psi is not None:
+        rows.append(signal_samples.format_record(ts_ms, "memory.psi.avg10", "ok", f"{psi:.2f}", "memory-samples"))
+    if anon is not None:
+        rows.append(signal_samples.format_record(ts_ms, "memory.anon.kib", "ok", str(anon), "memory-samples"))
+    written = signal_samples.append_samples(Path(home) / "samples" / "memory", rows)
+    return f"samples={written}"
+
+
+BUILTIN = {"dispatch": dispatch, "ci": ci, "tape-lock": tape_lock, "delivery-requests": delivery_requests,
+           "memory-samples": memory_samples}
 
 
 def produce(home, name: str, *, now: float, **kw) -> str | None:
