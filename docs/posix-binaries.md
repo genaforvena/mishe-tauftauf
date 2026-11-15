@@ -2,10 +2,13 @@
 
 Status: contract and ranking (rust-plan, 2026-11-14). Step 1 of operator DM
 301098. No new binary is built by this document; the first candidate is step 2.
+Updated 2026-11-15: two candidates have since been built (candidate 1,
+`mishe-systemd-show`, and the signal sample store), so the crate count and the
+table below are current.
 
 ## Why this exists
 
-Mishe's Python runtime is about 49,500 lines. Four Rust crates (about 2,600
+Mishe's Python runtime is about 49,500 lines. Six Rust crates (about 3,000
 lines) already sit beside it, each one a small program with a stdin/argument
 and stdout/exit-code boundary. This document says what counts as a Mishe binary,
 which existing seams already meet that bar, and which responsibilities come next.
@@ -59,19 +62,25 @@ owner changes that decision (see the constraint below).
 
 `mishe-tape` and `mishe-records` use 0/1/2. `mishe-network-probe` adds 3 for
 "could not run", which is why an unreachable helper is not mistaken for a quiet
-network.
+network. The two later binaries keep the same convention with their own
+meanings: `mishe-systemd-show` uses 0/1/2 (2 is a data fault), and
+`mishe-signal-sample` uses 0/1/2 with 2 for a malformed or torn record — on
+`read` the valid records are still emitted and the caller marks the window
+UNKNOWN for the faulted segments.
 
 ## Seams that already are binaries
 
-| Binary | Responsibility | Live state (2026-11-14) |
+| Binary | Responsibility | Live state (2026-11-15) |
 |---|---|---|
 | `mishe-tape` | Tape framing: entries, offsets, eligibility facts | Live, read by `feed.py` through `MISHE_TAPE_BIN` / installed component |
 | `mishe-records` | Record verification and the verified store | Live since the 2026-11-11 cutover, run by `feed._RecordsChild` |
 | `mishe-tape-facts` | One-pass byte-level facts for a disposition reading | Built and installed, differential-tested, **not wired into a live consumer**: its contract says so. Counts as a binary, not as live migration yet |
 | `mishe-network-probe` | One network probe row | Live: the `network-probe` duty runs it |
+| `mishe-systemd-show` | `systemctl show` text decoding | Live since candidate 1: `unit_psi_text.parse_systemd_show` runs it and `discovery.py` reads the result through `read_unit_psi`. The retired Python decoder survives only as the oracle in `tests/test_rust_systemd_show.py` |
+| `mishe-signal-sample` | The append-only signal sample store | Live on the write side: the `memory-samples` duty appends two rows every three minutes into `SITE/samples/memory/`. `read_samples` has no production caller yet, so nothing reads the store back |
 
-The first three are Mishe binaries by the rules above. `mishe-tape-facts` is
-the honest gap: its consumer is not yet running it.
+`mishe-tape-facts` is the honest gap: its consumer is not yet running it. The
+signal sample store is the narrower one: it is written live and not yet read.
 
 ## Constraint kept
 
@@ -95,7 +104,8 @@ them.
    `Key=value` lines fixed by systemd. Testable: a fixture per property set.
    Measured Python cost: UNKNOWN (expected negligible; it is a small pure parse).
    Its gain is architectural: it is the smallest complete binary and the template
-   for the rest. This is the step 2 pick.
+   for the rest. **Built and live** as `rust/mishe-systemd-show/` (2026-11-14);
+   kept here because it is the template the other candidates follow.
 
 2. **Signal edge append and freshness read** (`src/mishe_tauftauf/signal_store.py`,
    `observe`, `_append_edge`, `read`, `expire`; 279 lines). Input: the signal
@@ -128,10 +138,11 @@ them.
 
 ## Next steps
 
-- Step 2 (next wake): build candidate 1 as `rust/mishe-systemd-show/` with the
-  same layout as `mishe-tape` (locked build, `CONTRACT.md`, tests, a
-  `MISHE_SYSTEMD_SHOW_BIN` override), wire `unit_psi_text.py` to it with a named
-  `...Unknown` error when the binary is missing, retire the Python parse path
-  once the differential test passes, and deliver it through the ordinary path.
+- Candidate 1 is done: `rust/mishe-systemd-show/` was built with the same
+  layout as `mishe-tape` (locked build, `CONTRACT.md`, tests, a
+  `MISHE_SYSTEMD_SHOW_BIN` override), `unit_psi_text.py` was wired to it with a
+  named `SystemdShowUnknown` error when the binary is missing, the Python parse
+  path was retired to the test oracle, and it was delivered through the ordinary
+  path on 2026-11-14.
 - Measure candidates 2 and 3 before choosing them; record the numbers here.
 - Keep this ranking updated when a candidate is built or retired.
