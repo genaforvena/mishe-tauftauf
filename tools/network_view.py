@@ -215,15 +215,15 @@ def wifi_facts():
         bands = nb.decode_wifi(r.stdout)
     except (OSError, ValueError, subprocess.SubprocessError):
         return None, False
-    parts, weakest = [], None
+    parts, weakest, weakest_band = [], None, None
     for band in sorted(bands):
         sig = bands[band]
         parts.append(f"{band} GHz {len(sig)}")
-        if sig:
-            weakest = min(sig) if weakest is None else min(weakest, min(sig))
+        if sig and (weakest is None or min(sig) < weakest):
+            weakest, weakest_band = min(sig), band
     total = sum(len(v) for v in bands.values())
     weak = weakest is not None and weakest < WEAK_WIFI_DBM
-    tail = f", weakest {weakest} dBm" if weakest is not None else ""
+    tail = f", weakest {weakest} dBm on {weakest_band} GHz" if weakest is not None else ""
     _wifi["text"] = f"{total} clients ({'; '.join(parts)}){tail}" + ("  WEAK SIGNAL" if weak else "")
     _wifi["weak"] = weak
     return _wifi["text"], weak
