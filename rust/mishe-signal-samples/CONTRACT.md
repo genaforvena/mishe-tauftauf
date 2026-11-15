@@ -31,7 +31,9 @@ any other field count, a carriage return, or any other character is malformed.
 
 - Files `DIR/<15 digits>.tsv`. The digits are the first `ts_ms` of the segment,
   zero-padded, so lexical order is time order of creation.
-- A segment grows by appends until the next batch would exceed `MAX_SEGMENT_BYTES`;
+- A segment grows by appends until the next batch would exceed `MAX_SEGMENT_BYTES`
+  (rotation happens between batches; one batch is never split, so a batch larger
+  than the limit makes one oversized segment);
   then a new segment is created with `create_new` (never merged into an old name).
 - Retention: after a new segment is created, the oldest segments beyond
   `KEEP_SEGMENTS` are removed. Retention is bounded by count and by segment size.
@@ -90,5 +92,6 @@ through `read`.
 
 ## Differential check
 
-Not yet done. The next slice adds a Python reader oracle in `tests/` and checks
-both on the same generated corpus, including malformed and torn cases.
+`tests/test_signal_samples.py` checks the binary against a Python reference reader on
+a generated corpus (every filter, rotation, gap-is-absent, torn tail, rejected batch,
+empty and missing directories). 6 tests pass against the release build.
