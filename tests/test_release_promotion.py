@@ -33,6 +33,19 @@ def test_failed_probe_restores_old_consumer_and_records_events(tree):
     assert not r.get("delivery_verified",False)
 
 
+def test_rollback_probe_imports_the_new_probe_not_the_old_release(tree):
+    # 7f10caa4 rolled back and its rollback probe failed with 'No module named mishe_tauftauf.pin_observation':
+    # the probe ran with PYTHONPATH naming the old release, which does not carry the probe module.
+    repo,home,old,sha=tree; pins=[old]; envs=[]
+    def activate(source, target): pins[0]=target
+    def probe(argv, **kw):
+        envs.append(kw["env"]["PYTHONPATH"]); return dict(code=int(pins[0]==sha), output=pins[0])
+    r=p.promote(home,repo,sha,check=[sys.executable,"-c","assert True"],observe=["probe"],
+                previous=old,activate=activate,probe=probe,reviewer=lambda *a: None,closure=lambda *a: None)
+    assert r["phase"]=="rolled-back"
+    assert envs==[str(Path(r["source"])/"src"), str(Path(r["source"])/"src")]
+
+
 def test_failed_restore_is_unknown(tree):
     repo,home,old,sha=tree
     r=p.promote(home,repo,sha,check=[sys.executable,"-c","assert True"],observe=["probe"],
