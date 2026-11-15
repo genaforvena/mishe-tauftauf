@@ -192,15 +192,19 @@ records. Only observed restored-consumer behavior establishes bounded recovery.
 The `delivery-requests` signal expires after ten minutes (`max_age` 600 in `duties.json`) if its consumer stops
 observing; missing, stale or malformed monitoring never establishes success.
 
-The site's moving-pin script (`SITE_HOME/operator/plans/moving-pin-20261105/delivery/deliver.sh`)
-re-runs the deterministic check before applying. A manual delivery driver
+`mishe-deliver` starts one promotion of HEAD as a detached transient systemd
+unit (`mishe-promote` runs
+`SITE_HOME/operator/plans/moving-pin-20261105/delivery/promote-head.sh`), which
+materializes a worktree of HEAD and runs the whole suite on it through
+`release advance`. A manual delivery driver
 must run in a separately supervised service under the existing containment,
 with retained logs and an explicit result. `setsid` and `nohup` do not escape a
 wake service's systemd control group: when the wake exits, systemd kills those
 descendants. Prefer the queued request above for authored delivery.
 
-The driver holds new wakes, waits for dispatch exclusion, applies and exercises
-recovery. Its exit trap releases the hold; an interruption can still leave an
+The promotion holds new wakes only while it waits for the dispatch lock at
+activation, applies the pin and exercises recovery, and releases the hold when
+that block ends. An interruption can still leave an
 UNKNOWN effect requiring reconciliation. A reverted patch or changed observer
 needs a fresh checked record before another apply. Installed
 consumer files and transient timer consumers have different contracts: check
