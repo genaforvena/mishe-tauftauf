@@ -14,14 +14,29 @@ import pytest
 
 from mishe_tauftauf import signal_samples as ss
 
-HAS_BIN = True
-try:
-    ss._binary()
-except ss.SignalSampleUnknown as exc:  # pragma: no cover - environment dependent
-    HAS_BIN = False
-    SKIP_REASON = str(exc)
 
-pytestmark = pytest.mark.skipif(not HAS_BIN, reason="mishe-signal-sample binary not available")
+def _require_binary() -> None:
+    """Skip the test with the reason when the binary is unreachable.
+
+    Resolved at test time, not at import.  The suite's session fixture deletes
+    MISHE_SEED_HOME on purpose so an in-mind run describes the tree as CI does
+    (tests/conftest.py, ``private_tmux_server``), and import happens before
+    that fixture runs.  A module-level probe therefore saw the site install,
+    decided the binary was there, and never skipped -- then every body failed
+    with "mishe-signal-sample unavailable: no MISHE_SIGNAL_SAMPLE_BIN and no
+    site install".  Measured 2026-11-15: the delivery of 8249c692 failed its
+    whole-suite check on five of these tests for exactly that reason.
+
+    The delivery check exports MISHE_SIGNAL_SAMPLE_BIN (like MISHE_TAPE_BIN),
+    so the differential test runs there; a CI-like run has neither the override
+    nor a site binding and skips with this reason.  This is the pattern
+    tests/test_feed.py uses.
+    """
+    try:
+        ss._binary()
+    except ss.SignalSampleUnknown as exc:  # pragma: no cover - environment dependent
+        pytest.skip(f"mishe-signal-sample binary not available: {exc}")
+
 
 _SEG = re.compile(r"^\d{15}\.tsv$")
 _NAME = re.compile(r"^[A-Za-z0-9._:-]{1,96}$")
@@ -75,6 +90,7 @@ def _corpus(n: int) -> list[str]:
 
 
 def test_roundtrip_matches_reference_for_every_filter(tmp_path: Path) -> None:
+    _require_binary()
     d = tmp_path / "samples"
     lines = _corpus(400)
     # One batch is one append, so rotation happens between batches, not inside one.
@@ -90,6 +106,7 @@ def test_roundtrip_matches_reference_for_every_filter(tmp_path: Path) -> None:
 
 
 def test_gap_is_absent_not_zero(tmp_path: Path) -> None:
+    _require_binary()
     d = tmp_path / "samples"
     ss.append_samples(d, [ss.format_record(1_794_700_000_000, "a.b", "ok", "1", "s"),
                           ss.format_record(1_794_700_180_000, "a.b", "ok", "2", "s")], keep_segments=5)
@@ -98,6 +115,7 @@ def test_gap_is_absent_not_zero(tmp_path: Path) -> None:
 
 
 def test_torn_tail_keeps_valid_records_and_reports_fault(tmp_path: Path) -> None:
+    _require_binary()
     d = tmp_path / "samples"
     ss.append_samples(d, [ss.format_record(1_794_700_000_000, "a.b", "ok", "1", "s")], keep_segments=5)
     seg = next(d.iterdir())
@@ -110,6 +128,7 @@ def test_torn_tail_keeps_valid_records_and_reports_fault(tmp_path: Path) -> None
 
 
 def test_bad_batch_is_rejected_and_writes_nothing(tmp_path: Path) -> None:
+    _require_binary()
     d = tmp_path / "samples"
     with pytest.raises(ValueError):
         ss.append_samples(d, ["1\tbad name\tok\t1\ts\n"], keep_segments=5)
@@ -117,6 +136,7 @@ def test_bad_batch_is_rejected_and_writes_nothing(tmp_path: Path) -> None:
 
 
 def test_empty_store_is_empty_result_not_error(tmp_path: Path) -> None:
+    _require_binary()
     d = tmp_path / "samples"
     d.mkdir()
     got = ss.read_samples(d)
