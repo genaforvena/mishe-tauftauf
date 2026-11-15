@@ -16,10 +16,10 @@ def _stream(tmp_path: Path, rows: list) -> Path:
 
 
 def test_command_reads_prompt_from_stdin_and_names_the_sandbox(tmp_path):
-    cmd = engine_codex.command("gpt-5.6-luna", tmp_path, thinking="high")
+    cmd = engine_codex.command("gpt-6-luna", tmp_path, thinking="high")
     assert cmd[:2] == ["codex", "exec"]
     assert cmd[cmd.index("-s") + 1] == engine_codex.SANDBOX
-    assert cmd[cmd.index("-m") + 1] == "gpt-5.6-luna"
+    assert cmd[cmd.index("-m") + 1] == "gpt-6-luna"
     assert cmd[-1] == "-"
     assert 'model_reasoning_effort="high"' in cmd
 
