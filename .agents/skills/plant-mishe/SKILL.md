@@ -28,7 +28,8 @@ exist, say so and stop; replacing them is the owner's decision.
 
 - Linux with a working user systemd manager (`systemctl --user status`), Python 3.10+, Git.
 - At least one authenticated coding agent: `claude` and/or `omp`. Mishe supplies neither
-  the model nor credentials, and agent usage counts against the person's limits.
+  the model nor credentials, and agent usage counts against the person's limits. The code also
+  knows a third engine, `codex`; no plant routes it by default.
 - Optional: `gh` with repository access for the CI reading; without it CI stays UNKNOWN.
 
 Missing tools or model access are reported, not treated as a successful setup. Explain
