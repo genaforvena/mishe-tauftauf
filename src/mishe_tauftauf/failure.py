@@ -65,12 +65,17 @@ def _unit_for(name: str, incident) -> str | None:
     return units.producer_unit_for_signal(name)
 
 
-def clear_recovered(home, *, now, last_exit=None) -> list[str]:
-    """Observe GREEN every RED failure signal whose unit has since exited 0 after the RED reading.
+RECOVERY_STABLE_S = 600   # a restarted unit must stay active this long before its failure record clears (no crash loops)
+
+
+def clear_recovered(home, *, now, last_exit=None, active_since=None) -> list[str]:
+    """Observe GREEN every RED failure signal whose unit has since recovered after the failure reading.
 
     A failure is a level, so the record must follow the unit: without this a unit that failed once stayed RED after
-    its next run succeeded (2026-11-08: nine cleared by hand). Only the unit's latest exit decides; a unit that is still
-    failing, or whose exit time is unreadable, stays RED. An incident written before ``unit`` was recorded is left alone.
+    its next run succeeded (2026-11-08: nine cleared by hand). Recovery is either the unit's latest exit being clean
+    after the failure, or (for a long-running unit that never exits) the unit being active for RECOVERY_STABLE_S
+    after the failure. A unit that is still failing, or whose times are unreadable, stays RED. An incident written
+    before ``unit`` was recorded is left alone.
 
     Recovery also retires the pending ``reoffer-<name>`` intention: it was scheduled to return a still-standing fault,
     and once the signal is GREEN it only fires a spurious wake (2026-11-10: a recovered pub service still woke Health).
@@ -81,6 +86,7 @@ def clear_recovered(home, *, now, last_exit=None) -> list[str]:
     from . import work_boundary
     home = Path(home)
     last_exit = last_exit or work_boundary.unit_last_exit
+    active_since = active_since or work_boundary.unit_active_since
     cleared = []
     for name in sorted(signal_store.registry(home)):
         if not work_boundary.failure_signal(name):
@@ -109,7 +115,13 @@ def clear_recovered(home, *, now, last_exit=None) -> list[str]:
         last_seen = incident.get("last_seen") if isinstance(incident, dict) else None
         since = (last_seen if isinstance(last_seen, (int, float)) else reading.get("observed_at")) if expired \
             else reading.get("observed_at")
-        if exit_ and exit_[1] and isinstance(since, (int, float)) and exit_[0] > since:
+        if not isinstance(since, (int, float)):
+            continue
+        exited_clean = bool(exit_ and exit_[1] and exit_[0] > since)
+        # A long-running unit has no exit to show: it recovered if it has stayed active since the failure, for a while.
+        started = None if exited_clean else active_since(unit)
+        running_clean = started is not None and started > since and now - started >= RECOVERY_STABLE_S
+        if exited_clean or running_clean:
             signal_store.observe(home, name, "GREEN", now=now, source="failure-recovered")
             _retire_reoffers(home, name)
             cleared.append(name)

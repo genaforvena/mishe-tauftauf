@@ -350,3 +350,40 @@ def test_unit_for_prefers_the_incident_unit_and_derives_only_a_round_tripping_on
         == "mishe-producer-work-trial.service"
     assert failure._unit_for("failed-mishe-producer-work-trial-service", None) == "mishe-producer-work-trial.service"
     assert failure._unit_for("failed-mishe-wake-docs-service", {}) is None
+
+
+# --- a long-running unit that never exits clears by staying active after the failure --------------------------------
+
+def test_a_restarted_long_running_unit_clears_after_it_is_stably_active(tmp_path):
+    # 2026-11-15: failed-mishe-dual-probe-service stayed UNKNOWN for a week while its Restart=always unit ran unbroken;
+    # a unit that never exits has no clean exit to show, so its active-since time is the recovery evidence.
+    unit, name = "mishe-dual-probe.service", "failed-mishe-dual-probe-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    never_exited = lambda u: None
+    # restarted 60 s after the failure: not yet stable, stays RED
+    assert failure.clear_recovered(tmp_path, now=NOW + 120, last_exit=never_exited,
+                                   active_since=lambda u: NOW + 60) == []
+    assert store.read(tmp_path, name, now=NOW + 120).value == "RED"
+    # active for RECOVERY_STABLE_S after the failure: observed GREEN
+    later = NOW + failure.RECOVERY_STABLE_S + 60
+    assert failure.clear_recovered(tmp_path, now=later, last_exit=never_exited,
+                                   active_since=lambda u: NOW + 60) == [name]
+    assert store.read(tmp_path, name, now=later).value == "GREEN"
+
+
+def test_a_unit_active_since_before_the_failure_does_not_clear_it(tmp_path):
+    unit, name = "mishe-dual-probe.service", "failed-mishe-dual-probe-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    assert failure.clear_recovered(tmp_path, now=NOW + 3600, last_exit=lambda u: None,
+                                   active_since=lambda u: NOW - 100) == []
+    assert store.read(tmp_path, name, now=NOW + 3600).value == "RED"
+
+
+def test_an_expired_failure_of_a_unit_running_since_then_clears(tmp_path):
+    unit, name = "mishe-dual-probe.service", "failed-mishe-dual-probe-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    week = NOW + 7 * 86400 + 10
+    assert store.read(tmp_path, name, now=week).state == "UNKNOWN"
+    assert failure.clear_recovered(tmp_path, now=week + 60, last_exit=lambda u: None,
+                                   active_since=lambda u: NOW + 86400) == [name]
+    assert store.read(tmp_path, name, now=week + 60).value == "GREEN"

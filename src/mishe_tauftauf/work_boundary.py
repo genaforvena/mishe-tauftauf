@@ -74,6 +74,31 @@ def unit_last_exit(unit):
     return exited_at, values.get("Result") == "success" and values.get("ExecMainStatus") == "0"
 
 
+def unit_active_since(unit):
+    """Epoch seconds when ``unit`` entered its current active state, or None when it is not active or unreadable.
+
+    A long-running monitor (Restart=always) never exits cleanly, so ``unit_last_exit`` cannot show its recovery: the
+    2026-11-08 kill of mishe-dual-probe left failed-mishe-dual-probe-service expired to UNKNOWN for a week while the unit
+    ran unbroken from 2026-11-14 00:50Z. Its start time is the evidence for that case.
+    """
+    try:
+        result = subprocess.run(["systemctl", "--user", "show", unit, "-p", "ActiveState,ActiveEnterTimestamp"],
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode:
+        return None
+    values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    stamp = values.get("ActiveEnterTimestamp", "").strip()
+    if values.get("ActiveState") != "active" or not stamp:
+        return None
+    try:
+        parsed = time.strptime(stamp, "%a %Y-%m-%d %H:%M:%S %Z")
+    except ValueError:
+        return None
+    return calendar.timegm(parsed) if parsed.tm_zone in ("UTC", "GMT") else time.mktime(parsed)
+
+
 def _journal_last_exit(unit):
     """``(exited_at, clean)`` from the unit's own journal, for a unit systemd has forgotten.
 
