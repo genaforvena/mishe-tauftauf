@@ -31,7 +31,9 @@ UNSUPPORTED_MARKERS = ("is not supported when using codex with a chatgpt account
 
 
 def command(model: str, cwd: Path, sandbox: str = SANDBOX, thinking: str | None = None) -> list[str]:
-    cmd = ["codex", "exec", "--skip-git-repo-check", "--ephemeral", "-s", sandbox,
+    # No --ephemeral: the rollout the CLI writes carries the account's rate_limits reading, the only
+    # evidence codex_usage has. Without it codex-a stays UNREADABLE and the router never picks a codex route.
+    cmd = ["codex", "exec", "--skip-git-repo-check", "-s", sandbox,
            "-m", model, "--json", "-C", str(cwd)]
     if thinking in THINKING_LEVELS:
         cmd += ["-c", f'model_reasoning_effort="{thinking}"']
