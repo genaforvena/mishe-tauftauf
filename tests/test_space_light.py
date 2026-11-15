@@ -1039,6 +1039,15 @@ def test_adb_sampler_stale_future_and_light_not_ok_stay_unknown(tmp_path: Path):
     assert discovery._note3_adb_sampler_read(bad, now=NOW)["reason"] == "sampler-light-not-ok"
 
 
+def test_adb_sampler_null_or_text_channel_is_malformed_not_a_crash(tmp_path: Path):
+    for name, values in (("null", [0.0, None, 1.0]), ("text", [0.0, "bright", 1.0])):
+        home = _sampler_home(tmp_path / name, NOW - 5,
+                             light={"status": "ok", "values": values})
+        row = discovery._note3_adb_sampler_read(home, now=NOW)
+        assert row["state"] == "unknown"
+        assert row["reason"] == "sampler-malformed"
+
+
 def test_adb_sampler_absent_and_malformed_are_unknown(tmp_path: Path):
     assert discovery._note3_adb_sampler_read(tmp_path, now=NOW)["reason"] == "sampler-absent"
     folder = tmp_path / "spatial" / "work" / "household"

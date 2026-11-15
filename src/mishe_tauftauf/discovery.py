@@ -6788,7 +6788,12 @@ def _note3_adb_sampler_read(home: Path, now: float | None = None) -> dict:
             f"Note3 adb light UNKNOWN: sampler-light-not-ok status={light_status}"
             f" age={_space_age(age)}"))
     else:
-        raw = "[" + ",".join(f"{float(value):g}" for value in channels) + "]"
+        try:
+            raw = "[" + ",".join(f"{float(value):g}" for value in channels) + "]"
+        except (ValueError, TypeError):
+            row.update(reason="sampler-malformed",
+                       sample=f"Note3 adb light UNKNOWN: sampler-malformed; file={path}")
+            return row
         row.update(reason="raw-channels-lux-unverified", sample=(
             f"Note3 adb light raw {raw} age={_space_age(age)};"
             " raw channels, lux not verified; provenance=adb dumpsys sensorservice"))
