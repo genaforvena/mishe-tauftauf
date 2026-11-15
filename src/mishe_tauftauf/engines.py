@@ -1,4 +1,4 @@
-"""Which engine a role wakes on. Only ``claude`` and ``omp`` exist."""
+"""Which engine a role wakes on. ``claude``, ``omp`` and ``codex`` exist; codex is routed only when a route names it."""
 from __future__ import annotations
 
 from pathlib import Path
