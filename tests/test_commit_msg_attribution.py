@@ -75,6 +75,42 @@ def test_repeated_coauthor_trailers_are_all_preserved():
                                    "Co-Authored-By: A <a@x>", "Co-Authored-By: B <b@x>"]
 
 
+def test_a_trailer_value_continuation_line_survives():
+    """Git folds a whitespace-prefixed line after a trailer into that trailer's
+    value. The hook must relocate the whole value, not only its first line, or it
+    rewrites a recognised trailer value -- the same contract the repeated-key
+    defect broke. Before the fix: the value became ``Co-Authored-By: A <a@x>`` and
+    ``  continued note`` was stranded in the body."""
+    text = ("subject\n\nbody text\n"
+            "Mishe-Wake: wake-x-1\n"
+            "Mishe-Role: field-review\n"
+            "\n"
+            "Co-Authored-By: A <a@x>\n"
+            "  continued note\n")
+    assert parse_trailers(text) == ["Co-Authored-By: A <a@x> continued note"]
+    new, changed = module.normalize(text, "", "")
+    assert changed is True
+    assert parse_trailers(new) == ["Mishe-Wake: wake-x-1", "Mishe-Role: field-review",
+                                   "Co-Authored-By: A <a@x> continued note"]
+    assert "  continued note" not in new.split("Co-Authored-By: A <a@x>")[0]
+
+
+def test_repeated_keys_and_continuations_together_survive():
+    """A message with the Mishe lines run into the body, two coauthors and a
+    continuation value on the second."""
+    text = ("subject\n\nbody\n"
+            "Mishe-Wake: wake-x-1\n"
+            "Mishe-Role: field-review\n"
+            "Co-Authored-By: A <a@x>\n"
+            "Co-Authored-By: B <b@x>\n"
+            "\textra detail\n")
+    new, changed = module.normalize(text, "", "")
+    assert changed is True
+    assert parse_trailers(new) == ["Mishe-Wake: wake-x-1", "Mishe-Role: field-review",
+                                   "Co-Authored-By: A <a@x>",
+                                   "Co-Authored-By: B <b@x> extra detail"]
+
+
 def test_unattributable_message_with_no_environment_is_untouched():
     bare = "subject\n\nbody\n"
     assert module.normalize(bare, "", "") == (bare, False)

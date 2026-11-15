@@ -53,30 +53,41 @@ def normalize(text, wake, role):
     if _already_attributed(text):
         return text, False
 
-    # Every matched trailer line, in order, so a repeated ``Co-Authored-By`` is
-    # preserved rather than collapsed to its first occurrence.
-    trailers = []
+    # Every matched trailer, in order, as a ``[key, value, raw_lines]`` unit. A
+    # whitespace-prefixed line immediately after a trailer is that trailer's
+    # value *continuation* (git folds it into the value), so it travels with the
+    # trailer instead of being stranded in the body. This keeps both a repeated
+    # ``Co-Authored-By`` and a multi-line value intact.
+    units = []
     body_lines = []
+    last = None
     for line in text.splitlines():
         match = _TRAILER_LINE.match(line)
         if match:
-            trailers.append((match.group(1), match.group(2).strip()))
+            units.append([match.group(1), match.group(2).strip(), [line]])
+            last = units[-1]
+        elif last is not None and line[:1] in (" ", "\t"):
+            last[2].append(line)
         else:
             body_lines.append(line)
+            last = None
 
     def first(key):
-        return next((value for k, value in trailers if k == key), None)
+        return next((value for k, value, _ in units if k == key), None)
 
     wake = first("Mishe-Wake") or (wake or "").strip()
     role = first("Mishe-Role") or (role or "").strip()
     if not wake or not role:
         return text, False  # cannot attribute; leave the author's message alone
 
-    block = [f"Mishe-Wake: {wake}", f"Mishe-Role: {role}"]
-    for key, value in trailers:
-        if (key, value) in (("Mishe-Wake", wake), ("Mishe-Role", role)):
+    wake_unit = next((u for u in units if u[0] == "Mishe-Wake" and u[1] == wake), None)
+    role_unit = next((u for u in units if u[0] == "Mishe-Role" and u[1] == role), None)
+    block = [f"Mishe-Wake: {wake}", *(wake_unit[2][1:] if wake_unit else []),
+             f"Mishe-Role: {role}", *(role_unit[2][1:] if role_unit else [])]
+    for unit in units:
+        if unit is wake_unit or unit is role_unit:
             continue  # already emitted as the canonical Mishe pair
-        block.append(f"{key}: {value}")
+        block.extend(unit[2])
 
     body = "\n".join(body_lines).strip("\n")
     new = (body + "\n\n" if body else "") + "\n".join(block) + "\n"
