@@ -1,0 +1,173 @@
+"""Tests for the Pub plant-state claims detector.
+
+The detector answers one question: does a published figure about the
+plant's own running state match the plant now?  On 2026-11-15 two posts
+stated such a figure in the present tense and both were false when read
+again: "the current ledger scan finds 123 rows whose original evidence is
+permanently lost" (the live scan read 126) and "the repository's current
+commit is 990 commits ahead of the release the running services are pinned
+to" (the live gap was 3).  The account's other detectors read counts a page
+publishes about the DEV account, so nothing read a figure about the plant.
+
+Every test here names the mutation to the detector that would make it fail.
+A test that cannot name one is not pinning anything.
+"""
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load(name: str, relative: str):
+    spec = importlib.util.spec_from_file_location(name, ROOT / relative)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+check = _load("pub_plant_state_claims", "checks/pub-plant-state-claims.py")
+
+# The live readings the fixture plant reports, so a claim that drifts is one
+# number away.
+LIVE = {
+    "ledger_permanent_loss": 126,
+    "ledger_owed": 75,
+    "pin_gap": 3,
+    "producer_units_naming_release": 41,
+    "checkout_head": "20c65d7309ed4c617913d5317d661912dd23ec56",
+}
+
+BODIES = {
+    "1": "The current ledger scan finds 126 rows whose original evidence is permanently lost.\n",
+    "2": "The repository's current commit is 3 commits ahead of the release the running services are pinned to.\n",
+    "3": "Forty-one producer units still name a release directly.\n",
+    "4": "The checkout is arborescent (you are on `20c65d73`).\n",
+}
+
+
+def _failures(bodies=None, live=None):
+    return check.check(bodies if bodies is not None else BODIES,
+                       live if live is not None else LIVE)
+
+
+def test_claims_that_hold_are_quiet():
+    """The detector is quiet when the plant agrees with the published figures."""
+    failures, undecidable = _failures()
+    assert failures == []
+    assert undecidable == []
+
+
+def test_a_stale_ledger_count_is_found():
+    """A body that understates the ledger's lost rows is found."""
+    failures, _ = _failures({"1": "The current ledger scan finds 123 rows whose "
+                                 "original evidence is permanently lost.\n"})
+    assert len(failures) == 1
+    assert "the plant reads 126" in failures[0]
+
+
+def test_a_stale_owed_count_is_found():
+    """A body that understates the ledger's still-owed rows is found."""
+    failures, _ = _failures({"1": "The current ledger scan finds 76 rows whose "
+                                 "evidence is still owed.\n"})
+    assert len(failures) == 1
+    assert "the plant reads 75" in failures[0]
+
+
+def test_a_stale_pin_gap_is_found():
+    """A body that overstates the gap to the pinned release is found."""
+    failures, _ = _failures({"2": "The repository's current commit is 990 commits "
+                                 "ahead of the release the running services are "
+                                 "pinned to.\n"})
+    assert len(failures) == 1
+    assert "the plant reads 3" in failures[0]
+
+
+def test_a_stale_unit_count_is_found():
+    """A body that understates the units that name a release is found."""
+    failures, _ = _failures({"3": "Nineteen producer units still name a release directly.\n"})
+    assert len(failures) == 1
+    assert "the plant reads 41" in failures[0]
+
+
+def test_a_stale_checkout_commit_is_found():
+    """A body that names the wrong checkout commit is found."""
+    failures, _ = _failures({"4": "The checkout is arborescent (you are on `51a5e68`).\n"})
+    assert len(failures) == 1
+    assert "the checkout is on 20c65d73" in failures[0]
+
+
+def test_a_figure_the_sentence_dates_is_not_a_claim():
+    """A figure its own sentence places in the past is a reading, not a claim."""
+    failures, _ = _failures({"1": "On 11 November, the ledger scan found 123 rows "
+                                 "whose original evidence is permanently lost.\n"})
+    assert failures == []
+
+
+def test_a_figure_in_the_past_tense_is_not_a_claim():
+    """A figure the sentence reports in the past tense is not a live claim."""
+    failures, _ = _failures({"2": "The gap was 3 commits ahead of the release the "
+                                 "running services are pinned to.\n"})
+    assert failures == []
+
+
+def test_a_figure_dated_by_the_paragraph_above_a_list_is_not_a_claim():
+    """A paragraph that dates the list below it dates the list's figures."""
+    failures, _ = _failures({"3": "Checked against the running system on 11 November.\n\n"
+                                 "- Nineteen producer units still name a release directly.\n"})
+    assert failures == []
+
+
+def test_a_figure_dated_by_the_section_heading_is_not_a_claim():
+    """A heading that carries a date dates the section's figures."""
+    failures, _ = _failures({"3": "## Checked on 11 November\n\n"
+                                 "- Nineteen producer units still name a release directly.\n"})
+    assert failures == []
+
+
+def test_a_figure_inside_a_correction_notice_is_not_a_claim():
+    """A correction notice's numbers are history, not a claim."""
+    failures, _ = _failures({"1": "> **Correction, 2026-11-15.** It said \"the current "
+                                 "ledger scan finds 123 rows whose original evidence is "
+                                 "permanently lost\".\n"})
+    assert failures == []
+
+
+def test_a_figure_the_plant_publishes_no_reading_for_is_undecidable():
+    """A reading the plant cannot supply is UNKNOWN, never a pass."""
+    failures, undecidable = check.check(
+        {"1": "The current ledger scan finds 123 rows whose original evidence "
+              "is permanently lost.\n"},
+        {"ledger_owed": 75})
+    assert failures == []
+    assert len(undecidable) == 1
+    assert "no live reading" in undecidable[0]
+
+
+def test_a_number_the_text_cannot_read_is_not_a_claim():
+    """A figure that is neither a digit nor a known number word is not read."""
+    assert check.live_figures("The current ledger scan finds many rows whose "
+                              "original evidence is permanently lost.\n") == []
+
+
+def test_a_number_word_is_read():
+    """A figure written as a word is read and checked."""
+    failures, _ = _failures({"3": "Nineteen producer units still name a release directly.\n"})
+    assert len(failures) == 1
+    assert "the plant reads 41" in failures[0]
+
+
+def test_the_scope_dates_of_a_body_are_read_per_line():
+    """A dated scope covers the lines under it and not the lines above."""
+    body = "## Checked on 11 November\n\n- Nineteen units still name a release directly.\n"
+    dated = check.scope_dates(body)
+    assert dated[0] is True
+    assert dated[2] is True
+
+
+def test_the_self_test_passes():
+    """The check's own controlled failure runs and passes."""
+    assert check._self_test() == 0

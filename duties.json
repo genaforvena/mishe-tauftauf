@@ -257,6 +257,31 @@
       "covers": "the DEV write path refuses a draft that breaks the private/public rule before the write"
     },
     {
+      "name": "pub-plant-state-claims",
+      "command": [
+        "{python}",
+        "{repo}/checks/pub-plant-state-claims.py",
+        "--env",
+        "{home}/pub/access/devto.env",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "every": 3600,
+      "timeout": 300,
+      "max_age": 7200,
+      "resolver": "pub",
+      "replaces": [],
+      "covers": "every figure a published post states about the plant's own running state matches the plant"
+    },
+    {
       "name": "budget",
       "command": [
         "{home}/producers/budget.sh"
