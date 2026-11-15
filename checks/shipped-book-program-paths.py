@@ -60,6 +60,11 @@ Scope and limits, named:
   also UNKNOWN rather than a finding: the ignore rules are the repository's
   own statement about what a clone receives, and a path the repository never
   mentioned at all is usually a runtime artifact the reader creates.
+* When the ignore rules **cannot be read** -- no work tree, no ``git``, or a
+  repository whose candidate path runs *beyond a symbolic link* (``git`` exits
+  128 when, for example, ``.venv`` is a symlink rather than a directory) -- the
+  question is undecided.  The answer is then UNKNOWN (exit 3), never a pass: a
+  rule that could not be read is not a rule that excludes nothing.
 * An **absolute path** (``/proc/loadavg``, ``/tmp/tmux-UID/...``) is out of
   scope: it names a place outside the clone on purpose.
 * This check says nothing about whether the program *runs* once found; that
@@ -69,7 +74,8 @@ Scope and limits, named:
 Exit status:
   0  every command in the shipped book names a program the clone contains
   2  a shipped page hands the reader a command whose program the clone lacks
-  3  the question cannot be decided: no tree, no git, or no command to read
+  3  the question cannot be decided: no tree, no git, no command to read, or the
+     ignore rules (the tree's own, or the named repository's) cannot be read
 """
 from __future__ import annotations
 
@@ -253,7 +259,9 @@ def _excluded(tree: Path, repo: Path, candidates: list[str]) -> set[str] | None:
     tree of any repository has no ignore rules to read, so the question
     cannot be decided and the answer is UNKNOWN rather than a finding.
 
-    ``None`` means exactly that: the question cannot be decided.
+    ``None`` means exactly that: the question cannot be decided -- neither the
+    tree's own rules nor, when a repository is named beside it, the
+    repository's rules could be read at all.
     """
     if not candidates:
         return set()
@@ -279,10 +287,33 @@ def _excluded(tree: Path, repo: Path, candidates: list[str]) -> set[str] | None:
         argv = [GIT, "-C", str(repo), "check-ignore", "--no-index", "--stdin"]
         result = subprocess.run(argv, input="\n".join(candidates).encode("utf-8"),
                                 capture_output=True)
-        if result.returncode in (0, 1):
-            return {line for line in result.stdout.decode("utf-8", "replace").splitlines()
-                    if line.strip()}
+        if result.returncode not in (0, 1):
+            # The repository's rules could not be read at all -- for example a
+            # candidate path that runs *beyond a symbolic link*, which ``git``
+            # refuses with exit 128 when the working tree carries ``.venv`` as
+            # a symlink instead of a directory.  The stronger answer is then
+            # unavailable, so the question is undecided; it is not the answer
+            # "nothing is excluded", which would turn a defect into a pass.
+            return None
+        return {line for line in result.stdout.decode("utf-8", "replace").splitlines()
+                if line.strip()}
     return excluded
+
+
+def _needs_ignore_rules(program: str, tree: Path) -> bool:
+    """Whether a program word's verdict depends on the ignore rules.
+
+    Everything else -- an absolute path, a value the reader supplies, a
+    placeholder segment, or a path the tree already contains -- is decided
+    without reading any rule, so it must not be handed to ``git check-ignore``.
+    """
+    if program.startswith("/"):
+        return False
+    if VARIABLE.search(program):
+        return False
+    if any(PLACEHOLDER_SEGMENT.match(segment) for segment in program.split("/") if segment):
+        return False
+    return not (tree / program).exists()
 
 
 def _audit(tree: Path, repo: Path) -> dict:
@@ -290,7 +321,13 @@ def _audit(tree: Path, repo: Path) -> dict:
     findings: list[dict] = []
     unknown: list[dict] = []
     checked = 0
-    # The programs the book names, so the ignore rules can be read once.
+    # The programs the book names, so the ignore rules can be read once -- but
+    # only those whose verdict actually needs them.  An absolute path, a path
+    # with a shell variable or a placeholder segment, and a path the tree
+    # already contains are all decided by ``_verdict`` without the rules, and
+    # asking ``git`` about them is worse than useless: an absolute path makes
+    # ``git check-ignore`` exit 128 ("outside repository"), which would turn a
+    # readable set of rules into an undecided one.
     programs: dict[tuple[str, str], str] = {}
     candidates: list[str] = []
     for page in _book_pages(tree):
@@ -305,15 +342,15 @@ def _audit(tree: Path, repo: Path) -> dict:
             if (relative, program) in programs:
                 continue
             programs[(relative, program)] = command
-            if program not in candidates:
+            if _needs_ignore_rules(program, tree) and program not in candidates:
                 candidates.append(program)
     excluded = _excluded(tree, repo, candidates)
     for (relative, program), command in programs.items():
         checked += 1
         if excluded is None:
-            # The tree carries no ignore rules, so a path the reader lacks
+            # The ignore rules could not be read, so a path the reader lacks
             # cannot be told apart from a path the reader creates.
-            verdict, detail = "unknown", "the tree carries no ignore rules to read"
+            verdict, detail = "unknown", "the ignore rules cannot be read"
         else:
             verdict, detail = _verdict(program, tree, excluded)
         if verdict == "present":
@@ -324,7 +361,8 @@ def _audit(tree: Path, repo: Path) -> dict:
             findings.append(record)
         else:
             unknown.append(record)
-    return {"checked": checked, "findings": findings, "unknown": unknown}
+    return {"checked": checked, "findings": findings, "unknown": unknown,
+            "undecided": excluded is None}
 
 
 def main(argv: list[str]) -> int:
@@ -375,6 +413,10 @@ def main(argv: list[str]) -> int:
     if result["checked"] == 0:
         print("UNKNOWN — the shipped book states no command with a path program, so "
               "there is nothing to check and a pass would be vacuous")
+        return 3
+    if result["undecided"]:
+        print("UNKNOWN — the ignore rules cannot be read, so a path the clone lacks "
+              "cannot be told from one the repository never tracked")
         return 3
     if not result["findings"]:
         print("OK every command in the shipped book names a program the clone contains")

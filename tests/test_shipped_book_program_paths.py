@@ -143,6 +143,22 @@ def test_a_tree_with_no_ignore_rules_is_unknown_not_a_finding(tmp_path):
     assert "UNKNOWN" in result.stdout
 
 
+def test_a_repository_whose_rules_cannot_be_read_is_unknown_not_a_pass(tmp_path):
+    """A rule that could not be read is not a rule that excludes nothing.
+
+    The repository named beside the tree is the stronger answer, but when
+    ``git`` cannot read it -- here it names no repository at all, and a delivery
+    worktree hits the same exit when ``.venv`` is a symlink and the candidate
+    path runs beyond it -- the question is undecided (UNKNOWN, exit 3), never a
+    pass that would let the defect through.
+    """
+    tree = make_tree(tmp_path, {"README.md": EXCLUDED_PROGRAM_PAGE})
+    result = run_check(tree, repo=tmp_path / "not-a-repository")
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "UNKNOWN" in result.stdout
+    assert "BOOK vs PROGRAM PATH" not in result.stdout
+
+
 def test_a_tree_carrying_its_own_ignore_rules_is_read(tmp_path):
     """The committed ignore rules travel with the tree.
 
