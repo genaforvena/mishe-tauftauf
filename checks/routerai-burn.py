@@ -1,24 +1,13 @@
 #!/usr/bin/env python3
-"""Detector: the RouterAI LLM budget is spent at the target rate (operator DM st-rai3).
+"""Report the shared RouterAI balance trend; the LLM ruble target is UNKNOWN.
 
-Reads engine/routerai-balance.jsonl (one row per successful balance read, written by
-budget_producer.append_routerai_balance). Spend is the sum of balance drops between consecutive
-reads inside the window (top-ups are not spend). Burn is that spend divided by the measured span.
-Target is limit / window_h per hour (200 / 24 = 8.33 per hour by default).
+Balance drops are observed credits shared by LLMs and decisions. Their ruble
+conversion and category attribution are unverified, so no balance trend can
+prove or disprove the LLM spending target. Top-ups between samples can hide
+spending, and positive balance changes are not counted as drops.
 
-Checks:
-  - GREEN when burn is within +/- band of the target (default 25 %).
-  - RED when burn is outside the band in either direction (overspend or underspend).
-
-Exit status:
-  0  GREEN: burn tracks the target
-  2  RED: burn is outside the band
-  3  UNKNOWN: no history file, fewer than --min-span-h of samples, the newest sample is older
-     than --max-age (a gap is not zero spend; it proves nothing either way), or --limit or
-     --window-h is not positive (an unusable argument proves nothing either way)
-
-Usage: routerai-burn.py --home SITE_HOME [--limit 200] [--window-h 24] [--band 0.25]
-                        [--min-span-h 1.0] [--max-age 900] [--now EPOCH]
+Exit 3 (UNKNOWN), including when samples are missing, stale, or too sparse.
+The shared balance-drop series remains visible when there is enough evidence.
 """
 from __future__ import annotations
 
@@ -72,14 +61,11 @@ def judge(rows, now, limit, window_h, band, min_span_h, max_age) -> tuple[int, d
     report["span_h"] = round(span_h, 3)
     if span_h < min_span_h:
         return 3, dict(report, verdict="UNKNOWN", reason=f"span {span_h:.2f} h < {min_span_h} h")
-    spend = sum(max(0.0, prev[1] - cur[1]) for prev, cur in zip(inside, inside[1:]))
-    burn = spend / span_h
-    ratio = burn / target
-    report.update(spend=round(spend, 3), burn_per_h=round(burn, 3), ratio=round(ratio, 3))
-    if 1 - band <= ratio <= 1 + band:
-        return 0, dict(report, verdict="GREEN")
-    direction = "overspend" if ratio > 1 else "underspend"
-    return 2, dict(report, verdict="RED", reason=f"{direction}: burn {burn:.2f}/h vs target {target:.2f}/h")
+    drops = sum(max(0.0, prev[1] - cur[1]) for prev, cur in zip(inside, inside[1:]))
+    report.update(balance_drops=round(drops, 3), balance_drop_per_h=round(drops / span_h, 3),
+                  balance_unit="RouterAI credits (conversion to rubles unverified)")
+    return 3, dict(report, verdict="UNKNOWN",
+                   reason="shared balance does not attribute LLM spend and conversion to rubles is unverified")
 
 
 def main(argv=None) -> int:
@@ -92,15 +78,12 @@ def main(argv=None) -> int:
     p.add_argument("--max-age", type=float, default=900.0)
     p.add_argument("--now", type=float, default=None)
     p.add_argument("--as-initiative", action="store_true",
-                   help="acceptance exit codes for checks/initiatives.py: 0 done, 1 open (was RED), 3 unknown")
+                   help="compatibility with checks/initiatives.py; unknown remains exit 3")
     args = p.parse_args(argv)
     now = args.now if args.now is not None else time.time()
     rows = read_rows(args.home / HISTORY)
     code, report = judge(rows, now, args.limit, args.window_h, args.band, args.min_span_h, args.max_age)
     print(json.dumps(report, sort_keys=True))
-    if args.as_initiative and code == 2:
-        # RED is "not done and past due" for an initiative: the initiatives detector reads only 0/1/else.
-        return 1
     return code
 
 

@@ -22,28 +22,27 @@ def test_producer_appends_balance_only_for_successful_reads(tmp_path):
     assert rows == [{"epoch": 1000.0, "balance": 200.0}, {"epoch": 3000.0, "balance": 190.0}]
 
 
-def test_burn_check_verdicts(tmp_path):
+def test_shared_balance_cannot_establish_llm_target():
     burn = _load_check()
-    target = 200 / 24  # 8.33 per hour
     now = 10 * 3600.0
-    # 10 h of samples spending exactly the target: GREEN
-    on_target = [(now - 10 * 3600 + i * 3600, 200 - target * i) for i in range(11)]
-    code, rep = burn.judge(on_target, now, 200, 24, 0.25, 1.0, 900)
-    assert code == 0 and rep["verdict"] == "GREEN", rep
-    # spending 3x the target: RED overspend
-    fast = [(now - 10 * 3600 + i * 3600, 200 - 3 * target * i) for i in range(11)]
-    code, rep = burn.judge(fast, now, 200, 24, 0.25, 1.0, 900)
-    assert code == 2 and "overspend" in rep["reason"], rep
-    # a top-up between samples is not spend
+    # Drops could be LLM spending, decision spending, or both.
+    for hourly_drop in (200 / 24, 25, 1):
+        rows = [(now - 10 * 3600 + i * 3600, 300 - hourly_drop * i) for i in range(11)]
+        code, report = burn.judge(rows, now, 200, 24, 0.25, 1.0, 900)
+        assert code == 3 and report["verdict"] == "UNKNOWN", report
+        assert report["balance_drop_per_h"] == round(hourly_drop, 3), report
+        assert "shared" in report["reason"] and "rubles" in report["reason"]
+
+
+def test_missing_stale_and_topped_up_balance():
+    burn = _load_check()
+    now = 10 * 3600.0
     topped = [(now - 2 * 3600, 100.0), (now - 3600, 150.0), (now, 140.0)]
-    code, rep = burn.judge(topped, now, 200, 24, 0.25, 1.0, 900)
-    assert rep["spend"] == 10.0, rep
-    # no history, or too short a span, is UNKNOWN (exit 3), never GREEN
+    code, report = burn.judge(topped, now, 200, 24, 0.25, 1.0, 900)
+    assert code == 3 and report["balance_drops"] == 10.0
     assert burn.judge([], now, 200, 24, 0.25, 1.0, 900)[0] == 3
-    short = [(now - 600, 200.0), (now, 199.0)]
-    assert burn.judge(short, now, 200, 24, 0.25, 1.0, 900)[0] == 3
-    stale = [(now - 10 * 3600, 200.0), (now - 3 * 3600, 180.0)]
-    assert burn.judge(stale, now, 200, 24, 0.25, 1.0, 900)[0] == 3
+    assert burn.judge([(now - 600, 200.0), (now, 199.0)], now, 200, 24, 0.25, 1.0, 900)[0] == 3
+    assert burn.judge([(now - 10 * 3600, 200.0), (now - 3 * 3600, 180.0)], now, 200, 24, 0.25, 1.0, 900)[0] == 3
 
 
 def test_a_zero_limit_or_window_is_unknown_not_a_crash(tmp_path, capsys):
@@ -68,14 +67,12 @@ def test_a_zero_limit_or_window_is_unknown_not_a_crash(tmp_path, capsys):
     assert mod.main(["--home", str(home), "--now", str(now), "--window-h", "0", "--as-initiative"]) == 3
 
 
-def test_as_initiative_maps_red_to_open_and_keeps_unknown(tmp_path, capsys):
-    # Burn RED is "not done" for the initiative (exit 1 = open); UNKNOWN must stay UNKNOWN (3).
+def test_as_initiative_preserves_unknown_for_shared_balance(tmp_path, capsys):
     mod = _load_check()
-    home = tmp_path
-    (home / "engine").mkdir()
+    (tmp_path / "engine").mkdir()
     rows = [{"epoch": 1000.0 + i * 3600, "balance": 200.0 - 14.0 * i} for i in range(4)]
-    (home / "engine" / "routerai-balance.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    (tmp_path / "engine" / "routerai-balance.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     now = rows[-1]["epoch"] + 60
-    assert mod.main(["--home", str(home), "--now", str(now)]) == 2
-    assert mod.main(["--home", str(home), "--now", str(now), "--as-initiative"]) == 1
+    assert mod.main(["--home", str(tmp_path), "--now", str(now), "--as-initiative"]) == 3
+    assert json.loads(capsys.readouterr().out)["verdict"] == "UNKNOWN"
     assert mod.main(["--home", str(tmp_path / "empty"), "--now", str(now), "--as-initiative"]) == 3
