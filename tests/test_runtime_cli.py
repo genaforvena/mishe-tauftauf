@@ -143,6 +143,25 @@ def test_doctor_no_observe_reports_without_publishing_the_meta_signal(site, tmp_
     assert store.rev(site, "doctor") == before + 1
 
 
+def test_a_doctors_run_inside_a_wake_never_publishes(site, tmp_path, monkeypatch, capsys):
+    """Only the scheduled monitor is the liveness probe. A wake's own doctor -- a reproduction, a
+    post-cleanup recheck -- must report but not publish, or the diagnostic flaps the signal and
+    wakes health a second time (the 2026-11-15 22:06Z/22:08Z pair health itself published)."""
+    units_dir = tmp_path / "units"
+    cli("sync", "--unit-dir", str(units_dir), "--no-systemctl")
+    (units_dir / "mishe-wake-genome.path").write_text(
+        "# mishe-generated: observation runtime (edit nothing here; run `mishe sync`)\nx\n")
+    before = store.rev(site, "doctor")
+    monkeypatch.setenv("MISHE_WAKE_KEY", "wake-health-example")
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 1   # reports the drift to the caller
+    assert store.rev(site, "doctor") == before                # but publishes nothing
+    assert not (site / "signals" / "doctor.json").exists()
+    assert "drift" in capsys.readouterr().out
+    monkeypatch.delenv("MISHE_WAKE_KEY")
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 1   # the monitor, outside any wake, publishes
+    assert store.rev(site, "doctor") == before + 1
+
+
 def test_a_silent_doctor_reads_unknown(site, tmp_path):
     cli("sync", "--unit-dir", str(tmp_path / "u"), "--no-systemctl")
     cli("doctor", "--unit-dir", str(tmp_path / "u"))

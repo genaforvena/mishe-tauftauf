@@ -89,6 +89,11 @@ def private_tmux_server(tmp_path_factory):
     if records_bin and not os.environ.get("MISHE_RECORDS_BIN"):
         patch.setenv("MISHE_RECORDS_BIN", records_bin)
     patch.delenv("MISHE_SEED_HOME", raising=False)
+    # A mind shell also exports MISHE_WAKE_KEY, and `mishe doctor` now publishes its meta-signal
+    # only outside a wake (a wake's own doctor is a diagnostic, not the liveness probe). CI has no
+    # ambient key, so an in-mind run has to describe that context exactly as CI does; cases that
+    # exercise publishing set the key themselves.
+    patch.delenv("MISHE_WAKE_KEY", raising=False)
     # Record-kind index lives in the user cache; a suite run must not write there.
     patch.setenv("XDG_CACHE_HOME", str(root / "xdg-cache"))
     try:

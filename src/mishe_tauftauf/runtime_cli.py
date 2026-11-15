@@ -473,13 +473,17 @@ def run_units(args, home: Path, now: float) -> int:
         except FeedError as exc:
             report.state = "RED"
             report.problems.append(f"chat.log: feed-corrupt: {exc}")
-    if "doctor" in signal_store.registry(home) and not getattr(args, "no_observe", False):
+    if ("doctor" in signal_store.registry(home) and not getattr(args, "no_observe", False)
+            and not os.environ.get("MISHE_WAKE_KEY")):
         # The meta-signal: a doctor that stops running ages out to UNKNOWN on schedule.
         # A RED carries its cause: the flap clears in minutes, so a subscriber woken by the edge
         # must be able to read why from the signal alone (the dossier, the pane and `signal show`
         # all print this reason) instead of re-deriving a transient that is already gone.
-        # ``--no-observe`` suppresses the write for diagnostic runs: publishing here is what wakes
-        # the health subscriber, so an ad-hoc probe must not be able to flap it.
+        # Only the scheduled monitor is the liveness probe, so only it publishes. ``--no-observe``
+        # suppresses the write for a diagnostic run outside a wake, and ``MISHE_WAKE_KEY`` does so
+        # inside one: a wake's own `doctor` (a reproduction, a post-cleanup recheck) is never
+        # liveness, and publishing from it is what flapped the signal and woke health a second time
+        # (2026-11-15 22:06Z RED -> 22:08Z GREEN, both published by the health wake's own probes).
         signal_store.observe(home, "doctor", "GREEN" if report.state == "GREEN" else "RED",
                              now=now, source="doctor", reason=doctor_reason(report))
         armmod_arm(home)
