@@ -89,3 +89,17 @@ def unit_file_pins(text):
 def loaded_pins(environment_text):
     """PYTHONPATH assignments in a loaded ``Environment`` property, as ``PYTHONPATH=value`` words."""
     return [word for word in str(environment_text).split() if word.startswith("PYTHONPATH=")]
+
+
+def crate_binaries(manifest_text):
+    """Binary names a Cargo.toml (external text, decoded at this boundary) builds: its [[bin]] names, else the package name."""
+    import tomllib
+    manifest = tomllib.loads(manifest_text)
+    named = [entry["name"] for entry in manifest.get("bin", []) if isinstance(entry, dict) and entry.get("name")]
+    return named or [manifest["package"]["name"]]
+
+
+def binary_env_name(binary):
+    """The variable a binary is exported as: no ``mishe-`` prefix, upper case, dashes to underscores, ``_BIN`` suffix."""
+    stem = binary[len("mishe-"):] if binary.startswith("mishe-") else binary
+    return "MISHE_" + stem.replace("-", "_").upper() + "_BIN"
