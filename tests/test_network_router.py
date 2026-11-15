@@ -103,7 +103,7 @@ def test_uplink_unknown_without_links_section():
 
 def test_router_load_and_free_ram_are_read_from_the_same_pass():
     text = SAMPLE.replace("LINKS\n", "LOAD\n0.42 0.30 0.25 1/200 999\nMemTotal:  235000 kB\nMemAvailable:  180224 kB\nLINKS\n")
-    assert nr.parse(text)["router_load"] == {"load_1m": 0.42, "mem_available_mb": 176.0}
+    assert nr.parse(text)["router_load"] == {"load_1m": 0.42, "load_5m": 0.30, "mem_available_mb": 176.0}
 
 
 def test_router_load_unknown_not_zero_when_missing():
@@ -112,8 +112,24 @@ def test_router_load_unknown_not_zero_when_missing():
     assert nr.parse(partial)["router_load"] is None
 
 
-def _loaded(ts, load, mem):
-    return {"ts": ts, "ok": True, "router_load": {"load_1m": load, "mem_available_mb": mem}}
+def _loaded(ts, load, mem, load5=None):
+    """A real router read. load is the 1-minute value; load5 defaults to the same so old-style tests stay about one number."""
+    load5 = load if load5 is None else load5
+    return {"ts": ts, "ok": True, "router_load": {"load_1m": load, "load_5m": load5, "mem_available_mb": mem}}
+
+
+def test_a_one_minute_burst_alone_does_not_hold_the_probe_off():
+    # the 2026-11-15 case: 1-minute load 2.56 spiked on a router whose 5-minute average was calm
+    assert nr.backoff_reason([_loaded(1000.0, 2.56, 200.0, load5=0.45)], 1060.0) is None
+
+
+def test_sustained_five_minute_load_holds_the_probe_off():
+    assert nr.backoff_reason([_loaded(1000.0, 0.3, 200.0, load5=1.2)], 1060.0) is not None
+
+
+def test_row_without_five_minute_load_falls_back_to_one_minute():
+    old = {"ts": 1000.0, "ok": True, "router_load": {"load_1m": 1.4, "mem_available_mb": 200.0}}
+    assert nr.backoff_reason([old], 1060.0) is not None
 
 
 def test_over_the_load_limit_holds_the_probe_off_for_the_cooldown():

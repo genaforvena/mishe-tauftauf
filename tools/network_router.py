@@ -64,12 +64,11 @@ def backoff_reason(rows, now):
         rl = row.get("router_load")
         if not isinstance(rl, dict):
             continue
-        load, mem = rl.get("load_1m"), rl.get("mem_available_mb")
-        over = (load is not None and load > nb.LOAD_LIMIT_1M) or (mem is not None and mem < nb.MEM_FLOOR_MB)
+        over = nb.router_over_limit(rl)
         age = now - row.get("ts", now)
         if over and age < COOLDOWN_S:
-            return (f"skipped: router over its self-limit at the last read (load {load}, free RAM {mem} MB); "
-                    f"next read after {COOLDOWN_S // 60} min")
+            return (f"skipped: router over its self-limit at the last read (load {rl.get('load_5m', rl.get('load_1m'))}"
+                    f" (5 min), free RAM {rl.get('mem_available_mb')} MB); next read after {COOLDOWN_S // 60} min")
         return None
     return None
 

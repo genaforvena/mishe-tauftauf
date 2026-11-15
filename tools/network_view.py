@@ -304,7 +304,7 @@ def guard_line(now=None, marker=GUARD_TRIP_MARKER):
             "and their readings go STALE until it is rearmed")
 
 
-LOAD_LIMIT_1M = nb.LOAD_LIMIT_1M
+LOAD_LIMIT = nb.LOAD_LIMIT
 MEM_FLOOR_MB = nb.MEM_FLOOR_MB
 
 
@@ -319,13 +319,14 @@ def router_health_line(now=None):
     if not last.get("ok"):
         return f"UNKNOWN (last router read failed {ago:.0f} s ago)"
     rl = last.get("router_load")
-    if not rl or rl.get("load_1m") is None or rl.get("mem_available_mb") is None:
+    over = nb.router_over_limit(rl)
+    if over is None:
         return f"UNKNOWN (load or free RAM not in the read {ago:.0f} s ago)"
-    over = rl["load_1m"] > LOAD_LIMIT_1M or rl["mem_available_mb"] < MEM_FLOOR_MB
+    load = rl.get("load_5m") if rl.get("load_5m") is not None else rl["load_1m"]
     limit_txt = "over the self-limit" if over else "within the self-limit"
     stale = "  STALE" if ago > STALE_ROUTER_S else ""
-    return (f"load {rl['load_1m']:.2f} (1 min), free RAM {rl['mem_available_mb']:.0f} MB, {limit_txt} "
-            f"(limit: load {LOAD_LIMIT_1M:g}, free RAM {MEM_FLOOR_MB:.0f} MB); read {ago:.0f} s ago{stale}")
+    return (f"load {load:.2f} (5 min), free RAM {rl['mem_available_mb']:.0f} MB, {limit_txt} "
+            f"(limit: load {LOAD_LIMIT:g}, free RAM {MEM_FLOOR_MB:.0f} MB); read {ago:.0f} s ago{stale}")
 
 
 def _wan_drops(reads, lo, hi):

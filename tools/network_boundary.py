@@ -122,10 +122,28 @@ def is_down(verdict_text):
     return verdict_text.startswith("DOWN")
 
 
-# Router self-limit: above this 1-minute load, or below this much free RAM, the router is busy and the
-# probe holds off (see network_router.backoff_reason) and the window marks it over the limit.
-LOAD_LIMIT_1M = 1.0
+# Router self-limit: above this 5-minute load, or below this much free RAM, the router is busy and the
+# probe holds off (see network_router.backoff_reason) and the window marks it over the limit. The gate
+# reads the 5-minute average, not the 1-minute one: a single 1-minute burst (the router sits near 0.1
+# and spikes to 1 or 2 for a sample) held the probe off for a whole cooldown and blinded the duty.
+LOAD_LIMIT = 1.0
 MEM_FLOOR_MB = 120.0
+
+
+def router_over_limit(rl):
+    """True when a router_load dict is over the self-limit, False when within it, None when unmeasured.
+
+    The 5-minute average decides; a row that predates load_5m falls back to the 1-minute value.
+    """
+    if not isinstance(rl, dict):
+        return None
+    load = rl.get("load_5m")
+    if load is None:
+        load = rl.get("load_1m")
+    mem = rl.get("mem_available_mb")
+    if load is None or mem is None:
+        return None
+    return load > LOAD_LIMIT or mem < MEM_FLOOR_MB
 
 
 STATION_LINE = re.compile(r"^([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\s+(-?\d+)\s+dBm")
@@ -197,21 +215,24 @@ def decode_router_output(stdout, bands, client_id):
 
 
 def decode_router_load(lines):
-    """Router self-limit numbers from /proc/loadavg and MemAvailable: {"load_1m", "mem_available_mb"}.
+    """Router self-limit numbers from /proc/loadavg and MemAvailable: {"load_1m", "load_5m", "mem_available_mb"}.
 
     A missing or unreadable field is None, never zero, so a dead read cannot look like an idle router.
     """
     load_1m = None
+    load_5m = None
     mem_mb = None
     for line in lines:
         parts = line.split()
         if load_1m is None and len(parts) >= 3 and parts[0].replace(".", "", 1).isdigit():
             load_1m = float(parts[0])
+            if len(parts) >= 2 and parts[1].replace(".", "", 1).isdigit():
+                load_5m = float(parts[1])
         elif len(parts) >= 2 and parts[0] == "MemAvailable:" and parts[1].isdigit():
             mem_mb = round(int(parts[1]) / 1024, 1)
     if load_1m is None and mem_mb is None:
         return None
-    return {"load_1m": load_1m, "mem_available_mb": mem_mb}
+    return {"load_1m": load_1m, "load_5m": load_5m, "mem_available_mb": mem_mb}
 
 
 def decode_link_counters(lines, device):
