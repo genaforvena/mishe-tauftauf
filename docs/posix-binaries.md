@@ -120,9 +120,11 @@ them. Updated 2026-11-15 after the operator DM 301336.
 3. **Duty runner** (`src/mishe_tauftauf/duties.py`, 44 lines, plus the producer
    launch path). Input: `duties.json` and a duty name. Output: the producer's
    status and its `timeout`-bounded exit. Stable: the file format is fixed.
-   Testable: a fixture duties file with a stub producer. Its cost is mostly the
-   child processes, so the next measurement is wall and child CPU per duty, not
-   Python CPU. Next to take.
+   Testable: a fixture duties file with a stub producer. Measured 2026-11-15: the
+   Python part only expands the manifest at timer generation (`runtime_cli.py:397`,
+   `plant_boot.py:103`), not per run. 60 duties expand in 4.5 ms, so it does not
+   pay as a binary and is not a candidate. Duties run as systemd units, not through
+   this module.
 
 4. **Scheduler arm and feed remaining scan** (`src/mishe_tauftauf/feed.py`,
    1,782 lines; `discovery.py` readings). Measured: one full scan 11.63 CPU-s,
@@ -155,6 +157,8 @@ them. Updated 2026-11-15 after the operator DM 301336.
   named `SystemdShowUnknown` error when the binary is missing, the Python parse
   path was deleted (2026-11-15 its answers became GOLDEN in the test), and it was delivered through the ordinary
   path on 2026-11-14.
-- Candidate 2 is measured and does not pay on CPU (see above). Measure candidate 3
-  next and record the numbers here before building anything.
+- Candidate 2 is measured and does not pay on CPU (see above). Candidate 3 is
+  measured (not per-run, 4.5 ms at generation) and not built.
+- Next: probe the framer loop in `_iter_streamed_feed` (candidate 4) with a
+  bounded A/B before any rewrite. If it does not pay, candidate 4 is parked.
 - Keep this ranking updated when a candidate is built or retired.
