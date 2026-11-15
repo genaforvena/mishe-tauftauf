@@ -227,7 +227,7 @@ def run(args) -> int:
                 raise ValueError("release advance needs --check-file and --observe-file to advance")
             result = promotion.promote(home, args.repo, target,
                 check=work_boundary.argv_file(args.check_file), observe=work_boundary.argv_file(args.observe_file),
-                previous=pin, wait_s=2200)
+                previous=pin, wait_s=2400)
             print(json.dumps(result, indent=2))
             return 0 if result.get("phase") == "delivered" else 3
         if args.release_command == "promote":
