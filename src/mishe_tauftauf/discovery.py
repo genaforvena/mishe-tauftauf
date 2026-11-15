@@ -6756,14 +6756,18 @@ def _note3_adb_sampler_read(home: Path, now: float | None = None) -> dict:
             handle.seek(0, os.SEEK_END)
             size = handle.tell()
             handle.seek(max(0, size - 8192))
-            tail = handle.read().decode("utf-8", errors="replace")
+            tail = handle.read()
     except OSError:
         return row
-    lines = [line for line in tail.splitlines() if line.strip()]
-    if not lines:
+    try:
+        sample = space_text.last_jsonl_object(tail)
+    except ValueError:
+        row.update(reason="sampler-malformed",
+                   sample=f"Note3 adb light UNKNOWN: sampler-malformed; file={path}")
+        return row
+    if sample is None:
         return row
     try:
-        sample = json.loads(lines[-1])
         wall = float(sample["wall_ts"])
         light = sample["sensors"]["light"]
         channels = light["values"]

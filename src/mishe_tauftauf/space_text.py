@@ -166,3 +166,15 @@ def decode_clock_domain(clock_domain: object) -> dict | None:
             "observed_at_epoch_s": offsets["observed_at_epoch_s"],
             "validity_seconds": offsets["validity_seconds"],
             "samples": samples, "source": source, "reason": reason, "jump": jump}
+
+
+def last_jsonl_object(tail: bytes) -> dict | None:
+    """The last non-blank line of a JSONL byte tail, parsed; None when the tail has no line.
+
+    Raises ValueError when that line is not JSON. Used by the Note3 adb sampler reader,
+    which keeps only the newest row of a file it does not own.
+    """
+    lines = [line for line in tail.decode("utf-8", errors="replace").splitlines() if line.strip()]
+    if not lines:
+        return None
+    return json.loads(lines[-1])
