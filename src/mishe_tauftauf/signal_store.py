@@ -135,6 +135,7 @@ def _store(home, name: str, *, value, state: str, reason: str, at: float, source
     rev_no = rev(home, name) + 1
     write_json(path, {"value": value, "state": state, "reason": reason, "event": event,
                       "observed_at": at, "source": source, "rev": rev_no})
+    _cause_path(home, name).unlink(missing_ok=True)   # an edge carries its own cause
     _append_edge(home, {"name": name, "state": state, "value": value, "reason": reason,
                         "event": event, "at": at, "source": source, "rev": rev_no})
 
@@ -175,8 +176,25 @@ def observe(home, name: str, value, *, now: float, source: str, event=None, reas
                 and current.get("event") == event)
     if edge:
         _store(home, name, value=value, state=OK, reason=reason, at=now, source=source, event=event)
+    elif reason != (_cause(home, name) or current.get("reason") or ""):
+        # The same reading with a new cause: refresh the cause beside the reading, not in it. A
+        # rewrite of NAME.json is what path units watch, so this must not wake subscribers.
+        write_json(_cause_path(home, name), {"value": value, "event": event, "reason": reason})
     _touch_seen(home, name, now)
     return edge
+
+
+def _cause_path(home, name: str) -> Path:
+    return _dir(home) / f"{name}.cause"
+
+
+def _cause(home, name: str) -> str | None:
+    """The latest cause for the stored OK reading, or None when none was refreshed since its edge."""
+    try:
+        data = read_json(_cause_path(home, name))
+    except ValueError:
+        return None
+    return data.get("reason") if isinstance(data, dict) and isinstance(data.get("reason"), str) else None
 
 
 def refresh(home, name: str, *, now: float) -> bool:
@@ -227,7 +245,7 @@ def retire(home, name: str, *, now: float, reason: str) -> None:
                         "event": None, "at": float(now), "source": "retire", "rev": rev(home, name) + 1})
     del reg[name]
     write_json(_dir(home) / "registry.json", reg)
-    for suffix in (".json", ".seen", ".detail"):
+    for suffix in (".json", ".seen", ".detail", ".cause"):
         (_dir(home) / f"{name}{suffix}").unlink(missing_ok=True)
 
 
@@ -248,8 +266,10 @@ def read(home, name: str, *, now: float) -> Signal:
                       data.get("reason") or "")
     if now - seen > max_age:
         return Signal(None, seen, name, UNKNOWN, f"expired after {max_age:g}s (age {now - seen:.1f}s)")
-    return Signal(data.get("value"), seen, data.get("source") or name, OK,
-                  data.get("reason") or "")
+    reason = _cause(home, name)
+    if reason is None:
+        reason = data.get("reason") or ""
+    return Signal(data.get("value"), seen, data.get("source") or name, OK, reason)
 
 
 def expire(home, *, now: float) -> list[str]:

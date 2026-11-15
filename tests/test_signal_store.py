@@ -50,8 +50,21 @@ def test_observe_records_the_reason_behind_a_not_ok_reading(home):
                          reason="unit drift: mishe-wake-genome.path") is True
     assert store.read(home, "ci", now=1002.0).reason == "unit drift: mishe-wake-genome.path"
     # A reason does not make an edge of its own: only the value that carries it does.
+    json_before = (home / "signals" / "ci.json").read_text()
     assert store.observe(home, "ci", "RED", now=1003.0, source="t", reason="different cause") is False
-    assert store.read(home, "ci", now=1004.0).reason == "unit drift: mishe-wake-genome.path"
+    # The latest cause is shown, and the reading file (what path units watch) is untouched.
+    assert store.read(home, "ci", now=1004.0).reason == "different cause"
+    assert (home / "signals" / "ci.json").read_text() == json_before
+    assert store.rev(home, "ci") == 2
+
+
+def test_a_new_edge_replaces_a_refreshed_cause(home):
+    store.observe(home, "ci", "RED", now=1000.0, source="t", reason="first")
+    store.observe(home, "ci", "RED", now=1001.0, source="t", reason="second")
+    assert store.read(home, "ci", now=1002.0).reason == "second"
+    assert store.observe(home, "ci", "GREEN", now=1003.0, source="t", reason="") is True
+    assert store.read(home, "ci", now=1004.0).reason == ""
+    assert not (home / "signals" / "ci.cause").exists()
 
 
 def test_observe_defaults_to_no_reason(home):
