@@ -57,7 +57,7 @@ import re
 import subprocess
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 GREEN = "GREEN"
@@ -297,7 +297,23 @@ def figures_in_line(line: str) -> list[tuple[str, str, int, int]]:
     return found
 
 
-def live_figures(line: str) -> list[tuple[str, str, str]]:
+def is_run_date_reading(text: str, today: date) -> bool:
+    """True when the text says it was read again on the run date.
+
+    "Read again on 15 November" or "as read on 15 November" is a claim about
+    the plant now only when the date is the run date: any earlier date is a
+    dated record of a past reading, and it stays history.  The clause that
+    names today's date therefore overrides its own date, and it also keeps
+    an earlier clause's date from dating the figures that follow it.
+    """
+    day = today.day
+    month = today.strftime("%B")
+    pattern = (r"\b(?:read again on|as read on)\s+(?:%d\s+%s|%s\s+%d)\b"
+               % (day, month, month, day))
+    return bool(re.search(pattern, text, re.I))
+
+
+def live_figures(line: str, today: date | None = None) -> list[tuple[str, str, str]]:
     """The registered figures one line states that the text leaves undated.
 
     Returns (name, value, clause) triples.  A figure is a live claim when
@@ -314,6 +330,7 @@ def live_figures(line: str) -> list[tuple[str, str, str]]:
     reading on the same sentence.
     """
     found: list[tuple[str, str, str]] = []
+    run_day = today or datetime.now(timezone.utc).date()
     for name, raw, start, end in figures_in_line(line):
         for span_start, span_end in sentence_spans(line):
             if not span_start <= start < span_end:
@@ -322,12 +339,18 @@ def live_figures(line: str) -> list[tuple[str, str, str]]:
             for index, (part_start, part_end, part) in enumerate(offsets):
                 if not part_start <= start < part_end:
                     continue
+                if is_run_date_reading(part, run_day):
+                    found.append((name, raw, part))
+                    break
                 if DATE_TOKEN.search(part) or PAST.search(part):
                     break
                 if CURRENT.search(part):
                     found.append((name, raw, part))
                     break
-                earlier = " ".join(text for _, _, text in offsets[:index])
+                # A clause that names the run date is a live reading, so it
+                # does not date the figures after it.
+                earlier = " ".join(text for _, _, text in offsets[:index]
+                                   if not is_run_date_reading(text, run_day))
                 if DATE_TOKEN.search(earlier) or PAST.search(earlier):
                     break
                 found.append((name, raw, part))
@@ -609,6 +632,47 @@ def _self_test() -> int:
         failures, _ = check(mutated, live)
         if not failures:
             print("self-test FAILED: %s was read GREEN" % label)
+            return 1
+
+    # "Read again on <run date>" is a claim about the plant now: a stale
+    # figure beside it must read RED.  An earlier date is history and stays
+    # GREEN, so the claim does not turn into a permanent live claim.
+    today = datetime.now(timezone.utc).date()
+    run_day = "%d %s" % (today.day, today.strftime("%B"))
+    run_day_true = [
+        ("the run-date landed figure, right",
+         {"6": "Read again on %s the branch carries 383 landed reviews, 0 of 192 cells are pending.\n" % run_day}),
+        ("the run-date grid figure, right",
+         {"5": "it is now a grid of 32 fields by six angles — 192 cells as read on %s.\n" % run_day}),
+    ]
+    for label, mutated in run_day_true:
+        failures, undecidable = check(mutated, live)
+        if failures or undecidable:
+            print("self-test FAILED: %s was read as a stale claim" % label)
+            for failure in failures + undecidable:
+                print("  " + failure)
+            return 1
+    run_day_stale = [
+        ("a run-date landed figure gone stale",
+         {"6": "Read again on %s the branch carries 17 landed reviews, 0 of 192 cells are pending.\n" % run_day}),
+        ("a run-date cell count gone stale, in a later clause",
+         {"6": "Read again on %s the branch carries 383 landed reviews, 55 of 192 cells are pending.\n" % run_day}),
+        ("a run-date grid figure gone stale",
+         {"5": "it is now a grid of twenty-nine fields by six angles — 192 cells as read on %s.\n" % run_day}),
+    ]
+    for label, mutated in run_day_stale:
+        failures, _ = check(mutated, live)
+        if not failures:
+            print("self-test FAILED: %s was read GREEN" % label)
+            return 1
+    old_date = [
+        ("a reading dated by an earlier date stays history",
+         {"6": "Read again on 11 November the branch carried 17 landed reviews, 0 of 192 cells are pending.\n"}),
+    ]
+    for label, mutated in old_date:
+        failures, _ = check(mutated, live)
+        if failures:
+            print("self-test FAILED: %s was read as a live claim" % label)
             return 1
 
     # A figure the text dates is a record of a reading, not a claim.
