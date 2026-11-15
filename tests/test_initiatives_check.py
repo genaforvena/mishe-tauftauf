@@ -87,6 +87,33 @@ def test_signal_and_json_checks(tmp_path, capsys):
     assert code == 2 and "j" in err
 
 
+def test_path_detail_matches_verdict(tmp_path):
+    probe = {"kind": "path", "path": "marker"}
+    assert check.evaluate(probe, tmp_path, tmp_path) == (check.OPEN, "marker missing")
+    (tmp_path / "marker").touch()
+    assert check.evaluate(probe, tmp_path, tmp_path) == (check.DONE, "marker exists")
+
+
+def test_json_bound_details_match_verdict(tmp_path):
+    (tmp_path / "m.json").write_text('{"n": 5}', encoding="utf-8")
+    base = {"kind": "json", "file": "m.json", "key": ["n"]}
+    assert check.evaluate({**base, "min": 6}, tmp_path, tmp_path) == (check.OPEN, "value 5 below 6")
+    assert check.evaluate({**base, "min": 5}, tmp_path, tmp_path) == (check.DONE, "value 5 meets minimum 5")
+    assert check.evaluate({**base, "max": 4}, tmp_path, tmp_path) == (check.OPEN, "value 5 above 4")
+    assert check.evaluate({**base, "max": 5}, tmp_path, tmp_path) == (check.DONE, "value 5 meets maximum 5")
+    assert check.evaluate({**base, "file": "missing.json", "min": 5}, tmp_path, tmp_path)[0] == check.UNKNOWN
+
+
+def test_commit_detail_matches_verdict(tmp_path):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-q",
+                    "--allow-empty", "-m", "footprint signal lands"], check=True)
+    probe = {"kind": "commit", "grep": "footprint", "since": 0}
+    assert check.evaluate(probe, tmp_path, tmp_path) == (check.DONE, "commit subject with 'footprint' since the start")
+    probe["grep"] = "absent"
+    assert check.evaluate(probe, tmp_path, tmp_path) == (check.OPEN, "no commit subject with 'absent' since the start")
+
+
 def test_commit_check_finds_subject_text(tmp_path, capsys):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-q",
@@ -111,6 +138,14 @@ def test_commit_check_since_zero_is_the_epoch_not_now(tmp_path, capsys):
                     "--allow-empty", "-m", "footprint signal lands"], check=True, env=dated)
     home = _site(tmp_path, [_item(check={"kind": "commit", "grep": "footprint signal", "since": 0})])
     assert _run(home, "health", capsys)[0] == 0
+
+
+def test_commit_check_unrepresentable_epoch_is_unknown(tmp_path):
+    home = _site(tmp_path, [_item(check={"kind": "commit", "grep": "signal", "since": 253402300800})])
+    result = subprocess.run([sys.executable, str(CHECK), "--home", str(home), "--repo", str(home),
+                             "--owner", "health"], capture_output=True, text=True)
+    assert result.returncode == 3
+    assert "i1" in result.stderr and "epoch" in result.stderr and "Traceback" not in result.stderr
 
 
 def test_commit_check_ignores_body_text(tmp_path, capsys):

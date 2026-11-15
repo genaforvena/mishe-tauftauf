@@ -63,7 +63,8 @@ def evaluate(check, home, repo):
         target = check.get("path")
         if not isinstance(target, str) or not target or Path(target).is_absolute() or ".." in Path(target).parts:
             return UNKNOWN, "path check needs a relative path inside the site home"
-        return (DONE if (home / target).exists() else OPEN), f"{target} missing"
+        exists = (home / target).exists()
+        return (DONE, f"{target} exists") if exists else (OPEN, f"{target} missing")
     if kind == "json":
         data = _read(home / str(check.get("file")))
         key = check.get("key")
@@ -78,9 +79,11 @@ def evaluate(check, home, repo):
         if not _number(data):
             return UNKNOWN, f"value {data!r} is not a number"
         if "min" in check and _number(check["min"]):
-            return (DONE if data >= check["min"] else OPEN), f"value {data} below {check['min']}"
+            return ((DONE, f"value {data} meets minimum {check['min']}") if data >= check["min"]
+                    else (OPEN, f"value {data} below {check['min']}"))
         if "max" in check and _number(check["max"]):
-            return (DONE if data <= check["max"] else OPEN), f"value {data} above {check['max']}"
+            return ((DONE, f"value {data} meets maximum {check['max']}") if data <= check["max"]
+                    else (OPEN, f"value {data} above {check['max']}"))
         return UNKNOWN, "json check needs equals, min or max"
     if kind == "commit":
         grep, since = check.get("grep"), check.get("since")
@@ -91,7 +94,10 @@ def evaluate(check, home, repo):
             # An explicit ISO-8601 UTC timestamp, not the bare epoch: git reads a small bare number as a
             # relative offset ("--since=0" means now, not 1970), so a register since of 0 or a few seconds
             # silently matched nothing and this check was timing-flaky (observed 2026-11-15 in CI).
-            since_iso = datetime.fromtimestamp(int(since), timezone.utc).isoformat()
+            try:
+                since_iso = datetime.fromtimestamp(int(since), timezone.utc).isoformat()
+            except (ValueError, OverflowError, OSError):
+                return UNKNOWN, "commit check epoch since is not representable"
             done = subprocess.run(["git", "-C", str(repo), "log", f"--since={since_iso}", "--format=%s"],
                                   capture_output=True, text=True, timeout=30,
                                   env={"GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "PATH": "/usr/bin:/bin"})
@@ -100,7 +106,8 @@ def evaluate(check, home, repo):
         if done.returncode != 0:
             return UNKNOWN, "git log failed"
         hit = any(grep in subject for subject in done.stdout.splitlines())
-        return (DONE if hit else OPEN), f"no commit subject with {grep!r} since the start"
+        return ((DONE, f"commit subject with {grep!r} since the start") if hit
+                else (OPEN, f"no commit subject with {grep!r} since the start"))
     if kind == "argv":
         return _argv(check, home, repo)
     return UNKNOWN, f"unknown check kind {kind!r}"

@@ -21,6 +21,10 @@ def test_report_distinguishes_open_overdue_done_unknown(tmp_path):
     assert run.returncode == 0
     data = json.loads(run.stdout)
     assert {r["id"]: r["status"] for r in data["items"]} == {"open": "open", "late": "overdue", "done": "check-passed", "unknown": "unknown"}
+    assert {r["id"]: r["detail"] for r in data["items"]} == {
+        "open": "missing missing", "late": "missing missing", "done": "done exists",
+        "unknown": "signal missing has no reading",
+    }
     assert data["checked_at"] == 100
 
 
