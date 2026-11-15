@@ -82,6 +82,12 @@ def private_tmux_server(tmp_path_factory):
     if os.environ.get("MISHE_SEED_HOME") and not os.environ.get("MISHE_TAPE_BIN") \
             and os.path.isfile(site_tape) and os.access(site_tape, os.X_OK):
         patch.setenv("MISHE_TAPE_BIN", site_tape)
+    # The same holds for the record verifier: feed reads fail closed (RecordsUnknown)
+    # without a binding, so pin the site mishe-records that passes its install sha256.
+    from tests.records_binary import resolve_records_binary
+    records_bin, _records_reason = resolve_records_binary()
+    if records_bin and not os.environ.get("MISHE_RECORDS_BIN"):
+        patch.setenv("MISHE_RECORDS_BIN", records_bin)
     patch.delenv("MISHE_SEED_HOME", raising=False)
     # Record-kind index lives in the user cache; a suite run must not write there.
     patch.setenv("XDG_CACHE_HOME", str(root / "xdg-cache"))
