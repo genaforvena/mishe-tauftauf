@@ -127,6 +127,22 @@ def test_doctor_red_on_drift_exits_nonzero_and_records_red(site, tmp_path):
     assert "drift" in sig.reason
 
 
+def test_doctor_no_observe_reports_without_publishing_the_meta_signal(site, tmp_path, capsys):
+    """Publishing the meta-signal is what wakes the health subscriber, so a diagnostic run must be
+    able to check doctor without flapping it — while still reporting the fault to its own caller."""
+    units_dir = tmp_path / "units"
+    cli("sync", "--unit-dir", str(units_dir), "--no-systemctl")
+    (units_dir / "mishe-wake-genome.path").write_text(
+        "# mishe-generated: observation runtime (edit nothing here; run `mishe sync`)\nx\n")
+    before = store.rev(site, "doctor")
+    assert cli("doctor", "--unit-dir", str(units_dir), "--no-observe") == 1
+    assert store.rev(site, "doctor") == before            # nothing published
+    assert not (site / "signals" / "doctor.json").exists()
+    assert "drift" in capsys.readouterr().out             # the fault is still reported
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 1   # the scheduled monitor still publishes
+    assert store.rev(site, "doctor") == before + 1
+
+
 def test_a_silent_doctor_reads_unknown(site, tmp_path):
     cli("sync", "--unit-dir", str(tmp_path / "u"), "--no-systemctl")
     cli("doctor", "--unit-dir", str(tmp_path / "u"))

@@ -183,6 +183,10 @@ def register(sub) -> None:
             p.add_argument("--no-systemctl", action="store_true")
             p.add_argument("--no-enable", action="store_true", help="install the units but enable and start no trigger")
             p.add_argument("--uninstall", action="store_true", help="remove the generated units (and only those)")
+        else:
+            p.add_argument("--no-observe", action="store_true",
+                           help="report to stdout only; do not publish the doctor meta-signal, so a "
+                                "diagnostic run cannot wake its health subscriber")
 
 
 def run(args) -> int:
@@ -469,11 +473,13 @@ def run_units(args, home: Path, now: float) -> int:
         except FeedError as exc:
             report.state = "RED"
             report.problems.append(f"chat.log: feed-corrupt: {exc}")
-    if "doctor" in signal_store.registry(home):
+    if "doctor" in signal_store.registry(home) and not getattr(args, "no_observe", False):
         # The meta-signal: a doctor that stops running ages out to UNKNOWN on schedule.
         # A RED carries its cause: the flap clears in minutes, so a subscriber woken by the edge
         # must be able to read why from the signal alone (the dossier, the pane and `signal show`
         # all print this reason) instead of re-deriving a transient that is already gone.
+        # ``--no-observe`` suppresses the write for diagnostic runs: publishing here is what wakes
+        # the health subscriber, so an ad-hoc probe must not be able to flap it.
         signal_store.observe(home, "doctor", "GREEN" if report.state == "GREEN" else "RED",
                              now=now, source="doctor", reason=doctor_reason(report))
         armmod_arm(home)
