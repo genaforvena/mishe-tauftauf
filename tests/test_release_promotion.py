@@ -668,3 +668,19 @@ def test_a_failed_check_publishes_failed_and_a_missing_signal_never_raises(tree)
     p.promote(home,repo,sha,check=[sys.executable,"-c","raise SystemExit(3)"],observe=["probe"],
         previous=old,activate=lambda *a:None,closure=lambda *a:None)
     assert signal_store.recorded(home, "moving-pin-delivery")["value"]=="FAILED"
+
+
+def test_a_failed_promotion_writes_the_outcome_detail_and_a_delivered_one_clears_it(tree):
+    from mishe_tauftauf import signal_store
+    repo,home,old,sha=tree
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"])
+    detail=home/"signals"/"moving-pin-delivery.detail"
+    failing=("import sys; print('collected 2 items'); print('FAILED tests/test_x.py::test_y'); sys.exit(1)")
+    p.promote(home,repo,sha,check=[sys.executable,"-c",failing],observe=["probe"],
+        previous=old,activate=lambda *a:None,closure=lambda *a:None)
+    text=detail.read_text()                                          # the woken reviewer reads sha, phase and reason
+    assert sha[:8] in text and "check-failed" in text and "FAILED tests/test_x.py::test_y" in text
+    p.promote(home,repo,sha,check=[sys.executable,"-c","assert True"],observe=["probe"],
+        previous=old,activate=lambda *a:None,probe=lambda *a,**k:dict(code=0,output="ok"),
+        reviewer=lambda *a:None,closure=lambda *a:None)
+    assert not detail.exists()                                       # a fresh VERIFIED is not shown a stale failure

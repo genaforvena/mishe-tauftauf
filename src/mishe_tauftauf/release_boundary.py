@@ -37,6 +37,20 @@ def newest_sample_at(path, tail_lines=20):
     return max(stamps) if stamps else None
 
 
+def failing_line(output, limit=240):
+    """The last diagnostic line of a promotion check's captured output, or "" when there is none.
+
+    A captured check's stdout/stderr is external text, decoded here so the runtime acts on the
+    chosen line. ``checks/pin-delivery.py`` selects the same line for genome's ``pin-delivery``
+    signal, so the published outcome detail names the same reason for the same failure.
+    """
+    if not isinstance(output, str):
+        return ""
+    lines = [line for line in output.splitlines() if line.startswith("FAILED") or "Error" in line]
+    chosen = lines[-1] if lines else (output.splitlines()[-1] if output.strip() else "")
+    return chosen[:limit]
+
+
 def unit_fields(show_text):
     """Parse `systemctl --user show -p ...` key=value output into a dict."""
     return dict(row.split("=", 1) for row in show_text.splitlines() if "=" in row)

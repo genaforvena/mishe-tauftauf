@@ -16,7 +16,7 @@ import sys
 import time
 from . import release_boundary, work_boundary as boundary, wall_patch
 from .git_base_text import commit_intent_text
-from .state_files import read_json, write_json
+from .state_files import read_json, write_json, write_text_atomic
 from .work_receipts import digest
 
 
@@ -313,6 +313,25 @@ def activate(home, repo, source, sha):
 OUTCOME_SIGNAL = "moving-pin-delivery"
 
 
+def outcome_detail(record):
+    """The one line a subscriber reads when the promotion did not deliver, or "" when it did.
+
+    The woken reviewer on ``moving-pin-delivery`` gets no check of its own: the signal carries the
+    bare token FAILED unless the failing sha, phase and diagnostic are written beside it. This is
+    the ``signals/NAME.detail`` a producer writes on a non-GREEN run, and reads back the same way —
+    ``checks/pin-delivery.py`` chooses for genome's ``pin-delivery`` signal, mirrored here so the two
+    signals name the same reason for the same failure.
+    """
+    sha = str(record.get("sha", ""))[:8]
+    phase = record.get("phase")
+    if phase == "delivered":
+        return ""
+    reason = (record.get("failure")
+              or release_boundary.failing_line((record.get("check") or {}).get("output"))
+              or record.get("rollback_error") or "no reason recorded")
+    return f"{OUTCOME_SIGNAL}: {sha} {phase}: {reason}"
+
+
 def publish_outcome(home, record):
     """Publish the promotion outcome as the ``moving-pin-delivery`` signal: VERIFIED when delivered, FAILED otherwise.
 
@@ -325,6 +344,14 @@ def publish_outcome(home, record):
     try:
         signal_store.observe(home, OUTCOME_SIGNAL, value, now=time.time(), source="release_promotion",
                              event=f"{record.get('sha', '')}:{phase}")
+        # Beside the reading, the reason a reviewer reads: the failing sha, phase and diagnostic.
+        # A delivered promotion removes any stale failure so it is not shown against a fresh VERIFIED.
+        detail = Path(home) / "signals" / f"{OUTCOME_SIGNAL}.detail"
+        line = outcome_detail(record)
+        if line:
+            write_text_atomic(detail, line + "\n")
+        else:
+            detail.unlink(missing_ok=True)
     except (OSError, ValueError) as exc:
         record["signal_error"] = f"{type(exc).__name__}: {exc}"
     return record
