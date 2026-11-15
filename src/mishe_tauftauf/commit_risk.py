@@ -2,7 +2,9 @@
 
 Labels: ``routine`` (docs, tests, observation code only), ``delivery-path`` (release,
 promotion, pin, delivery, heal, rollback), ``dispatch-path`` (wake admission, scheduling,
-locking, authorization, dispatch, failure routing). A commit whose paths all fall in one
+locking, authorization, dispatch, failure routing), and ``ordinary`` (product code with no
+such effect; a model-only label, never a path rule). Before ``ordinary`` existed, most
+ordinary code escaped to ``unclear`` (replay 2026-11-15: 21 of 27 answers). A commit whose paths all fall in one
 rule gets that label from code with source ``system0``. A commit that mixes rules or
 touches neither is the residual: the decision provider picks one label from the three,
 or the escape option, and the answer is kept only if its confidence clears the threshold.
@@ -30,6 +32,7 @@ CRITERIA = {
     "routine": "changes only docs, tests or observation code; no effect on dispatch, delivery or locking",
     "delivery-path": "changes release, promotion, pin, delivery, heal or rollback behaviour",
     "dispatch-path": "changes wake admission, scheduling, locking, authorization or failure routing",
+    "ordinary": "changes ordinary product code (budget, reporting, text, units, tools) with no effect on dispatch, delivery or locking",
 }
 MAX_STATE_CHARS = 2000
 

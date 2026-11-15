@@ -45,6 +45,12 @@ class CommitRiskTests(unittest.TestCase):
         self.assertEqual(cr.system0(["src/mishe_tauftauf/release_promotion.py"]), "delivery-path")
         self.assertEqual(cr.system0(["src/mishe_tauftauf/owed.py"]), "dispatch-path")
 
+    def test_ordinary_is_a_model_only_label(self):
+        self.assertIn("ordinary", cr.CRITERIA)
+        self.assertNotIn(dp.UNCLEAR, cr.CRITERIA)
+        self.assertIsNone(cr.system0(["src/mishe_tauftauf/budget_producer.py"]))
+        self.assertIsNone(cr.system0(["src/mishe_tauftauf/decision_provider.py"]))
+
     def test_mixed_or_unmatched_paths_are_the_residual(self):
         self.assertIsNone(cr.system0(["docs/a.md", "src/mishe_tauftauf/owed.py"]))
         self.assertIsNone(cr.system0(["src/mishe_tauftauf/feed.py"]))
