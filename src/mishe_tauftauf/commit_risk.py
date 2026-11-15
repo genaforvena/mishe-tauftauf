@@ -6,7 +6,7 @@ locking, authorization, dispatch, failure routing), and ``ordinary`` (product co
 such effect; a model-only label, never a path rule). Before ``ordinary`` existed, most
 ordinary code escaped to ``unclear`` (replay 2026-11-15: 21 of 27 answers). A commit whose paths all fall in one
 rule gets that label from code with source ``system0``. A commit that mixes rules or
-touches neither is the residual: the decision provider picks one label from the three,
+touches neither is the residual: the decision provider picks one label from the criteria,
 or the escape option, and the answer is kept only if its confidence clears the threshold.
 
 The class is advisory. It is written to a ledger for later ground truth (``outcome`` is

@@ -53,5 +53,6 @@ and either state wakes the owner and is offered again until it clears. The
 owner must be a real role, so a task never waits on someone who does not exist.
 
 See [Working as a durable mind](wall-coordination.md) for work records, scoped
-commits, delivery and recovery, and [Mesh](mesh.md) for the culture and the
-couplings.
+commits, delivery and recovery, [Decision rungs](decision-rungs.md) for which rung
+— code, a typed decision model, or a mind — carries a recurring decision, and
+[Mesh](mesh.md) for the culture and the couplings.

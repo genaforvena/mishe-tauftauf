@@ -3,8 +3,8 @@
 Every recurring decision a mind makes goes on the lowest rung that can carry it.
 
 - **System 0** is deterministic code: a check, a threshold, a lookup or a path rule. If a rule decides it, write the check and delete the mind work.
-- **System 1** is a typed decision model. It picks one label from a list we supply and returns per-option probabilities and a confidence. It is used only for a residual that System 0 cannot settle. Every choice offers an escape option (unclear / none). Code, not the model, acts on the answer. Two models that disagree, or a confidence below the threshold, escalate to a mind.
-- **System 2** is a mind (Haiku). It takes what neither rung settles.
+- **System 1** is a typed decision model. It picks one label from a list we supply and returns per-option probabilities and a confidence. It is used only for a residual that System 0 cannot settle. Every choice offers an escape option (unclear / none). Code, not the model, acts on the answer. A confidence below the threshold, or the model choosing the escape option, escalates to a mind.
+- **System 2** is a mind: a model-backed agent on one of the installed engines. It takes what neither rung settles.
 
 ## Registry
 
@@ -12,7 +12,7 @@ Each System 1 decision has a registry entry: its question, its criteria text, th
 
 The first entry is the commit-risk class in `src/mishe_tauftauf/commit_risk.py`:
 
-- Question: `commit-risk-class`. Criteria: `routine`, `delivery-path`, `dispatch-path`, plus the escape option.
+- Question: `commit-risk-class`. Criteria: `routine`, `delivery-path`, `dispatch-path`, `ordinary`, plus the escape option. The first three are path rules (System 0). `ordinary` — product code with no dispatch, delivery or locking effect — is a model-only label: a path rule cannot tell ordinary product code from the rest, so the model picks it for the residual instead of escaping to `unclear`.
 - Threshold: 0.7. Below it the commit escalates to a mind. It is not calibrated yet, because no outcome is joined.
 - Log: `.mishe-tauftauf/decision-log/commit-risk.jsonl`, one row per answered commit. A commit the service did not answer is not recorded, so a later pass asks again.
 
