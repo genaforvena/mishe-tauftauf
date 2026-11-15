@@ -33,7 +33,11 @@ def build(crate_dir: Path, target: Path, cargo: str) -> None:
                "--manifest-path", str(crate_dir / "Cargo.toml"), "--target-dir", str(target)]
     if shutil.which("systemd-run"):
         command = ["systemd-run", "--user", "--quiet", "--scope", "-p", "MemoryMax=2G", "nice", "-n", "19", *command]
-    done = subprocess.run(command, capture_output=True, text=True, timeout=1500)
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=1500)
+    except subprocess.TimeoutExpired:
+        sys.stderr.write(f"build of {crate_dir.name} timed out after 1500 s\n")
+        raise SystemExit(2)
     if done.returncode != 0:
         sys.stderr.write(f"build of {crate_dir.name} failed ({done.returncode}):\n{done.stderr[-2000:]}\n")
         raise SystemExit(2)

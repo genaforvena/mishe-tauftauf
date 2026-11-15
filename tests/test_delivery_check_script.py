@@ -28,3 +28,18 @@ def test_every_committed_crate_maps_to_a_distinct_variable():
     for crate in sorted((SCRIPT.parents[1] / "rust").glob("*/Cargo.toml")):
         names += [dc.env_name(b) for b in dc.binaries(crate.parent)]
     assert len(names) == len(set(names)) >= 6
+
+
+def test_a_hung_build_exits_2_not_with_a_traceback(tmp_path, monkeypatch, capsys):
+    import subprocess
+    import pytest
+
+    def hang(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="cargo", timeout=1500)
+
+    monkeypatch.setattr(dc.subprocess, "run", hang)
+    monkeypatch.setattr(dc.shutil, "which", lambda name: None)
+    with pytest.raises(SystemExit) as exc:
+        dc.build(tmp_path, tmp_path / "target", "cargo")
+    assert exc.value.code == 2
+    assert "timed out" in capsys.readouterr().err
