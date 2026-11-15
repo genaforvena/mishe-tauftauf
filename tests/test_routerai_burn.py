@@ -1,0 +1,46 @@
+import importlib.util
+import json
+from pathlib import Path
+
+from mishe_tauftauf import budget_producer as bp
+
+CHECK = Path(__file__).resolve().parent.parent / "checks" / "routerai-burn.py"
+
+
+def _load_check():
+    spec = importlib.util.spec_from_file_location("routerai_burn", CHECK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_producer_appends_balance_only_for_successful_reads(tmp_path):
+    bp.append_routerai_balance(tmp_path, 1000.0, 200.0)
+    bp.append_routerai_balance(tmp_path, 2000.0, None)  # failed read: a gap, not a row
+    bp.append_routerai_balance(tmp_path, 3000.0, 190.0)
+    rows = [json.loads(line) for line in (tmp_path / "engine" / "routerai-balance.jsonl").read_text().splitlines()]
+    assert rows == [{"epoch": 1000.0, "balance": 200.0}, {"epoch": 3000.0, "balance": 190.0}]
+
+
+def test_burn_check_verdicts(tmp_path):
+    burn = _load_check()
+    target = 200 / 24  # 8.33 per hour
+    now = 10 * 3600.0
+    # 10 h of samples spending exactly the target: GREEN
+    on_target = [(now - 10 * 3600 + i * 3600, 200 - target * i) for i in range(11)]
+    code, rep = burn.judge(on_target, now, 200, 24, 0.25, 1.0, 900)
+    assert code == 0 and rep["verdict"] == "GREEN", rep
+    # spending 3x the target: RED overspend
+    fast = [(now - 10 * 3600 + i * 3600, 200 - 3 * target * i) for i in range(11)]
+    code, rep = burn.judge(fast, now, 200, 24, 0.25, 1.0, 900)
+    assert code == 2 and "overspend" in rep["reason"], rep
+    # a top-up between samples is not spend
+    topped = [(now - 2 * 3600, 100.0), (now - 3600, 150.0), (now, 140.0)]
+    code, rep = burn.judge(topped, now, 200, 24, 0.25, 1.0, 900)
+    assert rep["spend"] == 10.0, rep
+    # no history, or too short a span, is UNKNOWN (exit 3), never GREEN
+    assert burn.judge([], now, 200, 24, 0.25, 1.0, 900)[0] == 3
+    short = [(now - 600, 200.0), (now, 199.0)]
+    assert burn.judge(short, now, 200, 24, 0.25, 1.0, 900)[0] == 3
+    stale = [(now - 10 * 3600, 200.0), (now - 3 * 3600, 180.0)]
+    assert burn.judge(stale, now, 200, 24, 0.25, 1.0, 900)[0] == 3

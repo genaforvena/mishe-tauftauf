@@ -535,6 +535,18 @@ def build_routerai(home: Path, now: float, fetch=fetch_routerai_credits) -> dict
 
 
 ROUTERAI_LLM_SPEND_LIMIT = 200  # operator DM 301051; see build_routerai for the unit caveat
+ROUTERAI_BALANCE_HISTORY = "engine/routerai-balance.jsonl"
+
+
+def append_routerai_balance(home: Path, now: float, balance) -> None:
+    """One row per successful balance read, so burn (the drop per hour) is measurable by
+    checks/routerai-burn.py. A failed read (balance None) writes nothing: a gap is UNKNOWN, not zero."""
+    if balance is None:
+        return
+    path = home / ROUTERAI_BALANCE_HISTORY
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"epoch": now, "balance": balance}, sort_keys=True) + "\n")
 
 DECISION_CONFIG = "engine/decision-providers.json"
 DECISION_PROVIDER = "routerai"
@@ -593,6 +605,7 @@ def main(home: Path, out: Path | None = None) -> int:
     payload["per_mind"] = ledger["per_mind"]
     payload["ledger"] = ledger["ledger"]
     payload["routerai"] = build_routerai(home, now)
+    append_routerai_balance(home, now, payload["routerai"]["llm"]["balance"])
     payload["unknowns"] = payload["unknowns"] + ledger["ledger_unknowns"]
     if out:
         write_atomic(Path(out), payload)
