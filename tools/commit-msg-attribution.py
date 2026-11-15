@@ -23,10 +23,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-#: Hoisted into the final block, in this order. Only lines that begin with the
-#: exact ``Key:`` token are moved, so prose that merely mentions the words (as a
-#: commit *about* this format does) is never touched.
-KEYS = ("Mishe-Wake", "Mishe-Role", "Co-Authored-By")
+#: Only lines that begin with the exact ``Key:`` token are moved, so prose that
+#: merely mentions the words (as a commit *about* this format does) is never
+#: touched.
 _TRAILER_LINE = re.compile(r"^(Mishe-Wake|Mishe-Role|Co-Authored-By):[ \t]*(.*)$")
 
 
@@ -54,24 +53,30 @@ def normalize(text, wake, role):
     if _already_attributed(text):
         return text, False
 
-    values = {}
+    # Every matched trailer line, in order, so a repeated ``Co-Authored-By`` is
+    # preserved rather than collapsed to its first occurrence.
+    trailers = []
     body_lines = []
     for line in text.splitlines():
         match = _TRAILER_LINE.match(line)
         if match:
-            values.setdefault(match.group(1), match.group(2).strip())
+            trailers.append((match.group(1), match.group(2).strip()))
         else:
             body_lines.append(line)
 
-    wake = values.get("Mishe-Wake") or (wake or "").strip()
-    role = values.get("Mishe-Role") or (role or "").strip()
+    def first(key):
+        return next((value for k, value in trailers if k == key), None)
+
+    wake = first("Mishe-Wake") or (wake or "").strip()
+    role = first("Mishe-Role") or (role or "").strip()
     if not wake or not role:
         return text, False  # cannot attribute; leave the author's message alone
 
     block = [f"Mishe-Wake: {wake}", f"Mishe-Role: {role}"]
-    for key in KEYS[2:]:
-        if values.get(key):
-            block.append(f"{key}: {values[key]}")
+    for key, value in trailers:
+        if (key, value) in (("Mishe-Wake", wake), ("Mishe-Role", role)):
+            continue  # already emitted as the canonical Mishe pair
+        block.append(f"{key}: {value}")
 
     body = "\n".join(body_lines).strip("\n")
     new = (body + "\n\n" if body else "") + "\n".join(block) + "\n"

@@ -62,6 +62,19 @@ def test_missing_mishe_lines_are_supplied_from_the_wake_environment():
                                    "Co-Authored-By: Someone <a@b>"]
 
 
+def test_repeated_coauthor_trailers_are_all_preserved():
+    """The defect the reviewer found on release e6617410: the old ``setdefault``
+    collapsed two ``Co-Authored-By`` lines to the first and silently dropped the
+    rest, contradicting the "never removes a trailer value" contract."""
+    text = ("subject\n\nbody\n"
+            "Co-Authored-By: A <a@x>\n"
+            "Co-Authored-By: B <b@x>\n")
+    new, changed = module.normalize(text, "wake-x-1", "field-review")
+    assert changed is True
+    assert parse_trailers(new) == ["Mishe-Wake: wake-x-1", "Mishe-Role: field-review",
+                                   "Co-Authored-By: A <a@x>", "Co-Authored-By: B <b@x>"]
+
+
 def test_unattributable_message_with_no_environment_is_untouched():
     bare = "subject\n\nbody\n"
     assert module.normalize(bare, "", "") == (bare, False)
