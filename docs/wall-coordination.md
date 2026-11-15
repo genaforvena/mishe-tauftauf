@@ -127,13 +127,6 @@ actual-consumer probe. Every change uses the same committed promotion, automatic
 rollback on failed observation, and asynchronous review. A review outage remains
 pending evidence and does not block delivery.
 
-There is no path classification any more. `release_classification` returns
-`ordinary` for every diff, including an empty one, so the delivery gate does not
-read the changed paths to decide which path a change takes. What still separates a
-change is its content: the scheduler, dispatch, settlement, locking, protocol,
-authorization and delivery modules keep their deterministic activation, revert and
-reapply observations.
-
 Every change takes this one path (operator policy, 2026-11-14): delivery is
 automatic, continuous and never held for a mind. A scoped `mishe_tauftauf.wall_patch`
 record carries the executable activation, observation and revert plan; `check` runs the
