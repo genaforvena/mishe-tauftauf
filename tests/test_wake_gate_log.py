@@ -89,3 +89,24 @@ def test_torn_fragment_is_skipped_and_later_rows_still_pair(tmp_path):
     assert rows[1]["result"] == "verified"
     wake_gate_log.record_start(tmp_path, "system1", "k2", snap=snap, mail=[], now=2.0)
     assert wake_gate_log._rows(tmp_path)[-1]["key"] == "k2"
+
+
+def test_engine_raise_still_writes_the_end_row_and_propagates(tmp_path, monkeypatch):
+    # The shadow log pairs every start with an end. An engine that raises something other than
+    # EngineNotStarted/EngineTimeout must not leave the start row without its end row, and the
+    # wake must still see the exception (the log never changes the outcome).
+    import pytest
+    from mishe_tauftauf import wake
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("engine exploded")
+
+    monkeypatch.setattr(wake, "_execute_engine", boom)
+    with pytest.raises(RuntimeError, match="engine exploded"):
+        wake._execute(tmp_path, "system1", "k-raise", engine=None, now=1000.0, snap=_snap(["inbox"]),
+                      mail=[], reconcile_of=None, repo=None, timeout=1, on_start=None)
+    rows = _rows(tmp_path)
+    assert [r["kind"] for r in rows] == ["start", "end"]
+    assert rows[1]["key"] == "k-raise"
+    assert rows[1]["state"] == "failed"
+    assert "RuntimeError" in rows[1]["detail"]

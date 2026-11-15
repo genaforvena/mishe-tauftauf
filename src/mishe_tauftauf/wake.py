@@ -314,8 +314,13 @@ def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, ti
     run. It never raises and never changes the outcome returned here.
     """
     wake_gate_log.record_start(home, role, key, snap=snap, mail=mail, now=now)
-    state, detail = _execute_engine(home, role, key, engine=engine, now=now, snap=snap, mail=mail,
-                                    reconcile_of=reconcile_of, repo=repo, timeout=timeout, on_start=on_start)
+    try:
+        state, detail = _execute_engine(home, role, key, engine=engine, now=now, snap=snap, mail=mail,
+                                        reconcile_of=reconcile_of, repo=repo, timeout=timeout, on_start=on_start)
+    except BaseException as exc:
+        # Close the shadow pair on every exit, then let the wake see the same exception.
+        wake_gate_log.record_end(home, role, key, state="failed", detail=f"{type(exc).__name__}: {exc}")
+        raise
     wake_gate_log.record_end(home, role, key, state=state, detail=detail)
     return state, detail
 
