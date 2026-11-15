@@ -13,8 +13,9 @@ Checks:
 Exit status:
   0  GREEN: burn tracks the target
   2  RED: burn is outside the band
-  3  UNKNOWN: no history file, fewer than --min-span-h of samples, or the newest sample is older
-     than --max-age (a gap is not zero spend; it proves nothing either way)
+  3  UNKNOWN: no history file, fewer than --min-span-h of samples, the newest sample is older
+     than --max-age (a gap is not zero spend; it proves nothing either way), or --limit or
+     --window-h is not positive (an unusable argument proves nothing either way)
 
 Usage: routerai-burn.py --home SITE_HOME [--limit 200] [--window-h 24] [--band 0.25]
                         [--min-span-h 1.0] [--max-age 900] [--now EPOCH]
@@ -47,6 +48,17 @@ def read_rows(path: Path) -> list[tuple[float, float]]:
 
 
 def judge(rows, now, limit, window_h, band, min_span_h, max_age) -> tuple[int, dict]:
+    if limit <= 0 or window_h <= 0:
+        # A zero or negative limit or window is not a measurement of the burn
+        # rate: the target is limit per window, and dividing by either of them
+        # proves nothing about the spend.  The contract reserves 3 for "proves
+        # nothing either way", so an unusable argument reads UNKNOWN instead of
+        # raising out of the contract.  (Independent review of release
+        # 20c65d73: --window-h 0 and --limit 0 raised ZeroDivisionError and
+        # exited 1, a code the check never documents.)
+        report = {"target_per_h": None, "samples": len(rows), "window_h": window_h, "limit": limit}
+        return 3, dict(report, verdict="UNKNOWN",
+                       reason="limit %s and window_h %s must both be positive" % (limit, window_h))
     window_s = window_h * 3600.0
     inside = [(e, b) for e, b in rows if now - window_s <= e <= now]
     target = limit / window_h

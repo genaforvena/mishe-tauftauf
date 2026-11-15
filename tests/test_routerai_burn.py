@@ -46,6 +46,28 @@ def test_burn_check_verdicts(tmp_path):
     assert burn.judge(stale, now, 200, 24, 0.25, 1.0, 900)[0] == 3
 
 
+def test_a_zero_limit_or_window_is_unknown_not_a_crash(tmp_path, capsys):
+    # Independent review of release 20c65d73: --window-h 0 and --limit 0 divided
+    # by zero, raised ZeroDivisionError and exited 1 -- a code outside the
+    # check's own 0/2/3 contract, so the check emitted no verdict at all.  An
+    # unusable argument proves nothing about the burn rate: it reads UNKNOWN.
+    mod = _load_check()
+    home = tmp_path
+    (home / "engine").mkdir()
+    rows = [{"epoch": 1000.0 + i * 3600, "balance": 200.0 - 8.0 * i} for i in range(4)]
+    (home / "engine" / "routerai-balance.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    now = rows[-1]["epoch"] + 60
+
+    for argv in (["--window-h", "0"], ["--limit", "0"], ["--window-h", "-1"], ["--limit", "-5"]):
+        assert mod.main(["--home", str(home), "--now", str(now)] + argv) == 3, argv
+        report = json.loads(capsys.readouterr().out)
+        assert report["verdict"] == "UNKNOWN", report
+        assert "must both be positive" in report["reason"], report
+
+    # UNKNOWN is not RED, so the initiative mapping leaves it alone.
+    assert mod.main(["--home", str(home), "--now", str(now), "--window-h", "0", "--as-initiative"]) == 3
+
+
 def test_as_initiative_maps_red_to_open_and_keeps_unknown(tmp_path, capsys):
     # Burn RED is "not done" for the initiative (exit 1 = open); UNKNOWN must stay UNKNOWN (3).
     mod = _load_check()
