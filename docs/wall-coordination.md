@@ -97,7 +97,7 @@ keeps the release it started from. No mind moves the pin by hand.
 `wall_patch` checks and applies a patch against. It does not decide what the units
 run.
 
-The strong gate binds the checked bytes to the committed release. The patch
+The patch gate binds the checked bytes to the committed release. The patch
 record keeps each path's after-bytes; the check captures them from the
 shared checkout, and the consumer compares them with the release worktree
 materialized at the commit. A release tree that differs from those bytes
@@ -123,22 +123,16 @@ mishe release request --sha FULL_SHA --previous FULL_SHA \
 ```
 
 The two files contain nonempty JSON argument arrays for relevant checks and an
-actual-consumer probe. Ordinary docs, tests and producer changes use existing
-committed promotion, automatic rollback on failed observation, and asynchronous
-review. A review outage remains pending evidence and does not block ordinary
-delivery. Classification is conservative; mixed changes take the strong path.
+actual-consumer probe. Every change uses the same committed promotion, automatic
+rollback on failed observation, and asynchronous review. A review outage remains
+pending evidence and does not block delivery.
 
-Ordinary means the diff cannot reach a mechanism. The admitted paths are
-Markdown files under `docs/` (subdirectories included), anything under `tests/`,
-`README.md` and `src/mishe_tauftauf/producers.py`.
-`README.md` is admitted by that exact path, not by extension: it is the
-reader's front page, which the runtime names as a default document to render
-and as a search corpus, and never reads to decide behaviour. Everything else
-is strong, including `duties.json`, the agent contracts and doctrine, the
-scheduler, settlement, locking, protocol, authorization and delivery modules,
-and every unknown path. An empty diff is strong. There is no author-supplied
-flag and no per-path exemption, so one unknown path in a diff sends the whole
-diff down the strong path.
+There is no path classification any more. `release_classification` returns
+`ordinary` for every diff, including an empty one, so the delivery gate does not
+read the changed paths to decide which path a change takes. What still separates a
+change is its content: the scheduler, dispatch, settlement, locking, protocol,
+authorization and delivery modules keep their deterministic activation, revert and
+reapply observations.
 
 Every change takes this one path (operator policy, 2026-11-14): delivery is
 automatic, continuous and never held for a mind. A scoped `mishe_tauftauf.wall_patch`
@@ -166,7 +160,7 @@ delivery once logged "activated 38e28e3d" as its revert and the pin stayed on th
 release.
 
 The consumer binds every changed committed path to the checked bytes and binds the
-delivery plan. It performs the strong apply and recovery exercise after the
+delivery plan. It performs the patch apply and recovery exercise after the
 engine exits and the dispatch settles. A changed command artifact, source tree
 or uncovered committed path is refused. Patch `check` runs the supplied test
 command on the exact bytes and ends in the phase `tested`; use tests with no live
@@ -190,7 +184,7 @@ The `delivery-requests` signal expires after ten minutes (`max_age` 600 in `duti
 observing; missing, stale or malformed monitoring never establishes success.
 
 The site's moving-pin script (`SITE_HOME/operator/plans/moving-pin-20261105/delivery/deliver.sh`)
-re-runs the strong deterministic check before applying. A manual delivery driver
+re-runs the deterministic check before applying. A manual delivery driver
 must run in a separately supervised service under the existing containment,
 with retained logs and an explicit result. `setsid` and `nohup` do not escape a
 wake service's systemd control group: when the wake exits, systemd kills those

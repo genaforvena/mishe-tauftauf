@@ -17,7 +17,7 @@ SITE_HOME/components/NAME/
 ```
 
 - Consumers call `components/NAME/current/bin/NAME`, a stable path, never a release path. This is the intended end state; no consumer calls it yet (see "Order of work").
-- The core (scheduler, dispatch, settlement, locking, delivery) stays on `runtime/current` with the strong gate and its deterministic activation, revert and reapply checks. It is not a component.
+- The core (scheduler, dispatch, settlement, locking, delivery) stays on `runtime/current` with the delivery gate and its deterministic activation, revert and reapply checks. It is not a component.
 
 ## Rules
 

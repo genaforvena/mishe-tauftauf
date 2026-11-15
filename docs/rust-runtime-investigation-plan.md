@@ -9,7 +9,9 @@ actual-consumer observation and continuing migration. `7:omp` is only completing
 the autonomy setup/handoff; it is not the migration owner. The remaining
 investigation sections below describe the initial stage, not a restriction on
 the newly authorized implementation. No further routine implementation approval
-is required. Apply the existing ordinary/strong-change delivery rules.
+is required. Apply the existing delivery rules: one path for every change, with
+the scheduler, dispatch, settlement, locking, protocol, authorization and delivery
+changes keeping their deterministic activation, revert and reapply checks.
 
 Drive meaningful responsibilities toward small composable POSIX commands,
 actually replacing selected Python implementations with Rust and retiring their
@@ -26,7 +28,7 @@ reviewed, activated, observed and recovered states. Continue autonomous bounded
 work and follow-up without waiting for another implementation assignment.
 
 The owner accepts bounded operational risk. This does not remove protected host
-limits, separate fresh strong-change review, or deterministic activation,
+limits, the fresh review that follows delivery, or deterministic activation,
 revert and reapply checks. Coordinate the current release writer and overlapping
 unit edits rather than moving pins or regenerating units from a second path.
 
@@ -195,10 +197,11 @@ resident services, IPC frameworks and speculative refactoring.
   integrity, release layout, interrupted-build/promotion behavior, pin consistency,
   prior artifact retention and rollback without rebuilding on the live host.
   Distinguish build reproducibility from merely recording source provenance.
-- [ ] Apply existing ordinary versus strong-change policy. Scheduler, dispatch,
-  settlement, locking, protocol, authorization and delivery/bootstrap changes
-  require deterministic activation/revert/reapply checks and a fresh review
-  after delivery. Define these future checks without executing or weakening them.
+- [ ] Apply existing delivery policy. There is one path for every change, and no
+  path classification. Scheduler, dispatch, settlement, locking, protocol,
+  authorization and delivery/bootstrap changes require deterministic
+  activation/revert/reapply checks and a fresh review after delivery. Define these
+  future checks without executing or weakening them.
 
 ### 5. Review and finish the planning deliverable
 

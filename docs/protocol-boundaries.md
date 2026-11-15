@@ -143,25 +143,33 @@ that composes it:
 - `rust/mishe-network-probe` (`mishe-network-probe`, contract
   `rust/mishe-network-probe/CONTRACT.md`) writes one probe row per run;
   `tools/network_boundary.py` decodes its JSONL rows for `tools/network_view.py`.
+- `rust/mishe-systemd-show` (`mishe-systemd-show`, contract
+  `rust/mishe-systemd-show/CONTRACT.md`) decodes `systemctl show` text;
+  `unit_psi_text.parse_systemd_show` composes it and fails closed with
+  `SystemdShowUnknown` when the binary is missing, mismatched or failing. There is
+  no Python fallback: the retired Python decoder survives only as the oracle in
+  `tests/test_rust_systemd_show.py`.
 
 A change to any of these binaries' input, output, exit statuses or fault text is a
 change to a protocol boundary: update its `CONTRACT.md` in the same commit and run
 its contract test (`tests/test_mishe_tape_frames.py`,
 `tests/test_mishe_records_verify.py`, `tests/test_mishe_tape_facts.py`,
-`tests/test_mishe_network_probe.py`).
+`tests/test_mishe_network_probe.py`, `tests/test_rust_systemd_show.py`).
 
 A delivery request's spec holds the repository, the exact commit and its previous
 commit. The author role and the originating wake key are not in the spec; they
 enter the request's identity digest, which covers the spec, role and wake key, and
 the wake key must name an actual wake snapshot for that role.
 
-A strong request names a reviewed patch record and carries a `patch_binding`
-digest. That digest covers the record's `files`, `runtime`, `test`, `review` and
-`delivery_plan`, so the file list, runtime and test arguments, review record and plan
-live in the patch record, not in the request. Submission checks that the record is
-reviewed, has a clear review and a passing test, that its delivery plan has the
-`activate`, `observe` and `revert_observe` steps, and that every changed path is in
-the reviewed file list. The plan the gate records also carries `revert`, the separate
+A patch request names a patch record and carries a `patch_binding` digest. That
+digest covers the record's `files`, `runtime`, `test`, `review` and `delivery_plan`,
+so the file list, runtime and test arguments, review record and plan live in the
+patch record, not in the request. Submission checks that the record's deterministic
+check passed — the phase is `tested` or `reviewed` — that its test exited 0, that its
+delivery plan has the `activate`, `observe` and `revert_observe` steps, and that
+every changed path is in the record's file list. It does not require a review
+verdict: the deterministic check is the gate, and review is asynchronous evidence
+after the pin moves. The plan the gate records also carries `revert`, the separate
 argv that restores the old consumer pin. `check` refuses a plan without one, and
 `revert` refuses a plan whose only restore path is its own activation, before any
 runtime byte moves, because re-running the activation re-pins the new release and is
@@ -172,10 +180,10 @@ again when the request is executed.
 
 The source and command artifacts are validated when the request is submitted and
 again when it is executed (`validate_source` in `src/mishe_tauftauf/delivery_requests.py`).
-A request whose changed paths classify as high-impact without a reviewed strong patch
-is refused at that validation, so an ordinary request cannot carry a high-impact change.
-Human wall statements such as "permission required" are not parsed into a grant or a
-delivery decision.
+There is no path classification any more: `release_classification` returns `ordinary`
+for every diff, so a request is refused only for what it carries, not for which
+paths it touches. Human wall statements such as "permission required" are not
+parsed into a grant or a delivery decision.
 
 Keep reusable explanations tracked in Git. Keep runtime snapshots, experiments,
 chat and local notes under the resolved site home. See [Working as a durable

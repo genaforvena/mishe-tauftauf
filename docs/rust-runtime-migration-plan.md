@@ -260,6 +260,11 @@ Reading:
 
 ### 5.1 Ordinary versus strong change
 
+The delivery code no longer classifies a change by its paths: `release_classification`
+returns `ordinary` for every diff, and there is no strong request path. The table
+below is therefore this plan's own commitment about which changes get the extra
+checks, not a description of a gate that selects them.
+
 | Change | Class | Reason |
 |---|---|---|
 | S0 hoisting | Ordinary if verification rules are unchanged (proved by the byte-identical test); otherwise strong | Touches `feed.py` and `records.py`, which are in `parsing-policy.json`. |
