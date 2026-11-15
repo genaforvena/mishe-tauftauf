@@ -47,7 +47,7 @@ def check_pointer(home: Path, release: Path) -> Path:
     return stable
 
 
-def check_units(home: Path, stable: Path, show=_show) -> list[str]:
+def check_units(home: Path, stable: Path, show=_show, *, sleep=time.sleep, retries: int = 3) -> list[str]:
     """Every owned installed service is loaded as its file says; pinned ones are oneshot on the stable path."""
     checked = []
     expected = "PYTHONPATH=" + str(stable / "src")
@@ -55,6 +55,12 @@ def check_units(home: Path, stable: Path, show=_show) -> list[str]:
         if unit_path.suffix != ".service" or "@." in unit_path.name:
             continue
         fields = show(unit_path.name, "Type", "Environment", "FragmentPath", "NeedDaemonReload", "LoadState")
+        for _ in range(retries):
+            # a concurrent sync may reload a moment later: look again before calling a pending reload a failure
+            if fields.get("NeedDaemonReload") == "no":
+                break
+            sleep(2)
+            fields = show(unit_path.name, "Type", "Environment", "FragmentPath", "NeedDaemonReload", "LoadState")
         if fields.get("LoadState") != "loaded":
             raise ValueError(f"owned installed service is not loaded: {unit_path.name}")
         if fields.get("FragmentPath") != str(unit_path):

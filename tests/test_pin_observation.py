@@ -68,3 +68,35 @@ def test_a_failed_evidence_read_is_not_retried_as_transient(tmp_path):
 
     with pytest.raises(ValueError, match="unbounded pinned consumer"):
         po.drain_old(tmp_path, 5, timeout=5, sleep=lambda s: None, inventory=lambda h: {}, pending_old=pending)
+
+
+def test_a_pending_reload_that_clears_a_moment_later_is_not_a_failure(tmp_path, monkeypatch):
+    home, release = _site(tmp_path)
+    stable = home / "runtime" / "current"
+    unit = home / "u" / "mishe-x.service"
+    unit.parent.mkdir()
+    unit.write_text("[Service]\nEnvironment=PYTHONPATH=" + str(stable / "src") + "\n")
+    monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
+    states = iter(["yes", "no"])
+
+    def show(name, *props):
+        return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot", "NeedDaemonReload": next(states),
+                "Environment": "PYTHONPATH=" + str(stable / "src")}
+
+    assert po.check_units(home, stable, show=show, sleep=lambda s: None) == ["mishe-x.service"]
+
+
+def test_a_reload_that_never_clears_is_a_failure(tmp_path, monkeypatch):
+    home, release = _site(tmp_path)
+    stable = home / "runtime" / "current"
+    unit = home / "u" / "mishe-x.service"
+    unit.parent.mkdir()
+    unit.write_text("[Service]\nEnvironment=PYTHONPATH=" + str(stable / "src") + "\n")
+    monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
+
+    def show(name, *props):
+        return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot", "NeedDaemonReload": "yes",
+                "Environment": "PYTHONPATH=" + str(stable / "src")}
+
+    with pytest.raises(ValueError, match="pending daemon-reload"):
+        po.check_units(home, stable, show=show, sleep=lambda s: None)

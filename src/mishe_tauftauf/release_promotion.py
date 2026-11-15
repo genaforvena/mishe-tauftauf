@@ -304,6 +304,9 @@ def activate(home, repo, source, sha):
     config = read_json(Path(home)/"coordination-mode.json") or {}
     config["runtime"] = str(source)
     write_json(Path(home)/"coordination-mode.json", config)
+    # Something else (a sync by another mind, a trigger enabled above) can touch a unit file after the sync's own reload:
+    # end the activation with one more reload so the loaded configuration matches the files the observation will compare.
+    reload_units()
 
 
 def enqueue_review(home, record):
@@ -406,7 +409,8 @@ def promote(home, repo, sha, *, check, observe, previous, activate=None, probe=r
                     restore_configuration(home, configs)
                     point(home, old)
                     record["restored_consumer_invocation"] = boundary.invoke_arm_consumer(old/"src")
-                record["rollback_probe"] = probe(observe,cwd=old,env=dict(env,PYTHONPATH=str(old/"src")))
+                # the probe code is the NEW source (an older release may not carry it); cwd names the release being observed
+                record["rollback_probe"] = probe(observe,cwd=old,env=dict(env,MISHE_PIN_CUTOFF_US=str(time.monotonic_ns() // 1000)))
                 record["phase"]="rolled-back" if record["rollback_probe"]["code"]==0 else "UNKNOWN"
                 record["rollback_completed_at" if record["phase"] == "rolled-back" else "rollback_failed_at"] = time.time()
             except (OSError,ValueError,subprocess.SubprocessError) as restore_error:
