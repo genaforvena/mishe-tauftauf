@@ -218,6 +218,37 @@ def test_ordinary_review_supplies_retained_recovery_evidence(tree,monkeypatch):
     assert "delivery_plan" not in seen["patch"]
 
 
+def test_ordinary_review_carries_the_release_commit_intent(tree,monkeypatch):
+    # Measured on ac94997b: the reviewer could not judge the intent behind a
+    # comment the diff alone did not explain, because the rationale was the same
+    # generic line for every ordinary release. Carry the window's own messages.
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha);p.materialize(home,repo,old)
+    identity="intent"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",
+        source=str(source),paths=["docs/page.md"],check=dict(output="pass",code=0),
+        observe_argv=["probe"],observe=dict(code=0,output="ok"),review_pending=True))
+    seen={}
+    monkeypatch.setattr(p.wall_patch,"review",lambda h,patch:(seen.__setitem__("patch",patch) or dict(clear=True,response={})))
+    monkeypatch.setattr(p,"config_paths",lambda *a:[])
+    p.review(home,identity)
+    assert "Author intent" in seen["patch"]["rationale"]
+    assert "new" in seen["patch"]["rationale"]
+
+
+def test_release_intent_is_empty_when_the_worktree_is_gone(tmp_path):
+    assert p._release_intent(tmp_path/"missing","a","b")==""
+
+
+def test_commit_intent_text_drops_attribution_trailers():
+    from mishe_tauftauf.git_base_text import commit_intent_text
+    raw=("abc123 push hook: name the wake-end check\n\nThe unit is the mechanism.\n\n"
+         "Mishe-Wake: wake-x\nMishe-Role: genome\nCo-Authored-By: Claude <n@x>\n")
+    text=commit_intent_text(raw)
+    assert "push hook: name the wake-end check" in text and "The unit is the mechanism." in text
+    assert "Mishe-Wake" not in text and "Mishe-Role" not in text and "Co-Authored-By" not in text
+
+
 def test_revert_rereads_review_completed_before_lock_acquisition(tree,monkeypatch):
     from contextlib import contextmanager
     from mishe_tauftauf.state_files import write_json
@@ -281,7 +312,8 @@ def test_reapply_same_sha_reuses_independent_review_for_new_delivery(tree,monkey
     monkeypatch.setattr(p.wall_patch,"review",lambda *a:calls.append(1) or dict(clear=True))
     p.review(home,"first")
     p.merge_reviews(home)
-    assert len(launched)==1 and len(calls)==1
+    launches=[argv for argv in launched if any("release-review" in str(a) for a in argv)]
+    assert len(launches)==1 and len(calls)==1
     assert read_json(p.record_path(home,"second"))["review_pending"] is False
     assert read_json(p.record_path(home,"first"))["phase"]==prior_phase
 

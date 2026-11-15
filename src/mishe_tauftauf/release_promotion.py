@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 from . import release_boundary, work_boundary as boundary, wall_patch
+from .git_base_text import commit_intent_text
 from .state_files import read_json, write_json
 from .work_receipts import digest
 
@@ -484,6 +485,22 @@ def revert(home, identity):
         return record
 
 
+def _release_intent(source, previous, sha):
+    """The release window's commit messages, minus attribution trailers.
+
+    The messages are the author's own statement of what changed and why; a
+    reviewer reading only the diff cannot always recover that intent. A missing
+    or broken worktree yields "" rather than failing the review.
+    """
+    try:
+        raw = boundary.git(source, "log", "--format=%h %s%n%b", f"{previous}..{sha}")
+    except (OSError, ValueError, subprocess.SubprocessError, AttributeError):
+        # AttributeError covers tests that stub the shared subprocess module; this
+        # helper must never fail a review, so any git trouble yields no intent.
+        return ""
+    return commit_intent_text(raw)
+
+
 def review(home, identity):
     path = record_path(home,identity); record=read_json(path)
     if not record or (record["phase"] not in ("delivered", "reverting", "reverted") and record.get("observed") is not True):
@@ -508,7 +525,14 @@ def review(home, identity):
     for name in record["paths"]:
         before=wall_patch.snapshot(old/name); after=wall_patch.snapshot(source/name)
         patch["files"][name]=dict(before=before,runtime_before=before,after=after)
-    patch["rationale"]="Asynchronous ordinary scoped release review. Tests passed and actual caller probe succeeded. Review for concrete source defects; recovery configuration and probe evidence are retained."
+    # Reviewer understanding depends on the author's stated intent (Bacchelli
+    # §VI.B: rationale determines what a reviewer can judge). The generic
+    # "probe succeeded" line cannot explain a design choice in the diff, and a
+    # reviewer measured on ac94997b could not confirm the intent behind a
+    # pre-existing comment. Supply the release window's own commit messages.
+    intent=_release_intent(record["source"],record["previous"],record["sha"])
+    patch["rationale"]=("Asynchronous ordinary scoped release review. Tests passed and actual caller probe succeeded. Review for concrete source defects; recovery configuration and probe evidence are retained."
+        + (f"\n\nAuthor intent — the commits in this release:\n{intent}" if intent else ""))
     patch["review_kind"]="ordinary-post-delivery"
     # The review question asks about the release's recovery path, so supply the
     # retained evidence it names rather than only asserting it is retained: the

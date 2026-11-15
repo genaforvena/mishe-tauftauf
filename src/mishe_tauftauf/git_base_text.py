@@ -31,3 +31,17 @@ def committed_snapshot(root, base, name):
     data = subprocess.run(["git", "-C", str(root), "show", f"{base}:{name}"],
                           capture_output=True, check=True).stdout
     return {"bytes": base64.b64encode(data).decode(), "mode": int(mode, 8) & 0o777}
+
+
+_TRAILER_PREFIXES = ("Mishe-Wake:", "Mishe-Role:", "Co-Authored-By:")
+
+
+def commit_intent_text(raw):
+    """A git ``log --format`` body with its attribution trailer block dropped.
+
+    A reviewer judging a release needs the author's own statement of what changed
+    and why; the trailers are provenance, not intent. Parsing git text lives here
+    as a boundary, and ``release_promotion`` acts on the plain string returned.
+    """
+    keep = [line for line in raw.splitlines() if not line.startswith(_TRAILER_PREFIXES)]
+    return "\n".join(keep).strip()

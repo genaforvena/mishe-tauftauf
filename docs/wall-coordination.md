@@ -176,7 +176,10 @@ a concrete fix or a revert. The review reads the scoped release diff for concret
 source defects; it is evidence after the pin has moved, never a gate that holds it.
 An already-delivered ordinary release is reviewed against its retained recovery
 evidence (the previous release, the observation argv and the explicit revert
-command), not the pre-activation delivery plan it does not carry.
+command), not the pre-activation delivery plan it does not carry. The request also
+carries the release window's own commit messages as the author's stated intent,
+with the attribution trailer block dropped (`git_base_text.commit_intent_text`),
+because the diff alone cannot always explain a design choice behind the change.
 
 The plan names four commands: `activate` restarts the affected consumers,
 `observe` checks the live ones afterwards, `revert_observe` checks the restored
