@@ -95,10 +95,11 @@ The foreground run measures about 4.5 minutes (108 items, paced reads), so the
 duty's timeout is 540 s and its `max_age` is 7200 s. The scan is a public-API
 read; it never writes to DEV.to.
 
-What the scan reads grew three times on 2026-11-14, each time because reading
+What the scan reads grew five times on 2026-11-14, each time because reading
 the check found a place it did not look. It now reads the whole comment tree and
 the tail the list endpoint withholds (below), the **card description** of
-every live and draft article, and the account's own **published profile**.
+every live and draft article, the account's own **published profile**, and the
+**canonical URL** and **cover image** of every article.
 
 DEV shows the description on every card and in
 every link preview, and DEV freezes it at creation, so a corrected body keeps
@@ -111,12 +112,29 @@ The draft pre-flight has always scanned the whole file as one body, so a
 private term in a draft's front matter was already refused there; what it did
 not do was name the field, so the verdict said `body` and a reader would look
 there and not find it. The front matter's description field is now read as the
-description it is.
+description it is, and the front matter's canonical URL as the canonical URL
+it is.
 
 A description that is present but unreadable is UNKNOWN, not a pass: a
 description nobody could read is a description nobody can rule out. An
 article that publishes no description carries no text to rule out and is
 read as empty.
+
+The canonical URL is read for the same reason. DEV renders it as the page's
+`<link rel="canonical">` and as a visible "Originally published at" line
+under the title, and it is the one published field that can name any host at
+all: the body and the description are our own prose, but a canonical URL is an
+off-site address. It is read from the article record in the `--all` run and
+from the front matter in the draft pre-flight, because the publisher sends
+`canonical_url:` from there too. An article that names no canonical URL
+carries no text to rule out and is read as empty; one that names an unreadable
+one is UNKNOWN.
+
+The cover image is read for the same reason, and its address is what carries
+the text: DEV serves the image from that address and shows it above the title,
+so a device name in a filename or a private host in the path reaches every
+reader of the article. The publisher sends `cover_image:` from the front
+matter, so the pre-flight reads it there as well.
 
 The profile is read for the same reason. DEV prints the profile name and
 summary under every article's title and links the website and the social

@@ -663,5 +663,208 @@ def test_the_report_records_that_the_profile_was_read(tmp_path):
     assert written["profile"]["read"] is True
 
 
+# ---- the canonical-URL blind spot, closed 2026-11-14 ----------------------------
+#
+# The scan read the title, the body, the tags, the card description, the
+# profile and the replies.  It never read the canonical URL, which DEV renders
+# as the page's <link rel="canonical"> and as a visible "Originally published
+# at" line under the title.  It is the one published field that can name any
+# host at all: the body and the description are our own prose, but a canonical
+# URL is an off-site address.  Measured 2026-11-14: article 3982149 already
+# carried one, and the lane read GREEN on it.
+
+
+def test_a_private_identifier_in_the_canonical_url_is_red():
+    """The canonical URL is published text, so the rule holds it too."""
+    scan = load_scan()
+    fields = {"title": "A post", "body": "A body.", "tags": "", "replies": [],
+              "canonical_url": "https://example.invalid/notes/probe@example.com"}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "RED"
+    assert [field for field, _rule, _code in violations] == ["canonical_url"]
+
+
+def test_the_same_text_is_red_in_the_body_and_in_the_canonical_url():
+    """One rule, two published places.
+
+    The point of the gap was that the rule's reach depended on where the text
+    sat, so the same private identifier is judged the same way in the body
+    and in the canonical URL.
+    """
+    scan = load_scan()
+    text = "Write to probe@example.com about it."
+    in_body = scan.verdict_for({"title": "t", "body": text, "tags": "",
+                                 "replies": []}, **NO_TERMS)
+    in_canonical = scan.verdict_for({"title": "t", "body": "clean", "tags": "",
+                                     "replies": [],
+                                     "canonical_url": text}, **NO_TERMS)
+    assert in_body[0] == "RED" and in_canonical[0] == "RED"
+
+
+def test_an_article_without_a_canonical_url_is_not_unknown():
+    """No canonical URL published is no text to rule out.
+
+    An item must not be made UNKNOWN by a field that simply does not exist.
+    """
+    scan = load_scan()
+    fields = {"title": "A post", "body": "A body.", "tags": "", "replies": []}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "GREEN" and not violations
+
+
+def test_an_unreadable_canonical_url_is_unknown():
+    """A canonical URL that is present but not readable is UNKNOWN, never a pass.
+
+    A canonical URL nobody could read is one nobody can rule out.
+    """
+    scan = load_scan()
+    fields = {"title": "A post", "body": "A body.", "tags": "", "replies": [],
+              "canonical_url": {"unexpected": "shape"}}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "UNKNOWN" and not violations
+
+
+def test_the_read_item_captures_the_canonical_url_the_api_answers():
+    """The canonical URL is read from the article record, not left out.
+
+    The scan has to fetch it; a fetch that forgot the field would report a
+    clean item while the page carried the term.
+    """
+    scan = load_scan()
+    article = {"title": "A post", "body_markdown": "A body.",
+               "tag_list": ["one"], "description": "the card",
+               "canonical_url": "https://example.invalid/original",
+               "comments_count": 0}
+    scan.get = lambda path, key=None: article
+    fields = scan.read_item({"id": 4218940, "state": "live"}, "key", "owner")
+    assert fields["canonical_url"] == "https://example.invalid/original"
+
+
+def test_the_draft_preflight_names_the_canonical_url_the_publisher_will_send():
+    """The pre-flight reads the canonical URL from the front matter.
+
+    The publisher sends `canonical_url:` from the front matter, so the
+    pre-flight has to read that field and name it in its verdict.
+    """
+    scan = load_scan()
+    draft = ('---\ntitle: A post\ncanonical_url: "https://example.invalid/notes/probe@example.com"\n'
+             'tags: one\n---\n\nThe body is clean.\n')
+    assert scan.draft_field(draft, "canonical_url") == "https://example.invalid/notes/probe@example.com"
+    fields = {"title": "A post", "body": draft, "tags": "", "replies": [],
+              "canonical_url": scan.draft_field(draft, "canonical_url")}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "RED"
+    assert "canonical_url" in [field for field, _rule, _code in violations]
+
+
+def test_a_draft_that_names_no_canonical_url_publishes_none():
+    """A front matter without a canonical_url field publishes no canonical URL."""
+    scan = load_scan()
+    draft = "---\ntitle: A post\ntags: one\n---\n\nThe body is clean.\n"
+    assert scan.draft_field(draft, "canonical_url") == ""
+    fields = {"title": "A post", "body": draft, "tags": "", "replies": [],
+              "canonical_url": scan.draft_field(draft, "canonical_url")}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "GREEN" and not violations
+
+
+def test_the_canonical_url_is_not_read_from_the_body():
+    """The canonical URL is a field of its own, not a line of the body.
+
+    A scan that read the body's text and called that the canonical URL would
+    pass on an article whose canonical URL names a forbidden host, because the
+    body says nothing about it.
+    """
+    scan = load_scan()
+    terms = [("R1", "devices", re.compile(r"(?<![\w-])mesh-home(?![\w-])", re.I))]
+    fields = {"title": "A post", "body": "A body.", "tags": "", "replies": [],
+              "canonical_url": "https://example.invalid/mesh-home/x"}
+    verdict, violations = scan.verdict_for(fields, terms=terms)
+    assert verdict == "RED"
+    assert [field for field, _rule, _code in violations] == ["canonical_url"]
+
+
+# ---- the cover-image blind spot, closed 2026-11-14 --------------------------------
+#
+# The publisher sends `cover_image:` from the front matter, and DEV shows that
+# image above the title of every article that carries one.  The scan never read
+# the field, so a term inside the address — a device name in a filename, a
+# private host in the path — reached a reader while the lane read GREEN.
+# Measured 2026-11-14: article 3982149 already carries one, hosted in a public
+# repository, so the account is clean today; the rule still has to hold.
+
+
+def test_a_private_identifier_in_the_cover_image_is_red():
+    """The cover image address is published text, so the rule holds it too."""
+    scan = load_scan()
+    terms = [("R1", "devices", re.compile(r"(?<![\w-])mesh-home(?![\w-])", re.I))]
+    fields = {"title": "A post", "body": "A body.", "tags": "", "replies": [],
+              "cover_image": "https://example.invalid/mesh-home/board.png"}
+    verdict, violations = scan.verdict_for(fields, terms=terms)
+    assert verdict == "RED"
+    assert [field for field, _rule, _code in violations] == ["cover_image"]
+
+
+def test_an_article_without_a_cover_image_is_not_unknown():
+    """No cover image published is no text to rule out."""
+    scan = load_scan()
+    fields = {"title": "A post", "body": "A body.", "tags": "", "replies": []}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "GREEN" and not violations
+
+
+def test_an_unreadable_cover_image_is_unknown():
+    """A cover image that is present but not readable is UNKNOWN, never a pass.
+
+    A cover image nobody could read is one nobody can rule out.
+    """
+    scan = load_scan()
+    fields = {"title": "A post", "body": "A body.", "tags": "", "replies": [],
+              "cover_image": {"unexpected": "shape"}}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "UNKNOWN" and not violations
+
+
+def test_the_read_item_captures_the_cover_image_the_api_answers():
+    """The cover image is read from the article record, not left out."""
+    scan = load_scan()
+    article = {"title": "A post", "body_markdown": "A body.",
+               "tag_list": ["one"], "description": "the card",
+               "canonical_url": "https://example.invalid/original",
+               "cover_image": "https://example.invalid/board.png",
+               "comments_count": 0}
+    scan.get = lambda path, key=None: article
+    fields = scan.read_item({"id": 4218940, "state": "live"}, "key", "owner")
+    assert fields["cover_image"] == "https://example.invalid/board.png"
+
+
+def test_the_draft_preflight_names_the_cover_image_the_publisher_will_send():
+    """The pre-flight reads the cover image from the front matter.
+
+    The publisher sends `cover_image:` from the front matter, so the
+    pre-flight has to read that field and name it in its verdict.
+    """
+    scan = load_scan()
+    draft = ('---\ntitle: A post\ncover_image: "https://example.invalid/notes/probe@example.com"\n'
+             'tags: one\n---\n\nThe body is clean.\n')
+    assert scan.draft_field(draft, "cover_image") == "https://example.invalid/notes/probe@example.com"
+    fields = {"title": "A post", "body": draft, "tags": "", "replies": [],
+              "cover_image": scan.draft_field(draft, "cover_image")}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "RED"
+    assert "cover_image" in [field for field, _rule, _code in violations]
+
+
+def test_a_draft_that_names_no_cover_image_publishes_none():
+    """A front matter without a cover_image field publishes no cover image."""
+    scan = load_scan()
+    draft = "---\ntitle: A post\ntags: one\n---\n\nThe body is clean.\n"
+    assert scan.draft_field(draft, "cover_image") == ""
+    fields = {"title": "A post", "body": draft, "tags": "", "replies": [],
+              "cover_image": scan.draft_field(draft, "cover_image")}
+    verdict, violations = scan.verdict_for(fields, **NO_TERMS)
+    assert verdict == "GREEN" and not violations
+
+
 if __name__ == "__main__":
     sys.exit(0)

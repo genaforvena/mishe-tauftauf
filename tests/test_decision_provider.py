@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import http.client
+import datetime
 import json
 import os
 import pathlib
@@ -225,11 +226,20 @@ class ProviderTests(unittest.TestCase):
         fake = _Fake(b"{}")
         dp.decide(provider, "q", "x", "s" * 100, CRITERIA, threshold=0.5, post=fake)
         dp.decide(provider, "q", "x", "s" * 100, CRITERIA, threshold=0.5, post=fake)
-        spent = dp.spent_total(provider, "2026-11-14")
+        # The days are RELATIVE to now, not written down.  The ledger refuses to
+        # be read as a day later than the one asked about ("budget state is
+        # dated in the future"), so a test that names fixed dates passes only
+        # while the calendar says so: with 2026-11-14 written down, this case
+        # turned RED at midnight on 2026-11-15 and failed the delivery check
+        # for every commit that night.
+        today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+        tomorrow = (datetime.datetime.now(datetime.timezone.utc).date()
+                    + datetime.timedelta(days=1)).isoformat()
+        spent = dp.spent_total(provider, today)
         self.assertGreater(spent, 0.0)
         # a later day resets the call count but keeps the total
-        self.assertEqual(dp.calls_today(provider, "2026-11-15"), 0)
-        self.assertAlmostEqual(dp.spent_total(provider, "2026-11-15"), spent)
+        self.assertEqual(dp.calls_today(provider, tomorrow), 0)
+        self.assertAlmostEqual(dp.spent_total(provider, tomorrow), spent)
         self.assertEqual(len(fake.calls), 2)
 
     def test_spend_limit_is_checked_against_the_total_not_one_day(self):

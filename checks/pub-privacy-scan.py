@@ -60,7 +60,22 @@ The draft pre-flight has always scanned the whole file as one body, so a
 private term in a draft's front matter was already refused there.  What it
 did not do was name the field: the verdict said ``body``, which is where a
 reader would look and would not find it.  The front matter's description
-field is now read as the description it is.
+field is now read as the description it is, and the front matter's canonical
+URL as the canonical URL it is.
+
+The canonical URL is published text too, and it was not read before
+2026-11-14.  DEV renders it as the page's ``<link rel="canonical">`` and as a
+visible "Originally published at" line under the title, and it is the one
+published field that can name any host at all: the body and the description
+are our own prose, but a canonical URL is an off-site address.  One article on
+the account already carries one.  It is read from the article record in the
+``--all`` run and from the front matter in the draft pre-flight, because the
+publisher sends ``canonical_url:`` from there too.
+
+The cover image is read for the same reason, and its address is what carries
+the text: DEV serves the image from that address and shows it above the title,
+so a device name in a filename or a private host in the path reaches every
+reader.  The publisher sends ``cover_image:`` from the front matter too.
 
 The account's own published profile is read too, and it was not before
 2026-11-14.  DEV prints the profile name and summary under every article's
@@ -142,10 +157,9 @@ ENV_FILE = Path(os.environ.get("MESH_DEVTO_ENV", str(SITE / "pub" / "access" / "
 #: The operator CLI used to publish the verdict.
 CLI = SITE / "bin" / "mishe"
 
-#: A draft's front matter, and the description field inside it.  The publisher
-#: reads the same field, so the pre-flight reads what the write will publish.
+#: A draft's front matter.  The publisher reads the description and the
+#: canonical URL out of it, so the pre-flight reads what the write will publish.
 FRONT_MATTER = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.S)
-FRONT_DESCRIPTION = re.compile(r"^description:\s*(.+)$", re.M)
 
 
 # ---- R2/R3/R4 structural patterns (no private terms here) -------------------------
@@ -451,6 +465,21 @@ def read_item(item: dict, key: str, owner: str = "") -> dict:
         fields["body"] = art.get("body_markdown")
         fields["tags"] = " ".join(art.get("tag_list") or []) if isinstance(art.get("tag_list"), list) else art.get("tag_list")
         fields["description"] = art.get("description")
+        # The canonical URL is published text too.  DEV renders it as the
+        # page's <link rel="canonical"> and as a visible "Originally published
+        # at <host>" line under the title, and it is the one place an OFF-SITE
+        # address reaches a reader: the body and the description are ours, but
+        # a canonical URL can name any host at all.  It was not read before
+        # 2026-11-14, so a private term inside one reached every reader of
+        # that article while the lane read GREEN on it.
+        fields["canonical_url"] = art.get("canonical_url")
+        # The cover image is published too, and it is read as its URL: DEV
+        # serves the image from that address and shows it above the title, so a
+        # term inside the address (a device name in a filename, a private host
+        # in the path) reaches every reader of the article.  It was not read
+        # before 2026-11-14.  The publisher sends it from the front matter, so
+        # the draft pre-flight reads it there as well.
+        fields["cover_image"] = art.get("cover_image")
         if isinstance(art.get("comments_count"), int):
             expected = art["comments_count"]
     except (urllib.error.URLError, ValueError, KeyError, TypeError) as err:
@@ -521,6 +550,30 @@ def verdict_for(fields: dict, terms: list, foreign_handles: list = (), public_re
         else:
             for rule, code in scan_text(text, terms, foreign_handles, public_repo_rx):
                 violations.append(("description", rule, code))
+    # The canonical URL is read for the same reason as the description: DEV
+    # publishes it as the page's canonical link and as a visible line under the
+    # title, so a rule hit inside it reaches a reader.  An article that names
+    # no canonical URL carries no text to rule out and is read as empty; a
+    # canonical URL that is present but unreadable is UNKNOWN, because a
+    # canonical URL nobody could read is one nobody can rule out.
+    if fields.get("canonical_url") is not None:
+        ok, text = text_or_unknown(fields.get("canonical_url"))
+        if not ok:
+            unknown = True
+        else:
+            for rule, code in scan_text(text, terms, foreign_handles, public_repo_rx):
+                violations.append(("canonical_url", rule, code))
+    # The cover image is read for the same reason.  An article that publishes
+    # no cover image carries no text to rule out and is read as empty; a cover
+    # image that is present but unreadable is UNKNOWN, because a cover image
+    # nobody could read is one nobody can rule out.
+    if fields.get("cover_image") is not None:
+        ok, text = text_or_unknown(fields.get("cover_image"))
+        if not ok:
+            unknown = True
+        else:
+            for rule, code in scan_text(text, terms, foreign_handles, public_repo_rx):
+                violations.append(("cover_image", rule, code))
     # The account's own profile is published on every article page: DEV prints
     # the name and the summary under the title and links the website and the
     # social handles from the same byline.  It was not read before 2026-11-14,
@@ -654,6 +707,19 @@ def self_test(terms_file: Path | None = None) -> int:
         # the account's published profile is read like any other published text
         "profile-red": ({"title": "x", "body": "A body.", "tags": "", "replies": [],
                          "profile": {"name": "ilya mozerov", "summary": "It ran on the mesh-home box."}}, RED),
+        # the canonical URL is published as the page's canonical link and as a
+        # visible line under the title, so a rule hit inside it is a violation
+        "canonical-url-red": ({"title": "x", "body": "A body.", "tags": "", "replies": [],
+                                "canonical_url": "https://example.invalid/mesh-home/notes"}, RED),
+        # a canonical URL with nothing forbidden in it stays GREEN
+        "canonical-url-clean": ({"title": "x", "body": "A body.", "tags": "", "replies": [],
+                                 "canonical_url": "https://github.com/genaforvena/lte-workstation"}, GREEN),
+        # the cover image is published above the title, so its address is read too
+        "cover-image-red": ({"title": "x", "body": "A body.", "tags": "", "replies": [],
+                             "cover_image": "https://example.invalid/mesh-home/board.png"}, RED),
+        # a cover image with nothing forbidden in it stays GREEN
+        "cover-image-clean": ({"title": "x", "body": "A body.", "tags": "", "replies": [],
+                               "cover_image": "https://raw.githubusercontent.com/genaforvena/x/main/docs/board.png"}, GREEN),
     }
     ok = True
     for name, (fields, expected) in cases.items():
@@ -721,25 +787,30 @@ def run_all(key: str, *, terms_file: Path | None = None, report: Path | None = N
     return {GREEN: 0, RED: 2, UNKNOWN: 3}[overall]
 
 
-def draft_description(text: str) -> str:
-    """The card description a draft's front matter names, or "" when it names none.
+def draft_field(text: str, name: str) -> str:
+    """The value a draft's front matter names for ``name``, or "" when it names none.
 
-    The publisher reads ``description:`` out of the front matter and sends it
-    to DEV, so the pre-flight has to read the same field the write path will
-    publish.  A front matter that names none publishes none, which is nothing
-    to rule out.
+    The publisher reads ``description:`` and ``canonical_url:`` out of the front
+    matter and sends them to DEV, so the pre-flight has to read the same fields
+    the write path will publish.  A front matter that names none publishes
+    none, which is nothing to rule out.
     """
     match = FRONT_MATTER.match(text)
     if not match:
         return ""
     head = match.group(1)
-    found = FRONT_DESCRIPTION.search(head)
+    found = re.search(r"^" + re.escape(name) + r":\s*(.+)$", head, re.M)
     if not found:
         return ""
     value = found.group(1).strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
         value = value[1:-1]
     return value
+
+
+def draft_description(text: str) -> str:
+    """The card description a draft's front matter names, or "" when it names none."""
+    return draft_field(text, "description")
 
 
 def scan_file(path: str, terms_file: Path | None = None) -> int:
@@ -750,7 +821,16 @@ def scan_file(path: str, terms_file: Path | None = None) -> int:
         print("UNKNOWN: draft unreadable")
         return 3
     fields = {"title": text.splitlines()[0] if text else "", "body": text, "tags": "",
-              "replies": [], "description": draft_description(text)}
+              "replies": [], "description": draft_description(text),
+              # The canonical URL is published the same way the description is:
+              # the publisher sends it from the front matter, and DEV renders it
+              # as the page's canonical link and as a visible line under the
+              # title.  It is the one published field that can name any host at
+              # all, so it has to be read here too.
+              "canonical_url": draft_field(text, "canonical_url"),
+              # The cover image is sent from the front matter the same way, and
+              # DEV shows it above the title.
+              "cover_image": draft_field(text, "cover_image")}
     verdict, violations = verdict_for(fields, loaded["terms"], loaded["foreign_handles"], loaded["public_repo_rx"])
     print(f"{verdict} " + " ".join(f"{f}:{r}/{c}" for f, r, c in violations))
     return {GREEN: 0, RED: 2, UNKNOWN: 3}[verdict]
