@@ -11,7 +11,7 @@ def _store(monkeypatch, records):
                         lambda directory, since_ms=None: signal_samples.ReadResult(records=records))
 
 
-def test_footprint_reads_the_latest_of_each_and_reports_age(tmp_path, monkeypatch):
+def test_footprint_reads_the_latest_of_each(tmp_path, monkeypatch):
     now = 1_000_000.0
     ts = int(now * 1000) - 5000
     _store(monkeypatch, [
@@ -21,7 +21,18 @@ def test_footprint_reads_the_latest_of_each_and_reports_age(tmp_path, monkeypatc
         f"{ts}\tmemory.psi.avg10\tok\t0.12\tmemory-samples",
     ])
     out = producers.footprint(tmp_path, now=now)
-    assert out == "anon=0.35GiB charged=12.60GiB psi_avg10=0.12 sample_age=5s"
+    assert out == "anon=0.35GiB charged=12.60GiB psi_avg10=0.12"
+
+
+def test_footprint_value_is_stable_while_no_new_sample_arrives(tmp_path, monkeypatch):
+    # The value must not move with wall time, or the signal store rewrites footprint.json on every run.
+    ts = 999_000
+    _store(monkeypatch, [
+        f"{ts}\tmemory.anon.kib\tok\t366000\tmemory-samples",
+        f"{ts}\tmemory.charged.kib\tok\t13212160\tmemory-samples",
+        f"{ts}\tmemory.psi.avg10\tok\t0.12\tmemory-samples",
+    ])
+    assert producers.footprint(tmp_path, now=1_000_000.0) == producers.footprint(tmp_path, now=1_000_500.0)
 
 
 def test_footprint_missing_any_reading_is_unknown_not_zero(tmp_path, monkeypatch):

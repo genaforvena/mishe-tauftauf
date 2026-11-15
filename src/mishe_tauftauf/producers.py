@@ -222,10 +222,12 @@ def memory_samples(home, *, now: float, **_) -> str:
 
 
 def footprint(home, *, now: float, **_) -> str:
-    """Honest footprint: latest anon and charged memory and PSI avg10 beside each other, with the newest sample's age.
+    """Honest footprint: latest anon and charged memory and PSI avg10 beside each other.
 
     Reads the sample store over the last 15 minutes. Any of the three missing means no reading: it raises, the unit
     fails and the signal ages to UNKNOWN. Nothing is carried forward from an older sample.
+    The value carries no sample age: an age in the text changes every second and rewrites the signal on every run
+    (and path-triggers health). Freshness is the signal's observed_at, and a new sample changes the value.
     """
     from . import signal_samples
     since = int((now - 900) * 1000)
@@ -234,12 +236,10 @@ def footprint(home, *, now: float, **_) -> str:
     missing = [n for n in ("memory.anon.kib", "memory.charged.kib", "memory.psi.avg10") if n not in latest]
     if missing:
         raise signal_samples.SignalSampleUnknown(f"no recent sample for {', '.join(missing)}")
-    newest = max(ts for ts, _ in latest.values())
     anon_gib = int(latest["memory.anon.kib"][1]) / (1024 * 1024)
     charged_gib = int(latest["memory.charged.kib"][1]) / (1024 * 1024)
     psi = latest["memory.psi.avg10"][1]
-    age_s = max(0, int(now * 1000) - newest) // 1000
-    return f"anon={anon_gib:.2f}GiB charged={charged_gib:.2f}GiB psi_avg10={psi} sample_age={age_s}s"
+    return f"anon={anon_gib:.2f}GiB charged={charged_gib:.2f}GiB psi_avg10={psi}"
 
 
 BUILTIN = {"dispatch": dispatch, "ci": ci, "tape-lock": tape_lock, "delivery-requests": delivery_requests,
