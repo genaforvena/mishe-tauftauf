@@ -237,7 +237,7 @@ def run(args) -> int:
         elif args.release_command == "revert": result = promotion.revert(home, args.id)
         else: result = promotion.review(home, args.id)
         print(json.dumps(result, indent=2))
-        return 0 if result.get("phase") in ("delivered", "reverted", "reviewed") else 3
+        return 0 if result.get("phase") in ("delivered", "reverted", "reviewed", "review-pending") else 3
     if args.command == "work":
         from . import work_state, work_metrics
         from .state_files import read_json, write_json
