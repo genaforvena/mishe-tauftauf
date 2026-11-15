@@ -158,8 +158,12 @@ target commit, so neither uncommitted edits in the shared checkout nor the remot
 run decide a delivery; CI stays a separate signal (`ci`), as do `pin-lag` and
 `moving-pin-delivery`. Scheduler, dispatch, settlement, locking, protocol, authorization and
 delivery changes keep their deterministic activation, revert and reapply observations;
-what they no longer wait for is a reviewer. Review is asynchronous evidence after the
-pin moves: a defect it finds is a new commit and another pin move. Request a patch
+what they no longer wait for is a reviewer. Those observations are the deterministic
+check itself — the plan must carry a real `revert` argv (refused otherwise, below), a
+failed observation rolls back automatically, and the rollback and reapply paths are
+covered by `tests/test_release_promotion.py` — not a live revert run against every
+delivered high-impact change. Review is asynchronous evidence after the pin moves: a
+defect it finds is a new commit and another pin move. Request a patch
 delivery explicitly with:
 
 ```sh
