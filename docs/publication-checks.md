@@ -206,10 +206,37 @@ The publisher is installed under the site home, which is gitignored, so the
 change is not reviewable bytes on its own. `checks/pub-publish-privacy-gate.py`
 is the reviewable form: it reads the INSTALLED publisher and asks whether the
 write is refused, with the DEV API redirected to a dead port so a run of the
-check cannot reach the account. It asks three questions — a draft whose title
-carries a private term is refused, a clean draft is not refused by the gate, and
-a draft whose rule terms cannot be read is refused. Duty
-`pub-publish-privacy-gate` runs it on an hourly timer.
+check cannot reach the account. It asks four questions — a draft whose title
+carries a private term is refused, a clean draft is not refused by the gate, a
+draft whose rule terms cannot be read is refused, and a draft whose rule check
+cannot be found at all is refused. Duty `pub-publish-privacy-gate` runs it on
+an hourly timer.
+
+### Both gates refuse when a rule cannot be applied
+
+The write path has two gates, and the fourth question above exists because
+they did not agree about what "the rule could not be applied" means.
+
+The privacy gate refused when the rule check was missing. The **duplication**
+gate did not: its whole block was guarded by "if the detector is there", so a
+missing detector meant no check at all on the body — the one defect that
+reaches a reader twice, in a paragraph the author read and approved once. It
+now refuses, as the privacy gate does. "No rule was applied" is not "no rule
+was broken", and two gates on one write path must not disagree about it.
+
+The privacy gate's refusal had a second defect, found the same day: the
+branch that handles a missing rule check built its message from a variable the
+script never defined, so the tool died with a `NameError` instead of refusing.
+The write still did not happen, so the account was safe, but a traceback is not
+a refusal and the operator reading the log could not tell a refused draft from
+a broken tool. Every name a refusal message reads is now bound before any
+branch that can reach it — a name bound inside a branch is missing in exactly
+the case that branch exists for.
+
+Both defects were invisible to the repository, because the publisher lives
+under the gitignored site home. The committed check is what makes them
+visible: it mutates the installed publisher and asks the same question again,
+and it fails RED on a publisher with either defect.
 
 `SITE/publication-check.json` is an object with `command` (nonempty argv list) and
 `timeout_seconds` (finite positive seconds, at most 300). Example command:

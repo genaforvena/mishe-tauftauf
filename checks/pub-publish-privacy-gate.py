@@ -28,7 +28,11 @@ dead port, so no request can reach the account, and it asks three questions:
 * a clean draft is NOT refused by the gate -- it goes on to the API stage and
   fails there.  A gate that refuses everything is not a gate;
 * a draft whose rule terms cannot be read is REFUSED, because "no rule was
-  applied" is not "no rule was broken".
+  applied" is not "no rule was broken";
+* a draft whose rule CHECK cannot be found at all is REFUSED too, because
+  that branch of the publisher is a different branch, and a gate whose
+  "cannot find the rule" path is untested is a gate whose behaviour on that
+  path is unknown.
 
 The refusal is distinguished from the API failure by the message, not by the
 exit code: both are non-zero, and a publisher with no gate at all still fails
@@ -68,6 +72,10 @@ DEAD_API = "http://127.0.0.1:9/api"
 #: the gate's refusal names the rule it applied, the API's failure does not.
 REFUSAL_MARKERS = ("refusing:",)
 RULE_MARKERS = ("privacy", "private/public", "rule list")
+#: The sibling gate's rule.  The duplication pre-flight refuses in its own
+#: words, so a probe about that gate looks for these and not for the privacy
+#: markers.
+DUP_MARKERS = ("duplication", "paragraph")
 
 
 def default_home() -> Path:
@@ -109,8 +117,15 @@ def draft(title: str, body: str = "A controlled probe. Nothing private in this b
 
 
 def run_publisher(publisher: Path, env_file: Path, home: Path, article: Path,
-                  terms: Path) -> subprocess.CompletedProcess:
-    """Run the installed publisher against a draft, with the API unreachable."""
+                  terms: Path,
+                  extra: dict | None = None) -> subprocess.CompletedProcess:
+    """Run the installed publisher against a draft, with the API unreachable.
+
+    ``extra`` sets variables for one run.  It is how a probe asks the
+    publisher a specific question: pointing ``MESH_DEVTO_PRIVACY_CHECK`` at
+    a path that does not exist asks "what happens when the rule cannot be
+    found at all?".
+    """
     environment = dict(os.environ)
     environment.update({
         "MESH_DEVTO_ENV": str(env_file),
@@ -118,6 +133,8 @@ def run_publisher(publisher: Path, env_file: Path, home: Path, article: Path,
         "MISHE_SEED_HOME": str(home),
         "MISHE_TAUFTAUF_HOME": str(home),
     })
+    if extra:
+        environment.update(extra)
     environment.pop("DEVTO_API_KEY", None)
     return subprocess.run([str(publisher), "--draft", str(article)],
                           capture_output=True, text=True, timeout=180,
@@ -131,12 +148,24 @@ def refused(output: str) -> bool:
     publisher with no gate fails on the dead port with a connection error,
     which is neither.
     """
+    return refused_naming(output, RULE_MARKERS)
+
+
+def refused_naming(output: str, markers: tuple[str, ...]) -> bool:
+    """Whether the output is a refusal that names the given gate.
+
+    ``refused`` is the privacy gate's refusal.  The write path has a second
+    gate -- the paragraph-duplication pre-flight -- whose refusal names a
+    different rule, so a probe about that gate asks for its own markers
+    rather than the privacy ones.  Sharing the mechanics keeps the two
+    readings of "refusal" from drifting apart.
+    """
     lowered = output.lower()
     if "connection refused" in lowered or "urlerror" in lowered:
         return False
     if not all(marker in lowered for marker in REFUSAL_MARKERS):
         return False
-    return any(marker in lowered for marker in RULE_MARKERS)
+    return any(marker in lowered for marker in markers)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -233,9 +262,59 @@ def main(argv: list[str] | None = None) -> int:
             print(unknown_output.strip()[-1200:])
             return 2
 
+        # The rule check itself is not on disk.  This is a different branch
+        # from the one above: there the rule exists and cannot be read, here
+        # the rule cannot be found at all.  Both must refuse the write.
+        #
+        # This probe exists because the two were confused.  The third probe
+        # (terms unreadable) reached the publisher's UNKNOWN branch, and the
+        # branch that handles a MISSING check was never run, so it could
+        # crash instead of refusing: on 2026-11-15 that branch's message
+        # named a variable the script did not define, so the tool died with a
+        # NameError instead of refusing.  The write still did not happen, so
+        # the account was safe -- but the gate's own contract says a refusal
+        # is what a reader of the log should see, and a traceback is not one.
+        # A gate whose refusal path is untested is a gate whose refusal path
+        # is unknown.
+        missing = run_publisher(publisher, env_file, home, clean, terms_file,
+                                extra={"MESH_DEVTO_PRIVACY_CHECK":
+                                       str(work_dir / "no-such-check.py")})
+        missing_output = (missing.stdout or "") + (missing.stderr or "")
+        if not refused(missing_output):
+            print("RED: the publication write path does not refuse when the "
+                  "rule check cannot be found at all. A gate that cannot find "
+                  "its rule must refuse the write, not crash on the way to "
+                  "the API.")
+            print("--- the publisher said ---")
+            print(missing_output.strip()[-1200:])
+            return 2
+
+        # The DUPLICATION gate, the sibling gate on the same write path.  It
+        # is here because the publisher is installed under the gitignored
+        # site home: a defect in it is invisible to every other committed
+        # check, and this one failed OPEN.  Its whole block was guarded by
+        # "if the detector is there", so when the detector was not there the
+        # write went through unchecked -- the one defect that reaches a
+        # reader twice, in a paragraph the author read and approved once.
+        # Measured 2026-11-15 with MESH_DEVTO_DUP_CHECK pointing at a path
+        # that does not exist: the tool went straight to the API stage.
+        missing_dup = run_publisher(publisher, env_file, home, clean, terms_file,
+                                    extra={"MESH_DEVTO_DUP_CHECK":
+                                           str(work_dir / "no-such-detector.py")})
+        missing_dup_output = (missing_dup.stdout or "") + (missing_dup.stderr or "")
+        if not refused_naming(missing_dup_output, DUP_MARKERS):
+            print("RED: the publication write path does not refuse when the "
+                  "paragraph-duplication detector cannot be found. The two "
+                  "gates on this write path must not disagree about what "
+                  "'the rule could not be applied' means: a missing detector "
+                  "is an unchecked write, not a clean one.")
+            print("--- the publisher said ---")
+            print(missing_dup_output.strip()[-1200:])
+            return 2
+
     print(f"{GREEN}: the publication write path refuses a rule break, lets a "
-          f"clean draft through, and refuses when the rule cannot be read "
-          f"(tested term: {term})")
+          f"clean draft through, and refuses when the rule cannot be read or "
+          f"cannot be found (tested term: {term})")
     return 0
 
 

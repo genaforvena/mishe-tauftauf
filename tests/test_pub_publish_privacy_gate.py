@@ -197,6 +197,64 @@ def test_the_refusal_is_distinguished_from_the_api_failure():
                          "Connection refused>") is False
 
 
+def test_a_publisher_whose_missing_check_branch_crashes_is_red(tmp_path, capsys):
+    """The mutation: the "the rule check is not there" branch dies instead of refusing.
+
+    This is the defect this wake found in the publisher installed on
+    2026-11-15.  The branch that handles a missing privacy check built its
+    refusal message from a variable the script never defined, so the tool
+    raised NameError instead of refusing the write.  The write still did not
+    happen -- the crash stopped it -- so the account was safe, but the
+    contract the check asserts ("the write path REFUSES") was not met: a
+    traceback is not a refusal, and the operator reading the log could not
+    tell a refused draft from a broken tool.
+
+    The third probe (terms unreadable) did not catch it: it reached the
+    publisher's UNKNOWN branch, which is a different branch.  The fourth
+    probe reaches this one.
+    """
+    source = _installed_publisher()
+    if not source:
+        import pytest
+        pytest.skip("the publisher is not installed on this host")
+    mutated = source.replace("_HOME or 'the site home'", "_SITE_HOME or 'the site home'")
+    assert mutated != source, "the mutation did not apply; the test would pin nothing"
+    home = _site_copy(tmp_path, mutated)
+    code = check.main(["--home", str(home), "--repo", str(ROOT)])
+    assert code == 2
+    assert "cannot be found" in capsys.readouterr().out
+
+
+def test_a_publisher_whose_duplication_gate_fails_open_is_red(tmp_path, capsys):
+    """The mutation: the duplication pre-flight lets the write through when its detector is absent.
+
+    This is the defect this wake found in the publisher installed on
+    2026-11-15, and it is the sibling of the one above: the whole
+    duplication block was guarded by "if the detector is there", so a
+    missing detector meant NO CHECK AT ALL on the body.  The one defect that
+    reaches a reader twice -- in a paragraph the author read and approved
+    once -- would have been published unchecked.
+
+    The privacy gate refused in this case, and the two gates sit on the same
+    write path, so they must not disagree about what "the rule could not be
+    applied" means.  This probe is what makes the disagreement visible: the
+    publisher is installed under the gitignored site home, so nothing else in
+    the repository can see it.
+    """
+    source = _installed_publisher()
+    if not source:
+        import pytest
+        pytest.skip("the publisher is not installed on this host")
+    mutated = source.replace(
+        "if _DUP_CHECK and os.path.isfile(_DUP_CHECK):",
+        "if False:")
+    assert mutated != source, "the mutation did not apply; the test would pin nothing"
+    home = _site_copy(tmp_path, mutated)
+    code = check.main(["--home", str(home), "--repo", str(ROOT)])
+    assert code == 2
+    assert "duplication" in capsys.readouterr().out
+
+
 def test_the_check_names_a_term_the_rule_list_actually_forbids():
     """The probe term comes from the rule list, not from the check.
 
