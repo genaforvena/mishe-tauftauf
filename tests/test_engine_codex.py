@@ -217,3 +217,9 @@ def test_a_failed_probe_still_starts_the_cooldown(tmp_path, monkeypatch):
     assert codex_usage.refresh(now, sessions=tmp_path, run=boom, home=home) is False
     assert codex_usage.refresh(now + 5.0, sessions=tmp_path, run=boom, home=home) is False
     assert len(calls) == 1
+
+
+def test_workspace_write_does_not_make_tmp_writable(tmp_path):
+    cmd = engine_codex.command("gpt-6-luna", tmp_path)
+    assert "sandbox_workspace_write.exclude_slash_tmp=true" in cmd
+    assert "sandbox_workspace_write.exclude_tmpdir_env_var=true" in cmd

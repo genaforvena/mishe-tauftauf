@@ -34,6 +34,13 @@ def command(model: str, cwd: Path, sandbox: str = SANDBOX, thinking: str | None 
     # evidence codex_usage has. Without it codex-a stays UNREADABLE and the router never picks a codex route.
     cmd = ["codex", "exec", "--skip-git-repo-check", "-s", sandbox,
            "-m", model, "--json", "-C", str(cwd)]
+    if sandbox == "workspace-write":
+        # workspace-write makes /tmp and $TMPDIR writable roots and puts a protective '.git' placeholder
+        # in each on the HOST while the wake runs. validate_home rejects a site with a '.git' in any ancestor,
+        # so every pytest tmp site failed ("not an initialized site") and the delivery check went red
+        # (3 deliveries, 234 failures, 2026-11-15). Keep /tmp and $TMPDIR out of the writable roots.
+        cmd += ["-c", "sandbox_workspace_write.exclude_slash_tmp=true",
+                "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true"]
     if thinking in THINKING_LEVELS:
         cmd += ["-c", f'model_reasoning_effort="{thinking}"']
     # The trailing "-" makes codex read the prompt from stdin. Without it the CLI waits on
