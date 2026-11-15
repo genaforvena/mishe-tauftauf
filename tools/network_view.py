@@ -229,6 +229,14 @@ def wifi_facts():
     return _wifi["text"], weak
 
 
+def wifi_line():
+    """The WI-FI line: the live listing with its age (it is cached for ROUTER_EVERY_S), or UNKNOWN."""
+    text, _weak = wifi_facts()
+    if text is None:
+        return "UNKNOWN (router Wi-Fi listing could not be read)"
+    return f"{text}; read {time.time() - _wifi['at']:.0f} s ago"
+
+
 ROUTER_LOG = SITE / "network" / "router.jsonl"
 STALE_ROUTER_S = 15 * 60  # the producer runs every 5 min; three missed runs is stale
 
@@ -448,8 +456,7 @@ def draw():
     out.append("")
     out.append("  OUTAGES (home internet DOWN, from the probes)")
     out.extend(outage_lines(data))
-    wf, _weak = wifi_facts()
-    out.append("  WI-FI         " + (wf or "UNKNOWN (router Wi-Fi listing could not be read)") + "   (read-only, clients counted, no devices named)")
+    out.append("  WI-FI         " + wifi_line() + "   (read-only, clients counted, no devices named)")
     out.append("  RECORDED      " + recorded_clients_line())
     rf = router_facts()
     out.append("  ROUTER        " + (rf or "UNKNOWN (ssh read failed)") + "   (read-only)")
