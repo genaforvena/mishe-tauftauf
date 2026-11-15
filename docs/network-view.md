@@ -43,4 +43,7 @@ Exit codes: 0 when the read worked, 3 when it failed (UNKNOWN in the duty contra
 
 - Signal values are one sample per 5 minutes. A single strong reading is not a finding; it
   becomes one only when it repeats over a day.
-- Not measured yet: upload speed, VPN (sing-box) state, router error and drop counters.
+- Not measured yet: upload speed, VPN (sing-box) state. The WAN error and drop counters
+  are measured: the view reports them from the last recorded router read, and the drop
+  count over a window needs at least 10 minutes of counters (`_wan_drops` in
+  `tools/network_view.py`).
