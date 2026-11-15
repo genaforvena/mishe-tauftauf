@@ -32,6 +32,12 @@ def test_thinking_deltas_count_as_no_progress():
     assert boundary.progress_bytes(line * 5) == (0, len(line) * 5)
 
 
+def test_thinking_block_markers_count_as_no_progress():
+    start = b'{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0}}\n'
+    end = b'{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0}}\n'
+    assert boundary.progress_bytes(start + end) == (0, len(start) + len(end))
+
+
 def test_tool_and_text_events_still_count_as_progress():
     tool = TOOL.encode() + b"\n"
     text = b'{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"hi"}}\n'

@@ -32,9 +32,11 @@ AUTH_SCHEMA_VERSION = 8
 
 
 HEARTBEAT_PREFIX = b'{"type":"tool_execution_update"'
-THINKING_PREFIX = b'{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta"'
-"""Reasoning-stream deltas. A model thinking without acting is not progress (health wake
-1794674035779401832 streamed ~32k of these for 14 min past its soft deadline, then hit the hard cap)."""
+THINKING_PREFIX = b'{"type":"message_update","assistantMessageEvent":{"type":"thinking_'
+"""Reasoning-stream events (thinking_start, thinking_delta, thinking_end). A model thinking without
+acting is not progress (health wake 1794674035779401832 streamed ~32k of these for 14 min past its
+soft deadline, then hit the hard cap). The block markers must match too: pub wake 1794722288504192628
+was carried 35 min to the hard cap on thinking_start/thinking_end lines, which the delta-only prefix let through."""
 
 
 def progress_bytes(data):
