@@ -856,7 +856,7 @@
         3
       ],
       "resolver": "steward",
-      "covers": "wakes that did real work and were thrown away: a wake in the last two hours ended by timeout, or without a yield after a stream of a megabyte or more; RED names role, model, outcome, minutes and size so the resolver fixes timeout policy, wake scope or engine use; UNKNOWN when the routing ledger cannot be read",
+      "covers": "wakes that did real work and were thrown away: a wake in the last two hours ended by timeout, or without a yield after a stream of a megabyte or more; RED rolls the losses up per candidate (engine/model/account) with cause class, count, roles, minutes and size so the resolver fixes timeout policy, wake scope or engine use; UNKNOWN when the routing ledger cannot be read",
       "replaces": []
     },
     {

@@ -3,8 +3,9 @@
 
 A wake that ends by timeout or without a yield, after a long stream of tool calls, loses what it learned:
 no wall update, no yield, no result.  This reads the engine routing ledger (select/outcome events) and
-the retained stream sizes, and says RED while such a wake is recent, naming the role, model, outcome,
-minutes and megabytes, so the resolver can fix the cause (timeout policy, scope of the wake, engine use).
+the retained stream sizes, and says RED while such a wake is recent.  The message rolls the losses up
+per candidate so the resolver can see *which* engine/model/account is the offender and how often it
+wasted work, instead of an undifferentiated list.
 
 Exit: 0 GREEN, 2 RED (a wake in the window ended in timeout/no-yield with real work), 3 UNKNOWN (ledger unreadable).
 """
@@ -13,6 +14,7 @@ import calendar
 import json
 import sys
 import time
+from collections import defaultdict
 from pathlib import Path
 
 
@@ -30,10 +32,51 @@ def decode(line):
         return None
 
 
-def main():
+def classify(ev):
+    """Short cause class for a discarded wake: hard cap, no-output watchdog, or other."""
+    reason = ev["reason"]
+    if "hard cap" in reason:
+        return "hard cap"
+    if "no output" in reason:
+        return "no output"
+    if ev["outcome"].startswith("timeout"):
+        return "timeout"
+    return "no yield"
+
+
+def evaluate(events, home, now):
+    """Return (exit_code, message).  events is the decoded ledger; home locates the wake streams."""
+    per_key = defaultdict(lambda: {"count": 0, "classes": defaultdict(int), "roles": set(),
+                                   "bytes": 0, "worst_age_s": 0.0})
+    for ev in events:
+        if not ev or ev["event"] != "outcome" or ev["outcome"] == "yielded" or now - ev["at"] > WINDOW_S:
+            continue
+        stream = Path(home) / "wakes" / f"{ev['wake']}.prompt.out.jsonl"
+        size = stream.stat().st_size if stream.is_file() else 0
+        if not (ev["outcome"].startswith("timeout") or size >= MIN_STREAM_BYTES):
+            continue
+        slot = per_key[ev["key"]]
+        slot["count"] += 1
+        slot["classes"][classify(ev)] += 1
+        slot["roles"].add(ev["role"])
+        slot["bytes"] += size
+        slot["worst_age_s"] = max(slot["worst_age_s"], now - ev["at"])
+    if not per_key:
+        return 0, "wake-waste: GREEN no timed-out or yield-less wake with real work in the last 2 h"
+    ranked = sorted(per_key.items(), key=lambda kv: kv[1]["count"], reverse=True)
+    parts = []
+    for key, slot in ranked:
+        classes = ", ".join(f"{n}x {c}" for c, n in sorted(slot["classes"].items(), key=lambda x: -x[1]))
+        parts.append(f"{key}: {slot['count']} wake(s) lost ({classes}) for {','.join(sorted(slot['roles']))}, "
+                     f"{slot['bytes'] / 1e6:.1f} MB, most recent {slot['worst_age_s'] / 60:.0f} min ago")
+    total = sum(s["count"] for _, s in ranked)
+    return 2, f"wake-waste: {total} wake(s) threw away work in the last 2 h -> " + "; ".join(parts)
+
+
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--home", type=Path, required=True)
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     ledger = a.home / "engine" / "routing-ledger.jsonl"
     if not ledger.is_file():
         print("wake-waste: no routing ledger; cannot tell", file=sys.stderr)
@@ -43,20 +86,9 @@ def main():
     except OSError as exc:
         print(f"wake-waste: ledger unreadable: {exc}", file=sys.stderr)
         return 3
-    now = time.time()
-    lost = []
-    for ev in events:
-        if not ev or ev["event"] != "outcome" or ev["outcome"] == "yielded" or now - ev["at"] > WINDOW_S:
-            continue
-        stream = a.home / "wakes" / f"{ev['wake']}.prompt.out.jsonl"
-        size = stream.stat().st_size if stream.is_file() else 0
-        if ev["outcome"].startswith("timeout") or size >= MIN_STREAM_BYTES:
-            lost.append(f"{ev['role']} via {ev['key']}: {ev['outcome']} {ev['reason']} ({size / 1e6:.1f} MB of work, {(now - ev['at']) / 60:.0f} min ago)")
-    if lost:
-        print("wake-waste: work thrown away -> " + "; ".join(lost), file=sys.stderr)
-        return 2
-    print("wake-waste: GREEN no timed-out or yield-less wake with real work in the last 2 h")
-    return 0
+    code, message = evaluate(events, a.home, time.time())
+    print(message, file=sys.stderr if code else sys.stdout)
+    return code
 
 
 if __name__ == "__main__":
