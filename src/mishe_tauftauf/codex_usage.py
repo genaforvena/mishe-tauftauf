@@ -8,12 +8,10 @@ codex account that has not run lately is STALE and the router skips it.
 """
 from __future__ import annotations
 
-import json
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 
-from . import budget_producer
+from . import budget_producer, codex_text
 
 CODEX_ALIAS = "codex-a"
 """The registry alias of the one ChatGPT login the codex CLI holds."""
@@ -23,23 +21,13 @@ TAIL_BYTES = 2 * 1024 * 1024  # bytes read from the end of each rollout (reading
 LIMIT_ID = "codex"
 
 
-def _epoch(stamp) -> float | None:
-    if not isinstance(stamp, str):
-        return None
-    try:
-        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone(timezone.utc).timestamp()
-    except ValueError:
-        return None
-
-
 def _tail_lines(path: Path) -> list[str]:
     with path.open("rb") as fh:
         fh.seek(0, os.SEEK_END)
         size = fh.tell()
         fh.seek(max(0, size - TAIL_BYTES))
         data = fh.read()
-    lines = data.decode("utf-8", errors="replace").splitlines()
-    return lines[1:] if size > TAIL_BYTES else lines  # the first line may be cut mid-record
+    return codex_text.tail_lines(data, cut=size > TAIL_BYTES)  # the first line may be cut mid-record
 
 
 def latest_reading(sessions: Path = SESSIONS, *, limit: int = RECENT_FILES) -> dict | None:
@@ -56,15 +44,14 @@ def latest_reading(sessions: Path = SESSIONS, *, limit: int = RECENT_FILES) -> d
         for line in lines:
             if "rate_limits" not in line:
                 continue
-            try:
-                event = json.loads(line)
-            except ValueError:
+            event = codex_text.json_line(line)
+            if event is None:
                 continue
             payload = event.get("payload") if isinstance(event, dict) else None
             limits = payload.get("rate_limits") if isinstance(payload, dict) else None
             if not isinstance(limits, dict) or limits.get("limit_id") != LIMIT_ID:
                 continue
-            at = _epoch(event.get("timestamp"))
+            at = codex_text.parse_timestamp(event.get("timestamp"))
             if at is not None:
                 best = {"at": at, "rate_limits": limits}
         if best is not None:

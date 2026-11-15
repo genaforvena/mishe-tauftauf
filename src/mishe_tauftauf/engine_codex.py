@@ -10,10 +10,9 @@ tmux and push), so :data:`SANDBOX` is a named default, not a settled policy.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from . import engine_process
+from . import codex_text, engine_process
 from .engine_omp import is_quota_error, is_rate_limit_error
 from .model_policy import refuse_banned_model
 from .wake import EngineExhausted, EngineRateLimited, EngineRejected
@@ -48,14 +47,8 @@ def events(stream: Path):
         return
     with stream.open(errors="replace") as fh:
         for line in fh:
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
-            try:
-                value = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(value, dict):
+            value = codex_text.json_line(line)
+            if value is not None:
                 yield value
 
 
@@ -75,7 +68,7 @@ def acted(stream: Path) -> bool:
     """True once codex ran a tool or changed a file: the effect may have happened."""
     for event in events(stream):
         item = event.get("item")
-        if event.get("type", "").startswith("item.") and isinstance(item, dict) and item.get("type") in EFFECT_ITEM_TYPES:
+        if codex_text.is_item_event(event) and isinstance(item, dict) and item.get("type") in EFFECT_ITEM_TYPES:
             return True
     return False
 
