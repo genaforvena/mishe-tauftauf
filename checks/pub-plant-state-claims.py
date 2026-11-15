@@ -154,7 +154,7 @@ REGISTRY = (
     },
     {
         "name": "producer-units-naming-release",
-        "pattern": re.compile(r"([0-9]+|[a-z-]+)\s+(?:producer\s+)?units?\s+(?:still\s+)?name[sd]?\s+a release", re.I),
+        "pattern": re.compile(r"([0-9]+|[a-z][a-z \t-]*?)\s+(?:producer\s+)?units?\s+(?:still\s+)?name[sd]?\s+a release", re.I),
         "reading": "the producer units that name a release directly",
         "value": "producer_units_naming_release",
     },
@@ -194,10 +194,16 @@ REGISTRY = (
 
 def number(text: str) -> int | None:
     """A figure written as a digit or as a word."""
-    text = text.strip().lower()
-    if text.isdigit():
-        return int(text)
-    return WORDS.get(text)
+    words = text.strip().lower().replace("-", " ").split()
+    if len(words) == 1 and words[0].isdigit():
+        return int(words[0])
+    # The longest trailing run of words that is a number: "forty one" is
+    # forty-one, and "on eleven" (a lazy capture) is eleven.
+    for start in range(len(words)):
+        number_word = WORDS.get("-".join(words[start:]))
+        if number_word is not None:
+            return number_word
+    return None
 
 
 def sentences(line: str) -> list[str]:
@@ -393,7 +399,7 @@ def check(bodies: dict[str, str], live: dict[str, object]) -> tuple[list[str], l
                         % (identifier, entry["reading"], raw, entry["reading"]))
                     continue
                 if entry["value"] == "checkout_head":
-                    if not str(value).startswith(raw):
+                    if not str(value).lower().startswith(raw.lower()):
                         failures.append(
                             "article %s: the body says the checkout is on %s, the checkout is on %s"
                             % (identifier, raw, str(value)[:8]))
@@ -755,7 +761,11 @@ def main(argv: list[str] | None = None) -> int:
         print("UNKNOWN: the account could not be read (%s)" % error)
         return 3
 
-    live = read_live(home, repo, unit_dir)
+    try:
+        live = read_live(home, repo, unit_dir)
+    except Exception as error:
+        print("UNKNOWN: a live reading could not be read (%s)" % error)
+        return 3
     failures, undecidable = check(bodies, live)
     for failure in failures:
         print("DRIFT: " + failure)

@@ -143,6 +143,21 @@ def test_an_update_line_is_not_a_notice_so_its_live_figure_is_checked():
     assert failures and "123" in failures[0]
 
 
+def test_a_spaced_compound_unit_count_is_read_whole():
+    """'Forty one producer units' is 41, not 'one': the whole compound is read."""
+    failures, _ = _failures({"3": "Forty one producer units still name a release directly.\n"})
+    assert failures == []
+    failures, _ = _failures({"3": "Thirty one producer units still name a release directly.\n"})
+    assert failures and "41" in failures[0]
+
+
+def test_a_checkout_head_compares_regardless_of_case():
+    """An upper-case hex commit in the body is the same commit as the checkout."""
+    head = LIVE["checkout_head"]
+    failures, _ = _failures({"3": "The checkout is on %s.\n" % head[:8].upper()})
+    assert failures == []
+
+
 def test_a_figure_the_plant_publishes_no_reading_for_is_undecidable():
     """A reading the plant cannot supply is UNKNOWN, never a pass."""
     failures, undecidable = check.check(
