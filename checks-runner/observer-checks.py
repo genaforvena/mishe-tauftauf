@@ -103,6 +103,12 @@ INVENTORY = (
     # runtime/current must equal the release of the last verified delivery; only the
     # delivery path writes it.  RED carries the restore command (incident 2026-11-10).
     ("pin-integrity.py", False, False, (), None),
+    # A repo-root entry named with an unexpanded shell literal ("$MISHE_SEED_HOME") is a tool
+    # writing outside the validated site home; the role's real wall silently goes stale
+    # (2026-11-15 health wake 1794783782367667911).  artifacts/repo-root-strays-* and
+    # rm-wake69735-stray-literal-seed-home-genome-wall.md record prior hand-cleaned cases with
+    # no continuing observation.  Plant level.  Revert: remove this row.
+    ("repo-root-strays.py", False, True, (), None),
     # The wakes window renders each model's newest retained output through the live view code.
     # A renderer failure is DMed to genome (resolver) once per distinct failure by the check itself.
     ("wakes-view-engines.py", False, True, ("--route",), None),
