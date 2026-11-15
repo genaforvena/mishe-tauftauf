@@ -941,5 +941,39 @@ def test_a_file_without_front_matter_is_still_read_for_the_term():
     assert scan.draft_body(text) == text
 
 
+# A URL is published percent-encoded, and DEV serves the cover image and the
+# social card from the ENCODED address it stores.  A term inside an encoded
+# path matched no rule: the scan read `...%2Fmesh-home%2F...` and found no
+# device name in it, while the reader saw the term in the address.
+def test_a_percent_encoded_term_is_read_as_the_term():
+    """A term inside a percent-encoded URL is RED.
+
+    DEV stores the cover image address percent-encoded, so a device name in the
+    path reaches a reader encoded.  The scan has to read the decoded form too.
+    """
+    scan = load_scan()
+    encoded = ("https://media2.dev.to/dynamic/image/width=1000,height=420,fit=cover,"
+               "gravity=auto,format=auto/https%3A%2F%2Fexample.invalid%2Fmesh-home%2Fboard.png")
+    assert scan.scan_text(encoded, **NO_TERMS) == []
+    assert scan.scan_text(encoded, terms=[("R1", "devices", re.compile(r"mesh-home", re.I))]) == \
+        [("R1", "devices")]
+
+
+def test_a_double_percent_encoded_term_is_read_as_the_term():
+    """A term inside a twice-encoded URL is RED too."""
+    scan = load_scan()
+    encoded = "https://example.invalid/probe%2540example.com/x"
+    hits = scan.scan_text(encoded, **NO_TERMS)
+    assert ("R1", "email") in hits
+
+
+def test_a_clean_url_is_not_read_as_a_violation():
+    """Decoding does not invent a violation: a clean URL stays clean."""
+    scan = load_scan()
+    assert scan.scan_text("https://example.invalid/clean/board.png", **NO_TERMS) == []
+    assert scan.scan_text("https://media2.dev.to/dynamic/image/width=1000/https%3A%2F%2Fexample.invalid%2Fok.png",
+                          **NO_TERMS) == []
+
+
 if __name__ == "__main__":
     sys.exit(0)

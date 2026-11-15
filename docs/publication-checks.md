@@ -148,6 +148,13 @@ so a device name in a filename or a private host in the path reaches every
 reader of the article. The publisher sends `cover_image:` from the front
 matter, so the pre-flight reads it there as well.
 
+A published URL is read in its decoded form as well as in the form the API
+answers. DEV stores the cover image address percent-encoded and serves the
+image from that encoded address, so a device name in the path reaches a reader
+as `mesh-home` inside `...%2Fmesh-home%2F...`. No rule matched that text: the
+term was in the address and the scan read the article as clean. The decoded
+form is read too, so an encoded term is the term it stands for.
+
 The profile is read for the same reason. DEV prints the profile name and
 summary under every article's title and links the website and the social
 handles from the same byline, so a private term in any of them reaches a

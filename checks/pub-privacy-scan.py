@@ -124,6 +124,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -243,8 +244,8 @@ def load_terms(terms_file: Path | None = None) -> dict:
     return {"terms": out, "foreign_handles": foreign, "public_repo_rx": public_repo_rx}
 
 
-def scan_text(text: str, terms: list, foreign_handles: list = (), public_repo_rx: list = ()) -> list[tuple[str, str]]:
-    """Return [(rule, code)] for violations. Never returns matched text."""
+def _scan_once(text: str, terms: list, foreign_handles: list, public_repo_rx: list) -> list[tuple[str, str]]:
+    """The rules applied to one form of the text."""
     hits: list[tuple[str, str]] = []
     for rule, code, rx in STRUCTURAL:
         if rx.search(text):
@@ -265,6 +266,25 @@ def scan_text(text: str, terms: list, foreign_handles: list = (), public_repo_rx
             break
     if sha_violations(strip_fenced_blocks(text), list(public_repo_rx)):
         hits.append(("R2", "sha-or-digest"))
+    return hits
+
+
+def scan_text(text: str, terms: list, foreign_handles: list = (), public_repo_rx: list = ()) -> list[tuple[str, str]]:
+    """Return [(rule, code)] for violations. Never returns matched text."""
+    hits = _scan_once(text, terms, foreign_handles, public_repo_rx)
+    # A URL is published percent-encoded, and DEV serves the cover image and
+    # the social card from the ENCODED address it stores.  So a device name in
+    # a path reached a reader as `mesh-home` inside `...%2Fmesh-home%2F...`,
+    # which no rule matched: the term was there and the scan read it as clean.
+    # The decoded form is read as well, so an encoded term is the term.
+    # Each round removes at least one escape, so the loop ends: a string with
+    # no escape left decodes to itself.
+    decoded = text
+    for _ in range(4):
+        decoded = urllib.parse.unquote(decoded)
+        if decoded == text:
+            break
+        hits += _scan_once(decoded, terms, foreign_handles, public_repo_rx)
     return sorted(set(hits))
 
 
