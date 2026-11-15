@@ -75,6 +75,13 @@ def private_tmux_server(tmp_path_factory):
     # while CI — which has no ambient binding — stayed green. An in-mind run has
     # to describe the tree under test exactly as CI does; the binding itself is
     # covered where it lives, in tests/test_site_home.py.
+    # Clearing the binding also hides the site-local mishe-tape framer that
+    # feed._tape_binary resolves from it, so pin the verified framer first when
+    # a site is present; CI has no site and keeps its existing behaviour.
+    site_tape = os.path.join(os.environ.get("MISHE_SEED_HOME") or "", "bin", "mishe-tape")
+    if os.environ.get("MISHE_SEED_HOME") and not os.environ.get("MISHE_TAPE_BIN") \
+            and os.path.isfile(site_tape) and os.access(site_tape, os.X_OK):
+        patch.setenv("MISHE_TAPE_BIN", site_tape)
     patch.delenv("MISHE_SEED_HOME", raising=False)
     # Record-kind index lives in the user cache; a suite run must not write there.
     patch.setenv("XDG_CACHE_HOME", str(root / "xdg-cache"))
