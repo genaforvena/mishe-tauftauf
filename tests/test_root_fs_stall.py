@@ -38,6 +38,18 @@ def test_stall_line_omits_io_pressure_when_the_probe_did_not_record_it():
     assert code == 2 and "io_psi" not in lines[0]
 
 
+def test_stall_line_carries_the_probe_memory_pressure_beside_io():
+    code, lines = mod.evaluate(
+        [rec(), rec(event="slow", at=NOW - 60, total=17.0, fsync=16.97, psi_io=84.66, psi_mem=23.93)], NOW)
+    assert code == 2 and "io_psi 84.66" in lines[0] and "mem_psi 23.93" in lines[0]
+
+
+def test_stall_line_renders_memory_pressure_alone_when_io_is_absent():
+    code, lines = mod.evaluate(
+        [rec(), rec(event="slow", at=NOW - 60, total=17.0, fsync=16.97, psi_mem=23.93)], NOW)
+    assert code == 2 and "mem_psi 23.93" in lines[0] and "io_psi" not in lines[0]
+
+
 def test_old_stall_outside_window_is_ignored():
     assert mod.evaluate([rec(), rec(event="slow", at=NOW - 5000, total=9.9)], NOW)[0] == 0
 

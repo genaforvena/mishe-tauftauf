@@ -23,6 +23,12 @@ write storm; a high value only says the machine *was* I/O-contended and cannot
 by itself separate a local write storm from a device latency cliff, since a
 blocked task raises the same counter either way.
 
+A stall line also carries mem_psi (PSI memory 'some' avg10) once the recorder
+samples it. A high mem_psi beside a high io_psi points at reclaim — the page
+cache being charged and swept (2026-11-16: site-home reads charging the plants
+slice) — rather than a plain write storm, so the two pressures together narrow
+the cause that io_psi alone could not.
+
 Exit status:
   0  the probe is fresh and no root probe in the window reached STALL_S
   2  a root-filesystem probe took STALL_S or longer inside the window
@@ -46,17 +52,24 @@ LIVE_LOG = "/dev/shm/dual-probe.jsonl"
 
 
 def psi_suffix(record: dict) -> str:
-    """The stalled probe's own I/O-pressure reading, when the recorder carried one.
+    """The stalled probe's own pressure readings, when the recorder carried them.
 
-    dual_probe.py samples PSI io 'some avg10' at the moment of a slow probe, so a
-    stall line shows how I/O-contended the machine was there. Near zero at a
-    stall means no other task was I/O-blocked (points away from a write storm); a
-    high value is expected both from a local write storm and from a device
-    latency cliff, so it cannot by itself name the cause. Absent on records
-    written before that field existed.
+    dual_probe.py samples PSI io and memory 'some avg10' at the moment of a slow
+    probe, so a stall line shows how contended the machine was there. Near-zero
+    io_psi means no other task was I/O-blocked (points away from a write storm);
+    a high io_psi is expected both from a local write storm and from a device
+    latency cliff. A high mem_psi beside it points at reclaim, which io_psi alone
+    could not separate. Either field may be absent on records written before it
+    existed, so each is rendered only when present.
     """
-    psi = record.get("psi_io")
-    return "" if not isinstance(psi, (int, float)) else f", io_psi {psi:.2f}"
+    parts = []
+    io = record.get("psi_io")
+    if isinstance(io, (int, float)):
+        parts.append(f"io_psi {io:.2f}")
+    mem = record.get("psi_mem")
+    if isinstance(mem, (int, float)):
+        parts.append(f"mem_psi {mem:.2f}")
+    return ", " + ", ".join(parts) if parts else ""
 
 
 def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
