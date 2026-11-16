@@ -161,7 +161,11 @@ that composes it:
 - `rust/mishe-records` (`mishe-records`, contract `rust/mishe-records/CONTRACT.md`)
   verifies record envelopes and owns `SITE/records.verified.sqlite3`;
   `feed._VerificationPass`/`feed._RecordsChild` compose it, reading its `V`/`N`/`S`
-  decisions and `P` payload bodies.
+  decisions and `P` payload bodies. Since contract 0.4 a `V` or `N` decision line
+  also names the verified record's kind, which `feed` attaches to the entry's framer
+  facts (`Facts.kind`, via `_attach_kinds`) so a classifying caller reads the kind
+  instead of re-peeking the cited record; `S` carries no kind, and an entry whose
+  kind stays `None` must resolve it itself.
 - `rust/mishe-tape-facts` (`mishe-tape-facts`, contract
   `rust/mishe-tape-facts/CONTRACT.md`) extracts byte-level tape facts from framed
   entries; `tape_facts.read_tape_facts` composes it. No production module imports
