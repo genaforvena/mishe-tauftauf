@@ -368,6 +368,33 @@ def test_review_merge_keeps_pending_evidence_when_lock_never_frees(tree, monkeyp
     assert read_json(p.record_path(home,identity))["review_pending"] is True
 
 
+def test_review_merge_batch_budget_bounds_work_poll_time(tree, monkeypatch):
+    from contextlib import contextmanager
+    repo, home, old, sha = tree
+    source = p.materialize(home, repo, sha); p.materialize(home, repo, old)
+    for i in range(4):
+        identity = f"batch-{i}"
+        write_json(p.record_path(home, identity), dict(id=identity, sha=sha, previous=old, phase="delivered",
+            source=str(source), paths=["docs/page.md"], check=dict(output="pass"), owner="genome", review_pending=True))
+        queued = home/"work/reviews"/f"{identity}.result.json"
+        queued.parent.mkdir(parents=True, exist_ok=True)
+        write_json(queued, dict(id=identity, result=dict(review=dict(clear=True)), merged=False))
+    attempts = []
+    @contextmanager
+    def always_busy(h):
+        attempts.append(1)
+        raise p.DeliveryBusy("running wake holds dispatch lock")
+        yield
+    monkeypatch.setattr(p, "delivery_lock", always_busy)
+    now = [0.0]
+    p.merge_reviews(home, sleep=lambda s: now.__setitem__(0, now[0] + s), clock=lambda: now[0], budget_s=20.0)
+    assert now[0] <= 20.5          # one bounded batch, not 4 x 30s
+    assert len(attempts) >= 4      # every pending result still attempted
+    for i in range(4):
+        result = read_json(home/"work/reviews"/f"batch-{i}.result.json")
+        assert result["merged"] is False and "dispatch lock" in result["merge_error"]
+
+
 def test_activation_starts_new_owned_timer_without_enabling_old_triggers(tree,monkeypatch):
     from mishe_tauftauf import runtime_cli
     repo,home,old,sha=tree

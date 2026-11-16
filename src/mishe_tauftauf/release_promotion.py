@@ -632,14 +632,26 @@ def review(home, identity):
 
 
 REVIEW_MERGE_RETRY_S = 30
-"""A review merge is bookkeeping, not a delivery: wait briefly for the dispatch lock instead of losing to every wake."""
+"""Per-result fallback lock wait when merge_review is called directly."""
+
+REVIEW_MERGE_BUDGET_S = 20
+"""Total lock-wait time one work poll spends across all review merges.
+
+The work-watch producer gives `work poll` 45s (signal run --timeout 45). A
+per-result 30s retry times out the whole poll once a few results are pending
+behind a wake-held dispatch lock, flapping failed-mishe-producer-work-watch-service
+RED. Bound the batch instead: reviews still merge at once in a lock-free gap,
+and pending results are retried on the next poll.
+"""
 
 
-def merge_review(home, queued, *, sleep=time.sleep, clock=time.monotonic, retry_s=REVIEW_MERGE_RETRY_S):
+def merge_review(home, queued, *, sleep=time.sleep, clock=time.monotonic,
+                 retry_s=REVIEW_MERGE_RETRY_S, deadline=None):
     outcome = read_json(queued)
     if not outcome or outcome.get("merged"):
         return
-    deadline = clock() + retry_s
+    if deadline is None:
+        deadline = clock() + retry_s
     try:
         while True:
             try:
@@ -685,5 +697,8 @@ def merge_review(home, queued, *, sleep=time.sleep, clock=time.monotonic, retry_
 
 
 def merge_reviews(home, **kwargs):
+    clock = kwargs.pop("clock", time.monotonic)
+    budget_s = kwargs.pop("budget_s", REVIEW_MERGE_BUDGET_S)
+    deadline = clock() + budget_s
     for queued in sorted((Path(home)/"work/reviews").glob("*.result.json")):
-        merge_review(home, queued, **kwargs)
+        merge_review(home, queued, clock=clock, deadline=deadline, **kwargs)
