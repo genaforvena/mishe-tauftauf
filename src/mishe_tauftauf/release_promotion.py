@@ -14,7 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from . import release_boundary, work_boundary as boundary, wall_patch
+from . import release_boundary, work_boundary as boundary, wall_patch, proc_table
 from .git_base_text import commit_intent_text
 from .state_files import read_json, write_json, write_text_atomic
 from .work_receipts import digest
@@ -138,8 +138,38 @@ class DeliveryBusy(ValueError):
     """No effect: the existing dispatch exclusion is owned elsewhere."""
 
 
+def _lock_holder_info(home, *, runner=subprocess.run):
+    """Best-effort pid+argv of whoever holds the dispatch lock, for the give-up record.
+
+    Diagnostic only: it never raises and never touches the lock. A missing ``lsof``/``ps``,
+    a nonzero exit or an empty holder set is recorded as such instead of breaking the promotion.
+    ``runner`` is injectable so the shape is testable without a real lock holder.
+    """
+    from .core.state import DispatchStore
+    lock = str(DispatchStore(Path(home) / "dispatch").lock_path)
+    try:
+        pids_query = runner(["lsof", "-t", "--", lock], capture_output=True, text=True, timeout=15, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return dict(available=False, reason=f"lsof unavailable: {type(exc).__name__}")
+    if pids_query.returncode != 0:
+        return dict(available=False, reason=f"lsof exit {pids_query.returncode}")
+    pids = proc_table.lsof_holder_pids(pids_query.stdout)
+    if not pids:
+        return dict(available=True, holders=[])
+    argv_by_pid = {}
+    try:
+        detail = runner(["ps", "-o", "pid=,args=", "-p", ",".join(pids)],
+                        capture_output=True, text=True, timeout=15, check=False)
+        if detail.returncode == 0:
+            argv_by_pid = proc_table.ps_argv_by_pid(detail.stdout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return dict(available=True, holders=[dict(pid=p, argv=None) for p in pids],
+                    reason=f"ps unavailable: {type(exc).__name__}")
+    return dict(available=True, holders=[dict(pid=p, argv=argv_by_pid.get(p)) for p in pids])
+
+
 @contextmanager
-def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=600, clock=time.monotonic):
+def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=600, clock=time.monotonic, holder_probe=None):
     """The dispatch lock: first a quiet gap without holding anything, then (``wait_s`` > 0) under a short hold of new wakes.
 
     Wakes are short (median under a minute, p90 about 7 min) and at most a few run at once, so the lock is usually free
@@ -167,7 +197,9 @@ def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=600, clock=
                     held = True
                     deadline = clock() + wait_s
                 if held and clock() >= deadline:
-                    raise
+                    exc = DeliveryBusy("running wake or promotion held the dispatch lock through the activation hold")
+                    exc.holders = (holder_probe or _lock_holder_info)(home)
+                    raise exc
                 sleep(1 if not held else 5)
         yield
     finally:
@@ -448,7 +480,13 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
         record["tests_passed"]=True
         # Only now the dispatch lock: the check above ran the whole suite without holding wakes back.
         record["phase"]="waiting-for-wakes"; save()
-        stack.enter_context(held_delivery_lock(home, wait_s)); record["phase"]="activating"; save()
+        try:
+            stack.enter_context(held_delivery_lock(home, wait_s))
+        except DeliveryBusy as exc:
+            record["held_delivery_lock_holder"] = getattr(exc, "holders", None)
+            record["phase"] = "delivery-busy"; save()
+            raise
+        record["phase"]="activating"; save()
         configs = {str(p):wall_patch.snapshot(p) for p in config_paths(home)} if activate is None else {}
         record["config_before"]=configs; record["rollback_available"]=True; save()
         switch = activate or (lambda root, target: globals()["activate"](home,repo,root,target))

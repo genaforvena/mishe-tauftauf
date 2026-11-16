@@ -29,7 +29,7 @@ PENDING = {"prepared", "tested", "reviewed", "activating", "applying"}
 # after activate() moves the pointer the record stays "activating" until the
 # observe step passes and phase becomes "delivered". Without these the detector
 # fired during that window and printed a restore command that regressed the plant.
-IN_FLIGHT = {"checking", "waiting-for-wakes", "activating", "reverting"}
+IN_FLIGHT = {"checking", "waiting-for-wakes", "delivery-busy", "activating", "reverting"}
 
 
 def _ts(text) -> float | None:

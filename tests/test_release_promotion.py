@@ -727,3 +727,82 @@ def test_with_no_gap_the_hold_starts_only_after_the_patience_window(tmp_path):
         mp.undo()
     assert seen["hold_at"] is not None and seen["hold_at"] >= 300.0
     assert not (tmp_path / "hold").exists()
+
+
+
+def test_lock_holder_info_reads_pid_and_argv_from_lsof_and_ps(tmp_path):
+    calls = []
+
+    class Result:
+        def __init__(self, code, out):
+            self.returncode = code; self.stdout = out; self.stderr = ""
+
+    def runner(argv, **kw):
+        calls.append(argv)
+        if argv[0] == "lsof": return Result(0, "2222\n1111\n1111\n")
+        if argv[0] == "ps": return Result(0, " 1111 mishe-wake --role health\n 2222 mishe-deliver promote\n")
+        raise AssertionError(argv)
+
+    info = p._lock_holder_info(tmp_path, runner=runner)
+    assert info["available"] is True
+    assert info["holders"] == [
+        dict(pid="1111", argv="mishe-wake --role health"),
+        dict(pid="2222", argv="mishe-deliver promote"),
+    ]
+    assert calls[0][:2] == ["lsof", "-t"]
+    assert calls[1][0] == "ps"
+
+
+def test_lock_holder_info_records_unavailable_without_raising(tmp_path):
+    def missing(*a, **k): raise FileNotFoundError("lsof")
+    info = p._lock_holder_info(tmp_path, runner=missing)
+    assert info["available"] is False and "lsof" in info["reason"]
+
+    class Bad:
+        returncode = 1; stdout = ""; stderr = "no such file"
+    info = p._lock_holder_info(tmp_path, runner=lambda *a, **k: Bad())
+    assert info["available"] is False and "exit 1" in info["reason"]
+
+
+def test_held_lock_give_up_attaches_holder_info_to_delivery_busy(tmp_path):
+    handle = _hold_dispatch_lock(tmp_path)
+    seen = {}
+
+    def probe(home):
+        seen["home"] = home
+        return dict(available=True, holders=[dict(pid="1", argv="wake")])
+
+    from mishe_tauftauf import wake
+    mp = pytest.MonkeyPatch()
+    mp.setattr(wake, "resume_owed", lambda *a, **k: None)
+    mp.setattr("mishe_tauftauf.roles.declared", lambda home: [])
+    try:
+        with pytest.raises(p.DeliveryBusy) as caught:
+            with p.held_delivery_lock(tmp_path, 0.01, sleep=lambda s: None, patience_s=0, holder_probe=probe):
+                pass
+    finally:
+        mp.undo()
+        handle.close()
+    assert seen["home"] == tmp_path
+    assert caught.value.holders == dict(available=True, holders=[dict(pid="1", argv="wake")])
+    assert not (tmp_path / "hold").exists()
+
+
+def test_promotion_records_lock_holder_and_phase_on_delivery_busy(tree, monkeypatch):
+    repo, home, old, sha = tree
+
+    def lock(home_arg, wait_s, **kw):
+        exc = p.DeliveryBusy("busy")
+        exc.holders = dict(available=True, holders=[dict(pid="4242", argv="mishe-wake --role senses")])
+        raise exc
+
+    monkeypatch.setattr(p, "held_delivery_lock", lock)
+    with pytest.raises(p.DeliveryBusy):
+        p.promote(home, repo, sha, check=[sys.executable, "-c", "assert True"], observe=["probe"],
+                  previous=old, activate=lambda *a: None, probe=lambda *a, **k: dict(code=0, output="ok"),
+                  reviewer=lambda *a: None, closure=lambda *a: None, wait_s=1)
+    records = list((home / "work/releases").glob("*.json"))
+    assert len(records) == 1
+    record = read_json(records[0])
+    assert record["phase"] == "delivery-busy"
+    assert record["held_delivery_lock_holder"]["holders"][0]["pid"] == "4242"

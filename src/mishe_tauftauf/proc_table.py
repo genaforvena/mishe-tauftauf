@@ -718,3 +718,18 @@ def scan_sandbox_processes(
         if marker is not None:
             matches.append({"pid": int(pid), "cwd": cwd, "marker": marker})
     return matches, unreadable
+
+
+def lsof_holder_pids(raw: str) -> list[str]:
+    """Pids holding a file, from ``lsof -t -- <path>`` output; deduped, sorted, junk skipped."""
+    return sorted({line.strip() for line in raw.splitlines() if line.strip().isdigit()})
+
+
+def ps_argv_by_pid(raw: str) -> dict[str, str]:
+    """pid -> argv from ``ps -o pid=,args= -p <pids>`` output; malformed lines skipped."""
+    argv = {}
+    for line in raw.splitlines():
+        fields = line.strip().split(None, 1)
+        if fields and fields[0].isdigit():
+            argv[fields[0]] = fields[1] if len(fields) > 1 else ""
+    return argv

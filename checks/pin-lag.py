@@ -44,7 +44,7 @@ FAILURE_PATTERN = re.compile(r"exit [1-9]|not clear|refused|failed|unavailable|s
 # (the exit-code legend is not). Map what the record says to the reported stage and failure reason.
 PHASE_STAGE = {
     "checking": "check", "check-failed": "check",
-    "waiting-for-wakes": "activate", "activating": "activate",
+    "waiting-for-wakes": "activate", "delivery-busy": "activate", "activating": "activate",
     "review": "review", "review-failed": "review",
     "applying": "apply", "applied": "apply", "apply-failed": "apply",
     "verified": "verify", "delivered": "verify", "rolled-back": "verify", "verify-failed": "verify",
