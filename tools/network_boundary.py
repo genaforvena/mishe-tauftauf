@@ -163,7 +163,7 @@ def decode_router_output(stdout, bands, client_id):
         if line.startswith("UPTIME "):
             uptime_line = line.split(None, 1)[1]
             current = None
-        elif line in ("LEASES", "WAN", "LOAD", "LINKS") or line.startswith("RADIO "):
+        elif line in ("LEASES", "WAN", "LOAD", "LINKS", "VPN") or line.startswith("RADIO "):
             current = line
             sections.setdefault(current, [])
         elif current is not None:
@@ -211,7 +211,30 @@ def decode_router_output(stdout, bands, client_id):
     if wan_device and isinstance(wan_device, str):
         uplink = decode_link_counters(sections.get("LINKS", []), wan_device)
     return {"uptime_s": round(uptime_s), "wan": wan, "uplink": uplink, "clients": clients,
-            "router_load": decode_router_load(sections.get("LOAD", []))}
+            "router_load": decode_router_load(sections.get("LOAD", [])),
+            "vpn": decode_router_vpn(sections.get("VPN", []))}
+
+
+def decode_router_vpn(lines):
+    """Router VPN state: {"ps_ok", "sing_box", "tun0"}. Read-only; the process command line is never kept.
+
+    ``ps_ok`` False means the process list could not be read, so ``sing_box`` is None (unknown, not
+    "not running"). ``tun0`` is "up", "down" or "absent"; a missing section gives ``ps_ok`` False and
+    ``tun0`` None, never a calm reading.
+    """
+    if not lines:
+        return {"ps_ok": False, "sing_box": None, "tun0": None}
+    ps_ok = any(line.strip() == "PS_OK" for line in lines)
+    sing_box = None
+    if ps_ok:
+        sing_box = any("sing-box" in line for line in lines)
+    tun0 = "absent"
+    for line in lines:
+        parts = line.split()
+        if parts and parts[0] == "tun0":
+            flags = parts[2].strip("<>").split(",") if len(parts) > 2 else []
+            tun0 = "up" if "UP" in flags and parts[1] != "DOWN" else "down"
+    return {"ps_ok": ps_ok, "sing_box": sing_box, "tun0": tun0}
 
 
 def decode_router_load(lines):

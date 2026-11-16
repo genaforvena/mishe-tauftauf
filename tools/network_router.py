@@ -33,7 +33,9 @@ REMOTE = (
     "for d in ra0 rax0; do echo \"RADIO $d\"; iwinfo $d assoclist 2>/dev/null; done; "
     'echo LEASES; cat /tmp/dhcp.leases 2>/dev/null; echo WAN; '
     'ubus call network.interface.wan status 2>/dev/null; echo LOAD; cat /proc/loadavg 2>/dev/null; '
-    'grep -E "^MemAvailable:" /proc/meminfo 2>/dev/null; echo LINKS; ip -s link show 2>/dev/null'
+    'grep -E "^MemAvailable:" /proc/meminfo 2>/dev/null; echo LINKS; ip -s link show 2>/dev/null; '
+    'echo VPN; if ps w >/dev/null 2>&1; then echo PS_OK; ps w 2>/dev/null | grep "[s]ing-box" | head -1; fi; '
+    "ip -br link show tun0 2>/dev/null"
 )
 
 

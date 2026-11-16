@@ -380,6 +380,28 @@ def router_health_line(now=None):
             f"(limit: load {LOAD_LIMIT:g}, free RAM {MEM_FLOOR_MB:.0f} MB); read {ago:.0f} s ago{stale}")
 
 
+def vpn_line(now=None):
+    """VPN (sing-box on the router) in plain words, from the newest router read that carried it.
+
+    "Running" and "tun0 up" say the tunnel process and link exist; they do not say which clients use it.
+    No VPN reading at all, or an unreadable process list, is UNKNOWN, never a calm answer.
+    """
+    now = time.time() if now is None else now
+    reads = [r for r in router_rows() if r.get("ok") and isinstance(r.get("vpn"), dict)]
+    if not reads:
+        return "UNKNOWN (no VPN reading recorded yet)"
+    last = reads[-1]
+    ago = now - last["ts"]
+    v = last["vpn"]
+    if not v.get("ps_ok"):
+        proc = "sing-box UNKNOWN (process list not read)"
+    else:
+        proc = "sing-box running" if v.get("sing_box") else "sing-box NOT running"
+    tun = {"up": "tun0 up", "down": "tun0 DOWN", "absent": "tun0 absent"}.get(v.get("tun0"), "tun0 UNKNOWN")
+    stale = "  STALE" if ago > STALE_ROUTER_S else ""
+    return f"{proc}, {tun} on the router; read {ago:.0f} s ago{stale}"
+
+
 def _wan_drops(reads, lo, hi):
     """Receive drops between the first and last WAN read in [lo, hi]; a reboot restarts the span.
 
@@ -506,6 +528,7 @@ def draw():
     out.append("  UPLINK        " + uplink_line() + "   (read-only)")
     out.append("  UPLINK RATE   " + uplink_rate_line())
     out.append("  ROUTER LOAD   " + router_health_line() + "   (read-only, one read per 5 min)")
+    out.append("  VPN           " + vpn_line() + "   (read-only, router process list and tun0)")
     out.append("  HOST GUARD    " + guard_line() + "   (read-only, marker file only)")
     out.append("  EXIT NODE     " + exit_line() + "   (read-only, the egress duty's file)")
     out.append("")
