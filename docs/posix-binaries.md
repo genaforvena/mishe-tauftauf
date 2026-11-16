@@ -175,9 +175,10 @@ them. Updated 2026-11-15 after the operator DM 301336.
   path was deleted (2026-11-15 its answers became GOLDEN in the test), and it was delivered through the ordinary
   path on 2026-11-14.
 - Candidate 2 is measured and does not pay on CPU for the append half (see
-  above). Its freshness half is built as `rust/mishe-signal-freshness` and
-  differential-tested against the Python comparison, but nothing runs it yet.
-  Candidate 3 is measured (not per-run, 4.5 ms at generation) and not built.
+  above). Its freshness half is built as `rust/mishe-signal-freshness`,
+  differential-tested against the Python comparison and live as the authority in
+  `signal_store.expire` from 2026-11-16. Candidate 3 is measured (not per-run,
+  4.5 ms at generation) and not built.
 - Candidate 4 (feed remaining scan) is parked: the framer-loop share measured
   about 36%, below the 50% trigger. Reopen it only if a live read crosses that line.
 - Keep this ranking updated when a candidate is built or retired.
