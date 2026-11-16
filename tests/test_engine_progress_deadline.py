@@ -106,6 +106,40 @@ def test_a_cap_below_the_idle_gap_still_ends_the_run(tmp_path: Path):
     assert 2.0 <= elapsed < 2.5, f"the run ended {elapsed:.2f}s after the start, not at the 2s cap"
 
 
+def test_a_stalled_engine_is_cut_before_the_soft_deadline(tmp_path: Path):
+    """An engine that wrote and then went silent is cut at the stall gap, not at the deadline.
+
+    rust-plan 2026-11-16: the wake finished and verified its work at 19:00:15Z, produced nothing
+    after, and was cut at the 19:26:57Z soft deadline. Silence before the deadline ends the run
+    too, so the dispatch slot is released instead of being held for the whole soft timeout.
+    """
+    out = tmp_path / "stream"
+    started = time.monotonic()
+    with pytest.raises(EngineTimeout) as caught:
+        proc.run_bounded([sys.executable, "-c", ONE_WRITE], env=dict(os.environ), cwd=tmp_path,
+                         timeout=60, stdout_to=out, hard_timeout=120, idle_gap=30.0, stall_gap=1.0)
+    elapsed = time.monotonic() - started
+    assert "silent" in str(caught.value), f"cut by another path, not the stall gap: {caught.value}"
+    assert elapsed < 20, f"the stalled engine held the run for {elapsed:.2f}s"
+
+
+def test_a_child_wait_defers_the_stall_cut_before_the_soft_deadline(tmp_path: Path):
+    """A silent wait on a live child is not a stall, before the deadline as well as after it.
+
+    The child starts a moment after the engine's one line, so the run is silent well past the
+    stall gap while the child sleeps; the cut must not fire, and the engine exits cleanly.
+    """
+    out = tmp_path / "stream"
+    writes_then_waits = ("import subprocess,sys,time\n"
+                         "print('x'*100, flush=True)\n"
+                         "subprocess.run([sys.executable,'-c','import time; time.sleep(8)'])\n")
+    started = time.monotonic()
+    code = proc.run_bounded([sys.executable, "-c", writes_then_waits], env=dict(os.environ), cwd=tmp_path,
+                            timeout=60, stdout_to=out, hard_timeout=120, idle_gap=30.0, stall_gap=1.0)
+    assert code == 0
+    assert time.monotonic() - started >= 8.0, "the engine waiting on its child was cut as idle"
+
+
 WAITS_ON_CHILD = ("import subprocess,sys\n"
                   "subprocess.run([sys.executable,'-c','import time; time.sleep(5)'])\n")
 

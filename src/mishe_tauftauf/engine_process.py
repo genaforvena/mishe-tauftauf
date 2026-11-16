@@ -25,6 +25,18 @@ from .wake import EngineNotStarted, EngineTimeout
 
 IDLE_GAP_S = 180.0
 """How long the output may stay unchanged before the engine counts as idle."""
+STALL_GAP_S = 600.0
+"""How long an engine may stay silent *before* the soft deadline before the run is cut.
+
+Past the deadline ``IDLE_GAP_S`` ends a run; before it, a silent engine was tolerated to the
+deadline, so a hung engine held the whole soft timeout and released nothing (rust-plan
+2026-11-16: last output 19:00:15Z, cut at the 19:26:57Z deadline after the wake had already
+finished and verified its work). This bound is deliberately looser than the idle gap: measured
+over 22 recent wake streams, the longest silent stretch between counted progress lines was 20 s
+median and 178 s worst, against 1602 s for that stall, so a stall is separable but a slow turn
+is not. Progress here is the same as the idle reader's (heartbeats and thinking deltas do not
+count), and a live tool child still defers the cut.
+"""
 TOOL_WAIT_GRACE_S = 600.0
 """How far past the soft deadline a silent wait on a live child may defer the idle cut.
 
@@ -117,6 +129,7 @@ class _ProgressReader:
 def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
                 stdin_from: Path | None = None, stdout_to: Path | None = None, on_start=None,
                 hard_timeout: float | None = None, idle_gap: float = IDLE_GAP_S,
+                stall_gap: float | None = None,
                 first_output_s: float | None = None, first_event: Callable[[], bool] | None = None,
                 stderr_to: Path | None = None) -> int:
     """Run ``command`` under a deadline.
@@ -124,8 +137,9 @@ def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
     ``timeout`` is the soft deadline. With ``hard_timeout`` (a total runtime cap) the run may
     continue past it while the output file keeps growing: an engine that is carrying on is not
     cut mid-work. The run ends as a timeout when the output has not grown for ``idle_gap``
-    seconds, or when the hard cap is reached. Without ``hard_timeout`` the run is cut exactly
-    at the soft deadline, as before.
+    seconds, when it falls silent for ``stall_gap`` seconds before the deadline, or when the
+    hard cap is reached. Without ``hard_timeout`` the run is cut exactly at the soft deadline,
+    as before.
 
     ``first_output_s`` bounds the wait for the first output: an engine that has not produced it
     by then is cut as a timeout, so a model that emits nothing cannot hold the wake for the whole
@@ -157,6 +171,7 @@ def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
                     raise EngineTimeout(f"exceeded {timeout:g}s") from exc
             return _run_with_progress(process, timeout=timeout, hard_timeout=hard_timeout,
                                       watched=stdout_to, idle_gap=idle_gap,
+                                      stall_gap=stall_gap if stall_gap is not None else STALL_GAP_S,
                                       first_output_s=first_output_s, first_event=first_event)
         except EngineTimeout:
             escaped = _descendants(process.pid)
@@ -172,14 +187,16 @@ def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
 
 
 def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeout: float,
-                       watched: Path | None, idle_gap: float,
+                       watched: Path | None, idle_gap: float, stall_gap: float = STALL_GAP_S,
                        first_output_s: float | None = None, first_event: Callable[[], bool] | None = None) -> int:
     """Wait for the engine, extending the deadline while its output still grows.
 
-    Before the soft deadline the engine runs exactly as it always did. After it, the
-    engine may continue only while its output grows: it is cut when the output has not
-    grown for ``idle_gap`` seconds, and never past ``hard_timeout``. An idle engine and
-    the hard cap both end the run as a timeout.
+    After the soft deadline the engine may continue only while its output grows: it is cut
+    when the output has not grown for ``idle_gap`` seconds, and never past ``hard_timeout``.
+    Before it, a run that has produced output is cut after ``stall_gap`` seconds of silence,
+    so a hung engine cannot hold the whole soft timeout; a run that has produced no output at
+    all is still left to the soft deadline. An idle engine and the hard cap both end the run
+    as a timeout.
 
     With ``first_output_s`` the wait for the first output is bounded too: an engine that has
     not produced it by then is cut as a timeout even before the soft deadline, so a model that
@@ -219,6 +236,16 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
         if first_at is not None and now >= first_at and not saw_first(size):
             raise EngineTimeout(f"no first output within {first_output_s:g}s")
         if now < soft_at:
+            # A run that has produced output and then falls silent is stalled even before the soft
+            # deadline. Cut it ``stall_gap`` seconds after its last growth rather than at the
+            # deadline: a hung engine otherwise holds the dispatch slot for the whole soft timeout
+            # invisible (rust-plan 2026-11-16: last output 19:00:15Z, cut at the 19:26:57Z soft
+            # deadline after the wake had already finished and verified its own work). A live tool
+            # child still defers the cut, exactly as it does past the deadline, so a mind that is
+            # silently waiting on a background job is not cut; and a run with no output at all is
+            # left to the first-output bound and the soft deadline, unchanged.
+            if last_growth > start and now - last_growth >= stall_gap and not _awaiting_tools(process):
+                raise EngineTimeout(f"silent {stall_gap:g}s before the {timeout:g}s deadline")
             boundary = soft_at
         else:
             if size is None or now - last_growth >= idle_gap:
