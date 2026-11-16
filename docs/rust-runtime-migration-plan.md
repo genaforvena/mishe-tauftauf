@@ -2750,3 +2750,16 @@ so the plant's active periods starve the sample by design; consumed-line attribu
 coarse; one machine. **Next:** let the next quiet hourly run produce the forced fold and
 compare it with §10.39's 3.53/3.89-CPU-s baseline; reopen the A/B only if a completed
 sample exceeds a trigger. Truly cold-cache reads remain UNKNOWN.
+
+### 10.42 The 20:13Z forced fold came in under both triggers: no seam (2026-11-16)
+
+The quiet run §10.41 asked for landed at 20:13:33Z
+(`artifacts/rust-plan-20261107/rust-measurement-latest.json`; producer guard satisfied at
+load1 1.42, memory pressure 0.00, MemAvailable 22 GB). senses: 36,386 entries, 3.543 CPU-s
+/ 6.325 s elapsed, 119,676 KB peak RSS; genome: 30,340 entries, 3.715 CPU-s / 7.482 s,
+100,628 KB peak. Triggers are 5.0 CPU-s and 204,800 KB; `over: []`.
+
+Against §10.39's 3.53/3.89-CPU-s baseline, senses is unchanged and genome is lower; peak
+RSS is about 117 MB and 98 MB, under half the 200 MB bar. No role crossed either trigger,
+so the A/B stays closed and there is no measured seam to port. rust-crates-nine stays unmet
+and its RED stays dispositioned to the steward, now with a fresh refutation at 20:13Z.
