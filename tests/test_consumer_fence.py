@@ -164,3 +164,22 @@ def test_pinned_wake_started_before_cutoff_and_still_running_fails_the_drain(tmp
     with pytest.raises(ValueError, match='old invocations remain'):
         fence.drain(tmp_path, tmp_path, 'pin', sleep=sleep)
     assert clock['now'] >= fence.DRAIN_TIMEOUT_S
+
+
+def test_queued_wake_held_by_promotion_lock_drains_to_deadline_then_fails_closed(tmp_path, monkeypatch):
+    """Characterizes a queued wake: a mishe-wake@ unit waiting on the held delivery lock is 'activating' with no
+    cgroup and no invocation yet. It runs no old code, but the drain treats that as transient mid-start evidence,
+    so it waits the whole DRAIN_TIMEOUT_S and then fails closed. Fresh review must decide whether a queued,
+    never-started unit should be excluded; this test pins the current behaviour, it does not endorse it."""
+    transition(tmp_path)
+    clock = {'now': 0.0}
+    monkeypatch.setattr(fence.time, 'monotonic', lambda: clock['now'])
+    queued = dict(STARTING, Id='mishe-wake@genome.service', Type='oneshot', KillMode='control-group',
+                  ActiveState='activating', ControlGroup='/mishe-wake.slice/mishe-wake@genome.service',
+                  ExecMainStartTimestampMonotonic='0', InvocationID='')
+    monkeypatch.setattr(fence, 'inventory', lambda home, previous=None: {'mishe-wake@genome.service': queued})
+    def sleep(seconds):
+        clock['now'] += seconds
+    with pytest.raises(ValueError, match='active cgroup evidence UNKNOWN: mishe-wake@genome.service'):
+        fence.drain(tmp_path, tmp_path, 'pin', sleep=sleep)
+    assert clock['now'] >= fence.DRAIN_TIMEOUT_S
