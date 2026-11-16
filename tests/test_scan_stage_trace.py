@@ -24,7 +24,7 @@ def _traces(home: Path) -> list[Path]:
 def test_clean_scan_records_each_stage_in_order_and_removes_its_trace(tmp_path: Path) -> None:
     value = {"created": "2026-01-01T00:00:00Z", "node": "node", "observations": []}
 
-    def slow_sample(home):
+    def slow_sample(home, trace=None):
         time.sleep(0.05)  # a forced slow stage: the trace must show its elapsed time
         return value
 
@@ -55,7 +55,7 @@ def test_killed_scan_keeps_the_last_stage_it_reached(tmp_path: Path) -> None:
         "from pathlib import Path\n"
         "from unittest.mock import patch\n"
         "from mishe_tauftauf import discovery\n"
-        "with patch('mishe_tauftauf.discovery.sample', side_effect=lambda home: time.sleep(600)):\n"
+        "with patch('mishe_tauftauf.discovery.sample', side_effect=lambda home, trace=None: time.sleep(600)):\n"
         "    discovery.scan(Path(sys.argv[1]))\n"
     )
     env = {**os.environ, "PYTHONPATH": str(src)}
