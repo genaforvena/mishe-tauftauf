@@ -56,9 +56,12 @@ per device per day.
 
 ## Self-limit for any read (already in the window)
 
-The network window's ROUTER LOAD line shows 1-minute load and free RAM for each router read. Reads
-stay at one per 5 minutes. A read above load 1.0 or below 120 MB free is shown as over the
-self-limit; the probe itself does not yet skip the read when over the limit (next step).
+The network window's ROUTER LOAD line shows the 5-minute load average and free RAM from the last
+router read and whether that read was over or within the self-limit (limit: load 1, free RAM
+120 MB). Reads stay at one per 5 minutes (duty `network-router`). While the last real read was over
+the self-limit, the probe itself holds off: it skips the ssh for 15 minutes and records a skipped
+row instead, so a busy router is not hammered while the window still shows the last real reading.
+The gate reads the 5-minute average, not a single 1-minute burst.
 
 The window's HOST GUARD line says whether the host guard's trip marker
 (`/var/lib/mishe-containment/tripped`) is present. A trip makes the router units skip, so the router
