@@ -67,19 +67,28 @@ def write_heal(path: Path, state: dict) -> None:
 
 
 def evaluate(state: dict, heartbeat: dict | None, now: float) -> tuple[int, str]:
-    """Pure verdict from a systemd snapshot and a heartbeat reading."""
-    if state.get("ActiveState") != "active" or not state.get("MainPID", "0").isdigit() \
-            or state["MainPID"] == "0":
+    """Pure verdict from a systemd snapshot and a heartbeat reading.
+
+    Never raises on a malformed snapshot or heartbeat: an unreadable input is
+    UNKNOWN (3) or not-active (2), never an uncaught traceback outside the
+    declared exit-code contract.
+    """
+    main_pid = str(state.get("MainPID", "0"))
+    if state.get("ActiveState") != "active" or not main_pid.isdigit() or main_pid == "0":
         return 2, f"unit {UNIT} is not active ({state.get('ActiveState', 'unknown')})"
     if heartbeat is None:
         return 3, "heartbeat missing or unreadable while the unit is active"
-    age = now - float(heartbeat["ts"])
+    try:
+        started = float(heartbeat["ts"])
+    except (KeyError, TypeError, ValueError):
+        return 3, "heartbeat timestamp is unreadable while the unit is active"
+    age = now - started
     if age > MAX_HEARTBEAT_AGE:
         return 2, f"poll loop heartbeat is {age:.0f}s old (limit {MAX_HEARTBEAT_AGE}s)"
     # A fresh startup heartbeat can legitimately show zero cycles: the first
     # getUpdates call blocks for up to 10 s before the first cycle is written.
     return 0, (f"unit active, heartbeat {age:.0f}s old, "
-               f"{heartbeat['cycles']} poll cycles, {heartbeat.get('replies', 0)} replies")
+               f"{heartbeat.get('cycles', 0)} poll cycles, {heartbeat.get('replies', 0)} replies")
 
 
 def restart_budget(state: dict, now: float) -> int:

@@ -129,3 +129,33 @@ def test_restart_budget_spent_leaves_red(monkeypatch, tmp_path):
 
     assert check.main() == 2
     assert restarts == []
+
+
+def test_active_unit_with_no_mainpid_is_red_not_a_traceback():
+    # Review finding 2026-11-16: `state['MainPID']` raised KeyError when the
+    # property was absent, exiting 1 instead of the declared 2/3.
+    assert check.evaluate({"ActiveState": "active", "Result": "success"},
+                          FRESH, NOW)[0] == 2
+
+
+def test_non_numeric_heartbeat_ts_is_unknown_not_a_traceback():
+    # A null or non-numeric timestamp is an unreadable heartbeat (UNKNOWN 3),
+    # not an uncaught TypeError from float().
+    assert check.evaluate(ACTIVE, {"ts": None, "cycles": 1}, NOW)[0] == 3
+    assert check.evaluate(ACTIVE, {"ts": "not-a-number", "cycles": 1}, NOW)[0] == 3
+    assert check.evaluate(ACTIVE, {"cycles": 1}, NOW)[0] == 3
+
+
+def test_malformed_heartbeat_file_is_unknown_and_never_restarts(monkeypatch, tmp_path):
+    restarts = []
+    heartbeat = tmp_path / "health" / "ilya-telegram-bot.json"
+    heartbeat.parent.mkdir(parents=True)
+    heartbeat.write_text('{"ts": null, "cycles": 5}', encoding="utf-8")
+    monkeypatch.setattr(check, "unit_state", lambda unit=check.UNIT: ACTIVE)
+    monkeypatch.setattr(check, "subprocess", SimpleNamespace(
+        run=lambda *a, **kw: restarts.append(a[0]),
+        SubprocessError=subprocess.SubprocessError))
+    monkeypatch.setattr(sys, "argv", ["telegram-bot-alive.py", "--home", str(tmp_path)])
+
+    assert check.main() == 3
+    assert restarts == []
