@@ -197,9 +197,14 @@ that composes it:
   `signal_store.read` makes. The verdict is the exit status — 0 FRESH, 1 EXPIRED,
   2 for an argument count or number outside the contract — so the binary writes
   nothing to stdout and the caller reads no output. `signal_freshness.verdict`
-  is the reader; it maps every other outcome (a missing binary, exit 2, a
-  timeout, a spawn failure) to `FreshnessUnknown` and has no Python fallback, so
-  a broken binary cannot make a stale signal look fresh. Not yet on a live path:
+  is the reader. It resolves its binary first — an explicit argument, then
+  `MISHE_SIGNAL_FRESHNESS_BIN`, then the site install `$SITE/bin/mishe-signal-freshness`
+  — and accepts the site install only when its sha256 matches the record beside it
+  (`mishe-signal-freshness.install.json`); that install-record read is itself a
+  named boundary in the policy. It maps every other outcome (a missing or
+  non-executable binary, a sha256 mismatch, exit 2, a timeout, a spawn failure) to
+  `FreshnessUnknown` and has no Python fallback, so a broken or replaced binary
+  cannot make a stale signal look fresh. Not yet on a live path:
   `signal_store.read` still compares in Python, and no production module
   imports the reader, so only `tests/test_signal_freshness.py` calls it.
 
