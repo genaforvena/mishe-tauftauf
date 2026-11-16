@@ -420,3 +420,26 @@ def test_a_recovered_failure_record_ages_out_when_its_unit_stops(tmp_path):
     assert failure.clear_recovered(tmp_path, now=NOW + 86400, last_exit=stopped, active_since=lambda u: None) == []
     assert store.expire(tmp_path, now=NOW + 100 + 604801) == [name]          # seven days after the clear it lapses
     assert store.read(tmp_path, name, now=NOW + 100 + 604801).state == "UNKNOWN"
+
+
+def test_a_recovered_failure_of_a_long_running_unit_is_kept_fresh_by_staying_active(tmp_path):
+    # 2026-11-16: mishe-dual-probe.service is Type=simple and never exits. The first cut refreshed only records whose
+    # unit exits (a clean exit after the freshness stamp), so a long-running unit never refreshed and its recovered
+    # record still aged to a false UNKNOWN 7 days after the clear. Its start time does not move across sweeps, so the
+    # confirmation is that it is still active and stable -- the same test the initial clear uses for such a unit.
+    unit, name = "mishe-dual-probe.service", "failed-mishe-dual-probe-service"
+    store.register(tmp_path, name, max_age=604800, subscribers=["health"], reoffer=3600)
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    no_exit = lambda u: None
+    active = lambda u: NOW + 30                                     # active since after the failure; never exits again
+    cleared = NOW + failure.RECOVERY_STABLE_S + 100
+    assert failure.clear_recovered(tmp_path, now=cleared, last_exit=no_exit, active_since=active) == [name]
+    recovered = store.recorded(tmp_path, name)
+    for day in (1, 2, 6):
+        assert failure.clear_recovered(tmp_path, now=cleared + day * 86400,
+                                       last_exit=no_exit, active_since=active) == []
+    assert store.recorded(tmp_path, name) == recovered                       # refreshed each sweep, never rewritten
+    last = cleared + 6 * 86400                                               # the last sweep's stamp
+    assert store.expire(tmp_path, now=last + 604800 - 60) == []              # still fresh: each sweep moved the stamp
+    assert store.expire(tmp_path, now=last + 604800 + 60) == [name]          # ...and lapses a week after the last one
+

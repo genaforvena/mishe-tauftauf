@@ -85,7 +85,10 @@ def clear_recovered(home, *, now, last_exit=None, active_since=None) -> list[str
 
     An already-GREEN record whose unit has run cleanly since the record was last confirmed is then refreshed, not
     rewritten: a recovered failure is a level nothing else re-observes, so it would otherwise age into a false UNKNOWN
-    that wakes its subscriber (2026-11-16: camera-livingroom). The unit is the evidence, so a unit that stops stops
+    that wakes its subscriber (2026-11-16: camera-livingroom). A unit that keeps exiting is confirmed by a clean exit
+    after the record's freshness stamp; a long-running unit that never exits is confirmed by still being active and
+    stable, not by restarting (its start time does not move, so a start-after-the-stamp test could never hold on a
+    second pass), the same distinction the initial clear makes. The unit is the evidence, so a unit that stops stops
     being confirmed and the record lapses as before.
     """
     from . import work_boundary
@@ -139,7 +142,12 @@ def clear_recovered(home, *, now, last_exit=None, active_since=None) -> list[str
         exited_clean = bool(exit_ and exit_[1] and exit_[0] > since)
         # A long-running unit has no exit to show: it recovered if it has stayed active since the failure, for a while.
         started = None if exited_clean else active_since(unit)
-        running_clean = started is not None and started > since and now - started >= RECOVERY_STABLE_S
+        # A still-flagged record needs the unit to have (re)started after the failure it records. An already-GREEN
+        # recovered record needs only a stable-active unit: a long-running unit's start time is fixed, so
+        # ``started > since`` would fail on every pass after the refresh that moved the stamp, and the record would
+        # age to a false UNKNOWN anyway (2026-11-16: the dual-probe service, active since 11-14 00:50Z).
+        running_clean = started is not None and now - started >= RECOVERY_STABLE_S \
+            and (already_green or started > since)
         if not (exited_clean or running_clean):
             continue
         if already_green:
