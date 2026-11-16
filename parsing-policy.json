@@ -57,6 +57,7 @@
     "src/mishe_tauftauf/spawn_dialect.py",
     "src/mishe_tauftauf/slugs.py",
     "src/mishe_tauftauf/state_files.py",
+    "src/mishe_tauftauf/system1_savings.py",
     "src/mishe_tauftauf/stats_boundary.py",
     "src/mishe_tauftauf/tape_facts.py",
     "src/mishe_tauftauf/timestamp_text.py",
