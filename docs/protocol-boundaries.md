@@ -102,12 +102,16 @@ reviewer only the bytes of the changed paths, so a changed page that describes a
 rule implemented elsewhere arrives without the code it documents and the reviewer
 cannot trace it. The composer adds at most `DESCRIBED_PATH_MAX` (12) such files,
 each at most 256 000 bytes and 320 000 bytes in total, as unchanged review
-entries; a token that does not resolve to a regular file in the release tree is
-dropped, never guessed. Measured cause: the docs releases 19fb7646 and c87cd884
-reviewed "unknown" because `docs/network-view.md` describes
+entries. The reviewer is an external model, so an added file must stay inside the
+release tree: a token that resolves outside it (a spelled `..` segment, which the
+adapter permits) or that does not resolve to a regular file in it is dropped,
+never read or handed over, never guessed. Measured cause: the docs releases
+19fb7646 and c87cd884 reviewed "unknown" because `docs/network-view.md` describes
 `checks/network-care.py`'s RED/UNKNOWN arms, which the reviewer never received.
 `tests/test_release_promotion.py::test_ordinary_review_supplies_a_file_the_changed_document_describes`
-pins the behaviour. Nothing else a page contains is read.
+pins the supply behaviour and
+`::test_described_paths_cannot_escape_the_release_tree` pins the containment rule.
+Nothing else a page contains is read.
 
 The engine-account text adapters decode the four external provider text formats the
 router consumes:
