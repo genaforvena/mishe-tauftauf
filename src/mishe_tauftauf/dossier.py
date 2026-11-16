@@ -125,7 +125,12 @@ def build(home, role: str, snap, *, key: str, now: float, mail: list, reconcile_
     out = [f"# Wake {key} for {role}", "",
            f"Site home (absolute): `{home.resolve()}`. Pass this resolved path to file tools; "
            "they do not expand `$MISHE_SEED_HOME`, `$MISHE_TAUFTAUF_HOME` or `~`, so an "
-           "unexpanded variable writes a stray tree outside the site whose files no peer reads.", ""]
+           "unexpanded variable writes a stray tree outside the site whose files no peer reads. "
+           "The site home is large (every release, wake, artifact and event — tens of GB) and is not a "
+           "repository search target: do not walk it with a broad `rg`/`find`, and never route such a "
+           "search through `rtk` (which buffers the whole match set in memory). A repo-wide `rtk rg` over "
+           "the site home faulted tens of GB of page cache into `mishe-plants.slice`, stalled the slice on "
+           "memory and tripped the root-filesystem fsync stall on 2026-11-16.", ""]
     if timeout:
         ceiling = engine_ceiling(home, role, timeout)
         minutes = max(1, int(ceiling // 60))
