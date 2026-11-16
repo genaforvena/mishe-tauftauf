@@ -599,7 +599,12 @@ def main(home: Path, out: Path | None = None) -> int:
     # the omp status row, which is UNREADABLE while its stored login is dead.
     from . import codex_usage
     probed = codex_usage.refresh(now, home=home)
-    codex = codex_usage.account_row(max(now, time.time()) if probed else now)
+    # A probe takes seconds and the CLI stamps its own rollout later than the `now` above; advance the
+    # one observation clock so the payload re-check (engine_windows -> window_fresh_at) does not read a
+    # just-collected reading as future-dated and flip codex-a to STALE for this tick.
+    if probed:
+        now = max(now, time.time())
+    codex = codex_usage.account_row(now)
     if codex is not None:
         status = dict(status or {}, accounts=dict((status or {}).get("accounts") or {}, **{codex_usage.CODEX_ALIAS: codex}))
     payload = build_budget(status, tap, now, load_burn_history(home, now))

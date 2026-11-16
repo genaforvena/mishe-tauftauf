@@ -173,6 +173,36 @@ def test_cli_dry_run_reads_real_shaped_files(tmp_path: Path, capsys):
     assert "5h" not in out["accounts"]["claude"]["windows"]
 
 
+def test_a_probe_that_stamps_its_reading_ahead_does_not_flap_codex_a_to_stale(tmp_path: Path, capsys, monkeypatch):
+    # 2026-11-16 incident: the codex probe ran ~8 s and the CLI's rollout event landed 6.6 s after the
+    # producer's pre-probe `now`; account_row was re-checked by engine_windows against that stale `now`,
+    # so a just-collected reading read as future-dated and codex-a flapped to STALE for the tick.
+    from mishe_tauftauf import codex_usage
+
+    clock = {"t": NOW}
+    monkeypatch.setattr(bp.time, "time", lambda: clock["t"])
+    seen = {}
+
+    def fake_refresh(now, **kwargs):
+        clock["t"] = NOW + 8.0  # the probe took ~8 s
+        return True
+
+    def fake_account_row(now, **kwargs):
+        seen["now"] = now
+        obs = NOW + 6.6  # the CLI stamps its own rollout after the pre-probe clock
+        return {"provider": "openai-codex", "state": "FRESH", "observed_at": obs, "windows": {
+            "5h": {"remaining": 0.58, "reset_at": NOW + 6000, "observed_at": obs, "state": "FRESH"}}}
+
+    monkeypatch.setattr(codex_usage, "refresh", fake_refresh)
+    monkeypatch.setattr(codex_usage, "account_row", fake_account_row)
+    assert bp.main(tmp_path) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert seen["now"] == NOW + 8.0
+    assert out["accounts"]["codex-a"]["state"] == "FRESH"
+    assert out["accounts"]["codex-a"]["windows"]["5h"]["state"] == "FRESH"
+    assert out["produced_at"] == NOW + 8.0
+
+
 def test_routing_without_routes_file_is_unknown_not_green(tmp_path: Path):
     payload = bp.build_budget(None, tap(), NOW)
     routing = bp.build_routing(tmp_path, payload, NOW)
