@@ -45,7 +45,7 @@ shown), **MISSING** (not measured or not shown).
 | Errors and drops | BUILT | WAN link errors and drops from `ip -s link` on the router, shown as the UPLINK line `uplink_line()`: totals since router boot, from the last recorded router read; "STALE" past 15 min, UNKNOWN when the read failed or has no WAN counters. `uplink_rate_line()` adds receive drops over the last hour, restarted by a reboot, and a trend clause comparing that rate with the six earlier hours (same, higher or lower; UNKNOWN-style "no comparison" with fewer than three earlier hours) |
 | Load | BUILT | `router_facts()`: 1/5/15-minute load from `/proc/loadavg` |
 | VPN state (sing-box) | MISSING | nothing reads sing-box |
-| Tailscale exit-node path | MISSING | nothing reads tailscale; the old `egress` duty is not shown in the window |
+| Tailscale exit-node path | BUILT | `exit_line()` reads `health/egress.json` (the `egress` duty's per-client GREEN/RED, written every 5 min) and shows each client's state with the file's age; UNKNOWN when the file is missing, unreadable or over 15 min old. It does not read tailscale itself |
 
 ## Trend and outages
 

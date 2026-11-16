@@ -312,6 +312,41 @@ def guard_line(now=None, marker=GUARD_TRIP_MARKER):
             "and their readings go STALE until it is rearmed")
 
 
+EGRESS_STATE = SITE / "health" / "egress.json"
+EGRESS_STALE_S = 900  # the egress duty runs every 5 minutes; 15 minutes without a write is stale
+
+
+def exit_line(now=None, path=EGRESS_STATE):
+    """EXIT NODE in plain words: each client's tailscale exit-node state from the egress duty's file.
+
+    Read-only. A missing, unreadable or stale file is UNKNOWN, never a calm all-GREEN.
+    """
+    now = time.time() if now is None else now
+    try:
+        mtime = os.stat(path).st_mtime
+        with open(path, encoding="utf-8") as fh:
+            results = json.load(fh).get("results") or []
+    except FileNotFoundError:
+        return "UNKNOWN (no exit-node reading yet: the egress duty has not written its file)"
+    except (OSError, ValueError, AttributeError) as exc:
+        return f"UNKNOWN (exit-node file could not be read: {type(exc).__name__})"
+    age_min = (now - mtime) / 60
+    if now - mtime > EGRESS_STALE_S:
+        return f"UNKNOWN (last exit-node reading is {age_min:.0f} min old)"
+    if not results:
+        return f"UNKNOWN (exit-node reading is {age_min:.0f} min old and lists no clients)"
+    states = []
+    for r in results:
+        name = str(r.get("client", "?"))[:24]
+        state = str(r.get("state", "UNKNOWN"))
+        if state not in ("GREEN", "RED"):
+            state = "UNKNOWN"
+        states.append(f"{name} {state}")
+    bad = [r for r in results if r.get("state") != "GREEN"]
+    head = "all GREEN" if not bad else f"{len(bad)} of {len(results)} not GREEN"
+    return f"{head}: " + ", ".join(states) + f"; read {age_min:.0f} min ago"
+
+
 LOAD_LIMIT = nb.LOAD_LIMIT
 MEM_FLOOR_MB = nb.MEM_FLOOR_MB
 
@@ -472,6 +507,7 @@ def draw():
     out.append("  UPLINK RATE   " + uplink_rate_line())
     out.append("  ROUTER LOAD   " + router_health_line() + "   (read-only, one read per 5 min)")
     out.append("  HOST GUARD    " + guard_line() + "   (read-only, marker file only)")
+    out.append("  EXIT NODE     " + exit_line() + "   (read-only, the egress duty's file)")
     out.append("")
     out.append("  note: pings to public addresses are not used: the router answers them itself,")
     out.append("  so they look fast even when the internet is down. Internet checks are secure page loads.")
