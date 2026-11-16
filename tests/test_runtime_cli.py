@@ -255,7 +255,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def test_sync_installs_every_duty_and_routes_failures_to_its_resolver(site, tmp_path):
     d = tmp_path / "u"
-    assert cli("sync", "--unit-dir", str(d), "--no-systemctl", "--repo", str(REPO_ROOT)) == 0
+    # Render the units from the tree under test.  Without --pythonpath the sync takes its duties from the
+    # *deployed pin* (``default_pythonpath`` reads the installed wake unit), so a working-tree run rendered
+    # the units from the pinned release's duties.json and this assertion described the pin, not this tree:
+    # it passed on 8a2dc8fc's CI (no ambient pin) and failed the same commit's own delivery check.
+    assert cli("sync", "--unit-dir", str(d), "--no-systemctl", "--repo", str(REPO_ROOT),
+               "--pythonpath", str(REPO_ROOT / "src")) == 0
     for duty in ("ci", "dispatch", "egress", "devto", "budget", "host-capacity"):
         assert (d / f"mishe-producer-{duty}.timer").exists(), duty
     devto_unit = (d / "mishe-producer-devto.service").read_text()
