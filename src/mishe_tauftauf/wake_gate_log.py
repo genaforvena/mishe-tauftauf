@@ -12,11 +12,9 @@ two wakes with the same pending work hash the same.
 ``same_dossier_as_last`` is the System 0 verdict: this role's previous wake had the same
 hash and yielded ``verified`` (nothing changed).
 
-``decision`` is the System One shadow answer for the same wake: one choice (owed work or repeat)
-from the decision provider, over derived facts only (role label, trigger, owed reasons, mail count).
-The model never sees the System 0 verdict, so the two can be compared later. A missing or failing
-provider leaves ``choice`` null with the reason; the wake is never delayed past the provider timeout
-and never stopped.
+``decision`` is always null. The System One per-start answer was retired (measured 2026-11-16:
+owed-work precision 43% against a 41% base rate), so the wake path makes no provider call.
+The field stays so older and newer rows share one schema.
 """
 from __future__ import annotations
 
@@ -25,18 +23,9 @@ import json
 import time
 from pathlib import Path
 
-from . import decision_provider as dp
 from . import state_files, yielding
 
 LOG_NAME = "wake-gate.jsonl"
-QUESTION = "wake-worth-running"
-INSTRUCTIONS = ("Decide whether one wake of a role adds new work. Pick exactly one label from the criteria. "
-                "The state gives derived facts only: the role label, the trigger, the owed reasons and a count of mail items.")
-CRITERIA = {
-    "owed-work": "a new signal, message, due intention or change makes this wake necessary",
-    "repeat": "nothing new is owed, so this wake would add nothing",
-}
-THRESHOLD = 0.7
 
 
 def log_path(home) -> Path:
@@ -105,25 +94,6 @@ def same_dossier_verdict(rows: list, role: str, digest: str) -> bool:
     return False
 
 
-def system1_answer(home, role: str, reasons: list, trigger: str, mail_count: int) -> dict | None:
-    """The shadow System One answer for one wake start. Never raises; None when there is no provider."""
-    try:
-        from .budget_producer import DECISION_CONFIG, DECISION_PROVIDER
-        provider = dp.select(dp.load_providers(Path(home) / DECISION_CONFIG), DECISION_PROVIDER)
-        state = (f"role: {role}\ntrigger: {trigger}\nowed reasons: {', '.join(reasons) or 'none'}\n"
-                 f"mail items: {mail_count}")
-        decision = dp.decide(provider, QUESTION, INSTRUCTIONS, state, CRITERIA, threshold=THRESHOLD)
-        # Shadow only: a below-threshold answer is still logged as its argmax, marked escalated,
-        # so the threshold can later be calibrated against real outcomes instead of guessed.
-        escalated = decision.choice is None and bool(decision.probabilities)
-        choice = max(decision.probabilities, key=decision.probabilities.get) if escalated else decision.choice
-        return {"choice": choice, "escalated": escalated, "probabilities": decision.probabilities,
-                "confidence": decision.confidence, "reason": decision.reason}
-    except Exception as exc:  # noqa: BLE001 - shadow answer: a failure is an unanswered start, not an error
-        return {"choice": None, "escalated": False, "probabilities": {}, "confidence": None,
-                "reason": f"decision provider not usable ({type(exc).__name__})"}
-
-
 def record_start(home, role: str, key: str, *, snap, mail, now: float) -> None:
     """Append the start row. Never raises: this is shadow data only."""
     try:
@@ -136,7 +106,7 @@ def record_start(home, role: str, key: str, *, snap, mail, now: float) -> None:
             "trigger": trigger,
             "reasons": inputs["reasons"], "dossier_hash": digest,
             "same_dossier_as_last": same_dossier_verdict(rows, role, digest),
-            "decision": system1_answer(home, role, inputs["reasons"], trigger, len(inputs["mail"])),
+            "decision": None,
         })
     except Exception:  # noqa: BLE001 - shadow logging must not affect the wake
         return

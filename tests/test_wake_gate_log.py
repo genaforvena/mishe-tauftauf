@@ -37,7 +37,7 @@ def test_same_dossier_after_verified_wake_is_the_system0_verdict(tmp_path):
     wake_gate_log.record_start(tmp_path, "system1", "k2", snap=snap, mail=[], now=2.0)
     start = [r for r in _rows(tmp_path) if r["kind"] == "start"][-1]
     assert start["key"] == "k2" and start["same_dossier_as_last"] is True
-    assert start["trigger"] == "intention:again" and start["decision"]["choice"] is None
+    assert start["trigger"] == "intention:again" and start["decision"] is None
 
 
 def test_changed_last_wake_does_not_mark_same_dossier(tmp_path):
@@ -172,66 +172,17 @@ def test_engine_receipt_then_raise_end_row_blocks_same_dossier(tmp_path, monkeyp
     assert start["key"] == "k-b" and start["same_dossier_as_last"] is False
 
 
-def test_start_row_carries_the_system_one_shadow_answer(tmp_path, monkeypatch):
-    seen = {}
+def test_start_makes_no_provider_call_and_writes_decision_null(tmp_path, monkeypatch):
+    # Drill: the retired per-start System One answer must not reach the provider at all.
+    from mishe_tauftauf import decision_provider as dp
 
-    def fake_decide(provider, question, instructions, state, criteria, *, threshold, post=None):
-        from mishe_tauftauf import decision_provider as dp
-        seen["state"] = state
-        seen["criteria"] = sorted(criteria)
-        return dp.Decision(question, "owed-work", {"owed-work": 0.9, "repeat": 0.1}, 0.8, "decided")
+    def must_not_run(*args, **kwargs):
+        raise AssertionError("provider called from the wake path")
 
-    class FakeProvider:
-        pass
-
-    from mishe_tauftauf import budget_producer, decision_provider as dp
-    monkeypatch.setattr(dp, "load_providers", lambda path: {"routerai": FakeProvider()})
-    monkeypatch.setattr(dp, "select", lambda providers, name: providers[name])
-    monkeypatch.setattr(dp, "decide", fake_decide)
+    monkeypatch.setattr(dp, "load_providers", must_not_run)
+    monkeypatch.setattr(dp, "decide", must_not_run)
     snap = _snap(["signal:initiatives-system1"], {"initiatives-system1": 2})
     wake_gate_log.record_start(tmp_path, "system1", "k2", snap=snap, mail=[(9, "body")], now=5.0)
     row = _rows(tmp_path)[-1]
-    assert row["decision"]["choice"] == "owed-work"
-    assert row["decision"]["probabilities"] == {"owed-work": 0.9, "repeat": 0.1}
-    assert sorted(row["decision"]) == ["choice", "confidence", "escalated", "probabilities", "reason"]
-    assert row["decision"]["escalated"] is False
-    assert seen["criteria"] == ["owed-work", "repeat"]
-    assert "mail items: 1" in seen["state"] and "body" not in seen["state"]
-    assert "same" not in seen["state"]  # the model never sees the System 0 verdict
-
-
-def test_below_threshold_answer_is_logged_as_escalated_argmax(tmp_path, monkeypatch):
-    from mishe_tauftauf import decision_provider as dp
-
-    def low_confidence(provider, question, instructions, state, criteria, *, threshold, post=None):
-        return dp.Decision(question, None, {"owed-work": 0.49, "repeat": 0.47}, 0.24,
-                           "confidence 0.24 below threshold 0.70; escalate to a mind")
-
-    monkeypatch.setattr(dp, "load_providers", lambda path: {"routerai": object()})
-    monkeypatch.setattr(dp, "select", lambda providers, name: providers[name])
-    monkeypatch.setattr(dp, "decide", low_confidence)
-    wake_gate_log.record_start(tmp_path, "system1", "k5", snap=_snap(["intention:again"]), mail=[], now=8.0)
-    decision = _rows(tmp_path)[-1]["decision"]
-    assert decision["choice"] == "owed-work" and decision["escalated"] is True
-    assert decision["confidence"] == 0.24 and "escalate" in decision["reason"]
-
-
-def test_missing_provider_config_is_an_unanswered_start_not_a_failure(tmp_path):
-    snap = _snap(["intention:again"])
-    wake_gate_log.record_start(tmp_path, "system1", "k3", snap=snap, mail=[], now=6.0)
-    row = _rows(tmp_path)[-1]
-    assert row["kind"] == "start"
-    assert row["decision"]["choice"] is None
-    assert "not usable" in row["decision"]["reason"]
-
-
-def test_failing_provider_still_writes_the_start_row(tmp_path, monkeypatch):
-    from mishe_tauftauf import decision_provider as dp
-
-    def boom(*args, **kwargs):
-        raise RuntimeError("network down")
-
-    monkeypatch.setattr(dp, "load_providers", boom)
-    wake_gate_log.record_start(tmp_path, "system1", "k4", snap=_snap(["inbox"]), mail=[], now=7.0)
-    row = _rows(tmp_path)[-1]
-    assert row["key"] == "k4" and row["decision"]["choice"] is None
+    assert row["kind"] == "start" and row["key"] == "k2" and row["decision"] is None
+    assert row["trigger"] == "signal:initiatives-system1"
