@@ -202,9 +202,13 @@ that composes it:
   — and accepts the site install only when its sha256 matches the record beside it
   (`mishe-signal-freshness.install.json`); that install-record read is itself a
   named boundary in the policy. It maps every other outcome (a missing or
-  non-executable binary, a sha256 mismatch, exit 2, a timeout, a spawn failure) to
+  non-executable binary, a non-object install record, a sha256 mismatch, exit 2, a
+  timeout, a spawn failure) to
   `FreshnessUnknown` and has no Python fallback, so a broken or replaced binary
-  cannot make a stale signal look fresh. Not yet on a live path:
+  cannot make a stale signal look fresh. Its four sibling sha256 install-record
+  readers — `feed._tape_binary`, `feed._records_binary`, `tape_facts.facts_binary`
+  and `unit_psi_text._systemd_show_binary` — reject a non-object record the same
+  way, each raising its own `*Unknown` rather than leaking an `AttributeError`. Not yet on a live path:
   `signal_store.read` still compares in Python, and no production module
   imports the reader, so only `tests/test_signal_freshness.py` calls it.
 
