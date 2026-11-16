@@ -1,27 +1,47 @@
 # Root-drive migration cutover plan (shape A)
 
-Source root: `/` on `/dev/mapper/ubuntu--vg-ubuntu--lv` (nvme0, 914G, 41% used, 525G free).
-Destination: `/mnt/mishe-scratch` on `/dev/nvme1n1p1` (ext4, 234G, 2% used, 219G free).
+Source root: `/` on `/dev/mapper/ubuntu--vg-ubuntu--lv` (nvme0, 914G).
+Destination: `/mnt/mishe-scratch` on `/dev/nvme1n1p1` (ext4, 234G).
 
-Move targets (total ~75G, fits 219G free):
+Move targets (measured 2026-11-16 06:28Z, total ~85G, fits 219G free):
 - `/home/mesh-home/.omp` (33G)
 - `/home/mesh-home/.codex` (23G)
-- `/home/mesh-home/mishe-tauftauf` (19G)
+- `/home/mesh-home/mishe-tauftauf` (29G; the plan's original 19G is stale — the checkout grew)
 
-OS, /boot, /boot/efi stay on nvme0.
+OS, /boot, /boot/efi, `/home/mesh-home/.mesh` (relay/router state) stay on nvme0.
+The destination already holds `/mnt/mishe-scratch/mishe-cargo-target` (the Rust build cache that
+`cd79beaf` moved off root) — do not wipe it, and account for its space.
+
+## Measured state at 2026-11-16 06:28Z
+
+- root-fs stalls >= 5 s: 18 in the last 24 h, all fsync-dominated, worst 16.97 s
+  (`checks/root-fs-stall.py`; detector supervised as `mishe-dual-probe.service`). This is a
+  true-positive host condition — the drive, not a plant writestorm (`create` ~0, `fsync` = total).
+- The checkout is on the *same* LVM/nvme0 as root, so the whole 85 G is on the DRAM-less drive.
+- 116 user unit files under `~/.config/systemd/user` reference the checkout path. **The retained
+  symlink keeps every one valid** — see step 3.
 
 ## Steps
 
 1. Pre-check: ensure no active process using targets beyond shell; record `lsof`/`fuser` for each.
 2. Quiesce writers before any copy: stop minds/wakes/observer and any process writing to `.omp`, `.codex`, `mishe-tauftauf`. Named units: mishe wake units, observer-checks, work-watch. Confirm via `lsof`/`fuser` that targets are idle.
-3. Realpath users of `mishe-tauftauf` (list exact fix for each before moving):
-   - runtime/current pin: resolve `readlink -f` and update pin to new path (or keep via symlink).
-   - unit files: grep `mishe-tauftauf` in `/etc/systemd/system` and user units; update `WorkingDirectory`/paths.
-   - PYTHONPATH entries resolving through symlinks: enumerate and repoint.
-   - git toplevel: `git -C /home/mesh-home/mishe-tauftauf rev-parse --show-toplevel`; ensure worktree path updated or symlink preserves it.
-4. Causal caveat: stalls show no plant-load correlation and no SMART error. Moving ~75G is a relief bet, not a diagnosed fix. Keep root-stall detector armed; report whether stalls stop after move.
+3. Path users of `mishe-tauftauf` (inventoried 2026-11-16): because the cutover renames the source and
+   leaves a **symlink at the original path** (steps 8-9), no path reference needs editing. Verified:
+   - `~/.config/systemd/user`: 116 unit files name the checkout in `WorkingDirectory`, `ExecStart`
+     and `Environment` (`PATH=…/.mishe-tauftauf/bin`, `PYTHONPATH=…/.mishe-tauftauf/runtime/current/src`).
+     All resolve through the symlink unchanged.
+   - `git`: `rev-parse --show-toplevel` = `/home/mesh-home/mishe-tauftauf`; delivery worktrees'
+     `.git/worktrees/<sha>` gitdir points at the same absolute path and stays valid through the
+     symlink (`git -C …/.mishe-tauftauf/runtime/current rev-parse HEAD` still works).
+   - `/etc/systemd/system/mesh-router-phaedra-relay.service` names `~/.mesh/…` only — not moved.
+   The realpath check is still run once after the flip (step 10) as a guard, not as a repointing task.
+4. Causal caveat: stalls show no plant-load correlation and no SMART error. Moving ~85G is a relief bet, not a diagnosed fix. Keep root-stall detector armed; report whether stalls stop after move.
 5. Create destination dirs: `/mnt/mishe-scratch/home-mesh-home/{.omp,.codex,mishe-tauftauf}`.
-6. `rsync -aHxc SRC/ DST/` for each (preserve perms/xattrs, checksums).
+6. Copy, in two passes so the quiesced window is short: first `rsync -aHx SRC/ DST/` (bulk, safe while
+   live — sources untouched, resumable), then under the step-2 quiesce the final
+   `rsync -aHxc --itemize-changes SRC/ DST/` (checksummed delta). Do not run a heavy pass while a
+   moving-pin delivery check is running: it competes for I/O and can push the check past its timeout
+   (a wasted delivery window).
 7. Verification after copy: `rsync -aHxc --dry-run --itemize-changes SRC/ DST/` MUST show zero changes; plus matching file count (`find ... | wc -l`) and `du -sb` match. All three must agree.
 8. Rename source dirs to `*.pre-migration` (atomic, reversible): `mv .omp .omp.pre-migration` etc. Keep for rollback window.
 9. Create symlinks: `ln -s /mnt/mishe-scratch/.../.omp /home/mesh-home/.omp` etc.
