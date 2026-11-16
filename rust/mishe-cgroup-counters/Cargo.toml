@@ -1,0 +1,11 @@
+[package]
+name = "mishe-cgroup-counters"
+version = "0.1.0"
+edition = "2021"
+description = "Decode cgroup v2 cpu.stat and cpu.max counters byte-exactly (Rust counterpart of cpu_stat_text)"
+license = "CC0-1.0"
+
+[dependencies]
+
+[profile.release]
+debug = false

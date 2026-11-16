@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from . import cgroup_counters
 
 COUNTERS = ("nr_periods", "nr_throttled", "throttled_usec")
 LOCAL_COUNTER = "throttled_usec"
@@ -21,8 +22,12 @@ def parse_cpu_stat_local(text: str | None) -> int | None:
     return None if fields is None else fields[LOCAL_COUNTER]
 
 
-def parse_cpu_stat(text: str | None, counters: tuple[str, ...] = COUNTERS) -> dict[str, int] | None:
-    """Counters from a cpu.stat body; None unless every counter parses."""
+def _reference_parse_cpu_stat(text: str | None, counters: tuple[str, ...] = COUNTERS) -> dict[str, int] | None:
+    """Retained Python answer, for isolated validation and uninstalled checkouts only.
+
+    A delivered plant has a configured binary and uses ``parse_cpu_stat`` below;
+    this function records the exact answers the Rust decoder must match.
+    """
     if not text:
         return None
     fields: dict[str, int] = {}
@@ -38,8 +43,25 @@ def parse_cpu_stat(text: str | None, counters: tuple[str, ...] = COUNTERS) -> di
     return fields
 
 
-def parse_cpu_max_period(text: str | None) -> int | None:
-    """Period in microseconds from a cpu.max body (``quota period``); None when unparseable."""
+def parse_cpu_stat(text: str | None, counters: tuple[str, ...] = COUNTERS) -> dict[str, int] | None:
+    """Counters from a cpu.stat body; None unless every counter parses.
+
+    The Rust binary is authoritative when configured. A configured binary that
+    fails maps to None (UNKNOWN, never zero); with no binary at all the retained
+    reference decoder answers.
+    """
+    if not text:
+        return None
+    try:
+        return cgroup_counters.parse_cpu_stat(text, counters)
+    except cgroup_counters.NoBinary:
+        return _reference_parse_cpu_stat(text, counters)
+    except cgroup_counters.CgroupCountersUnknown:
+        return None
+
+
+def _reference_parse_cpu_max_period(text: str | None) -> int | None:
+    """Retained Python answer for cpu.max; isolated validation only."""
     if not text:
         return None
     parts = text.split()
@@ -50,6 +72,18 @@ def parse_cpu_max_period(text: str | None) -> int | None:
     except ValueError:
         return None
     return period if period > 0 else None
+
+
+def parse_cpu_max_period(text: str | None) -> int | None:
+    """Period in microseconds from a cpu.max body (``quota period``); None when unparseable."""
+    if not text:
+        return None
+    try:
+        return cgroup_counters.parse_cpu_max_period(text)
+    except cgroup_counters.NoBinary:
+        return _reference_parse_cpu_max_period(text)
+    except cgroup_counters.CgroupCountersUnknown:
+        return None
 
 
 UNIT_SUFFIXES = (".service", ".scope")
