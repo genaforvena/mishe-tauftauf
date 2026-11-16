@@ -36,13 +36,15 @@ Exit codes: 0 when the read worked, 3 when it failed or was skipped over the sel
 (UNKNOWN in the duty contract, not RED).
 
 The rows are also the input to the `network-uplink` duty, which runs every 300 s
-(`checks/network-care.py`, subcommand `uplink`) and judges the newest two hours of
-rows. It is RED when the WAN link reports any receive error, or when `rx_dropped`
-grew by more than 400 per hour across a span of at least 1.8 h. It is UNKNOWN when
-no row is newer than 15 minutes, when fewer than two rows fall in the window, when
-the `rx_dropped` counter went backwards (a router reboot or driver reset), or when
-the log is unreadable — an alarm that cannot read the log is UNKNOWN, never a
-quiet pass.
+(`checks/network-care.py`, subcommand `uplink`) and judges the rows of the newest
+two hours. It is RED when the newest row reports a receive error (`rx_errors`
+above zero), or when `rx_dropped` grew by more than 400 per hour across a span of
+at least 1.8 h. It is UNKNOWN when no row is newer than 15 minutes, when fewer
+than two rows fall in the window, when the `rx_dropped` counter went backwards (a
+router reboot or driver reset), or when the log is unreadable — an alarm that
+cannot read the log is UNKNOWN, never a quiet pass. A row whose `uplink` object is
+missing or `null` is skipped, so a reading that does not carry the counters can
+neither raise nor clear the alarm.
 
 The same checker also guards the network area's own continuity. The
 `network-progress` duty (`checks/network-care.py`, subcommand `progress`, every
