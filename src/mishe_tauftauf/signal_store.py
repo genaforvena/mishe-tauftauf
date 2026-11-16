@@ -16,6 +16,7 @@ from pathlib import Path
 from .live_signal import OK, STALE, UNKNOWN, Signal
 from .space_text import nonblank
 from .state_files import read_json, write_json
+from . import signal_freshness
 
 _NAME_OK = set("abcdefghijklmnopqrstuvwxyz0123456789-_")
 
@@ -280,12 +281,47 @@ def read(home, name: str, *, now: float) -> Signal:
     return Signal(data.get("value"), seen, data.get("source") or name, OK, reason)
 
 
-def expire(home, *, now: float) -> list[str]:
+def _freshness_binary(binary: str | None) -> str | None:
+    """Resolve the Rust freshness verifier once per expiry sweep; None only when none is configured.
+
+    An explicit argument, the env override or a site home means a binary is expected: if it cannot
+    be resolved or verified, FreshnessUnknown propagates and the caller fails closed. With none of
+    those configured (isolated/test use) the caller keeps the pre-existing Python comparison as its
+    oracle, so a broken binary can never make a stale signal look fresh.
+    """
+    explicit = binary or os.environ.get(signal_freshness.ENV_OVERRIDE)
+    site = os.environ.get("MISHE_SEED_HOME") or os.environ.get("MISHE_TAUFTAUF_HOME")
+    try:
+        return str(signal_freshness.resolve_binary(binary))
+    except signal_freshness.FreshnessUnknown:
+        if explicit is None and not site:
+            return None
+        raise
+
+
+def _is_expired(seen: float, now: float, max_age: float, exe: str | None) -> bool:
+    """EXPIRED from the Rust verifier, or the offline Python comparison when no binary exists."""
+    if exe is None:
+        return now - seen > max_age
+    return signal_freshness.verdict(seen, now, max_age, binary=exe) == signal_freshness.EXPIRED
+
+
+def expire(home, *, now: float, binary: str | None = None) -> list[str]:
     """Turn every expired OK signal UNKNOWN on disk (an edge), and a never-observed signal past its
-    grace (registration + max_age) too, so a missing monitor wakes its subscribers once. Names changed."""
+    grace (registration + max_age) too, so a missing monitor wakes its subscribers once. Names changed.
+
+    Freshness is decided by ``mishe-signal-freshness``. A configured binary that cannot give a
+    verdict fails closed: that signal becomes UNKNOWN with the reason, never fresh.
+    """
     changed = []
     reg = registry(home)
     stamped = False
+    try:
+        exe = _freshness_binary(binary)
+    except signal_freshness.FreshnessUnknown as exc:
+        exe, broken = None, exc
+    else:
+        broken = None
     for name, entry in sorted(reg.items()):
         if _never_observed(home, name):
             if entry.get("registered_at") is None:
@@ -301,9 +337,22 @@ def expire(home, *, now: float) -> list[str]:
         seen = _seen(home, name)
         if data is None or seen is None or data.get("state") != OK:
             continue
-        if now - seen > entry["max_age"]:
+        if broken is not None:
+            reason = f"freshness verdict unavailable: {broken}"
+            expired = True
+        else:
+            try:
+                expired = _is_expired(seen, now, entry["max_age"], exe)
+            except signal_freshness.FreshnessUnknown as exc:
+                reason = f"freshness verdict unavailable: {exc}"
+                _store(home, name, value=None, state=UNKNOWN, at=now,
+                       source=data.get("source") or name, reason=reason)
+                changed.append(name)
+                continue
+            reason = f"expired after {entry['max_age']:g}s without observation"
+        if expired:
             _store(home, name, value=None, state=UNKNOWN, at=now, source=data.get("source") or name,
-                   reason=f"expired after {entry['max_age']:g}s without observation")
+                   reason=reason)
             changed.append(name)
     if stamped:
         write_json(_dir(home) / "registry.json", reg)

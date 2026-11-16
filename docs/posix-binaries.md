@@ -81,11 +81,10 @@ reads no output at all.
 | `mishe-network-probe` | One network probe row | Live: the `network-probe` duty runs it |
 | `mishe-systemd-show` | `systemctl show` text decoding | Live since candidate 1: `unit_psi_text.parse_systemd_show` runs it and `discovery.py` reads the result through `read_unit_psi`. The retired Python decoder is deleted; its recorded answers are GOLDEN in `tests/test_rust_systemd_show.py` |
 | `mishe-signal-sample` | The append-only signal sample store | Live on both sides: the `memory-samples` duty appends up to three rows every three minutes into `SITE/samples/memory/`, and the `footprint` duty reads the last 15 minutes of that store back |
-| `mishe-signal-freshness` | The freshness verdict of one signal observation | Built and differential-tested; installed at `$SITE/bin/mishe-signal-freshness` with its sha256 record (2026-11-16, source 63da1a20). The reader `signal_freshness.resolve_binary` verifies that sha and fails closed. **Not yet wired**: `signal_store.read` still compares in Python |
-
+| `mishe-signal-freshness` | The freshness verdict of one signal observation | Live: `signal_store.expire` resolves the sha256-recorded `$SITE/bin/mishe-signal-freshness` once per sweep and routes each OK signal's verdict through it (explicit arg / env override / site install). A configured but broken binary fails closed to UNKNOWN. `read` keeps a display-level Python comparison |
 `mishe-tape-facts` is the honest gap: its consumer is not yet running it. The
-signal sample store has both a writer and a reader. The freshness binary is the
-narrower one: it is built and tested, and nothing runs it yet.
+signal sample store has both a writer and a reader. The freshness binary is now
+live in the expiry sweep; its reader is called by production `signal_store.expire`.
 
 ## Whole-system target
 
@@ -123,10 +122,11 @@ them. Updated 2026-11-15 after the operator DM 301336.
    site-local and not shipped, so this line names no path).
    The CPU gain would not pay, so the append half has no binary. The freshness
    half now has one: `rust/mishe-signal-freshness` computes exactly the
-   `now - seen > max_age` comparison `signal_store.read` makes, and it is built
-   and differential-tested against it, but `signal_store.read` still compares in
-   Python. The candidate stays open for the append half and is re-opened if a
-   sweep exceeds 1 CPU-s.
+   `now - seen > max_age` comparison, is built and differential-tested against it,
+   and is the authority in `signal_store.expire` from 2026-11-16. Each sweep spawns
+   one short-lived process per OK signal; the aggregate cost on the live home is
+   not yet measured, so no speedup is claimed. The append half stays Python and is
+   re-opened if a sweep exceeds 1 CPU-s.
 
 3. **Duty runner** (`src/mishe_tauftauf/duties.py`, 44 lines, plus the producer
    launch path). Input: `duties.json` and a duty name. Output: the producer's

@@ -1,8 +1,9 @@
 # mishe-signal-freshness contract (version 0.1, responsibility: signal freshness verdict)
 
-Status: BUILT and differential-tested (`tests/test_signal_freshness.py`). Not yet on a
-live path: `signal_store.read` still makes the same comparison in Python. The reader is
-`src/mishe_tauftauf/signal_freshness.py`. Owner: rust-plan.
+Status: BUILT, differential-tested (`tests/test_signal_freshness.py`) and wired into the
+signal store's authoritative expiry sweep (`signal_store.expire`). The reader is
+`src/mishe_tauftauf/signal_freshness.py`. `signal_store.read` keeps its Python comparison
+as a display-level safety net, not the state-changing authority. Owner: rust-plan.
 
 ## Scope
 

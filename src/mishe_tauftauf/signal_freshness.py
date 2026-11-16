@@ -7,8 +7,8 @@ EXPIRED, and anything else (2, a signal, a timeout, a missing binary) is UNKNOWN
 There is no Python fallback, so a broken binary can never make a stale signal look
 fresh.
 
-Not yet on a live path. ``signal_store.read`` still compares in Python; the site install
-``$SITE/bin/mishe-signal-freshness`` is in place, waiting for that wiring.
+Wired into ``signal_store.expire``: that sweep is the authoritative freshness arbiter.
+``signal_store.read`` keeps its Python comparison as a display-level safety net.
 """
 
 from __future__ import annotations

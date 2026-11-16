@@ -212,9 +212,11 @@ that composes it:
   cannot make a stale signal look fresh. Its four sibling sha256 install-record
   readers — `feed._tape_binary`, `feed._records_binary`, `tape_facts.facts_binary`
   and `unit_psi_text._systemd_show_binary` — reject a non-object record the same
-  way, each raising its own `*Unknown` rather than leaking an `AttributeError`. Not yet on a live path:
-  `signal_store.read` still compares in Python, and no production module
-  imports the reader, so only `tests/test_signal_freshness.py` calls it.
+  way. Wired into the authoritative expiry sweep: `signal_store.expire` resolves the
+  binary once per sweep and calls `signal_freshness.verdict` for every OK signal; a
+  configured but broken binary turns those signals UNKNOWN with a reason.
+  `signal_store.read` keeps its display-level Python comparison. Tests:
+  `tests/test_signal_freshness.py` and `tests/test_signal_store_freshness.py`.
 
 A change to any of these binaries' input, output, exit statuses or fault text is a
 change to a protocol boundary: update its `CONTRACT.md` in the same commit and run
