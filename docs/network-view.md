@@ -35,6 +35,15 @@ so a dead probe shows as UNKNOWN in the view, not as a calm network.
 Exit codes: 0 when the read worked, 3 when it failed or was skipped over the self-limit
 (UNKNOWN in the duty contract, not RED).
 
+The rows are also the input to the `network-uplink` duty, which runs every 300 s
+(`checks/network-care.py`, subcommand `uplink`) and judges the newest two hours of
+rows. It is RED when the WAN link reports any receive error, or when `rx_dropped`
+grew by more than 400 per hour across a span of at least 1.8 h. It is UNKNOWN when
+no row is newer than 15 minutes, when fewer than two rows fall in the window, when
+the `rx_dropped` counter went backwards (a router reboot or driver reset), or when
+the log is unreadable — an alarm that cannot read the log is UNKNOWN, never a
+quiet pass.
+
 ## What the view says about it
 
 - `RECORDED`: client count by band, weakest device by name and dBm, the age of the last read.
