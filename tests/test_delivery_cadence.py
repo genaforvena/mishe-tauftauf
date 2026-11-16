@@ -61,3 +61,74 @@ def test_run_does_not_start_a_promotion_when_the_pin_is_head(monkeypatch):
     monkeypatch.setattr(cadence.subprocess, "run", lambda *a, **k: started.append(a))
     assert cadence.run(Path("."), Path("."), now=0.0) == 0
     assert started == [], "the installed promotion is not started when the pin already names HEAD"
+
+
+def test_missing_delivery_launcher_reports_unknown_and_does_not_suppress_retry(monkeypatch, tmp_path):
+    monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
+    monkeypatch.setattr(cadence, "gate_running", lambda: False)
+    monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
+    monkeypatch.setattr(cadence, "_remote_ci", lambda *args: "unknown")
+    def fake_git(repo, *args):
+        out = {"rev-parse": HEAD, "log": "0", "merge-base": PIN, "rev-list": "1"}[args[0]]
+        return subprocess.CompletedProcess(args, 0, out, "")
+    monkeypatch.setattr(cadence, "_git", fake_git)
+    assert cadence.run(tmp_path, tmp_path, now=10000) == 3
+    assert not (tmp_path / "delivery-cadence.last").exists()
+
+
+def test_failed_delivery_launcher_reports_unknown(monkeypatch, tmp_path):
+    monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
+    monkeypatch.setattr(cadence, "gate_running", lambda: False)
+    monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
+    monkeypatch.setattr(cadence, "_remote_ci", lambda *args: "unknown")
+    def fake_git(repo, *args):
+        out = {"rev-parse": HEAD, "log": "0", "merge-base": PIN, "rev-list": "1"}[args[0]]
+        return subprocess.CompletedProcess(args, 0, out, "")
+    monkeypatch.setattr(cadence, "_git", fake_git)
+    monkeypatch.setattr(cadence.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1, "", "launch failed"))
+    assert cadence.run(tmp_path, tmp_path, now=10000) == 3
+
+
+def test_uncertain_launch_remains_unknown_during_retry_bound(monkeypatch, tmp_path):
+    monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
+    monkeypatch.setattr(cadence, "gate_running", lambda: False)
+    monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
+    monkeypatch.setattr(cadence, "_remote_ci", lambda *args: "unknown")
+    def fake_git(repo, *args):
+        out = {"rev-parse": HEAD, "log": "0", "merge-base": PIN, "rev-list": "1"}[args[0]]
+        return subprocess.CompletedProcess(args, 0, out, "")
+    monkeypatch.setattr(cadence, "_git", fake_git)
+    monkeypatch.setattr(cadence.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1, "", "launch failed"))
+    assert cadence.run(tmp_path, tmp_path, now=10000) == 3
+    assert cadence.run(tmp_path, tmp_path, now=10001) == 3
+
+
+def test_timed_out_launcher_preserves_uncertain_attempt(monkeypatch, tmp_path):
+    monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
+    monkeypatch.setattr(cadence, "gate_running", lambda: False)
+    monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
+    monkeypatch.setattr(cadence, "_remote_ci", lambda *args: "unknown")
+    def fake_git(repo, *args):
+        out = {"rev-parse": HEAD, "log": "0", "merge-base": PIN, "rev-list": "1"}[args[0]]
+        return subprocess.CompletedProcess(args, 0, out, "")
+    monkeypatch.setattr(cadence, "_git", fake_git)
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], 120)
+    monkeypatch.setattr(cadence.subprocess, "run", timeout)
+    assert cadence.run(tmp_path, tmp_path, now=10000) == 3
+    assert cadence._read_state(tmp_path) == (HEAD, 10000, "unknown")
+    assert cadence.run(tmp_path, tmp_path, now=10001) == 3
+
+
+def test_successful_launcher_records_started_attempt(monkeypatch, tmp_path):
+    monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
+    monkeypatch.setattr(cadence, "gate_running", lambda: False)
+    monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
+    monkeypatch.setattr(cadence, "_remote_ci", lambda *args: "unknown")
+    def fake_git(repo, *args):
+        out = {"rev-parse": HEAD, "log": "0", "merge-base": PIN, "rev-list": "1"}[args[0]]
+        return subprocess.CompletedProcess(args, 0, out, "")
+    monkeypatch.setattr(cadence, "_git", fake_git)
+    monkeypatch.setattr(cadence.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "started", ""))
+    assert cadence.run(tmp_path, tmp_path, now=10000) == 0
+    assert cadence._read_state(tmp_path) == (HEAD, 10000, "started")

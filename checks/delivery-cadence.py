@@ -20,7 +20,7 @@ bytes in a clean worktree, so CI is only logged here. This script never edits th
 gate; it only starts the installed promotion, which re-targets, checks, reviews,
 applies and verifies.
 
-Exit: 0 after an observation. A skip and a started promotion both read as a healthy
+Exit: 0 after an observation, 3 for an uncertain launch. A skip and a started promotion both read as a healthy
 run; the signal is GREEN while the cadence keeps running and ages to UNKNOWN if it
 stops, which wakes its resolver.
 """
@@ -105,8 +105,10 @@ def should_start(pin: str, head: str, newest_at: float, last: tuple | None, now:
 
 def _read_state(home: Path):
     try:
-        sha, at = (home / "delivery-cadence.last").read_text(encoding="utf-8").split()
-        return sha, float(at)
+        fields = (home / "delivery-cadence.last").read_text(encoding="utf-8").split()
+        if len(fields) not in (2, 3) or (len(fields) == 3 and fields[2] not in ("unknown", "started")):
+            return None
+        return fields[0], float(fields[1]), fields[2] if len(fields) == 3 else "started"
     except (OSError, ValueError):
         return None
 
@@ -134,9 +136,13 @@ def run(home: Path, repo: Path, *, now: float | None = None) -> int:
     pin = pin_sha(home)
     head = _git(repo, "rev-parse", "HEAD").stdout.strip()
     newest = _git(repo, "log", "-1", "--format=%ct", head).stdout.strip()
-    start, reason = should_start(pin, head, float(newest or 0), _read_state(home), now)
+    last = _read_state(home)
+    start, reason = should_start(pin, head, float(newest or 0), last, now)
     if not start:
         _log(reason)
+        if pin != head and last and last[0] == head and last[2] == "unknown":
+            _log("previous launch outcome remains unknown")
+            return 3
         return 0
     # A pin rewritten away by an amend is not an ancestor of HEAD; the promotion re-targets from
     # the merge base, so only note it.
@@ -145,7 +151,12 @@ def run(home: Path, repo: Path, *, now: float | None = None) -> int:
     _log(f"remote CI on {head[:8]}: {_remote_ci(repo, head)} (signal only)")
     base = _git(repo, "merge-base", pin, head).stdout.strip() or pin
     count = _git(repo, "rev-list", "--count", f"{base}..{head}").stdout.strip()
-    (home / "delivery-cadence.last").write_text(f"{head} {int(now)}\n", encoding="utf-8")
+    state_path = home / "delivery-cadence.last"
+    try:
+        previous = state_path.read_bytes()
+    except FileNotFoundError:
+        previous = None
+    state_path.write_text(f"{head} {int(now)} unknown\n", encoding="utf-8")
     _log(f"pin {pin[:8]} -> HEAD {head[:8]}, {count or '?'} commits, delivering")
     env = {**os.environ, "MISHE_SEED_HOME": str(home)}
     env.pop("MISHE_WAKE_KEY", None)
@@ -153,11 +164,22 @@ def run(home: Path, repo: Path, *, now: float | None = None) -> int:
     try:
         done = subprocess.run([str(home / "bin" / "mishe-deliver")], env=env,
                               capture_output=True, text=True, timeout=120)
-    except (OSError, subprocess.SubprocessError) as exc:
+    except OSError as exc:
         _log(f"could not start the promotion: {type(exc).__name__}: {exc}")
-        return 0
+        if previous is None:
+            state_path.unlink()
+        else:
+            state_path.write_bytes(previous)
+        return 3
+    except subprocess.SubprocessError as exc:
+        _log(f"promotion launch outcome unknown: {type(exc).__name__}: {exc}")
+        return 3
     for line in (done.stdout + done.stderr).splitlines()[-2:]:
         _log(line)
+    if done.returncode != 0:
+        _log(f"promotion launch exited {done.returncode}; outcome unknown")
+        return 3
+    state_path.write_text(f"{head} {int(now)} started\n", encoding="utf-8")
     return 0
 
 
