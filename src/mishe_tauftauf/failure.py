@@ -82,6 +82,11 @@ def clear_recovered(home, *, now, last_exit=None, active_since=None) -> list[str
     A signal that was already GREEN when this ran — recovered by a path that predates that retirement (the 2026-11-10
     ``failed-mishe-doctor-service`` residue, and the same shape under ``failed-mishe-producer-*-service``) — carries the
     same spurious re-offer and is retired here too, so a stale re-offer cannot outlive the next sweep.
+
+    An already-GREEN record whose unit has run cleanly since the record was last confirmed is then refreshed, not
+    rewritten: a recovered failure is a level nothing else re-observes, so it would otherwise age into a false UNKNOWN
+    that wakes its subscriber (2026-11-16: camera-livingroom). The unit is the evidence, so a unit that stops stops
+    being confirmed and the record lapses as before.
     """
     from . import work_boundary
     home = Path(home)
@@ -95,36 +100,54 @@ def clear_recovered(home, *, now, last_exit=None, active_since=None) -> list[str
         if not reading:
             continue
         state, value = reading.get("state"), reading.get("value")
-        if state == signal_store.OK and value == "GREEN":
+        already_green = state == signal_store.OK and value == "GREEN"
+        if already_green:
             _retire_reoffers(home, name)     # already recovered: any re-offer is residue, not a standing fault
-            continue
         # A RED failure is a level the sweep clears. A failure that lapsed to UNKNOWN by expiry (nobody cleared it within
         # SIGNAL_MAX_AGE) is still a standing record, and the clean-exit test below is the same evidence for it: 2026-11-13
         # failed-mishe-producer-work-watch-service stayed UNKNOWN for a week while its unit exited 0 every 2 minutes.
         expired = state == signal_store.UNKNOWN and value is None
-        if not (expired or (state == signal_store.OK and value == "RED")):
+        red = state == signal_store.OK and value == "RED"
+        if not (already_green or expired or red):
             continue
         incident = read_json(home / "work/incidents" / f"{name}.json")
         unit = _unit_for(name, incident)
         if unit is None:
             continue
         exit_ = last_exit(unit)
-        # A RED reading is cleared by an exit after the RED was observed; an expired one by an exit after the last failure
-        # the incident saw. With no incident last_seen (missing record), the expiry write is the proxy: a clean exit after a
-        # week of standing record is the recovery the sweep looks for, and a recurrence writes a new incident.
-        last_seen = incident.get("last_seen") if isinstance(incident, dict) else None
-        since = (last_seen if isinstance(last_seen, (int, float)) else reading.get("observed_at")) if expired \
-            else reading.get("observed_at")
+        if already_green:
+            # A recovered record is kept fresh by the unit's next clean run, and the sweep is the only thing that looks
+            # at the unit while the record is GREEN: without it the record ages into a false UNKNOWN that wakes its
+            # subscriber (2026-11-16: the camera-livingroom producer's failure signal expired to UNKNOWN at 00:17Z and
+            # woke Senses although the producer had just exited 0). The stamp it is confirmed against is the freshness
+            # stamp, not the stored edge, so a unit that stops stops being confirmed and ages out as before. A record
+            # that already lapsed has nothing to keep fresh; expiry and the recovery path below handle it.
+            fresh = signal_store.read(home, name, now=now)
+            if fresh.state != signal_store.OK:
+                continue
+            since = fresh.observed_at
+        elif expired:
+            # An expired reading is cleared by an exit after the last failure the incident saw. With no incident
+            # last_seen (missing record), the expiry write is the proxy: a clean exit after a week of standing record is
+            # the recovery the sweep looks for, and a recurrence writes a new incident.
+            last_seen = incident.get("last_seen") if isinstance(incident, dict) else None
+            since = last_seen if isinstance(last_seen, (int, float)) else reading.get("observed_at")
+        else:
+            since = reading.get("observed_at")     # a RED reading is cleared by an exit after the RED was observed
         if not isinstance(since, (int, float)):
             continue
         exited_clean = bool(exit_ and exit_[1] and exit_[0] > since)
         # A long-running unit has no exit to show: it recovered if it has stayed active since the failure, for a while.
         started = None if exited_clean else active_since(unit)
         running_clean = started is not None and started > since and now - started >= RECOVERY_STABLE_S
-        if exited_clean or running_clean:
-            signal_store.observe(home, name, "GREEN", now=now, source="failure-recovered")
-            _retire_reoffers(home, name)
-            cleared.append(name)
+        if not (exited_clean or running_clean):
+            continue
+        if already_green:
+            signal_store.refresh(home, name, now=now)     # not an edge: never rewrites NAME.json, never wakes a subscriber
+            continue
+        signal_store.observe(home, name, "GREEN", now=now, source="failure-recovered")
+        _retire_reoffers(home, name)
+        cleared.append(name)
     return cleared
 
 

@@ -387,3 +387,36 @@ def test_an_expired_failure_of_a_unit_running_since_then_clears(tmp_path):
     assert failure.clear_recovered(tmp_path, now=week + 60, last_exit=lambda u: None,
                                    active_since=lambda u: NOW + 86400) == [name]
     assert store.read(tmp_path, name, now=week + 60).value == "GREEN"
+
+
+# --- a recovered failure record is kept fresh by the unit's next clean run -----------------------------------------
+
+def test_a_recovered_failure_record_is_kept_fresh_while_its_unit_keeps_running(tmp_path):
+    # 2026-11-16: camera-livingroom's producer failed once, recovered, then ran 0 every 2 minutes for a week until its
+    # failure record ``expired after 604800s without observation`` and woke its subscriber for a fault that was not
+    # there. The sweep confirms the running unit each pass and keeps the record fresh, without rewriting NAME.json.
+    unit, name = "mishe-producer-camera-livingroom.service", "failed-mishe-producer-camera-livingroom-service"
+    store.register(tmp_path, name, max_age=604800, subscribers=["senses"], reoffer=3600)
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    assert failure.clear_recovered(tmp_path, now=NOW + 100, last_exit=lambda u: (NOW + 50, True)) == [name]
+    recovered = store.recorded(tmp_path, name)
+    assert recovered["value"] == "GREEN"
+    day_six = NOW + 6 * 86400
+    assert failure.clear_recovered(tmp_path, now=day_six, last_exit=lambda u: (day_six - 60, True)) == []
+    assert store.recorded(tmp_path, name) == recovered                       # refreshed, not rewritten
+    day_eight = day_six + 2 * 86400
+    assert store.expire(tmp_path, now=day_eight) == []                       # still fresh 8 days after the clear
+    assert store.read(tmp_path, name, now=day_eight).value == "GREEN"
+
+
+def test_a_recovered_failure_record_ages_out_when_its_unit_stops(tmp_path):
+    # The stamp, not the stored edge, is what a refresh confirms against: once the unit stops, its last clean exit is
+    # behind the stamp, the sweep stops confirming it, and the record still lapses to UNKNOWN rather than staying GREEN.
+    unit, name = "mishe-producer-camera-livingroom.service", "failed-mishe-producer-camera-livingroom-service"
+    store.register(tmp_path, name, max_age=604800, subscribers=["senses"], reoffer=3600)
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    assert failure.clear_recovered(tmp_path, now=NOW + 100, last_exit=lambda u: (NOW + 50, True)) == [name]
+    stopped = lambda u: (NOW + 50, True)                                     # the unit's last exit predates the stamp
+    assert failure.clear_recovered(tmp_path, now=NOW + 86400, last_exit=stopped, active_since=lambda u: None) == []
+    assert store.expire(tmp_path, now=NOW + 100 + 604801) == [name]          # seven days after the clear it lapses
+    assert store.read(tmp_path, name, now=NOW + 100 + 604801).state == "UNKNOWN"
