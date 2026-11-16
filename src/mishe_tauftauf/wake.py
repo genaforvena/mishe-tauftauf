@@ -37,6 +37,13 @@ START_REQUEST_TIMEOUT_SECONDS = 60.0
 START_LAUNCH_SLACK_SECONDS = 30.0
 # The write-ahead record covers the bound, the launch slack and the spacing (see _start_once).
 START_WRITE_AHEAD_SECONDS = START_REQUEST_TIMEOUT_SECONDS + START_LAUNCH_SLACK_SECONDS + START_SPACING_SECONDS
+# Name of the ripgrep config written for each wake engine. The site home holds transcripts, release
+# snapshots and work trees (tens of GB, over a million files): one `rg <pattern> .mishe-tauftauf`
+# walks all of it, because ripgrep searches an explicitly named directory even when it is hidden or
+# ignored. That starved a wake engine into its hard timeout (wake-senses-1794824873283298988,
+# 2026-11-16). The config is a deterministic guard that does not depend on a mind reading its
+# dossier warning.
+RIPGREP_CONFIG_NAME = "ripgreprc"
 
 
 class EngineNotStarted(Exception):
@@ -327,6 +334,21 @@ def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, ti
     return state, detail
 
 
+def _ripgrep_guard(home) -> Path:
+    """Write and return a ripgrep config that excludes the site home from every search.
+
+    ``RIPGREP_CONFIG_PATH`` applies to each ripgrep invocation, including one that names an
+    ignored or hidden directory on the command line, which a plain ``.ignore`` file does not
+    cover. The site home's own basename is used, so a renamed home keeps the guard.
+    """
+    name = Path(home).name
+    body = f"--glob=!{name}/**\n--glob=!**/{name}/**\n"
+    path = Path(home) / RIPGREP_CONFIG_NAME
+    if not path.exists() or path.read_text(encoding="utf-8") != body:
+        path.write_text(body, encoding="utf-8")
+    return path
+
+
 def _execute_engine(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, timeout, on_start=None):
     snap.tape_seq = max([owed.tape_cursor(home, role)] + [seq for seq, _ in mail])
     yielding.wakes_dir(home).mkdir(parents=True, exist_ok=True)
@@ -337,7 +359,8 @@ def _execute_engine(home, role, key, *, engine, now, snap, mail, reconcile_of, r
     prompt = yielding.wakes_dir(home) / f"{key}.prompt.md"
     prompt.write_text(dossier.build(home, role, snap, key=key, now=now, mail=mail,
                                     reconcile_of=reconcile_of, repo=repo, timeout=timeout), encoding="utf-8")
-    env = dict(os.environ, MISHE_SEED_HOME=str(home), MISHE_ROLE=role, MISHE_WAKE_KEY=key)
+    env = dict(os.environ, MISHE_SEED_HOME=str(home), MISHE_ROLE=role, MISHE_WAKE_KEY=key,
+               RIPGREP_CONFIG_PATH=str(_ripgrep_guard(home)))
     engine_started = time.monotonic()
     try:
         code = engine.run(prompt, env=env, cwd=repo or Path(home), timeout=timeout, on_start=on_start)

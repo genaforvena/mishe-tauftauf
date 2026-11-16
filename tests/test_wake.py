@@ -64,6 +64,25 @@ def test_owed_wake_runs_engine_with_dossier_and_yield_completes(home):
     assert [i["id"] for i in intentions.list_(home, "genome")] == ["idle-initiative"]
 
 
+def test_wake_engine_env_excludes_the_site_home_from_ripgrep(home):
+    # A mind that names the site home on an rg command line would otherwise walk tens of GB
+    # (wake-senses-1794824873283298988). The guard must reach the engine env and cover both the
+    # relative and absolute spellings of the home, derived from its own basename.
+    owed.touch_inbox(home, "genome")
+    seen = {}
+
+    def script(prompt, env):
+        seen.update(env)
+        return do_yield(prompt, env)
+
+    assert go(home, "genome", FakeEngine(script)).outcome == "completed"
+    cfg = Path(seen["RIPGREP_CONFIG_PATH"])
+    assert cfg.exists() and cfg.parent == home
+    body = cfg.read_text()
+    assert f"--glob=!{home.name}/**" in body
+    assert f"--glob=!**/{home.name}/**" in body
+
+
 def test_no_yield_leaves_dispatch_unknown_and_cursor_unmoved(home):
     owed.touch_inbox(home, "genome")
     result = go(home, "genome", FakeEngine(lambda p, e: 0))
