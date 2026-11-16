@@ -9,8 +9,11 @@ a model until you release the hold.
 
 - Linux with a working user systemd manager (`systemctl --user status`), Python 3.10+
   and Git.
-- At least one authenticated coding agent: **`claude`** (Claude Code), **`omp`**, or
-  **`codex`** (the `codex` CLI's own login).
+- A Rust toolchain (`cargo`, ideally installed via rustup): step 2 builds the Rust
+  components the site's readers need. Each crate pins its version in
+  `rust/*/rust-toolchain.toml`.
+- At least one authenticated coding agent: **`claude`** (Claude Code), **`omp`**,
+  **`codex`** (the `codex` CLI's own login), or **`qwen`** (Qwen Code).
   Mishe supplies neither the model nor credentials; usage counts against your plan.
 - Optional: GitHub CLI `gh` with repository access, for the CI reading. Without it
   the CI signal stays UNKNOWN.
