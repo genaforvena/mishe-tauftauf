@@ -4,7 +4,7 @@ Status: the mechanism works and has been exercised on the live site. `components
 
 ## Problem
 
-Every delivery moves one pin, `SITE_HOME/runtime/current`, that serves all code at once. A delivery holds new wakes only while it waits for the dispatch lock at activation, then applies the pin and exercises recovery with that block still held (the duration is not measured; `operating.md` records the same gap), so a change to one leaf tool can still delay every mind. The pin is one release, so a leaf change cannot ship without the core.
+Every delivery moves one pin, `SITE_HOME/runtime/current`, that serves all code at once. A delivery holds new wakes only while it waits for the dispatch lock at activation, then applies the pin and exercises recovery with that block still held (the duration is not measured), so a change to one leaf tool can still delay every mind. The pin is one release, so a leaf change cannot ship without the core.
 
 ## Layout
 
