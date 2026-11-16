@@ -824,6 +824,30 @@
       "replaces": []
     },
     {
+      "name": "network-uplink",
+      "command": [
+        "{python}",
+        "{repo}/checks/network-care.py",
+        "uplink",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 300,
+      "timeout": 30,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "network",
+      "covers": "the WAN receive-drop rate (eth0 rx_dropped per hour, from the router readings in network/router.jsonl) and rx_errors above zero; RED above 400 drops/h over a full 1.8 h span or on any rx_errors, UNKNOWN when the newest router reading is missing or older than two hours, or the counter reset",
+      "replaces": []
+    },
+    {
       "name": "network-window",
       "command": [
         "{python}",

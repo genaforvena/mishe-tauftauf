@@ -57,5 +57,19 @@ class UplinkStateTests(unittest.TestCase):
         self.assertEqual(code, 0, msg)
 
 
+class UplinkDutyDeclared(unittest.TestCase):
+    """The uplink judge must run as a registered duty, or nothing alarms on it."""
+
+    def test_network_uplink_duty_runs_the_uplink_check_with_the_standard_codes(self):
+        import json
+        duties = json.loads((ROOT / "duties.json").read_text(encoding="utf-8"))
+        items = duties if isinstance(duties, list) else duties.get("duties", [])
+        (duty,) = [d for d in items if d.get("name") == "network-uplink"]
+        self.assertEqual(duty["command"][1:], ["{repo}/checks/network-care.py", "uplink", "--home", "{home}", "--repo", "{repo}"])
+        self.assertEqual(duty["red_codes"], [2])
+        self.assertEqual(duty["unknown_codes"], [3])
+        self.assertEqual(duty["resolver"], "network")
+
+
 if __name__ == "__main__":
     unittest.main()
