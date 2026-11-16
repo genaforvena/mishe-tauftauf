@@ -146,6 +146,15 @@ def test_non_numeric_heartbeat_ts_is_unknown_not_a_traceback():
     assert check.evaluate(ACTIVE, {"cycles": 1}, NOW)[0] == 3
 
 
+def test_non_finite_heartbeat_ts_is_unknown_not_green():
+    # Review finding 2026-11-16: float("nan")/float("inf") parse fine, so a
+    # NaN age (nan > 180 is False) or -inf age reported a dead heartbeat as
+    # fresh GREEN. A non-finite timestamp is unreadable -> UNKNOWN 3.
+    for ts in (float("nan"), float("inf"), float("-inf"), "nan", "inf"):
+        code, reason = check.evaluate(ACTIVE, {"ts": ts, "cycles": 5}, NOW)
+        assert code == 3, (ts, code, reason)
+
+
 def test_malformed_heartbeat_file_is_unknown_and_never_restarts(monkeypatch, tmp_path):
     restarts = []
     heartbeat = tmp_path / "health" / "ilya-telegram-bot.json"

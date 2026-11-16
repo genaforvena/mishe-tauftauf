@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import subprocess
 import time
 from pathlib import Path
@@ -81,6 +82,8 @@ def evaluate(state: dict, heartbeat: dict | None, now: float) -> tuple[int, str]
     try:
         started = float(heartbeat["ts"])
     except (KeyError, TypeError, ValueError):
+        return 3, "heartbeat timestamp is unreadable while the unit is active"
+    if not math.isfinite(started):
         return 3, "heartbeat timestamp is unreadable while the unit is active"
     age = now - started
     if age > MAX_HEARTBEAT_AGE:
