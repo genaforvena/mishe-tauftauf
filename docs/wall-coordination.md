@@ -256,7 +256,9 @@ A `--when` whose condition already holds fires on the next check — the test is
 the signal matches now, not whether it just changed — so a wait on a value that persists
 does not wait at all: `pin-delivery` stays `GREEN` from a delivery until the next
 promotion. When the condition you want is already true, wait with `--again`; reserve
-`--when` for a value the signal does not yet hold.
+`--when` for a value the signal does not yet hold. The yield says so too: `settle` warns
+when the `--when` condition already holds, in the same message that flags an unregistered
+signal, so a written wait that is no wait is visible the moment it is written.
 
 A yield also sets the idle pace. The default idle initiative returns in two hours, but a
 role with a ready lane in its work record and fresh spare budget returns in thirty
