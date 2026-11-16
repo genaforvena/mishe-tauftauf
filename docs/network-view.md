@@ -13,11 +13,13 @@ One JSON object per line, oldest first.
 | field | meaning |
 | --- | --- |
 | `ts` | epoch seconds (float), when the read ran |
-| `ok` | `true` if the read worked, `false` if not |
+| `ok` | `true` if the read worked, `false` if it failed or the pass was skipped |
 | `clients` | only when `ok` is true: list of Wi-Fi clients |
 | `uptime_s` | only when `ok` is true: router uptime in seconds |
 | `wan` | only when `ok` is true: `{"up": bool, "uptime_s": int}` |
-| `error` | only when `ok` is false: text of the failure |
+| `uplink` | only when `ok` is true and the WAN link device is named: `{"device": str, "rx_errors": int, "rx_dropped": int, "tx_errors": int, "tx_dropped": int}`, cumulative since the router booted; `null` when the device is not named |
+| `router_load` | only when `ok` is true: `{"load_1m": float, "load_5m": float, "mem_available_mb": float}` from the router's `/proc/loadavg` and `MemAvailable`; `null` when the read carries neither a load nor free RAM |
+| `error` | only when `ok` is false: the failure text, or a `skipped: …` reason when the pass was held off over the router's self-limit (see `docs/network-router-monitoring.md`) |
 
 Each client:
 
@@ -27,10 +29,11 @@ Each client:
 - `dbm`: signal strength. Higher is stronger, so -9 is stronger than -36.
 - `rx`, `tx`: rates in MBit/s. These can be `null` if the router did not report them.
 
-Retention: rows older than 2 days are dropped (`KEEP_S`). Failed rows are kept, so a dead
-probe shows as UNKNOWN in the view, not as a calm network.
+Retention: rows older than 2 days are dropped (`KEEP_S`). Failed and skipped rows are kept,
+so a dead probe shows as UNKNOWN in the view, not as a calm network.
 
-Exit codes: 0 when the read worked, 3 when it failed (UNKNOWN in the duty contract, not RED).
+Exit codes: 0 when the read worked, 3 when it failed or was skipped over the self-limit
+(UNKNOWN in the duty contract, not RED).
 
 ## What the view says about it
 
