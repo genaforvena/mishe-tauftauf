@@ -325,7 +325,7 @@ def router_health_line(now=None):
     last = rows_[-1]
     ago = now - last["ts"]
     if not last.get("ok"):
-        return f"UNKNOWN (last router read failed {ago:.0f} s ago)"
+        return f"UNKNOWN (last router read failed {ago:.0f} s ago: {last.get('error', 'no reason recorded')})"
     rl = last.get("router_load")
     over = nb.router_over_limit(rl)
     if over is None:

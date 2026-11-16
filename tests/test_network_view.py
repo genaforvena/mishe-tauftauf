@@ -244,6 +244,14 @@ def test_router_health_flags_the_self_limit(tmp_path, monkeypatch):
     assert "load 1.40" in line and "over the self-limit" in line
 
 
+def test_router_health_shows_the_skip_reason(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    reason = "skipped: router over its self-limit at the last read (load 1.08 (5 min), free RAM 196 MB)"
+    _router_log(tmp_path, monkeypatch, {"ts": now, "ok": False, "error": reason})
+    line = view.router_health_line(now)
+    assert line.startswith("UNKNOWN") and "skipped: router over its self-limit" in line
+
+
 def test_router_health_unknown_without_numbers(tmp_path, monkeypatch):
     now = 1_000_000.0
     _router_log(tmp_path, monkeypatch, {"ts": now, "ok": True, "clients": [], "router_load": None})
