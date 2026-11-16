@@ -46,6 +46,7 @@
     "src/mishe_tauftauf/release_boundary.py",
     "src/mishe_tauftauf/release_retention.py",
     "src/mishe_tauftauf/render_admission.py",
+    "src/mishe_tauftauf/retention_text.py",
     "src/mishe_tauftauf/revive_boundary.py",
     "src/mishe_tauftauf/rollout_boundary.py",
     "src/mishe_tauftauf/runtime_cli.py",
