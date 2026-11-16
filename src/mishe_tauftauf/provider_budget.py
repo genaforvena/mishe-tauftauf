@@ -99,5 +99,8 @@ def publish(home, rows, *, now):
     if state == "UNKNOWN":
         signal_store.observe_unknown(Path(home), name, now=now, reason=reason, source=source)
     else:
-        signal_store.observe(Path(home), name, state, now=now, source=source)
+        # Carry the cause into the reading: a RED with an empty reason tells a subscriber the
+        # provider holds work but not which window or rule did it (2026-11-16: the live
+        # budget-claude RED recorded reason="" while ``evaluate`` had already named the cause).
+        signal_store.observe(Path(home), name, state, now=now, source=source, reason=reason)
     return dict(state=state, reason=reason)

@@ -42,6 +42,21 @@ def test_provider_signal_missing_stale_and_recovery(tmp_path):
     assert signal_store.read(tmp_path, "budget-claude", now=1002).state == "UNKNOWN"
 
 
+def test_red_and_green_readings_carry_their_cause(tmp_path):
+    # A subscriber woken by a RED edge must be able to read why without re-deriving it; the
+    # verdict's reason was previously dropped for every non-UNKNOWN state (2026-11-16).
+    signal_store.register(tmp_path, "budget-claude", max_age=900, subscribers=[])
+    burning = rows(); burning[1]["verdict"] = "RUNS OUT BEFORE RESET"
+    assert budget.publish(tmp_path, burning, now=100)["state"] == "RED"
+    red = signal_store.read(tmp_path, "budget-claude", now=101)
+    assert red.value == "RED"
+    assert red.reason == "provider's existing quota or burn rule holds spontaneous work"
+    assert budget.publish(tmp_path, rows(), now=110)["state"] == "GREEN"
+    green = signal_store.read(tmp_path, "budget-claude", now=111)
+    assert green.value == "GREEN"
+    assert green.reason == "both provider windows satisfy the existing budget policy"
+
+
 def _engine_budget(now, **over):
     window = dict(used=0.2, reset_at=now + 3600, observed_at=now - 10, state="FRESH", eta_s=None)
     window.update(over)
