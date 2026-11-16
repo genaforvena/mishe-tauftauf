@@ -131,6 +131,21 @@ def test_configured_model_without_output_is_unknown(tmp_path):
     assert any("role senses: model claude-haiku-5-5" in line and "UNKNOWN" in line for line in lines)
 
 
+def test_configured_model_that_rendered_before_the_window_is_not_unknown(tmp_path):
+    # A model that stopped being routed must not read as never-run just because its
+    # newest output aged past the newest `limit` files: existence, not recency.
+    home = site(tmp_path, {"genome": "gpt-6.1-terra", "senses": "MiniMax-M3.1-Flash"})
+    older = write_out(home / "wakes", "wake-senses-1", "MiniMax-M3.1-Flash",
+                      omp_lines("MiniMax-M3.1-Flash", *clean_events("MiniMax-M3.1-Flash")))
+    newer = write_out(home / "wakes", "wake-genome-1", "gpt-6.1-terra",
+                      omp_lines("gpt-6.1-terra", *clean_events("gpt-6.1-terra")))
+    os.utime(older, (1, 1))
+    os.utime(newer, (2, 2))
+    code, lines = check.evaluate(home, REPO, 1, False)
+    assert code == 0, lines
+    assert not any("no retained wake output yet" in line for line in lines)
+
+
 def test_no_outputs_is_undecidable(tmp_path):
     home = site(tmp_path, {"genome": "gpt-6.1-terra"})
     code, _ = check.evaluate(home, REPO, 50, False)

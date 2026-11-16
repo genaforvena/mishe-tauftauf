@@ -18,9 +18,11 @@ fails on:
   - an exception raised by the renderer.
 
 Engine change: every SITE/engines/ROLE.json names a model. If a role's
-configured model has no retained wake output yet, that model cannot be shown
-passing, so it is UNKNOWN until its first wake is rendered. The next wake of
-that role after a model change is therefore the one that must pass.
+configured model has never produced a retained wake output, that model cannot be
+shown passing, so it is UNKNOWN until its first wake is rendered. The next wake of
+that role after a model change is therefore the one that must pass. This is an
+existence test over every retained output, not the newest `--limit`: a model that
+merely stopped being routed must not read as never-run.
 
 On a failure with --route, the renderer owner (genome) gets one DM per distinct
 failure, naming the sample wake key. The same failure is not re-sent: the
@@ -91,6 +93,25 @@ def newest_per_model(wakes: Path, limit: int) -> dict[str, Path]:
         if name and name not in newest:
             newest[name] = path
     return newest
+
+
+def models_ever_seen(wakes: Path, skip: int) -> set[str]:
+    """Model names in the retained outputs the newest `skip` files do not cover.
+
+    `newest_per_model` bounds rendering work, but it is the wrong bound for the
+    question "has this model ever produced output": a quiet model ages past a fixed
+    window and reads as never-run. Callers union this set with the rendered window
+    to answer existence over every retained output.
+    """
+    paths = sorted(wakes.glob('wake-*.prompt.out.*'), key=lambda p: p.stat().st_mtime_ns, reverse=True)[skip:]
+    seen = set()
+    for path in paths:
+        if path.suffix not in ('.json', '.jsonl'):
+            continue
+        name = model_name(path)
+        if name:
+            seen.add(name)
+    return seen
 
 
 def configured_models(home: Path) -> dict[str, tuple[str, str]]:
@@ -251,9 +272,14 @@ def evaluate(home: Path, repo: Path, limit: int, do_route: bool) -> tuple[int, l
             lines.append(f'{label} model {model}: {state} (sample {sample})')
             failures += [(model, sample, f'{label}: {p}') for p in problems]
     pending = []
-    for role, (engine, model) in sorted(roles.items()):
-        if model not in newest:
-            pending.append(f'role {role}: model {model} ({engine}) has no retained wake output yet; UNKNOWN until its first wake renders')
+    missing = [(role, engine, model) for role, (engine, model) in sorted(roles.items())
+               if model not in newest]
+    if missing:
+        # A model absent from the render window may still have produced output the
+        # window no longer covers: existence is the pending question, not recency.
+        older = models_ever_seen(home / 'wakes', limit)
+        pending = [f'role {role}: model {model} ({engine}) has no retained wake output yet; UNKNOWN until its first wake renders'
+                   for role, engine, model in missing if model not in older]
     if failures:
         out = [f'{len(failures)} rendering violation(s) across {len(newest)} model(s) and {len(targets(home, repo))} renderer(s)']
         if do_route:
