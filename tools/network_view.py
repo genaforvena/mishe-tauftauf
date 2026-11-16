@@ -325,7 +325,15 @@ def router_health_line(now=None):
     last = rows_[-1]
     ago = now - last["ts"]
     if not last.get("ok"):
-        return f"UNKNOWN (last router read failed {ago:.0f} s ago: {last.get('error', 'no reason recorded')})"
+        line = f"UNKNOWN (last router read failed {ago:.0f} s ago: {last.get('error', 'no reason recorded')})"
+        real = next((r for r in reversed(rows_) if r.get("ok") and r.get("router_load")), None)
+        if real is not None:
+            rl_real = real["router_load"]
+            load_real = rl_real.get("load_5m") if rl_real.get("load_5m") is not None else rl_real.get("load_1m")
+            if load_real is not None and rl_real.get("mem_available_mb") is not None:
+                line += (f"; last real load {load_real:.2f} (5 min), free RAM {rl_real['mem_available_mb']:.0f} MB, "
+                         f"read {(now - real['ts']) / 60:.0f} min ago")
+        return line
     rl = last.get("router_load")
     over = nb.router_over_limit(rl)
     if over is None:

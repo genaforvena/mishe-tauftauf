@@ -252,6 +252,18 @@ def test_router_health_shows_the_skip_reason(tmp_path, monkeypatch):
     assert line.startswith("UNKNOWN") and "skipped: router over its self-limit" in line
 
 
+def test_router_health_keeps_the_last_real_load_after_a_skip(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    real = {"ts": now - 1800, "ok": True, "clients": [], "router_load": {"load_5m": 0.31, "mem_available_mb": 207.0}}
+    skip = {"ts": now, "ok": False, "error": "skipped: router over its self-limit at the last read"}
+    _router_log(tmp_path, monkeypatch, real)
+    with open(view.ROUTER_LOG, "a") as fh:
+        fh.write(json.dumps(skip) + "\n")
+    line = view.router_health_line(now)
+    assert line.startswith("UNKNOWN") and "skipped: router over its self-limit" in line
+    assert "last real load 0.31 (5 min), free RAM 207 MB, read 30 min ago" in line
+
+
 def test_router_health_unknown_without_numbers(tmp_path, monkeypatch):
     now = 1_000_000.0
     _router_log(tmp_path, monkeypatch, {"ts": now, "ok": True, "clients": [], "router_load": None})
