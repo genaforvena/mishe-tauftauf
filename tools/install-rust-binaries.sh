@@ -39,6 +39,17 @@ mishe-systemd-show:mishe-systemd-show
 mishe-signal-freshness:mishe-signal-freshness
 mishe-signal-samples:mishe-signal-sample"
 
+# Build output goes off the root filesystem: MISHE_BUILD_CACHE wins, then the scratch
+# mount when it is a writable mountpoint, else the site cache. Same policy as delivery_check.py.
+if [ -n "${MISHE_BUILD_CACHE:-}" ]; then
+  cache="$MISHE_BUILD_CACHE"
+elif mountpoint -q /mnt/mishe-scratch 2>/dev/null && [ -w /mnt/mishe-scratch ]; then
+  cache=/mnt/mishe-scratch/mishe-cargo-target
+else
+  cache="$site/cache/cargo-target"
+fi
+mkdir -p "$cache"
+
 commit="$(git -C "$repo" rev-parse HEAD)"
 bin_dir="$site/bin"
 mkdir -p "$bin_dir"
@@ -48,8 +59,8 @@ while IFS=: read -r crate binary; do
   echo "build $crate -> $binary"
   # Build from the crate directory: rustup resolves rust-toolchain.toml from cwd,
   # so --manifest-path from the caller's cwd would build with the default toolchain.
-  (cd "$crate_dir" && "$cargo_bin" build --release --locked)
-  built="$repo/rust/$crate/target/release/$binary"
+  (cd "$crate_dir" && "$cargo_bin" build --release --locked --target-dir "$cache/$crate")
+  built="$cache/$crate/release/$binary"
   if [ ! -x "$built" ]; then
     echo "install-rust-binaries: build produced no $built" >&2
     exit 1
