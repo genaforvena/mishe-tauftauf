@@ -168,6 +168,72 @@ def _lock_holder_info(home, *, runner=subprocess.run):
     return dict(available=True, holders=[dict(pid=p, argv=argv_by_pid.get(p)) for p in pids])
 
 
+HOLD_TEXT = "promotion: short activation hold; wakes resume automatically"
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _hold_fields(text):
+    fields = {}
+    for part in text.split():
+        key, sep, value = part.partition("=")
+        if sep:
+            fields[key] = value
+    return fields
+
+
+def _dispatch_lock_free(home):
+    from .core.state import DispatchStore
+    path = DispatchStore(Path(home) / "dispatch").lock_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    return True
+
+
+def clear_stale_hold(home, *, pid_alive=_pid_alive, now=time.time, legacy_max_age_s=3600):
+    """Remove a ``hold`` left behind by a promotion that died inside its activation window.
+
+    A hold written by ``held_delivery_lock`` carries the writer's pid (``pid=N``). It is stale when that pid is gone
+    and the dispatch lock is free. A hold without a pid (written before this check existed) is stale only when it is
+    older than ``legacy_max_age_s``. Returns True when the hold was removed. Never removes a hold whose writer is alive,
+    or while a running wake or promotion holds the dispatch lock.
+    """
+    hold = Path(home) / "hold"
+    try:
+        text = hold.read_text()
+        mtime = hold.stat().st_mtime
+    except FileNotFoundError:
+        return False
+    fields = _hold_fields(text)
+    if "pid" in fields and fields["pid"].isdigit():
+        if pid_alive(int(fields["pid"])):
+            return False
+    elif now() - mtime < legacy_max_age_s:
+        return False
+    if not _dispatch_lock_free(home):
+        return False
+    try:
+        if hold.read_text() != text:
+            return False  # a new promotion rewrote it while we looked: leave the live hold alone
+    except FileNotFoundError:
+        return False
+    hold.unlink(missing_ok=True)
+    return True
+
+
 @contextmanager
 def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=600, clock=time.monotonic, holder_probe=None):
     """The dispatch lock: first a quiet gap without holding anything, then (``wait_s`` > 0) under a short hold of new wakes.
@@ -185,6 +251,10 @@ def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=600, clock=
     stack = ExitStack()
     hold = Path(home) / "hold"
     held = False
+    if clear_stale_hold(home):
+        from . import wake
+        from .roles import declared
+        wake.resume_owed(home, declared(home), now=time.time())
     try:
         patience_until = clock() + patience_s
         while True:
@@ -193,7 +263,7 @@ def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=600, clock=
                 break
             except DeliveryBusy:
                 if not held and clock() >= patience_until:
-                    hold.write_text("promotion: short activation hold; wakes resume automatically\n")
+                    hold.write_text(f"{HOLD_TEXT}\npid={os.getpid()} started={int(time.time())}\n")
                     held = True
                     deadline = clock() + wait_s
                 if held and clock() >= deadline:

@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -923,3 +924,57 @@ def test_promotion_records_lock_holder_and_phase_on_delivery_busy(tree, monkeypa
     record = read_json(records[0])
     assert record["phase"] == "delivery-busy"
     assert record["held_delivery_lock_holder"]["holders"][0]["pid"] == "4242"
+
+def test_stale_hold_with_a_dead_writer_pid_is_cleared_when_the_dispatch_lock_is_free(tmp_path):
+    hold = tmp_path / "hold"
+    hold.write_text(f"{p.HOLD_TEXT}\npid=999999 started=1\n")
+    assert p.clear_stale_hold(tmp_path, pid_alive=lambda pid: False) is True
+    assert not hold.exists()
+
+
+def test_hold_with_a_live_writer_pid_is_kept(tmp_path):
+    hold = tmp_path / "hold"
+    hold.write_text(f"{p.HOLD_TEXT}\npid=4242 started=1\n")
+    assert p.clear_stale_hold(tmp_path, pid_alive=lambda pid: True) is False
+    assert hold.exists()
+
+
+def test_dead_writer_hold_is_kept_while_a_wake_holds_the_dispatch_lock(tmp_path):
+    hold = tmp_path / "hold"
+    hold.write_text(f"{p.HOLD_TEXT}\npid=999999 started=1\n")
+    handle = _hold_dispatch_lock(tmp_path)
+    try:
+        assert p.clear_stale_hold(tmp_path, pid_alive=lambda pid: False) is False
+    finally:
+        handle.close()
+    assert hold.exists()
+
+
+def test_legacy_hold_without_pid_is_kept_when_fresh_and_cleared_when_old(tmp_path):
+    hold = tmp_path / "hold"
+    hold.write_text(f"{p.HOLD_TEXT}\n")
+    assert p.clear_stale_hold(tmp_path, now=lambda: hold.stat().st_mtime + 10) is False
+    assert hold.exists()
+    assert p.clear_stale_hold(tmp_path, now=lambda: hold.stat().st_mtime + 7200) is True
+    assert not hold.exists()
+
+
+def test_held_lock_writes_the_writer_pid_into_the_hold(tmp_path):
+    handle = _hold_dispatch_lock(tmp_path)
+    seen = {}
+
+    def sleep(_):
+        seen["text"] = (tmp_path / "hold").read_text()
+        handle.close()
+
+    from mishe_tauftauf import wake
+    mp = pytest.MonkeyPatch()
+    mp.setattr(wake, "resume_owed", lambda *a, **k: None)
+    mp.setattr("mishe_tauftauf.roles.declared", lambda home: [])
+    try:
+        with p.held_delivery_lock(tmp_path, 60, sleep=sleep, patience_s=0):
+            pass
+    finally:
+        mp.undo()
+    assert f"pid={os.getpid()} " in seen["text"]
+    assert seen["text"].startswith(p.HOLD_TEXT)
