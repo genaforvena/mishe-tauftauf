@@ -146,3 +146,21 @@ def test_old_invocation_running_300s_drains_under_default_window(tmp_path, monke
     record = fence.drain(tmp_path, tmp_path, 'pin', sleep=sleep)
     assert record['label'] == 'pin'
     assert clock['now'] >= 300
+
+
+def test_pinned_wake_started_before_cutoff_and_still_running_fails_the_drain(tmp_path, monkeypatch):
+    """Reproduces the a0e0dbe8 rollback: a mishe-wake@ oneshot (a 35-minute wake) that started before the
+    cutoff keeps old bytes running past DRAIN_TIMEOUT_S, so the drain must time out and fail closed."""
+    transition(tmp_path)
+    clock = {'now': 0.0}
+    monkeypatch.setattr(fence.time, 'monotonic', lambda: clock['now'])
+    wake = dict(STARTING, Id='mishe-wake@genome.service', Type='oneshot', KillMode='control-group',
+                ActiveState='activating', ControlGroup='/', ExecMainStartTimestampMonotonic='1',
+                InvocationID='wake-genome-inv')
+    monkeypatch.setattr(fence, 'inventory', lambda home, previous=None: {'mishe-wake@genome.service': wake})
+    monkeypatch.setattr(fence, 'cgroup_pids', lambda group: [4343])
+    def sleep(seconds):
+        clock['now'] += seconds
+    with pytest.raises(ValueError, match='old invocations remain'):
+        fence.drain(tmp_path, tmp_path, 'pin', sleep=sleep)
+    assert clock['now'] >= fence.DRAIN_TIMEOUT_S
