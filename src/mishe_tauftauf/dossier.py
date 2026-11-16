@@ -122,7 +122,10 @@ def engine_ceiling(home, role: str, timeout: float) -> float:
 def build(home, role: str, snap, *, key: str, now: float, mail: list, reconcile_of=None,
           repo: Path | None = None, since: str | None = None, timeout: float | None = None) -> str:
     home = Path(home)
-    out = [f"# Wake {key} for {role}", ""]
+    out = [f"# Wake {key} for {role}", "",
+           f"Site home (absolute): `{home.resolve()}`. Pass this resolved path to file tools; "
+           "they do not expand `$MISHE_SEED_HOME`, `$MISHE_TAUFTAUF_HOME` or `~`, so an "
+           "unexpanded variable writes a stray tree outside the site whose files no peer reads.", ""]
     if timeout:
         ceiling = engine_ceiling(home, role, timeout)
         minutes = max(1, int(ceiling // 60))

@@ -245,3 +245,16 @@ def test_ending_names_the_one_hour_red_reoffer_default(tmp_path):
     ending = out[out.index("## Ending the wake"):]
     assert "RED failure signal" in ending and "one hour later" in ending and "--again 1h" in ending
     assert "15 minutes" not in ending
+
+
+def test_dossier_carries_the_resolved_site_home_for_file_tools(tmp_path):
+    """A woken mind must not have to expand `$MISHE_SEED_HOME` itself.
+
+    The agent's file tools do not expand shell variables, so a wall or artifact
+    written against the literal `$MISHE_SEED_HOME/<...>` path lands in a stray
+    tree outside the site (observed 2026-11-15 docs wall, 2026-11-16 health
+    wall). The dossier prints the absolute home and the non-expansion fact.
+    """
+    out = dossier.build(tmp_path, "health", owed.Snapshot(), key="example", now=100, mail=[])
+    assert f"Site home (absolute): `{tmp_path.resolve()}`" in out
+    assert "do not expand" in out and "$MISHE_SEED_HOME" in out
