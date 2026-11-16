@@ -233,12 +233,29 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         # period), a write burst that stalled the root-fs probe's fsync on 2026-11-13. A per-activation
         # random delay breaks that lockstep; it is a quarter of the period, capped at 120 s, so short
         # timers are not pushed far.
-        jitter = max(1, min(120, prod.every_seconds // 4))
+        jitter = timer_jitter(prod.every_seconds)
         files[f"{p}-producer-{prod.name}.timer"] = _file(
             f"[Unit]\nDescription=Run producer {prod.name}",
-            f"[Timer]\nOnBootSec=30\nOnUnitActiveSec={prod.every_seconds}\nRandomizedDelaySec={jitter}\nAccuracySec=5s\nUnit={p}-producer-{prod.name}.service",
+            f"[Timer]\nOnBootSec=30\nOnUnitActiveSec={prod.every_seconds}\nRandomizedDelaySec={jitter}\nAccuracySec={TIMER_ACCURACY_S}s\nUnit={p}-producer-{prod.name}.service",
             "[Install]\nWantedBy=timers.target")
     return files
+
+
+TIMER_ACCURACY_S = 5
+"""The timer's ``AccuracySec``: a run may start this late past its period. Paired with ``timer_jitter``."""
+
+
+def timer_jitter(every_seconds: int) -> int:
+    """The producer timer's ``RandomizedDelaySec``: a quarter of the period, capped at 120 s.
+
+    Producers with the same period started together fire in lockstep (about 17 at one
+    second every period), a write burst that stalled the root-fs probe's fsync on
+    2026-11-13. A per-activation random delay breaks that lockstep, so the longest gap
+    between two runs is ``every + timer_jitter(every) + TIMER_ACCURACY_S``. A duty whose
+    ``max_age`` sits below that reads expired while its producer is healthy (2026-11-16:
+    ``audio-listener-coverage`` max_age 120 under a 105 s period flapped on every run).
+    """
+    return max(1, min(120, every_seconds // 4))
 
 
 def signal_name(unit: str) -> str:

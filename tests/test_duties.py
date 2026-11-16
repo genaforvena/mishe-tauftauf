@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from mishe_tauftauf import duties, owed, producers, signal_store as store
+from mishe_tauftauf import duties, owed, producers, signal_store as store, units
 
 REPO = Path(__file__).resolve().parents[1]
 NOW = 10_000.0
@@ -28,6 +28,12 @@ def test_every_duty_has_a_resolver_signal_and_sane_timing():
         # A duty that replaces nothing is new coverage; `replaces` must still be declared.
         assert d["resolver"] and isinstance(d["replaces"], list) and d["covers"], d["name"]
         assert d["max_age"] >= d["every"] + d["timeout"], f"{d['name']} would read stale while healthy"
+        # The producer timer adds RandomizedDelaySec + AccuracySec on top of the period, so a run
+        # can start this late; a max_age inside that window reads expired between healthy runs and
+        # wakes the subscriber for nothing (2026-11-16: audio-listener-coverage flapped every run).
+        latest_start = d["every"] + units.timer_jitter(d["every"]) + units.TIMER_ACCURACY_S
+        assert d["max_age"] > latest_start, \
+            f"{d['name']} would read stale between healthy runs (max_age {d['max_age']} <= {latest_start})"
         assert d["max_age"] <= 6 * d["every"], f"{d['name']} would take too long to notice silence"
 
 

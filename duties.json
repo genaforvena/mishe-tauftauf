@@ -549,12 +549,12 @@
       ],
       "every": 105,
       "timeout": 15,
-      "max_age": 120,
+      "max_age": 150,
       "unknown_codes": [
         4
       ],
       "resolver": "senses",
-      "covers": "resident living-room listener heartbeat: GREEN when its status is fresh and at least half of wall time is observed, RED under 50 %, UNKNOWN when the status is stale, missing, stopped, restarting, suspended or warming up",
+      "covers": "resident living-room listener heartbeat: GREEN when its status is fresh and at least half of wall time is observed, RED under 50 %, UNKNOWN when the status is stale, missing, stopped, restarting, suspended or warming up. max_age sits above every + the timer's per-period jitter + clock accuracy (105 + 26 + 5) so a healthy run never reads expired between samples",
       "replaces": []
     },
     {
