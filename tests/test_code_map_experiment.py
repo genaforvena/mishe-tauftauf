@@ -36,6 +36,15 @@ def test_parse_errors_are_reported_as_unknown(tmp_path):
     assert "bad.py" in result.stdout
 
 
+def test_broken_source_symlink_in_directory_is_incomplete(tmp_path):
+    (tmp_path / "visible.py").write_text("def visible():\n    pass\n")
+    (tmp_path / "missing.py").symlink_to("absent.py")
+    result = run_map(tmp_path)
+    assert result.returncode != 0, result.stdout
+    assert "UNKNOWN" in result.stdout
+    assert "missing.py" in result.stdout
+
+
 def test_rooted_reference_experiment_keeps_unknowns_and_follows_transitive_names(tmp_path):
     source = tmp_path / "sample.py"
     source.write_text("def entry():\n    middle()\n\ndef middle():\n    leaf()\n\ndef leaf():\n    pass\n\ndef orphan():\n    pass\n")

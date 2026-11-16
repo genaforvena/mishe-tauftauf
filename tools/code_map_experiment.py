@@ -32,7 +32,7 @@ def main():
             for directory, dirs, filenames in os.walk(path, onerror=lambda error: problems.append(str(error))):
                 dirs[:] = [name for name in dirs if not excluded(Path(directory) / name)]
                 files.update(p for name in filenames if not excluded(p := Path(directory) / name)
-                             and p.is_file() and p.suffix in parsers)
+                             and p.suffix in parsers and (p.is_file() or p.is_symlink()))
         else:
             problems.append(f"unsupported or missing path: {path}")
     names, definitions, references = Counter(), [], []

@@ -17,6 +17,8 @@ macros and test discovery can invoke names with no syntactic reference. A
 same-name identifier anywhere in scope also suppresses a candidate even if it is
 unrelated. Parse errors and unreadable paths are UNKNOWN and cause a nonzero
 exit. Check each candidate with wider searches and actual usage evidence.
+Directory traversal does not follow symlinked directories; supply their targets
+explicitly when they belong in the scope.
 
 The existing `tools/check_dangling.py` uses Python AST and symbol tables to
 find unresolved names and imports; it answers a different question. In a
