@@ -189,6 +189,18 @@ def test_ilya_bot_duty_runs_the_committed_detector_against_the_plant():
     assert item["command"][:2] == ["{python}", "{repo}/checks/telegram-bot-alive.py"]
     assert item["command"][2:4] == ["--home", "{home}"]
 
+
+
+def test_lzhezalia_duty_names_its_own_unit_and_heartbeat():
+    """A copy of the Ilya duty that reuses the defaults would watch the wrong bot."""
+    item = next(d for d in ALL if d["name"] == "lzhezalia-bot")
+    assert item["resolver"] == "health"
+    assert item["red_codes"] == [2] and item["unknown_codes"] == [3]
+    assert item["command"][:2] == ["{python}", "{repo}/checks/telegram-bot-alive.py"]
+    assert item["command"][2:4] == ["--home", "{home}"]
+    assert item["command"][4:6] == ["--unit", "lzhezalia-bot.service"]
+    assert item["command"][6:8] == ["--heartbeat", "{home}/health/lzhezalia-bot.json"]
+    assert item["command"][8:10] == ["--state", "{home}/health/lzhezalia-bot-heal.json"]
 def test_privacy_scan_runs_on_a_timer_with_the_site_credentials():
     """The privacy scan had no duty, so its signal aged to UNKNOWN between hand runs.
 
