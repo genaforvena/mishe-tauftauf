@@ -236,6 +236,31 @@ def test_ordinary_review_carries_the_release_commit_intent(tree,monkeypatch):
     assert "new" in seen["patch"]["rationale"]
 
 
+def test_ordinary_review_supplies_a_file_the_changed_document_describes(tree,monkeypatch):
+    # Measured on the docs releases 19fb7646 and c87cd884: docs/network-view.md
+    # describes checks/network-care.py's RED/UNKNOWN rules, but review() supplied
+    # only record["paths"], so the reviewer could not trace the documented arms to
+    # code and answered "unknown". A changed file that names an existing repo file
+    # must carry that file's bytes too.
+    import base64
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha);p.materialize(home,repo,old)
+    (source/"checks").mkdir(exist_ok=True)
+    (source/"checks"/"care.py").write_text("UPLINK_RED_PER_HOUR = 400\n")
+    (source/"docs"/"page.md").write_text("see `checks/care.py` for the rule\n")
+    identity="described"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",
+        source=str(source),paths=["docs/page.md"],check=dict(output="pass",code=0),
+        observe_argv=["probe"],observe=dict(code=0,output="ok"),review_pending=True))
+    seen={}
+    monkeypatch.setattr(p.wall_patch,"review",lambda h,patch:(seen.__setitem__("patch",patch) or dict(clear=True,response={})))
+    monkeypatch.setattr(p,"config_paths",lambda *a:[])
+    p.review(home,identity)
+    described=seen["patch"]["files"]["checks/care.py"]
+    assert described["before"]==described["after"]
+    assert "UPLINK_RED_PER_HOUR = 400" in base64.b64decode(described["after"]["bytes"]).decode()
+
+
 def test_release_intent_is_empty_when_the_worktree_is_gone(tmp_path):
     assert p._release_intent(tmp_path/"missing","a","b")==""
 

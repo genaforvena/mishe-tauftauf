@@ -14,7 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from . import release_boundary, work_boundary as boundary, wall_patch, proc_table
+from . import page_paths_text, release_boundary, work_boundary as boundary, wall_patch, proc_table
 from .git_base_text import commit_intent_text
 from .state_files import read_json, write_json, write_text_atomic
 from .work_receipts import digest
@@ -574,6 +574,51 @@ def _release_intent(source, previous, sha):
     return commit_intent_text(raw)
 
 
+DESCRIBED_PATH_MAX = 12
+"""How many repo files one release may add to a review context this way."""
+
+_DESCRIBED_MAX_BYTES = 256_000
+_DESCRIBED_TOTAL_BYTES = 320_000
+"""Total bounded addition: half ``wall_patch``'s own ``CONTEXT_TOTAL_BYTES``."""
+
+
+def _described_paths(source, paths, included):
+    """Repo files a changed page names, which the reviewer would otherwise never see.
+
+    A review supplies the bytes of ``record["paths"]`` only. A changed
+    documentation page that describes a source file it does not change therefore
+    arrives without the code it documents, and the documented rules cannot be
+    traced to code: measured on the docs releases 19fb7646 and c87cd884, where
+    ``docs/network-view.md`` describes ``checks/network-care.py``'s RED/UNKNOWN
+    arms and the reviewer answered "unknown" for want of that file.
+
+    ``page_paths_text`` decodes the path tokens a page spells; here they are
+    resolved against the release tree and returned as unchanged review entries.
+    Deterministic: first-appearance order, capped at ``DESCRIBED_PATH_MAX``;
+    an over-size file is skipped, never truncated.
+    """
+    found, seen, total = [], set(included), 0
+    for name in paths:
+        if not page_paths_text.is_page(name):
+            continue
+        file = source / name
+        if not file.is_file() or file.is_symlink() or file.stat().st_size > _DESCRIBED_MAX_BYTES:
+            continue
+        for token in page_paths_text.referenced_paths(file.read_text(errors="replace")):
+            if token in seen or token in paths:
+                continue
+            candidate = source / token
+            if not candidate.is_file() or candidate.is_symlink():
+                continue
+            size = candidate.stat().st_size
+            if size > _DESCRIBED_MAX_BYTES or total + size > _DESCRIBED_TOTAL_BYTES:
+                continue
+            seen.add(token); found.append(token); total += size
+            if len(found) >= DESCRIBED_PATH_MAX:
+                return found
+    return found
+
+
 def review(home, identity):
     path = record_path(home,identity); record=read_json(path)
     if not record or (record["phase"] not in ("delivered", "reverting", "reverted") and record.get("observed") is not True):
@@ -598,6 +643,13 @@ def review(home, identity):
     for name in record["paths"]:
         before=wall_patch.snapshot(old/name); after=wall_patch.snapshot(source/name)
         patch["files"][name]=dict(before=before,runtime_before=before,after=after)
+    # A changed page that describes a source file it does not change would
+    # otherwise reach the reviewer without the code it documents. Hand those
+    # files over as unchanged entries (an empty diff still carries full
+    # after_text), so the documented rules can be traced to their source.
+    for name in _described_paths(source, record["paths"], patch["files"]):
+        same=wall_patch.snapshot(source/name)
+        patch["files"][name]=dict(before=same,runtime_before=same,after=same)
     # Reviewer understanding depends on the author's stated intent (Bacchelli
     # §VI.B: rationale determines what a reviewer can judge). The generic
     # "probe succeeded" line cannot explain a design choice in the diff, and a

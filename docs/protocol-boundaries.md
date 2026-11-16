@@ -91,6 +91,24 @@ than wall text. It accepts a reviewer model id only when the id starts with
 `claude-haiku-`, and `wall_review.py` calls it on the configured id.
 Everything the adapters do not name stays opaque.
 
+`page_paths_text.py` reads one form of the reader book: the repository paths a
+Markdown page spells. `SUFFIX` is `.md` and `REFERENCE` matches a token that
+starts with a word character and ends in a file suffix (`py`, `md`, `json`, `sh`,
+`rs`, `toml`), in first-appearance order; a token that begins `./` cannot match,
+so none needs trimming. Whether a token names an existing file, and whether it
+joins a delivery review, is the caller's decision, not the adapter's.
+`release_promotion._described_paths` composes it: a review already supplies the
+reviewer only the bytes of the changed paths, so a changed page that describes a
+rule implemented elsewhere arrives without the code it documents and the reviewer
+cannot trace it. The composer adds at most `DESCRIBED_PATH_MAX` (12) such files,
+each at most 256 000 bytes and 320 000 bytes in total, as unchanged review
+entries; a token that does not resolve to a regular file in the release tree is
+dropped, never guessed. Measured cause: the docs releases 19fb7646 and c87cd884
+reviewed "unknown" because `docs/network-view.md` describes
+`checks/network-care.py`'s RED/UNKNOWN arms, which the reviewer never received.
+`tests/test_release_promotion.py::test_ordinary_review_supplies_a_file_the_changed_document_describes`
+pins the behaviour. Nothing else a page contains is read.
+
 The engine-account text adapters decode the four external provider text formats the
 router consumes:
 
