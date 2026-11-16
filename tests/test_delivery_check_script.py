@@ -75,6 +75,28 @@ def test_build_cache_without_a_site_home_uses_the_tree(tmp_path, monkeypatch):
     assert dc.build_cache(tmp_path, None) == tmp_path / "target-delivery-check"
 
 
+def test_suite_temp_env_override_wins(tmp_path, monkeypatch):
+    monkeypatch.setenv("MISHE_TEST_TMPDIR", str(tmp_path / "custom"))
+    monkeypatch.setattr(dc.os.path, "ismount", lambda p: False)
+    assert dc.suite_temp() == tmp_path / "custom"
+
+
+def test_suite_temp_prefers_a_separate_writable_scratch_mount(tmp_path, monkeypatch):
+    monkeypatch.delenv("MISHE_TEST_TMPDIR", raising=False)
+    monkeypatch.setattr(dc.os.path, "ismount", lambda p: p == dc.SCRATCH_MOUNT)
+    monkeypatch.setattr(dc.os, "access", lambda p, mode: True)
+    assert dc.suite_temp() == dc.SCRATCH_MOUNT / "mishe-test-tmp"
+
+
+def test_suite_temp_keeps_the_default_without_a_writable_scratch_mount(monkeypatch):
+    monkeypatch.delenv("MISHE_TEST_TMPDIR", raising=False)
+    monkeypatch.setattr(dc.os.path, "ismount", lambda p: False)
+    assert dc.suite_temp() is None
+    monkeypatch.setattr(dc.os.path, "ismount", lambda p: True)
+    monkeypatch.setattr(dc.os, "access", lambda p, mode: False)
+    assert dc.suite_temp() is None
+
+
 def test_is_elf_accepts_only_elf_magic(tmp_path):
     elf = tmp_path / "real"
     elf.write_bytes(b"\x7fELF\x02\x01\x01rest")

@@ -12,7 +12,9 @@ release build is fsync-heavy and blocks root fsync for seconds while it runs
 (``checks/root-fs-stall.py``), so the target dir lives off the root filesystem when the scratch mount
 is a separate writable filesystem (the same convention as ``operator/dual_probe.py``): the scratch
 mount's ``mishe-cargo-target``, else ``MISHE_SEED_HOME/cache/cargo-target``, with ``MISHE_BUILD_CACHE``
-overriding both.  Exit status is the suite's, or 2 when a build fails.
+overriding both.  The suite's own temp follows the same rule (``suite_temp``): it goes to the scratch
+mount's ``mishe-test-tmp``, else the environment default, with ``MISHE_TEST_TMPDIR`` overriding.  Exit
+status is the suite's, or 2 when a build fails.
 """
 import os
 import shutil
@@ -24,6 +26,13 @@ sys.path.insert(0, str(Path.cwd() / "src"))
 from mishe_tauftauf import release_boundary  # noqa: E402
 
 SCRATCH_MOUNT = Path("/mnt/mishe-scratch")
+
+
+def scratch_mount() -> Path | None:
+    """The scratch mount when it is a separate, writable filesystem, else None."""
+    if os.path.ismount(SCRATCH_MOUNT) and os.access(SCRATCH_MOUNT, os.W_OK):
+        return SCRATCH_MOUNT
+    return None
 
 
 def binaries(crate_dir: Path) -> list[str]:
@@ -66,9 +75,30 @@ def build_cache(root: Path, home: str | None) -> Path:
         return Path(override)
     if home is None:
         return root / "target-delivery-check"
-    if os.path.ismount(SCRATCH_MOUNT) and os.access(SCRATCH_MOUNT, os.W_OK):
-        return SCRATCH_MOUNT / "mishe-cargo-target"
+    scratch = scratch_mount()
+    if scratch is not None:
+        return scratch / "mishe-cargo-target"
     return Path(home) / "cache" / "cargo-target"
+
+
+def suite_temp() -> Path | None:
+    """Where the delivery test run's temp files live, or None to keep the default.
+
+    One suite run builds tens of thousands of ``tmp_path`` entries.  By default
+    they land in the root filesystem's temp directory, where that churn joins the
+    root-fsync pressure ``checks/root-fs-stall.py`` surfaces and, because the
+    suite runs are concurrent enough that pytest's own retention never fires,
+    it accumulates (2026-11-16: every multi-second stall that day landed inside a
+    moving-pin delivery, and ``/tmp`` held 14 GB of stale pytest runs).  Put both
+    the temp and the pytest base temp on the scratch mount, the same convention
+    as the build cache; the defaults are kept when there is no separate writable
+    scratch filesystem.
+    """
+    override = os.environ.get("MISHE_TEST_TMPDIR")
+    if override:
+        return Path(override)
+    scratch = scratch_mount()
+    return scratch / "mishe-test-tmp" if scratch is not None else None
 
 
 def main() -> int:
@@ -92,7 +122,14 @@ def main() -> int:
                 sys.stderr.write(f"{built} is not an ELF binary; refusing to test against it\n")
                 return 2
             env[env_name(binary)] = str(built)
-    return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"], env=env).returncode
+    argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+    temp = suite_temp()
+    if temp is not None:
+        temp.mkdir(parents=True, exist_ok=True)
+        env["TMPDIR"] = str(temp)
+        argv.append(f"--basetemp={temp / 'basetemp'}")
+    argv.append("tests")
+    return subprocess.run(argv, env=env).returncode
 
 
 if __name__ == "__main__":
