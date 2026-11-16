@@ -66,6 +66,7 @@
     "src/mishe_tauftauf/wall_text.py",
     "src/mishe_tauftauf/work_boundary.py",
     "tools/check_dangling.py",
+    "tools/code_map_args.py",
     "tools/check_docs_command_names.py",
     "tools/check_leaf_invocation_coverage.py",
     "tools/check_parsing.py",

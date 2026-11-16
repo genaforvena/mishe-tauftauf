@@ -27,3 +27,44 @@ outside that small scope; `_changed_names` had no other textual hit in the
 repository at the time of the scan. None of these observations proves a safe
 removal. This pilot supports trying cross-language syntax indexing, but does not
 establish that Tree-sitter outperforms the existing AST tools or a text search.
+
+## Rooted name-reference experiment
+
+To explore a supplied entry point, pass its exact printed file and definition
+line as a root (repeat `--root` for more roots):
+
+```sh
+python3 tools/code_map_experiment.py --root rust/mishe-signal-freshness/src/main.rs:31 rust/mishe-signal-freshness/src
+```
+
+For each definition, the experiment follows identifiers inside it to every
+same-named definition in the scanned files of the same language. It prints one
+predecessor for each `POSSIBLE` path; this is a name match, not a resolved call.
+An `UNKNOWN` definition has no path found from the supplied roots, not a finding
+that it is unreachable. Roots are assumptions: configuration, imports, module
+initializers, test discovery, dynamic dispatch, Rust macros, and external or
+unscanned consumers can add entry points or references. Nested definitions,
+unrelated attributes, and same-named symbols can add false paths. This is not
+a sound or complete call graph. Unreadable files, parse errors, missing roots,
+or ambiguous root labels produce UNKNOWN and a nonzero exit. Working-tree bytes
+can differ from the displayed commit. The command-line decoder is isolated in
+`tools/code_map_args.py`, the only newly registered parsing boundary; it reads
+only this experiment's options and paths and grants no runtime authority.
+
+On the 4b0c52dd checkout, the Rust example produced possible name paths from
+`main` to `parse_float` and `expired`; its two attribute-registered tests stayed
+UNKNOWN, as they should when only `main` is supplied. With
+`--root tools/check_dangling.py:74 tools/check_dangling.py src/mishe_tauftauf/wall_patch.py`,
+it found the names of the three helpers called by `main`, but also followed
+`ast.walk` to the unrelated `wall_patch.walk` and onward to `target`. That
+counterexample shows why name paths require inspection. Python's standard AST
+and symbol tables already expose scopes, imports and syntax without optional
+dependencies; `check_dangling.py` uses them to check unresolved Python names,
+not reachability. Tree-sitter's demonstrated advantage here is a common syntax
+interface for the Rust and Python samples, not better resolution or a measured
+speed or accuracy advantage over AST or `rg`.
+
+The `_changed_names` wrapper remains UNKNOWN. Repository search found only its
+definition, and commit `1c62d1f6` replaced its visible `symbol_context` call
+with `_definition_diff`; that is a plausible leftover, not proof that reflective
+or external use is absent. Do not remove it on this experiment alone.
