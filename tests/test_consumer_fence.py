@@ -167,10 +167,12 @@ def test_pinned_wake_started_before_cutoff_and_still_running_fails_the_drain(tmp
 
 
 def test_queued_wake_held_by_promotion_lock_drains_to_deadline_then_fails_closed(tmp_path, monkeypatch):
-    """Characterizes a queued wake: a mishe-wake@ unit waiting on the held delivery lock is 'activating' with no
-    cgroup and no invocation yet. It runs no old code, but the drain treats that as transient mid-start evidence,
-    so it waits the whole DRAIN_TIMEOUT_S and then fails closed. Fresh review must decide whether a queued,
-    never-started unit should be excluded; this test pins the current behaviour, it does not endorse it."""
+    """Pins the current drain response to a MODELLED state: a mishe-wake@ unit reported 'activating' with an empty
+    InvocationID and no cgroup. This mock is not observed evidence. The installed ExecStart launches Python first,
+    and a wake waiting on the shared dispatch lock is already old-code code that can continue after promotion, so
+    'no invocation' does not hold for a real lock waiter. Whether a truly never-executed systemd job should be
+    excluded needs a separate discriminator and post-promotion code-selection proof. This test does not endorse
+    excluding it, and it does not explain the a0e0dbe8 producer-unit incident."""
     transition(tmp_path)
     clock = {'now': 0.0}
     monkeypatch.setattr(fence.time, 'monotonic', lambda: clock['now'])
