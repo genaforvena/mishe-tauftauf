@@ -49,6 +49,8 @@ def resolve_binary(explicit: str | None = None) -> Path:
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
     except (OSError, ValueError) as exc:
         raise FreshnessUnknown(f"mishe-signal-freshness install missing or unreadable: {exc}") from exc
+    if not isinstance(record, dict):
+        raise FreshnessUnknown("mishe-signal-freshness install record is not a JSON object")
     if not os.access(path, os.X_OK) or record.get("sha256") != digest:
         raise FreshnessUnknown("mishe-signal-freshness install is not executable or does not match its recorded sha256")
     return path

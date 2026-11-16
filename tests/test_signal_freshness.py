@@ -112,6 +112,21 @@ def test_site_install_without_matching_sha_is_unknown(tmp_path, monkeypatch):
         sf.verdict(1.0, 2.0, 3.0)
 
 
+@pytest.mark.parametrize("record_text", ["[]", "1", '"sha"', "null"])
+def test_site_install_record_that_is_not_an_object_is_unknown(tmp_path, monkeypatch, record_text):
+    home = tmp_path / "site"
+    bindir = home / "bin"
+    bindir.mkdir(parents=True)
+    binary = bindir / "mishe-signal-freshness"
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+    (bindir / "mishe-signal-freshness.install.json").write_text(record_text, encoding="utf-8")
+    monkeypatch.delenv(sf.ENV_OVERRIDE, raising=False)
+    monkeypatch.setenv("MISHE_SEED_HOME", str(home))
+    with pytest.raises(sf.FreshnessUnknown):
+        sf.resolve_binary(None)
+
+
 def test_site_install_with_matching_sha_is_used(tmp_path, monkeypatch):
     import hashlib
     bindir = tmp_path / "bin"
