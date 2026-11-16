@@ -216,6 +216,21 @@ def test_settle_warns_when_the_awaited_signal_is_not_registered(tmp_path):
     assert "WARNING" in msg and "no-such" in msg
 
 
+def test_settle_warns_when_the_awaited_value_already_holds(tmp_path):
+    """``is_met`` is level, so a ``--when`` whose value already holds is no wait: it makes the role owed at
+    once and retires its paired ``--again``. The yield names that instead of leaving a silent immediate fire."""
+    from mishe_tauftauf import yielding
+    from mishe_tauftauf.state_files import write_json
+    store.register(tmp_path, "ci", max_age=600, subscribers=["genome"])
+    store.observe(tmp_path, "ci", "GREEN", now=100.0, source="t")
+    for key, equals in (("wake-11a", "GREEN"), ("wake-11b", "RED")):
+        write_json(yielding.snapshot_path(tmp_path, key),
+                   {"role": "genome", "snapshot": owed.check(tmp_path, "genome", now=100.0).to_json()})
+        msg = yielding.settle(tmp_path, "genome", key, text="wall", result="changed", now=100.0,
+                              when={"signal": "ci", "equals": equals}, wall_writer=lambda h, r, t: None)
+        assert ("already reads its awaited value" in msg) is (equals == "GREEN"), msg
+
+
 def test_settle_when_without_again_sets_a_paired_deadline(tmp_path):
     from mishe_tauftauf import yielding
     from mishe_tauftauf.state_files import write_json

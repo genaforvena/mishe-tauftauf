@@ -164,6 +164,14 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
     dead_wait = ""
     if when is not None and when["signal"] not in signal_store.registry(home):
         dead_wait = f"; WARNING --when names signal {when['signal']!r}, which is not registered, so it cannot fire until it is registered"
+    # An intention is a claim about the present, not an edge (intentions.is_met is level). A --when whose
+    # condition already holds is therefore not a wait: the role reads as owed at once and the next due tick
+    # wakes it, retiring its paired --again. A latch signal (moving-pin-delivery stays VERIFIED between pins)
+    # makes the pattern fatal: "wake me on the next move" can never be written this way. Say so at the yield
+    # so the mind can use --again instead (2026-11-16 health: woke 33 s after yielding for an unmoved pin).
+    if when is not None and intentions.is_met(home, {"when": when}, now=now):
+        dead_wait += (f"; WARNING --when signal {when['signal']!r} already reads its awaited value, so the wait"
+                      f" fires at once and retires any paired --again; use --again for a timer")
     wait = requested_again if requested_again is not None else idle
     if wait > CLAMP_SECONDS and not _subscribed_signals(home, role):
         dead_wait += f"; WARNING {role} subscribes to no signal, so a wait over {CLAMP_SECONDS // 3600}h has nothing to wake it early"
