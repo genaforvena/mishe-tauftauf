@@ -7234,9 +7234,14 @@ def sample(home: Path, trace=None) -> dict[str, object]:
     observed.append(_ledger_dv_binding(home))
     report("stage:patch-dv-binding:done")
     observed.append(evidence_binding)
+    report("stage:local-readings:start")
     observed.append(_head_rewinds(home))
     observed.append(_disk_trend(home))
     observed.append(_space_light_read(home))
+    report("stage:local-readings:done")
+    # The body and network readings can block on a phone or a peer, so a stall
+    # here must be distinguishable from the local reads above.
+    report("stage:body-network-readings:start")
     observed.append(_note3_adb_sampler_read(home))
     observed.append(read_redmi10(home))
     observed.append(read_redmi10_light(home))
@@ -7255,6 +7260,7 @@ def sample(home: Path, trace=None) -> dict[str, object]:
     observed.append(_host_boot_read(home))
     observed.append(_ethernet_read())
     observed.append(_tailnet_peer_read(peer_state, peer_problems))
+    report("stage:body-network-readings:done")
 
     loadavg = _read(Path("/proc/loadavg"), 256)
     observed.append({"id": "sense.proc.loadavg", "state": "verified" if loadavg else "unknown",
