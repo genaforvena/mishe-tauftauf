@@ -147,7 +147,8 @@
       "command": [
         "{home}/pub/bin/devto-watch"
       ],
-      "red_codes": [],
+      "red_codes": [2],
+      "unknown_codes": [3],
       "every": 300,
       "timeout": 300,
       "max_age": 900,

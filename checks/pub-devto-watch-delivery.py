@@ -410,6 +410,24 @@ def analyze(text: str) -> dict[str, object]:
                            % (len(candidates), DELIVERY_SOURCE))}
     call = candidates[0]
 
+    # The same duty also needs to distinguish an unreadable scan from a failed
+    # notification append.  Both used to return 1, which made UNKNOWN input
+    # fail the producer unit.  Read the actual main() return values so this
+    # delivery check also guards the watcher/duty exit contract.
+    main = next((node for node in tree.body
+                 if isinstance(node, ast.FunctionDef) and node.name == "main"), None)
+    returns: set[int] = set()
+    if main is not None:
+        for node in ast.walk(main):
+            if isinstance(node, ast.Return):
+                value = node.value
+                if isinstance(value, ast.Constant) and isinstance(value.value, int):
+                    returns.add(value.value)
+                elif isinstance(value, ast.IfExp):
+                    for branch in (value.body, value.orelse):
+                        if isinstance(branch, ast.Constant) and isinstance(branch.value, int):
+                            returns.add(branch.value)
+
     constants = _module_constants(tree)
     timeout = _timeout_of(call, constants)
 
@@ -454,7 +472,7 @@ def analyze(text: str) -> dict[str, object]:
 
     return {"error": None, "timeout": timeout, "guarded": guarded,
             "retains_pending": retains_pending, "caught": sorted(caught),
-            "reraises": reraises}
+            "reraises": reraises, "exit_codes": sorted(returns)}
 
 
 def verdict(text: str | None) -> tuple[str, str]:
@@ -488,6 +506,10 @@ def verdict(text: str | None) -> tuple[str, str]:
         problems.append(
             "a failed delivery can drop the pending notification instead of "
             "retaining it for the next tick")
+    exit_codes = set(analysis.get("exit_codes", []))
+    if not {2, 3}.issubset(exit_codes):
+        problems.append("the watcher main() must return 2 for retained delivery failure "
+                        "and 3 for an UNKNOWN scan")
     if problems:
         return RED, "; ".join(problems)
     return GREEN, ("the delivery step is guarded, its %gs timeout covers the %gs "

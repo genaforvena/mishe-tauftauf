@@ -141,6 +141,18 @@ def test_devto_claim_checks_declare_the_unknown_exit(tmp_path, name):
     assert store.read(tmp_path, name, now=NOW + 1).value == "RED"
 
 
+def test_devto_watcher_routes_delivery_failure_red_and_scan_failure_unknown(tmp_path):
+    """A failed append is RED; an unreadable scan only ages to UNKNOWN."""
+    item = next(i for i in declared(tmp_path) if i["name"] == "devto")
+    assert item["red_codes"] == [2] and item["unknown_codes"] == [3]
+    assert producers.run(tmp_path, "devto", [PY, "-c", "import sys; sys.exit(3)"],
+                         now=NOW, timeout=10, red_codes=(2,), unknown_codes=(3,)) == 0
+    assert store.read(tmp_path, "devto", now=NOW).state == "UNKNOWN"
+    assert producers.run(tmp_path, "devto", [PY, "-c", "import sys; sys.exit(2)"],
+                         now=NOW + 1, timeout=10, red_codes=(2,), unknown_codes=(3,)) == 0
+    assert store.read(tmp_path, "devto", now=NOW + 1).value == "RED"
+
+
 def test_privacy_scan_runs_on_a_timer_with_the_site_credentials():
     """The privacy scan had no duty, so its signal aged to UNKNOWN between hand runs.
 

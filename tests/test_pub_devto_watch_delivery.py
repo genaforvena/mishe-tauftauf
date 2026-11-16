@@ -64,6 +64,12 @@ def deliver(site, message, pending):
         return 1
     pending.unlink()
     return 0
+def main():
+    if delivery_failed:
+        return 2
+    if scan_state != 'KNOWN':
+        return 3
+    return 0 if scan_state == 'KNOWN' else 3
 '''
 
 # Guarded, but the handler drops the pending marker: a failed delivery would
@@ -102,6 +108,21 @@ def test_a_guarded_delivery_with_a_sufficient_ceiling_is_green():
     state, reason = check.verdict(GUARDED)
     assert state == check.GREEN
     assert "180" in reason
+
+
+def test_installed_watcher_has_distinct_red_delivery_and_unknown_scan_codes():
+    """The detector reads the installed watcher and requires the split contract."""
+    source = check.read_watcher(check.default_home())
+    state, reason = check.verdict(source)
+    assert state == check.GREEN, reason
+
+
+def test_missing_unknown_scan_code_is_red():
+    """Mutation: mapping an UNKNOWN scan back to the delivery failure code."""
+    source = GUARDED.replace("return 3", "return 2").replace("else 3", "else 2")
+    state, reason = check.verdict(source)
+    assert state == check.RED
+    assert "UNKNOWN scan" in reason
 
 
 def test_a_handler_that_catches_the_wrong_exception_is_red():
@@ -317,6 +338,12 @@ def deliver(site, message, pending):
     except subprocess.TimeoutExpired:
         return 1
     return 0
+def main():
+    if delivery_failed:
+        return 2
+    if scan_state != 'KNOWN':
+        return 3
+    return 0 if scan_state == 'KNOWN' else 3
 '''
     state, _ = check.verdict(source)
     assert state == check.GREEN
