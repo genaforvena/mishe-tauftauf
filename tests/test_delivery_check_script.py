@@ -124,3 +124,39 @@ def test_a_non_elf_built_binary_fails_the_check_before_the_suite(tmp_path, monke
     assert dc.main() == 2
     assert ran == []
     assert "is not an ELF binary" in capsys.readouterr().err
+
+
+def test_the_suite_gets_our_tmpdir_but_no_fixed_basetemp(tmp_path, monkeypatch):
+    # A fixed --basetemp is one directory pytest empties at every session start, so concurrent
+    # delivery runs would delete each other's tmp_path trees.  Point TMPDIR at the scratch mount
+    # and let pytest number its own per-run base temp underneath it.
+    crate = tmp_path / "rust" / "tape"
+    crate.mkdir(parents=True)
+    (crate / "Cargo.toml").write_text('[package]\nname = "mishe-tape"\n')
+    scratch = tmp_path / "scratch"
+
+    def fake_build(crate_dir, target, cargo):
+        (target / "release").mkdir(parents=True)
+        (target / "release" / "mishe-tape").write_bytes(b"\x7fELF" + b"\0" * 8)
+
+    seen = {}
+
+    def fake_run(argv, env, **kwargs):
+        seen["argv"] = argv
+        seen["env"] = env
+
+        class Done:
+            returncode = 0
+
+        return Done()
+
+    monkeypatch.setattr(dc, "build", fake_build)
+    monkeypatch.setattr(dc.subprocess, "run", fake_run)
+    monkeypatch.setattr(dc.Path, "cwd", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(dc, "scratch_mount", lambda: scratch)
+    monkeypatch.delenv("MISHE_TEST_TMPDIR", raising=False)
+    monkeypatch.setenv("MISHE_BUILD_CACHE", str(tmp_path / "cache"))
+    assert dc.main() == 0
+    assert seen["env"]["TMPDIR"] == str(scratch / "mishe-test-tmp")
+    assert (scratch / "mishe-test-tmp").is_dir()
+    assert not any(str(a).startswith("--basetemp") for a in seen["argv"])

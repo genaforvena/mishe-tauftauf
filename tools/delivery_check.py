@@ -12,9 +12,10 @@ release build is fsync-heavy and blocks root fsync for seconds while it runs
 (``checks/root-fs-stall.py``), so the target dir lives off the root filesystem when the scratch mount
 is a separate writable filesystem (the same convention as ``operator/dual_probe.py``): the scratch
 mount's ``mishe-cargo-target``, else ``MISHE_SEED_HOME/cache/cargo-target``, with ``MISHE_BUILD_CACHE``
-overriding both.  The suite's own temp follows the same rule (``suite_temp``): it goes to the scratch
-mount's ``mishe-test-tmp``, else the environment default, with ``MISHE_TEST_TMPDIR`` overriding.  Exit
-status is the suite's, or 2 when a build fails.
+overriding both.  The suite's own temp follows the same rule (``suite_temp``): it is exported as
+``TMPDIR``, so pytest's per-run numbered base temp (``pytest-of-<user>/pytest-N``, with its own
+retention) lands on the scratch mount's ``mishe-test-tmp``, else the environment default, with
+``MISHE_TEST_TMPDIR`` overriding.  Exit status is the suite's, or 2 when a build fails.
 """
 import os
 import shutil
@@ -89,10 +90,15 @@ def suite_temp() -> Path | None:
     root-fsync pressure ``checks/root-fs-stall.py`` surfaces and, because the
     suite runs are concurrent enough that pytest's own retention never fires,
     it accumulates (2026-11-16: every multi-second stall that day landed inside a
-    moving-pin delivery, and ``/tmp`` held 14 GB of stale pytest runs).  Put both
-    the temp and the pytest base temp on the scratch mount, the same convention
-    as the build cache; the defaults are kept when there is no separate writable
-    scratch filesystem.
+    moving-pin delivery, and ``/tmp`` held 14 GB of stale pytest runs).  Point
+    ``TMPDIR`` at the scratch mount, the same convention as the build cache; the
+    default is kept when there is no separate writable scratch filesystem.
+
+    The caller must set ``TMPDIR`` only and must *not* pass ``--basetemp``: an
+    explicit base temp is a single directory pytest empties at every session
+    start (``_pytest.tmpdir`` ``rm_rf``), so concurrent delivery runs would
+    delete each other's ``tmp_path`` trees mid-run.  Without it pytest numbers a
+    fresh one per run under ``TMPDIR`` and keeps its own retention.
     """
     override = os.environ.get("MISHE_TEST_TMPDIR")
     if override:
@@ -127,7 +133,6 @@ def main() -> int:
     if temp is not None:
         temp.mkdir(parents=True, exist_ok=True)
         env["TMPDIR"] = str(temp)
-        argv.append(f"--basetemp={temp / 'basetemp'}")
     argv.append("tests")
     return subprocess.run(argv, env=env).returncode
 
