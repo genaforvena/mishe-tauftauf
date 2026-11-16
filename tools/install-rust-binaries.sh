@@ -39,9 +39,11 @@ bin_dir="$site/bin"
 mkdir -p "$bin_dir"
 
 while IFS=: read -r crate binary; do
-  manifest="$repo/rust/$crate/Cargo.toml"
+  crate_dir="$repo/rust/$crate"
   echo "build $crate -> $binary"
-  "$cargo_bin" build --release --locked --manifest-path "$manifest"
+  # Build from the crate directory: rustup resolves rust-toolchain.toml from cwd,
+  # so --manifest-path from the caller's cwd would build with the default toolchain.
+  (cd "$crate_dir" && "$cargo_bin" build --release --locked)
   built="$repo/rust/$crate/target/release/$binary"
   if [ ! -x "$built" ]; then
     echo "install-rust-binaries: build produced no $built" >&2
