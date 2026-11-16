@@ -20,6 +20,11 @@ import os
 import subprocess
 from pathlib import Path
 
+# The boundary's own process runner, captured at import. A caller that mocks
+# ``subprocess.run`` to stand in for systemctl must not also intercept this
+# binary call: the binary is a separate process with its own stdout contract.
+from subprocess import run as _run_binary
+
 from .unit_properties import declared_paths as python_declared_paths
 
 ENV_OVERRIDE = "MISHE_UNIT_PATHS_BIN"
@@ -67,7 +72,7 @@ def declared_paths(text: str, *, binary: str | None = None) -> list[str]:
     """
     exe = resolve_binary(binary)
     try:
-        done = subprocess.run([str(exe)], input=text.encode("utf-8"),
+        done = _run_binary([str(exe)], input=text.encode("utf-8"),
                               capture_output=True, timeout=5, check=False)
     except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
         raise UnitPathsUnknown(f"mishe-unit-paths could not run: {exc}") from exc
