@@ -435,6 +435,33 @@
       "covers": "the Rosalia imitation bot service is alive and its long-poll loop is advancing: RED when the unit is not active or its heartbeat is stale, UNKNOWN when systemd or the heartbeat cannot be read"
     },
     {
+      "name": "darinci-bot",
+      "command": [
+        "{python}",
+        "{repo}/checks/telegram-bot-alive.py",
+        "--home",
+        "{home}",
+        "--unit",
+        "darinci-bot.service",
+        "--heartbeat",
+        "{home}/health/darinci-bot.json",
+        "--state",
+        "{home}/health/darinci-bot-heal.json"
+      ],
+      "every": 120,
+      "timeout": 60,
+      "max_age": 300,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "health",
+      "replaces": [],
+      "covers": "the Daria imitation bot service is alive and its long-poll loop is advancing: RED when the unit is not active or its heartbeat is stale, UNKNOWN when systemd or the heartbeat cannot be read"
+    },
+    {
       "name": "delivery-requests",
       "builtin": true,
       "every": 120,
