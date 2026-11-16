@@ -175,6 +175,20 @@ def test_devto_watcher_delivery_duty_schedules_the_committed_check_against_the_p
     assert item["command"][2:4] == ["--home", "{home}"]
 
 
+
+def test_ilya_bot_duty_runs_the_committed_detector_against_the_plant():
+    """The bot's liveness must be observed by a duty, not by an untracked process.
+
+    A destination that points at a site-local copy, a resolver other than health,
+    or a missing RED/UNKNOWN routing would leave a dead bot invisible to Mishe.
+    """
+    item = next(d for d in ALL if d["name"] == "ilya-telegram-bot")
+    assert item["resolver"] == "health"
+    assert item["red_codes"] == [2] and item["unknown_codes"] == [3]
+    assert (REPO / "checks" / "telegram-bot-alive.py").is_file()
+    assert item["command"][:2] == ["{python}", "{repo}/checks/telegram-bot-alive.py"]
+    assert item["command"][2:4] == ["--home", "{home}"]
+
 def test_privacy_scan_runs_on_a_timer_with_the_site_credentials():
     """The privacy scan had no duty, so its signal aged to UNKNOWN between hand runs.
 
