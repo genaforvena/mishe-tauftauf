@@ -49,6 +49,11 @@ def build(crate_dir: Path, target: Path, cargo: str) -> None:
         raise SystemExit(2)
 
 
+def is_elf(path: Path) -> bool:
+    with path.open("rb") as fh:
+        return fh.read(4) == b"\x7fELF"
+
+
 def build_cache(root: Path, home: str | None) -> Path:
     """Where the shared cargo target dirs live.
 
@@ -80,6 +85,11 @@ def main() -> int:
             built = target / "release" / binary
             if not built.is_file():
                 sys.stderr.write(f"{crate_dir.name} built no {binary} at {built}\n")
+                return 2
+            if not is_elf(built):
+                # A cargo build that reports success can leave a text stub in place when cargo's fingerprint
+                # is fresh (2026-11-16: a shell stub in the shared cache poisoned the 08547645 check). Fail closed.
+                sys.stderr.write(f"{built} is not an ELF binary; refusing to test against it\n")
                 return 2
             env[env_name(binary)] = str(built)
     return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"], env=env).returncode

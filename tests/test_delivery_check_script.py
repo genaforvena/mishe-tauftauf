@@ -73,3 +73,32 @@ def test_build_cache_without_a_site_home_uses_the_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(dc.os.path, "ismount", lambda p: True)
     monkeypatch.setattr(dc.os, "access", lambda p, mode: True)
     assert dc.build_cache(tmp_path, None) == tmp_path / "target-delivery-check"
+
+
+def test_is_elf_accepts_only_elf_magic(tmp_path):
+    elf = tmp_path / "real"
+    elf.write_bytes(b"\x7fELF\x02\x01\x01rest")
+    stub = tmp_path / "stub"
+    stub.write_bytes(b"#!/bin/sh\necho mishe-tape\n")
+    assert dc.is_elf(elf)
+    assert not dc.is_elf(stub)
+
+
+def test_a_non_elf_built_binary_fails_the_check_before_the_suite(tmp_path, monkeypatch, capsys):
+    crate = tmp_path / "rust" / "tape"
+    crate.mkdir(parents=True)
+    (crate / "Cargo.toml").write_text('[package]\nname = "mishe-tape"\n')
+    cache = tmp_path / "cache"
+
+    def fake_build(crate_dir, target, cargo):
+        (target / "release").mkdir(parents=True)
+        (target / "release" / "mishe-tape").write_bytes(b"#!/bin/sh\necho mishe-tape\n")
+
+    ran = []
+    monkeypatch.setattr(dc, "build", fake_build)
+    monkeypatch.setattr(dc.subprocess, "run", lambda *a, **k: ran.append(a) or None)
+    monkeypatch.setattr(dc.Path, "cwd", staticmethod(lambda: tmp_path))
+    monkeypatch.setenv("MISHE_BUILD_CACHE", str(cache))
+    assert dc.main() == 2
+    assert ran == []
+    assert "is not an ELF binary" in capsys.readouterr().err
