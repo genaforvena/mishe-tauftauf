@@ -318,6 +318,56 @@ def test_reapply_same_sha_reuses_independent_review_for_new_delivery(tree,monkey
     assert read_json(p.record_path(home,"first"))["phase"]==prior_phase
 
 
+def test_review_merge_retries_a_transient_wake_lock(tree, monkeypatch):
+    from contextlib import contextmanager
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha); p.materialize(home,repo,old)
+    identity="retry-merge"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",
+        source=str(source),paths=["docs/page.md"],check=dict(output="pass"),owner="genome",review_pending=True))
+    queued=home/"work/reviews"/f"{identity}.result.json"
+    queued.parent.mkdir(parents=True,exist_ok=True)
+    write_json(queued,dict(id=identity,result=dict(review=dict(clear=True)),merged=False))
+    attempts=[]
+    @contextmanager
+    def flaky_lock(h):
+        attempts.append(1)
+        if len(attempts)<3: raise p.DeliveryBusy("running wake holds dispatch lock")
+        yield
+    monkeypatch.setattr(p,"delivery_lock",flaky_lock)
+    now=[0.0]
+    p.merge_review(home,queued,sleep=lambda s:now.__setitem__(0,now[0]+s),clock=lambda:now[0],retry_s=2.0)
+    assert len(attempts)==3
+    assert read_json(queued)["merged"] is True and "merge_error" not in read_json(queued)
+    record=read_json(p.record_path(home,identity))
+    assert record["review_pending"] is False and record["review_state"]=="clear"
+
+
+def test_review_merge_keeps_pending_evidence_when_lock_never_frees(tree, monkeypatch):
+    from contextlib import contextmanager
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha); p.materialize(home,repo,old)
+    identity="busy-merge"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",
+        source=str(source),paths=["docs/page.md"],check=dict(output="pass"),owner="genome",review_pending=True))
+    queued=home/"work/reviews"/f"{identity}.result.json"
+    queued.parent.mkdir(parents=True,exist_ok=True)
+    write_json(queued,dict(id=identity,result=dict(review=dict(clear=True)),merged=False))
+    attempts=[]
+    @contextmanager
+    def always_busy(h):
+        attempts.append(1)
+        raise p.DeliveryBusy("running wake holds dispatch lock")
+        yield
+    monkeypatch.setattr(p,"delivery_lock",always_busy)
+    now=[0.0]
+    p.merge_review(home,queued,sleep=lambda s:now.__setitem__(0,now[0]+s),clock=lambda:now[0],retry_s=1.0)
+    assert len(attempts)>=2
+    result=read_json(queued)
+    assert result["merged"] is False and "dispatch lock" in result["merge_error"]
+    assert read_json(p.record_path(home,identity))["review_pending"] is True
+
+
 def test_activation_starts_new_owned_timer_without_enabling_old_triggers(tree,monkeypatch):
     from mishe_tauftauf import runtime_cli
     repo,home,old,sha=tree

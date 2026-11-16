@@ -631,46 +631,59 @@ def review(home, identity):
     return dict(phase="reviewed" if current.get("review_pending") is False else "review-pending", id=identity)
 
 
-def merge_review(home, queued):
+REVIEW_MERGE_RETRY_S = 30
+"""A review merge is bookkeeping, not a delivery: wait briefly for the dispatch lock instead of losing to every wake."""
+
+
+def merge_review(home, queued, *, sleep=time.sleep, clock=time.monotonic, retry_s=REVIEW_MERGE_RETRY_S):
     outcome = read_json(queued)
     if not outcome or outcome.get("merged"):
         return
+    deadline = clock() + retry_s
     try:
-        with delivery_lock(home):
-            path = record_path(home, outcome["id"])
-            current = read_json(path)
-            if not current:
-                raise ValueError("review target record disappeared")
-            result = outcome["result"]
-            if "review" in result and current.get("review_pending") is not False:
-                current.update(result, review_pending=False)
-                current["reviewed_at"] = time.time()
-                current["review_state"] = "clear" if result["review"]["clear"] else "action-needed"
-                if not result["review"]["clear"] and current["phase"] == "delivered":
-                    from . import intentions
-                    from .failure import default_notify
-                    intentions.add(home, current["owner"], "review-" + current["sha"][:12],
-                                   note="Decide a concrete fix or revert for independent release finding", due=time.time()+21600)
-                    default_notify(home, current["owner"], f"Release {outcome['id']}: review finding; decide fix/revert within six hours. Evidence: {path}")
-            elif "review_error" in result:
-                current["review_error"] = result["review_error"]
-            write_json(path, current)
-            shared_path = review_queue_path(home, current)
-            shared = read_json(shared_path)
-            if shared is not None:
-                shared.update(result=result, state="reviewed" if "review" in result else "unavailable")
-                write_json(shared_path, shared)
-                for identity in shared.get("release_ids", [shared["release_id"]]):
-                    target = shared_path.parent/f"{identity}.result.json"
-                    if identity != outcome["id"] and not target.exists():
-                        write_json(target, dict(id=identity, result=result, merged=False))
-            write_json(queued, dict(outcome, merged=True))
+        while True:
+            try:
+                with delivery_lock(home):
+                    path = record_path(home, outcome["id"])
+                    current = read_json(path)
+                    if not current:
+                        raise ValueError("review target record disappeared")
+                    result = outcome["result"]
+                    if "review" in result and current.get("review_pending") is not False:
+                        current.update(result, review_pending=False)
+                        current["reviewed_at"] = time.time()
+                        current["review_state"] = "clear" if result["review"]["clear"] else "action-needed"
+                        if not result["review"]["clear"] and current["phase"] == "delivered":
+                            from . import intentions
+                            from .failure import default_notify
+                            intentions.add(home, current["owner"], "review-" + current["sha"][:12],
+                                           note="Decide a concrete fix or revert for independent release finding", due=time.time()+21600)
+                            default_notify(home, current["owner"], f"Release {outcome['id']}: review finding; decide fix/revert within six hours. Evidence: {path}")
+                    elif "review_error" in result:
+                        current["review_error"] = result["review_error"]
+                    write_json(path, current)
+                    shared_path = review_queue_path(home, current)
+                    shared = read_json(shared_path)
+                    if shared is not None:
+                        shared.update(result=result, state="reviewed" if "review" in result else "unavailable")
+                        write_json(shared_path, shared)
+                        for identity in shared.get("release_ids", [shared["release_id"]]):
+                            target = shared_path.parent/f"{identity}.result.json"
+                            if identity != outcome["id"] and not target.exists():
+                                write_json(target, dict(id=identity, result=result, merged=False))
+                    write_json(queued, dict(outcome, merged=True))
+                return
+            except DeliveryBusy:
+                remaining = deadline - clock()
+                if remaining <= 0:
+                    raise
+                sleep(min(0.5, remaining))
     except ValueError as exc:
         # Busy dispatch is an expected pending result; malformed evidence stays
         # visible in the retained queue and the next poll retries the merge.
         write_json(queued, dict(outcome, merge_error=str(exc)))
 
 
-def merge_reviews(home):
+def merge_reviews(home, **kwargs):
     for queued in sorted((Path(home)/"work/reviews").glob("*.result.json")):
-        merge_review(home, queued)
+        merge_review(home, queued, **kwargs)
