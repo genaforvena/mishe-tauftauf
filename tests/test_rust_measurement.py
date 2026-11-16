@@ -73,3 +73,31 @@ def test_duty_declares_host_busy_exit_as_unknown():
     duties = json.loads((Path(__file__).resolve().parents[1] / "duties.json").read_text())["duties"]
     duty = next(d for d in duties if d["name"] == "rust-measurement")
     assert duty.get("unknown_codes") == [3]
+
+
+def test_duty_measures_release_source_not_editable_checkout(tmp_path):
+    from mishe_tauftauf import duties
+
+    checkout = tmp_path / "checkout"
+    release = tmp_path / "release"
+    home = tmp_path / "site"
+    home.mkdir()
+    for tree, count in ((checkout, 7), (release, 3)):
+        package = tree / "src" / "mishe_tauftauf"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("")
+        (package / "feed.py").write_text(
+            "class Feed:\n"
+            "    def __init__(self, home): pass\n"
+            f"    def role_entries(self, role, _force_full=False): return [None] * {count}\n"
+        )
+    (release / "duties.json").write_text((REPO / "duties.json").read_text())
+    duty = next(d for d in duties.declared(checkout, home, source=release)
+                if d["name"] == "rust-measurement")
+    # The checker itself is the real one; only its target source trees differ.
+    command = duty["command"]
+    command[1] = str(CHECK)
+    proc = subprocess.run(command + ["--roles", "senses", "--max-load", "100000",
+                                     "--no-artifact"], capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    assert "3 entries" in proc.stdout

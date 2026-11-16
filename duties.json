@@ -888,7 +888,7 @@
         "--home",
         "{home}",
         "--repo",
-        "{repo}"
+        "{repo}/."
       ],
       "every": 3600,
       "timeout": 240,
