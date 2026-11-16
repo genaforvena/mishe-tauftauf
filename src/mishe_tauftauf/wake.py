@@ -343,8 +343,12 @@ def _ripgrep_guard(home) -> Path:
     is replaced atomically: a concurrent wake's ripgrep never reads a half-written config with
     no exclusions.
     """
-    name = Path(home).name
-    body = f"--glob=!{name}/**\n--glob=!**/{name}/**\n"
+    # `Path(".").name` is empty, so a relative home (`mishe wake ROLE --home .`) would make the
+    # body `--glob=!/**`, which excludes the whole search tree and makes ripgrep return nothing
+    # at all. Fall back to the resolved directory's name, and emit no glob when there is no name
+    # (a filesystem root) rather than a pattern that matches everything.
+    name = Path(home).name or Path(home).resolve().name
+    body = f"--glob=!{name}/**\n--glob=!**/{name}/**\n" if name else ""
     path = Path(home) / RIPGREP_CONFIG_NAME
     write_text_atomic(path, body)
     return path

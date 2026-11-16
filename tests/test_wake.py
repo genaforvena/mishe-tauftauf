@@ -1,6 +1,8 @@
 """One-shot wakes with a fake engine: owed gating, crash safety, one at a time."""
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -81,6 +83,40 @@ def test_wake_engine_env_excludes_the_site_home_from_ripgrep(home):
     body = cfg.read_text()
     assert f"--glob=!{home.name}/**" in body
     assert f"--glob=!**/{home.name}/**" in body
+
+
+def test_ripgrep_guard_never_excludes_the_whole_tree_for_a_relative_home(tmp_path, monkeypatch):
+    # `mishe wake ROLE --home .` passes a relative home whose `Path(...).name` is empty. The
+    # naive body (`--glob=!/**`) makes ripgrep return no results at all (verified against
+    # ripgrep 14.1.0), so the guard must fall back to the resolved directory's name.
+    site = tmp_path / "site"
+    site.mkdir()
+    monkeypatch.chdir(site)
+    path = wake._ripgrep_guard(".")
+    body = path.read_text(encoding="utf-8")
+    assert "--glob=!/**" not in body
+    assert body == f"--glob=!{site.name}/**\n--glob=!**/{site.name}/**\n"
+
+
+def test_ripgrep_guard_is_effective_against_real_ripgrep(tmp_path):
+    # The written text is not the contract; the contract is that a real ripgrep invocation
+    # skips the site home while still reporting results next to it. This also covers the
+    # empty-name case: over-exclusion would drop kept.txt, under-exclusion would keep inside.txt.
+    rg = shutil.which("rg")
+    if rg is None:
+        pytest.skip("ripgrep is not installed")
+    repo = tmp_path / "repo"
+    site = repo / "site"
+    site.mkdir(parents=True)
+    (repo / "kept.txt").write_text("x\n", encoding="utf-8")
+    (site / "inside.txt").write_text("x\n", encoding="utf-8")
+    wake._ripgrep_guard(site)
+    env = dict(os.environ, RIPGREP_CONFIG_PATH=str(site / wake.RIPGREP_CONFIG_NAME))
+    done = subprocess.run([rg, "--files"], cwd=repo, env=env, capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    found = done.stdout.split()
+    assert "kept.txt" in found
+    assert not any("inside.txt" in line for line in found)
 
 
 def test_ripgrep_guard_publishes_atomically(home, monkeypatch):
