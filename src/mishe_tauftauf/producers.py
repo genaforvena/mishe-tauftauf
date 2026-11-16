@@ -3,7 +3,9 @@
 ``run`` adapts any exit-code check script: 0 is GREEN, a declared red code
 (default 2, this repo's check contract) is RED, and anything else — a crash, the
 checks' own "cannot tell" 3, a missing binary, a timeout — leaves the signal
-untouched so it ages to UNKNOWN. The runner fails then, which is what routes it to a resolver; it never
+untouched so it ages to UNKNOWN. A declared RED carries the check's own output as the
+signal's cause, so a subscriber woken by the edge — and the verdict line — reads why
+without opening the detail. The runner fails then, which is what routes it to a resolver; it never
 turns a broken check into GREEN or into a quieter RED.
 
 A duty may declare ``unknown_codes``: exit codes the check uses to say "the input is stale or missing,
@@ -20,12 +22,13 @@ from pathlib import Path
 from . import signal_store, units, wake_memory
 from .core.state import DispatchStore
 from .engine_process import run_bounded
-from .state_files import read_json, write_json
+from .state_files import detail_brief, read_json, write_json
 from .wake import EngineNotStarted, EngineTimeout
 
 DECLARED_REOFFER_SECONDS = 3600
 
 DETAIL_BYTES = 4000
+REASON_MAX = 300  # a RED signal carries the check's own cause, bounded like the detail view
 
 
 def _utc(epoch: float) -> str:
@@ -99,7 +102,12 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
         signal_store.observe_unknown(home, name, now=now, source=f"run:{command[0]}",
                                      reason=f"check exit {code}")
         return 2
-    signal_store.observe(home, name, "GREEN" if code == 0 else "RED", now=now, source=f"run:{command[0]}")
+    # A declared RED carries the check's own cause. The detail is the only place the duty wrote it
+    # and the next run overwrites it, so a subscriber woken by the edge must be able to read why
+    # here; without it the verdict line records no cause for the very state that needs one.
+    reason = detail_brief(detail, REASON_MAX) if code != 0 else ""
+    signal_store.observe(home, name, "GREEN" if code == 0 else "RED", now=now,
+                         source=f"run:{command[0]}", reason=reason)
     return 0
 
 

@@ -85,6 +85,20 @@ def write_text_atomic(path: Path, text: str) -> None:
             os.unlink(temporary)
 
 
+def detail_brief(path: Path, limit: int) -> str:
+    """A signal's detail file as one bounded, whitespace-collapsed line.
+
+    A producer's non-GREEN run writes the check's own cause to this file; the cause is carried in
+    the signal so a subscriber woken by the edge reads why without opening the detail. Empty when
+    the file is absent, unreadable or blank. No interpretation of the text.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return " ".join(text.split())[:limit]
+
+
 def read_detail_lines(path: Path, limit: int) -> list[str]:
     """The raw lines of a signal's detail file, bounded to its last ``limit`` characters.
 

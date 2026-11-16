@@ -20,7 +20,21 @@ def test_exit_zero_is_green_and_nonzero_is_red_with_detail(home):
     assert producers.run(home, "devto", [PY, "-c", "import sys; print('stale feed'); sys.exit(2)"], now=NOW + 1, timeout=10) == 0
     sig = store.read(home, "devto", now=NOW + 1)
     assert sig.value == "RED"
+    assert "stale feed" in sig.reason                       # the RED carries the check's own cause
     assert "stale feed" in (home / "signals" / "devto.detail").read_text()
+
+
+def test_a_red_reason_is_collapsed_and_bounded(home):
+    # A multi-line, indented cause reaches the signal as one bounded line, not as a bare "RED".
+    script = "print('daylight curve:'); print('  bedroom: lamp step at 00:00'); import sys; sys.exit(2)"
+    assert producers.run(home, "devto", [PY, "-c", script], now=NOW, timeout=10) == 0
+    reason = store.read(home, "devto", now=NOW).reason
+    assert reason == "daylight curve: bedroom: lamp step at 00:00"
+
+
+def test_a_green_reading_carries_no_cause(home):
+    assert producers.run(home, "devto", [PY, "-c", "print('fine')"], now=NOW, timeout=10) == 0
+    assert store.read(home, "devto", now=NOW).reason == ""
 
 
 def test_command_that_cannot_run_turns_the_last_green_unknown_and_fails(home):
