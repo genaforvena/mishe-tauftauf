@@ -113,10 +113,14 @@ def system1_answer(home, role: str, reasons: list, trigger: str, mail_count: int
         state = (f"role: {role}\ntrigger: {trigger}\nowed reasons: {', '.join(reasons) or 'none'}\n"
                  f"mail items: {mail_count}")
         decision = dp.decide(provider, QUESTION, INSTRUCTIONS, state, CRITERIA, threshold=THRESHOLD)
-        return {"choice": decision.choice, "probabilities": decision.probabilities,
+        # Shadow only: a below-threshold answer is still logged as its argmax, marked escalated,
+        # so the threshold can later be calibrated against real outcomes instead of guessed.
+        escalated = decision.choice is None and bool(decision.probabilities)
+        choice = max(decision.probabilities, key=decision.probabilities.get) if escalated else decision.choice
+        return {"choice": choice, "escalated": escalated, "probabilities": decision.probabilities,
                 "confidence": decision.confidence, "reason": decision.reason}
     except Exception as exc:  # noqa: BLE001 - shadow answer: a failure is an unanswered start, not an error
-        return {"choice": None, "probabilities": {}, "confidence": None,
+        return {"choice": None, "escalated": False, "probabilities": {}, "confidence": None,
                 "reason": f"decision provider not usable ({type(exc).__name__})"}
 
 

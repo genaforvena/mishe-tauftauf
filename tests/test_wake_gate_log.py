@@ -193,10 +193,27 @@ def test_start_row_carries_the_system_one_shadow_answer(tmp_path, monkeypatch):
     row = _rows(tmp_path)[-1]
     assert row["decision"]["choice"] == "owed-work"
     assert row["decision"]["probabilities"] == {"owed-work": 0.9, "repeat": 0.1}
-    assert sorted(row["decision"]) == ["choice", "confidence", "probabilities", "reason"]
+    assert sorted(row["decision"]) == ["choice", "confidence", "escalated", "probabilities", "reason"]
+    assert row["decision"]["escalated"] is False
     assert seen["criteria"] == ["owed-work", "repeat"]
     assert "mail items: 1" in seen["state"] and "body" not in seen["state"]
     assert "same" not in seen["state"]  # the model never sees the System 0 verdict
+
+
+def test_below_threshold_answer_is_logged_as_escalated_argmax(tmp_path, monkeypatch):
+    from mishe_tauftauf import decision_provider as dp
+
+    def low_confidence(provider, question, instructions, state, criteria, *, threshold, post=None):
+        return dp.Decision(question, None, {"owed-work": 0.49, "repeat": 0.47}, 0.24,
+                           "confidence 0.24 below threshold 0.70; escalate to a mind")
+
+    monkeypatch.setattr(dp, "load_providers", lambda path: {"routerai": object()})
+    monkeypatch.setattr(dp, "select", lambda providers, name: providers[name])
+    monkeypatch.setattr(dp, "decide", low_confidence)
+    wake_gate_log.record_start(tmp_path, "system1", "k5", snap=_snap(["intention:again"]), mail=[], now=8.0)
+    decision = _rows(tmp_path)[-1]["decision"]
+    assert decision["choice"] == "owed-work" and decision["escalated"] is True
+    assert decision["confidence"] == 0.24 and "escalate" in decision["reason"]
 
 
 def test_missing_provider_config_is_an_unanswered_start_not_a_failure(tmp_path):
