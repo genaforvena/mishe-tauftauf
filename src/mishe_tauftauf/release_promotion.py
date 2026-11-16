@@ -14,7 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from . import page_paths_text, release_boundary, work_boundary as boundary, wall_patch, proc_table
+from . import hold_text, page_paths_text, release_boundary, work_boundary as boundary, wall_patch, proc_table
 from .git_base_text import commit_intent_text
 from .state_files import read_json, write_json, write_text_atomic
 from .work_receipts import digest
@@ -168,7 +168,7 @@ def _lock_holder_info(home, *, runner=subprocess.run):
     return dict(available=True, holders=[dict(pid=p, argv=argv_by_pid.get(p)) for p in pids])
 
 
-HOLD_TEXT = "promotion: short activation hold; wakes resume automatically"
+HOLD_TEXT = hold_text.PROMOTION_PREFIX
 
 
 def _pid_alive(pid):
@@ -179,15 +179,6 @@ def _pid_alive(pid):
     except PermissionError:
         return True
     return True
-
-
-def _hold_fields(text):
-    fields = {}
-    for part in text.split():
-        key, sep, value = part.partition("=")
-        if sep:
-            fields[key] = value
-    return fields
 
 
 def _dispatch_lock_free(home):
@@ -206,10 +197,11 @@ def _dispatch_lock_free(home):
 def clear_stale_hold(home, *, pid_alive=_pid_alive, now=time.time, legacy_max_age_s=3600):
     """Remove a ``hold`` left behind by a promotion that died inside its activation window.
 
-    A hold written by ``held_delivery_lock`` carries the writer's pid (``pid=N``). It is stale when that pid is gone
-    and the dispatch lock is free. A hold without a pid (written before this check existed) is stale only when it is
-    older than ``legacy_max_age_s``. Returns True when the hold was removed. Never removes a hold whose writer is alive,
-    or while a running wake or promotion holds the dispatch lock.
+    Only promotion holds (``HOLD_TEXT`` prefix) are eligible. A hold written by ``held_delivery_lock`` carries the
+    writer's pid (``pid=N``) and is stale when that pid is gone and the dispatch lock is free. A legacy promotion hold
+    without a pid is stale only when older than ``legacy_max_age_s``. A manual ``mishe hold on`` hold carries no prefix
+    and is never cleared here: it lasts until ``mishe hold off``. Returns True when the hold was removed. Never removes
+    a hold whose writer is alive, or while a running wake or promotion holds the dispatch lock.
     """
     hold = Path(home) / "hold"
     try:
@@ -217,7 +209,9 @@ def clear_stale_hold(home, *, pid_alive=_pid_alive, now=time.time, legacy_max_ag
         mtime = hold.stat().st_mtime
     except FileNotFoundError:
         return False
-    fields = _hold_fields(text)
+    if not hold_text.is_promotion_hold(text):
+        return False  # an opaque manual hold is indefinite, irrespective of age or pid-looking text
+    fields = hold_text.fields(text)
     if "pid" in fields and fields["pid"].isdigit():
         if pid_alive(int(fields["pid"])):
             return False

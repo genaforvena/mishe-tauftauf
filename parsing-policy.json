@@ -23,6 +23,7 @@
     "src/mishe_tauftauf/feed.py",
     "src/mishe_tauftauf/git_base_text.py",
     "src/mishe_tauftauf/head_rewind_dispositions.py",
+    "src/mishe_tauftauf/hold_text.py",
     "src/mishe_tauftauf/host_boot.py",
     "src/mishe_tauftauf/host_capacity.py",
     "src/mishe_tauftauf/host_containment.py",

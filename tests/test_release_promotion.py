@@ -959,6 +959,21 @@ def test_legacy_hold_without_pid_is_kept_when_fresh_and_cleared_when_old(tmp_pat
     assert not hold.exists()
 
 
+def test_manual_hold_is_never_auto_cleared_even_when_old(tmp_path):
+    hold = tmp_path / "hold"
+    hold.write_text("freeze for deploy\n")
+    assert p.clear_stale_hold(tmp_path, now=lambda: hold.stat().st_mtime + 7200) is False
+    assert hold.exists()
+
+
+def test_manual_hold_with_pid_like_text_is_never_auto_cleared(tmp_path):
+    hold = tmp_path / "hold"
+    hold.write_text("freeze for deploy pid=999999\n")
+    assert p.clear_stale_hold(tmp_path, pid_alive=lambda pid: False,
+                              now=lambda: hold.stat().st_mtime + 7200) is False
+    assert hold.exists()
+
+
 def test_held_lock_writes_the_writer_pid_into_the_hold(tmp_path):
     handle = _hold_dispatch_lock(tmp_path)
     seen = {}
