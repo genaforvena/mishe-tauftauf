@@ -26,7 +26,7 @@ def test_stall_in_window_is_red_and_names_worst():
     assert code == 2 and "9.9" in lines[0]
 
 
-def test_stall_line_carries_the_probe_io_pressure_cause():
+def test_stall_line_carries_the_probe_io_pressure():
     code, lines = mod.evaluate(
         [rec(), rec(event="slow", at=NOW - 60, total=17.0, fsync=16.97, psi_io=84.66)], NOW)
     assert code == 2 and "io_psi 84.66" in lines[0]

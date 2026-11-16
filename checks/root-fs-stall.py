@@ -16,9 +16,12 @@ and recurrence is counted over the union, so the "last 24 h" recurrence claim is
 backed by the probe's whole history while the tmpfs log is alive, and still by the
 durable mirror after it is gone.
 
-Each stall line carries the stalled probe's io_psi (PSI io 'some' avg10): a high
-value means the root device was blocked behind a local write storm, a low value
-means the device itself stalled.
+Each stall line carries the stalled probe's io_psi (PSI io 'some' avg10): the
+share of the prior 10 s during which some task was stalled on I/O. A near-zero
+value means nothing was I/O-contended at the stall, which points away from a
+write storm; a high value only says the machine *was* I/O-contended and cannot
+by itself separate a local write storm from a device latency cliff, since a
+blocked task raises the same counter either way.
 
 Exit status:
   0  the probe is fresh and no root probe in the window reached STALL_S
@@ -46,9 +49,11 @@ def psi_suffix(record: dict) -> str:
     """The stalled probe's own I/O-pressure reading, when the recorder carried one.
 
     dual_probe.py samples PSI io 'some avg10' at the moment of a slow probe, so a
-    stall names its cause class: a high value means the root device was stalled
-    behind a local write storm; a low value with a long fsync means the device
-    itself stalled. Absent on records written before that field existed.
+    stall line shows how I/O-contended the machine was there. Near zero at a
+    stall means no other task was I/O-blocked (points away from a write storm); a
+    high value is expected both from a local write storm and from a device
+    latency cliff, so it cannot by itself name the cause. Absent on records
+    written before that field existed.
     """
     psi = record.get("psi_io")
     return "" if not isinstance(psi, (int, float)) else f", io_psi {psi:.2f}"
