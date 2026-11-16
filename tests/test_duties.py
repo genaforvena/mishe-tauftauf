@@ -116,6 +116,31 @@ def test_committed_duty_manifest_and_script_use_release_but_repo_argument_stays_
     assert found[0]["command"][-1]==str(repo)
 
 
+@pytest.mark.parametrize("name", ["devto-article-duplication", "pub-index-self-claims", "pub-account-count-claims"])
+def test_devto_claim_checks_declare_the_unknown_exit(tmp_path, name):
+    """A devto claim check exits 3 when the account cannot be read (e.g. HTTP 429).
+
+    Each check documents ``0 GREEN / 2 RED / 3 UNKNOWN``, but the duty omitted the codes,
+    so exit 3 was an *undeclared* code: ``producers.run`` recorded the value UNKNOWN yet
+    returned 2, which failed the unit and minted a spurious
+    ``failed-mishe-producer-<name>-service``. On 2026-11-16 a DEV.to 429 did exactly that
+    for ``pub-account-count-claims``; the new failure signal then drifted the generated
+    ``mishe-wake-pub.path`` and read doctor RED until the next ``mishe sync``. A declared
+    UNKNOWN exit returns 0 (the unit succeeds, the signal ages to UNKNOWN) so a transient
+    read failure is never a unit failure.
+    """
+    item = next(i for i in declared(tmp_path) if i["name"] == name)
+    assert item["red_codes"] == [2] and item["unknown_codes"] == [3]
+    assert producers.run(tmp_path, name, [PY, "-c", "import sys; sys.exit(3)"], now=NOW, timeout=10,
+                         red_codes=tuple(item["red_codes"]),
+                         unknown_codes=tuple(item["unknown_codes"])) == 0
+    # A real disagreement (exit 2) is a RED observation, not a unit failure.
+    assert producers.run(tmp_path, name, [PY, "-c", "import sys; sys.exit(2)"], now=NOW + 1, timeout=10,
+                         red_codes=tuple(item["red_codes"]),
+                         unknown_codes=tuple(item["unknown_codes"])) == 0
+    assert store.read(tmp_path, name, now=NOW + 1).value == "RED"
+
+
 def test_privacy_scan_runs_on_a_timer_with_the_site_credentials():
     """The privacy scan had no duty, so its signal aged to UNKNOWN between hand runs.
 

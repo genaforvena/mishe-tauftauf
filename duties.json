@@ -172,6 +172,12 @@
       "timeout": 180,
       "max_age": 3600,
       "resolver": "pub",
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
       "replaces": [],
       "covers": "no published DEV.to article repeats a paragraph verbatim"
     },
@@ -187,6 +193,12 @@
       "timeout": 300,
       "max_age": 7200,
       "resolver": "pub",
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
       "replaces": [],
       "covers": "the DEV.to index page's published counts match the account"
     },
@@ -202,6 +214,12 @@
       "timeout": 300,
       "max_age": 7200,
       "resolver": "pub",
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
       "replaces": [],
       "covers": "every count a published page states about the DEV account matches the account"
     },
