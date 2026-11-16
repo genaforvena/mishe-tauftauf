@@ -5,7 +5,7 @@ functions whose name has no other syntactic identifier in the selected files.
 Install with `pip install -e ".[code-map]"`, then run, for example:
 
 ```sh
-python tools/code_map_experiment.py src/mishe_tauftauf tests tools rust
+python3 tools/code_map_experiment.py src/mishe_tauftauf tests tools rust
 ```
 
 It prints the scanned scope, checkout revision, candidates and incomplete reads.
