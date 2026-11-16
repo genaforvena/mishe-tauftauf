@@ -28,7 +28,7 @@ done
 [ -n "$target" ] || { echo "stub: no --target-dir" >&2; exit 2; }
 mkdir -p "$target/release"
 # every installed binary name (the bin name can differ from the crate dir, e.g. signal-samples)
-for bin in mishe-tape mishe-tape-facts mishe-records mishe-systemd-show mishe-signal-freshness mishe-unit-paths mishe-signal-sample; do
+for bin in mishe-tape mishe-tape-facts mishe-records mishe-systemd-show mishe-signal-freshness mishe-unit-paths mishe-signal-sample mishe-cgroup-counters; do
   printf '#!/bin/sh\necho %s\n' "$bin" > "$target/release/$bin"
   chmod 0755 "$target/release/$bin"
 done
@@ -70,13 +70,13 @@ def test_builds_into_cache_from_crate_dir_and_installs(stub_env):
     result = run_script(env, site, cwd=REPO)
     assert result.returncode == 0, result.stderr
     lines = log.read_text().splitlines()
-    assert len(lines) == 7
+    assert len(lines) == 8
     for line in lines:
         cwd, argv = line.split(" argv=")
         crate = Path(cwd.removeprefix("cwd=")).name
         assert Path(cwd.removeprefix("cwd=")).parent == REPO / "rust"
         assert argv == f"build --release --locked --target-dir {cache / crate}"
-    for binary in ["mishe-tape", "mishe-records", "mishe-signal-sample"]:
+    for binary in ["mishe-tape", "mishe-records", "mishe-signal-sample", "mishe-cgroup-counters"]:
         assert (site / "bin" / binary).exists()
         assert (site / "bin" / f"{binary}.install.json").exists()
     # the build output lands in the cache, not in the crate's own target dir
@@ -92,5 +92,5 @@ def test_relative_cargo_resolves_from_caller_cwd(stub_env, tmp_path):
     env["MISHE_CARGO"] = "./cargo"
     result = run_script(env, site, cwd=rel_dir)
     assert result.returncode == 0, result.stderr
-    assert len(log.read_text().splitlines()) == 7
+    assert len(log.read_text().splitlines()) == 8
 
