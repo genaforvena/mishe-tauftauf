@@ -76,6 +76,8 @@ def facts_binary() -> str:
         digest = hashlib.sha256(binary.read_bytes()).hexdigest()
     except (OSError, ValueError) as exc:
         raise TapeUnknown(f"mishe-tape-facts install missing or unreadable: {exc}") from exc
+    if not isinstance(record, dict):
+        raise TapeUnknown("mishe-tape-facts install record is not a JSON object")
     if not os.access(binary, os.X_OK) or record.get("sha256") != digest:
         raise TapeUnknown("mishe-tape-facts install is not executable or its sha256 does not match the install record")
     return str(binary)

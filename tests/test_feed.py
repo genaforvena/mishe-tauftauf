@@ -12,6 +12,8 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
+import pytest
+
 from mishe_tauftauf import feed as feed_module
 from mishe_tauftauf.feed import Feed, FeedError, parse_feed
 from tests.records_binary import requires_records_binary
@@ -936,6 +938,36 @@ class ReadTextTailTest(unittest.TestCase):
 
     def test_missing_file_reads_as_empty(self):
         self.assertEqual(feed_module.read_text_tail(self.directory / "absent.log", 10), "")
+
+
+@pytest.mark.parametrize("record_text", ["[]", "1", '"sha"', "null"])
+def test_tape_install_record_that_is_not_an_object_is_unknown(tmp_path, monkeypatch, record_text):
+    # Valid JSON that is not an object must fail closed as TapeUnknown, the
+    # documented contract, not leak an AttributeError from record.get().
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    binary = bindir / "mishe-tape"
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+    (bindir / "mishe-tape.install.json").write_text(record_text, encoding="utf-8")
+    monkeypatch.delenv("MISHE_TAPE_BIN", raising=False)
+    monkeypatch.setenv("MISHE_SEED_HOME", str(tmp_path))
+    with pytest.raises(feed_module.TapeUnknown, match="not a JSON object"):
+        feed_module._tape_binary()
+
+
+@pytest.mark.parametrize("record_text", ["[]", "1", '"sha"', "null"])
+def test_records_install_record_that_is_not_an_object_is_unknown(tmp_path, monkeypatch, record_text):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    binary = bindir / "mishe-records"
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+    (bindir / "mishe-records.install.json").write_text(record_text, encoding="utf-8")
+    monkeypatch.delenv("MISHE_RECORDS_BIN", raising=False)
+    monkeypatch.setenv("MISHE_SEED_HOME", str(tmp_path))
+    with pytest.raises(feed_module.RecordsUnknown, match="not a JSON object"):
+        feed_module._records_binary()
 
 
 if __name__ == "__main__":

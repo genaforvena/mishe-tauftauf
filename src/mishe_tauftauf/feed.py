@@ -253,6 +253,8 @@ def _tape_binary() -> str:
         digest = hashlib.sha256(binary.read_bytes()).hexdigest()
     except (OSError, ValueError) as exc:
         raise TapeUnknown(f"mishe-tape install missing or unreadable: {exc}") from exc
+    if not isinstance(record, dict):
+        raise TapeUnknown("mishe-tape install record is not a JSON object")
     if not os.access(binary, os.X_OK) or record.get("sha256") != digest:
         raise TapeUnknown("mishe-tape install is not executable or does not match its recorded sha256")
     return str(binary)
@@ -279,6 +281,8 @@ def _records_binary() -> str:
         digest = hashlib.sha256(binary.read_bytes()).hexdigest()
     except (OSError, ValueError) as exc:
         raise RecordsUnknown(f"mishe-records install missing or unreadable: {exc}") from exc
+    if not isinstance(record, dict):
+        raise RecordsUnknown("mishe-records install record is not a JSON object")
     if not os.access(binary, os.X_OK) or record.get("sha256") != digest:
         raise RecordsUnknown("mishe-records install is not executable or does not match its recorded sha256")
     return str(binary)

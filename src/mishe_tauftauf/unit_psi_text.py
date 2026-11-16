@@ -40,6 +40,8 @@ def _systemd_show_binary() -> str:
         digest = hashlib.sha256(binary.read_bytes()).hexdigest()
     except (OSError, ValueError) as exc:
         raise SystemdShowUnknown(f"mishe-systemd-show install missing or unreadable: {exc}") from exc
+    if not isinstance(record, dict):
+        raise SystemdShowUnknown("mishe-systemd-show install record is not a JSON object")
     if not os.access(binary, os.X_OK) or record.get("sha256") != digest:
         raise SystemdShowUnknown("mishe-systemd-show install is not executable or does not match its recorded sha256")
     return str(binary)

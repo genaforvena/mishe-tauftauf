@@ -101,3 +101,17 @@ def test_no_site_and_no_override_is_unknown(monkeypatch):
     monkeypatch.delenv("MISHE_TAUFTAUF_HOME", raising=False)
     with pytest.raises(SystemdShowUnknown):
         text_mod._systemd_show_binary()
+
+
+@pytest.mark.parametrize("record_text", ["[]", "1", '"sha"', "null"])
+def test_site_install_record_that_is_not_an_object_is_unknown(tmp_path, monkeypatch, record_text):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    binary = bindir / "mishe-systemd-show"
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+    (bindir / "mishe-systemd-show.install.json").write_text(record_text, encoding="utf-8")
+    monkeypatch.delenv("MISHE_SYSTEMD_SHOW_BIN", raising=False)
+    monkeypatch.setenv("MISHE_SEED_HOME", str(tmp_path))
+    with pytest.raises(SystemdShowUnknown, match="not a JSON object"):
+        text_mod._systemd_show_binary()

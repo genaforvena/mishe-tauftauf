@@ -136,3 +136,18 @@ def test_no_site_install_and_no_override_is_unknown(tmp_path, monkeypatch):
     monkeypatch.setenv("MISHE_SEED_HOME", str(tmp_path))
     with pytest.raises(TapeUnknown):
         facts_binary()
+
+
+@pytest.mark.parametrize("record_text", ["[]", "1", '"sha"', "null"])
+def test_site_install_record_that_is_not_an_object_is_unknown(tmp_path, monkeypatch, record_text):
+    from mishe_tauftauf.tape_facts import facts_binary
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    binary = bindir / "mishe-tape-facts"
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+    (bindir / "mishe-tape-facts.install.json").write_text(record_text, encoding="utf-8")
+    monkeypatch.delenv("MISHE_TAPE_FACTS_BIN", raising=False)
+    monkeypatch.setenv("MISHE_SEED_HOME", str(tmp_path))
+    with pytest.raises(TapeUnknown, match="not a JSON object"):
+        facts_binary()
