@@ -14,6 +14,11 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 site="${1:-${MISHE_SEED_HOME:-${MISHE_TAUFTAUF_HOME:-$repo/.mishe-tauftauf}}}"
 cargo_bin="${MISHE_CARGO:-$(command -v cargo || true)}"
+# A relative MISHE_CARGO would stop resolving after the per-crate `cd` below: resolve it now, against the caller's cwd.
+case "$cargo_bin" in
+  */*) [ -n "$cargo_bin" ] && cargo_bin="$(cd "$(dirname "$cargo_bin")" && pwd)/$(basename "$cargo_bin")" ;;
+  ?*) cargo_bin="$(command -v "$cargo_bin" || true)" ;;
+esac
 if [ -z "$cargo_bin" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
   cargo_bin="$HOME/.cargo/bin/cargo"
 fi
