@@ -136,8 +136,13 @@ def run(home, identity, label, command, timeout=RUN_TIMEOUT_S):
     return {"command": command, "code": result.returncode, "log": str(out)}
 
 
-def command_artifacts(home, commands):
-    """Bind owned command scripts; system executables are outside the scoped patch."""
+def command_artifacts(home, commands, cwd=None):
+    """Bind owned command scripts; system executables are outside the scoped patch.
+
+    Relative argv resolves against ``cwd`` (the directory the command really runs in;
+    defaults to the live checkout). Absolute owned scripts are bound wherever they sit."""
+    base = Path(cwd) if cwd is not None else home.parent
+    roots = {base.resolve(), home.parent.resolve()}
     artifacts = {}
     for command in commands:
         if command is None:
@@ -154,8 +159,8 @@ def command_artifacts(home, commands):
                 continue
             path = Path(arg)
             if not path.is_absolute():
-                path = home.parent / path
-            if path.resolve().is_relative_to(home.parent.resolve()) and path.is_file():
+                path = base / path
+            if any(path.resolve().is_relative_to(root) for root in roots) and path.is_file():
                 artifacts[str(path.resolve())] = snapshot(path)
     return artifacts
 

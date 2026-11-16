@@ -430,7 +430,8 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
         def save(): write_json(path, record)
         save()
         env = dict(os.environ, PYTHONPATH=str(source/"src"), MISHE_SEED_HOME=str(home))
-        commands = wall_patch.command_artifacts(home, [check, observe])
+        # check and observe run with cwd=source, so relative argv binds to the release tree.
+        commands = wall_patch.command_artifacts(home, [check, observe], cwd=source)
         record["command_artifacts"] = commands
         record["observe_argv"] = observe
         from .roles import declared
@@ -442,7 +443,7 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
         closure(source, env)
         if not boundary.clean_tree(source) or boundary.head(source) != sha:
             record["phase"]="check-mutated-source"; save(); raise ValueError("committed source changed during checks")
-        if commands != wall_patch.command_artifacts(home,[check,observe]):
+        if commands != wall_patch.command_artifacts(home, [check, observe], cwd=source):
             record["phase"]="check-mutated-command"; save(); raise ValueError("command changed during check")
         record["tests_passed"]=True
         # Only now the dispatch lock: the check above ran the whole suite without holding wakes back.

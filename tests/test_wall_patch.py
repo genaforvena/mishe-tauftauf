@@ -1327,3 +1327,50 @@ def test_verify_refuses_a_plan_without_revert_argv_before_moving_bytes(tmp_path,
         wall_patch.verify(home, "change")
     assert deployed.read_text() == "after\n"
     assert "revert_activation" not in wall_patch.status(home, "change")
+
+
+def _artifact_fixture(tmp_path):
+    # live checkout = tmp_path/checkout; site = checkout/.mishe-tauftauf; release tree under the site.
+    checkout = tmp_path / "checkout"
+    home = checkout / ".mishe-tauftauf"
+    source = home / "releases" / "abc"
+    (source / "tools").mkdir(parents=True)
+    (checkout / "tools").mkdir(parents=True)
+    (source / "tools" / "check.py").write_text("release")
+    (checkout / "tools" / "check.py").write_text("checkout")
+    return home, source, checkout
+
+
+def test_relative_command_binds_release_script_when_run_in_release_tree(tmp_path):
+    home, source, checkout = _artifact_fixture(tmp_path)
+    artifacts = wall_patch.command_artifacts(home, [["python", "tools/check.py"]], cwd=source)
+    assert list(artifacts) == [str((source / "tools" / "check.py").resolve())]
+
+
+def test_checkout_only_change_does_not_change_release_artifacts(tmp_path):
+    home, source, checkout = _artifact_fixture(tmp_path)
+    before = wall_patch.command_artifacts(home, [["python", "tools/check.py"]], cwd=source)
+    (checkout / "tools" / "check.py").write_text("checkout changed")
+    after = wall_patch.command_artifacts(home, [["python", "tools/check.py"]], cwd=source)
+    assert before == after
+
+
+def test_release_script_change_is_detected(tmp_path):
+    home, source, checkout = _artifact_fixture(tmp_path)
+    before = wall_patch.command_artifacts(home, [["python", "tools/check.py"]], cwd=source)
+    (source / "tools" / "check.py").write_text("release changed")
+    after = wall_patch.command_artifacts(home, [["python", "tools/check.py"]], cwd=source)
+    assert before != after
+
+
+def test_absolute_owned_script_is_bound_from_checkout(tmp_path):
+    home, source, checkout = _artifact_fixture(tmp_path)
+    script = str((checkout / "tools" / "check.py").resolve())
+    artifacts = wall_patch.command_artifacts(home, [["python", script]], cwd=source)
+    assert list(artifacts) == [script]
+
+
+def test_default_cwd_keeps_checkout_binding(tmp_path):
+    home, source, checkout = _artifact_fixture(tmp_path)
+    artifacts = wall_patch.command_artifacts(home, [["python", "tools/check.py"]])
+    assert list(artifacts) == [str((checkout / "tools" / "check.py").resolve())]
