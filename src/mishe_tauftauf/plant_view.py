@@ -109,7 +109,10 @@ def _with_routed(home, facts, key, role, running):
         return facts
     blank = {'text': '', 'turns': None, 'seconds': None, 'cost': None, 'tokens_in': None, 'tokens_out': None,
              'error': False, 'subtype': None, 'stop': None, 'denials': None}
-    return dict(blank, **(facts or {}), models=[safe(model)], routed=True)
+    merged = dict(blank, **(facts or {}))
+    merged['models'] = [safe(model)]
+    merged['routed'] = True
+    return merged
 
 
 def _model_text(facts, configured) -> str:

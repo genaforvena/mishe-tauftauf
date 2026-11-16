@@ -878,6 +878,19 @@ def test_model_label_comes_from_the_router_ledger_when_the_run_reports_none(tmp_
     assert plant_view._with_routed(tmp_path, None, "wake-health-2", "health", True)["models"] == ["longcat-2.5-free"]
 
 
+def test_falsy_models_fact_does_not_duplicate_the_routed_keyword(tmp_path):
+    import json
+    from mishe_tauftauf import plant_view
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "engine" / "routing-ledger.jsonl").write_text(
+        json.dumps({"event": "select", "role": "steward", "key": "omp:longcat-2.5-free:-", "wake": "wake-steward-1"}) + "\n")
+    for empty in ([], None):
+        facts = plant_view._with_routed(tmp_path, {"models": empty, "text": "hi"}, "wake-steward-1", "steward", False)
+        assert facts["models"] == ["longcat-2.5-free"]
+        assert facts["text"] == "hi"
+        assert facts["routed"] is True
+
+
 def test_a_running_wake_and_the_top_header_name_the_engine_the_router_selected(tmp_path):
     import json
     from mishe_tauftauf import plant_view
