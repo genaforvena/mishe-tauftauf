@@ -1,4 +1,5 @@
 """Controlled-failure tests for the post-move observation of the live consumers (pin_observation)."""
+import time
 import pytest
 
 from mishe_tauftauf import pin_observation as po
@@ -53,6 +54,27 @@ def test_drain_waits_for_old_invocations_and_fails_closed_when_they_stay(tmp_pat
     with pytest.raises(ValueError, match="old consumer invocations remain"):
         po.drain_old(tmp_path, 5, timeout=0.0, sleep=lambda s: None, inventory=lambda h: {}, pending_old=pending)
     assert calls == [5]
+
+
+def test_drain_timeout_reports_the_real_pending_unit_not_only_the_last_transient(tmp_path):
+    reads = iter([
+        [{"unit": "mishe-real.service", "invocation": "old", "start_us": 1, "pids": [1]}],
+        ValueError("active cgroup evidence UNKNOWN: mishe-transient.service"),
+    ])
+
+    def pending(record, rows):
+        item = next(reads)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    # the first read sees the real unit; the sleep spends the deadline so the transient read is the last one
+    with pytest.raises(ValueError) as caught:
+        po.drain_old(tmp_path, 5, timeout=0.05, sleep=lambda s: time.sleep(0.06), inventory=lambda h: {},
+                     pending_old=pending)
+    message = str(caught.value)
+    assert "mishe-real.service" in message
+    assert "mishe-transient.service" in message
 
 
 def test_drain_returns_when_nothing_old_remains_and_ignores_its_own_invocation(tmp_path, monkeypatch):

@@ -100,19 +100,24 @@ def drain_old(home: Path, cutoff_us: int, *, timeout: float = DRAIN_TIMEOUT_S, s
     record = {"cutoff_us": cutoff_us, "before": {}}
     until = time.monotonic() + timeout
     own = os.environ.get("INVOCATION_ID", "")
-    last = None
+    last_transient = None
+    last_rows = None  # the most recent successful read that still held old invocations
     while True:
         try:
             pending = [row for row in pending_old(record, inventory(home)) if not (own and row["invocation"] == own)]
+            if pending:
+                last_rows = pending
         except ValueError as exc:
             # mid-start evidence is transient; anything else fails closed at once
             if not fence.is_transient(exc):
                 raise
-            pending, last = [{"unit": "UNKNOWN", "error": str(exc)}], str(exc)
+            pending, last_transient = [{"unit": "UNKNOWN", "error": str(exc)}], str(exc)
         if not pending:
             return 0
         if time.monotonic() >= until:
-            raise ValueError("old consumer invocations remain: " + repr(pending if last is None else last))
+            # report the real pending rows and the last transient separately; neither masks the other
+            raise ValueError("old consumer invocations remain: " + repr({
+                "pending": pending, "last_observed_pending": last_rows, "last_transient": last_transient}))
         sleep(fence.RETRY_INTERVAL_S)
 
 
