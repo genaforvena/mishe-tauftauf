@@ -3,6 +3,7 @@
 
   window    the outer tmux window "network" exists and its pane runs tools/network_view.py
   progress  the network mind's wall is fresh and network files were committed recently
+  uplink    the WAN receive-drop rate (eth0 rx_dropped) from router readings stays under the bound
 
 Exit: 0 GREEN, 2 RED (the window is missing/wrong, or the mind has gone quiet), 3 UNKNOWN
 (tmux or git cannot be read).  Nothing here holds a signal GREEN by hand.
@@ -182,13 +183,84 @@ def progress(home, repo):
     return 0
 
 
+UPLINK_WINDOW_S = 2 * 3600     # the rate is judged over the last two hours of router readings
+UPLINK_MIN_SPAN_S = 1.8 * 3600  # a RED rate needs the readings to actually cover that span
+UPLINK_MAX_AGE_S = 900         # the newest router reading must be this fresh, else UNKNOWN
+UPLINK_RED_PER_HOUR = 400      # rx_dropped per hour above this for the full span is RED
+
+
+def uplink_state(rows, now):
+    """Judge the WAN receive-drop rate from router readings (dicts with 'ts' and 'uplink').
+
+    Returns (code, message): 0 GREEN, 2 RED, 3 UNKNOWN.  A dead or stale probe is UNKNOWN, never GREEN.
+    A counter that went backwards (router reboot or driver reset) is UNKNOWN for this window."""
+    fresh = []
+    for row in rows:
+        try:
+            ts = float(row["ts"])
+            up = row["uplink"]
+            dropped = int(up["rx_dropped"])
+            errors = int(up["rx_errors"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if now - ts <= UPLINK_WINDOW_S and ts <= now + START_SLACK_S:
+            fresh.append((ts, dropped, errors))
+    if not fresh:
+        return 3, "network-care: no router uplink reading in the last two hours"
+    fresh.sort()
+    last_ts, last_drop, last_err = fresh[-1]
+    if now - last_ts > UPLINK_MAX_AGE_S:
+        return 3, f"network-care: newest router uplink reading is {(now - last_ts) / 60:.0f} min old"
+    if last_err > 0:
+        return 2, f"network-care: eth0 has {last_err} receive errors (a link fault, not drops)"
+    if len(fresh) < 2:
+        return 3, "network-care: only one router uplink reading; no rate yet"
+    first_ts, first_drop, _ = fresh[0]
+    span = last_ts - first_ts
+    if last_drop < first_drop:
+        return 3, "network-care: rx_dropped counter went backwards in this window (reset); no rate"
+    if span <= 0:
+        return 3, "network-care: router uplink readings do not span a time; no rate"
+    per_hour = (last_drop - first_drop) * 3600.0 / span
+    text = f"rx_dropped {per_hour:.0f}/h over {span / 3600:.1f} h"
+    if per_hour > UPLINK_RED_PER_HOUR and span >= UPLINK_MIN_SPAN_S:
+        return 2, f"network-care: {text}, above {UPLINK_RED_PER_HOUR}/h for the full span"
+    return 0, f"network-care: uplink GREEN ({text})"
+
+
+def uplink(home):
+    path = home / "network" / "router.jsonl"
+    rows = []
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 256 * 1024))
+            tail = fh.read().decode("utf-8", "replace").splitlines()
+        if size > 256 * 1024:
+            tail = tail[1:]  # the first line may be cut mid-row
+        for line in tail:
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+    except OSError as exc:
+        print(f"network-care: router readings unreadable: {exc}", file=sys.stderr)
+        return 3
+    code, message = uplink_state(rows, time.time())
+    print(message, file=sys.stderr if code else sys.stdout)
+    return code
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("what", choices=("window", "progress"))
+    ap.add_argument("what", choices=("window", "progress", "uplink"))
     ap.add_argument("--home", type=Path, required=True)
     ap.add_argument("--repo", type=Path, required=True)
     ap.add_argument("--session", default="plants")
     a = ap.parse_args()
+    if a.what == "uplink":
+        return uplink(a.home)
     return window(a.session, a.home, a.repo) if a.what == "window" else progress(a.home, a.repo)
 
 
