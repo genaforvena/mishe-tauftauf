@@ -154,7 +154,8 @@ def test_each_stored_edge_is_appended_to_history_and_refresh_is_not(home):
 
 def test_retire_removes_registration_and_files_and_keeps_reason_in_history(home, tmp_path):
     store.observe(home, "ci", "GREEN", now=1000.0, source="t")
-    store.retire(home, "ci", now=1100.0, reason="experiment closed")
+    # the caller warns the operator to sync when the retired name was watched
+    assert store.retire(home, "ci", now=1100.0, reason="experiment closed") == ["genome"]
     assert "ci" not in store.registry(home)
     assert not (tmp_path / "signals" / "ci.json").exists()
     assert not (tmp_path / "signals" / "ci.seen").exists()

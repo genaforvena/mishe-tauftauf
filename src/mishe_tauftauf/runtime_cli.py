@@ -312,9 +312,14 @@ def run(args) -> int:
             armmod.arm(home, scheduler=scheduler(home))
             return code
         elif args.signal_command == "retire":
-            signal_store.retire(home, args.name, now=now, reason=args.reason)
+            subscribers = signal_store.retire(home, args.name, now=now, reason=args.reason)
             armmod.arm(home, scheduler=scheduler(home))
             print(f"retired {args.name}")
+            if subscribers:
+                # A subscribed name is a PathChanged watch in each subscriber's generated wake
+                # .path unit; retire removes it from the registry but not from the installed
+                # unit, so the unit drifts until a sync regenerates it (doctor RED mean-time).
+                print(f"  watched by: {', '.join(subscribers)} — run `mishe sync` to drop the stale watch line")
         else:
             print(signal_store.read(home, args.name, now=now))
         return 0

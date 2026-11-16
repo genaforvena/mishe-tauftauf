@@ -230,10 +230,16 @@ def observe_unknown(home, name: str, *, now: float, reason: str, source: str) ->
     return edge
 
 
-def retire(home, name: str, *, now: float, reason: str) -> None:
+def retire(home, name: str, *, now: float, reason: str) -> list:
     """Remove a closed experiment's signal: its registration and its files, with a RETIRED edge in
     the history (the reason is kept there). Refuses an empty reason. Subscribers must be checked by
-    the caller: a retired name is no longer readable, and its unit's failure hook must not depend on it."""
+    the caller: a retired name is no longer readable, and its unit's failure hook must not depend on it.
+
+    Returns the retired entry's subscribers. A subscribed name is watched by the generated wake
+    ``.path`` unit of each subscriber, so retiring it leaves a dangling ``PathChanged`` line that
+    doctor reports as drift until ``mishe sync`` regenerates the unit: a caller that has a sync
+    should run it, and one that does not must tell the operator to.
+    """
     text = nonblank(reason)
     if text is None:
         raise ValueError("retire needs a reason")
@@ -241,12 +247,14 @@ def retire(home, name: str, *, now: float, reason: str) -> None:
     reg = registry(home)
     if name not in reg:
         raise ValueError(f"signal {name!r} is not registered")
+    subscribers = list(reg[name].get("subscribers", []))
     _append_edge(home, {"name": name, "state": "RETIRED", "value": None, "reason": text,
                         "event": None, "at": float(now), "source": "retire", "rev": rev(home, name) + 1})
     del reg[name]
     write_json(_dir(home) / "registry.json", reg)
     for suffix in (".json", ".seen", ".detail", ".cause"):
         (_dir(home) / f"{name}{suffix}").unlink(missing_ok=True)
+    return subscribers
 
 
 def read(home, name: str, *, now: float) -> Signal:
