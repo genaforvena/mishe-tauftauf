@@ -22,7 +22,7 @@ from .core.registry import StaticRoleRegistry
 from .core.state import DispatchRecord, DispatchStore
 from .core import supervisor
 from .core.supervisor import DispatchBusy, Supervisor, SupervisorError
-from .state_files import read_json, write_json
+from .state_files import read_json, write_json, write_text_atomic
 
 DEFAULT_TIMEOUT = 1800.0
 # Minimum gap between two starts of the same role from resume_owed. 150 s keeps two starts in any
@@ -339,13 +339,14 @@ def _ripgrep_guard(home) -> Path:
 
     ``RIPGREP_CONFIG_PATH`` applies to each ripgrep invocation, including one that names an
     ignored or hidden directory on the command line, which a plain ``.ignore`` file does not
-    cover. The site home's own basename is used, so a renamed home keeps the guard.
+    cover. The site home's own basename is used, so a renamed home keeps the guard. The config
+    is replaced atomically: a concurrent wake's ripgrep never reads a half-written config with
+    no exclusions.
     """
     name = Path(home).name
     body = f"--glob=!{name}/**\n--glob=!**/{name}/**\n"
     path = Path(home) / RIPGREP_CONFIG_NAME
-    if not path.exists() or path.read_text(encoding="utf-8") != body:
-        path.write_text(body, encoding="utf-8")
+    write_text_atomic(path, body)
     return path
 
 

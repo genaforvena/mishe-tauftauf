@@ -83,6 +83,28 @@ def test_wake_engine_env_excludes_the_site_home_from_ripgrep(home):
     assert f"--glob=!**/{home.name}/**" in body
 
 
+def test_ripgrep_guard_publishes_atomically(home, monkeypatch):
+    # A second wake can launch ripgrep with this config while the guard rewrites it. In-place
+    # truncation would expose an empty config (no exclusions -> site-home starvation), so the
+    # destination must still hold the complete old config at the instant of replacement.
+    path = Path(home) / wake.RIPGREP_CONFIG_NAME
+    old = "--glob=!old/**\n"
+    path.write_text(old, encoding="utf-8")
+    seen = []
+    replace = os.replace
+
+    def checking_replace(source, destination):
+        seen.append(Path(destination).read_text(encoding="utf-8"))
+        return replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", checking_replace)
+    wake._ripgrep_guard(home)
+    assert seen == [old]
+    assert path.read_text(encoding="utf-8") == (
+        f"--glob=!{home.name}/**\n--glob=!**/{home.name}/**\n"
+    )
+
+
 def test_no_yield_leaves_dispatch_unknown_and_cursor_unmoved(home):
     owed.touch_inbox(home, "genome")
     result = go(home, "genome", FakeEngine(lambda p, e: 0))
