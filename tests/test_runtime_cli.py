@@ -258,7 +258,8 @@ def test_sync_installs_every_duty_and_routes_failures_to_its_resolver(site, tmp_
     assert cli("sync", "--unit-dir", str(d), "--no-systemctl", "--repo", str(REPO_ROOT)) == 0
     for duty in ("ci", "dispatch", "egress", "devto", "budget", "host-capacity"):
         assert (d / f"mishe-producer-{duty}.timer").exists(), duty
-    assert "--red-codes none" in (d / "mishe-producer-devto.service").read_text()
+    devto_unit = (d / "mishe-producer-devto.service").read_text()
+    assert "--red-codes 2" in devto_unit and "--unknown-codes 3" in devto_unit
     from mishe_tauftauf import failure
     assert failure.resolver_for(site, "mishe-producer-egress.service") == "health"
     assert failure.resolver_for(site, "mishe-producer-ci.service") == "genome"

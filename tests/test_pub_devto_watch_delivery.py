@@ -113,6 +113,10 @@ def test_a_guarded_delivery_with_a_sufficient_ceiling_is_green():
 def test_installed_watcher_has_distinct_red_delivery_and_unknown_scan_codes():
     """The detector reads the installed watcher and requires the split contract."""
     source = check.read_watcher(check.default_home())
+    if source is None:
+        # CI has no plant home, so the installed watcher is absent there. The live observer runs this
+        # check against the plant and reports UNKNOWN when the watcher cannot be read; skip here, never GREEN.
+        pytest.skip("no installed pub-devto watcher in this environment")
     state, reason = check.verdict(source)
     assert state == check.GREEN, reason
 
