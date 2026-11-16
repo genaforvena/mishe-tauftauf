@@ -153,6 +153,28 @@ def test_devto_watcher_routes_delivery_failure_red_and_scan_failure_unknown(tmp_
     assert store.read(tmp_path, "devto", now=NOW + 1).value == "RED"
 
 
+def test_devto_watcher_delivery_duty_schedules_the_committed_check_against_the_plant():
+    """The installed-watcher contract must be observed live, not only in a test.
+
+    ``checks/pub-devto-watch-delivery.py`` reads the *installed* watcher
+    (``{home}/pub/bin/devto-watch``) and requires exit 2 for a failed delivery and exit 3
+    for an unreadable scan. That source is not in the committed tree, so the in-tree test
+    skips under pytest (``tests/conftest.py`` strips ``MISHE_SEED_HOME``), and the delivery
+    reviewer cannot see the bytes. Before this duty the check had no runner at all, so an
+    edit to either the watcher or the devto duty could break the 2=RED / 3=UNKNOWN routing
+    with every test green (2026-11-16: the delivery review of 25ddc765 returned verdict
+    ``unknown`` for exactly this unobservable contract). The duty names the committed check
+    through ``{repo}`` and passes ``--home {home}`` so it reads the real watcher.
+    """
+    item = next(d for d in ALL if d["name"] == "pub-devto-watch-delivery")
+    assert item["resolver"] == "pub"
+    assert item["red_codes"] == [2] and item["unknown_codes"] == [3]
+    check = REPO / "checks" / "pub-devto-watch-delivery.py"
+    assert check.is_file(), "the watcher contract must be a committed check"
+    assert item["command"][:2] == ["{python}", "{repo}/checks/pub-devto-watch-delivery.py"]
+    assert item["command"][2:4] == ["--home", "{home}"]
+
+
 def test_privacy_scan_runs_on_a_timer_with_the_site_credentials():
     """The privacy scan had no duty, so its signal aged to UNKNOWN between hand runs.
 

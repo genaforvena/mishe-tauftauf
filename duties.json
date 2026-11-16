@@ -161,6 +161,23 @@
       "covers": "DEV.to threads observed and delivered"
     },
     {
+      "name": "pub-devto-watch-delivery",
+      "command": [
+        "{python}",
+        "{repo}/checks/pub-devto-watch-delivery.py",
+        "--home",
+        "{home}"
+      ],
+      "red_codes": [2],
+      "unknown_codes": [3],
+      "every": 3600,
+      "timeout": 120,
+      "max_age": 7200,
+      "resolver": "pub",
+      "replaces": [],
+      "covers": "the installed devto watcher returns its delivery failure as RED (2) and its unreadable scan as UNKNOWN (3), the two codes the devto duty routes"
+    },
+    {
       "name": "devto-article-duplication",
       "command": [
         "{python}",
@@ -1211,6 +1228,28 @@
       ],
       "resolver": "system1",
       "covers": "advisory commit-risk class for recent commits (path rules first, the decision model only for the mixed residual): UNKNOWN when the decision provider is not configured or residual commits stay unanswered while the daily cap has room; never gates delivery",
+      "replaces": []
+    },
+    {
+      "name": "system1-savings",
+      "command": [
+        "{python}",
+        "-m",
+        "mishe_tauftauf.system1_savings",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 3600,
+      "timeout": 60,
+      "max_age": 7500,
+      "red_codes": [],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "system1",
+      "covers": "P4 measured System One savings over the trailing 24 h, System 0 only (no provider call): wake starts per day by trigger class, wakes avoided by a live gate, projected skip and changed-rate of same-dossier wakes against all wakes, decision calls and spend. UNKNOWN when the wake-gate ledger is missing or corrupt or the decision budget is stale; never RED, since savings are not a failure",
       "replaces": []
     },
     {
