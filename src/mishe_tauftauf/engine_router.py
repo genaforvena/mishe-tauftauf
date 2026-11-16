@@ -6,20 +6,20 @@ Site file ``engine/routes.json`` (one file, the only place candidates live)::
      "roles": {"health": [{"engine": "omp", "model": "opencode-go/beam-free", "account": "go-a"},
                           {"engine": "claude", "model": "claude-haiku-5-5", "account": null}]}}
 
-A candidate is ``engine`` (``claude``, ``omp`` or ``codex``), ``model`` and ``account`` (a
-registry alias, or null for the Claude subscription safety net, which has no
-window reading in this router). A candidate may also carry ``max_parallel``: the
-number of wakes that may use it at once. The router counts the candidate's
-running wakes from the routing ledger and skips a candidate that is at its cap,
-so the extra wake takes the next candidate instead of hitting the provider's
-rate limit (operator DM 299311).
+A candidate is ``engine`` (``claude``, ``omp``, ``codex`` or ``qwen``), ``model`` and
+``account`` (a registry alias, or null for a login with no window reading in this
+router: the Claude subscription safety net and account-less qwen). A candidate may
+also carry ``max_parallel``: the number of wakes that may use it at once. The router
+counts the candidate's running wakes from the routing ledger and skips a candidate
+that is at its cap, so the extra wake takes the next candidate instead of hitting
+the provider's rate limit (operator DM 299311).
 
 Choice is the first candidate in order that is not cooling off and is admitted
 by :mod:`engine_policy` on the account windows in ``engine/budget.json`` (the
 budget producer's one-source file; :func:`live_status` reads it). Admission needs
 a FRESH account; UNKNOWN, STALE and UNREADABLE accounts are never evidence of
-capacity and are skipped. A candidate with no account (a free model or the Claude
-safety net) reads no window, so a missing file does not stop it.
+capacity and are skipped. A candidate with no account (a free model, the Claude
+safety net or qwen) reads no window, so a missing file does not stop it.
 
 Outcomes are judged from the wake's own yield receipt, not from the engine exit
 code alone. A candidate that does not start falls through to the next one within
@@ -60,7 +60,7 @@ DEFAULT_HARD_TIMEOUT_S = 3600     # total runtime a wake may reach when it is st
 DEFAULT_RATE_LIMIT_COOL_OFF_S = 300   # a rate limit waits minutes, not the site-wide window
 MAX_RETRY_AFTER_COOL_OFF_S = 28800   # cap for a provider-stated retry-after, 8 h
 MAX_RATE_LIMIT_COOL_OFF_S = 1800    # ceiling of the self-computed doubling backoff, the site-wide window
-ENGINES = ("claude", "omp", "codex")
+ENGINES = ("claude", "omp", "codex", "qwen")
 STALE_STATES = ("STALE", "UNKNOWN", "UNATTRIBUTED", "UNREADABLE")
 
 
@@ -96,6 +96,11 @@ def cooling_table(cooling: dict, now_ms: float, cool_off_s: float = DEFAULT_COOL
 
 def _is_safety_net(c: dict) -> bool:
     return c["engine"] == "claude" and c["account"] is None
+
+
+def _no_window(c: dict) -> bool:
+    """A candidate whose login has no account window in the router: Claude's safety net and qwen."""
+    return c["account"] is None and c["engine"] in ("claude", "qwen")
 
 
 def load_routes(home) -> dict | None:
@@ -246,6 +251,8 @@ def _eligible(role: str, cand: dict, status, now_ms) -> tuple[bool, str]:
         return True, "free model (no account window to read; failures cool it off)"
     if _is_safety_net(cand):
         return True, "Claude subscription safety net (no account window read in the router)"
+    if _no_window(cand):
+        return True, "qwen login (no account window read in the router)"
     alias = cand["account"]
     if status is None:
         return False, "live account status unavailable"
@@ -499,6 +506,9 @@ class RoutedEngine:
         if cand["engine"] == "codex":
             from .engine_codex import CodexEngine
             return CodexEngine(cand["model"], thinking=cand.get("thinking"))
+        if cand["engine"] == "qwen":
+            from .engine_qwen import QwenEngine
+            return QwenEngine(cand["model"])
         return OmpEngine(cand["model"], thinking=cand.get("thinking"))
 
     def _cool(self, cand: dict, now_ms: float, *, role_only: bool = False, off_ms: float | None = None) -> None:

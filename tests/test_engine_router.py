@@ -26,6 +26,7 @@ def status(**accounts):
 GO = {"engine": "omp", "model": "opencode-go/beam-free", "account": "go-a"}
 MINI = {"engine": "omp", "model": "minimax-code/MiniMax-M3.1-Flash", "account": "minimax-a"}
 HAIKU = {"engine": "claude", "model": "claude-haiku-5-5", "account": None}
+QWEN = {"engine": "qwen", "model": "qmodel_latest", "account": None}
 
 
 def routes_file(home, roles, cool_off_s=1800):
@@ -71,6 +72,32 @@ def test_depleted_account_is_not_selected():
 def test_claude_safety_net_needs_no_account_status():
     c = router.choose("genome", [HAIKU], None, {}, NOW_MS)
     assert c["decision"] == "select"
+
+
+def test_qwen_candidate_needs_no_account_status():
+    c = router.choose("docs", [QWEN], None, {}, NOW_MS)
+    assert c["decision"] == "select" and c["key"] == router.candidate_key(QWEN)
+
+
+def test_qwen_candidate_is_cooled_on_failure_unlike_the_safety_net(tmp_path, monkeypatch):
+    monkeypatch.setattr(router, "live_status", lambda home: None)
+    monkeypatch.setattr(router.time, "time", lambda: NOW_MS / 1000)
+    monkeypatch.setattr(router.RoutedEngine, "_build", lambda self, cand: FakeEngine(cand["model"]))
+    FakeEngine.script = {QWEN["model"]: "timeout"}
+    routes_file(tmp_path, {"docs": [QWEN]})
+    eng = router.for_role(tmp_path, "docs")
+    with pytest.raises(EngineTimeout):
+        eng.run(tmp_path / "p.md", env=_env(tmp_path, "kq1"), cwd=tmp_path, timeout=5)
+    cooling = json.loads((tmp_path / "engine" / router.STATE).read_text())["cooling"]
+    assert router.role_key("docs", router.candidate_key(QWEN)) in cooling
+
+
+def test_load_routes_accepts_qwen_and_builds_its_engine(tmp_path):
+    routes_file(tmp_path, {"docs": [QWEN, HAIKU]})
+    routes = router.load_routes(tmp_path)
+    assert routes["roles"]["docs"][0]["engine"] == "qwen"
+    engine = router.for_role(tmp_path, "docs")._build(QWEN)
+    assert engine.name == "qwen" and engine.model == QWEN["model"]
 
 
 def test_cooling_candidate_is_skipped_then_reprobed_after_cool_off():

@@ -117,7 +117,8 @@ class _ProgressReader:
 def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
                 stdin_from: Path | None = None, stdout_to: Path | None = None, on_start=None,
                 hard_timeout: float | None = None, idle_gap: float = IDLE_GAP_S,
-                first_output_s: float | None = None, first_event: Callable[[], bool] | None = None) -> int:
+                first_output_s: float | None = None, first_event: Callable[[], bool] | None = None,
+                stderr_to: Path | None = None) -> int:
     """Run ``command`` under a deadline.
 
     ``timeout`` is the soft deadline. With ``hard_timeout`` (a total runtime cap) the run may
@@ -133,13 +134,17 @@ def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
     few bytes and then go quiet); without it, any output growth counts.
     The bound is enforced on the progress path (with ``hard_timeout``), which is the wake path;
     the plain fixed-deadline path is unchanged.
+
+    stderr joins stdout by default. ``stderr_to`` retains it in its own file instead, for an
+    engine whose stdout is one JSON document that stderr noise would make unreadable.
     """
     stdin = open(stdin_from, "rb") if stdin_from else subprocess.DEVNULL
     stdout = open(stdout_to, "wb") if stdout_to else subprocess.DEVNULL
+    stderr = open(stderr_to, "wb") if stderr_to else subprocess.STDOUT
     try:
         try:
             process = subprocess.Popen(command, env=env, cwd=cwd, stdin=stdin, stdout=stdout,
-                                       stderr=subprocess.STDOUT, start_new_session=True)
+                                       stderr=stderr, start_new_session=True)
         except OSError as exc:
             raise EngineNotStarted(f"{command[0]}: {exc}") from exc
         if on_start is not None:
@@ -161,7 +166,7 @@ def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
         finally:
             _kill_group(process) if process.poll() is None else None
     finally:
-        for handle in (stdin, stdout):
+        for handle in (stdin, stdout, stderr):
             if hasattr(handle, "close"):
                 handle.close()
 

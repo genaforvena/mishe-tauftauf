@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import intentions, owed, signal_store, yielding
 from .core.dispatch_record import read_record_fields, valid_role
-from .engines import DEFAULT_CLAUDE_MODEL
+from .engines import DEFAULT_CLAUDE_MODEL, DEFAULT_QWEN_MODEL
 from .feed import Feed
 from .plant_view_boundary import (arguments, brief, cut, file_tail_lines, last_lines, output_view, routed_models, safe, uncommitted, wake_commits,
                                   wake_key, wall_lines, would_cut)
@@ -94,7 +94,8 @@ def _configured(home, role) -> tuple[str, str | None]:
     except (OSError, ValueError):
         return 'UNKNOWN engine', None
     kind = config.get('engine', 'claude')
-    model = config.get('model', DEFAULT_CLAUDE_MODEL if kind == 'claude' else None)
+    defaults = {'claude': DEFAULT_CLAUDE_MODEL, 'qwen': DEFAULT_QWEN_MODEL}
+    model = config.get('model', defaults.get(kind))
     return safe(kind), safe(model) if model else None
 
 

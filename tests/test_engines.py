@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from mishe_tauftauf import engine_claude, engine_codex, engine_omp, engine_process as proc, engines, wake
+from mishe_tauftauf import engine_claude, engine_codex, engine_omp, engine_qwen, engine_process as proc, engines, wake
 
 
 def test_missing_binary_is_not_started():
@@ -53,6 +53,8 @@ def test_engine_choice_defaults_and_rejects_unsupported(tmp_path):
     (tmp_path / "engines").mkdir()
     (tmp_path / "engines" / "genome.json").write_text('{"engine":"omp","model":"x"}')
     assert engines.for_role(tmp_path, "genome").name == "omp"
+    (tmp_path / "engines" / "genome.json").write_text('{"engine":"qwen","model":"x"}')
+    assert engines.for_role(tmp_path, "genome").name == "qwen"
     (tmp_path / "engines" / "genome.json").write_text('{"engine":"bogus"}')
     with pytest.raises(ValueError):
         engines.for_role(tmp_path, "genome")
@@ -103,3 +105,66 @@ def test_omp_wakes_bound_thinking_and_honour_a_configured_level(tmp_path):
     assert cmd[cmd.index("--thinking") + 1] == "minimal"
     cmd = engine_omp.command("m", tmp_path, tmp_path / "p.md", "bogus")
     assert cmd[cmd.index("--thinking") + 1] == "low"
+
+
+def test_qwen_command_is_headless_bounded_and_unpersisted():
+    cmd = engine_qwen.command("qmodel_latest")
+    assert cmd[:2] == ["qwen", "-p"]
+    assert "--no-session-persistence" in cmd and "--permission-mode" in cmd
+    assert cmd[cmd.index("--permission-mode") + 1] == "dont_ask"
+    assert cmd[cmd.index("--model") + 1] == "qmodel_latest"
+    assert cmd[cmd.index("--output-format") + 1] == "json"
+    assert "Bash" in cmd and "Read" in cmd
+
+
+def test_a_qwen_role_without_a_model_gets_a_usable_model(tmp_path):
+    (tmp_path / "engines").mkdir()
+    (tmp_path / "engines" / "p.json").write_text('{"engine":"qwen"}')
+    engine = engines.for_role(tmp_path, "p")
+    assert engine.name == "qwen"
+    assert engine.model == engines.DEFAULT_QWEN_MODEL
+    argv = engine_qwen.command(engine.model, engine.tools)
+    assert argv[argv.index("--model") + 1] == engines.DEFAULT_QWEN_MODEL
+    assert all(isinstance(part, str) for part in argv)
+
+
+def test_qwen_tools_can_be_narrowed_per_role(tmp_path):
+    (tmp_path / "engines").mkdir()
+    (tmp_path / "engines" / "p.json").write_text('{"engine":"qwen","tools":["Read"]}')
+    engine = engines.for_role(tmp_path, "p")
+    assert engine.tools == ("Read",)
+    cmd = engine_qwen.command(engine.model, engine.tools)
+    assert cmd.count("--allowed-tools") == 1
+    assert cmd[cmd.index("--allowed-tools") + 1] == "Read" and "Bash" not in cmd
+
+
+def test_qwen_wake_retains_the_claude_shaped_envelope(tmp_path, monkeypatch):
+    seen = {}
+    def run(command, **kw):
+        seen.update(command=command, **kw)
+        return 0
+    monkeypatch.setattr(proc, "run_bounded", run)
+    prompt = tmp_path / "wake.prompt.md"
+    assert engine_qwen.QwenEngine("qmodel_latest").run(prompt, env={}, cwd=tmp_path, timeout=10) == 0
+    assert seen["stdin_from"] == prompt
+    assert seen["stdout_to"] == tmp_path / "wake.prompt.out.json"
+    assert seen["stderr_to"] == tmp_path / "wake.prompt.err"
+
+
+def test_stderr_to_keeps_the_stdout_document_clean(tmp_path):
+    out, err = tmp_path / "out.json", tmp_path / "err"
+    code = proc.run_bounded(
+        [sys.executable, "-c", "import sys; sys.stdout.write('{\"a\":1}'); sys.stderr.write('noise')"],
+        env=dict(os.environ), cwd=tmp_path, timeout=10, stdout_to=out, stderr_to=err)
+    assert code == 0
+    assert out.read_text() == '{"a":1}'
+    assert err.read_text() == "noise"
+
+
+def test_stderr_joins_stdout_by_default(tmp_path):
+    out = tmp_path / "out"
+    code = proc.run_bounded(
+        [sys.executable, "-c", "import sys; sys.stdout.write('a'); sys.stderr.write('b')"],
+        env=dict(os.environ), cwd=tmp_path, timeout=10, stdout_to=out)
+    assert code == 0
+    assert out.read_text() == "ab"

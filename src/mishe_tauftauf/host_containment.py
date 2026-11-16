@@ -58,7 +58,7 @@ CPU_THROTTLE_WARNING = .5
 #: ``claude`` is the Claude Code engine that the site's current mind launchers
 #: run (``claude --model ...`` under the claude-gate settings).  Without it a
 #: contained, working claude mind read as absent and held clearance closed.
-LIFE_SUPPORT_ENGINES = frozenset({"omp", "codex", "opencode", "claude"})
+LIFE_SUPPORT_ENGINES = frozenset({"omp", "codex", "opencode", "claude", "qwen"})
 LIFE_SUPPORT_PYTHON_NAMES = ("python", "python3")
 LIFE_SUPPORT_PYTHON_PREFIXES = ("python3.",)
 

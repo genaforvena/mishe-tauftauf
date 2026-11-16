@@ -38,7 +38,7 @@ charter).
 ## 3. Choose engines
 
 By default a role wakes on `claude` with `claude-haiku-5-5`. To change one, write
-`SITE_HOME/engines/ROLE.json` (for example `{"engine": "claude", "model": "claude-haiku-5-5"}` or `{"engine": "omp", "model": "..."}`). Three engines exist: `claude`, `omp` and `codex`.
+`SITE_HOME/engines/ROLE.json` (for example `{"engine": "claude", "model": "claude-haiku-5-5"}` or `{"engine": "omp", "model": "..."}`). Four engines exist: `claude`, `omp`, `codex` and `qwen`.
 
 `codex` runs the `codex` CLI (`codex exec`) with the login that CLI already holds; Mishe
 copies no credential into an engine store. A plant runs it only where its own
@@ -47,6 +47,12 @@ choice also settles its sandbox mode, which is still an open decision for the ow
 code's default, `workspace-write`, is narrower than a mind's work needs). Its account
 window is read from the codex CLI's own rollout files,
 so an account that has not run lately reads STALE and the router skips it.
+
+`qwen` runs the Qwen Code CLI (`qwen -p`) with the login that CLI already holds, reading
+the dossier on stdin like `claude`. Without a model it uses `qmodel_latest`. Its result
+envelope has the claude shape, so wake views read it the same way. The router has no
+account-window reading for it: a qwen candidate carries `"account": null` and is admitted
+without a budget window, cooling off on failure like any other candidate.
 
 A site can instead list ordered candidates per role in
 `SITE_HOME/engine/routes.json`; each wake then picks the first eligible
