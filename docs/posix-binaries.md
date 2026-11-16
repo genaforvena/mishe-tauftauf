@@ -81,7 +81,7 @@ reads no output at all.
 | `mishe-network-probe` | One network probe row | Live: the `network-probe` duty runs it |
 | `mishe-systemd-show` | `systemctl show` text decoding | Live since candidate 1: `unit_psi_text.parse_systemd_show` runs it and `discovery.py` reads the result through `read_unit_psi`. The retired Python decoder is deleted; its recorded answers are GOLDEN in `tests/test_rust_systemd_show.py` |
 | `mishe-signal-sample` | The append-only signal sample store | Live on both sides: the `memory-samples` duty appends up to three rows every three minutes into `SITE/samples/memory/`, and the `footprint` duty reads the last 15 minutes of that store back |
-| `mishe-signal-freshness` | The freshness verdict of one signal observation | Built and differential-tested, **not wired into a live consumer**: `signal_store.read` still compares in Python, and the binary is not installed as a component |
+| `mishe-signal-freshness` | The freshness verdict of one signal observation | Built and differential-tested; installed at `$SITE/bin/mishe-signal-freshness` with its sha256 record (2026-11-16, source 63da1a20). The reader `signal_freshness.resolve_binary` verifies that sha and fails closed. **Not yet wired**: `signal_store.read` still compares in Python |
 
 `mishe-tape-facts` is the honest gap: its consumer is not yet running it. The
 signal sample store has both a writer and a reader. The freshness binary is the

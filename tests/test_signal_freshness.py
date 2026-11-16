@@ -97,3 +97,38 @@ def test_hanging_binary_is_unknown(tmp_path):
     slow.chmod(slow.stat().st_mode | stat.S_IXUSR)
     with pytest.raises(sf.FreshnessUnknown):
         sf.verdict(1.0, 2.0, 3.0, binary=str(slow), timeout=0.2)
+
+
+def test_site_install_without_matching_sha_is_unknown(tmp_path, monkeypatch):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    binary = bindir / "mishe-signal-freshness"
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o755)
+    (bindir / "mishe-signal-freshness.install.json").write_text('{"sha256": "0000"}', encoding="utf-8")
+    monkeypatch.delenv(sf.ENV_OVERRIDE, raising=False)
+    monkeypatch.setenv("MISHE_SEED_HOME", str(tmp_path))
+    with pytest.raises(sf.FreshnessUnknown):
+        sf.verdict(1.0, 2.0, 3.0)
+
+
+def test_site_install_with_matching_sha_is_used(tmp_path, monkeypatch):
+    import hashlib
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    binary = bindir / "mishe-signal-freshness"
+    binary.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    binary.chmod(0o755)
+    digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    (bindir / "mishe-signal-freshness.install.json").write_text(f'{{"sha256": "{digest}"}}', encoding="utf-8")
+    monkeypatch.delenv(sf.ENV_OVERRIDE, raising=False)
+    monkeypatch.setenv("MISHE_SEED_HOME", str(tmp_path))
+    assert sf.verdict(1.0, 2.0, 3.0) == sf.EXPIRED
+
+
+def test_no_site_home_and_no_override_is_unknown(monkeypatch):
+    monkeypatch.delenv(sf.ENV_OVERRIDE, raising=False)
+    monkeypatch.delenv("MISHE_SEED_HOME", raising=False)
+    monkeypatch.delenv("MISHE_TAUFTAUF_HOME", raising=False)
+    with pytest.raises(sf.FreshnessUnknown):
+        sf.verdict(1.0, 2.0, 3.0)
