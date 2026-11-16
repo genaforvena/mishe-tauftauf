@@ -27,6 +27,18 @@ the duty is promoted — it was not present under release `35748377`. The viewer
 flags a render older than 30 minutes as stale, so a fresh render keeps the pane
 from reading STALE.
 
+The `network` window is watched by its own duty: `network-window`
+(`duties.json`, every 300 s, `max_age` 900 s, resolver `network`) runs
+`checks/network-care.py window`. It is RED when the `plants:network` window is
+missing, when its pane is dead or is not running `tools/network_view.py`, when the
+pane's live process no longer matches the view's recorded pid and start time, or
+when the running copy of `tools/network_view.py` and `tools/network_boundary.py`
+differs by content from the files on disk (it then prints the exact
+`tmux respawn-pane` command to use). It is UNKNOWN when the tmux server cannot be
+reached, the pane process cannot be read, or the view files cannot be read — a check
+that cannot look is UNKNOWN, never a quiet pass. Comparing by content means
+committing unchanged code is not a false RED.
+
 Create a window: `tmux new-window -t plants -d -n NAME 'env MISHE_TAUFTAUF_HOME=... python3 tools/X_view.py'`.
 Never type into another plant's panes. Keep this table current when a window is added or retired.
 

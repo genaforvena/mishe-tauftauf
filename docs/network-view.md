@@ -44,6 +44,15 @@ the `rx_dropped` counter went backwards (a router reboot or driver reset), or wh
 the log is unreadable — an alarm that cannot read the log is UNKNOWN, never a
 quiet pass.
 
+The same checker also guards the network area's own continuity. The
+`network-progress` duty (`checks/network-care.py`, subcommand `progress`, every
+900 s, `max_age` 1800 s, resolver `network`) is RED when the network mind's wall
+(`SITE_HOME/walls/network.md`) is missing or more than six hours old, or when none
+of `tools/network_view.py`, `tools/network_boundary.py`, `rust/mishe-network-probe`
+or `checks/network-care.py` was committed in the last 48 hours — the area has gone
+quiet. It is UNKNOWN when `git log` cannot be read, so a shallow or damaged checkout
+is not mistaken for a quiet mind.
+
 ## What the view says about it
 
 - `RECORDED`: client count by band, weakest device by name and dBm, the age of the last read.
