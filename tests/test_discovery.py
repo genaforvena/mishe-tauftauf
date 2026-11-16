@@ -22,6 +22,22 @@ from tests.tape_binary import pin_tape_binary  # noqa: F401  (fixture)
 pytestmark = pytest.mark.usefixtures("pin_tape_binary")
 
 
+@pytest.fixture(autouse=True)
+def _decode_unit_paths_in_python(monkeypatch):
+    """Caller tests mock ``systemctl show`` text, not the Rust decoder.
+
+    These tests exercise the caller (spawn/drift judgement) from faked property
+    text. The binary-backed reader is covered by test_unit_paths_reader.py and
+    test_rust_unit_paths.py; here the decode boundary is the pre-existing Python
+    decoder, so the mocked ``subprocess.run`` (whose stdout is str, not the
+    binary's bytes) is never asked to answer as mishe-unit-paths.
+    """
+    from mishe_tauftauf import unit_paths
+    from mishe_tauftauf.unit_properties import declared_paths as python_declared_paths
+
+    monkeypatch.setattr(unit_paths, "declared_paths", python_declared_paths)
+
+
 def test_scan_writes_real_bounded_local_evidence(tmp_path: Path) -> None:
     home = tmp_path / "site"
     artifact = scan(home)

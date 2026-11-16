@@ -1,4 +1,5 @@
 import subprocess
+import pytest
 from pathlib import Path
 
 from mishe_tauftauf.plant_tmux import parse_list_windows
@@ -6,6 +7,21 @@ from mishe_tauftauf.replacement_readings import (
     RENDERER_SENSE_ID, TMUX_SENSE_ID,
     read_renderer_coverage, read_tmux_windows,
 )
+
+
+@pytest.fixture(autouse=True)
+def _decode_unit_paths_in_python(monkeypatch):
+    """This module mocks ``systemctl show`` text, not the Rust decoder.
+
+    read_drift_across_sites is judged here on faked property text; its binary
+    decoder is covered by test_unit_paths_reader.py and test_rust_unit_paths.py.
+    Route the decode boundary to the pre-existing Python decoder so a mocked
+    ``subprocess.run`` (str stdout) is never asked to answer as the binary.
+    """
+    from mishe_tauftauf import unit_paths
+    from mishe_tauftauf.unit_properties import declared_paths as python_declared_paths
+
+    monkeypatch.setattr(unit_paths, "declared_paths", python_declared_paths)
 
 
 def _done(code=0, out="", err=""):
