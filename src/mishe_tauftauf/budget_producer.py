@@ -249,7 +249,9 @@ def build_routing(home: Path, payload: dict, now: float) -> dict:
     if routes is not None:
         running = er.running_candidates(home, now_ms=now * 1000,
                                         horizon_s=routes.get("hard_timeout_s", er.DEFAULT_HARD_TIMEOUT_S))
-    return er.assess(routes, er.status_from_payload(payload, now), state["cooling"], now * 1000, running=running)
+    tally = er.measured_tally(home, now_ms=now * 1000)
+    return er.assess(routes, er.status_from_payload(payload, now), state["cooling"], now * 1000, running=running,
+                     tally=tally)
 
 
 def build_cooling(home: Path, now: float) -> dict:

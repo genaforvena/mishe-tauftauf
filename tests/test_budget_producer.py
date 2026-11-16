@@ -210,6 +210,26 @@ def test_routing_without_routes_file_is_unknown_not_green(tmp_path: Path):
     assert "routes.json" in routing["reason"]
 
 
+def test_routing_view_names_the_same_ranked_candidate_as_the_signal(tmp_path: Path):
+    from mishe_tauftauf import engine_router as er
+
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    first = {"engine": "omp", "model": "roster-first", "account": None, "free": True, "tier": 0}
+    second = {"engine": "omp", "model": "rate-winner", "account": None, "free": True, "tier": 0}
+    (engine / er.ROUTES).write_text(json.dumps({"version": 1, "roles": {"health": [first, second]}}))
+    at = er._iso(NOW * 1000 - 3600_000)
+    rows = ([{"at": at, "event": "outcome", "key": er.candidate_key(first), "outcome": "no yield (exit 1)"}] * 5
+            + [{"at": at, "event": "outcome", "key": er.candidate_key(second), "outcome": "yielded"}] * 5)
+    (engine / er.LEDGER).write_text("".join(json.dumps(row) + "\n" for row in rows))
+    payload = bp.build_budget(None, tap(), NOW)
+    view = bp.build_routing(tmp_path, payload, NOW)
+    tally = er.measured_tally(tmp_path, now_ms=NOW * 1000)
+    signal = er.assess(er.load_routes(tmp_path), er.status_from_payload(payload, NOW), {}, NOW * 1000, tally=tally)
+    assert signal["roles"]["health"]["selected"] == er.candidate_key(second)
+    assert view["roles"]["health"]["selected"] == signal["roles"]["health"]["selected"]
+
+
 def test_router_reages_a_window_admitted_on_a_stale_label(tmp_path: Path):
     # the repro: produced 800 s ago, observation 1400 s ago, labelled FRESH by the producer at that time
     from mishe_tauftauf import engine_router as er
