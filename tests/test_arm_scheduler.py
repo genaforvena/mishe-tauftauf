@@ -109,6 +109,18 @@ def test_scheduled_return_uses_callers_source_pin_and_plant_slice(monkeypatch):
     assert "--slice=mishe-plants.slice" in call
 
 
+def test_the_due_service_is_a_bounded_oneshot(monkeypatch):
+    # 2026-11-16 04:36Z: the promotion drain caught a running next-due service whose
+    # systemd-run default Type=simple is "unbounded" to consumer_fence; the pin rolled
+    # back and the rollback probe failed the same way. The due handler fires every
+    # OVERDUE_RETRY_SECONDS while a role is owed, so the overlap is likely, not rare.
+    fake = FakeRun()
+    monkeypatch.setattr(arm.subprocess, "run", fake)
+    arm.systemd_scheduler(2_000_000_000.0, command=["python", "due"])
+    call = next(c for c in fake.calls if c[0] == "systemd-run")
+    assert "--service-type=oneshot" in call
+
+
 def test_a_refused_systemd_run_surfaces_the_manager_error(monkeypatch):
     """DM 299366: the armer swallowed stderr, so a failed arm could not be diagnosed."""
     class Refused:

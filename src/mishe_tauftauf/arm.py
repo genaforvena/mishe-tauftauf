@@ -101,7 +101,11 @@ def systemd_scheduler(epoch: float | None, *, command: list[str],
         when = max(epoch, now + 1) if epoch > now else now + OVERDUE_RETRY_SECONDS
         moment = datetime.fromtimestamp(when, timezone.utc)
         unit = f"{TIMER_UNIT}-{uuid.uuid4().hex[:12]}"
+        # oneshot, not systemd-run's default simple: the consumer fence fails closed on any
+        # active non-oneshot consumer, and a due handler caught mid-run rolled back the
+        # 2026-11-16 04:36Z promotion ("unbounded pinned consumer: mishe-next-due-...").
         result = subprocess.run(["systemd-run", "--user", f"--unit={unit}",
+                                 "--service-type=oneshot",
                                  "--slice=mishe-plants.slice",
                                  "--setenv=PYTHONPATH=" + str(Path(__file__).resolve().parent.parent),
                                  f"--on-calendar={moment:%Y-%m-%d %H:%M:%S} UTC",
