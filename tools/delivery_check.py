@@ -7,8 +7,12 @@ the tests as ``MISHE_<BINARY>_BIN``: the binary name without its ``mishe-`` pref
 underscores (mishe-tape -> MISHE_TAPE_BIN, mishe-signal-sample -> MISHE_SIGNAL_SAMPLE_BIN).  A crate that
 does not build fails the check: the suite must never run against a stale or missing binary.
 
-Builds go to a shared target directory under the site (``MISHE_SEED_HOME/cache/cargo-target``) so an unchanged
-crate is reused between deliveries.  Exit status is the suite's, or 2 when a build fails.
+Builds go to a shared target directory so an unchanged crate is reused between deliveries.  The
+release build is fsync-heavy and blocks root fsync for seconds while it runs
+(``checks/root-fs-stall.py``), so the target dir lives off the root filesystem when the scratch mount
+is a separate writable filesystem (the same convention as ``operator/dual_probe.py``): the scratch
+mount's ``mishe-cargo-target``, else ``MISHE_SEED_HOME/cache/cargo-target``, with ``MISHE_BUILD_CACHE``
+overriding both.  Exit status is the suite's, or 2 when a build fails.
 """
 import os
 import shutil
@@ -18,6 +22,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.cwd() / "src"))
 from mishe_tauftauf import release_boundary  # noqa: E402
+
+SCRATCH_MOUNT = Path("/mnt/mishe-scratch")
 
 
 def binaries(crate_dir: Path) -> list[str]:
@@ -43,10 +49,27 @@ def build(crate_dir: Path, target: Path, cargo: str) -> None:
         raise SystemExit(2)
 
 
+def build_cache(root: Path, home: str | None) -> Path:
+    """Where the shared cargo target dirs live.
+
+    ``MISHE_BUILD_CACHE`` wins; otherwise the scratch mount when it is a separate, writable
+    filesystem (a multi-second root fsync stall while a build runs would otherwise recur); otherwise
+    the site cache, or ``root/target-delivery-check`` when the site home is unset.
+    """
+    override = os.environ.get("MISHE_BUILD_CACHE")
+    if override:
+        return Path(override)
+    if home is None:
+        return root / "target-delivery-check"
+    if os.path.ismount(SCRATCH_MOUNT) and os.access(SCRATCH_MOUNT, os.W_OK):
+        return SCRATCH_MOUNT / "mishe-cargo-target"
+    return Path(home) / "cache" / "cargo-target"
+
+
 def main() -> int:
     root = Path.cwd()
     home = os.environ.get("MISHE_SEED_HOME")
-    cache = Path(home) / "cache" / "cargo-target" if home else root / "target-delivery-check"
+    cache = build_cache(root, home)
     cargo = os.environ.get("CARGO") or shutil.which("cargo") or str(Path.home() / ".cargo" / "bin" / "cargo")
     env = dict(os.environ, PYTHONPATH="src")
     for crate in sorted((root / "rust").glob("*/Cargo.toml")):

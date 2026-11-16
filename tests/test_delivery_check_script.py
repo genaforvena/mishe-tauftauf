@@ -43,3 +43,33 @@ def test_a_hung_build_exits_2_not_with_a_traceback(tmp_path, monkeypatch, capsys
         dc.build(tmp_path, tmp_path / "target", "cargo")
     assert exc.value.code == 2
     assert "timed out" in capsys.readouterr().err
+
+
+def test_build_cache_env_override_wins(tmp_path, monkeypatch):
+    monkeypatch.setenv("MISHE_BUILD_CACHE", str(tmp_path / "custom"))
+    monkeypatch.setattr(dc.os.path, "ismount", lambda p: True)
+    monkeypatch.setattr(dc.os, "access", lambda p, mode: True)
+    assert dc.build_cache(tmp_path, "/site") == tmp_path / "custom"
+
+
+def test_build_cache_prefers_a_separate_writable_scratch_mount(tmp_path, monkeypatch):
+    monkeypatch.delenv("MISHE_BUILD_CACHE", raising=False)
+    monkeypatch.setattr(dc.os.path, "ismount", lambda p: p == dc.SCRATCH_MOUNT)
+    monkeypatch.setattr(dc.os, "access", lambda p, mode: True)
+    assert dc.build_cache(tmp_path, "/site") == dc.SCRATCH_MOUNT / "mishe-cargo-target"
+
+
+def test_build_cache_falls_back_when_scratch_is_absent_or_read_only(tmp_path, monkeypatch):
+    monkeypatch.delenv("MISHE_BUILD_CACHE", raising=False)
+    monkeypatch.setattr(dc.os.path, "ismount", lambda p: False)
+    assert dc.build_cache(tmp_path, "/site") == Path("/site") / "cache" / "cargo-target"
+    monkeypatch.setattr(dc.os.path, "ismount", lambda p: True)
+    monkeypatch.setattr(dc.os, "access", lambda p, mode: False)
+    assert dc.build_cache(tmp_path, "/site") == Path("/site") / "cache" / "cargo-target"
+
+
+def test_build_cache_without_a_site_home_uses_the_tree(tmp_path, monkeypatch):
+    monkeypatch.delenv("MISHE_BUILD_CACHE", raising=False)
+    monkeypatch.setattr(dc.os.path, "ismount", lambda p: True)
+    monkeypatch.setattr(dc.os, "access", lambda p, mode: True)
+    assert dc.build_cache(tmp_path, None) == tmp_path / "target-delivery-check"
