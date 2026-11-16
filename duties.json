@@ -429,6 +429,21 @@
       "covers": "every role's top and bottom pane renders as human-readable text: no JSON, dict reprs, escaped newlines, raw epoch numbers or private paths; unrenderable or missing views stay UNKNOWN"
     },
     {
+      "name": "build-cache-stubs",
+      "command": [
+        "{python}",
+        "{repo}/checks/build-cache-stubs.py"
+      ],
+      "every": 3600,
+      "timeout": 60,
+      "max_age": 7200,
+      "red_codes": [2],
+      "unknown_codes": [3],
+      "resolver": "genome",
+      "replaces": [],
+      "covers": "the shared cargo build cache holds only ELF installed binaries: RED names any text stub a delivery check would test against (2026-11-16, 08547645); UNKNOWN when the cache cannot be read"
+    },
+    {
       "name": "push-lag",
       "command": [
         "{python}",
