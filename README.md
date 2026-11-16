@@ -91,8 +91,8 @@ and a provisional daily rhythm:
 
 ## Quick start
 
-You need Linux with a user systemd manager, Python 3.10+, Git, a Rust toolchain (`cargo`;
-each crate pins its version in `rust/*/rust-toolchain.toml`), and an installed, signed-in coding
+You need Linux with a user systemd manager, Python 3.10+, Git, a Rust toolchain (`cargo` via
+rustup, which applies each crate's pin from `rust/*/rust-toolchain.toml`), and an installed, signed-in coding
 agent: Claude Code (`claude`), `omp`, `codex`, or Qwen Code (`qwen`). Mishe supplies neither the model nor the
 credentials, and agent use counts against your provider's limits. A plant routes each role through
 its site-local `engine/routes.json` (this plant's names `codex` on the `codex-a` account). The
