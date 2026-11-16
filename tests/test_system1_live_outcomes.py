@@ -75,7 +75,7 @@ def test_shadow_null_rows_never_pass_on_count(tmp_path):
     _write(tmp_path / "decision-log" / "wake-gate.jsonl", rows)
     code, detail = mod.shadow_check(tmp_path)
     assert code == mod.OPEN
-    assert "0 of 263" in detail
+    assert "0 decided of 263" in detail
 
 
 def test_shadow_answered_rows_pass_at_fifty(tmp_path):
@@ -198,3 +198,15 @@ def test_irrelevant_rows_with_bad_stamps_do_not_block(tmp_path):
     path.write_text('{"source": "system0", "reason": "path rule", "at": 1e999}\n'
                     '{"source": "system1", "reason": "decided", "at": %r}\n' % (NOW - 60))
     assert _main(tmp_path, "decision", NOW, _budget(tmp_path)) == mod.DONE
+
+
+def test_shadow_escalated_argmax_rows_do_not_count(tmp_path):
+    # 507f2a6d logs below-threshold starts with an argmax choice and escalated true; those are not decided answers.
+    escalated = [_start({"choice": "wake", "escalated": True, "confidence": 0.4}) for _ in range(60)]
+    _write(tmp_path / "decision-log" / "wake-gate.jsonl", escalated)
+    code, detail = mod.shadow_check(tmp_path)
+    assert code == mod.OPEN
+    assert "0 decided" in detail and "60 escalated" in detail
+    decided = [_start({"choice": "wake", "escalated": False, "confidence": 0.9}) for _ in range(50)]
+    _write(tmp_path / "decision-log" / "wake-gate.jsonl", escalated + decided)
+    assert mod.shadow_check(tmp_path)[0] == mod.DONE

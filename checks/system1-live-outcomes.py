@@ -123,9 +123,15 @@ def shadow_check(home):
     """
     rows = _rows(home / SHADOW_LOG)
     starts = [r for r in rows if r.get("kind") == "start"]
+    # An escalated shadow row keeps its argmax as choice (for later calibration) but is not a decided
+    # answer, so it must not count toward the 50 that prove the shadow path answers.
     answered = [r for r in starts if isinstance(r.get("decision"), dict)
-                and isinstance(r["decision"].get("choice"), str) and r["decision"]["choice"]]
-    detail = f"{len(answered)} of {len(starts)} wake starts carry a System One answer (need 50)"
+                and isinstance(r["decision"].get("choice"), str) and r["decision"]["choice"]
+                and r["decision"].get("escalated") is not True]
+    escalated = [r for r in starts if isinstance(r.get("decision"), dict)
+                 and r["decision"].get("escalated") is True]
+    detail = (f"{len(answered)} decided of {len(starts)} wake starts carry a System One answer "
+              f"({len(escalated)} escalated, not counted; need 50)")
     if len(answered) >= SHADOW_MIN:
         return DONE, detail
     return OPEN, detail
