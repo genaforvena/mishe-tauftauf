@@ -5396,7 +5396,7 @@ def _rebind_links(events: list[dict], checked: list[tuple],
     return links, stats, byte_relations
 
 
-def _ledger_evidence_binding(home: Path, entries=None) -> dict[str, object]:
+def _ledger_evidence_binding(home: Path, entries=None, trace=None) -> dict[str, object]:
     """Check that post-clause wall outcomes bind write-once evidence.
 
     A ``wall-outcome`` record binds its per-outcome evidence file with
@@ -5557,6 +5557,7 @@ def _ledger_evidence_binding(home: Path, entries=None) -> dict[str, object]:
     not eligible, even when their resolved target is in an allowed directory.
     """
     home = home.resolve()
+    report = trace if trace is not None else _no_trace
     # The tape is read through the classifier's own seam, and the record
     # digests its entries name are collected as they stream past: the census
     # of the store then measures exactly the records this reading cannot see,
@@ -5565,12 +5566,14 @@ def _ledger_evidence_binding(home: Path, entries=None) -> dict[str, object]:
     # set because a digest is a function of the body that names it.
     named_records: set[str] = set()
     tape = home / "chat.log"
+    report("stage:evidence:named-records:start")
     if entries is None:
         entries = (store_census.tape_entries(tape, home, named_records)
                    if tape.exists() else None)
     else:
         entries = list(entries)
         store_census.collect_named(entries, named_records)
+    report("stage:evidence:named-records:done")
     coverage = classify_outcomes(home, EVIDENCE_BINDING_CLAUSE_TIME, entries=entries)
     read_at = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     incomplete = coverage["incomplete"]
@@ -5591,7 +5594,9 @@ def _ledger_evidence_binding(home: Path, entries=None) -> dict[str, object]:
     # a record carries no publication instant, so how many of them are
     # outside the clause window and how many lost their tape entry cannot be
     # told from the store.
+    report("stage:evidence:census:start")
     census = store_census.store_census(home, named_records)
+    report("stage:evidence:census:done")
     audited_population = {
         "source": "the current chat tape (chat.log)",
         "kind": "post-clause wall-outcome publications the tape names",
@@ -5635,6 +5640,7 @@ def _ledger_evidence_binding(home: Path, entries=None) -> dict[str, object]:
     # against the file as it now stands, without reading either file again.
     current_digests: dict[int, str] = {}
     prefix_budget = EVIDENCE_PREFIX_SEARCH_TOTAL_BYTES
+    report("stage:evidence:hash:start")
     for ts, sequence, role, evidence in loaded:
         path = evidence.get("path")
         digest = evidence.get("sha256")
@@ -5671,6 +5677,7 @@ def _ledger_evidence_binding(home: Path, entries=None) -> dict[str, object]:
             classes.append("D")
         name = _display_path(path, home) if file_path is not None else str(path)
         checked.append((ts, sequence, role, name, "".join(classes)))
+    report("stage:evidence:hash:done")
     checked.sort()
     violations = [row for row in checked if row[4]]
     latest: dict[str, tuple[datetime, int, str]] = {}
@@ -7180,8 +7187,15 @@ def _scan_snapshot(home: Path) -> list | None:
         return None
 
 
-def sample(home: Path) -> dict[str, object]:
-    """Take bounded reads; never open input event streams or record key content."""
+def sample(home: Path, trace=None) -> dict[str, object]:
+    """Take bounded reads; never open input event streams or record key content.
+
+    ``trace`` is an optional ``event: str -> None`` stage reporter. The scan
+    passes its per-scan trace writer, so a scan killed inside this long
+    function leaves a retained trace naming the sub-stage it reached; callers
+    that pass nothing get a no-op and unchanged behaviour.
+    """
+    report = trace if trace is not None else _no_trace
     observed: list[dict[str, object]] = []
     for command in COMMANDS:
         found = shutil.which(command)
@@ -7198,19 +7212,27 @@ def sample(home: Path) -> dict[str, object]:
     # the snapshot is released before the rest of the scan: holding ~300k parsed
     # entries for the whole scan pushed the readings child past its 1G limit.
     # Results are appended at their original positions, so output order holds.
+    report("stage:snapshot:start")
     snapshot = _scan_snapshot(home)
+    report("stage:snapshot:done")
+    report("stage:tape-readings")
     recurrence = _mind_artifact_recurrence(home, entries=snapshot)
-    evidence_binding = _ledger_evidence_binding(home, entries=snapshot)
+    evidence_binding = _ledger_evidence_binding(home, entries=snapshot, trace=report)
     disposition = _coord_dm_disposition_age(home, entries=snapshot)
     del snapshot
+    report("stage:tape-readings:done")
     observed.append(_mind_treadmill(home))
     observed.append(_mind_docs_treadmill(home))
     observed.append(recurrence)
     observed.append(_mind_loop_stall(home))
     observed.append(_mind_watch_wait(home))
     observed.append(_seed_settle_result_mix(home))
+    report("stage:patch-invariant:start")
     observed.append(_ledger_delivery_invariant(home))
+    report("stage:patch-invariant:done")
+    report("stage:patch-dv-binding:start")
     observed.append(_ledger_dv_binding(home))
+    report("stage:patch-dv-binding:done")
     observed.append(evidence_binding)
     observed.append(_head_rewinds(home))
     observed.append(_disk_trend(home))
@@ -7562,6 +7584,11 @@ SCAN_STACK_DUMP_S = 270
 """Seconds into a scan before its thread stacks are dumped; the readings producer cuts at 300 s."""
 
 
+def _no_trace(_event: str) -> None:
+    """The default stage reporter, so ``sample`` reads the same with or without a trace writer."""
+    return None
+
+
 def _scan_trace(path: Path, started: float, event: str) -> None:
     """Append one timestamped stage line. Each line is opened and closed, so a SIGKILLed scan keeps every
     stage it reached; the epoch column lines up with the producer's journal `start=` to split pre-scan from in-scan time."""
@@ -7601,7 +7628,7 @@ def scan(home: Path) -> Path:
         faulthandler.dump_traceback_later(SCAN_STACK_DUMP_S, repeat=False, file=stack_file)
         start = endpoint()
         trace("sample:start")
-        snapshot = dict(sample(home))
+        snapshot = dict(sample(home, trace=trace))
         trace("sample:done")
         # Windowed AoI beside age_bounds: prior acquisition starts (observation
         # instants) as the sawtooth, now = this receipt's created. Additive,

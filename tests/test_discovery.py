@@ -7081,3 +7081,27 @@ def test_scan_marks_attempt_failed_when_its_stack_dump_cannot_open(tmp_path: Pat
     attempt = discovery.scan_attempt(tmp_path)
     assert attempt["status"] == "failed"
     assert attempt["stage"] == "acquisition"
+
+
+def test_a_scan_killed_inside_sample_keeps_the_sub_stage_trace(tmp_path: Path) -> None:
+    """A scan that dies inside ``sample()`` leaves a retained trace naming the sub-stage it reached.
+
+    The trace is the only evidence of where a timed-out scan sits. Before this it stopped at
+    ``sample:start``, so a stall in any of the long whole-tape/whole-store traversals read the same.
+    """
+    home = tmp_path / "site"
+
+    def boom(_home):
+        raise RuntimeError("stall")
+
+    with patch("mishe_tauftauf.discovery._scan_snapshot", side_effect=boom):
+        with pytest.raises(RuntimeError):
+            scan(home)
+
+    traces = list((home / "signals").glob("readings-scan-trace-*.txt"))
+    assert len(traces) == 1
+    events = [line.split(" ", 2)[2] for line in traces[0].read_text().splitlines()]
+    assert events[0] == "enter"
+    assert "sample:start" in events
+    assert "stage:snapshot:start" in events
+    assert any(event.startswith("failed RuntimeError") for event in events)
