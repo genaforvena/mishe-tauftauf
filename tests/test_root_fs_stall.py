@@ -26,6 +26,18 @@ def test_stall_in_window_is_red_and_names_worst():
     assert code == 2 and "9.9" in lines[0]
 
 
+def test_stall_line_carries_the_probe_io_pressure_cause():
+    code, lines = mod.evaluate(
+        [rec(), rec(event="slow", at=NOW - 60, total=17.0, fsync=16.97, psi_io=84.66)], NOW)
+    assert code == 2 and "io_psi 84.66" in lines[0]
+
+
+def test_stall_line_omits_io_pressure_when_the_probe_did_not_record_it():
+    code, lines = mod.evaluate(
+        [rec(), rec(event="slow", at=NOW - 60, total=17.0, fsync=16.97)], NOW)
+    assert code == 2 and "io_psi" not in lines[0]
+
+
 def test_old_stall_outside_window_is_ignored():
     assert mod.evaluate([rec(), rec(event="slow", at=NOW - 5000, total=9.9)], NOW)[0] == 0
 

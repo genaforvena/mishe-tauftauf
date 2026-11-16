@@ -16,6 +16,10 @@ and recurrence is counted over the union, so the "last 24 h" recurrence claim is
 backed by the probe's whole history while the tmpfs log is alive, and still by the
 durable mirror after it is gone.
 
+Each stall line carries the stalled probe's io_psi (PSI io 'some' avg10): a high
+value means the root device was blocked behind a local write storm, a low value
+means the device itself stalled.
+
 Exit status:
   0  the probe is fresh and no root probe in the window reached STALL_S
   2  a root-filesystem probe took STALL_S or longer inside the window
@@ -38,6 +42,18 @@ LIVE_LOG = "/dev/shm/dual-probe.jsonl"
 """The probe's full, volatile log (tmpfs). Read with the durable mirror, never alone."""
 
 
+def psi_suffix(record: dict) -> str:
+    """The stalled probe's own I/O-pressure reading, when the recorder carried one.
+
+    dual_probe.py samples PSI io 'some avg10' at the moment of a slow probe, so a
+    stall names its cause class: a high value means the root device was stalled
+    behind a local write storm; a low value with a long fsync means the device
+    itself stalled. Absent on records written before that field existed.
+    """
+    psi = record.get("psi_io")
+    return "" if not isinstance(psi, (int, float)) else f", io_psi {psi:.2f}"
+
+
 def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
     seen = [r for r in records if r.get("dir") == TARGET and isinstance(r.get("at"), (int, float))]
     if not seen:
@@ -50,7 +66,8 @@ def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
     if stalls:
         worst = max(stalls, key=lambda r: r["total"])
         return 2, [f"{len(stalls)} root-filesystem stall(s) >= {STALL_S:.0f}s in the last {WINDOW_S:.0f}s; "
-                   f"worst {worst['total']:.1f}s (create {worst.get('create')}, fsync {worst.get('fsync')})"]
+                   f"worst {worst['total']:.1f}s (create {worst.get('create')}, fsync {worst.get('fsync')})"
+                   f"{psi_suffix(worst)}"]
     recurrence = [r for r in seen if r.get("event") == "slow" and now - r["at"] <= RECURRENCE_S
                   and (r.get("total") or 0) >= STALL_S]
     line = f"root probe fresh ({now - newest:.0f}s) with no stall >= {STALL_S:.0f}s in {WINDOW_S:.0f}s"
