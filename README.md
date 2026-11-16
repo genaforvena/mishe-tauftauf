@@ -91,7 +91,8 @@ and a provisional daily rhythm:
 
 ## Quick start
 
-You need Linux with a user systemd manager, Python 3.10+, Git, and an installed, signed-in coding
+You need Linux with a user systemd manager, Python 3.10+, Git, a Rust toolchain (`cargo`; the
+pinned version comes from `rust-toolchain.toml`), and an installed, signed-in coding
 agent: Claude Code (`claude`), `omp`, `codex`, or Qwen Code (`qwen`). Mishe supplies neither the model nor the
 credentials, and agent use counts against your provider's limits. A plant routes each role through
 its site-local `engine/routes.json` (this plant's names `codex` on the `codex-a` account). The
@@ -103,6 +104,7 @@ git clone https://github.com/genaforvena/mishe-tauftauf.git
 cd mishe-tauftauf
 export PATH="$PWD/bin:$PATH" MISHE_SEED_HOME="$PWD/.mishe-tauftauf"
 mishe init                                          # creates the site: the ignored directory of local state
+tools/install-rust-binaries.sh                      # builds the Rust components into $MISHE_SEED_HOME/bin (tape, records, ...)
 mishe hold on --reason "first install"              # no model is called while the hold is on
 mishe sync --repo "$PWD" --pythonpath "$PWD/src"    # installs the systemd units
 mishe doctor                                        # checks they match what was generated

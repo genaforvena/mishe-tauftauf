@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Build the Rust components a fresh clone needs and install them into the site.
+#
+# The Python resolvers (feed._tape_binary, feed._records_binary, ...) read
+# $SITE/bin/NAME and fail closed unless NAME.install.json holds the sha256 of
+# those exact bytes. Nothing in git carries the built binaries, so this script
+# is the bootstrap step: locked release build per crate, then an atomic copy and
+# an install record. Run it once after `mishe init` (and again after a Rust change).
+#
+# Usage: tools/install-rust-binaries.sh [SITE_HOME]
+#   SITE_HOME defaults to $MISHE_SEED_HOME, then $MISHE_TAUFTAUF_HOME, then ./.mishe-tauftauf
+set -euo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+site="${1:-${MISHE_SEED_HOME:-${MISHE_TAUFTAUF_HOME:-$repo/.mishe-tauftauf}}}"
+cargo_bin="${MISHE_CARGO:-$(command -v cargo || true)}"
+if [ -z "$cargo_bin" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+  cargo_bin="$HOME/.cargo/bin/cargo"
+fi
+if [ -z "$cargo_bin" ]; then
+  echo "install-rust-binaries: cargo not found; install rustup (toolchain pinned by rust-toolchain.toml)" >&2
+  exit 1
+fi
+if [ ! -d "$site" ]; then
+  echo "install-rust-binaries: site $site does not exist; run 'mishe init' first" >&2
+  exit 1
+fi
+
+# crate directory under rust/ : installed binary name
+components="mishe-tape:mishe-tape
+mishe-tape-facts:mishe-tape-facts
+mishe-records:mishe-records
+mishe-systemd-show:mishe-systemd-show
+mishe-signal-freshness:mishe-signal-freshness
+mishe-signal-samples:mishe-signal-sample"
+
+commit="$(git -C "$repo" rev-parse HEAD)"
+bin_dir="$site/bin"
+mkdir -p "$bin_dir"
+
+while IFS=: read -r crate binary; do
+  manifest="$repo/rust/$crate/Cargo.toml"
+  echo "build $crate -> $binary"
+  "$cargo_bin" build --release --locked --manifest-path "$manifest"
+  built="$repo/rust/$crate/target/release/$binary"
+  if [ ! -x "$built" ]; then
+    echo "install-rust-binaries: build produced no $built" >&2
+    exit 1
+  fi
+  tmp="$bin_dir/.$binary.tmp.$$"
+  cp "$built" "$tmp"
+  chmod 0755 "$tmp"
+  mv -f "$tmp" "$bin_dir/$binary"
+  digest="$(sha256sum "$bin_dir/$binary" | cut -d' ' -f1)"
+  printf '{"binary":"%s","sha256":"%s","source_commit":"%s","built":"%s","installed_by":"tools/install-rust-binaries.sh"}\n' \
+    "$binary" "$digest" "$commit" "$(date -u +%Y-%m-%dT%H:%MZ)" > "$bin_dir/$binary.install.json.tmp"
+  mv -f "$bin_dir/$binary.install.json.tmp" "$bin_dir/$binary.install.json"
+  echo "installed $bin_dir/$binary sha256=$digest"
+done <<EOF
+$components
+EOF

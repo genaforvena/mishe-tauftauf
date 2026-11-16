@@ -25,7 +25,11 @@ git clone https://github.com/genaforvena/mishe-tauftauf.git
 cd mishe-tauftauf
 export PATH="$PWD/bin:$PATH" MISHE_SEED_HOME="$PWD/.mishe-tauftauf"   # no install, no third-party packages
 ./bin/mishe init                            # creates the ignored site and default charters
+tools/install-rust-binaries.sh              # builds the Rust components into $MISHE_SEED_HOME/bin (needs cargo)
 ```
+
+`init` alone is not enough: the tape, records and signal readers are Rust binaries that
+fail closed until the install script has put them, with their sha256 records, in the site's `bin/`.
 
 The site holds everything local (walls, signals, chat, wake files) and is never
 committed. `init` installs starter charters for `genome`, `witness`, `senses`,

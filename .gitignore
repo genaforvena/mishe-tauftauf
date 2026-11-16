@@ -51,3 +51,6 @@ research/field-review/__pycache__/
 # commits, but as an untracked entry it reads as authorship fog and holds
 # sense.repo.landing-block at drift. Keep it out of the checkout's status.
 /pytest-of-*/
+
+# Cargo build output of the Rust components (tools/install-rust-binaries.sh).
+rust/*/target/
