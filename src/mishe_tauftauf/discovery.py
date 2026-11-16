@@ -2153,7 +2153,7 @@ def _unit_declared_paths(unit: str) -> list[str] | None:
 
     ``systemctl show`` reports the *effective* unit, so a drop-in overriding the
     base unit cannot hide a path. The rendered property text is decoded by the
-    :mod:`mishe_tauftauf.unit_properties` boundary; a unit whose properties
+    :mod:`mishe_tauftauf.unit_paths` boundary (Rust); a unit whose properties
     cannot be read is unjudgeable, which is different from a unit that declares
     no site path.
     """
