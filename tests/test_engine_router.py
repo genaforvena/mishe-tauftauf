@@ -696,3 +696,41 @@ def test_outcome_tally_window_drops_old_failures_and_keeps_recent_ones():
     assert router.outcome_tally(rows) == {"omp:m:-": {"yielded": 1, "failed": 2}}
     since = now - 24 * 3600 * 1000
     assert router.outcome_tally(rows, since_ms=since) == {"omp:m:-": {"yielded": 1, "failed": 0}}
+
+
+def test_the_live_selection_and_the_signal_both_use_the_ranker(routed):
+    """The router runs the ranker's first candidate, not the roster's, and the signal agrees.
+
+    GO has a perfect ledger rate but sits in tier 1; MINI is tier 0 with a bad rate. The tier wins,
+    so both the wake that runs and the ``engine-routing`` signal's ``selected`` must name MINI.
+    """
+    routes_file(routed, {"health": [dict(GO, tier=1), dict(MINI, tier=0), dict(HAIKU, tier=2)]})
+    at = router._iso(NOW_MS - 3600_000)
+    rows = ([{"at": at, "event": "outcome", "key": router.candidate_key(GO), "outcome": "yielded"}] * 5
+            + [{"at": at, "event": "outcome", "key": router.candidate_key(MINI), "outcome": "no yield (exit 1)"}] * 5)
+    (routed / "engine" / router.LEDGER).write_text("".join(json.dumps(r) + "\n" for r in rows))
+    FakeEngine.script = {MINI["model"]: "yield"}
+    eng = router.for_role(routed, "health")
+    assert eng.run(routed / "p.md", env=_env(routed, "k50"), cwd=routed, timeout=5) == 0
+    selects = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()
+               if json.loads(x)["event"] == "select"]
+    assert selects[-1]["key"] == router.candidate_key(MINI)
+    result = router.assess(router.load_routes(routed), router.live_status(routed),
+                           router._load_state(routed)["cooling"], NOW_MS,
+                           tally=router.measured_tally(routed, now_ms=NOW_MS))
+    assert result["roles"]["health"]["selected"] == router.candidate_key(MINI)
+
+
+def test_measured_rate_breaks_a_tie_inside_one_tier(routed):
+    """Equal tiers: the candidate that yields more in the trailing window is selected first."""
+    routes_file(routed, {"health": [dict(GO, tier=0), dict(MINI, tier=0), HAIKU]})
+    at = router._iso(NOW_MS - 3600_000)
+    rows = ([{"at": at, "event": "outcome", "key": router.candidate_key(GO), "outcome": "no yield (exit 1)"}] * 5
+            + [{"at": at, "event": "outcome", "key": router.candidate_key(MINI), "outcome": "yielded"}] * 5)
+    (routed / "engine" / router.LEDGER).write_text("".join(json.dumps(r) + "\n" for r in rows))
+    FakeEngine.script = {MINI["model"]: "yield"}
+    eng = router.for_role(routed, "health")
+    assert eng.run(routed / "p.md", env=_env(routed, "k51"), cwd=routed, timeout=5) == 0
+    selects = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()
+               if json.loads(x)["event"] == "select"]
+    assert selects[-1]["key"] == router.candidate_key(MINI)

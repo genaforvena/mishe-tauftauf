@@ -54,6 +54,7 @@ STATE = "routing-state.json"
 LEDGER = "routing-ledger.jsonl"
 SIGNAL = "engine-routing"
 SIGNAL_MAX_AGE = 900.0
+TALLY_WINDOW_S = 604800.0   # a week: long enough to rank a rarely-tried candidate, short enough to forget an old burst
 DEFAULT_COOL_OFF_S = 1800
 DEFAULT_ACCOUNT_COOL_OFF_S = 5400  # a quota-exhausted account is out for a window, not a role retry
 DEFAULT_HARD_TIMEOUT_S = 3600     # total runtime a wake may reach when it is still producing output
@@ -337,6 +338,22 @@ def rank_candidates(candidates: list, tally: dict) -> list:
     return [c for _, c in sorted(enumerate(candidates), key=score)]
 
 
+def measured_tally(home, *, now_ms: float, window_s: float = TALLY_WINDOW_S) -> dict:
+    """The trailing-window outcome counts that :func:`rank_candidates` reads, from the routing ledger.
+
+    The ledger is the same one :func:`choose` appends to; only outcome rows inside the window count,
+    so a candidate that failed a burst a month ago starts clean once the burst leaves the window.
+    """
+    path = _dir(home) / LEDGER
+    rows = ledger_events(path) if path.is_file() else []
+    return outcome_tally(rows, since_ms=now_ms - window_s * 1000)
+
+
+def ranked_candidates(home, role: str, routes: dict, *, now_ms: float) -> list:
+    """The role's candidates in selection order: roster tier first, then measured yield rate."""
+    return rank_candidates(routes["roles"][role], measured_tally(home, now_ms=now_ms))
+
+
 def _is_num(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
@@ -426,8 +443,13 @@ def _windowed(routes: dict) -> bool:
     return any(c.get("account") for cands in (routes.get("roles") or {}).values() for c in cands)
 
 
-def assess(routes: dict | None, status, cooling: dict, now_ms: float, running: dict | None = None) -> dict:
-    """The engine-routing signal value and its reasons, from pure inputs."""
+def assess(routes: dict | None, status, cooling: dict, now_ms: float, running: dict | None = None,
+           tally: dict | None = None) -> dict:
+    """The engine-routing signal value and its reasons, from pure inputs.
+
+    ``tally`` is :func:`measured_tally`'s outcome counts; the per-role candidate lists are ranked
+    with it before choosing, so the reported ``selected`` is the candidate the router would run.
+    """
     if routes is None:
         return {"state": "UNKNOWN", "reason": "no engine/routes.json in this site", "roles": {}}
     if status is None and _windowed(routes):
@@ -436,6 +458,7 @@ def assess(routes: dict | None, status, cooling: dict, now_ms: float, running: d
     roles, stale, dead = {}, [], []
     cooled = cooling_table(cooling, now_ms, routes.get("cool_off_s", DEFAULT_COOL_OFF_S))
     for role, cands in routes["roles"].items():
+        cands = rank_candidates(cands, tally or {})
         choice = choose(role, cands, status, cooling, now_ms, running=running)
         roles[role] = {"selected": choice["key"], "decision": choice["decision"], "trail": choice["trail"]}
         if choice["decision"] == "none":
@@ -480,7 +503,8 @@ def publish(home, *, now: float | None = None) -> dict:
     else:
         running = running_candidates(home, now_ms=now * 1000,
                                      horizon_s=routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S))
-        result = assess(routes, live_status(home), _load_state(home)["cooling"], now * 1000, running=running)
+        result = assess(routes, live_status(home), _load_state(home)["cooling"], now * 1000, running=running,
+                        tally=measured_tally(home, now_ms=now * 1000))
     return observe(home, result, now=now)
 
 
@@ -548,7 +572,8 @@ class RoutedEngine:
         """Re-assess the signal from the status read at selection, with the cool-offs as they now stand."""
         running = running_candidates(self.home, now_ms=now_ms,
                                      horizon_s=self.routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S))
-        result = assess(self.routes, status, _load_state(self.home)["cooling"], now_ms, running=running)
+        result = assess(self.routes, status, _load_state(self.home)["cooling"], now_ms, running=running,
+                        tally=measured_tally(self.home, now_ms=now_ms))
         observe(self.home, result, now=now_ms / 1000)
 
     def hard_cap(self, limit: float, cand: dict) -> float | None:
@@ -573,8 +598,9 @@ class RoutedEngine:
             status = live_status(self.home)
             cooling = _load_state(self.home)["cooling"]
             running = running_candidates(self.home, now_ms=now_ms, horizon_s=self.routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S))
-            choice = choose(self.role, self.candidates, status, cooling, now_ms,
-                             exclude=frozenset(tried), running=running)
+            choice = choose(self.role, ranked_candidates(self.home, self.role, self.routes, now_ms=now_ms),
+                            status, cooling, now_ms,
+                            exclude=frozenset(tried), running=running)
             if choice["candidate"] is None:
                 record(self.home, {"role": self.role, "event": "none", "wake": key_wake, "trail": choice["trail"]},
                        now_ms=now_ms)
@@ -675,7 +701,8 @@ def cmd_choose(args) -> int:
     now_ms = time.time() * 1000
     running = running_candidates(args.home, now_ms=now_ms,
                                  horizon_s=routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S))
-    choice = choose(args.role, routes["roles"][args.role], live_status(args.home),
+    choice = choose(args.role, ranked_candidates(args.home, args.role, routes, now_ms=now_ms),
+                    live_status(args.home),
                     _load_state(args.home)["cooling"], now_ms, running=running)
     print(json.dumps(choice, indent=2, sort_keys=True))
     return 0 if choice["decision"] == "select" else 3
