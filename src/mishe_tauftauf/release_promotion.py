@@ -593,11 +593,13 @@ def _described_paths(source, paths, included):
     arms and the reviewer answered "unknown" for want of that file.
 
     ``page_paths_text`` decodes the path tokens a page spells; here they are
-    resolved against the release tree and returned as unchanged review entries.
+    resolved against the release tree and returned as unchanged review entries;
+    a token that escapes that tree is dropped, never read or handed over.
     Deterministic: first-appearance order, capped at ``DESCRIBED_PATH_MAX``;
     an over-size file is skipped, never truncated.
     """
     found, seen, total = [], set(included), 0
+    source_root = source.resolve()
     for name in paths:
         if not page_paths_text.is_page(name):
             continue
@@ -608,6 +610,8 @@ def _described_paths(source, paths, included):
             if token in seen or token in paths:
                 continue
             candidate = source / token
+            if not candidate.resolve().is_relative_to(source_root):
+                continue
             if not candidate.is_file() or candidate.is_symlink():
                 continue
             size = candidate.stat().st_size

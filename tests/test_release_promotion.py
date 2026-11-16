@@ -261,6 +261,21 @@ def test_ordinary_review_supplies_a_file_the_changed_document_describes(tree,mon
     assert "UPLINK_RED_PER_HOUR = 400" in base64.b64decode(described["after"]["bytes"]).decode()
 
 
+def test_described_paths_cannot_escape_the_release_tree(tmp_path):
+    # A changed page may spell a path token with embedded `..`. Resolving it
+    # against the release tree must never pull a real file from OUTSIDE that
+    # tree into the review: the reviewer is an external model, so those bytes
+    # would leave the host, and the adapter promises repo-relative resolution.
+    root = tmp_path
+    source = root / "release"; source.mkdir()
+    (source / "docs").mkdir(); (source / "checks").mkdir()
+    (source / "checks" / "care.py").write_text("KEEP = 1\n")
+    (root / "secret.json").write_text('{"secret": true}\n')
+    (source / "docs" / "page.md").write_text(
+        "see `checks/care.py` and `docs/../../secret.json` for the rule\n")
+    assert p._described_paths(source, ["docs/page.md"], []) == ["checks/care.py"]
+
+
 def test_release_intent_is_empty_when_the_worktree_is_gone(tmp_path):
     assert p._release_intent(tmp_path/"missing","a","b")==""
 
