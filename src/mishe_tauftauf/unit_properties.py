@@ -66,11 +66,6 @@ def site_home(path: str) -> str | None:
     return match.group(1) if match else None
 
 
-def declared_site_homes(text: str) -> set[str]:
-    """Site homes the paths a unit's ExecStart/WorkingDirectory text declares."""
-    return {home for home in (site_home(path) for path in declared_paths(text)) if home}
-
-
 def cmdline_site_homes(raw: bytes) -> set[str]:
     """Site homes named by the NUL-separated argv of a live process.
 

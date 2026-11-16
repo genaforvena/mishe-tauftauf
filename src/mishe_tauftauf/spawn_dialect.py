@@ -73,9 +73,13 @@ def script_spawns_site_package(unit: str, package: str) -> bool | None:
         return None
     if result.returncode:
         return None
-    from .unit_properties import declared_paths
+    from .unit_paths import UnitPathsUnknown, declared_paths
     checked = False
-    for path in declared_paths(result.stdout):
+    try:
+        paths = declared_paths(result.stdout)
+    except UnitPathsUnknown:
+        return None
+    for path in paths:
         candidate = Path(path)
         if not candidate.is_file():
             continue

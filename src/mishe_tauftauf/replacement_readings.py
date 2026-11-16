@@ -26,7 +26,7 @@ RENDERER_SENSE_ID = "sense.runtime.renderer-coverage"
 # execs ``mishe_tauftauf.plant_view``; the boundary module is imported by it.
 RENDERER_MODULES = ("plant_view", "plant_view_boundary")
 
-from . import proc_table, unit_properties
+from . import proc_table, unit_paths, unit_properties
 from .plant_tmux import WINDOW_FORMAT as _WINDOW_FORMAT, parse_list_windows, parse_session_births
 
 
@@ -487,5 +487,12 @@ def read_drift_across_sites(site: str | None, *, proc_root: Path = Path("/proc")
         if text is None:
             row["readable"] = False
         else:
-            row["declared"] = unit_properties.declared_site_homes(text)
+            try:
+                paths = unit_paths.declared_paths(text)
+            except unit_paths.UnitPathsUnknown:
+                row["readable"] = False
+            else:
+                row["declared"] = {
+                    home for home in (unit_properties.site_home(path) for path in paths) if home
+                }
     return judge_drift_across_sites(units, site)

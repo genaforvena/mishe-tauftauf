@@ -1,0 +1,11 @@
+[package]
+name = "mishe-unit-paths"
+version = "0.1.0"
+edition = "2021"
+description = "Decode the absolute paths a unit's systemctl show text declares (byte-exact Rust counterpart of unit_properties.declared_paths)"
+license = "CC0-1.0"
+
+[dependencies]
+
+[profile.release]
+debug = false

@@ -217,13 +217,22 @@ that composes it:
   configured but broken binary turns those signals UNKNOWN with a reason.
   `signal_store.read` keeps its display-level Python comparison. Tests:
   `tests/test_signal_freshness.py` and `tests/test_signal_store_freshness.py`.
+- `rust/mishe-unit-paths` (`mishe-unit-paths`, contract
+  `rust/mishe-unit-paths/CONTRACT.md`) decodes the absolute paths a unit's
+  `systemctl show` text declares: it writes one ordered, deduplicated path per
+  line for ASCII input and a single `DEFER` line for any non-ASCII input, which
+  the Python decoder in `unit_paths.py` handles. `unit_paths.py` composes the
+  binary and fails closed with `UnitPathsUnknown` when it is missing, mismatched
+  or failing; there is no Python fallback. Its recorded answers are GOLDEN in
+  `tests/test_rust_unit_paths.py`.
 
 A change to any of these binaries' input, output, exit statuses or fault text is a
 change to a protocol boundary: update its `CONTRACT.md` in the same commit and run
 its contract test (`tests/test_mishe_tape_frames.py`,
 `tests/test_mishe_records_verify.py`, `tests/test_mishe_tape_facts.py`,
 `tests/test_mishe_network_probe.py`, `tests/test_rust_systemd_show.py`,
-`tests/test_signal_samples.py`, `tests/test_signal_freshness.py`).
+`tests/test_signal_samples.py`, `tests/test_signal_freshness.py`,
+`tests/test_rust_unit_paths.py`).
 
 A delivery request's spec holds the repository, the exact commit and its previous
 commit. The author role and the originating wake key are not in the spec; they

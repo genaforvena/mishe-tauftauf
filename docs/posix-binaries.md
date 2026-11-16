@@ -2,13 +2,13 @@
 
 Status: contract and ranking (rust-plan, 2026-11-14). Step 1 of operator DM
 301098. No new binary is built by this document; the first candidate is step 2.
-Updated 2026-11-15: three candidates have since been built (candidate 1,
-`mishe-systemd-show`, the signal sample store, and `mishe-signal-freshness`), so
-the crate count and the table below are current.
+Updated 2026-11-16: four candidates have since been built (candidate 1,
+`mishe-systemd-show`, the signal sample store, `mishe-signal-freshness`, and
+`mishe-unit-paths`), so the crate count and the table below are current.
 
 ## Why this exists
 
-Mishe's Python runtime is about 49,500 lines. Seven Rust crates (about 3,100
+Mishe's Python runtime is about 49,500 lines. Eight Rust crates (about 3,100
 lines) already sit beside it, each one a small program with a stdin/argument
 and stdout/exit-code boundary. This document says what counts as a Mishe binary,
 which existing seams already meet that bar, and which responsibilities come next.
@@ -82,6 +82,7 @@ reads no output at all.
 | `mishe-systemd-show` | `systemctl show` text decoding | Live since candidate 1: `unit_psi_text.parse_systemd_show` runs it and `discovery.py` reads the result through `read_unit_psi`. The retired Python decoder is deleted; its recorded answers are GOLDEN in `tests/test_rust_systemd_show.py` |
 | `mishe-signal-sample` | The append-only signal sample store | Live on both sides: the `memory-samples` duty appends up to three rows every three minutes into `SITE/samples/memory/`, and the `footprint` duty reads the last 15 minutes of that store back |
 | `mishe-signal-freshness` | The freshness verdict of one signal observation | Live: `signal_store.expire` resolves the sha256-recorded `$SITE/bin/mishe-signal-freshness` once per sweep and routes each OK signal's verdict through it (explicit arg / env override / site install). A configured but broken binary fails closed to UNKNOWN. `read` keeps a display-level Python comparison |
+| `mishe-unit-paths` | Absolute unit paths declared by `systemctl show` text | Live: `unit_paths.py` composes it and fails closed with `UnitPathsUnknown` when the binary is missing, mismatched or failing; the binary handles ASCII input and emits `DEFER` for non-ASCII text, which the Python decoder handles. Its recorded answers are GOLDEN in `tests/test_rust_unit_paths.py` |
 `mishe-tape-facts` is the honest gap: its consumer is not yet running it. The
 signal sample store has both a writer and a reader. The freshness binary is now
 live in the expiry sweep; its reader is called by production `signal_store.expire`.

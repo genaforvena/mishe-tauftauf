@@ -2168,8 +2168,11 @@ def _unit_declared_paths(unit: str) -> list[str] | None:
         return None
     if result.returncode:
         return None
-    from .unit_properties import declared_paths
-    return declared_paths(result.stdout)
+    from .unit_paths import UnitPathsUnknown, declared_paths
+    try:
+        return declared_paths(result.stdout)
+    except UnitPathsUnknown:
+        return None
 
 
 
@@ -2208,9 +2211,13 @@ def _script_imports_site_package(unit: str) -> bool | None:
         return None
     if result.returncode:
         return None
-    from .unit_properties import declared_paths
+    from .unit_paths import UnitPathsUnknown, declared_paths
     checked = False
-    for path in declared_paths(result.stdout):
+    try:
+        paths = declared_paths(result.stdout)
+    except UnitPathsUnknown:
+        return None
+    for path in paths:
         candidate = Path(path)
         if not candidate.is_file():
             continue

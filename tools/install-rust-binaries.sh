@@ -37,6 +37,7 @@ mishe-tape-facts:mishe-tape-facts
 mishe-records:mishe-records
 mishe-systemd-show:mishe-systemd-show
 mishe-signal-freshness:mishe-signal-freshness
+mishe-unit-paths:mishe-unit-paths
 mishe-signal-samples:mishe-signal-sample"
 
 # Build output goes off the root filesystem: MISHE_BUILD_CACHE wins, then the scratch
