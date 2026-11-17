@@ -66,7 +66,14 @@ def router_next(home: Path) -> tuple[dict | None, str | None]:
         return None, f"engine_router import failed: {str(exc)[:120]}"
     try:
         routes = er.load_routes(home)
-        a = er.assess(routes, er.live_status(home), er._load_state(home)["cooling"], time.time() * 1000)
+        now_ms = time.time() * 1000
+        running = None
+        if routes is not None:
+            running = er.running_candidates(home, now_ms=now_ms,
+                                            horizon_s=routes.get("hard_timeout_s", er.DEFAULT_HARD_TIMEOUT_S))
+        tally = er.measured_tally(home, now_ms=now_ms)
+        a = er.assess(routes, er.live_status(home), er._load_state(home)["cooling"], now_ms,
+                      running=running, tally=tally)
     except Exception as exc:  # noqa: BLE001
         return None, f"assess failed: {str(exc)[:120]}"
     roles = a.get("roles")
