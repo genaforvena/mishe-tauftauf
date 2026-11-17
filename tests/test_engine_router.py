@@ -318,6 +318,23 @@ def test_safety_net_is_never_cooled_so_role_keeps_an_engine(tmp_path, monkeypatc
     assert eng.run(tmp_path / "p.md", env=_env(tmp_path, "k7"), cwd=tmp_path, timeout=5) == 0
 
 
+def test_safety_net_is_cooled_when_its_account_is_out_of_quota(tmp_path, monkeypatch):
+    # The one exception to "never cool the net": a demonstrably spent account. The net is out
+    # until its window resets, so the next wake does not pay the same failure before falling through.
+    monkeypatch.setattr(router, "live_status", lambda home: status(**{"go-a": account()}))
+    monkeypatch.setattr(router.time, "time", lambda: NOW_MS / 1000)
+    monkeypatch.setattr(router.RoutedEngine, "_build", lambda self, cand: FakeEngine(cand["model"]))
+    FakeEngine.script = {HAIKU["model"]: "exhausted"}
+    routes_file(tmp_path, {"genome": [HAIKU]})
+    eng = router.for_role(tmp_path, "genome")
+    # no other candidate: the cooled net leaves the role with no engine, not an immediate retry
+    with pytest.raises(EngineNotStarted):
+        eng.run(tmp_path / "p.md", env=_env(tmp_path, "k8"), cwd=tmp_path, timeout=5)
+    cooling = json.loads((tmp_path / "engine" / router.STATE).read_text())["cooling"]
+    # held for the account window (5400 s), the fallback when the provider named no reset
+    assert cooling[router.candidate_key(HAIKU)] == NOW_MS + 5_400_000
+
+
 def test_publish_observes_engine_routing_signal(routed):
     result = router.publish(routed, now=NOW_MS / 1000)
     assert result["state"] == "GREEN"
