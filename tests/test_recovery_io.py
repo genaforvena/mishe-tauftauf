@@ -256,11 +256,13 @@ def test_original_renderer_is_bounded_when_its_wrapper_is_killed(tmp_path):
         parent.kill()
         parent.wait(timeout=2)
         def child_state():
-            # The kernel may reap the child between any two reads; a vanished entry means it exited.
+            # The kernel may reap the child between any two reads: /proc/<pid> then vanishes (FileNotFoundError)
+            # or the pid is already gone (ProcessLookupError), and a read racing the exit can come back short.
             try:
-                return Path(f"/proc/{child}/stat").read_text().split()[2]
-            except FileNotFoundError:
+                fields = Path(f"/proc/{child}/stat").read_text().split()
+            except (FileNotFoundError, ProcessLookupError):
                 return None
+            return fields[2] if len(fields) > 2 else None
 
         cutoff = time.monotonic() + 3
         state = child_state()
