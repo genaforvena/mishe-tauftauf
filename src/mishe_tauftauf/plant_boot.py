@@ -105,7 +105,7 @@ def boot_start(home: Path, artifact: Path, request_id: str, *, timeout=1000):
     from .work_boundary import runtime_source
     # The same resolver map the `mishe sync` below will write, so the check compares against the
     # units that sync is about to generate rather than against a map left from the previous boot.
-    resolvers = duties.resolvers(Path(runtime_source(home.parent, str(runtime / 'src'))).resolve(), 'mishe')
+    resolvers = duties.resolvers(Path(runtime_source(home.parent, str(runtime / 'src'))).resolve(), cfg.prefix)
     report = units.doctor(cfg, roles.declared(home), producers=declared, resolvers=resolvers)
     if report.state != 'GREEN':
         raise RuntimeError(f'exact unit check failed: {report.problems}')
