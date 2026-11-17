@@ -2,7 +2,7 @@
 
 One line per promised slot in the network charter. Checked against `tools/network_view.py`
 (`draw()` and its helpers) and `tools/network_router.py` and `rust/mishe-network-probe`, on 2026-11-13.
-Day-trend, baseline and Wi-Fi channel/noise rows rechecked 2026-11-17.
+Speed, day-trend, baseline and Wi-Fi channel/noise rows rechecked 2026-11-17.
 
 Status words: **BUILT** (the window shows it with an age or UNKNOWN), **PARTLY** (some of it is
 shown), **MISSING** (not measured or not shown).
@@ -59,9 +59,9 @@ shown), **MISSING** (not measured or not shown).
 
 ## Count
 
-- BUILT: 16
+- BUILT: 18
 - PARTLY: 5
-- MISSING: 4
+- MISSING: 2
 
 ## Next gaps, in order of value
 
