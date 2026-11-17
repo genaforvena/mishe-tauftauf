@@ -32,10 +32,24 @@ Past the deadline ``IDLE_GAP_S`` ends a run; before it, a silent engine was tole
 deadline, so a hung engine held the whole soft timeout and released nothing (rust-plan
 2026-11-16: last output 19:00:15Z, cut at the 19:26:57Z deadline after the wake had already
 finished and verified its work). This bound is deliberately looser than the idle gap: measured
-over 22 recent wake streams, the longest silent stretch between counted progress lines was 20 s
-median and 178 s worst, against 1602 s for that stall, so a stall is separable but a slow turn
-is not. Progress here is the same as the idle reader's (heartbeats and thinking deltas do not
-count), and a live tool child still defers the cut.
+over 22 wake streams on 2026-11-16, the longest silent stretch between counted progress lines
+was 20 s median and 178 s worst, against 1602 s for that stall, so a stall is separable from a
+slow turn — for an engine that writes its own turns.
+
+Progress here is the same as the idle reader's (heartbeats and thinking deltas do not count),
+and a live tool child still defers the cut, because ``_awaiting_tools`` follows parent-pid
+links. A wake waiting on an in-process subagent is neither: the omp ``task`` tool is not an OS
+child, and the only thing such a wait writes is ``tool_execution_update`` lines, which
+``progress_bytes`` drops as heartbeats. So a parent whose scout is still working — senses
+2026-11-17 02:44Z: 3,723 task/wait updates, the scout at 80 tool calls, 133k context — reads as
+silent and is cut at this gap, and the subagent's results, including 10.5 minutes of its work,
+are discarded with it. The 178 s worst case above does not cover that shape.
+
+A candidate repair is to count a ``tool_execution_update`` as progress when the async job it
+reports has advanced (``toolCallCount``, ``requests``, ``tokens``), not when the line merely
+repeats. Keying on the counters matters: the 2026-11-13 docs wake wrote the same stuck wait for
+an hour and was cut at the 3600 s cap, and byte growth from a frozen job must keep reading as
+silence.
 """
 TOOL_WAIT_GRACE_S = 600.0
 """How far past the soft deadline a silent wait on a live child may defer the idle cut.
