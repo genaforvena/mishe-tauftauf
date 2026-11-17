@@ -342,3 +342,20 @@ def test_usuality_marks_a_stale_last_probe():
 def test_day_spark_buckets_the_day_and_handles_empty():
     assert len(view.day_spark([300.0] * 200)) == view.USUAL_BUCKETS
     assert view.day_spark([]) == "(no data)"
+
+
+def test_probe_cadence_is_measured_not_a_fixed_minute_claim():
+    rows = [{"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(i * 180))} for i in range(5)]
+    line = view.probe_age_line(rows, 220, 40)
+    assert "probes about 3.0 min apart" in line
+    assert "one probe a minute" not in line
+
+
+def test_probe_cadence_follows_a_slow_producer():
+    rows = [{"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(i * 600))} for i in range(5)]
+    assert "probes about 10.0 min apart" in view.probe_age_line(rows, 700, 40)
+
+
+def test_probe_cadence_unknown_without_usable_timestamps():
+    assert view.probe_cadence_phrase([]) == "probe cadence UNKNOWN"
+    assert view.probe_cadence_phrase([{"at": "not-a-time"}]) == "probe cadence UNKNOWN"

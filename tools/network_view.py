@@ -595,6 +595,35 @@ def speed_line(speed_rows, now=None):
     return f"DOWN {best['down_mbps']:g} Mbps, measured {hours:.1f} h ago (5 MB download, night only, no upload yet)"
 
 
+def probe_cadence_phrase(data):
+    """How far apart the recent probes are, measured from their own timestamps.
+
+    The duty's period is a deployment detail; deriving the phrase from recorded rows keeps the
+    window honest if that period changes or a producer slows to a crawl.
+    """
+    ts = []
+    for row in data[-41:]:
+        try:
+            ts.append(nb.utc_epoch(row["at"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    gaps = sorted(b - a for a, b in zip(ts, ts[1:]) if 0 < b - a)
+    if not gaps:
+        return "probe cadence UNKNOWN"
+    med = gaps[len(gaps) // 2]
+    if med < 90:
+        return f"probes about {med:.0f} s apart"
+    return f"probes about {med / 60:.1f} min apart"
+
+
+def probe_age_line(data, a=None, n=40):
+    """The 'last probe' header line; the cadence beside the age is measured, never a fixed claim."""
+    if a is None and data:
+        a = age(data[-1])
+    return (f"  last probe: {'%ds ago' % a if a is not None else 'never'}   "
+            f"({probe_cadence_phrase(data)}; sparklines = last {n} probes)")
+
+
 def draw():
     data = rows()
     last = data[-1] if data else None
@@ -604,7 +633,7 @@ def draw():
     committed_txt = f", committed {(time.time() - committed) / 3600:.1f} h ago" if committed else ""
     out.append(f"  view code {sha}{committed_txt}; this copy loaded {time.time() - STARTED:.0f} s ago")
     out.append(f"  HOME INTERNET: {verdict(last, a)}")
-    out.append(f"  last probe: {'%ds ago' % a if a is not None else 'never'}   (one probe a minute; sparklines = last {min(len(data), 40)} probes)")
+    out.append(probe_age_line(data, a, min(len(data), 40)))
     out.append("")
     out.append("  ROUTER AND LOCAL LINK (ping, average of 5)")
     out.append(gateway_line(data))
