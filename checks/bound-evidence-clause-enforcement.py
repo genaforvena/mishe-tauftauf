@@ -297,11 +297,26 @@ def _disposable_home() -> Path:
     return home
 
 
-def _publish(home: Path, root: Path, evidence: Path, prose: Path) -> subprocess.CompletedProcess:
-    """Publish one outcome through ``root`` into the disposable home."""
+def _publish(home: Path, root: Path, evidence: Path, prose: Path,
+             site: Path | None = None) -> subprocess.CompletedProcess:
+    """Publish one outcome through ``root`` into the disposable home.
+
+    The publication is isolated from the plant's own home, so the plant's save
+    path cannot bind evidence the plant did not intend. The pinned bytes resolve
+    the chat tape and the record verifier from the site home or an explicit
+    ``MISHE_TAPE_BIN``/``MISHE_RECORDS_BIN``; with the site home removed those
+    binaries must be named, or the probe would report the live roots' clause
+    unmeasured only because it could not publish through them.
+    """
     env = dict(os.environ)
     env[PYTHONPATH_ENV] = str(root)
     env.pop("MISHE_SEED_HOME", None)
+    if site is not None:
+        for variable, name in (("MISHE_TAPE_BIN", "mishe-tape"),
+                               ("MISHE_RECORDS_BIN", "mishe-records")):
+            binary = site / "bin" / name
+            if binary.is_file() and os.access(binary, os.X_OK):
+                env[variable] = str(binary)
     return subprocess.run(
         [sys.executable, "-m", PACKAGE, "--home", str(home), "wall", "outcome",
          "--owner", "inference-research", "--kind", "accepted",
@@ -335,7 +350,7 @@ def _replace(path: Path) -> None:
     os.replace(temporary, path)
 
 
-def probe_root(root: Path) -> dict:
+def probe_root(root: Path, site: Path | None = None) -> dict:
     """Whether a file the clause made read-only can be replaced anyway.
 
     The probe publishes a bound artifact through ``root``, checks the mode the
@@ -350,7 +365,7 @@ def probe_root(root: Path) -> dict:
         prose.write_text("probe publication for the write-once clause\n", encoding="utf-8")
         before = stat.S_IMODE(evidence.stat().st_mode)
         digest_before = hashlib.sha256(evidence.read_bytes()).hexdigest()
-        result = _publish(probe_home, root, evidence, prose)
+        result = _publish(probe_home, root, evidence, prose, site)
         if result.returncode != 0:
             return {"decided": False,
                     "reason": (result.stderr or result.stdout or "").strip()[-300:]}
@@ -498,7 +513,7 @@ def main(argv=None) -> int:
         if not states[root]:
             continue
         try:
-            result = probe_root(root)
+            result = probe_root(root, home)
         except (OSError, subprocess.SubprocessError) as exc:
             print("          %s — the probe could not run: %s" % (root, type(exc).__name__))
             continue
