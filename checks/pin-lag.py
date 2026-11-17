@@ -3,15 +3,18 @@
 
 Reads the pin (readlink of SITE/runtime/current, no writes) and local main. The age is the commit
 time of the oldest commit on main that is not yet in the pinned release. It is GREEN under
---green-age (default 60 min), AMBER up to --red-age (default 3 h), RED beyond that.
+--green-age (default 60 min), AMBER up to --red-age (default 3 h), RED beyond that — except while
+a promotion is still running (a live work/releases record in a non-terminal phase that is moving
+this HEAD): then the lag is progress and reads GREEN with the run's stage, up to --red-age.
 
 It also reports the stage and last failure reason of the newest delivery run log, so a lagging pin
 says where it stopped instead of only that it lags. Stages: check, review, apply, verify.
 
 Exit status:
-  0  GREEN   the pin is main's HEAD, or the oldest unreleased commit is younger than --green-age
-  1  AMBER   older than --green-age, not yet older than --red-age
-  2  RED     the oldest unreleased commit is older than --red-age
+  0  GREEN   the pin is main's HEAD, or the oldest unreleased commit is younger than --green-age,
+             or a promotion of this HEAD is in flight and younger than --red-age
+  1  AMBER   older than --green-age, not yet older than --red-age, no promotion in flight
+  2  RED     the oldest unreleased commit is older than --red-age (even with a promotion in flight)
   3  UNKNOWN no pin, the pin is not a commit in this clone, or it is not an ancestor of HEAD
 """
 from __future__ import annotations
@@ -49,6 +52,10 @@ PHASE_STAGE = {
     "applying": "apply", "applied": "apply", "apply-failed": "apply",
     "verified": "verify", "delivered": "verify", "rolled-back": "verify", "verify-failed": "verify",
 }
+# Phases a promote writes while it is still working. A record in one of these is a live run, not a
+# result: the pin is about to move, so a lagging pin is progress rather than a fault.
+IN_FLIGHT_PHASES = frozenset({"checking", "waiting-for-wakes", "delivery-busy", "activating",
+                              "review", "applying"})
 PHASE_FAILURE = {
     "check-failed": "check failed",
     "review-failed": "review not clear",
@@ -163,6 +170,23 @@ def last_stage_and_failure(home: Path, log: Path | None) -> tuple[str, str]:
     return stage, failure[:200]
 
 
+def in_flight(home: Path, now: float, red_age: float = RED_AGE_S) -> tuple[str, str] | None:
+    """The promotion that is still running, as (stage, sha), or None.
+
+    The single promote path writes a ``work/releases`` record when it starts and updates its
+    ``phase`` in place as the run advances; a non-terminal phase means the pin is being moved
+    right now. A record older than ``red_age`` is not trusted as live: a promote that died
+    without finishing leaves its phase behind, and no delivery takes that long to show progress.
+    """
+    record = newest_record(home)
+    if record is None or record.get("phase") not in IN_FLIGHT_PHASES:
+        return None
+    created = record.get("created_at")
+    if not isinstance(created, (int, float)) or now - created > red_age:
+        return None
+    return PHASE_STAGE.get(str(record.get("phase")), "unknown"), str(record.get("sha") or "")
+
+
 def evaluate(home: Path, now: float, green_age: float = GREEN_AGE_S, red_age: float = RED_AGE_S) -> tuple[int, list[str]]:
     repo = home.parent
     code, head = git(repo, "rev-parse", "HEAD")
@@ -190,8 +214,22 @@ def evaluate(home: Path, now: float, green_age: float = GREEN_AGE_S, red_age: fl
         f"last delivery stage: {stage}",
         f"last failure: {failure or 'none in newest run log'}",
     ]
+    flight = in_flight(home, now, red_age)
+    if flight is not None:
+        fstage, fsha = flight
+        # Only a run that is moving HEAD (or a commit on the way to it) explains this lag; a record
+        # naming anything else is not this pin's delivery.
+        if not fsha or git(repo, "cat-file", "-e", f"{fsha}^{{commit}}")[0] != 0 \
+                or git(repo, "merge-base", "--is-ancestor", fsha, head)[0] != 0:
+            flight = None
+        else:
+            detail.insert(1, f"delivery in flight: {fstage} for {fsha[:8]}")
     if age > red_age:
+        # Even a live delivery that has run past --red-age is worth waking a resolver: progress
+        # that slow is the fault, not the lag it leaves behind.
         return 2, detail
+    if flight is not None:
+        return 0, detail
     if age > green_age:
         return 1, detail
     return 0, detail
