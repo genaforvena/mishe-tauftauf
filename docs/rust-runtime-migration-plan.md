@@ -2763,3 +2763,22 @@ Against §10.39's 3.53/3.89-CPU-s baseline, senses is unchanged and genome is lo
 RSS is about 117 MB and 98 MB, under half the 200 MB bar. No role crossed either trigger,
 so the A/B stays closed and there is no measured seam to port. rust-crates-nine stays unmet
 and its RED stays dispositioned to the steward, now with a fresh refutation at 20:13Z.
+
+### 10.43 The 00:18Z forced fold confirms the closed A/B, and the pin's binaries stay intact (2026-11-17)
+
+The quiet run §10.42 waited for landed at 00:18:20Z
+(`artifacts/rust-plan-20261107/rust-measurement-latest.json`; producer guard satisfied):
+senses 36,387 entries, 3.265 CPU-s / 4.226 s elapsed, 120,184 KB peak RSS; genome
+30,339 entries, 3.263 CPU-s / 4.082 s, 100,832 KB. Triggers are 5.0 CPU-s and
+204,800 KB; `over: []`. Both roles are at or below the 20:13Z sample (§10.42), so
+`next-rust-slice` is refuted again and no Rust slice has measured headroom on the
+read path. Truly cold-cache reads stay UNKNOWN: cache dropping is forbidden.
+
+The live pin had moved from `6ecc811d` to `2e2d080d` since the ninth crate's manual
+install. All nine `.install.json` records in `$SITE/bin` still recompute to the sha256
+of the installed bytes, and all eight binary resolver functions in the pin (`feed`,
+`tape_facts`, `signal_freshness`, `unit_psi_text`, `unit_paths`, `cgroup_counters`,
+`signal_samples`) resolve to them. A `wall show --owner rust-plan` through the pin's
+code read clean in 0.68 s. The promotion gap (promotion does not run
+`tools/install-rust-binaries.sh`) therefore did not recur as a missing binary this
+time; it stays an open systemic handoff to Genome, not a resolved defect.
