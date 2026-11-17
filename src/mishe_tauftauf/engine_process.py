@@ -107,6 +107,10 @@ def _awaiting_tools(process: subprocess.Popen) -> bool | None:
     can end a run.
     """
     found = _descendants(process.pid)
+    if found is None:
+        # One retry: a single failed table read is not evidence of a childless engine, and the
+        # read is one cheap `ps`.
+        found = _descendants(process.pid)
     return None if found is None else bool(found)
 
 
