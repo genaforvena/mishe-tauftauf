@@ -389,6 +389,22 @@
       "covers": "root-drive fsync stalls of 5 s or more in the last 900 s, from the dual-probe mirror; the signal was registered with no producer and went UNKNOWN on 2026-11-14 11:01Z"
     },
     {
+      "name": "root-migration-bulk",
+      "command": [
+        "{python}",
+        "{repo}/checks/root-migration-bulk.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 120,
+      "timeout": 60,
+      "max_age": 900,
+      "unknown_codes": [3],
+      "resolver": "health",
+      "replaces": [],
+      "covers": "the root-drive migration bulk copy (step 6 first pass, docs/root-fs-migration-plan.md): GREEN when bulk.log records 'all done rc=0', RED when a tree failed or the log stopped advancing mid-pass, UNKNOWN while a tree is still copying, so completion is event-observable instead of polled"
+    },
+    {
       "name": "host-capacity",
       "command": [
         "{home}/producers/host-capacity.sh"
