@@ -65,10 +65,11 @@ shown), **MISSING** (not measured or not shown).
 
 ## Next gaps, in order of value
 
-1. Wi-Fi retry counters and co-channel trouble: DONE on 2026-11-17. The per-radio counters come from `iwpriv <radio> stat`
-   (the router has no `iw` and no debugfs), and the "two APs on channel 13" question is closed: `ra0` is the
-   2.4 GHz access point, `rax0` the 5 GHz one, and `apcli0`/`apclix0` are client-mode interfaces on the same
-   radios whose `-256 dBm` signal is meaningless. What the counters mean exactly is the open question: the
-   driver prints its own PER (3.3% on 2.4 GHz, 0.1% on 5 GHz) while the success/fail counters give 14.6% and
-   6.3%, so the fail counter probably counts each retry attempt. Watch the last-hour rate for a few days before
-   turning it into a threshold, and add a comparison with the driver PER line if the two disagree consistently.
+1. What the radio fail counter means, and when it deserves a threshold. The counters exist now
+   (`iwpriv <radio> stat`, shown by `WI-FI QUALITY` with UNKNOWN/STALE guards), but the driver prints
+   its own PER (3.3% on 2.4 GHz, 0.1% on 5 GHz) while the success/fail counters imply 14.6% and 6.3%,
+   so "Tx fail" probably counts each retry attempt rather than a lost frame. Watch the last-hour rate
+   for a few days, compare it with the driver PER line, then decide whether a household-visible
+   threshold earns its place. The earlier "two APs on channel 13" question is closed: `ra0` is the
+   2.4 GHz access point, `rax0` the 5 GHz one, and `apcli0`/`apclix0` are client-mode interfaces on
+   the same radios.
