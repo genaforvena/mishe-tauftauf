@@ -30,8 +30,14 @@ def busy(repo: Path, home: Path, proc_root: Path = Path("/proc")) -> str | None:
             fields = (process / "stat").read_text().rsplit(")", 1)[1].split()
             if fields[0] == "Z" or int(fields[6]) & 0x00200000:
                 continue
-            cwd = (process / "cwd").resolve(strict=True)
-            if cwd == root or cwd.is_relative_to(root):
+            # A removed cwd target (a deleted temp dir, a replaced release dir)
+            # resolves to nothing; that is not the process being gone, and its
+            # environment and argv still protect the candidate path.
+            try:
+                cwd = (process / "cwd").resolve(strict=True)
+            except (FileNotFoundError, ProcessLookupError):
+                cwd = None
+            if cwd is not None and (cwd == root or cwd.is_relative_to(root)):
                 return f"process {process.name} owns candidate cwd"
             args = (process / "cmdline").read_bytes().split(b"\0")
             environment = (process / "environ").read_bytes().split(b"\0")

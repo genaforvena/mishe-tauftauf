@@ -116,6 +116,22 @@ def test_busy_detects_source_only_in_process_environment(tmp_path):
         child.terminate(); child.wait(timeout=5)
 
 
+def test_busy_sees_a_process_whose_cwd_target_was_removed(tmp_path):
+    """A live process with a deleted cwd still protects the candidate through its environment."""
+    import os, sys, time
+    repo = tmp_path / "candidate"
+    (repo / "src").mkdir(parents=True)
+    workdir = tmp_path / "workdir"; workdir.mkdir()
+    child = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(30)"], cwd=workdir,
+        env={**os.environ, "PYTHONPATH": str(repo / "src")})
+    try:
+        time.sleep(0.5)
+        os.rmdir(workdir)
+        assert f"process {child.pid} environment" in retirement.busy(repo, tmp_path)
+    finally:
+        child.terminate(); child.wait(timeout=5)
+
+
 def test_busy_unreadable_process_does_not_mask_definite_detection(tmp_path, monkeypatch):
     """A protected /proc entry must not hide a process that really uses the candidate."""
     repo = tmp_path / "candidate"
