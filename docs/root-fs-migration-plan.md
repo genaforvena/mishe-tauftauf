@@ -139,6 +139,33 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
   **~23-24 min** — it does not fit the 35-minute wake cap alongside delta and
   flip.
 
+## Measured 2026-11-17 08:47-08:53Z: the cutover scripts, self-tested
+
+- `tools/root-migration-flip.sh --dry-run` prints the preflight readings (pin, source and
+  destination HEAD, its own sha256 against the committed copy) and the stop list, then
+  stops. Measured: **94 units**, of which 71 `mishe-producer-*.timer`, 10
+  `mishe-release-review-retry-*`, the three bots, `mishe-dual-probe`,
+  `mishe-unit-psi-sampler`, `mishe-next-due-*`, `mishe-doctor.timer`,
+  `mishe-ifm-shim`, `mishe-audio-listener`, `mishe-note3-sampler`,
+  `mishe-human-inbound-relay.timer`, `plant-mishe-ui` and `plant-mishe-revive.timer`.
+- The first version found only 20 units: a producer's *service* names the checkout but is
+  inactive between runs, so the active unit is its timer and the timer file names no path.
+  Reading each timer's `Unit=` target is what makes the list complete. Without it the delta
+  would have run with 71 producers still writing the site home.
+- `tools/root-migration-verify-scoped.sh` self-tested against a synthetic source/destination
+  pair (`MIGRATION_SRC`/`MIGRATION_DST`/`MIGRATION_WORK` overrides exist for this): a clean
+  copy prints `VERIFIED`; content corrupted while preserving size and mtime is caught both
+  in the changed-since set and in the sample; an extra destination file is caught by the
+  count and byte checks. Two defects found and fixed by the tests: a sample stride of 1
+  selected nothing (`NR % 1 == 1`), and `--files-from` adds the parent directories of the
+  listed files, whose mtimes were being counted as content differences — the checksum
+  stages now count file entries only.
+- Live run on the unquiesced `.omp`: 9.3 s, 27 size+mtime churn entries, 22 file entries
+  changed since the bulk pass, and **0 content mismatches in a 199-file sample**. That is
+  the intended discrimination: churn is reported, corruption is not invented.
+- Not run: the flip itself. It waits on the reviewer's answer about the step-7 shape and a
+  wake window that can hold quiesce + delta + verify + cutover.
+
 ## Steps
 
 1. Pre-check: ensure no active process using targets beyond shell; record `lsof`/`fuser` for each.
@@ -199,26 +226,43 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
    backlog.
 7. Verification after copy — two shapes; a fresh reviewer who is not the author
    accepts the shape before the flip runs, because the flip moves the delivery
-   worktrees and the pinned release (high-impact).
+   worktrees and the pinned release (high-impact). Both shapes are implemented;
+   the flip script calls the one it is told to use.
    - **Full:** `rsync -aHxc --dry-run --itemize-changes SRC/ DST/` shows zero
      changes, file counts equal, `du -sb` equal
      (`/mnt/mishe-scratch/mishe-migration/verify-copy.sh [tree …]` prints
      `VERIFIED`/`NOT-CLEAN`). Measured cost ~23-24 min of source reads (89.4 GB
      at 62-64 MB/s), so it cannot run inside a wake: it needs a transient unit
-     with the plant quiesced across a wake gap.
+     with the plant quiesced across a wake gap. `flip.sh --full` selects it.
    - **Scoped (recommended, fits one wake):** after the step-2 quiesce and a
      final non-checksummed delta, check (i) exhaustive size+mtime equality — the
      dry run reports zero transfers; (ii) content equality with `-c` for every
-     file changed since the bulk pass (~0.4-1 GB, seconds); (iii) a random
-     content sample of the rest (a few GB, ~1 min); (iv) file counts and
-     `du -sb` equal. rsync verifies the whole-file checksum of every file it
-     transfers and the bulk pass finished rc=0, so what full `-c` adds over this
-     is post-write disk corruption on untouched files.
-   Either way `verify-copy.sh` can only pass on a quiesced tree; a nonzero delta
-   outside one is live churn, not a copy defect.
+     file changed since the bulk pass; (iii) a random content sample of the rest;
+     (iv) file counts and `du -sb` equal. Implemented as
+     `tools/root-migration-verify-scoped.sh` (deployed to
+     `/mnt/mishe-scratch/mishe-migration/verify-scoped.sh`), which is what
+     `flip.sh` runs by default. `--since` defaults to `bulk.log`'s mtime, the
+     sample is evenly spaced by path and capped at 2 GiB of reads.
+     rsync verifies the whole-file checksum of every file it transfers and the
+     bulk pass finished rc=0, so what full `-c` adds over this is post-write disk
+     corruption on untouched files.
+   Either way verification can only pass on a quiesced tree; a nonzero delta
+   outside one is live churn, not a copy defect. Measured 2026-11-17 08:49Z on
+   the live `.omp`: 27 churn entries and 0 content mismatches in a 199-file
+   sample, i.e. the check separates churn from corruption as intended.
 8. Rename source dirs to `*.pre-migration` (atomic, reversible): `mv .omp .omp.pre-migration` etc. Keep for rollback window.
 9. Create symlinks: `ln -s /mnt/mishe-scratch/.../.omp /home/mesh-home/.omp` etc.
 10. Restart affected services/processes; verify reads/writes to new path.
+    Steps 8-10, plus the step-2 quiesce, the final delta and the step-7 verify, are one
+    script: `tools/root-migration-flip.sh`. It runs from
+    `/mnt/mishe-scratch/mishe-migration/flip.sh` (its own path must survive the rename)
+    and refuses to start if the deployed copy's sha256 differs from the committed one.
+    `--dry-run` is the default and prints the stop list and preflight readings without
+    changing anything; `--execute` performs the cutover. Before anything is stopped it
+    arms a watchdog transient unit (`mishe-root-migration-watchdog`, 900 s) that restores
+    a working plant if the flip dies: it rolls the rename back when the symlink
+    half-happened and restarts the recorded units otherwise. The stop list is recorded in
+    `flip.units` and restarted from that same file.
 11. After 24h stable: removal of `*.pre-migration` is deletion of data. Requires explicit human approval; not run by default. Until approved, keep pre-migration dirs.
 
 ## Rollback
