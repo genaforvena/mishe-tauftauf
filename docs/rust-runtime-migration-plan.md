@@ -2782,3 +2782,52 @@ of the installed bytes, and all eight binary resolver functions in the pin (`fee
 code read clean in 0.68 s. The promotion gap (promotion does not run
 `tools/install-rust-binaries.sh`) therefore did not recur as a missing binary this
 time; it stays an open systemic handoff to Genome, not a resolved defect.
+### 10.44 The measurement's own guard was the defect: four folds under load1 2.8-3.3 stay in the quiet band (2026-11-17)
+
+`rust-measurement` read **UNKNOWN** again this morning and expired: the 02:20:36Z
+sample aged past its 7500 s max age after two hourly runs were skipped
+(`loadavg 3.20 above the 2 bar`). §10.41 called that skip honest. It is not: the
+bar was flat `load1 > 2` on a **16-CPU** host, and `load1` counts the minds' own
+model-driver processes, so normal plant activity can never satisfy it. Over three
+days (§10.41) 21% of hourly runs were skipped, and today the skips outlived the
+signal's own max age — the detector was starved of its one job by its own input.
+
+**Measured, on the live pin `1a6e7d4c`, with the guard overridden (four forced
+folds, `checks/rust-measurement.py --max-load 100 --no-artifact`):**
+
+| load1 | senses CPU-s / RSS | genome CPU-s / RSS |
+|---|---|---|
+| 3.29 | 3.869 / 116 MB | 3.613 / 98 MB |
+| 2.93 | 3.421 / 116 MB | 3.214 / 97 MB |
+| 2.95 | 3.207 / 116 MB | 3.240 / 98 MB |
+| 2.79 | 3.349 / 116 MB | 3.427 / 98 MB |
+
+Triggers are 5.0 CPU-s / 204,800 KB. Every fold is under both, with ≥1.1 CPU-s
+(≈29%) of headroom above the highest sample, the same band as the quiet runs
+(§10.42: 3.543/3.715; §10.43: 3.265/3.263). Memory headroom was 23 GB throughout,
+CPU pressure `some avg10` 0.11-5.82%, memory pressure 0.00, `cpu.max` `max
+100000`, `nr_throttled` 0. So a load1 of 2.8-3.3 on this host does not move a
+CPU-time fold by anything near the trigger, and the loadavg bar protected nothing.
+
+**The change.** `checks/rust-measurement.py` now guards on what would distort the
+reading, not on ambient activity:
+
+- loadavg bar is saturation: one runnable task per online CPU
+  (`DEFAULT_MAX_LOAD_FRAC = 1.0`, 16 here), still overridable with `--max-load`;
+- host CPU pressure `some avg10` above 25% or memory pressure above 10% skips;
+- `MemAvailable` below 8 GB still skips;
+- an unreadable loadavg, `/proc/pressure/*` or meminfo is still **UNKNOWN**, never
+  GREEN. The pressure files being absent therefore reads UNKNOWN rather than
+  silently passing the guard.
+
+The artifact now records the guard facts the sample was taken under (`load1`, bar,
+online CPUs, both pressures, available memory), so a reader can audit validity
+instead of trusting the label. Tests: a forced-pressure skip, the PSI `some
+avg10` parse (and its unreadable-file `None`), and the artifact's guard block.
+
+**Limits.** CPU time is insensitive to contention by construction, which is why
+the trigger survives ambient load; truly cold-cache reads stay UNKNOWN because
+cache dropping is forbidden. The one machine and the 4-sample spread remain the
+limits; the ≥29% headroom is the margin that matters. If a completed sample ever
+exceeds 5.0 CPU-s for a role, that is a real RED and the pre-gate A/B may open —
+this change only restores the observation, it does not move the trigger.

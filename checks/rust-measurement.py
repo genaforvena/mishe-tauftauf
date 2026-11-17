@@ -9,9 +9,18 @@ measurement on a schedule, so the slice could only reopen by hand.
 
 This is a System 0 duty: a deterministic measurement, no judgment. Each role is
 folded in its own child process, so CPU and peak RSS are not shared between
-roles. The host guard comes first: a measurement made on a loaded host would
-skew the numbers, so under the load or memory guard the run is skipped and
-reads UNKNOWN, never GREEN.
+roles. The host guard comes first: a measurement made on a saturated host would
+skew the numbers, so under the guard the run is skipped and reads UNKNOWN, never
+GREEN.
+
+The guard reads what actually distorts a CPU-time measurement, not ambient
+activity: a saturation loadavg bar (one runnable task per online CPU), this
+host's CPU and memory pressure (PSI `some avg10`), and the memory headroom
+floor. The earlier flat `load1 > 2` bar skipped on the minds' own model drivers:
+three forced folds under load1 2.93-3.29 came in at 3.207/3.421/3.869 CPU-s for
+senses and 3.214/3.240/3.613 for genome against a 5.0 CPU-s trigger, the same
+band as the quiet runs, while 21% of hourly runs were skipped (plan 10.41/10.44).
+An unreadable load, pressure or meminfo file is still UNKNOWN, never GREEN.
 
 Verdicts:
   GREEN   0  every role measured and under both triggers; the slice stays closed.
@@ -34,7 +43,9 @@ from pathlib import Path
 DEFAULT_ROLES = ("senses", "genome")
 DEFAULT_CPU_TRIGGER_S = 5.0
 DEFAULT_RSS_TRIGGER_KB = 200 * 1024
-DEFAULT_MAX_LOAD = 2.0
+DEFAULT_MAX_LOAD_FRAC = 1.0  # runnable tasks per online CPU; above it the host is saturated
+DEFAULT_MAX_CPU_PRESSURE = 25.0  # percent of a 10 s window stalled on CPU
+DEFAULT_MAX_MEMORY_PRESSURE = 10.0  # percent of a 10 s window stalled on memory
 DEFAULT_MIN_FREE_KB = 8 * 1024 * 1024
 DEFAULT_TIMEOUT_S = 240
 
@@ -56,28 +67,72 @@ print(json.dumps({
 """
 
 
-def host_guard(max_load: float, min_free_kb: int) -> str | None:
-    """Return the reason the host is too busy to measure, or None when it is quiet."""
+def online_cpus() -> int:
+    """The CPUs this process may run on, never zero."""
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        return max(1, os.cpu_count() or 1)
+
+
+def pressure_some_avg10(path: Path) -> float | None:
+    """The `some avg10` stall percentage, or None when the PSI file is unreadable."""
+    try:
+        for line in path.read_text().splitlines():
+            if not line.startswith("some "):
+                continue
+            for field in line.split()[1:]:
+                if field.startswith("avg10="):
+                    return float(field.split("=", 1)[1])
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def host_guard(max_load: float | None, min_free_kb: int,
+               max_cpu_pressure: float, max_memory_pressure: float
+               ) -> tuple[str | None, dict]:
+    """Return the reason the host is too loaded to measure, and the observed facts."""
+    facts: dict = {}
     try:
         load1 = float(Path("/proc/loadavg").read_text().split()[0])
     except (OSError, ValueError, IndexError) as exc:
-        return f"loadavg unreadable: {exc}"
-    if load1 > max_load:
-        return f"loadavg {load1:.2f} above the {max_load:g} bar"
+        return f"loadavg unreadable: {exc}", facts
+    cpus = online_cpus()
+    bar = max_load if max_load is not None else DEFAULT_MAX_LOAD_FRAC * cpus
+    facts.update({"load1": round(load1, 2), "load_bar": round(bar, 2), "online_cpus": cpus})
+    if load1 > bar:
+        return f"loadavg {load1:.2f} above the {bar:g} bar over {cpus} CPUs", facts
+
     try:
         meminfo = Path("/proc/meminfo").read_text()
     except OSError as exc:
-        return f"meminfo unreadable: {exc}"
+        return f"meminfo unreadable: {exc}", facts
     avail = None
     for line in meminfo.splitlines():
         if line.startswith("MemAvailable:"):
             avail = int(line.split()[1])
             break
     if avail is None:
-        return "MemAvailable not found in meminfo"
+        return "MemAvailable not found in meminfo", facts
+    facts["mem_available_mb"] = avail // 1024
     if avail < min_free_kb:
-        return f"MemAvailable {avail // 1024} MB below the {min_free_kb // 1024} MB floor"
-    return None
+        return f"MemAvailable {avail // 1024} MB below the {min_free_kb // 1024} MB floor", facts
+
+    cpu_psi = pressure_some_avg10(Path("/proc/pressure/cpu"))
+    if cpu_psi is None:
+        return "cpu pressure unreadable (/proc/pressure/cpu)", facts
+    facts["cpu_pressure_some_avg10"] = cpu_psi
+    if cpu_psi > max_cpu_pressure:
+        return f"cpu pressure some avg10 {cpu_psi:g} above the {max_cpu_pressure:g} bar", facts
+
+    mem_psi = pressure_some_avg10(Path("/proc/pressure/memory"))
+    if mem_psi is None:
+        return "memory pressure unreadable (/proc/pressure/memory)", facts
+    facts["memory_pressure_some_avg10"] = mem_psi
+    if mem_psi > max_memory_pressure:
+        return f"memory pressure some avg10 {mem_psi:g} above the {max_memory_pressure:g} bar", facts
+    return None, facts
 
 
 def fold_role(repo: Path, home: Path, role: str, timeout: int) -> dict:
@@ -103,7 +158,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--roles", default=",".join(DEFAULT_ROLES))
     parser.add_argument("--cpu-trigger", type=float, default=DEFAULT_CPU_TRIGGER_S)
     parser.add_argument("--rss-trigger-kb", type=int, default=DEFAULT_RSS_TRIGGER_KB)
-    parser.add_argument("--max-load", type=float, default=DEFAULT_MAX_LOAD)
+    parser.add_argument("--max-load", type=float, default=None,
+                        help="absolute load1 bar; default one runnable task per online CPU")
+    parser.add_argument("--max-cpu-pressure", type=float, default=DEFAULT_MAX_CPU_PRESSURE)
+    parser.add_argument("--max-mem-pressure", type=float, default=DEFAULT_MAX_MEMORY_PRESSURE)
     parser.add_argument("--min-free-kb", type=int, default=DEFAULT_MIN_FREE_KB)
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S)
     parser.add_argument("--no-artifact", action="store_true")
@@ -118,7 +176,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"rust-measurement: UNKNOWN no feed.py under {repo}/src", file=sys.stderr)
         return 3
 
-    skip = host_guard(args.max_load, args.min_free_kb)
+    skip, guard = host_guard(args.max_load, args.min_free_kb,
+                             args.max_cpu_pressure, args.max_mem_pressure)
     if skip:
         print(f"rust-measurement: UNKNOWN skipped, host busy: {skip}; re-run when quiet",
               file=sys.stderr)
@@ -151,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
                 "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "readings": readings,
                 "triggers": {"cpu_s": args.cpu_trigger, "rss_kb": args.rss_trigger_kb},
+                "guard": guard,
                 "over": over,
             }, indent=1) + "\n")
         except OSError as exc:
