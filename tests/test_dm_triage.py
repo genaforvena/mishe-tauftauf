@@ -110,6 +110,20 @@ class DmTriageTests(unittest.TestCase):
         self.assertNotIn("[dm]", state["content"])
         self.assertNotIn("opaque " * 50, json.dumps(state))
 
+    def test_derived_state_prefers_an_explicit_request_over_a_lead_in(self):
+        body = ("[dm] to=genome\nReview result, both commits.\n\n"
+                "5ed2398d ACCEPTED, no defect.\n\n"
+                "Please review 6f48d99f as the non-author: the locking question I want checked.\n")
+        state = dt.derived_state(99, "genome", body, roles=("genome",))
+        self.assertTrue(state["content"].startswith("Please review 6f48d99f"), state["content"])
+        self.assertNotIn("Review result", state["content"])
+
+    def test_lead_in_naming_a_request_is_not_taken_as_the_ask(self):
+        body = ("[dm] to=genome\nThree results, one request.\n\n"
+                "Please review 5ed2398d as the non-author.\n")
+        state = dt.derived_state(100, "genome", body, roles=("genome",))
+        self.assertTrue(state["content"].startswith("Please review"), state["content"])
+
     def test_record_and_dedup(self):
         provider = _provider(self.root)
         mail = [(101, "[dm] to=system1\nfirst"), (102, "[ci] state=ok\n")]

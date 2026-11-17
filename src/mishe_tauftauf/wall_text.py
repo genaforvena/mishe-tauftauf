@@ -121,22 +121,31 @@ def message_subject(text: str) -> str:
     return ""
 
 _DM_ADDRESS_RE = re.compile(r"\[dm\] to=\S+")
+_REQUEST_RE = re.compile(
+    r"^\s*(?:please\b|request\s*:|could you\b|can you\b|i need (?:you|your)\b)"
+    r"|\breview request\b|\bneeds your call\b", re.IGNORECASE)
 
 
 def message_excerpt(text: str) -> str:
-    """The first prose line after the address line, skipping repeated addresses; '' when none.
+    """The first explicit request line, else the first prose line; '' when none.
 
     Live addressed DMs carry their content as plain prose after the ``[dm] to=ROLE``
     line, not as a markdown heading, so ``message_subject`` sees nothing there.
     This is the one bounded prose line the classifier may read instead; the
     caller caps it at the same excerpt budget as ``first_line`` and ``subject``.
-    Some walls repeat the address line, so a second ``[dm] to=ROLE`` is not content;
-    skip it and take the next real prose line.
+    Some walls repeat the address line, so a second ``[dm] to=ROLE`` is not content.
+    A long DM often opens with a short lead-in ("Three results, one request.") and
+    states its ask in a later paragraph, so prefer a line with an explicit request
+    ("Please review", "Request:", "review request"); fall back to the first prose
+    line when there is none. Both selections skip address lines.
     """
-    for line in text.splitlines()[1:]:
-        stripped = line.strip()
-        if stripped and not _DM_ADDRESS_RE.fullmatch(stripped):
-            return stripped
+    prose = [line.strip() for line in text.splitlines()[1:]]
+    for line in prose:
+        if line and not _DM_ADDRESS_RE.fullmatch(line) and _REQUEST_RE.search(line):
+            return line
+    for line in prose:
+        if line and not _DM_ADDRESS_RE.fullmatch(line):
+            return line
     return ""
 
 def sender_role(source: str) -> str:
