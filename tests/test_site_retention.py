@@ -125,3 +125,37 @@ def test_apply_of_empty_plan_writes_no_archive(tmp_path: Path) -> None:
     assert result["removed"] == 0
     assert not archive.exists()
 
+
+
+def _retention_apply(home: Path) -> "subprocess.CompletedProcess[str]":
+    import subprocess
+    import sys
+
+    script = Path(__file__).resolve().parents[1] / "checks/retention-apply.py"
+    return subprocess.run([sys.executable, str(script), "--home", str(home),
+                           "--class", "work/releases", "--apply"],
+                          capture_output=True, text=True)
+
+
+def test_apply_to_release_records_refuses_while_a_merge_holds_the_lock(tmp_path: Path) -> None:
+    import time
+
+    from mishe_tauftauf.release_promotion import review_records_lock
+
+    home = tmp_path / "home"
+    kept = _file(home / "work/releases/record.json", mtime=time.time() - 10 * 86400)
+    with review_records_lock(home):
+        run = _retention_apply(home)
+    assert run.returncode == 2
+    assert "holds the record lock" in run.stdout
+    assert kept.exists()
+
+
+def test_apply_to_release_records_still_removes_an_unreferenced_old_record(tmp_path: Path) -> None:
+    import time
+
+    home = tmp_path / "home"
+    old = _file(home / "work/releases/record.json", mtime=time.time() - 10 * 86400)
+    run = _retention_apply(home)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert not old.exists()

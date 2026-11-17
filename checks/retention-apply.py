@@ -50,7 +50,19 @@ def main(argv=None) -> int:
     if args.apply:
         archive = args.archive or (home / "archive" / f"retention-{class_dir.name}.tar.gz")
         archive.parent.mkdir(parents=True, exist_ok=True)
-        out["apply"] = apply_plan(plan, class_dir, archive)
+        if args.class_name == "work/releases":
+            # A review merge and the retry re-arm scan read-modify-write these records;
+            # unlink under the same lock so neither decides on a file that just vanished.
+            from mishe_tauftauf.release_promotion import DeliveryBusy, review_records_lock
+            try:
+                with review_records_lock(home):
+                    out["apply"] = apply_plan(plan, class_dir, archive)
+            except DeliveryBusy:
+                print(json.dumps({"state": "unknown", "class": args.class_name,
+                                  "reason": "a review merge or re-arm scan holds the record lock"}))
+                return 2
+        else:
+            out["apply"] = apply_plan(plan, class_dir, archive)
         out["archive"] = str(archive)
         out["state"] = "applied"
     print(json.dumps(out))

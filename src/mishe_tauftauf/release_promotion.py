@@ -496,11 +496,37 @@ def publish_outcome(home, record):
     return record
 
 
+def _save_signal_error(home, record, *, sleep=time.sleep, attempts=40, delay=0.05):
+    """Persist ``publish_outcome``'s ``signal_error`` without overwriting a merged review.
+
+    ``_promote`` saved the complete record while it held the delivery lock; the only
+    new field here is the one ``publish_outcome`` writes when the signal store fails.
+    A review poll can merge its verdict between the two writes, so this updates the
+    record found on disk under ``review_records_lock`` rather than rewriting it from
+    this (possibly stale) copy.
+    """
+    path = Path(home) / "work/releases" / f"{record['id']}.json"
+    for attempt in range(attempts):
+        try:
+            with review_records_lock(home):
+                current = read_json(path) or dict(record)
+                current["signal_error"] = record["signal_error"]
+                write_json(path, current)
+            return
+        except DeliveryBusy:
+            if attempt + 1 >= attempts:
+                # The delivery itself is complete and the failure line is also in the
+                # signal detail; a wedged scan must not turn this into a failed promotion.
+                return
+            sleep(delay)
+
+
 def promote(home, repo, sha, **kwargs):
     """Promote ``sha`` as the one pin (see ``_promote``) and publish the outcome signal."""
     record = _promote(home, repo, sha, **kwargs)
     publish_outcome(Path(home), record)
-    write_json(Path(home) / "work/releases" / f"{record['id']}.json", record)
+    if "signal_error" in record:
+        _save_signal_error(Path(home), record)
     return record
 
 

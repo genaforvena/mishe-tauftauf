@@ -1625,3 +1625,47 @@ def test_held_lock_writes_the_writer_pid_into_the_hold(tmp_path):
         mp.undo()
     assert f"pid={os.getpid()} " in seen["text"]
     assert seen["text"].startswith(p.HOLD_TEXT)
+
+
+def test_promote_does_not_overwrite_a_review_merged_after_its_last_save(tmp_path, tree, monkeypatch):
+    # promote() used to rewrite the whole record after _promote returned and its delivery
+    # lock closed, so a review poll's verdict merged in that gap was replaced by the stale
+    # copy with review_pending still true.
+    repo, home, old, sha = tree
+
+    def merge_between(home_, record):
+        path = next((home_ / "work/releases").glob("*.json"))
+        current = read_json(path)
+        current.update(review_pending=False, review=dict(verdict="OK"))
+        write_json(path, current)
+        return dict()
+
+    monkeypatch.setattr(p, "publish_outcome", merge_between)
+    r = p.promote(home, repo, sha, check=[sys.executable, "-c", "assert True"], observe=["probe"],
+                  previous=old, activate=lambda *a: None, probe=lambda *a, **k: dict(code=0, output=""),
+                  closure=lambda *a: None)
+    assert r["phase"] == "delivered"
+    on_disk = read_json(home / "work/releases" / f"{r['id']}.json")
+    assert on_disk["review_pending"] is False
+    assert on_disk["review"] == {"verdict": "OK"}
+
+
+def test_promote_persists_signal_error_without_losing_a_merged_review(tmp_path, tree, monkeypatch):
+    repo, home, old, sha = tree
+
+    def fail_signal(home_, record):
+        path = next((home_ / "work/releases").glob("*.json"))
+        current = read_json(path)
+        current.update(review_pending=False, review=dict(verdict="OK"))
+        write_json(path, current)
+        record["signal_error"] = "OSError: signal store down"
+        return record
+
+    monkeypatch.setattr(p, "publish_outcome", fail_signal)
+    r = p.promote(home, repo, sha, check=[sys.executable, "-c", "assert True"], observe=["probe"],
+                  previous=old, activate=lambda *a: None, probe=lambda *a, **k: dict(code=0, output=""),
+                  closure=lambda *a: None)
+    on_disk = read_json(home / "work/releases" / f"{r['id']}.json")
+    assert on_disk["signal_error"] == "OSError: signal store down"
+    assert on_disk["review_pending"] is False
+    assert on_disk["review"] == {"verdict": "OK"}
