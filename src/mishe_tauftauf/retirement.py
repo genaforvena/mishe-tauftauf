@@ -11,10 +11,17 @@ from pathlib import Path
 import subprocess
 
 
-def busy(repo: Path, home: Path) -> str | None:
-    """Live process references and installed runtime pins protect candidate paths."""
+def busy(repo: Path, home: Path, proc_root: Path = Path("/proc")) -> str | None:
+    """Live process references and installed runtime pins protect candidate paths.
+
+    An unreadable /proc entry is remembered but not returned at once: a definite
+    reference found in another process is the stronger, actionable reason, so it
+    wins. If nothing definite is found, the remembered inconclusive reason still
+    keeps the candidate busy (UNKNOWN is never treated as free).
+    """
     root = repo.resolve()
-    for process in Path("/proc").iterdir():
+    unavailable = None
+    for process in proc_root.iterdir():
         if not process.name.isdigit():
             continue
         try:
@@ -52,7 +59,8 @@ def busy(repo: Path, home: Path) -> str | None:
                 if not process.exists():
                     continue
                 if cwd_result.returncode or args_result.returncode or env_result.returncode:
-                    return f"process {process.name} reference check unavailable"
+                    unavailable = unavailable or f"process {process.name} reference check unavailable"
+                    continue
                 for field in env_result.stdout.split(b"\0"):
                     _, separator, value = field.partition(b"=")
                     if separator and any(os.fsdecode(part) == str(root) or os.fsdecode(part).startswith(str(root) + "/") for part in value.split(b":")):
@@ -63,7 +71,8 @@ def busy(repo: Path, home: Path) -> str | None:
                     os.fsdecode(arg) == str(root) or os.fsdecode(arg).startswith(str(root) + "/") for arg in args):
                     return f"process {process.name} uses candidate path"
             except (OSError, subprocess.SubprocessError):
-                return f"process {process.name} reference check unavailable"
+                unavailable = unavailable or f"process {process.name} reference check unavailable"
+                continue
     import json
     for pin in (home / "health").glob("*runtime*.json"):
         try:
@@ -72,7 +81,7 @@ def busy(repo: Path, home: Path) -> str | None:
             return f"runtime pin {pin} unavailable"
         if str(root) in str(data):
             return f"installed runtime pin references {root}"
-    return None
+    return unavailable
 
 
 def retire(home: Path, identity: str) -> dict:

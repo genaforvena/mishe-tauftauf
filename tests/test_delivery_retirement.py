@@ -116,6 +116,43 @@ def test_busy_detects_source_only_in_process_environment(tmp_path):
         child.terminate(); child.wait(timeout=5)
 
 
+def test_busy_unreadable_process_does_not_mask_definite_detection(tmp_path, monkeypatch):
+    """A protected /proc entry must not hide a process that really uses the candidate."""
+    repo = tmp_path / "candidate"
+    (repo / "src").mkdir(parents=True)
+    proc_dir = tmp_path / "proc"
+    proc_dir.mkdir()
+
+    def fake_process(pid, environ):
+        d = proc_dir / pid
+        d.mkdir()
+        # stat: after ")" -> state + fields; index 6 is the flags word (0 = user process).
+        (d / "stat").write_text(f"{pid} (p) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n")
+        (d / "cwd").symlink_to(tmp_path, target_is_directory=True)
+        (d / "cmdline").write_bytes(b"python\0")
+        env_file = d / "environ"
+        env_file.write_bytes(environ)
+        return env_file
+
+    # Lower PID first: environ unreadable and the sudo fallback unavailable.
+    unreadable_env = fake_process("100", b"PYTHONPATH=/unrelated\0")
+    unreadable_env.chmod(0)
+    # Higher PID: an environment pointing straight at the candidate tree.
+    fake_process("200", b"PYTHONPATH=" + str(repo / "src").encode() + b"\0")
+
+    def fail_sudo(*args, **kwargs):
+        return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(subprocess, "run", fail_sudo)
+
+    class ProcRoot:
+        def iterdir(self):
+            return iter([proc_dir / "100", proc_dir / "200"])  # unreadable first
+
+    assert retirement.busy(repo, tmp_path, proc_root=ProcRoot()) == \
+        "process 200 environment uses candidate path"
+
+
 def test_retirement_archives_ignored_bytes_arriving_after_admission(candidate, monkeypatch):
     home, primary, work, head = completed(candidate, monkeypatch)
     common = git(work, "rev-parse", "--path-format=absolute", "--git-common-dir")
