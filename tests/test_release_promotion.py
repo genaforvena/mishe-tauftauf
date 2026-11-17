@@ -173,6 +173,28 @@ def test_partial_default_activation_removes_new_config_files(tree,monkeypatch):
     assert not newfile.exists()
 
 
+def test_probe_failure_names_the_probes_own_line_in_the_signal_detail(tree):
+    """A rollback's published detail must carry the cause, not just "functional probe failed".
+
+    2026-11-17: the 0c567f9d detail read only "functional probe failed" while the record held
+    "pin observation failed: cgroup enumeration missing: <unit>", so a subscriber could not tell a
+    vanished consumer cgroup from a broken release without opening the record by hand.
+    """
+    repo,home,old,sha=tree; pins=[old]
+    from mishe_tauftauf import signal_store
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"])
+    cause="pin observation failed: cgroup enumeration missing: /mishe-plants.slice/mishe-x.service"
+    def activate(source, target): pins[0]=target
+    def probe(argv, **kw):
+        return dict(code=1, output=cause + "\n") if pins[0]==sha else dict(code=0, output="ok\n")
+    r=p.promote(home,repo,sha,check=[sys.executable,"-c","assert True"],observe=["probe"],previous=old,
+                activate=activate,probe=probe,reviewer=lambda *a:None,closure=lambda *a:None)
+    assert r["phase"]=="rolled-back"
+    assert r["failure"] == "functional probe failed: " + cause
+    assert p.outcome_detail(r) == f"moving-pin-delivery: {sha[:8]} rolled-back: functional probe failed: {cause}"
+    assert (home/"signals/moving-pin-delivery.detail").read_text().strip() == p.outcome_detail(r)
+
+
 def test_async_review_cannot_overwrite_completed_revert(tree,monkeypatch):
     repo,home,old,sha=tree
     source=p.materialize(home,repo,sha);p.materialize(home,repo,old)

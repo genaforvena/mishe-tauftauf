@@ -998,7 +998,11 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
             if activate is None:
                 record["consumer_invocation"] = boundary.invoke_arm_consumer(source/"src")
             record["observe"] = probe(observe,cwd=source,env=env)
-            if record["observe"]["code"] != 0: raise ValueError("functional probe failed")
+            if record["observe"]["code"] != 0:
+                # The probe's own line is the cause a subscriber needs (2026-11-17: the detail read
+                # only "functional probe failed" while the record held the unit that vanished).
+                diagnostic = release_boundary.failing_line(record["observe"].get("output"))
+                raise ValueError("functional probe failed" + (f": {diagnostic}" if diagnostic else ""))
             record["config_after"] = {str(p):wall_patch.snapshot(p) for p in config_paths(home)} if activate is None else {}
             record.update(observed=True,phase="delivered",delivered_at=time.time()); save()
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
