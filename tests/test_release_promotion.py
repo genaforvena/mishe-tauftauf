@@ -447,7 +447,7 @@ def test_one_failed_attempt_schedules_one_retry(tmp_path,monkeypatch):
 
 
 def test_a_collected_retry_unit_is_armed_again(tmp_path,monkeypatch):
-    # A transient `--on-active` retry cannot be restarted after a stop/collect
+    # A transient calendar retry cannot be restarted after a stop/collect
     # (the root-migration flip stops every unit that names a moved tree). No
     # attempt is archived, so the attempt count alone cannot see the loss: the
     # recorded due time has to re-arm it, or the release stays review_pending.

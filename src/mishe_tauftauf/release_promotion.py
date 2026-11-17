@@ -525,7 +525,7 @@ REVIEW_RETRY_MAX_ATTEMPTS = 8
 REVIEW_RETRY_REARM_GRACE_S = 900
 """How long past its due time a recorded retry may stay silent before it is armed again.
 
-The retry is a transient ``systemd-run --on-active`` unit, and a transient timer
+The retry is a transient ``systemd-run --on-calendar`` unit, and a transient timer
 does not survive a stop/start cycle: the root-migration flip's quiesce stops every
 unit that names a moved tree and ``--collect`` removes the stopped unit, so the
 restore cannot start that name again (``restart failed:
@@ -546,7 +546,7 @@ def _review_attempts(home, identity):
 def _review_retry_lost(current, now, live_units=frozenset()):
     """True when a recorded retry rung is neither armed nor running any more.
 
-    A transient ``--on-active`` unit cannot be started again once a stop/collect
+    A transient calendar unit cannot be started again once a stop/collect
     cycle removed it, and it leaves no result, so the record itself has to notice
     the loss. A rung is lost when its unit is not among ``live_units`` and either
 
