@@ -14,6 +14,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -22,7 +23,16 @@ PACKAGE = "mishe_tauftauf"
 
 # Reuse the real wall.py bytes so a synthetic root can actually publish.
 WALL_SOURCE = (REPO / "src" / PACKAGE / "wall.py").read_text(encoding="utf-8")
-NO_CLAUSE_WALL = WALL_SOURCE.replace("os.chmod", "os.stat")
+# The publication's own chmod is replaced, not every chmod in the module: the
+# store chmods its copy and that is not the clause.
+NO_CLAUSE_WALL = WALL_SOURCE.replace(
+    "        os.chmod(evidence, original_mode & ~0o222)\n", "        pass\n").replace(
+    "                os.chmod(evidence, original_mode)\n", "                pass\n")
+# A writer that still chmods the evidence but no longer keeps the bytes it binds.
+NO_STORE_WALL = WALL_SOURCE.replace(
+    "        _preserve_bound_bytes(home, digest, data)\n", "")
+assert "os.chmod(evidence, original_mode" not in NO_CLAUSE_WALL
+assert "_preserve_bound_bytes(home, digest, data)" not in NO_STORE_WALL
 
 
 def _digest(path: Path) -> str:
@@ -105,6 +115,9 @@ def test_carries_clause_reads_text_not_import(tmp_path):
     _make_root(tmp_path, "bad", NO_CLAUSE_WALL)
     assert mod.carries_clause(good) is True
     assert mod.carries_clause(bad) is False
+    # The store's own chmod is not the clause: with the publication's chmod
+    # removed, the module still contains os.chmod in the store helper.
+    assert "os.chmod" in NO_CLAUSE_WALL
     # Must not import the plant.
     assert "import mishe_tauftauf" not in CHECK.read_text(encoding="utf-8")
 
@@ -150,8 +163,52 @@ def test_standing_loss_splits_defeated_from_never_applied(tmp_path):
     assert loss["missing"] == 1
 
 
+def test_standing_loss_says_whether_the_store_still_holds_the_bytes(tmp_path):
+    """A lost row is drift over held bytes only when the store has its digest."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("clause_check_held", str(CHECK))
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+    home = tmp_path / "home"
+    (home / "records").mkdir(parents=True)
+    (home / "bound-bytes").mkdir()
+
+    def store(digest: str, data: bytes) -> None:
+        (home / "bound-bytes" / digest).write_bytes(data)
+
+    original = b"original\n"
+    bound = hashlib.sha256(original).hexdigest()
+    store(bound, original)
+
+    # Lost writable, its bytes held by the store.
+    writable = home / "writable.md"
+    writable.write_text("changed\n", encoding="utf-8")
+    os.chmod(writable, 0o664)
+    _write_record(home, "a.json", writable, bound)
+    # Lost read-only, no copy and no store entry.
+    defeated = home / "defeated.md"
+    defeated.write_text("replaced\n", encoding="utf-8")
+    os.chmod(defeated, 0o444)
+    _write_record(home, "b.json", defeated, hashlib.sha256(b"never kept\n").hexdigest())
+    # Missing path, its bytes held by the store.
+    _write_record(home, "c.json", home / "missing.md", bound)
+
+    loss = mod.standing_loss(home, since=None, copy_since=0)
+    assert loss["decided"] is True
+    assert (loss["lost_writable"], loss["lost_readonly"], loss["missing"]) == (1, 1, 1)
+    assert loss["held"] == 2
+    assert loss["unheld_after_store"] == 1
+    assert loss["unheld_pre_store"] == 0
+    # The same rows read as UNKNOWN when they predate the store.
+    early = mod.standing_loss(home, since=None, copy_since=time.time() + 3600)
+    assert early["held"] == 2
+    assert early["unheld_pre_store"] == 1
+    assert early["unheld_after_store"] == 0
+
+
 def test_probe_shows_clause_defeated_by_replace(tmp_path):
-    """Publish through a real root, then replace — mode and bytes are gone."""
+    """Publish through a real root, then replace — the mode is gone, the copy held."""
     import importlib.util
     spec = importlib.util.spec_from_file_location("clause_check3", str(CHECK))
     assert spec and spec.loader
@@ -170,6 +227,9 @@ def test_probe_shows_clause_defeated_by_replace(tmp_path):
     # (umask-dependent: 0o644 with 022, 0o664 with 002). The invariant
     # is that the read-only mode does not survive, not the exact bits.
     assert result["mode_after_replace"] & 0o222 != 0, oct(result["mode_after_replace"])
+    # The mode is not a property of the bytes, but the bytes are held: the store
+    # keeps one copy per digest at publication, so the loss is recoverable.
+    assert result["bytes_kept"] is True
 
 
 def test_absent_root_is_a_failure(tmp_path):
@@ -188,14 +248,25 @@ def test_absent_root_is_a_failure(tmp_path):
     assert str(bad_root) in result.stdout
 
 
-def test_defeated_clause_is_a_failure_even_when_present_everywhere(tmp_path):
-    # Every root carries the clause, yet the probe defeats it — the check must still fail.
+def test_mode_loss_alone_is_not_a_failure_when_the_bytes_are_kept(tmp_path):
+    # The mode does not survive a replace (a design fact), but a root that keeps
+    # the bound bytes answers the question the clause rests on.
     pin = _make_root(tmp_path, "pin-good2", WALL_SOURCE)
     home = _make_site(tmp_path, pin=pin, cli=pin)
     result = _run(home, REPO)
-    # On this host the live set may add extra roots; at minimum the probe defeats the clause.
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "the mode does not survive" in result.stdout
+    assert "bytes kept     : yes" in result.stdout
+
+
+def test_a_publication_root_that_keeps_no_bytes_is_a_failure(tmp_path):
+    """A pin root whose writer drops the store cannot answer for its own bindings."""
+    pin = _make_root(tmp_path, "pin-no-store", NO_STORE_WALL)
+    home = _make_site(tmp_path, pin=pin, cli=pin)
+    result = _run(home, REPO)
     assert result.returncode == 2, result.stdout + result.stderr
-    assert "did not hold" in result.stdout
+    assert "predates the store" in result.stdout
+    assert "bytes kept     : no" in result.stdout
 
 
 def test_check_reads_published_artifacts_only(tmp_path):

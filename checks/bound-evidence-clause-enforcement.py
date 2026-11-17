@@ -33,6 +33,16 @@ undo it. Two mechanisms defeat the clause, and they leave different traces.
 No mode can stop the second, because the owner may chmod its own file; the
 mode is advisory. The durable defence is to keep the bound bytes themselves
 (a content-addressed copy taken at publication) and to detect drift by digest.
+Since ``d5e9730f`` the writer does that: it keeps one copy per digest at
+``SITE/bound-bytes/<sha256>`` before it publishes the record, so a row that no
+longer matches its path is **drift over held bytes** whenever that copy is
+readable. Rows published before the store existed have no copy, and their
+absence must read as UNKNOWN, not as lost bytes.
+
+The mode loss is therefore reported as a design fact, not a verdict: a mode
+protects an inode and the plant's save path replaces the path. What decides
+the verdict is whether the publication root keeps the bytes it binds, and
+whether a row published after the store was live has its copy.
 
 This is not hypothetical. Measured on this plant (2026-10-29):
 
@@ -80,11 +90,12 @@ in a **disposable** home and then replacing the bound file the way the plant's
 own writers do. A check that cannot decide says so.
 
 Exit status:
-  0  the clause is present on every root that can publish, and a bound file
-     the clause made read-only survives the plant's own save path
-  2  the clause is absent from a root that can publish, or a bound file the
-     clause made read-only does not survive a replacement: the write-once
-     property is not a property of the bytes
+  0  the clause is present on every root that can publish, the publication
+     roots keep the bytes they bind, and no row published after the store was
+     live lacks its copy
+  2  the clause is absent from a root that can publish, the bytes a root binds
+     are not kept anywhere, or a row published after the store was live has no
+     held copy: the write-once property is not a property of the bytes
   3  the question cannot be decided: no root can be read, the probe cannot
      publish, or the plant's own save path cannot be found
 """
@@ -121,6 +132,18 @@ CLAUSE_COMMIT = "3c22087"
 
 #: The commit that made the publishing writer set the bound file read-only.
 READ_ONLY_COMMIT = "d9f4ebe"
+
+#: The commit that made the publishing writer keep a content-addressed copy of
+#: the bytes it binds. A row older than this has no copy and its absence is
+#: UNKNOWN rather than lost bytes.
+COPY_COMMIT = "d5e9730f"
+
+#: The writer call that keeps the bound bytes. The clause is durable on a root
+#: only when its bytes name this call.
+STORE_CALL = "_preserve_bound_bytes"
+
+#: Where a publication keeps one copy per digest, relative to the home.
+STORE_DIR = "bound-bytes"
 
 #: The site's record of the pin every service is started from.
 PIN_RECORD = "health/runtime-release.json"
@@ -161,6 +184,22 @@ def _read_json(path: Path) -> dict:
     return payload
 
 
+def _function_body(text: str, name: str) -> str | None:
+    """The text from ``def name(`` to the next top-level definition.
+
+    The body is delimited by a definition at column zero, so a nested helper
+    stays inside the body it was written in and a module-level neighbour does
+    not.
+    """
+    marker = "def %s(" % name
+    start = text.find(marker)
+    if start < 0:
+        return None
+    rest = text[start + len(marker):]
+    end = rest.find("\ndef ")
+    return rest if end < 0 else rest[:end]
+
+
 def carries_clause(root: Path) -> bool:
     """Whether the plant package at ``root`` applies the write-once clause.
 
@@ -168,14 +207,48 @@ def carries_clause(root: Path) -> bool:
     imports the package: a measurement that imports the plant dies silently
     when an internal helper changes its signature, which is how a measurement
     script of discover's died on 2026-10-21.
+
+    The mode call must sit inside the publishing function's own body. A
+    ``chmod`` anywhere else in the module is not the clause: the store added
+    in ``d5e9730f`` chmods the copy it writes, and a module-wide match would
+    read that as the clause even after the publication stopped applying it.
     """
     module = root / PACKAGE / CLAUSE_MODULE
     if not module.is_file():
         return False
-    text = _read_text(module)
-    if CLAUSE_FUNCTION not in text:
+    body = _function_body(_read_text(module), CLAUSE_FUNCTION)
+    if body is None:
         return False
-    return CLAUSE_CALL in text
+    return CLAUSE_CALL in body
+
+
+def carries_store(root: Path) -> bool:
+    """Whether the plant package at ``root`` keeps the bytes it binds.
+
+    Read as text like ``carries_clause``, and with the same rule: the call must
+    sit in the publishing function's own body. A helper that exists but is not
+    called keeps nothing, and a module-wide match would call that a store.
+    """
+    module = root / PACKAGE / CLAUSE_MODULE
+    if not module.is_file():
+        return False
+    body = _function_body(_read_text(module), CLAUSE_FUNCTION)
+    if body is None:
+        return False
+    return STORE_CALL in body
+
+
+def held_bytes(home: Path, digest: str) -> bool:
+    """Whether the store still holds readable bytes hashing to ``digest``.
+
+    The copy's own digest is compared, so a truncated or rewritten copy is not
+    counted as held: the point is the bytes, not the filename.
+    """
+    copy = home / STORE_DIR / digest
+    try:
+        return hashlib.sha256(copy.read_bytes()).hexdigest() == digest
+    except OSError:
+        return False
 
 
 def _is_root(path: Path) -> bool:
@@ -396,20 +469,21 @@ def probe_root(root: Path, site: Path | None = None) -> dict:
             "clause_applied": not (after_publish & 0o222),
             "read_only_survived": not (after_replace & 0o222),
             "bytes_survived": digest_before == digest_after,
+            "bytes_kept": held_bytes(probe_home, digest_before),
         }
     finally:
         shutil.rmtree(probe_home, ignore_errors=True)
 
 
-def clause_time(repo: Path) -> float | None:
-    """When the write-once clause landed, as a POSIX timestamp.
+def commit_time(repo: Path, commit: str) -> float | None:
+    """When ``commit`` landed, as a POSIX timestamp.
 
-    The clause's date is taken from the commit that introduced it rather than
-    from a literal in this file, so the measurement does not drift as the
-    tree moves.
+    The date is taken from the commit that introduced the behaviour rather than
+    from a literal in this file, so the measurement does not drift as the tree
+    moves.
     """
     result = subprocess.run(
-        ["git", "-C", str(repo), "log", "-1", "--format=%ct", CLAUSE_COMMIT],
+        ["git", "-C", str(repo), "log", "-1", "--format=%ct", commit],
         capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         return None
@@ -419,7 +493,8 @@ def clause_time(repo: Path) -> float | None:
         return None
 
 
-def standing_loss(home: Path, since: float | None) -> dict:
+def standing_loss(home: Path, since: float | None,
+                  copy_since: float | None = None) -> dict:
     """The bound rows whose bytes no longer match the digest they recorded.
 
     The rows are read from the published record store, which is the plant's
@@ -430,6 +505,14 @@ def standing_loss(home: Path, since: float | None) -> dict:
     file, e.g. ``chmod u+w``, append, ``chmod 400``) or by a mode-preserving
     writer. A read-only mode is therefore not evidence that the bytes are the
     bound ones; only the digest is.
+
+    Each lost row is then asked the question the clause now rests on: does the
+    content-addressed store still hold bytes hashing to the digest the row
+    recorded? A held row is **drift over held bytes** — the bound evidence is
+    recoverable and the drift is provable. An unheld row is only a gap when it
+    was published after the store was live: a row older than ``copy_since``
+    was published before the store existed, so its absence is UNKNOWN rather
+    than lost.
     """
     directory = home / RECORDS_DIR
     if not directory.is_dir():
@@ -438,9 +521,13 @@ def standing_loss(home: Path, since: float | None) -> dict:
     lost_writable = 0
     lost_readonly = 0
     missing = 0
+    held = 0
+    unheld_pre_store = 0
+    unheld_after_store = 0
     for record in sorted(directory.glob("*.json")):
         try:
             payload = json.loads(record.read_text(encoding="utf-8"))
+            published = record.stat().st_mtime
         except (OSError, ValueError):
             continue
         if not isinstance(payload, dict) or payload.get("kind") != "wall-outcome":
@@ -455,7 +542,7 @@ def standing_loss(home: Path, since: float | None) -> dict:
         digest = evidence.get("sha256")
         if not isinstance(path, str) or not isinstance(digest, str):
             continue
-        if since is not None and record.stat().st_mtime < since:
+        if since is not None and published < since:
             continue
         target = Path(path)
         if not target.is_absolute():
@@ -465,16 +552,26 @@ def standing_loss(home: Path, since: float | None) -> dict:
             mode = stat.S_IMODE(target.stat().st_mode)
         except OSError:
             missing += 1
-            continue
-        total += 1
-        if hashlib.sha256(data).hexdigest() == digest:
-            continue
-        if mode & 0o222:
-            lost_writable += 1
+            data = None
+            mode = 0
         else:
-            lost_readonly += 1
+            total += 1
+            if hashlib.sha256(data).hexdigest() == digest:
+                continue
+            if mode & 0o222:
+                lost_writable += 1
+            else:
+                lost_readonly += 1
+        if held_bytes(home, digest):
+            held += 1
+        elif copy_since is not None and published >= copy_since:
+            unheld_after_store += 1
+        else:
+            unheld_pre_store += 1
     return {"decided": True, "total": total, "lost_writable": lost_writable,
-            "lost_readonly": lost_readonly, "missing": missing}
+            "lost_readonly": lost_readonly, "missing": missing, "held": held,
+            "unheld_pre_store": unheld_pre_store,
+            "unheld_after_store": unheld_after_store}
 
 
 def main(argv=None) -> int:
@@ -493,6 +590,7 @@ def main(argv=None) -> int:
             raise Undecidable("no root that can carry a publication was found under %s" % home)
         live = live_roots()
         states = {root: carries_clause(root) for root in roots}
+        stores = {root: carries_store(root) for root in roots}
     except Undecidable as exc:
         print("UNKNOWN — " + str(exc))
         return 3
@@ -503,7 +601,9 @@ def main(argv=None) -> int:
     absent = []
     for root in sorted(roots, key=lambda p: str(p)):
         state = "carries the clause" if states[root] else "DOES NOT CARRY the clause"
-        print("  %-9s live=%-3d %-28s %s" % (state, live.get(root, 0), roots[root], root))
+        store = "keeps the bound bytes" if stores[root] else "keeps no copy"
+        print("  %-27s %-21s live=%-3d %-28s %s"
+              % (state, store, live.get(root, 0), roots[root], root))
         if not states[root]:
             absent.append(root)
 
@@ -526,7 +626,11 @@ def main(argv=None) -> int:
     print("")
     print("probe     : does a bound file the clause made read-only survive a replacement?")
     probed = 0
-    for root in sorted(roots, key=lambda p: (-live.get(p, 0), str(p))):
+    pin = pinned_root(home)
+    entry = entry_point_root(home)
+    primary = {root for root in (pin, entry[0] if entry is not None else None)
+               if root is not None}
+    for root in sorted(roots, key=lambda p: (p not in primary, -live.get(p, 0), str(p))):
         if not states[root]:
             continue
         try:
@@ -543,10 +647,24 @@ def main(argv=None) -> int:
         print("            after publish  : %s" % oct(result["mode_after_publish"]))
         print("            after replace  : %s" % oct(result["mode_after_replace"]))
         print("            bytes survived : %s" % ("yes" if result["bytes_survived"] else "no"))
-        if not result["read_only_survived"] or not result["bytes_survived"]:
-            failed = True
-            print("            the clause did not hold: the plant's own writers replace the "
-                  "path, so the mode the clause applied is gone")
+        print("            bytes kept     : %s" % ("yes" if result["bytes_kept"] else "no"))
+        if not result["read_only_survived"]:
+            print("            the mode does not survive — a mode protects an inode and the "
+                  "plant's own writers replace the path; the clause is durable only through "
+                  "the bytes kept above")
+        if not result["bytes_kept"]:
+            if stores[root]:
+                failed = True
+                print("            this root names the store but its publication kept no copy: "
+                      "the writer is not keeping the bytes it binds")
+            elif root in primary:
+                failed = True
+                print("            this publication root keeps no copy of the bytes it binds: "
+                      "it predates the store commit %s, and a pin that contains it starts the "
+                      "store" % COPY_COMMIT)
+            else:
+                print("            an off-pin copy older than %s keeps no bytes; nothing "
+                      "publishes here for the pin" % COPY_COMMIT)
         if probed >= 3:
             break
 
@@ -555,24 +673,41 @@ def main(argv=None) -> int:
         return 3
 
     print("")
-    since = clause_time(repo)
+    since = commit_time(repo, CLAUSE_COMMIT)
+    copy_since = commit_time(repo, COPY_COMMIT)
     if since is None:
         print("standing loss: UNKNOWN — the clause commit %s could not be read from the "
               "reviewed repository" % CLAUSE_COMMIT)
     else:
-        loss = standing_loss(home, since)
+        loss = standing_loss(home, since, copy_since)
         if not loss.get("decided"):
             print("standing loss: UNKNOWN — %s" % loss.get("reason"))
         else:
+            lost = loss["lost_writable"] + loss["lost_readonly"] + loss["missing"]
             print("standing loss since the clause (%d bound row(s) read):" % loss["total"])
             print("  lost, file writable now (no clause was applied) : %d" % loss["lost_writable"])
             print("  lost, file read-only now (the clause was defeated): %d" % loss["lost_readonly"])
             print("  bound file missing                              : %d" % loss["missing"])
+            print("  of those %d lost row(s):" % lost)
+            print("    drift over held bytes (the store has them)    : %d" % loss["held"])
+            if copy_since is None:
+                print("    no copy held (the store commit %s is unreadable) : UNKNOWN"
+                      % COPY_COMMIT)
+            else:
+                print("    no copy, published before the store           : %d (UNKNOWN, not lost)"
+                      % loss["unheld_pre_store"])
+                print("    no copy, published while the store was live   : %d"
+                      % loss["unheld_after_store"])
+                if loss["unheld_after_store"]:
+                    failed = True
+                    print("            a row published after %s has no held copy: the writer "
+                          "was live and did not keep the bytes it bound" % COPY_COMMIT)
 
     if failed:
         return 2
     print("")
-    print("VERDICT: the write-once clause is present and effective on this site")
+    print("VERDICT: the write-once clause is present on every publishing root and the "
+          "bytes it binds are kept on this site")
     return 0
 
 

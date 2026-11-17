@@ -609,7 +609,7 @@
       "unknown_codes": [3],
       "resolver": "genome",
       "replaces": [],
-      "covers": "a bound evidence file is still the bytes its outcome recorded, and the write-once clause holds where it was applied: RED counts the rows writable now (no clause applied), read-only now but changed after binding (the clause was defeated by a path replace or an owner chmod+rewrite), and the bound paths missing entirely, naming a probed root whose clause does not survive its own writers' replace; UNKNOWN when no root carrying the clause could be probed. The answer comes from SITE/records directly, not from the published coverage report the three retired checks read (2026-11-17); the check had no caller until this duty"
+      "covers": "a bound evidence file is still the bytes its outcome recorded, and the bytes it bound are recoverable: the check reports the rows writable now (no clause applied), read-only now but changed after binding, and the bound paths missing, then asks of each lost row whether SITE/bound-bytes/<digest> still holds bytes hashing to the recorded digest. RED when a publishing root keeps no copy of the bytes it binds (a pin advance that contains d5e9730f starts the store), when a root naming the store keeps none, or when a row published after the store was live has no held copy; the mode not surviving a path replace is reported as a design fact, not the verdict, because the copy makes drift over held bytes recoverable and provable. UNKNOWN when no root carrying the clause could be probed. The answer comes from SITE/records directly, not from the published coverage report the three retired checks read (2026-11-17)"
     },
     {
       "name": "push-lag",
@@ -989,6 +989,30 @@
       ],
       "resolver": "network",
       "covers": "the router's read-only Wi-Fi and uplink reading (rows in network/router.jsonl): per-device signal and rate (hashed id, household device name), WAN state, router uptime; UNKNOWN when ssh to the router fails or its output is unreadable, RED only when the duty itself cannot run",
+      "replaces": []
+    },
+    {
+      "name": "network-router-load",
+      "command": [
+        "{python}",
+        "{repo}/checks/network-care.py",
+        "load",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 300,
+      "timeout": 30,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "network",
+      "covers": "the router's own load/free-RAM self-limit (the 5-minute average above 1.0 or free RAM below 120 MB the producer backs off on and the window prints, from router_load in network/router.jsonl): RED when an unbroken run of over-limit readings spans at least 30 minutes with no gap over 20 minutes, UNKNOWN when no reading carries load in the last six hours or the newest is older than 15 minutes, GREEN otherwise with a short breach named in the message",
       "replaces": []
     },
     {
