@@ -5,10 +5,17 @@
 # restarts the plant. It runs from OUTSIDE the trees it moves, because its own
 # path must survive the rename:
 #
-#   cp tools/root-migration-flip.sh /mnt/mishe-scratch/mishe-migration/flip.sh
+#   cp tools/root-migration-flip.sh                /mnt/mishe-scratch/mishe-migration/flip.sh
+#   cp tools/root-migration-verify-scoped.sh       /mnt/mishe-scratch/mishe-migration/verify-scoped.sh
+#   cp tools/root-migration-verify-copy.sh         /mnt/mishe-scratch/mishe-migration/verify-copy.sh   # --full only
 #   sha256sum tools/root-migration-flip.sh /mnt/mishe-scratch/mishe-migration/flip.sh
 #   /mnt/mishe-scratch/mishe-migration/flip.sh --dry-run        # plan only
 #   /mnt/mishe-scratch/mishe-migration/flip.sh --execute        # the cutover
+#
+# Preflight refuses to run unless its own sha256 and the sha256 of the helper for
+# the selected --shape both match the committed copies under tools/. A stale
+# helper cannot weaken the verify: the pre-0e8bafdc scoped check printed VERIFIED
+# after comparing nothing.
 #
 # Run it from a wake-held slot (delivery waits for wakes to end) so the window is
 # delivery-free. The default verify shape is the scoped one accepted in step 7;
@@ -154,16 +161,28 @@ preflight() {
     log "preflight: pin -> $(readlink -f "$SRC/mishe-tauftauf/.mishe-tauftauf/runtime/current" 2>/dev/null)"
     log "preflight: HEAD  -> $(git -C "$SRC/mishe-tauftauf" rev-parse HEAD 2>/dev/null)"
     log "preflight: dst HEAD -> $(git -C "$DST/mishe-tauftauf" rev-parse HEAD 2>/dev/null)"
-    # The executed copy must be the reviewed bytes, and its helpers must exist.
-    local me committed
+    # The executed copy and every helper it runs must be the reviewed bytes. A
+    # stale helper would silently weaken the verify: the pre-fix scoped check
+    # printed VERIFIED after comparing nothing (fixed in 0e8bafdc), so "exists
+    # and is executable" is not enough.
+    local me committed helper have want
     me=$(sha256sum "$0" | cut -d' ' -f1)
     committed=$(sha256sum "$SRC/mishe-tauftauf/tools/root-migration-flip.sh" 2>/dev/null | cut -d' ' -f1)
     log "preflight: flip sha256 $me (committed copy ${committed:-absent})"
     [ -n "$committed" ] && [ "$me" != "$committed" ] && die "running copy differs from the committed script"
-    [ -x "$WORK/verify-scoped.sh" ] || die "missing $WORK/verify-scoped.sh"
-    [ "$SHAPE" = full ] && { [ -x "$WORK/verify-copy.sh" ] || die "missing $WORK/verify-copy.sh"; }
+    helper=verify-scoped.sh
+    [ "$SHAPE" = full ] && helper=verify-copy.sh
+    [ -x "$WORK/$helper" ] || die "missing $WORK/$helper"
+    have=$(sha256sum "$WORK/$helper" | cut -d' ' -f1)
+    want=$(sha256sum "$SRC/mishe-tauftauf/tools/root-migration-$helper" 2>/dev/null | cut -d' ' -f1)
+    [ -n "$want" ] || die "committed tools/root-migration-$helper absent; cannot verify the deployed copy"
+    [ "$have" = "$want" ] || die "$WORK/$helper ($have) differs from committed $helper ($want); recopy it"
+    log "preflight: $helper sha256 $have (matches committed)"
     # A delivery check in flight would compete for root I/O and time out (step 6).
-    if systemctl --user list-units --state=running --no-legend --plain 'mishe-moving-pin-delivery-*' 2>/dev/null | grep -q .; then
+    # Real unit names carry no `mishe-` prefix (`moving-pin-delivery-HHMMSS`), and
+    # the old pattern matched nothing: a 09:03:25Z delivery was running during the
+    # 09:07Z dry-run. Match the actual name and both live states.
+    if systemctl --user list-units --all --state=running,activating --no-legend --plain 'moving-pin-delivery-*' 2>/dev/null | grep -q .; then
         die "a moving-pin delivery unit is running; not flipping"
     fi
     # The destination must have room for the delta plus headroom.

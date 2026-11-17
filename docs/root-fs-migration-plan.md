@@ -142,7 +142,8 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
 ## Measured 2026-11-17 08:47-08:53Z: the cutover scripts, self-tested
 
 - `tools/root-migration-flip.sh --dry-run` prints the preflight readings (pin, source and
-  destination HEAD, its own sha256 against the committed copy) and the stop list, then
+  destination HEAD, its own sha256 against the committed copy, and the shape helper's
+  sha256 against `tools/root-migration-verify-scoped.sh`) and the stop list, then
   stops. Measured: **94 units**, of which 71 `mishe-producer-*.timer`, 10
   `mishe-release-review-retry-*`, the three bots, `mishe-dual-probe`,
   `mishe-unit-psi-sampler`, `mishe-next-due-*`, `mishe-doctor.timer`,
@@ -176,6 +177,15 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
   half-flipped tree (rename done, no symlink) rolls back, a fully flipped tree is kept and
   its units restarted, an untouched tree is left alone, and an existing done marker exits
   without touching anything.
+- Preflight checks the *deployed* helper's sha256, not just that it is executable: on
+  2026-11-17 the deployed `verify-scoped.sh` was still the pre-`0e8bafdc` bytes
+  (`a852b2ef…`) while the fix (`0955773945…`) was committed, and the old preflight would
+  have run the fail-open checker. The work dir is now recopied from `tools/`, and a
+  deliberately corrupted deployed copy was exercised: preflight died with
+  `differs from committed verify-scoped.sh` before any unit was stopped. The `--full`
+  helper existed only in the work dir; it is committed byte-identical as
+  `tools/root-migration-verify-copy.sh` (its verdict is now also its exit status, which
+  `flip.sh` keeps reading from stdout).
 - Not run: the flip itself. It waits on the reviewer's answer about the step-7 shape and a
   wake window that can hold quiesce + delta + verify + cutover.
 
@@ -270,7 +280,8 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
     Steps 8-10, plus the step-2 quiesce, the final delta and the step-7 verify, are one
     script: `tools/root-migration-flip.sh`. It runs from
     `/mnt/mishe-scratch/mishe-migration/flip.sh` (its own path must survive the rename)
-    and refuses to start if the deployed copy's sha256 differs from the committed one.
+    and refuses to start if its own deployed sha256, or that of the helper for the
+    selected shape, differs from the committed copy under `tools/`.
     `--dry-run` is the default and prints the stop list and preflight readings without
     changing anything; `--execute` performs the cutover. Before anything is stopped it
     arms a watchdog transient unit (`mishe-root-migration-watchdog`, 900 s) that restores
