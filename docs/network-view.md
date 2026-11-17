@@ -73,8 +73,10 @@ is not mistaken for a quiet mind.
   (18:00–20:59). Those two hours were chosen because the handshake median is elevated there in
   both the eight-day log and the shorter window the view loads; 17:00 and 21:00 sit near the
   daytime baseline in both. The line says where the time went, not why: household traffic and the
-  ISP's evening peak look the same from here. UNKNOWN when the newest probe is stale or did not
-  carry both phases.
+  ISP's evening peak look the same from here. The evening hours also carry about a fifth fewer
+  probes than the quiet hours (118–133 rows against 148–155 per clock hour over eight days), so
+  the evening median rests on fewer samples and can miss its own worst moments. UNKNOWN when the
+  newest probe is stale or did not carry both phases.
 - `WI-FI RADIO`: each known radio's channel, frequency and noise floor from the read-only router
   pass, with the age of the reading; UNKNOWN when the sub-reading is absent, STALE past 15 minutes.
 - `UNKNOWN`: the log has no reading, or the last read failed.
