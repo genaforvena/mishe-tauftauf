@@ -532,16 +532,27 @@ def schedule_review_retry(home, record, *, delay, runner=None):
 
 
 def schedule_review_retry_if_needed(home, current):
-    """Record one delayed re-run for ``current``'s unanswered review error, once.
+    """Record one delayed re-run for ``current``'s newest unanswered review error.
 
     Both merge paths reach a review error: ``review()`` merging its own result and
     the work-watch poll merging a result a wake deferred behind the dispatch lock.
     Before this only ``review()`` scheduled the retry, so a deferred merge recorded
     ``review_error`` and left ``review_pending`` true with no retry unit
     (2026-11-17), stranding the release exactly as the in-process path used to.
-    The caller holds the delivery lock and writes ``current`` afterwards.
+
+    The retry is recorded once per failed attempt, keyed on the number of
+    failed-attempt archives already written: a wake that merges the same result
+    twice (or reviews and the poll racing) schedules only one unit, while the
+    next failed attempt raises the count and schedules the next rung of
+    ``review_retry_delay``. Gating on ``review_retry_state`` alone latched after
+    the first retry and left the ladder's eight attempts unreachable
+    (2026-11-17). The caller holds the delivery lock and writes ``current``
+    afterwards.
     """
-    if current.get("review_pending") is False or current.get("review_retry_state") is not None:
+    if current.get("review_pending") is False:
+        return
+    attempts = len(list((Path(home)/"work/reviews").glob(f"{current['id']}-*.failed-attempt.json")))
+    if current.get("review_retry_attempts") == attempts:
         return
     delay = review_retry_delay(home, current["id"])
     try:
@@ -551,7 +562,10 @@ def schedule_review_retry_if_needed(home, current):
             schedule_review_retry(home, current, delay=delay)
             current["review_retry_state"] = f"scheduled in {int(delay)}s"
     except (OSError, subprocess.SubprocessError) as exc:
+        # Leave the attempt uncounted so a later merge retries the scheduling.
         current["review_retry_state"] = f"scheduling failed: {exc}"
+        return
+    current["review_retry_attempts"] = attempts
 
 
 def review_queue_path(home, record):

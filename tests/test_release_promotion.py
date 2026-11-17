@@ -379,6 +379,44 @@ def test_deferred_review_error_merge_schedules_the_retry(tree,monkeypatch):
     assert record["review_retry_state"]=="scheduled in 1800s"
 
 
+def test_retry_ladder_advances_on_each_failed_attempt(tree,monkeypatch):
+    # Gating the retry on review_retry_state alone latched after the first
+    # scheduling and left review_retry_delay's eight attempts unreachable: the
+    # next failed attempt must raise the archive count and schedule the next rung.
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha);p.materialize(home,repo,old)
+    identity="ladder"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",source=str(source),paths=["docs/page.md"],check=dict(output="pass"),review_pending=True))
+    launched=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:launched.append(argv))
+    reviews=home/"work/reviews"
+    write_json(reviews/f"{identity}.result.json",dict(id=identity,result=dict(review_error="quota spent"),merged=False))
+    p.merge_reviews(home)
+    assert read_json(p.record_path(home,identity))["review_retry_state"]=="scheduled in 1800s"
+    # The scheduled retry ran, archived that failed attempt and failed again.
+    (reviews/f"{identity}-1.failed-attempt.json").write_text("{}")
+    write_json(reviews/f"{identity}.result.json",dict(id=identity,result=dict(review_error="quota spent"),merged=False))
+    p.merge_reviews(home)
+    assert read_json(p.record_path(home,identity))["review_retry_state"]=="scheduled in 3600s"
+    retries=[argv for argv in launched if any("review-retry" in str(a) for a in argv)]
+    delays=[next(a for a in argv if a.startswith("--on-active=")) for argv in retries]
+    assert delays==["--on-active=1800","--on-active=3600"]
+
+
+def test_one_failed_attempt_schedules_one_retry(tmp_path,monkeypatch):
+    from mishe_tauftauf import release_promotion as p
+    (tmp_path/"work/reviews").mkdir(parents=True)
+    launched=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:launched.append(argv))
+    current=dict(id="rel-1",sha="a"*40,source=str(tmp_path),review_pending=True)
+    p.schedule_review_retry_if_needed(tmp_path,current)
+    p.schedule_review_retry_if_needed(tmp_path,current)
+    assert len(launched)==1 and current["review_retry_attempts"]==0
+    (tmp_path/"work/reviews"/"rel-1-1.failed-attempt.json").write_text("{}")
+    p.schedule_review_retry_if_needed(tmp_path,current)
+    assert len(launched)==2 and current["review_retry_attempts"]==1
+
+
 def test_retry_over_an_unmerged_failure_reruns_the_review(tree,monkeypatch):
     # The scheduled retry must re-run the model even when a wake deferred the first
     # failure's merge. Merely merging it would record the error and return without
