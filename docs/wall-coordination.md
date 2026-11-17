@@ -272,7 +272,11 @@ the plant reads at all: `SITE_HOME/checks-runner/observer-checks.py` holds
 skips, each with its reason). Its source is tracked at
 `checks-runner/observer-checks.py`, and `tests/test_runner_bytes.py` requires the
 live copy to equal the copy in the release `runtime/current` names — not the
-checkout. That target is deliberate: activation copies a release and only then
+checkout. `mishe sync` installs that live path as the relative link
+`../runtime/current/checks-runner/observer-checks.py` (and keeps any file it
+replaces as `observer-checks.py.pre-link-<epoch>`), so the binding needs no hand
+copy and holds through every pin move; a copy left in its place is exactly what
+the test detects. That target is deliberate: activation copies a release and only then
 advances the pin, so a runner change cannot be installed until the pin contains
 it, and a checkout comparison deadlocks (measured 2026-11-17: pin `05da8d15`,
 live `43f980fd`, checkout `9a84df2f`; candidate `0e67fdb1` failed its own delivery
