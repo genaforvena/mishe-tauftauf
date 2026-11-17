@@ -364,32 +364,34 @@ MEM_FLOOR_MB = nb.MEM_FLOOR_MB
 
 
 def router_health_line(now=None):
-    """Router load and free RAM from the last recorded read, with the self-limit it is held to."""
+    """Router load and free RAM from the newest recorded read, with the self-limit it is held to and,
+    when it is over that limit, how long the breach has lasted against the 30-minute alarm."""
     now = time.time() if now is None else now
     rows_ = router_rows()
     if not rows_:
         return "UNKNOWN (no router reading recorded yet)"
     last = rows_[-1]
     ago = now - last["ts"]
+    sample = nb.load_run(rows_, now)
     if not last.get("ok"):
         line = f"UNKNOWN (last router read failed {ago:.0f} s ago: {last.get('error', 'no reason recorded')})"
-        real = next((r for r in reversed(rows_) if r.get("ok") and r.get("router_load")), None)
-        if real is not None:
-            rl_real = real["router_load"]
-            load_real = rl_real.get("load_5m") if rl_real.get("load_5m") is not None else rl_real.get("load_1m")
-            if load_real is not None and rl_real.get("mem_available_mb") is not None:
-                line += (f"; last real load {load_real:.2f} (5 min), free RAM {rl_real['mem_available_mb']:.0f} MB, "
-                         f"read {(now - real['ts']) / 60:.0f} min ago")
+        if sample is not None:
+            line += (f"; last real load {sample['load']:.2f} (5 min), free RAM {sample['mem_mb']:.0f} MB, "
+                     f"read {sample['ago_s'] / 60:.0f} min ago")
+            if sample["over"]:
+                line += f", over the self-limit for {sample['span_s'] / 60:.0f} min"
         return line
-    rl = last.get("router_load")
-    over = nb.router_over_limit(rl)
-    if over is None:
+    if sample is None:
         return f"UNKNOWN (load or free RAM not in the read {ago:.0f} s ago)"
-    load = rl.get("load_5m") if rl.get("load_5m") is not None else rl["load_1m"]
-    limit_txt = "over the self-limit" if over else "within the self-limit"
-    stale = "  STALE" if ago > STALE_ROUTER_S else ""
-    return (f"load {load:.2f} (5 min), free RAM {rl['mem_available_mb']:.0f} MB, {limit_txt} "
-            f"(limit: load {LOAD_LIMIT:g}, free RAM {MEM_FLOOR_MB:.0f} MB); read {ago:.0f} s ago{stale}")
+    age = sample["ago_s"]
+    limit_txt = "within the self-limit"
+    if sample["over"]:
+        limit_txt = f"over the self-limit for {sample['span_s'] / 60:.0f} min"
+        if sample["span_s"] < nb.LOAD_ALARM_SPAN_S:
+            limit_txt += f", alarm at {nb.LOAD_ALARM_SPAN_S // 60} min"
+    stale = "  STALE" if age > STALE_ROUTER_S else ""
+    return (f"load {sample['load']:.2f} (5 min), free RAM {sample['mem_mb']:.0f} MB, {limit_txt} "
+            f"(limit: load {LOAD_LIMIT:g}, free RAM {MEM_FLOOR_MB:.0f} MB); read {age:.0f} s ago{stale}")
 
 
 def vpn_line(now=None):

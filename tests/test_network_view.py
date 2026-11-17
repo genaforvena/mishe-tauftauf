@@ -143,7 +143,8 @@ def test_gateway_line_shows_jitter_and_unknown_when_missing():
 def _router_log(tmp_path, monkeypatch, row):
     import json
     log = tmp_path / "router.jsonl"
-    log.write_text(json.dumps(row) + "\n")
+    rows = row if isinstance(row, list) else [row]
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows))
     monkeypatch.setattr(view, "ROUTER_LOG", log)
 
 
@@ -268,6 +269,34 @@ def test_router_health_unknown_without_numbers(tmp_path, monkeypatch):
     now = 1_000_000.0
     _router_log(tmp_path, monkeypatch, {"ts": now, "ok": True, "clients": [], "router_load": None})
     assert view.router_health_line(now).startswith("UNKNOWN")
+
+
+def _load_rows(now, loads, step=300):
+    rows = [{"ts": now - step * (len(loads) - 1 - i), "ok": True,
+             "router_load": {"load_5m": load, "mem_available_mb": 220.0}}
+            for i, load in enumerate(loads)]
+    return rows
+
+
+def test_router_health_counts_how_long_the_breach_has_lasted(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    _router_log(tmp_path, monkeypatch, _load_rows(now, [0.2] * 3 + [1.5] * 6))  # 25 minutes over
+    line = view.router_health_line(now)
+    assert "over the self-limit for 25 min" in line and "alarm at 30 min" in line
+
+
+def test_router_health_drops_the_alarm_note_past_thirty_minutes(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    _router_log(tmp_path, monkeypatch, _load_rows(now, [1.5] * 7))  # 30 minutes over
+    line = view.router_health_line(now)
+    assert "over the self-limit for 30 min" in line and "alarm at" not in line
+
+
+def test_router_health_forgets_a_breach_that_ended(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    _router_log(tmp_path, monkeypatch, _load_rows(now, [1.5] * 4 + [0.2]))  # spike ended 0 min ago
+    line = view.router_health_line(now)
+    assert "within the self-limit" in line and "over the self-limit" not in line
 
 
 def _web_rows(n, ms, ok=True):

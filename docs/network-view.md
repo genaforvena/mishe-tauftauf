@@ -62,7 +62,10 @@ spanning at least 30 minutes is RED, so a persistently busy router wakes a perso
 only changing one line in the window. A throttled read carries no load numbers, so it neither
 raises nor hides the alarm; a gap of more than 20 minutes between load readings ends the run
 rather than joining two breaches; no load reading in six hours, or a newest one over 15 minutes
-old, is UNKNOWN.
+old, is UNKNOWN. The window prints the same run — `ROUTER LOAD` says "over the self-limit for 12
+min, alarm at 30 min" instead of only the instant — because one walk
+(`tools/network_boundary.py`, `load_run`) feeds both the line and the duty, so they cannot
+disagree about how long a breach has lasted.
 
 The same checker also guards the network area's own continuity. The
 `network-progress` duty (`checks/network-care.py`, subcommand `progress`, every

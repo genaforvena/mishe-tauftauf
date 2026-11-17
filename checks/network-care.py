@@ -381,61 +381,35 @@ def wifi(home):
     return code
 
 
-LOAD_WINDOW_S = 6 * 3600     # a breach is judged from readings no older than this
 LOAD_MAX_AGE_S = 900         # the newest load reading must be this fresh, else UNKNOWN
-LOAD_MAX_GAP_S = 1200        # a longer gap between load readings ends the run (skipped reads)
-LOAD_RED_SPAN_S = 1800       # a breach must last this long before it is RED
 
 
 def load_state(rows, now):
     """Judge the router's own load/free-RAM self-limit from the read-only readings.
 
     Row shape: {"ts", "router_load": {"load_5m", "load_1m", "mem_available_mb"}}. Returns
-    (code, message): 0 GREEN, 2 RED, 3 UNKNOWN. The same limit the producer backs off on and the
-    window prints (``network_boundary.router_over_limit``) is used here: a short burst is GREEN
+    (code, message): 0 GREEN, 2 RED, 3 UNKNOWN. The limit and the run walk are the same ones the
+    window prints (``network_boundary.router_over_limit`` / ``load_run``): a short burst is GREEN
     with the breach named, because the 5-minute average the gate reads can spike for one sample;
     an unbroken run of over-limit samples spanning at least 30 minutes is RED. A skipped row
     carries no ``router_load``, so throttled reads neither raise nor hide the alarm; a gap longer
     than 20 minutes between load readings breaks the run rather than joining two breaches.
     """
-    reads = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        rl = row.get("router_load")
-        over = nb.router_over_limit(rl)
-        if over is None:
-            continue
-        try:
-            ts = float(row["ts"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if 0 <= now - ts <= LOAD_WINDOW_S and ts <= now + START_SLACK_S:
-            reads.append((ts, over, rl))
-    if not reads:
+    sample = nb.load_run(rows, now)
+    if sample is None:
         return 3, "network-care: no router load reading in the last six hours"
-    reads.sort(key=lambda item: item[0])
-    last_ts, last_over, last_rl = reads[-1]
-    ago = now - last_ts
+    ago = sample["ago_s"]
     if ago > LOAD_MAX_AGE_S:
         return 3, f"network-care: newest router load reading is {ago / 60:.0f} min old"
-    load = last_rl.get("load_5m")
-    if load is None:
-        load = last_rl.get("load_1m")
-    text = (f"load {load:.2f} (5 min), free RAM {last_rl['mem_available_mb']:.0f} MB; "
+    text = (f"load {sample['load']:.2f} (5 min), free RAM {sample['mem_mb']:.0f} MB; "
             f"limit load {nb.LOAD_LIMIT:g}, free RAM {nb.MEM_FLOOR_MB:.0f} MB")
-    if not last_over:
+    if not sample["over"]:
         return 0, f"network-care: router load GREEN ({text})"
-    start_ts = prev_ts = last_ts
-    for ts, over, _ in reversed(reads[:-1]):
-        if not over or prev_ts - ts > LOAD_MAX_GAP_S:
-            break
-        start_ts = prev_ts = ts
-    span = last_ts - start_ts
-    if span >= LOAD_RED_SPAN_S:
+    span = sample["span_s"]
+    if span >= nb.LOAD_ALARM_SPAN_S:
         return 2, f"network-care: router over its self-limit for {span / 60:.0f} min ({text})"
     return 0, (f"network-care: router over its self-limit for {span / 60:.0f} min, "
-               f"under the {LOAD_RED_SPAN_S // 60} min alarm ({text})")
+               f"under the {nb.LOAD_ALARM_SPAN_S // 60} min alarm ({text})")
 
 
 def load(home):

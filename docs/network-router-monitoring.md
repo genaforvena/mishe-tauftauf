@@ -58,7 +58,9 @@ per device per day.
 
 The network window's ROUTER LOAD line shows the 5-minute load average and free RAM from the last
 router read and whether that read was over or within the self-limit (limit: load 1, free RAM
-120 MB). Reads stay at one per 5 minutes (duty `network-router`). While the last real read was over
+120 MB); when it is over, the line also says for how long the breach has lasted and, under 30
+minutes, when the alarm would fire. Reads stay at one per 5 minutes (duty `network-router`). While
+the last real read was over
 the self-limit, the probe itself holds off: it skips the ssh for 15 minutes and records a skipped
 row instead, so a busy router is not hammered while the window still shows the last real reading.
 The gate reads the 5-minute average, not a single 1-minute burst.

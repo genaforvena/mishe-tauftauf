@@ -163,6 +163,58 @@ def router_over_limit(rl):
     return load > LOAD_LIMIT or mem < MEM_FLOOR_MB
 
 
+# A breach is judged from the last six hours of reads. A longer gap than LOAD_RUN_GAP_S between load
+# samples ends the run, because a throttled producer writes skip rows without numbers and two
+# breaches hours apart are not one sustained breach. LOAD_ALARM_SPAN_S is how long a run must last
+# before the network-router-load duty turns RED; the window prints the same span against it.
+LOAD_RUN_WINDOW_S = 6 * 3600
+LOAD_RUN_GAP_S = 1200
+LOAD_ALARM_SPAN_S = 1800
+LOAD_RUN_FUTURE_S = 5       # a row may be a few seconds ahead of the caller's clock
+
+
+def load_run(rows, now):
+    """The newest router load sample in the window, and how long its over-limit run has lasted.
+
+    Returns {"ts", "ago_s", "over", "span_s", "load", "mem_mb"}, or None when no row of the last
+    ``LOAD_RUN_WINDOW_S`` carries readable load/free-RAM numbers. Rows without numbers (throttled
+    reads) are skipped rather than read as calm, and ``span_s`` is zero unless the newest sample
+    is over the limit. One walk feeds both the duty and the window, so they cannot disagree about
+    how long a breach has lasted.
+    """
+    samples = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        rl = row.get("router_load")
+        over = router_over_limit(rl)
+        if over is None:
+            continue
+        try:
+            ts = float(row["ts"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0 <= now - ts <= LOAD_RUN_WINDOW_S and ts <= now + LOAD_RUN_FUTURE_S:
+            samples.append((ts, over, rl))
+    if not samples:
+        return None
+    samples.sort(key=lambda item: item[0])
+    last_ts, last_over, last_rl = samples[-1]
+    span = 0.0
+    if last_over:
+        start = prev = last_ts
+        for ts, over, _ in reversed(samples[:-1]):
+            if not over or prev - ts > LOAD_RUN_GAP_S:
+                break
+            start = prev = ts
+        span = last_ts - start
+    load = last_rl.get("load_5m")
+    if load is None:
+        load = last_rl.get("load_1m")
+    return {"ts": last_ts, "ago_s": now - last_ts, "over": last_over, "span_s": span,
+            "load": load, "mem_mb": last_rl.get("mem_available_mb")}
+
+
 STATION_LINE = re.compile(r"^([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\s+(-?\d+)\s+dBm")
 RATE_LINE = re.compile(r"^\s*(RX|TX):\s*([\d.]+)\s*MBit/s")
 CHANNEL_LINE = re.compile(r"Channel:\s*(\d+)\s*\(([\d.]+)\s*GHz\)")

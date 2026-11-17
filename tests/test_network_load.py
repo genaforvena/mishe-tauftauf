@@ -81,6 +81,32 @@ class LoadStateTests(unittest.TestCase):
         self.assertEqual(code, 0, msg)
 
 
+class LoadRunTests(unittest.TestCase):
+    """The one run walk both the duty and the window print (tools/network_boundary.load_run)."""
+
+    def test_no_readable_sample_is_none(self):
+        self.assertIsNone(care.nb.load_run([], NOW))
+        self.assertIsNone(care.nb.load_run([{"ts": NOW, "router_load": None}], NOW))
+
+    def test_span_covers_the_whole_over_limit_run(self):
+        rows = run(NOW - 3600, 4, load=0.2) + run(NOW - 1500, 6, load=1.4)
+        sample = care.nb.load_run(rows, NOW)
+        self.assertTrue(sample["over"])
+        self.assertAlmostEqual(sample["span_s"], 1500)
+
+    def test_span_is_zero_when_within_the_limit(self):
+        sample = care.nb.load_run(run(NOW - 900, 4, load=0.2), NOW)
+        self.assertFalse(sample["over"])
+        self.assertEqual(sample["span_s"], 0.0)
+
+    def test_a_skipped_row_still_yields_the_last_real_sample(self):
+        rows = [row(NOW - 900, load=0.3), row(NOW - 600, load=0.3),
+                {"ts": NOW - 120, "ok": False, "error": "skipped"}]
+        sample = care.nb.load_run(rows, NOW)
+        self.assertEqual(sample["load"], 0.3)
+        self.assertAlmostEqual(sample["ago_s"], 600)
+
+
 class LoadDutyDeclared(unittest.TestCase):
     """The load judge must run as a registered duty, or nothing alarms on a busy router."""
 
