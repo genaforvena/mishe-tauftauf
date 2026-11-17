@@ -266,6 +266,21 @@ After every delivery, compare the units' `PYTHONPATH` with `runtime/current`: it
 should resolve to the release just delivered. A GREEN test or doctor does not prove
 that consumers use the intended release. Preserve protected host guards and limits.
 
+The observer-check runner is bound the same way, and its bytes decide which checks
+the plant reads at all: `SITE_HOME/checks-runner/observer-checks.py` holds
+`INVENTORY` (the checks it runs) and `NOT_SCHEDULED` (the ones it deliberately
+skips, each with its reason). Its source is tracked at
+`checks-runner/observer-checks.py`, and `tests/test_runner_bytes.py` requires the
+live copy to equal the copy in the release `runtime/current` names — not the
+checkout. That target is deliberate: activation copies a release and only then
+advances the pin, so a runner change cannot be installed until the pin contains
+it, and a checkout comparison deadlocks (measured 2026-11-17: pin `05da8d15`,
+live `43f980fd`, checkout `9a84df2f`; candidate `0e67fdb1` failed its own delivery
+check on that line and the pin stayed where it was). The runner is committed at
+all because of a measurement: while it lived only under the ignored site home, its
+inventory changed with no diff anywhere — five checks stopped being read and five
+started (2026-11-10).
+
 ## Ending a wake
 
 Run `mishe yield --result changed|verified|blocked` with the edited wall on stdin.
