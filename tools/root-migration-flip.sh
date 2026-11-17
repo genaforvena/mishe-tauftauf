@@ -17,9 +17,14 @@
 # helper cannot weaken the verify: the pre-0e8bafdc scoped check printed VERIFIED
 # after comparing nothing.
 #
-# Run it from a wake-held slot (delivery waits for wakes to end) so the window is
-# delivery-free. The default verify shape is the scoped one accepted in step 7;
-# --full selects the exhaustive shape, which needs ~23-24 min of source reads.
+# Run it from a wake-held slot. Entry order in quiesce is: stop the wake and
+# delivery triggers, drain live wake engines (up to MIGRATION_ENGINE_TIMEOUT),
+# re-sample the moving-pin-delivery guard and wait up to
+# MIGRATION_DELIVERY_DRAIN_TIMEOUT for a delivery started during that drain, then
+# stop the recorded units. The preflight guard alone cannot vouch for the run: it
+# samples before a wait that can outlast a cadence interval. The default verify
+# shape is the scoped one accepted in step 7; --full selects the exhaustive shape,
+# which needs ~23-24 min of source reads.
 #
 # Safety: before anything is stopped, a watchdog transient unit is armed. If this
 # script is killed outright (SIGKILL, host reset) the watchdog restores a working
@@ -57,6 +62,15 @@ VERIFY_TIMEOUT_FULL=3600
 # How long the flip waits for live wake engines to finish before it stops the
 # plant (production execute is detached, so the launching wake can yield).
 ENGINE_DRAIN_TIMEOUT=${MIGRATION_ENGINE_TIMEOUT:-1800}
+# How long the flip waits, after the engine drain, for a delivery that started
+# during that drain to finish. Its whole-suite check plus activation measured
+# about 18 min (10:08:18 -> 10:26:42Z on 2026-11-17), so the bound is generous
+# but still aborts a wedged unit before anything is stopped.
+DELIVERY_DRAIN_TIMEOUT=${MIGRATION_DELIVERY_DRAIN_TIMEOUT:-900}
+# Units that START a promotion. They are stopped before the drain (a delivery
+# begun inside a 1800 s drain checks and activates against the trees being
+# renamed) and are recorded in $UNITS so the restart paths bring them back.
+DELIVERY_TRIGGERS=(mishe-producer-delivery-cadence.timer)
 PROD_SRC=/home/mesh-home
 DETACH=0
 while [ $# -gt 0 ]; do
@@ -120,6 +134,16 @@ writers_present() {
 # 2026-11-17 09:37-09:41Z: 29 + 13 + 3 files changed between delta and verify).
 wake_engines() {
     pgrep -af -- "$SRC/" 2>/dev/null | grep -F '/wakes/wake-' || true
+}
+
+# A promotion in flight runs its whole-suite check and then activates a release,
+# and during cutover the source trees are briefly absent then symlinks -- the
+# exact path that check exercises. Real unit names carry no `mishe-` prefix
+# (`moving-pin-delivery-HHMMSS`); the pre-09:07Z pattern matched nothing while a
+# real delivery ran. One predicate for both the preflight refusal and the
+# post-drain re-sample, so the two cannot drift apart.
+live_delivery() {
+    systemctl --user list-units --all --state=running,activating --no-legend --plain 'moving-pin-delivery-*' 2>/dev/null | grep . || true
 }
 
 # Units that were active before the flip and name a moved tree or the site home.
@@ -295,10 +319,9 @@ preflight() {
     [ "$have" = "$want" ] || die "$WORK/$helper ($have) differs from committed $helper ($want); recopy it"
     log "preflight: $helper sha256 $have (matches committed)"
     # A delivery check in flight would compete for root I/O and time out (step 6).
-    # Real unit names carry no `mishe-` prefix (`moving-pin-delivery-HHMMSS`), and
-    # the old pattern matched nothing: a 09:03:25Z delivery was running during the
-    # 09:07Z dry-run. Match the actual name and both live states.
-    if systemctl --user list-units --all --state=running,activating --no-legend --plain 'moving-pin-delivery-*' 2>/dev/null | grep -q .; then
+    # This sample is a fast refusal at launch; it cannot vouch for the whole run,
+    # so quiesce re-samples after the engine drain.
+    if [ -n "$(live_delivery)" ]; then
         die "a moving-pin delivery unit is running; not flipping"
     fi
     # The destination must have room for the delta plus headroom.
@@ -308,8 +331,14 @@ preflight() {
 
 # --- quiesce -----------------------------------------------------------------
 quiesce() {
-    local u i engines
+    local u i engines live
     target_units | sort >"$UNITS" || die "could not enumerate units"
+    # A stopped trigger is only restarted from this list, so record the delivery
+    # triggers explicitly: an inactive timer is not listed by target_units, and
+    # leaving one out would end the flip with the cadence permanently stopped.
+    for u in "${DELIVERY_TRIGGERS[@]}"; do
+        grep -qxF "$u" "$UNITS" || echo "$u" >>"$UNITS"
+    done
     log "units to stop: $(wc -l <"$UNITS") (list $UNITS)"
     if [ "$MODE" = dry-run ]; then
         log "dry-run: would stop these units, delta, verify ($SHAPE), rename, symlink, restart"
@@ -318,6 +347,11 @@ quiesce() {
         if [ -n "$engines" ]; then
             log "dry-run: wake engines that must exit first (up to ${ENGINE_DRAIN_TIMEOUT}s):"
             printf '%s\n' "$engines" >&2
+        fi
+        live=$(live_delivery)
+        if [ -n "$live" ]; then
+            log "dry-run: delivery units that must end before the plant is stopped (up to ${DELIVERY_DRAIN_TIMEOUT}s):"
+            printf '%s\n' "$live" >&2
         fi
         return 0
     fi
@@ -329,6 +363,12 @@ quiesce() {
     # pub and system1 at 09:39-09:41Z and no delta under them could verify.
     systemctl --user stop 'mishe-wake-*.path' 'mishe-wake-debounce-*.timer' \
         mishe-producer-dispatch.timer 'mishe-next-due-*.timer' 2>/dev/null || true
+    # The delivery triggers go first, for the same reason: the cadence fires
+    # every 600 s, so a promotion started inside the drain below would run its
+    # whole-suite check and activate while the trees are renamed (field-review,
+    # 2026-11-17: preflight samples the guard before a wait that can last
+    # ENGINE_DRAIN_TIMEOUT, so a clear guard is necessary but not sufficient).
+    systemctl --user stop "${DELIVERY_TRIGGERS[@]}" 2>/dev/null || true
     engines=$(wake_engines)
     if [ -n "$engines" ]; then
         log "wake engines still running; waiting up to ${ENGINE_DRAIN_TIMEOUT}s for them to end"
@@ -344,6 +384,26 @@ quiesce() {
             sleep 10
         done
         log "wake engines exited after ${i}s"
+    fi
+    # Re-sample the delivery guard the preflight took before that wait. The
+    # triggers are stopped, so the set of live deliveries only shrinks: wait
+    # bounded for a promotion started during the drain instead of dying on the
+    # first look, then abort if one is still wedged.
+    live=$(live_delivery)
+    if [ -n "$live" ]; then
+        log "a delivery started during the drain; waiting up to ${DELIVERY_DRAIN_TIMEOUT}s for it to end"
+        i=0
+        while :; do
+            live=$(live_delivery)
+            [ -z "$live" ] && break
+            i=$((i + 10))
+            if [ "$i" -ge "$DELIVERY_DRAIN_TIMEOUT" ]; then
+                printf '%s\n' "$live" >&2
+                die "a moving-pin delivery unit is still running after ${DELIVERY_DRAIN_TIMEOUT}s; not flipping"
+            fi
+            sleep 10
+        done
+        log "delivery unit exited after ${i}s"
     fi
     while read -r u; do systemctl --user stop "$u" 2>/dev/null || log "stop failed (continuing): $u"; done <"$UNITS"
     # Bounded wait for writers to drain; the EXIT trap and the watchdog both

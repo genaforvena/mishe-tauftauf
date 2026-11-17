@@ -297,3 +297,72 @@ def test_watchdog_leaves_a_live_flip_alone(tmp_path):
     assert "restore done" not in log, log
     assert not any("start fake-a.service" in line for line in calls(root)), calls(root)
     assert not (root / "src" / "mishe-tauftauf").exists()
+
+
+SYSTEMCTL_DELIVERY = r"""#!/bin/bash
+printf '%s\n' "$*" >>"$SANDBOX/systemctl.log"
+case "$*" in
+  *"list-units"*"moving-pin-delivery-"*)
+      # A promotion the cadence starts during the engine drain appears only after
+      # the wake triggers are disarmed, which is why preflight's earlier sample
+      # could not have seen it.
+      [ -e "$SANDBOX/delivery-live" ] && printf 'moving-pin-delivery-101010.service loaded activating start x\n' ;;
+  *"list-units"*"--type=path"*)
+      printf 'fake-a.service loaded active running x\nfake-b.service loaded active running x\nfake-c.service loaded active running x\nfake-w.path loaded active waiting x\n' ;;
+  *"list-units"*"--state=active"*)
+      printf 'fake-a.service loaded active running x\nfake-b.service loaded active running x\nfake-c.service loaded active running x\n' ;;
+  *"list-units"*) : ;;
+  *" cat "*) echo "ExecStart=/bin/true $SANDBOX/src/mishe-tauftauf/x" ;;
+  *" stop mishe-wake-"*)
+      : >"$SANDBOX/delivery-live"
+      [ -n "${CLEAR_AFTER:-}" ] && ( sleep "$CLEAR_AFTER"; rm -f "$SANDBOX/delivery-live" ) & ;;
+esac
+exit 0
+"""
+
+
+def delivery_sandbox(tmp_path):
+    root = sandbox(tmp_path)
+    stub = root / "bin" / "systemctl"
+    stub.write_text(SYSTEMCTL_DELIVERY)
+    stub.chmod(0o755)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+    return root
+
+
+def test_delivery_started_during_the_drain_is_waited_out(tmp_path):
+    """Regression (field-review, 2026-11-17): the delivery guard was sampled once
+    in preflight, before a drain that can last ENGINE_DRAIN_TIMEOUT. A promotion
+    the cadence starts during that drain would check and activate while the trees
+    are renamed. The fix stops the delivery triggers first, then waits bounded for
+    a live delivery instead of dying on the first post-drain look."""
+    root = delivery_sandbox(tmp_path)
+    done = flip(root, "--execute",
+                extra_env={"MIGRATION_DELIVERY_DRAIN_TIMEOUT": "60", "CLEAR_AFTER": "3"})
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    log = (root / "work" / "flip.log").read_text()
+    assert "a delivery started during the drain" in log, log
+    assert "delivery unit exited after" in log, log
+    assert (root / "work" / "flip.done").exists()
+    log_lines = calls(root)
+    assert any("start mishe-producer-delivery-cadence.timer" in line for line in log_lines), log_lines
+    first_stop = next(i for i, line in enumerate(log_lines) if "stop fake-a.service" in line)
+    for i, line in enumerate(log_lines):
+        if "stop mishe-producer-delivery-cadence.timer" in line:
+            assert i < first_stop, log_lines
+            break
+    else:
+        raise AssertionError(log_lines)
+
+
+def test_delivery_outliving_the_bound_aborts_before_the_plant_is_stopped(tmp_path):
+    """A wedged promotion must abort the flip, not race the rename."""
+    root = delivery_sandbox(tmp_path)
+    done = flip(root, "--execute", extra_env={"MIGRATION_DELIVERY_DRAIN_TIMEOUT": "1"})
+
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "still running after 1s" in done.stdout + done.stderr
+    assert not (root / "work" / "flip.done").exists()
+    assert not any("stop fake-a.service" in line for line in calls(root)), calls(root)
+    assert any("start fake-a.service" in line for line in calls(root)), calls(root)

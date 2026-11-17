@@ -118,8 +118,15 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
 - The checkout delta is almost one new release tree, `releases/0ccfd809…`
   (delivered 08:23Z, between wakes), plus `signals/` and `wakes/`. **Every
   delivery adds ~1 GB to the destination delta**, so the flip must not straddle
-  a delivery. A wake-held window is delivery-free by construction (delivery
-  waits for wakes to end), which puts delta and flip in the same wake.
+  a delivery. The flip now enforces that itself instead of trusting the window:
+  `quiesce` stops `mishe-producer-delivery-cadence.timer` with the wake triggers
+  *before* the engine drain (the cadence fires every 600 s, and a promotion
+  started inside a drain that can last 1800 s runs its check and activation while
+  the trees are renamed), records the timer in `flip.units` so the restart paths
+  bring it back, and re-samples the `moving-pin-delivery-*` guard after the drain,
+  waiting up to `MIGRATION_DELIVERY_DRAIN_TIMEOUT` (900 s) for a live delivery to
+  end before anything is stopped. A clear guard at launch is therefore necessary
+  but not sufficient; the re-sample is what covers the drain.
 - `.codex` churn is 5.95 GB in 28 files: `logs_2.sqlite`, `state_5.sqlite`,
   `thread_history_1.sqlite` and their `-wal`/`-shm`. Cheap to re-copy, but
   `.codex` cannot be verified clean while a coder CLI runs.
