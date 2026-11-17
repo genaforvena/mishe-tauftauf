@@ -655,9 +655,14 @@ def schedule_review_retry_if_needed(home, current):
     The scheduled time is recorded as ``review_retry_due`` so a retry unit that a
     stop/collect cycle removed is armed again once that time is
     ``REVIEW_RETRY_REARM_GRACE_S`` past, instead of stranding the review for good.
+
+    Returns True only when a unit was armed by this call. A caller that stops a
+    superseded timer must require it: when the ladder is spent or the start
+    failed, the old unit is the only pending attempt and stopping it loses the
+    last review.
     """
     if current.get("review_pending") is False:
-        return
+        return False
     attempts = _review_attempts(home, current["id"])
     if current.get("review_retry_attempts") == attempts:
         # The recorded rung was already scheduled. Arm it again only when the
@@ -665,7 +670,7 @@ def schedule_review_retry_if_needed(home, current):
         # whose due time was never recorded. Both are a retry a stop/collect
         # cycle removed (a flip, a unit reset), not one waiting to fire.
         if not _review_retry_lost(current, time.time()):
-            return
+            return False
     delay = review_retry_delay(home, current["id"])
     try:
         if delay is None:
@@ -678,8 +683,9 @@ def schedule_review_retry_if_needed(home, current):
     except (OSError, subprocess.SubprocessError) as exc:
         # Leave the attempt uncounted so a later merge retries the scheduling.
         current["review_retry_state"] = f"scheduling failed: {exc}"
-        return
+        return False
     current["review_retry_attempts"] = attempts
+    return delay is not None
 
 
 def _identity(record):
@@ -747,12 +753,12 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None, stop=No
                     continue
                 if not _review_retry_lost(current, clock(), live_shas, timer_shas):
                     continue
-                schedule_review_retry_if_needed(home, current)
-                if isinstance(current.get("review_retry_due"), (int, float)):
+                if schedule_review_retry_if_needed(home, current):
                     # The replacement is armed; the postponed timer must not fire
-                    # a second review. When the ladder is exhausted (no due is
-                    # recorded) the old unit is left to run its one attempted
-                    # review rather than be lost to a scheduling decision.
+                    # a second review. When the ladder is spent or the start
+                    # failed nothing replaced it, and the old unit is left to run
+                    # its one attempted review rather than be lost to a
+                    # scheduling decision.
                     stop(_postponed_retry_timers(current, live))
                 write_json(path, current)
         except (OSError, ValueError, subprocess.SubprocessError):

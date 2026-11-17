@@ -622,6 +622,35 @@ def test_a_timer_postponed_past_its_deadline_is_replaced(tmp_path,monkeypatch):
     assert read_json(p.record_path(tmp_path,"rel-running"))["review_retry_due"]==int(now-p.REVIEW_RETRY_REARM_GRACE_S-1)
 
 
+def test_a_failed_rearm_leaves_the_postponed_timer_running(tmp_path,monkeypatch):
+    # A start that fails arms nothing, so the old timer is the only pending
+    # attempt. Stopping it would leave review_pending true with no unit at all:
+    # the next poll can only try the same failing start again. The recorded due
+    # time is kept, so that poll does retry the arming.
+    from mishe_tauftauf import release_promotion as p
+    (tmp_path/"work/reviews").mkdir(parents=True)
+    (tmp_path/"work/releases").mkdir(parents=True)
+    calls=[]
+    def run(argv,**kw):
+        calls.append(argv)
+        if argv[0]=="systemd-run":
+            raise subprocess.CalledProcessError(1,argv)
+    monkeypatch.setattr(p.subprocess,"run",run)
+    now=time.time(); sha="4"*40
+    stale_due=int(now-p.REVIEW_RETRY_REARM_GRACE_S-1)
+    write_json(p.record_path(tmp_path,"rel-stale"),
+               dict(id="rel-stale",sha=sha,source=str(tmp_path),review_pending=True,
+                    review_retry_attempts=0,review_retry_state="scheduled in 7200s",
+                    review_retry_due=stale_due))
+    timer=f"mishe-release-review-retry-{sha[:12]}-1794930448.timer"
+    p.rearm_lost_review_retries(tmp_path,clock=lambda: now,
+                                live_units={sha[:12]:{"timers":(timer,),"services":()}})
+    assert not [c for c in calls if c[0]=="systemctl" and "stop" in c], calls
+    record=read_json(p.record_path(tmp_path,"rel-stale"))
+    assert record["review_retry_state"].startswith("scheduling failed:"), record
+    assert record["review_retry_due"]==stale_due and record["review_pending"] is True
+
+
 def test_retry_over_an_unmerged_failure_reruns_the_review(tree,monkeypatch):
     # The scheduled retry must re-run the model even when a wake deferred the first
     # failure's merge. Merely merging it would record the error and return without
