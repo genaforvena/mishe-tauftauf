@@ -1,4 +1,8 @@
-"""Controlled-failure tests for checks/pin-delivery.py (stdlib only, run from the committed check file)."""
+"""Controlled-failure tests for checks/pin-delivery.py (run from the committed check file).
+
+The check is stdlib-only until it re-observes the delivery latch, and those tests import the
+package their run pinned (``env PYTHONPATH=src``), so the latch assertions use the tree under test.
+"""
 import importlib.util
 import json
 from pathlib import Path
@@ -67,6 +71,71 @@ def test_only_the_newest_record_counts(tmp_path, capsys):
     old = _rec("check-failed", created_at=NOW - 7200)
     new = _rec("delivered", created_at=NOW - 60)
     assert _run(_site(tmp_path, [old, new]), capsys)[0] == 0
+
+
+def _latch(home):
+    """The site's moving-pin-delivery registration and a 8000s-old VERIFIED reading (past max_age)."""
+    from mishe_tauftauf import signal_store
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"])
+    signal_store.observe(home, "moving-pin-delivery", "VERIFIED", now=NOW - 8000,
+                         source="release_promotion", event=SHA + ":delivered")
+    return signal_store
+
+
+def test_a_delivered_reading_refreshes_the_latch_and_keeps_its_value(tmp_path, capsys):
+    """A quiet pin must not age the delivery latch to a false UNKNOWN (2026-11-17, fc834468)."""
+    home = _site(tmp_path, [_rec("delivered")])
+    signal_store = _latch(home)
+    stale = signal_store.read(home, "moving-pin-delivery", now=NOW)
+    assert stale.state == "UNKNOWN", "the fixture must start past max_age, or it proves nothing"
+    stored = (home / "signals" / "moving-pin-delivery.json").read_bytes()
+
+    code, out = _run(home, capsys)
+
+    assert code == 0 and "delivered" in out.out
+    reading = signal_store.read(home, "moving-pin-delivery", now=NOW)
+    assert reading.state == "OK" and reading.value == "VERIFIED"
+    assert (home / "signals" / "moving-pin-delivery.json").read_bytes() == stored, \
+        "a refresh must not rewrite the reading (that would wake every subscriber)"
+    assert (home / "signals" / "moving-pin-delivery.detail").exists() is False
+
+
+def test_a_reading_the_sweep_turned_unknown_is_restored(tmp_path, capsys):
+    """The sweep's UNKNOWN is not permanent: the record still says the outcome (2026-11-17 15:01:42Z)."""
+    home = _site(tmp_path, [_rec("delivered")])
+    signal_store = _latch(home)
+    signal_store.observe_unknown(home, "moving-pin-delivery", now=NOW,
+                                 reason="expired after 7200s without observation", source="release_promotion")
+    assert signal_store.read(home, "moving-pin-delivery", now=NOW).state == "UNKNOWN"
+
+    code, out = _run(home, capsys)
+
+    assert code == 0 and "delivered" in out.out
+    stored = signal_store.recorded(home, "moving-pin-delivery")
+    assert stored["state"] == "OK" and stored["value"] == "VERIFIED"
+    assert stored["event"] == SHA + ":delivered", "the restored reading keeps the promotion's event"
+
+
+def test_a_latch_that_was_never_observed_stays_unobserved(tmp_path, capsys):
+    """A refresh creates no reading: a missing monitor must still age to UNKNOWN."""
+    home = _site(tmp_path, [_rec("delivered")])
+    from mishe_tauftauf import signal_store
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"])
+
+    assert _run(home, capsys)[0] == 0
+
+    assert signal_store.read(home, "moving-pin-delivery", now=NOW).state == "UNKNOWN"
+    assert not (home / "signals" / "moving-pin-delivery.seen").exists()
+
+
+def test_a_pointer_that_disagrees_does_not_refresh_the_latch(tmp_path, capsys):
+    """Only a verified reading refreshes: an UNKNOWN must not be kept warm."""
+    home = _site(tmp_path, [_rec("delivered")], pointer="b" * 40)
+    _latch(home)
+
+    assert _run(home, capsys)[0] == 3
+
+    assert abs((home / "signals" / "moving-pin-delivery.seen").stat().st_mtime - (NOW - 8000)) < 1
 
 
 def test_running_is_green_until_stuck_then_unknown(tmp_path, capsys):

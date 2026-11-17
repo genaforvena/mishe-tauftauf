@@ -10,6 +10,14 @@ Reads the newest record under SITE/work/releases (written by release_promotion.p
            the newest promotion is then unknown, not the newest record that happened to parse), a pointer that
            disagrees with a delivered record, or a promotion that has run longer than --stuck-min
 
+A GREEN reading is also this check's own observation of the ``moving-pin-delivery`` latch: that
+signal is published only when a promotion runs, so a pin equal to HEAD leaves it ``VERIFIED`` and
+unobserved until the generic expiry sweep turns it UNKNOWN after its 7200s ``max_age`` — a wake for
+field-review with nothing to review (2026-11-17, a 2h-quiet window after ``fc834468``). Re-observing
+the record's own outcome here (same value and event, so no edge and no wake; a swept-UNKNOWN reading
+is restored) keeps the latch as fresh as this reading, while a stall still leaves the pin trailing
+HEAD, which ``pin-lag`` reports.
+
 Exit: 0 GREEN, 2 RED, 3 UNKNOWN. GREEN prints to stdout, the others to stderr.
 """
 import argparse
@@ -61,6 +69,33 @@ def pointer_sha(home):
     return link.resolve().name if link.is_symlink() else None
 
 
+SRC = Path(__file__).resolve().parents[1] / "src"
+"""The release's own ``src``: the promotion's observation runtime, as its unit pins PYTHONPATH."""
+
+
+def keep_outcome_current(home, record, now):
+    """Re-observe the newest promotion's delivered outcome as ``moving-pin-delivery``.
+
+    The same value and event are not an edge, so a healthy latch only has its freshness stamp
+    advanced and no subscriber is woken; a reading the expiry sweep turned UNKNOWN is restored
+    to the outcome the record still shows. A latch the promotion never published is left to its
+    never-observed grace: nothing here may stand in for the missing publisher. This check's own
+    signal must not fail because the latch could not be re-observed, so the reason goes to stderr
+    and the caller's reading stands.
+    """
+    try:
+        if str(SRC) not in sys.path:
+            sys.path.insert(0, str(SRC))
+        from mishe_tauftauf import signal_store
+        if signal_store.recorded(home, "moving-pin-delivery") is None:
+            return
+        signal_store.observe(home, "moving-pin-delivery", "VERIFIED", now=now, source="pin-delivery",
+                             event=f"{record.get('sha', '')}:delivered")
+    except (ImportError, OSError, ValueError) as exc:
+        print(f"pin-delivery: could not record the moving-pin-delivery outcome "
+              f"({type(exc).__name__}: {exc}); its reading stands and may age to UNKNOWN", file=sys.stderr)
+
+
 def last_failing_line(record):
     out = (record.get("check") or {}).get("output")
     if not isinstance(out, str):
@@ -93,6 +128,7 @@ def main(argv=None):
             print(f"pin-delivery: {sha} is recorded delivered but runtime/current names {str(pointer_sha(a.home))[:8]}", file=sys.stderr)
             return 3
         print(f"pin-delivery: GREEN {sha} delivered {age_min:.0f} min ago ({len(record.get('paths', []))} paths)")
+        keep_outcome_current(a.home, record, now)
         return 0
     if phase in RUNNING:
         if age_min > a.stuck_min:
