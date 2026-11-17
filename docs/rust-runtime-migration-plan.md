@@ -3334,3 +3334,40 @@ is non-zero in live bytes), and the total is closest to the reader at quiet load
 rather than only under contention. The RSS reading stays in the low (Python-parent)
 band at 100-120 MB, so §10.54's spread is still open and is the next bounded
 measurement; nothing here licenses a total-CPU bar from one sample.
+
+### 10.57 The RSS spread was the launcher's resident set, not the fold's (2026-11-18)
+
+§10.54 left the 3x peak-RSS spread unexplained. Cause found and measured:
+`ru_maxrss` is not this process's own peak. Across fork+exec Linux carries the
+forking parent's resident set into the child's `signal->maxrss`, so
+`RUSAGE_SELF.ru_maxrss` never reports less than the launcher's RSS at fork. glibc
+arenas were the wrong hypothesis.
+
+Evidence, same fold and same tape per row
+(`.mishe-tauftauf/artifacts/rust-plan-20261107/rss-launch-probe-20261118.txt`):
+
+| launch context | reported `ru_maxrss` |
+|---|---|
+| python parent, `/usr/bin/python3` | 100,588 KB |
+| shell parent, `/usr/bin/python3` | 100,416 KB |
+| python parent, `.venv/bin/python` | 100,452 KB |
+| shell parent, `.venv/bin/python` | 100,388 KB |
+
+At the duty wrapper's size the launch context makes no difference. Then a parent
+that touched 400 MB (live 427,796 KB, peak 527 MB) spawned the identical child,
+which reported **427,648 KB** while its own peak stayed ~100 MB: the floor tracks
+the parent's live RSS at fork. The 350-360 MB shell readings were the launcher's
+resident set inherited through fork, not the fold's.
+
+What that means for the trigger: the 204,800 KB bar was comparing the caller
+against the fold. Under the thin `.venv` signal-run wrapper the history is
+100-120 MB and the bar is honest, but any larger caller — a wake engine, a
+harness that loaded the tape in-process — would have produced RED on a fold that
+never changed size.
+
+Fix, in this commit: the fold child reads `VmHWM` from `/proc/self/status`, which
+is reset at exec and therefore this process's own peak, falling back to
+`ru_maxrss` only when that file is unreadable. Verified with the 428 MB parent:
+the child now reports 100,312 KB; a full run is GREEN (`senses 116 MB`,
+`genome 98 MB`) and `tests/test_rust_measurement.py` passes (21 tests). The 110-120
+MB band in history is unchanged and stays comparable.

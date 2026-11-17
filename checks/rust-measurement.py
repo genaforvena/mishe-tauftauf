@@ -115,6 +115,18 @@ def child_cpu():
     u = resource.getrusage(resource.RUSAGE_CHILDREN)
     return u.ru_utime + u.ru_stime
 
+def peak_rss_kb():
+    # VmHWM is this process's own high-water mark after exec. ru_maxrss is not
+    # usable here: across fork+exec Linux carries the parent's RSS into the
+    # child's ru_maxrss, so a large launcher (plan 10.57) inflates it 3x.
+    try:
+        for line in open("/proc/self/status"):
+            if line.startswith("VmHWM:"):
+                return int(line.split()[1])
+    except OSError:
+        pass
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
 home, role = Path(sys.argv[1]), sys.argv[2]
 c0 = time.process_time(); k0 = child_cpu(); t0 = time.perf_counter()
 rows = Feed(home).role_entries(role, _force_full=True)
@@ -126,7 +138,7 @@ print(json.dumps({
     "children_cpu_s": round(k1 - k0, 3),
     "fold_cpu_s": round((c1 - c0) + (k1 - k0), 3),
     "elapsed_s": round(t1 - t0, 3),
-    "maxrss_kb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+    "maxrss_kb": peak_rss_kb(),
 }))
 """
 
