@@ -42,10 +42,25 @@ case "$*" in
       # A transient next-due timer: the stop removes it and the restart cannot
       # start that name again (observed 2026-11-17 11:28:18Z).
       [ -e "$SANDBOX/transient-timer" ] &&
-          printf 'mishe-next-due-abc123.timer loaded active waiting x\n' ;;
+          printf 'mishe-next-due-abc123.timer loaded active waiting x\n'
+      # A transient review-retry timer, same shape (11:28:26Z).
+      [ -e "$SANDBOX/review-retry-timer" ] &&
+          printf 'mishe-release-review-retry-abc123-1794913066.timer loaded active waiting x\n' ;;
+  *"list-units"*"--state=activating"*)
+      # Wake units whose start job is queued behind the dispatch lock, one with
+      # an omp already in its cgroup (live engine) and one without (queued).
+      [ -e "$SANDBOX/queued-wakes" ] &&
+          printf 'mishe-wake@queued.service loaded activating start start x\nmishe-wake@live.service loaded activating start start x\n' ;;
   *"list-units"*"--state=active"*)
       printf 'fake-a.service loaded active running x\nfake-b.service loaded active running x\nfake-c.service loaded active running x\n' ;;
   *"list-units"*) : ;;
+  *" show "*"-p ControlGroup"*)
+      # The test decides which unit's cgroup holds an omp process; the path is
+      # $MIGRATION_CGROUP_ROOT/<unit>/cgroup.procs.
+      u=
+      for a in "$@"; do case "$a" in mishe-wake@*) u=$a ;; esac; done
+      [ -n "$u" ] && printf '/%s\n' "$u"
+      exit 0 ;;
   *" cat "*) echo "ExecStart=/bin/true $SANDBOX/src/mishe-tauftauf/x" ;;
   *" start "*)
       if printf '%s' "$*" | grep -qE ' start +mishe-next-due-'; then
@@ -349,6 +364,59 @@ def test_disarm_stops_debounce_services_that_would_start_an_engine(tmp_path):
                for line in calls(root)), calls(root)
 
 
+def test_transient_review_retry_timer_is_not_restarted(tmp_path):
+    """Regression (2026-11-17 11:28:26Z): the restore logged three
+    `restart failed: mishe-release-review-retry-*`. They are `--on-active`
+    transient units created by schedule_review_retry, so stopping one destroys
+    the retry and the recorded name cannot be started again. Restart skips them;
+    schedule_review_retry_if_needed re-arms a pending review on later release
+    activity."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+    (root / "review-retry-timer").write_text("")
+
+    done = flip(root, "--execute")
+
+    out = done.stdout + done.stderr
+    assert done.returncode == 0, out
+    assert (root / "work" / "flip.done").exists()
+    assert "restart failed: mishe-release-review-retry" not in out, out
+    assert not any("start mishe-release-review-retry" in line for line in calls(root)), calls(root)
+
+
+def test_queued_wake_job_is_cancelled_but_a_live_engine_is_left_alone(tmp_path):
+    """Regression (2026-11-17 11:36Z): `mishe-wake@health` and `@field-review`
+    were `activating (start)` while the running wake held dispatch, so their
+    `mishe wake` processes waited with no omp yet. wake_engines() samples omp
+    only, so the drain proceeds and the queued job then starts an engine inside
+    the delta. Disarm must stop the queued unit; a unit that already has an omp
+    is a live engine the drain waits for, and must not be killed."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+    (root / "queued-wakes").write_text("")
+    cg = root / "cgroups"
+    queued = subprocess.Popen(["sleep", "60"])
+    live = subprocess.Popen(["bash", "-c", "exec -a omp sleep 60"])
+    try:
+        for unit, pid in (("mishe-wake@queued.service", queued.pid),
+                          ("mishe-wake@live.service", live.pid)):
+            d = cg / unit
+            d.mkdir(parents=True)
+            (d / "cgroup.procs").write_text(f"{pid}\n")
+        done = flip(root, "--execute", extra_env={"MIGRATION_CGROUP_ROOT": str(cg)})
+    finally:
+        queued.kill()
+        live.kill()
+        queued.wait()
+        live.wait()
+
+    out = done.stdout + done.stderr
+    assert done.returncode == 0, out
+    assert "cancelled queued wake mishe-wake@queued.service" in out, out
+    assert any("stop mishe-wake@queued.service" in line for line in calls(root)), calls(root)
+    assert not any("stop mishe-wake@live.service" in line for line in calls(root)), calls(root)
+
+
 def test_transient_next_due_timer_is_rearmed_not_restarted(tmp_path):
     """Regression (2026-11-17 11:28:18Z): `restarted 96 units` was preceded by
     `restart failed: mishe-next-due-92e2a1ca02bb.timer`. The snapshot holds a
@@ -404,7 +472,9 @@ def watchdog_body(root, *, bound, pid):
 
 def test_watchdog_rolls_back_when_the_flip_is_gone(tmp_path):
     root = sandbox(tmp_path)
-    (root / "work" / "flip.units").write_text("fake-a.service\nmishe-next-due-abc123.timer\n")
+    (root / "work" / "flip.units").write_text(
+        "fake-a.service\nmishe-next-due-abc123.timer\n"
+        "mishe-release-review-retry-abc123-1794913066.timer\n")
     (root / "src" / "mishe-tauftauf").rename(root / "src" / "mishe-tauftauf.pre-migration")
     shutil.rmtree(root / "src" / ".omp")
     (root / "src" / ".omp").symlink_to(root / "dst" / ".omp")
@@ -423,6 +493,9 @@ def test_watchdog_rolls_back_when_the_flip_is_gone(tmp_path):
     # A hard kill leaves the transient next-due timer stopped and unstartable by
     # name; the watchdog must re-arm it, or due-time wakes are gone with no timer.
     assert "restart failed: mishe-next-due-abc123.timer" not in log, log
+    # Same for the `--on-active` review-retry transient: starting its recorded
+    # name can only fail, and schedule_review_retry_if_needed re-arms it later.
+    assert "restart failed: mishe-release-review-retry" not in log, log
     assert any("start mishe-arm.service" in line for line in calls(root)), calls(root)
     assert "re-armed the next-due timer" in log, log
 

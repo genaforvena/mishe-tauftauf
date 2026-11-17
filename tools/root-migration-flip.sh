@@ -73,6 +73,9 @@ DELIVERY_DRAIN_TIMEOUT=${MIGRATION_DELIVERY_DRAIN_TIMEOUT:-900}
 # on 2026-11-17 the pass that ran with five live engines ended `NOT-CLEAN` after
 # ~25 min of delta+verify. Aborting here costs seconds and names the processes.
 WRITER_DRAIN_TIMEOUT=${MIGRATION_WRITER_DRAIN_TIMEOUT:-120}
+# Where systemd exposes unit cgroups, for cancel_queued_wakes() below. Overridable
+# only so the tests can point at a fake cgroup tree.
+CGROUP_ROOT=${MIGRATION_CGROUP_ROOT:-/sys/fs/cgroup}
 # Units that START a promotion. They are stopped before the drain (a delivery
 # begun inside a 1800 s drain checks and activates against the trees being
 # renamed) and are recorded in $UNITS so the restart paths bring them back.
@@ -147,11 +150,47 @@ writers_present() {
 #     11:34:19Z: cwd under the repo, `wake-debounce health --window 120`).
 #     Stopping it loses no trigger: the role stays owed and the arm after the
 #     restart retries it.
+#   * a `mishe-wake@<role>.service` whose start job is queued behind the dispatch
+#     lock is `activating` with no `omp` yet, so wake_engines() cannot see it and
+#     the drain proceeds; the job then starts an engine inside the delta (live
+#     example 11:36Z: `@health` and `@field-review` both activating/start while
+#     this wake held dispatch). Stop it to cancel the job. A unit that already
+#     has an `omp` in its cgroup is a live engine: the drain waits for it, and
+#     this must never kill it.
 # Disarm again inside the writer wait, immediately before the delta.
+cancel_queued_wakes() {
+    local u cg p own live
+    own=
+    [ -n "${MISHE_ROLE:-}" ] && own="mishe-wake@$MISHE_ROLE.service"
+    while read -r u; do
+        [ -n "$u" ] || continue
+        [ "$u" = "$own" ] && continue        # the wake that launched this flip
+        cg=$(systemctl --user show "$u" -p ControlGroup --value 2>/dev/null) || continue
+        [ -n "$cg" ] || continue
+        [ -r "$CGROUP_ROOT$cg/cgroup.procs" ] || continue
+        live=0
+        while read -r p; do
+            [ -r "/proc/$p/cmdline" ] || continue
+            if tr '\0' ' ' <"/proc/$p/cmdline" 2>/dev/null | grep -qE '(^|/)omp( |$)'; then
+                live=1
+                break
+            fi
+        done <"$CGROUP_ROOT$cg/cgroup.procs"
+        [ "$live" -eq 1 ] && continue
+        systemctl --user stop "$u" 2>/dev/null && log "cancelled queued wake $u" ||
+            log "queued wake stop failed: $u"
+    done < <(systemctl --user list-units --all --state=activating --no-legend --plain 'mishe-wake@*.service' 2>/dev/null | awk '{print $1}')
+}
+
 disarm_triggers() {
+    local rc=0
     systemctl --user stop 'mishe-wake-*.path' 'mishe-wake-debounce-*.service' \
         mishe-producer-dispatch.timer 'mishe-next-due-*.timer' \
-        'mishe-next-due-*.service' mishe-arm.service 2>/dev/null
+        'mishe-next-due-*.service' mishe-arm.service 2>/dev/null || rc=$?
+    # The caller logs a nonzero return: a trigger that refused to stop must stay
+    # visible, so the queued-wake pass must not overwrite that status.
+    cancel_queued_wakes
+    return "$rc"
 }
 
 # A live wake engine is an `omp` process launched with a wake prompt under the
@@ -209,8 +248,14 @@ restart_recorded() {
         # and the snapshot name cannot be started again (`restart failed:
         # mishe-next-due-92e2a1ca02bb.timer`, 2026-11-17 11:28:18Z). The arming
         # oneshot below re-arms one under the current release instead.
+        # `mishe-release-review-retry-<sha>-<ts>.timer` is the same shape: an
+        # `--on-active` transient created by schedule_review_retry, so stopping it
+        # destroys the retry and starting the recorded name fails (three such
+        # lines at 11:28:26Z). It is recoverable, not silent: a pending review is
+        # re-armed by schedule_review_retry_if_needed on the next release activity.
         case "$u" in
             mishe-next-due-*) continue ;;
+            mishe-release-review-retry-*) continue ;;
         esac
         systemctl --user start "$u" 2>/dev/null && n=$((n + 1)) || log "restart failed: $u"
     done <"$UNITS"
@@ -266,11 +311,12 @@ for t in ${TREES[*]}; do
     fi
 done
 # The watchdog restarts $UNITS itself (it cannot call restart_recorded: it runs
-# in its own transient unit). A transient next-due timer cannot be started by its
-# snapshot name, so it is skipped and the timer is re-armed through the oneshot,
-# exactly as restart_recorded does after an in-process restore.
+# in its own transient unit). A transient next-due or review-retry timer cannot be
+# started by its snapshot name, so both are skipped and the next-due timer is
+# re-armed through the oneshot, exactly as restart_recorded does after an
+# in-process restore.
 while read -r u; do
-    case "\$u" in mishe-next-due-*) continue ;; esac
+    case "\$u" in mishe-next-due-*|mishe-release-review-retry-*) continue ;; esac
     systemctl --user start "\$u" 2>/dev/null || p "restart failed: \$u"
 done <$UNITS
 systemctl --user start mishe-arm.service 2>/dev/null && p 're-armed the next-due timer' ||
