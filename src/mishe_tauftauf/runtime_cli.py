@@ -168,7 +168,8 @@ def register(sub) -> None:
     inbox = add("inbox").add_subparsers(dest="inbox_command", required=True)
     p = inbox.add_parser("touch"); p.set_defaults(func=cmd_runtime); p.add_argument("role")
     hold = add("hold"); hold.add_argument("state", choices=("on", "off", "status"))
-    hold.add_argument("--reason", default="held")
+    hold.add_argument("--reason", default=None,
+                      help="why autonomous work must stop; required for 'on' and must not be the old default 'held'")
     add("arm"); add("due"); add("migrate")
     p = add("wake-debounce"); p.add_argument("role"); p.add_argument("--window", type=float, required=True)
     p = add("failed"); p.add_argument("unit")
@@ -340,7 +341,12 @@ def run(args) -> int:
     if args.command == "hold":
         path = home / "hold"
         if args.state == "on":
-            path.write_text(args.reason + "\n")
+            reason = (args.reason or "").strip()
+            if not reason or reason == "held":
+                print("mishe hold on needs --reason explaining why autonomous work must stop; "
+                      "the old default 'held' is refused", file=sys.stderr)
+                return 2
+            path.write_text(reason + "\n")
         elif args.state == "off":
             path.unlink(missing_ok=True)
             wake.resume_owed(home, declared_roles(home), now=now)  # wakes that arrived while held would not otherwise return

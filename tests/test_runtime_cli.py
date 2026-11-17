@@ -89,6 +89,15 @@ def test_hold_blocks_wake(site):
     assert cli("hold", "off") == 0
 
 
+def test_hold_on_needs_a_reason(site):
+    assert cli("hold", "on") == 2
+    assert cli("hold", "on", "--reason", "held") == 2
+    assert not (site / "hold").exists()
+    assert cli("hold", "on", "--reason", "operator: migration window 16:00-16:10") == 0
+    assert (site / "hold").read_text() == "operator: migration window 16:00-16:10\n"
+    assert cli("hold", "off") == 0
+
+
 def test_yield_outside_a_wake_is_refused(site):
     assert cli("yield", "--result", "changed") == 2
 
@@ -233,7 +242,7 @@ def test_releasing_the_hold_offers_the_owed_role(site, monkeypatch):
     started = []
     monkeypatch.setattr(wake, "systemd_starter", started.append)
     owed.touch_inbox(site, "genome")
-    cli("hold", "on")
+    cli("hold", "on", "--reason", "test hold")
     cli("hold", "off")
     assert started == ["genome"]
 
@@ -244,7 +253,7 @@ def test_releasing_the_hold_starts_every_owed_role_without_a_new_trigger(site, m
     monkeypatch.setattr(wake, "systemd_starter", started.append)
     owed.touch_inbox(site, "genome")
     owed.touch_inbox(site, "health")
-    cli("hold", "on")
+    cli("hold", "on", "--reason", "test hold")
     assert started == []                       # held: nothing fires yet
     cli("hold", "off")
     assert sorted(started) == ["genome", "health"]
