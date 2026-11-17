@@ -334,7 +334,7 @@ Measured values at 23:46Z are shown; each trigger is checked again immediately b
 | Revival timer | `plant-mishe-revive.timer` active; last service `Result=success`; not recovering from a trip | timer active, last trigger 23:42:16Z, `Result=success` | pass |
 | Containment | `/var/lib/mishe-containment/tripped` absent | absent | pass |
 | Mind windows | no `mishe-wake@*` running and no wake starting within the build window | not checked in this pass | UNKNOWN; must be checked immediately before build |
-| Niceness and caps | build under `nice -n 19`, `CARGO_BUILD_JOBS=2` (-j2), and a transient cgroup with `MemoryMax` set below the host limit | not applicable (no build) | to be defined by the build assignment |
+| Niceness and caps | build under `nice -n 19`, `--jobs 2` (`CARGO_BUILD_JOBS`/`MISHE_BUILD_JOBS`), and a transient cgroup with `MemoryMax` set below the host limit | not applicable (no build) | enforced by `tools/install-rust-binaries.sh` and `tools/delivery_check.py` since §10.49 |
 | Location | build once in a throwaway directory, outside the repo checkout and outside `src/` | not applicable | to be enforced |
 
 If any trigger fails: no build. The slice slips. The Python path stays authoritative, and the Python-first steps continue on their own assignments.
@@ -3008,3 +3008,43 @@ start of the file that will become one.
 promotion reaches the pin; the detector of that is the first history line whose
 `measured_at` is an automatic hourly run after the pin moves, with the pin's
 checker sha in the release. Until then the file has exactly the smoke line.
+
+### 10.49 The bootstrap build takes the §6.2 caps, so a release build cannot saturate the host (2026-11-17)
+
+**Evidence.** The 07:06:26Z root-filesystem stall coincides with six
+`nice-19 cargo build --release` jobs from release `16df940c` started at
+07:04:30Z (`docs/root-fs-migration-plan.md`, "the coincident load was Rust
+builds on the other drive"). The script built one crate at a time, but each
+`cargo build` defaulted to one rustc job per online CPU — 16 here — so the
+serial loop still put a 16-way compile behind every crate.
+`tools/delivery_check.py` already built with `--jobs 2` inside
+`systemd-run --scope -p MemoryMax=2G nice -n 19`; the bootstrap script had no
+cap at all, which §6.2 lists as "to be defined by the build assignment".
+
+**Change.** `tools/install-rust-binaries.sh` now builds with
+`--jobs "${MISHE_BUILD_JOBS:-2}"` through the same wrapper as
+`delivery_check.py` (`systemd-run --user --scope -p MemoryMax=2G nice -n 19`),
+falling back to bare `nice -n 19` when the user manager does not answer a probe.
+It keeps `--locked` and does not add `--offline`, because a fresh clone must
+still fetch its dependencies.
+
+**Checks.** The stub tests assert the new argv (`--jobs 2`) and pass (2 passed).
+A real run into a throwaway site with the warm `/mnt/mishe-scratch` cache
+installed all eight binaries and exited 0; the journal shows the cap took effect:
+`Started run-u1516336.scope - /usr/bin/nice -n 19 …cargo build --release --locked
+--jobs 2 --target-dir /mnt/mishe-scratch/…`.
+
+**Limits.** The caps bound parallelism, priority and build memory but not CPU
+time or start-time host pressure: the script still begins a build under load.
+A start-time `MemAvailable`/`psi` gate is the next bounded change if a build is
+ever seen starting over the §6.2 triggers. This is not a delivery-mechanism
+change — it builds the same bytes it built before, only more slowly — so it
+takes the ordinary path; the capped argv becomes live with the next build from
+any checked checkout or promoted release.
+
+**Observed (07:34:56Z).** The detector fired inside this wake: starting the
+pinned unit by hand (`releases/16df940c…`, its ExecStart already naming that
+release) ran 11.4 s with `outcome=exit=0` and appended the first line written by
+the checker under the pin — `verdict: green`, senses 3.313 CPU-s / 119,676 KB,
+genome 3.418 CPU-s / 100,412 KB, guard `load1` 2.07, `some avg10` 2.96,
+`over []`. The hourly timer's own run is next due 07:58:08Z.

@@ -56,12 +56,25 @@ commit="$(git -C "$repo" rev-parse HEAD)"
 bin_dir="$site/bin"
 mkdir -p "$bin_dir"
 
+# Build caps from docs/rust-runtime-migration-plan.md §6.2: two jobs, nice 19 and a
+# transient cgroup memory cap. Cargo's default -j is one job per online CPU, and a
+# 2026-11-17 07:06Z release build at that default drove the host into a root-fs stall.
+build_jobs="${MISHE_BUILD_JOBS:-2}"
+build_wrap=()
+if command -v systemd-run >/dev/null 2>&1 &&
+   systemd-run --user --quiet --scope -p MemoryMax=2G true >/dev/null 2>&1; then
+  build_wrap=(systemd-run --user --quiet --scope -p MemoryMax=2G nice -n 19)
+elif command -v nice >/dev/null 2>&1; then
+  build_wrap=(nice -n 19)
+fi
+
 while IFS=: read -r crate binary; do
   crate_dir="$repo/rust/$crate"
   echo "build $crate -> $binary"
   # Build from the crate directory: rustup resolves rust-toolchain.toml from cwd,
   # so --manifest-path from the caller's cwd would build with the default toolchain.
-  (cd "$crate_dir" && "$cargo_bin" build --release --locked --target-dir "$cache/$crate")
+  (cd "$crate_dir" && "${build_wrap[@]}" "$cargo_bin" build --release --locked \
+     --jobs "$build_jobs" --target-dir "$cache/$crate")
   built="$cache/$crate/release/$binary"
   if [ ! -x "$built" ]; then
     echo "install-rust-binaries: build produced no $built" >&2

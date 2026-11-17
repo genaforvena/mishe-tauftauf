@@ -75,7 +75,7 @@ def test_builds_into_cache_from_crate_dir_and_installs(stub_env):
         cwd, argv = line.split(" argv=")
         crate = Path(cwd.removeprefix("cwd=")).name
         assert Path(cwd.removeprefix("cwd=")).parent == REPO / "rust"
-        assert argv == f"build --release --locked --target-dir {cache / crate}"
+        assert argv == f"build --release --locked --jobs 2 --target-dir {cache / crate}"
     for binary in ["mishe-tape", "mishe-records", "mishe-signal-sample", "mishe-cgroup-counters"]:
         assert (site / "bin" / binary).exists()
         assert (site / "bin" / f"{binary}.install.json").exists()
