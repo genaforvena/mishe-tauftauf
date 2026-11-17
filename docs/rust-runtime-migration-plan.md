@@ -3075,6 +3075,15 @@ line, `07:02:17Z`, is §10.48's bare-checker smoke (3.785 / 3.737).
 That run was mine, not the timer's, and it moved the timer's own schedule: the
 unit is `OnUnitActiveSec=3600` with a 120 s randomized delay, so
 `LastTriggerUSec` stayed at 06:34:43Z, the 07:35Z automatic run was displaced,
-and the next automatic run is 08:35:37Z. §10.48's detector — a history line from
-an automatic run under the pin — is therefore still pending. One automatic
-sample moved by an hour; none was lost.
+and the next automatic run was 08:35:37Z. One automatic sample moved by an hour;
+none was lost.
+
+**Observed (08:35:12Z, automatic).** The timer fired on its own:
+`LastTriggerUSec=08:34:56Z`, matched by the service's `Starting` line, under the
+current pin (`ExecStart` names `releases/0ccfd809…`). The checker appended a
+green line at `08:35:12Z` — senses 3.834 CPU-s / 8.52 s / 119,836 KB, genome
+3.609 CPU-s / 6.808 s / 100,400 KB, guard `load1` 1.22, CPU `some avg10` 20.54,
+memory `some avg10` 0.04, `over []`. Both roles sit well under the 5.0 CPU-s and
+204,800 KB bars, so §10.48's detector — a history line from an automatic run
+under the pin — is satisfied and the GREEN signal is not ageing on a broken
+timer. The timer re-armed to 09:36:15Z.
