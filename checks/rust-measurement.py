@@ -38,16 +38,43 @@ readings and guard facts, a guard skip keeps the reason and the guard facts it
 observed. The 60 bar in §10.45 rests on one measured point, so the history is
 how the next calibration gets a curve instead of another forced fold; it is
 bounded to the newest `HISTORY_MAX_LINES` lines.
+
+Each run also checks the binary side of the same slice, because a CPU reading of
+a path that cannot run says nothing. The Rust binaries live in `$SITE/bin` and a
+pin move does not refresh them (plan 10.46), so a release can carry crate source
+newer than the bytes the consumer execs. `git diff` from a binary's recorded
+install commit to the release commit over that crate's `.rs`, `Cargo.toml`,
+`Cargo.lock` and `build.rs` is positive drift: the reading then cannot stand for
+the release's source, so the run is RED and names the rebuild. A record whose
+sha256 no longer matches its bytes is RED too, since the resolver refuses those
+bytes. A site with no `bin/` installs, or a release whose commit or one install
+commit git cannot resolve, reports the gap and keeps the CPU verdict.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# Installed binary under $SITE/bin : crate directory under rust/.
+CRATES = {
+    "mishe-cgroup-counters": "mishe-cgroup-counters",
+    "mishe-network-probe": "mishe-network-probe",
+    "mishe-records": "mishe-records",
+    "mishe-signal-freshness": "mishe-signal-freshness",
+    "mishe-signal-sample": "mishe-signal-samples",
+    "mishe-systemd-show": "mishe-systemd-show",
+    "mishe-tape": "mishe-tape",
+    "mishe-tape-facts": "mishe-tape-facts",
+    "mishe-unit-paths": "mishe-unit-paths",
+}
+# Files whose change alters the compiled bytes or the dependency graph they fix.
+SOURCE_NAMES = ("Cargo.toml", "Cargo.lock", "build.rs")
 
 DEFAULT_ROLES = ("senses", "genome")
 DEFAULT_CPU_TRIGGER_S = 5.0
@@ -167,6 +194,66 @@ def fold_role(repo: Path, home: Path, role: str, timeout: int) -> dict:
     return json.loads(lines[-1])
 
 
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    """Run one bounded read-only git query against the release worktree."""
+    try:
+        return subprocess.run(["git", "-C", str(repo), *args],
+                              capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return subprocess.CompletedProcess(args, 127, "", str(exc))
+
+
+def binary_provenance(home: Path, repo: Path) -> dict:
+    """Compare each installed Rust binary with the crate source in this release.
+
+    Drift is source the release carries that the installed bytes were not built
+    from; `broken` is an install record that no longer matches its bytes and that
+    the resolvers therefore refuse. `unknown` names evidence this run could not
+    read at all; it is reported and never turns into GREEN on its own.
+    """
+    facts: dict = {"checked": 0, "drift": [], "broken": [], "unknown": None}
+    bin_dir = home / "bin"
+    if not bin_dir.is_dir():
+        facts["unknown"] = f"no bin dir under {home}; no Rust installs to check"
+        return facts
+    head = _git(repo, "rev-parse", "--verify", "HEAD")
+    pin = head.stdout.strip()
+    if head.returncode != 0 or not pin:
+        facts["unknown"] = f"release commit unreadable: {(head.stderr or head.stdout).strip()[:200]}"
+        return facts
+    for binary, crate in CRATES.items():
+        record_path = bin_dir / f"{binary}.install.json"
+        if not record_path.is_file():
+            continue
+        try:
+            record = json.loads(record_path.read_text())
+            recorded = str(record["sha256"])
+            install_commit = str(record["source_commit"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            facts["broken"].append(f"{binary}: unreadable install record: {exc}")
+            continue
+        try:
+            digest = hashlib.sha256((bin_dir / binary).read_bytes()).hexdigest()
+        except OSError as exc:
+            facts["broken"].append(f"{binary}: installed binary unreadable: {exc}")
+            continue
+        facts["checked"] += 1
+        if digest != recorded:
+            facts["broken"].append(
+                f"{binary}: sha256 {digest[:12]} != install record {recorded[:12]}")
+        diff = _git(repo, "diff", "--quiet", install_commit, pin, "--",
+                    f":(glob)rust/{crate}/*.rs", f":(glob)rust/{crate}/**/*.rs",
+                    *(f"rust/{crate}/{name}" for name in SOURCE_NAMES))
+        if diff.returncode == 1:
+            facts["drift"].append(
+                f"{binary}: rust/{crate} differs between install {install_commit[:8]} "
+                f"and release {pin[:8]}")
+        elif diff.returncode != 0:
+            facts["unknown"] = (f"{binary}: cannot compare {install_commit[:8]}..{pin[:8]}: "
+                                f"{(diff.stderr or diff.stdout).strip()[:200]}")
+    return facts
+
+
 def append_history(home: Path, record: dict, max_lines: int = HISTORY_MAX_LINES) -> None:
     """Append one run to the bounded history beside the latest artifact.
 
@@ -225,6 +312,7 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     roles = [r.strip() for r in args.roles.split(",") if r.strip()]
+    provenance = binary_provenance(home, repo)
     readings = []
     try:
         for role in roles:
@@ -242,6 +330,12 @@ def main(argv: list[str] | None = None) -> int:
                         f"{args.rss_trigger_kb // 1024} MB")
     summary = "; ".join(f"{r['role']} {r['cpu_s']} CPU-s {r['maxrss_kb'] // 1024} MB "
                         f"{r['entries']} entries" for r in readings)
+    drift = provenance["drift"]
+    broken = provenance["broken"]
+    binaries = (f"{provenance['checked']} checked"
+                + (f", {len(drift)} drift" if drift else "")
+                + (f", {len(broken)} broken" if broken else "")
+                + (f", unknown: {provenance['unknown']}" if provenance["unknown"] else ""))
 
     if not args.no_artifact:
         measured_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -254,22 +348,29 @@ def main(argv: list[str] | None = None) -> int:
                 "triggers": {"cpu_s": args.cpu_trigger, "rss_kb": args.rss_trigger_kb},
                 "guard": guard,
                 "over": over,
+                "binaries": provenance,
             }, indent=1) + "\n")
         except OSError as exc:
             print(f"rust-measurement: artifact not written: {exc.strerror or exc}", file=sys.stderr)
         append_history(home, {
             "measured_at": measured_at,
-            "verdict": "over" if over else "green",
+            "verdict": "red" if over or drift or broken else "green",
             "readings": readings,
             "guard": guard,
             "over": over,
+            "binaries": provenance,
         })
 
+    if drift or broken:
+        print("rust-measurement: RED installed Rust bytes do not match the release source: "
+              f"{'; '.join(broken + drift)}", file=sys.stderr)
+        return 2
     if over:
         print(f"rust-measurement: RED trigger hit, slice may reopen: {'; '.join(over)} [{summary}]",
               file=sys.stderr)
         return 2
-    print(f"rust-measurement: GREEN under triggers, slice stays closed: {summary}")
+    print(f"rust-measurement: GREEN under triggers, slice stays closed: {summary} "
+          f"[binaries {binaries}]")
     return 0
 
 

@@ -190,3 +190,103 @@ def test_history_is_bounded_to_the_newest_lines(tmp_path):
     path.write_text("".join('{"n":%d}\n' % i for i in range(5)))
     mod.append_history(home, {"n": 5}, max_lines=3)
     assert path.read_text().splitlines() == ['{"n":3}', '{"n":4}', '{"n":5}']
+
+
+def _commit(repo: Path, message: str) -> str:
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@example.invalid",
+                    "-c", "user.name=t", "commit", "-qm", message], check=True)
+    out = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                         capture_output=True, text=True, check=True)
+    return out.stdout.strip()
+
+
+def _rust_release(tmp_path: Path) -> Path:
+    """A release worktree: one crate, and the package the fold child imports."""
+    repo = tmp_path / "release"
+    (repo / "rust" / "mishe-tape" / "src").mkdir(parents=True)
+    (repo / "rust" / "mishe-tape" / "Cargo.toml").write_text("[package]\nname='mishe-tape'\n")
+    (repo / "rust" / "mishe-tape" / "src" / "main.rs").write_text("fn main() {}\n")
+    package = repo / "src" / "mishe_tauftauf"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "feed.py").write_text(
+        "class Feed:\n"
+        "    def __init__(self, home): pass\n"
+        "    def role_entries(self, role, _force_full=False): return [None] * 3\n")
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    _commit(repo, "release with the installed bytes")
+    return repo
+
+
+def _install(home: Path, repo: Path) -> Path:
+    """An install record whose sha256 matches the bytes and whose commit is HEAD."""
+    import hashlib
+
+    bin_dir = home / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    body = bin_dir / "mishe-tape"
+    body.write_bytes(b"frame the tape\n")
+    commit = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    (bin_dir / "mishe-tape.install.json").write_text(json.dumps({
+        "binary": "mishe-tape",
+        "sha256": hashlib.sha256(body.read_bytes()).hexdigest(),
+        "source_commit": commit,
+    }))
+    return body
+
+
+def test_binary_provenance_is_clean_when_the_crates_match_the_installed_bytes(tmp_path):
+    mod = check_module()
+    repo = _rust_release(tmp_path)
+    home = tmp_path / "site"
+    _install(home, repo)
+    facts = mod.binary_provenance(home, repo)
+    assert facts["checked"] == 1 and facts["drift"] == [] and facts["broken"] == []
+    assert facts["unknown"] is None
+
+
+def test_binary_provenance_flags_crate_source_newer_than_the_installed_bytes(tmp_path):
+    # The plan's 10.46 gap: $SITE/bin is not refreshed by a pin move, so a release
+    # can carry crate source newer than the bytes the consumer execs.
+    mod = check_module()
+    repo = _rust_release(tmp_path)
+    home = tmp_path / "site"
+    _install(home, repo)
+    (repo / "rust" / "mishe-tape" / "src" / "main.rs").write_text("fn main() { }\n")
+    _commit(repo, "newer crate source")
+    facts = mod.binary_provenance(home, repo)
+    assert facts["checked"] == 1
+    assert len(facts["drift"]) == 1 and "mishe-tape" in facts["drift"][0]
+    assert facts["broken"] == []
+
+
+def test_binary_provenance_flags_bytes_that_no_longer_match_their_record(tmp_path):
+    mod = check_module()
+    repo = _rust_release(tmp_path)
+    home = tmp_path / "site"
+    body = _install(home, repo)
+    body.write_bytes(b"not the built bytes\n")
+    facts = mod.binary_provenance(home, repo)
+    assert facts["checked"] == 1 and facts["drift"] == []
+    assert len(facts["broken"]) == 1 and "sha256" in facts["broken"][0]
+
+
+def test_installed_binary_drift_is_red_not_green(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir()
+    repo = _rust_release(tmp_path)
+    _install(home, repo)
+    (repo / "rust" / "mishe-tape" / "src" / "main.rs").write_text("fn main() { }\n")
+    _commit(repo, "newer crate source")
+    proc = subprocess.run(
+        [sys.executable, str(CHECK), "--home", str(home), "--repo", str(repo),
+         "--roles", "senses", "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000",
+         "--max-load", "100000", "--max-cpu-pressure", "100000",
+         "--max-mem-pressure", "100000"], capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "RED installed Rust bytes" in proc.stderr and "mishe-tape" in proc.stderr
+    record = json.loads((home / "artifacts" / "rust-plan-20261107"
+                         / "rust-measurement-history.jsonl").read_text().splitlines()[0])
+    assert record["verdict"] == "red" and record["binaries"]["drift"]

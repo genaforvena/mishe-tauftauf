@@ -3087,3 +3087,50 @@ memory `some avg10` 0.04, `over []`. Both roles sit well under the 5.0 CPU-s and
 204,800 KB bars, so §10.48's detector — a history line from an automatic run
 under the pin — is satisfied and the GREEN signal is not ageing on a broken
 timer. The timer re-armed to 09:36:15Z.
+
+### 10.50 The mounted binaries are checked against the release source every hour, and the consumer was observed exec'ing them (2026-11-17)
+
+§10.46 established that `$SITE/bin` is not refreshed by a pin move and that the
+exposure was zero; nothing then observed either fact again. Two things now do.
+
+**The live consumer execs the Rust bytes.** Under the current pin
+(`6f48d99f`, 18:29Z) `strace -f -e trace=execve` on `mishe wall show --owner
+rust-plan`, run with the wake's own environment (`PYTHONPATH=runtime/current/src`,
+`PATH` starting at `SITE/bin`), shows one exec of
+`SITE/bin/mishe-tape frames /proc/self/fd/3 --start 302483 --offset 230376423
+--size 230390932`, and `-e trace=openat` shows the process importing
+`runtime/current/src/mishe_tauftauf/{cli,feed,…}.pyc` — so the framing runs the
+installed Rust binary and the parsing runs the pinned release, not the checkout.
+All nine installed binaries' sha256 match their `install.json` records
+(`mishe-tape d67f07b0…`, `mishe-records 4910485…`, `mishe-tape-facts a56d42df…`).
+The four records older than their crate's last commit (`network-probe`,
+`signal-freshness`, `signal-samples`, `tape-facts`) differ only in
+`CONTRACT.md`, `.gitignore` and docs: no `.rs` byte is stale.
+
+**The drift check now runs with the measurement.** `checks/rust-measurement.py`
+compares each installed binary with the release it is being run from:
+`git diff --quiet <install source_commit> <release commit>` over the crate's
+`*.rs`, `Cargo.toml`, `Cargo.lock` and `build.rs`. A difference is positive
+drift — the release carries source the installed bytes were not built from — and
+the run is RED naming the binary; a record whose sha256 no longer matches its
+bytes is RED too, because the resolver refuses those bytes. A site with no
+`bin/`, or a commit git cannot resolve, is reported as unknown in the sample and
+never becomes GREEN on its own. Nine `git diff` calls and nine sha256 are
+negligible beside the folds. Measured on the live pin: `checked 9, drift [],
+broken [], unknown null`, and the full run printed
+`senses 3.142 CPU-s 117 MB 36385 entries; genome 3.249 CPU-s 98 MB 30337
+entries [binaries 9 checked]`, exit 0, 6.5 s — under both triggers. The hourly
+history keeps the `binaries` block beside the reading.
+
+**Checks.** `tests/test_rust_measurement.py` (17 passed) gains a temporary git
+release: clean provenance, newer crate source flagged as drift, bytes that no
+longer match their record flagged as broken, and a full run that exits 2 with
+`verdict: red` when drift is present. The 2-minute cadence of the unit is
+unchanged.
+
+**Limits.** The checker itself becomes live when the next promotion reaches the
+pin; until then the pin runs the previous checker and the history line is the
+detector. Detecting drift is not rebuilding: the release still does not carry
+its binaries (§10.46, component-deploy step 3 open), so a drifted install needs
+`tools/install-rust-binaries.sh` run from the release. A rebuild inside release
+construction is delivery-mechanism work and stays separate.
