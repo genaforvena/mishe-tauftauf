@@ -628,6 +628,18 @@ def schedule_review_retry_if_needed(home, current):
     current["review_retry_attempts"] = attempts
 
 
+def _identity(record):
+    """The review identity a record names, or ``None`` when it names none.
+
+    A partially written or malformed record must not fail the whole work poll
+    (review note on 3a2379dd, 2026-11-17): this scan can only act on a record
+    that names its identity, so it skips the rest and leaves their repair to
+    whoever owns that record.
+    """
+    identity = record.get("id")
+    return identity if isinstance(identity, str) and identity else None
+
+
 def rearm_lost_review_retries(home, *, clock=time.time, live_units=None):
     """Re-arm the retries whose transient unit a stop/collect cycle removed.
 
@@ -652,7 +664,10 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None):
             current = read_json(path)
             if not current or current.get("review_pending") is not True:
                 continue
-            if current.get("review_retry_attempts") != _review_attempts(home, current["id"]):
+            identity = _identity(current)
+            if identity is None:
+                continue
+            if current.get("review_retry_attempts") != _review_attempts(home, identity):
                 continue
             if not _review_retry_lost(current, clock(), live):
                 continue
@@ -660,7 +675,10 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None):
                 current = read_json(path)
                 if not current or current.get("review_pending") is not True:
                     continue
-                if current.get("review_retry_attempts") != _review_attempts(home, current["id"]):
+                identity = _identity(current)
+                if identity is None:
+                    continue
+                if current.get("review_retry_attempts") != _review_attempts(home, identity):
                     continue
                 if not _review_retry_lost(current, clock(), live):
                     continue
@@ -671,7 +689,7 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None):
             # evidence; the next poll re-reads it. A malformed record is not
             # this scan's to repair, and must not fail the whole poll.
             continue
-        armed.append(current["id"])
+        armed.append(identity)
     return armed
 
 

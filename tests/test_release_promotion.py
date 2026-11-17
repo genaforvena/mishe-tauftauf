@@ -495,6 +495,35 @@ def test_work_poll_scan_rearms_only_a_lost_retry(tmp_path,monkeypatch):
     assert len(launched)==2, launched
 
 
+def test_a_malformed_record_does_not_fail_the_work_poll(tmp_path,monkeypatch):
+    # Review note on 3a2379dd: a record without "id" raised KeyError outside the
+    # scan's caught tuple, so one bad write failed the whole work poll. The scan
+    # skips what it cannot identify and still arms the rest.
+    from mishe_tauftauf import release_promotion as p
+    (tmp_path/"work/reviews").mkdir(parents=True)
+    (tmp_path/"work/releases").mkdir(parents=True)
+    launched=[]
+    class NoUnits: stdout=""; returncode=0
+    def fake(argv,**kw):
+        if argv[0]=="systemd-run":
+            launched.append(argv)
+        return NoUnits()
+    monkeypatch.setattr(p.subprocess,"run",fake)
+    now=time.time()
+    write_json(p.record_path(tmp_path,"rel-good"),
+               dict(id="rel-good",sha="9"*40,source=str(tmp_path),review_pending=True,
+                    review_retry_attempts=0,review_retry_state="scheduled in 1800s"))
+    write_json(p.record_path(tmp_path,"rel-noid"),
+               dict(sha="8"*40,source=str(tmp_path),review_pending=True,
+                    review_retry_attempts=0,review_retry_state="scheduled in 1800s"))
+    write_json(p.record_path(tmp_path,"rel-empty-id"),
+               dict(id="",sha="7"*40,source=str(tmp_path),review_pending=True,
+                    review_retry_attempts=0,review_retry_state="scheduled in 1800s"))
+    assert p.rearm_lost_review_retries(tmp_path,clock=lambda: now)==["rel-good"]
+    assert len(launched)==1, launched
+    assert read_json(p.record_path(tmp_path,"rel-noid"))["review_retry_state"]=="scheduled in 1800s"
+
+
 def test_a_record_with_a_live_retry_unit_is_not_armed_again(tmp_path,monkeypatch):
     from mishe_tauftauf import release_promotion as p
     (tmp_path/"work/releases").mkdir(parents=True)
