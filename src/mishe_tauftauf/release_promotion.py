@@ -558,6 +558,9 @@ REVIEW_RETRY_BASE_S = 1800
 REVIEW_RETRY_MAX_ATTEMPTS = 8
 """How many failed reviews a release re-runs before it stops trying."""
 
+REVIEW_EXHAUSTED_DUE_S = 21600
+"""How long an owner has to answer a spent review-retry ladder before the intention returns."""
+
 REVIEW_RETRY_REARM_GRACE_S = 900
 """How long past its due time a recorded retry may stay silent before it is armed again.
 
@@ -682,6 +685,40 @@ def schedule_review_retry(home, record, *, due, runner=None):
     return at
 
 
+def _announce_exhausted_review_retry(home, current):
+    """Make a spent review-retry ladder an obligation instead of silence.
+
+    ``_review_retry_lost`` answers False for "exhausted", so no later scan arms
+    the record again and its next failed attempt never merges: before this, eight
+    failed reviews ended as a record that kept ``review_pending`` true with no due
+    time, no intention and no message (2026-11-17). Every other non-clear outcome
+    of ``merge_review`` raises an intention; the terminal one did not. The
+    intention id is keyed on the sha, so a repeated call overwrites rather than
+    accumulating obligations.
+    """
+    from . import intentions
+    from .failure import default_notify
+    owner = current.get("owner")
+    if not isinstance(owner, str) or not owner:
+        owner = "genome"                    # the attribution fallback of a delivered record
+    path = record_path(home, current["id"])
+    try:
+        intentions.add(home, owner, "review-exhausted-" + (current.get("sha") or "")[:12],
+                       note=(f"Independent review of {current['id']} is still pending after "
+                             f"{REVIEW_RETRY_MAX_ATTEMPTS} failed retries; the ladder is spent and no unit "
+                             f"is armed. Re-run the review by hand or accept the release without one. "
+                             f"Record: {path}"),
+                       due=time.time() + REVIEW_EXHAUSTED_DUE_S)
+        default_notify(home, owner,
+                       f"Release {current['id']}: independent review still unavailable after "
+                       f"{REVIEW_RETRY_MAX_ATTEMPTS} retries; review_pending stays true and no further retry "
+                       f"is armed. Record: {path}")
+    except (OSError, RuntimeError, ValueError) as exc:
+        # A broken intentions directory or uninstalled chat tape must not abort
+        # the exhaustion write: record why the owner was not told instead.
+        current["review_retry_notice_error"] = str(exc)
+
+
 def schedule_review_retry_if_needed(home, current):
     """Record one delayed re-run for ``current``'s newest unanswered review error.
 
@@ -724,6 +761,7 @@ def schedule_review_retry_if_needed(home, current):
         if delay is None:
             current["review_retry_state"] = "exhausted"
             current.pop("review_retry_due", None)
+            _announce_exhausted_review_retry(home, current)
         else:
             armed = schedule_review_retry(home, current, due=time.time() + delay)
             current["review_retry_state"] = f"scheduled in {int(delay)}s"

@@ -383,6 +383,38 @@ def test_deferred_review_error_merge_schedules_the_retry(tree,monkeypatch):
     assert record["review_retry_state"]=="scheduled in 1800s"
 
 
+def test_spent_retry_ladder_raises_one_owner_obligation(tree,monkeypatch):
+    # The eighth failed attempt spends the ladder: "exhausted" makes
+    # _review_retry_lost answer False forever, so before this the record kept
+    # review_pending true with no due, no unit, no intention and no message
+    # (2026-11-17). The owner must get one obligation and one notice, and no
+    # ninth unit; a re-scan of the spent record must add neither.
+    from mishe_tauftauf import failure, intentions
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha);p.materialize(home,repo,old)
+    identity="spent"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",
+        owner="docs",source=str(source),paths=["docs/page.md"],check=dict(output="pass"),
+        review_pending=True,review_error="reviewer quota spent"))
+    for n in range(p.REVIEW_RETRY_MAX_ATTEMPTS):
+        (home/"work/reviews"/f"{identity}-{n}.failed-attempt.json").parent.mkdir(parents=True,exist_ok=True)
+        (home/"work/reviews"/f"{identity}-{n}.failed-attempt.json").write_text("{}")
+    launched=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:launched.append(argv))
+    sent=[]
+    monkeypatch.setattr(failure,"default_notify",lambda home,role,text:sent.append((role,text)))
+    current=read_json(p.record_path(home,identity))
+    assert p.schedule_review_retry_if_needed(home,current) is False
+    assert current["review_retry_state"]=="exhausted"
+    assert "review_retry_due" not in current and not launched
+    entries=intentions.list_(home,"docs")
+    assert [e["id"] for e in entries]==["review-exhausted-"+sha[:12]]
+    assert entries[0]["due"]>time.time()
+    assert len(sent)==1 and sent[0][0]=="docs" and identity in sent[0][1]
+    p.schedule_review_retry_if_needed(home,current)
+    assert len(intentions.list_(home,"docs"))==1 and len(sent)==1 and not launched
+
+
 def test_retry_ladder_advances_on_each_failed_attempt(tree,monkeypatch):
     # Gating the retry on review_retry_state alone latched after the first
     # scheduling and left review_retry_delay's eight attempts unreachable: the
