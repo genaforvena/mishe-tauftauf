@@ -120,6 +120,19 @@ def message_subject(text: str) -> str:
             return line.lstrip("#").strip()
     return ""
 
+def message_excerpt(text: str) -> str:
+    """The first non-empty prose line after the address line; '' when none.
+
+    Live addressed DMs carry their content as plain prose after the ``[dm] to=ROLE``
+    line, not as a markdown heading, so ``message_subject`` sees nothing there.
+    This is the one bounded prose line the classifier may read instead; the
+    caller caps it at the same excerpt budget as ``first_line`` and ``subject``.
+    """
+    for line in text.splitlines()[1:]:
+        if line.strip():
+            return line.strip()
+    return ""
+
 def sender_role(source: str) -> str:
     """The sender's own role from a feed source, whether it signs as ROLE or mind/ROLE."""
     return source.removeprefix("mind/")

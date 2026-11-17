@@ -16,13 +16,13 @@ import pathlib
 import time
 
 from . import decision_provider as dp
-from .wall_text import dm_recipient, first_line, message_subject, record_tag, sender_role
+from .wall_text import dm_recipient, first_line, message_excerpt, message_subject, record_tag, sender_role
 LOG_NAME = "dm-triage.jsonl"
 QUESTION = "dm-triage-class"
 THRESHOLD = 0.7
 INSTRUCTIONS = ("Classify one addressed direct message for the receiving mind. Pick exactly one label "
                 "from the criteria. The state gives the sender role, recipient role, tag, body length bucket "
-                "and a short first-line excerpt only.")
+                "and a short first-line and content excerpt only.")
 CRITERIA = {
     "action": "asks the recipient to do something concrete (decide, repair, review, answer a question)",
     "fyi": "informs without requiring a reply (status, result, observation, FYI note)",
@@ -84,6 +84,7 @@ def derived_state(seq: int, source: str, body: str, roles=()) -> dict:
         "tag": record_tag(body),
         "len": _len_bucket(len(body)),
         "first_line": first[:MAX_EXCERPT_CHARS],
+        "content": message_excerpt(body)[:MAX_EXCERPT_CHARS],
         "subject": message_subject(body)[:MAX_EXCERPT_CHARS],
     }
 

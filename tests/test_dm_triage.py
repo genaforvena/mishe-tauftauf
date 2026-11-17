@@ -94,6 +94,14 @@ class DmTriageTests(unittest.TestCase):
         self.assertNotIn("secret detail " * 50, json.dumps(state))
         self.assertIn(state["len"], {"<=120", "<=400", "<=1200", "<=4000", ">4000"})
 
+    def test_derived_state_reads_plain_prose_content_without_a_heading(self):
+        body = "[dm] to=system1\nPlease review the pin failure\n" + ("opaque " * 400)
+        state = dt.derived_state(43, "genome", body, roles=("system1",))
+        self.assertEqual(state["content"], "Please review the pin failure")
+        self.assertEqual(state["subject"], "")
+        self.assertLessEqual(len(state["content"]), dt.MAX_EXCERPT_CHARS)
+        self.assertNotIn("opaque " * 50, json.dumps(state))
+
     def test_record_and_dedup(self):
         provider = _provider(self.root)
         mail = [(101, "[dm] to=system1\nfirst"), (102, "[ci] state=ok\n")]
