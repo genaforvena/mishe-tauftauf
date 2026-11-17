@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +19,23 @@ from mishe_tauftauf import argv_text, discovery
 from mishe_tauftauf import proc_table
 from mishe_tauftauf.feed import Feed
 from tests.tape_binary import pin_tape_binary  # noqa: F401  (fixture)
+
+class _TimeShim:
+    """The ``time`` module with selected names replaced.
+
+    ``discovery`` does ``import time``, so patching ``discovery.time.sleep`` or
+    ``discovery.time.monotonic`` rewrites the process-global module and every other thread in
+    the suite sees the fake (2026-11-17: a sleep patched that way let a stray thread write the
+    after values into a fake slice, failing the delivery check for 8594e897). Patch the
+    module's ``time`` name instead, so only ``discovery`` sees the replacements.
+    """
+
+    def __init__(self, **replacements):
+        self.__dict__.update(replacements)
+
+    def __getattr__(self, name: str):
+        return getattr(time, name)
+
 
 pytestmark = pytest.mark.usefixtures("pin_tape_binary")
 
@@ -746,7 +764,7 @@ def test_journal_boot_loss_or_change_invalidates_even_empty_output(monkeypatch, 
 
 def test_journal_monotonic_regression_invalidates_output(monkeypatch):
     clock = iter([20, 19])
-    monkeypatch.setattr(discovery.time, "monotonic_ns", lambda: next(clock))
+    monkeypatch.setattr(discovery, "time", _TimeShim(monotonic_ns=lambda: next(clock)))
     assert _journal_fixture(monkeypatch, b"")["state"] == "unknown"
 
 
@@ -775,7 +793,7 @@ def test_journal_cleanup_wait_uses_only_remaining_deadline() -> None:
             raise subprocess.TimeoutExpired(["journalctl"], timeout)
 
     child = Child()
-    with patch("mishe_tauftauf.discovery.time.monotonic", return_value=10.0):
+    with patch("mishe_tauftauf.discovery.time", _TimeShim(monotonic=lambda: 10.0)):
         discovery._kill_journal_process(child, 10.25)
     assert child.killed
     assert child.wait_timeout == 0.25
@@ -3082,7 +3100,7 @@ def test_top_cpu_processes_ranks_by_sampled_rate_not_lifetime_average() -> None:
     with patch("mishe_tauftauf.discovery.subprocess.run",
                return_value=_completed(stdout)), \
             patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=jreader), \
-            patch("mishe_tauftauf.discovery.time.sleep"):
+            patch("mishe_tauftauf.discovery.time", _TimeShim(sleep=lambda seconds: None)):
         rows = discovery._top_cpu_processes(rows=2)
     # Five clock ticks in one second is 5% of a core, not 500%: a jiffy is 1/100 s.
     assert rows[0]["rate"] == 100.0 * 5 / discovery._CLOCK_TICK / discovery.TOP_CPU_SAMPLE_SECONDS
@@ -3112,7 +3130,7 @@ def test_top_cpu_processes_breaks_rate_ties_on_the_lifetime_average() -> None:
     with patch("mishe_tauftauf.discovery.subprocess.run",
                return_value=_completed(stdout)), \
             patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=jreader), \
-            patch("mishe_tauftauf.discovery.time.sleep"):
+            patch("mishe_tauftauf.discovery.time", _TimeShim(sleep=lambda seconds: None)):
         # Both earn exactly one tick, so the tie falls to the lifetime average
         # rather than to whichever pid the dictionary happened to visit last.
         rows = discovery._top_cpu_processes()
@@ -3146,7 +3164,7 @@ def test_top_cpu_processes_keeps_unmeasured_rows_below_measured_ones() -> None:
     with patch("mishe_tauftauf.discovery.subprocess.run",
                return_value=_completed(stdout)), \
             patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=jreader), \
-            patch("mishe_tauftauf.discovery.time.sleep"):
+            patch("mishe_tauftauf.discovery.time", _TimeShim(sleep=lambda seconds: None)):
         rows = discovery._top_cpu_processes()
     # The measured row leads; the idle row keeps its place so the retained
     # sample still names it; the unmeasurable row is retained below both.
@@ -3185,7 +3203,7 @@ def test_sample_carries_a_bounded_top_cpu_read() -> None:
     with patch("mishe_tauftauf.discovery.subprocess.run",
                return_value=_completed(stdout)), \
             patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: 100), \
-            patch("mishe_tauftauf.discovery.time.sleep"):
+            patch("mishe_tauftauf.discovery.time", _TimeShim(sleep=lambda seconds: None)):
         observed = {row["id"]: row for row in discovery.sample(Path("/nonexistent"))["observations"]}
     reading = observed["sense.proc.top-cpu"]
     assert reading["state"] == "verified"
@@ -3208,7 +3226,7 @@ def test_top_cpu_row_count_is_bounded_on_a_busy_host() -> None:
     with patch("mishe_tauftauf.discovery.subprocess.run",
                return_value=_completed(stdout)), \
             patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: pid), \
-            patch("mishe_tauftauf.discovery.time.sleep"):
+            patch("mishe_tauftauf.discovery.time", _TimeShim(sleep=lambda seconds: None)):
         rows = discovery._top_cpu_processes()
     assert len(rows) == discovery.TOP_CPU_ROWS
     # Every process earns one tick, so the bound is reached by the row limit and

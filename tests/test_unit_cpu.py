@@ -89,7 +89,10 @@ def test_read_unit_cpu_samples_a_fake_slice_across_the_window(tmp_path: Path) ->
 
 
 def test_read_unit_cpu_is_unknown_when_the_slice_is_unreadable(tmp_path: Path) -> None:
-    with patch("mishe_tauftauf.unit_cpu.time.sleep"):
+    # Patch the module's ``time`` name, not the process-global ``time.sleep``: other threads in
+    # the suite keep sleeping while this test runs, and their sleeps must not be rewritten.
+    with patch("mishe_tauftauf.unit_cpu.time",
+               SimpleNamespace(sleep=lambda seconds: None, monotonic=time.monotonic)):
         reading = unit_cpu.read_unit_cpu(cgroup_root=tmp_path)
     assert reading["state"] == "unknown"
     assert "not measured, not calm" in reading["sample"]
