@@ -1,6 +1,7 @@
 """Transient mid-start UNKNOWN is retried inside the drain deadline; persistent UNKNOWN fails closed."""
 import json
 import time
+from pathlib import Path
 
 import pytest
 
@@ -185,3 +186,53 @@ def test_queued_wake_held_by_promotion_lock_drains_to_deadline_then_fails_closed
     with pytest.raises(ValueError, match='active cgroup evidence UNKNOWN: mishe-wake@genome.service'):
         fence.drain(tmp_path, tmp_path, 'pin', sleep=sleep)
     assert clock['now'] >= fence.DRAIN_TIMEOUT_S
+
+
+def _exec(argv):
+    """The shape ``systemctl show -p ExecStart`` returns for a unit."""
+    return "{ path=/usr/bin/python ; argv[]=/usr/bin/python " + argv + " ; ignore_errors=no ; }"
+
+
+def test_release_review_is_not_a_pin_consumer():
+    """A review run names the release under test; the pin names the release in service (2026-11-17)."""
+    review = _exec("-m mishe_tauftauf --home /site release review --id 2e2d080d-1")
+    consumer = _exec("-m mishe_tauftauf --home /site produce arm")
+    assert fence.pin_independent(dict(ExecStart=review))
+    assert not fence.pin_independent(dict(ExecStart=consumer))
+    assert not fence.pin_independent(dict(ExecStart=""))
+
+
+def test_inventory_skips_a_queued_release_review_retry(monkeypatch):
+    """The retry timer queued behind the pin must not enter the consumer rows at all."""
+    from mishe_tauftauf import release_promotion as rp
+    review = "mishe-release-review-retry-x.service"
+    services = [{'unit': 'mishe-arm.service'}, {'unit': review}]
+    timers = [{'unit': 'mishe-release-review-retry-x.timer'}]
+    rows = {
+        'mishe-arm.service': dict(FragmentPath='/site/units/mishe-arm.service',
+                                  ExecStart=_exec("-m mishe_tauftauf --home /site produce arm"),
+                                  Environment='PYTHONPATH=/site/runtime/current/src'),
+        review: dict(FragmentPath='/run/user/1000/systemd/transient/' + review,
+                     ExecStart=_exec("-m mishe_tauftauf --home /site release review --id 2e2d080d-1"),
+                     Environment='PYTHONPATH=/site/releases/2e2d080d/src'),
+    }
+    def command(args):
+        if 'mishe-*.service' in args: return json.dumps(services)
+        if 'mishe-*.timer' in args: return json.dumps(timers)
+        return review
+    monkeypatch.setattr(fence, 'command', command)
+    monkeypatch.setattr(fence, 'properties', lambda name: dict(rows[name]))
+    monkeypatch.setattr(rp, 'config_paths', lambda home: [Path('/site/units/mishe-arm.service')])
+    assert set(fence.inventory(Path('/site'))) == {'mishe-arm.service'}
+
+
+def test_verify_future_still_rejects_an_installed_consumer_on_old_bytes(tmp_path, monkeypatch):
+    """The review exemption must not soften the check for a real site consumer."""
+    home = tmp_path / 'site'
+    (home / 'runtime' / 'current').mkdir(parents=True)
+    old = home / 'releases' / ('a' * 40) / 'src'
+    row = dict(ExecStart=_exec("-m mishe_tauftauf --home /site produce arm"), ActiveState='active',
+               Environment='PYTHONPATH=' + str(old), Type='oneshot', KillMode='control-group')
+    monkeypatch.setattr(fence, 'inventory', lambda h, previous=None: {'mishe-arm.service': row})
+    with pytest.raises(ValueError, match='wrong pin: mishe-arm.service'):
+        fence.verify_future(home, home / 'runtime' / 'current' / 'src', {})
