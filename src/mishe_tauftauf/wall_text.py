@@ -89,6 +89,29 @@ def ends_with_newline(text: str) -> bool:
     return text[-1:] == "\n"
 
 
+def first_line(text: str) -> str:
+    """The first line of a message body; later lines are prose."""
+    return text.splitlines()[0] if text else ""
+
+
+_TAG_RE = re.compile(r"^\[([a-z0-9-]+)\]")
+
+
+def record_tag(text: str) -> str | None:
+    """The bracketed record tag of a message's first line (``[ci] ...`` -> ``ci``), or None.
+
+    This is the one form a classifier may read from a first line besides the DM
+    address forms; the rest of the line and body stay opaque prose.
+    """
+    first = text.splitlines()[0] if text else ""
+    match = _TAG_RE.match(first)
+    return match.group(1) if match else None
+
+def sender_role(source: str) -> str:
+    """The sender's own role from a feed source, whether it signs as ROLE or mind/ROLE."""
+    return source.removeprefix("mind/")
+
+
 def dm_recipient(text: str, source: str, roles=()) -> str | None:
     """The recipient of an addressed first line, or None.
 
