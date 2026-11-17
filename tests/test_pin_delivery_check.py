@@ -56,6 +56,13 @@ def test_rolled_back_is_red_with_the_recorded_failure(tmp_path, capsys):
     assert code == 2 and "functional probe failed" in out.err
 
 
+def test_delivery_busy_is_red_and_names_the_failure(tmp_path, capsys):
+    # The promote writes delivery-busy only as it gives up, so a delivered run is not in flight.
+    rec = _rec("delivery-busy", failure="dispatch lock still held after a 2400s activation hold")
+    code, out = _run(_site(tmp_path, [rec]), capsys)
+    assert code == 2 and "activation hold" in out.err
+
+
 def test_only_the_newest_record_counts(tmp_path, capsys):
     old = _rec("check-failed", created_at=NOW - 7200)
     new = _rec("delivered", created_at=NOW - 60)

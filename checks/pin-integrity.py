@@ -29,7 +29,9 @@ PENDING = {"prepared", "tested", "reviewed", "activating", "applying"}
 # after activate() moves the pointer the record stays "activating" until the
 # observe step passes and phase becomes "delivered". Without these the detector
 # fired during that window and printed a restore command that regressed the plant.
-IN_FLIGHT = {"checking", "waiting-for-wakes", "delivery-busy", "activating", "reverting"}
+# "delivery-busy" is absent: held_delivery_lock writes it only as it gives up, so the
+# run is over and the promotion no longer owns the pin.
+IN_FLIGHT = {"checking", "waiting-for-wakes", "activating", "reverting"}
 
 
 def _ts(text) -> float | None:

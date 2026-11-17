@@ -1054,6 +1054,23 @@ def test_promotion_records_lock_holder_and_phase_on_delivery_busy(tree, monkeypa
     assert sha[:8] in detail and "delivery-busy" in detail and "2400s activation hold" in detail
 
 
+def test_a_failed_import_closure_publishes_failed(tree):
+    from mishe_tauftauf import signal_store
+    repo, home, old, sha = tree
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"])
+
+    def broken_closure(source, env):
+        raise ValueError("committed import closure failed: No module named missing")
+
+    with pytest.raises(ValueError, match="import closure failed"):
+        p.promote(home, repo, sha, check=[sys.executable, "-c", "assert True"], observe=["probe"],
+                  previous=old, activate=lambda *a: None, probe=lambda *a, **k: dict(code=0, output="ok"),
+                  reviewer=lambda *a: None, closure=broken_closure)
+    reading = signal_store.recorded(home, "moving-pin-delivery")
+    assert reading["value"] == "FAILED" and reading["event"] == sha + ":check-failed"
+    assert "import closure failed" in (home / "signals" / "moving-pin-delivery.detail").read_text()
+
+
 def test_a_source_mutated_during_checks_publishes_failed(tree, monkeypatch):
     from mishe_tauftauf import signal_store
     repo, home, old, sha = tree

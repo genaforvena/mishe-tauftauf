@@ -614,13 +614,19 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
         record["check"] = run(check, cwd=source, env=env, timeout=CHECK_TIMEOUT_S)
         if record["check"]["code"] != 0:
             record["phase"]="check-failed"; save(); return record
-        closure(source, env)
+        try:
+            closure(source, env)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            # The committed import closure is part of the check stage; a release whose tree cannot
+            # import must publish FAILED like any other check failure, not stay "checking".
+            record["phase"]="check-failed"; record["failure"]=str(exc)
+            publish_outcome(home, record); save(); raise
         if not boundary.clean_tree(source) or boundary.head(source) != sha:
             record["phase"]="check-mutated-source"; record["failure"]="committed source changed during checks"
-            save(); publish_outcome(home, record); raise ValueError(record["failure"])
+            publish_outcome(home, record); save(); raise ValueError(record["failure"])
         if commands != wall_patch.command_artifacts(home, [check, observe], cwd=source):
             record["phase"]="check-mutated-command"; record["failure"]="command changed during check"
-            save(); publish_outcome(home, record); raise ValueError(record["failure"])
+            publish_outcome(home, record); save(); raise ValueError(record["failure"])
         record["tests_passed"]=True
         # Only now the dispatch lock: the check above ran the whole suite without holding wakes back.
         record["phase"]="waiting-for-wakes"; save()
@@ -631,7 +637,7 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
             record["phase"] = "delivery-busy"
             record["failure"] = (f"dispatch lock still held after a {int(wait_s)}s activation hold"
                                  if wait_s else "dispatch lock busy")
-            save(); publish_outcome(home, record)
+            publish_outcome(home, record); save()
             raise
         record["phase"]="activating"; save()
         configs = {str(p):wall_patch.snapshot(p) for p in config_paths(home)} if activate is None else {}

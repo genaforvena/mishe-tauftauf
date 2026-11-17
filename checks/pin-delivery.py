@@ -18,8 +18,10 @@ import sys
 import time
 from pathlib import Path
 
-FAILED = {"check-failed", "check-mutated-source", "check-mutated-command", "rolled-back", "UNKNOWN"}
-RUNNING = {"checking", "waiting-for-wakes", "delivery-busy", "activating"}
+FAILED = {"check-failed", "check-mutated-source", "check-mutated-command", "delivery-busy", "rolled-back", "UNKNOWN"}
+# delivery-busy is written only as the promote gives up (held_delivery_lock raised), so it is a dead
+# run, not a live one: counting it as running reported GREEN for a delivery that never started.
+RUNNING = {"checking", "waiting-for-wakes", "activating"}
 
 
 def newest(directory):
