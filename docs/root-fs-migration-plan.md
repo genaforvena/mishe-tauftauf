@@ -29,7 +29,9 @@ The destination already holds `/mnt/mishe-scratch/mishe-cargo-target` (the Rust 
 - The 07:06:26Z stall (5.43 s, `fsync` 5.43, `create` 0.0001, io_psi 21.17,
   mem_psi 5.18) is the first stall with a memory-pressure sample; the next two
   probes in that span recorded mem_psi 18.72 and 22.03. It was one fsync waiting
-  under I/O and memory contention, not write volume.
+  under I/O and memory contention, not write volume. (Superseded in part by the
+  07:53Z measurement below: across the whole population memory pressure is not
+  required for a slow root fsync; I/O pressure is.)
 - Bounded, reversible experiment applied: an 8 GiB swapfile on
   `/mnt/mishe-scratch` at priority 0 (above the root file's -2) so new swapout
   goes to the idle drive. Baseline before it: 24 h = 7 stalls >= 5 s, worst
@@ -57,10 +59,46 @@ The destination already holds `/mnt/mishe-scratch/mishe-cargo-target` (the Rust 
   11-17 02Z 18, 03Z 28, 05Z 27 (1), 07Z 6 (1). Total 24 h: 276 slow, 7 >= 5 s.
 - The probe now also logs `{"event": "swap"}` every 10 s with `pswpin`,
   `pswpout`, `swap_free_kib` and each swap file's used KiB
-  (`operator/dual_probe.py` in the site home, restarted 07:47Z, verified: two
+  (`operator/dual_probe.py` in the site home, restarted 07:27:42Z, verified: two
   records, `/swap.img` 7995808 KiB used, the nvme1 file 0). A future stall can
   therefore be read against swapout directly: pages charged to `/swap.img`
   support the hypothesis, a flat `/swap.img` beside pswpout growth does not.
+
+## Measured 2026-11-17 07:41-07:57Z: the root device itself is 20-100x slower
+
+Controlled, reversible experiment (test files deleted afterwards) with the probe
+running as the instrument. All commands `nice -n 19 ionice -c 3`.
+
+- **1 GiB `dd bs=4M conv=fsync` on the root LV** (`/var/lib/mishe-rootprobe`):
+  took 68.10 s = **15 MiB/s**. During it the probe recorded eight root fsyncs of
+  6.51, 8.00, 10.23, 9.79, 10.06, 9.99 and 13.39 s, every one with
+  `psi_mem 0.0` and `psi_io` rising 17.5 → 91.2. The same burst on
+  `/mnt/mishe-scratch` took **1.00 s**, and the probe's `scratch` directory worst
+  was 0.068 s. Identical load, opposite result, no memory pressure on either.
+- **Repeatability and confound checks**, root LV each time: buffered 67.8 s,
+  `oflag=direct` 67.45 s, and the same write as root outside the contained
+  `mishe-plants.slice` 67.6 s. So it is not the page cache and not the cgroup
+  (`io.weight` only, no `io.max`).
+- **Raw partition reads** (64 x 4 MiB `iflag=direct`, deep offset, output
+  `/dev/null`): `/dev/nvme0n1p3` 62 MiB/s vs `/dev/nvme1n1p1` 1280 MiB/s. The
+  gap survives bypassing ext4 and dm, so it is the device path, not the
+  filesystem.
+- **Population check**: of 273 root-dir probe events with `fsync >= 0.3 s` in
+  the last 24 h, **251 had `psi_mem < 0.01`**; the seven `>= 5 s` events all
+  have `psi_io` 14.6-50.8. Memory pressure is not necessary for this latency.
+- **Hardware state, not wear**: `nvme smart-log` for nvme0: 26 % used, 81.9 TB
+  written, spare 99 %, `media_errors 0`, no error-log entries, temps 57-66 °C,
+  zero thermal-throttle transitions, PCIe link 16 GT/s x4. The other drive is a
+  DRAM-less MAXIO MAP1608 negotiated at 8 GT/s x4 yet 20x faster on raw reads.
+  The weekly `fstrim` ran 2026-11-16 01:17 and trimmed 129.4 GiB on `/`, so
+  discard is not the missing piece.
+- **Consequence for scheduling and for the probe**, not just for the copy: any
+  root writeback backlog drains at ~15 MiB/s, so 1 GiB of root-resident dirty
+  data costs about 68 s of fsync tail for anything that fsyncs on root — the
+  site-home journal, git/index writes, delivery checks, and the probe's own
+  one-second fsync. That is the incident mechanism; the six cargo builds of
+  07:04Z were load on the same host, and the build cap now in `645d71c3` reduces
+  load but cannot raise this number.
 
 ## Steps
 
@@ -76,7 +114,21 @@ The destination already holds `/mnt/mishe-scratch/mishe-cargo-target` (the Rust 
      symlink (`git -C …/.mishe-tauftauf/runtime/current rev-parse HEAD` still works).
    - `/etc/systemd/system/mesh-router-phaedra-relay.service` names `~/.mesh/…` only — not moved.
    The realpath check is still run once after the flip (step 10) as a guard, not as a repointing task.
-4. Causal caveat: stalls show no plant-load correlation and no SMART error. Moving ~85G is a relief bet, not a diagnosed fix. Keep root-stall detector armed; report whether stalls stop after move.
+4. Causal status (2026-11-17 07:57Z): diagnosed to the device path, not to a plant
+   writestorm and not to swap. The root LV sustains ~15 MiB/s writes and ~62 MiB/s
+   reads against ~1.3 GiB/s reads on nvme1n1, measured raw and through ext4, inside
+   and outside the plant slice, with no memory pressure (measurement above). Moving
+   the 87 G of writers is therefore a diagnosed remedy for the *stall class*, while
+   SMART is clean (26 % used, 0 media errors). Acceptance after the move: root-dir
+   probe events with `fsync >= 0.3 s` drop toward the nvme1n1 rate (3-4 ever), and
+   the recurrence detector stays armed. If stalls continue after the move, the
+   remaining root writers are journal and `/swap.img`; then revisit the pending
+   swapout-to-nvme1 evidence and the journal's `Storage=`.
+   Device-throughput watch (run when stalls recur or monthly; 1 GiB each, safe,
+   delete the files):
+   `dd if=/dev/zero of=/var/lib/mishe-rootprobe/t.bin bs=4M count=256 oflag=direct`
+   and `sudo dd if=/dev/nvme0n1p3 of=/dev/null bs=4M count=64 skip=100000 iflag=direct`
+   — a further drop in those numbers is hardware, not load.
 5. Create destination dirs: `/mnt/mishe-scratch/home-mesh-home/{.omp,.codex,mishe-tauftauf}`.
 6. Copy, in two passes so the quiesced window is short: first `rsync -aHx SRC/ DST/` (bulk, safe while
    live — sources untouched, resumable), then under the step-2 quiesce the final
