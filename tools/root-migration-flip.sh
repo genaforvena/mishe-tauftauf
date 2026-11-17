@@ -132,16 +132,24 @@ writers_present() {
     return 0
 }
 
-# Everything that can start a wake engine or a promotion. `mishe-next-due-<hash>`
-# is a *transient* unit: a `due` service that runs inside the drain calls arm.py,
-# which replaces it with a timer under a new hash, so the snapshot in $UNITS (and
-# one stop at the start of an 1800 s drain) cannot cover it. Observed 2026-11-17
-# 11:23-11:26Z: after `stop failed (continuing): mishe-next-due-92e2a1ca02bb.timer`
-# the new timer fired and started field-review, senses, genome, network and health
-# inside the delta; the verify then found 29 changed entries and could not be
-# clean. Disarm again inside the writer wait, immediately before the delta.
+# Everything that can start a wake engine or a promotion. Two sources are not
+# covered by the $UNITS snapshot taken when quiesce starts:
+#   * `mishe-next-due-<hash>` is a *transient* unit: a `due` service that runs
+#     inside the drain calls arm.py, which replaces it with a timer under a new
+#     hash, so one stop cannot cover it. Observed 2026-11-17 11:23-11:26Z: after
+#     `stop failed (continuing): mishe-next-due-92e2a1ca02bb.timer` the new timer
+#     fired and started field-review, senses, genome, network and health inside
+#     the delta; the verify then found 29 changed entries and could not be clean.
+#   * `mishe-wake-debounce-<role>.service` is a Type=oneshot with
+#     WorkingDirectory under $SRC/mishe-tauftauf: it sleeps the coalescing window
+#     (120 s) and then starts `mishe-wake@<role>`. A debounce started just before
+#     quiesce therefore launches an engine after the plant stop (live example
+#     11:34:19Z: cwd under the repo, `wake-debounce health --window 120`).
+#     Stopping it loses no trigger: the role stays owed and the arm after the
+#     restart retries it.
+# Disarm again inside the writer wait, immediately before the delta.
 disarm_triggers() {
-    systemctl --user stop 'mishe-wake-*.path' 'mishe-wake-debounce-*.timer' \
+    systemctl --user stop 'mishe-wake-*.path' 'mishe-wake-debounce-*.service' \
         mishe-producer-dispatch.timer 'mishe-next-due-*.timer' \
         'mishe-next-due-*.service' mishe-arm.service 2>/dev/null
 }
@@ -257,7 +265,16 @@ for t in ${TREES[*]}; do
         p "\$t state unclear: left untouched"
     fi
 done
-while read -r u; do systemctl --user start "\$u" 2>/dev/null || p "restart failed: \$u"; done <$UNITS
+# The watchdog restarts $UNITS itself (it cannot call restart_recorded: it runs
+# in its own transient unit). A transient next-due timer cannot be started by its
+# snapshot name, so it is skipped and the timer is re-armed through the oneshot,
+# exactly as restart_recorded does after an in-process restore.
+while read -r u; do
+    case "\$u" in mishe-next-due-*) continue ;; esac
+    systemctl --user start "\$u" 2>/dev/null || p "restart failed: \$u"
+done <$UNITS
+systemctl --user start mishe-arm.service 2>/dev/null && p 're-armed the next-due timer' ||
+    p 're-arm failed: mishe-arm.service (the next-due producer will re-arm on its next run)'
 p 'restore done'
 EOF
 }

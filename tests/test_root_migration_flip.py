@@ -330,6 +330,25 @@ def test_writers_left_after_the_stop_abort_before_the_delta(tmp_path):
     assert any("start fake-a.service" in line for line in calls(root)), calls(root)
 
 
+def test_disarm_stops_debounce_services_that_would_start_an_engine(tmp_path):
+    """Regression (2026-11-17 11:34Z): `mishe-wake-<role>.path` points its Unit=
+    at `mishe-wake-debounce-<role>.service`, a Type=oneshot whose WorkingDirectory
+    is the repo and which sleeps the 120 s coalescing window before starting a wake
+    engine. A debounce already running when quiesce starts is not in the $UNITS
+    snapshot (taken before the engine drain), so disarming only the .path units let
+    it start an engine after the plant stop -- the 11:28Z NOT-CLEAN class. The
+    disarm must stop the debounce services as well."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+
+    done = flip(root, "--execute")
+
+    out = done.stdout + done.stderr
+    assert done.returncode == 0, out
+    assert any("stop mishe-wake-*.path mishe-wake-debounce-*.service" in line
+               for line in calls(root)), calls(root)
+
+
 def test_transient_next_due_timer_is_rearmed_not_restarted(tmp_path):
     """Regression (2026-11-17 11:28:18Z): `restarted 96 units` was preceded by
     `restart failed: mishe-next-due-92e2a1ca02bb.timer`. The snapshot holds a
@@ -385,7 +404,7 @@ def watchdog_body(root, *, bound, pid):
 
 def test_watchdog_rolls_back_when_the_flip_is_gone(tmp_path):
     root = sandbox(tmp_path)
-    (root / "work" / "flip.units").write_text("fake-a.service\n")
+    (root / "work" / "flip.units").write_text("fake-a.service\nmishe-next-due-abc123.timer\n")
     (root / "src" / "mishe-tauftauf").rename(root / "src" / "mishe-tauftauf.pre-migration")
     shutil.rmtree(root / "src" / ".omp")
     (root / "src" / ".omp").symlink_to(root / "dst" / ".omp")
@@ -401,6 +420,11 @@ def test_watchdog_rolls_back_when_the_flip_is_gone(tmp_path):
     assert (root / "src" / "mishe-tauftauf").is_dir()
     assert not (root / "src" / "mishe-tauftauf.pre-migration").exists()
     assert any("start fake-a.service" in line for line in calls(root)), calls(root)
+    # A hard kill leaves the transient next-due timer stopped and unstartable by
+    # name; the watchdog must re-arm it, or due-time wakes are gone with no timer.
+    assert "restart failed: mishe-next-due-abc123.timer" not in log, log
+    assert any("start mishe-arm.service" in line for line in calls(root)), calls(root)
+    assert "re-armed the next-due timer" in log, log
 
 
 def test_watchdog_leaves_a_live_flip_alone(tmp_path):
