@@ -1468,6 +1468,13 @@
         "recovery-evaluation"
       ],
       "why": "the recovery runtime's incident outbox and evaluation reported to resident minds; pressure is now the host-capacity signal and failures route through mishe-failed. recovery_io remains as manual tooling (accept/evaluate), not as units"
+    },
+    {
+      "units": [],
+      "checks": [
+        "release-lag.py"
+      ],
+      "why": "the duty was dropped on 2026-11-15 (f1341a56) because pin-lag reads the same lag with one threshold, but the check file outlived it unscheduled: no timer ran it, and its 30-minute limit sits below the measured promotion duration (20.9, 28.4, 35.8, 47.9, 58.9 min in the records under SITE/work/releases), so it could only fire while a promotion was legitimately in flight, and it made check-scheduler-coverage FAILING-UNOBSERVED on every run. The check and its test were removed (2026-11-17). The scheduled pin-lag duty replaces it: same comparison, GREEN under 60 minutes, AMBER to 3 h, RED beyond, and it prints the newest delivery stage and failure"
     }
   ],
   "kept": [

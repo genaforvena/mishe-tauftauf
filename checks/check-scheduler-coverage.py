@@ -537,7 +537,7 @@ def run_check(repo: Path, name: str, home: Path) -> tuple[int, str]:
             raise Undecidable("cannot extract HEAD:" + CHECKS_DIR + ": " +
                               extract.stderr.decode("utf-8", "replace").strip())
         script = Path(directory) / CHECKS_DIR / name
-        # A check that takes a shared checkout (release-lag.py requires it)
+        # A check that takes a shared checkout (push-lag.py requires it)
         # declares --repo in its source; pass it only to those, so checks that
         # take only --home still run with the arguments they accept.
         # The declaration is matched, not the bare text: a docstring that
