@@ -3,10 +3,10 @@
 Source root: `/` on `/dev/mapper/ubuntu--vg-ubuntu--lv` (nvme0, 914G).
 Destination: `/mnt/mishe-scratch` on `/dev/nvme1n1p1` (ext4, 234G).
 
-Move targets (measured 2026-11-16 06:28Z, total ~85G, fits 219G free):
+Move targets (re-measured 2026-11-17 02:58Z, total ~87G, fits 218G free):
 - `/home/mesh-home/.omp` (33G)
 - `/home/mesh-home/.codex` (23G)
-- `/home/mesh-home/mishe-tauftauf` (29G; the plan's original 19G is stale — the checkout grew)
+- `/home/mesh-home/mishe-tauftauf` (31G; the plan's original 19G is stale — the checkout grew)
 
 OS, /boot, /boot/efi, `/home/mesh-home/.mesh` (relay/router state) stay on nvme0.
 The destination already holds `/mnt/mishe-scratch/mishe-cargo-target` (the Rust build cache that
@@ -62,5 +62,9 @@ The destination already holds `/mnt/mishe-scratch/mishe-cargo-target` (the Rust 
 ## Not doing
 
 - No partition resize, no OS move, no purchase (shape B).
-- No movement until human confirms reading this plan.
+- The reading confirmation this plan asked for is in hand: Ilya's standing approval of 2026-11-11
+  13:05Z ("go ahead with proposed root-fs fix/change. mesh-home machine and note3 are in full
+  mishe's control. you have explicit approval to go ahead", `SITE_HOME/operator/standing-approvals.md`).
+  Movement is Mishe's to schedule as a host operation with the step-2 quiesce — do not run the bulk
+  copy inside a moving-pin delivery window (it competes for root I/O and can time the check out).
 - No deletion of `*.pre-migration` without explicit human approval.
