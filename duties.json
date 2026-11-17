@@ -593,6 +593,25 @@
       "covers": "every promoted component still matches its ledger and the live $SITE/bin install: components.verify is GREEN and, where consumers still read $SITE/bin/NAME before component-deploy step 3, its sha256 equals the promoted bytes, so a promotion and a later hand install cannot drift apart silently; RED names the component and the differing digests, UNKNOWN when no component is promoted or the detector cannot be imported"
     },
     {
+      "name": "bound-evidence",
+      "command": [
+        "{python}",
+        "{repo}/checks/bound-evidence-clause-enforcement.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 3600,
+      "timeout": 120,
+      "max_age": 7200,
+      "red_codes": [2],
+      "unknown_codes": [3],
+      "resolver": "genome",
+      "replaces": [],
+      "covers": "a bound evidence file is still the bytes its outcome recorded, and the write-once clause holds where it was applied: RED counts the rows writable now (no clause applied), read-only now but changed after binding (the clause was defeated by a path replace or an owner chmod+rewrite), and the bound paths missing entirely, naming a probed root whose clause does not survive its own writers' replace; UNKNOWN when no root carrying the clause could be probed. The answer comes from SITE/records directly, not from the published coverage report the three retired checks read (2026-11-17); the check had no caller until this duty"
+    },
+    {
       "name": "push-lag",
       "command": [
         "{python}",
