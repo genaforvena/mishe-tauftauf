@@ -287,6 +287,22 @@ def test_held_install_and_uninstall_leave_no_installed_marker(cfg):
     assert not (cfg.home / "units-installed").exists()
 
 
+def test_no_systemctl_sync_never_revokes_the_site_installed_claim(cfg):
+    """A diagnostic render must not stop due-time arming (2026-11-17 23:41Z regression).
+
+    Health rendered the checkout's units into a scratch dir with
+    ``sync --no-systemctl --no-enable``; sync unlinked the live marker, so
+    ``runtime_cli.scheduler()`` recorded due times without arming a timer and
+    ``next-due-armed`` went RED within five minutes.
+    """
+    units.sync(cfg, ROLES, runner=lambda c: None)
+    assert (cfg.home / "units-installed").exists()
+    units.sync(cfg, ROLES, runner=None, enable=False)                  # --no-systemctl --no-enable
+    assert (cfg.home / "units-installed").exists()
+    units.sync(cfg, [], runner=None, uninstall=True)                   # a held uninstall likewise
+    assert (cfg.home / "units-installed").exists()
+
+
 def test_install_held_then_sync_enables_every_trigger_even_though_files_are_unchanged(cfg):
     units.sync(cfg, ROLES, runner=lambda c: None, enable=False)       # the held install
     calls = []

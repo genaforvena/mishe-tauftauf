@@ -546,10 +546,16 @@ def sync(cfg: Config, roles, *, producers=(), resolvers=None, runner=None, unins
             elif rel.endswith("-arm.service"):
                 runner(["systemctl", "--user", "enable", "--no-reload", rel])  # re-arms the next-due timer at boot
     marker = cfg.home / "units-installed"
-    if uninstall or not enable:
-        marker.unlink(missing_ok=True)
-    elif runner is not None:
-        marker.write_text("units installed and enabled by mishe sync\n", encoding="utf-8")
+    # Only a sync that actually talks to systemd may change the site's claim. ``runner is None``
+    # (--no-systemctl) is a render or a held probe: it enables no trigger, so it must revoke none
+    # either. 2026-11-17 23:41Z a scratch `sync --no-systemctl --no-enable --unit-dir /tmp/probe`
+    # deleted this marker; runtime_cli.scheduler() then took its record-only branch and stopped
+    # arming mishe-next-due timers, so the 5-minute next-due-armed producer went RED.
+    if runner is not None:
+        if uninstall or not enable:
+            marker.unlink(missing_ok=True)
+        else:
+            marker.write_text("units installed and enabled by mishe sync\n", encoding="utf-8")
     return report
 
 
