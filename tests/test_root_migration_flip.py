@@ -474,6 +474,12 @@ def watchdog_body(root, *, bound, pid):
     return body.replace("-ge 60", f"-ge {bound}").replace("\nsleep 10\n", "\nsleep 1\n")
 
 
+def watchdog_hold_token(body):
+    """The token line the watchdog compares the hold against: the flip's own text."""
+    line = next(l for l in body.splitlines() if l.startswith("T="))
+    return line.split("=", 1)[1].strip("'")
+
+
 def test_watchdog_rolls_back_when_the_flip_is_gone(tmp_path):
     root = sandbox(tmp_path)
     (root / "work" / "flip.units").write_text(
@@ -646,8 +652,8 @@ def test_watchdog_releases_a_hold_left_by_a_hard_killed_flip(tmp_path):
     root = sandbox(tmp_path)
     (root / "work" / "flip.units").write_text("fake-a.service\n")
     hold_path(root).parent.mkdir(parents=True)
-    hold_path(root).write_text("root migration flip 123\n")
     body = watchdog_body(root, bound=1, pid=999999)
+    hold_path(root).write_text(watchdog_hold_token(body) + "\n")
 
     run = subprocess.run(["bash", "-c", body], env=env_for(root),
                          capture_output=True, text=True, timeout=120)
@@ -657,3 +663,47 @@ def test_watchdog_releases_a_hold_left_by_a_hard_killed_flip(tmp_path):
     log = (root / "work" / "flip.log").read_text()
     assert "released the hold" in log, log
     assert any("start fake-a.service" in line for line in calls(root)), calls(root)
+
+
+MANUAL_HOLD = "authorized reboot: waiting for current-boot guard admission\n"
+
+
+def test_a_manual_hold_is_neither_overwritten_nor_released(tmp_path):
+    """Regression (field-review, chat #302409): hold_plant overwrote any existing
+    hold and every restore path deleted it and resumed owed wakes. plant_boot arms
+    exactly such a hold while waiting for the boot guard to admit; clearing it
+    would start wakes before admission. The flip must leave a foreign hold alone
+    through both the quiesce and the restore."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+    hold_path(root).parent.mkdir(parents=True)
+    hold_path(root).write_text(MANUAL_HOLD)
+
+    done = flip(root, "--execute")
+
+    out = done.stdout + done.stderr
+    assert done.returncode == 0, out
+    assert "was already there; left to its owner" in out, out
+    assert "hold: released" not in out, out
+    assert "is not this flip's; left in place" in out, out
+    assert hold_path(root).read_text() == MANUAL_HOLD, out
+    assert (root / "work" / "flip.done").exists()
+
+
+def test_watchdog_leaves_a_manual_hold_in_place(tmp_path):
+    """The watchdog's SIGKILL path had the same defect: an unconditional rm would
+    clear plant_boot's boot-guard hold and let wakes start before admission."""
+    root = sandbox(tmp_path)
+    (root / "work" / "flip.units").write_text("fake-a.service\n")
+    hold_path(root).parent.mkdir(parents=True)
+    hold_path(root).write_text(MANUAL_HOLD)
+    body = watchdog_body(root, bound=1, pid=999999)
+
+    run = subprocess.run(["bash", "-c", body], env=env_for(root),
+                         capture_output=True, text=True, timeout=120)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert hold_path(root).exists(), run.stdout + run.stderr
+    assert hold_path(root).read_text() == MANUAL_HOLD
+    log = (root / "work" / "flip.log").read_text()
+    assert "hold left in place" in log, log

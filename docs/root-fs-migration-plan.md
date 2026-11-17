@@ -134,12 +134,21 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
   eleven minutes into a drain that was waiting for the previous engines to end.
   `quiesce` now writes `$SITE/hold` before it stops anything; a wake that finds it
   exits `held` in milliseconds (`src/mishe_tauftauf/wake.py`, `run_wake`), so only
-  the engines that already exist have to end. Every restore path — `restore_plant`,
-  the success tail of `cutover`, and the generated watchdog body — removes the file
-  and resumes the roles that were owed while it was in place. The hold suppresses
-  wake starts only: a unit that fails still records its OnFailure signal. A SIGKILL
-  with the watchdog also dead would leave the plant held; `mishe hold status` names
-  the flip pid that wrote it, which is the detector.
+  the engines that already exist have to end. The hold text is
+  `root migration flip <pid>`, and that token is what makes the hold the flip's:
+  an existing hold is never overwritten, and only a hold still carrying the token
+  is removed. A manual `mishe hold on` and plant_boot's boot-guard hold
+  (`authorized reboot: waiting for current-boot guard admission`) carry other text
+  and survive both the flip and its watchdog, because release resumes owed wakes
+  and must not start them before the boot guard admits. Order in `quiesce` is
+  watchdog first, hold second: the watchdog is the only restorer after a SIGKILL,
+  so a kill in the gap leaves a watchdog with no hold rather than a hold with no
+  restorer. Every restore path — `restore_plant`, the success tail of `cutover`,
+  and the generated watchdog body — releases only the flip's own token and
+  resumes the roles that were owed while it was in place. The hold suppresses
+  wake starts only: a unit that fails still records its OnFailure signal. A
+  SIGKILL with the watchdog also dead would leave the plant held; the token names
+  the flip pid, so `cat $SITE/hold` plus a `kill -0` on that pid is the detector.
 - `.codex` churn is 5.95 GB in 28 files: `logs_2.sqlite`, `state_5.sqlite`,
   `thread_history_1.sqlite` and their `-wal`/`-shm`. Cheap to re-copy, but
   `.codex` cannot be verified clean while a coder CLI runs.

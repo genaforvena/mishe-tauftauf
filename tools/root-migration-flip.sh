@@ -117,6 +117,13 @@ die() { log "FAIL: $*"; exit 1; }
 
 FLIP_PID=$$
 FLIP_BASE=$(basename "$0")
+# The hold this flip writes carries this token, and only a hold carrying it is
+# removed or resumed by the flip and the watchdog. A manual `mishe hold on` holds
+# its own reason text, and plant_boot's boot-guard hold must outlive the flip:
+# `hold off` resumes owed wakes, which must not happen before the boot guard
+# admits. HOLD_MINE is 1 only when this run created the file.
+HOLD_TOKEN="root migration flip $FLIP_PID"
+HOLD_MINE=0
 log "paths: src=$SRC dst=$DST work=$WORK (pid $FLIP_PID)"
 
 self_unit() { awk -F/ '/^0::/{print $NF}' /proc/$$/cgroup 2>/dev/null; }
@@ -282,6 +289,7 @@ L=$LOG
 D=$DONE
 F=$FLIP_PID
 H=$HOLD
+T='$HOLD_TOKEN'
 p() { printf '%s watchdog: %s\n' "\$(date -u +%FT%TZ)" "\$*" >>"\$L"; }
 flip_alive() {
     [ -r /proc/\$F/cmdline ] || return 1
@@ -329,9 +337,17 @@ while read -r u; do
 done <$UNITS
 systemctl --user start mishe-arm.service 2>/dev/null && p 're-armed the next-due timer' ||
     p 're-arm failed: mishe-arm.service (the next-due producer will re-arm on its next run)'
-# The flip writes this before it stops anything, so a hard kill would otherwise
-# leave every wake held with no process left to release it.
-[ -e "\$H" ] && rm -f "\$H" && p 'released the hold: wake starts resume'
+# The flip writes the hold before it stops anything, so a hard kill would
+# otherwise leave every wake held with no process left to release it. Release
+# only the hold this flip wrote: a manual `mishe hold on` or plant_boot's
+# boot-guard hold carries other text and must survive the restore.
+if [ -e "\$H" ]; then
+    if [ "\$(cat "\$H" 2>/dev/null)" = "\$T" ] && ! flip_alive; then
+        rm -f "\$H" && p 'released the hold: wake starts resume'
+    else
+        p 'hold left in place: not this flip token, or its writer is still alive'
+    fi
+fi
 p 'restore done'
 EOF
 }
@@ -358,11 +374,30 @@ arm_watchdog() {
 # running an engine, so the drain converges on the engines that already exist.
 # The hold suppresses wake starts only: a unit that fails still records its
 # OnFailure signal, so a real fault during the window stays visible.
+# An existing hold is never overwritten: a manual `mishe hold on` and plant_boot's
+# boot-guard hold both mean "do not start wakes", and the flip's release resumes
+# owed wakes, so clearing one early would start them before the boot guard admits.
+# The claim is link(2) on a fully written temp file, so a concurrent `mishe hold
+# on` that wins the create keeps its text and the flip does not own the file.
 hold_plant() {
     mkdir -p "$SITE" || { log "hold: cannot create $SITE"; return 1; }
-    printf 'root migration flip %s\n' "$FLIP_PID" >"$HOLD" ||
-        { log "hold: cannot write $HOLD"; return 1; }
-    log "hold: wake starts paused ($HOLD)"
+    local tmp=$HOLD.flip.$$
+    printf '%s\n' "$HOLD_TOKEN" >"$tmp" || { log "hold: cannot write $tmp"; return 1; }
+    if ln "$tmp" "$HOLD" 2>/dev/null; then
+        HOLD_MINE=1
+        log "hold: wake starts paused ($HOLD)"
+    else
+        HOLD_MINE=0
+        if [ -e "$HOLD" ]; then
+            log "hold: $HOLD was already there; left to its owner, wake starts stay paused"
+        else
+            log "hold: cannot create $HOLD; wake starts are not paused"
+            rm -f "$tmp"
+            return 1
+        fi
+    fi
+    rm -f "$tmp"
+    return 0
 }
 
 # Release the hold and resume the roles that were owed while it was in place. A
@@ -370,8 +405,21 @@ hold_plant() {
 # happen here. The site venv python is the only CLI handle this script has; when
 # it is absent (the unit-test sandbox) nothing is started and the next arm
 # resumes, with the skip visible in flip.log.
+# Only this flip's own hold is released: HOLD_MINE set and the content still our
+# token. A manual `mishe hold on` written after ours overwrites the file with its
+# reason, so the content check also covers that race.
 release_hold() {
+    if [ "$HOLD_MINE" != 1 ]; then
+        [ -e "$HOLD" ] || return 0
+        log "hold: $HOLD is not this flip's; left in place"
+        return 0
+    fi
+    HOLD_MINE=0
     [ -e "$HOLD" ] || return 0
+    if [ "$(cat "$HOLD" 2>/dev/null)" != "$HOLD_TOKEN" ]; then
+        log "hold: $HOLD no longer carries this flip's token; left in place"
+        return 0
+    fi
     rm -f "$HOLD" || { log "hold: cannot remove $HOLD; wakes stay paused until it is deleted"; return 1; }
     log "hold: released"
     local py=$SRC/mishe-tauftauf/.venv/bin/python
@@ -496,12 +544,18 @@ quiesce() {
         return 0
     fi
     QUIESCED=1   # from here on, any exit path must restart these units
-    # Pause wake starts before arming the watchdog: the drains below can outlive
+    # Watchdog first, hold second. The watchdog is the only restorer after a
+    # SIGKILL, and a hold written before it was armed left a sub-second window
+    # where the plant stayed paused with no watchdog and no runnable wake to
+    # clear it (a held wake exits before running). Armed first, a kill in the
+    # window leaves a watchdog with no hold: it restarts the units, finds no
+    # file, and does nothing further.
+    arm_watchdog
+    # Pause wake starts before disarming anything: the drains below can outlive
     # a trigger's armed timer, and an engine started mid-drain rewrites every
     # moved tree. Failing to write the hold is not fatal -- the writer drain is
     # still the bound before the delta -- but it must be visible in flip.log.
     hold_plant || log "hold not written; a wake can still start during the drain"
-    arm_watchdog
     # A wake needs a trigger and a dispatcher, and a live engine rewrites every
     # tree until it ends. Disarm the triggers before waiting so the set of
     # engines only shrinks: a .path unit that fired mid-delta started genome,
