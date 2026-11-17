@@ -102,6 +102,7 @@ Exit status:
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -129,6 +130,13 @@ CLAUSE_CALL = "chmod"
 
 #: The commit that introduced the write-once clause for bound evidence.
 CLAUSE_COMMIT = "3c22087"
+
+#: ``3c22087``'s own commit time (2026-10-06T16:22:11Z). History was rewritten,
+#: so the object is reachable from no ref (``git branch -a --contains 3c22087``
+#: is empty) and a fresh clone — CI, a new plant — cannot date it. The recorded
+#: date keeps the standing-loss window stable; when the object is present,
+#: ``commit_time`` is preferred and a test asserts the two agree.
+CLAUSE_DATE = 1791303731.0
 
 #: The commit that made the publishing writer set the bound file read-only.
 READ_ONLY_COMMIT = "d9f4ebe"
@@ -673,35 +681,31 @@ def main(argv=None) -> int:
         return 3
 
     print("")
-    since = commit_time(repo, CLAUSE_COMMIT)
+    since = commit_time(repo, CLAUSE_COMMIT) or CLAUSE_DATE
     copy_since = commit_time(repo, COPY_COMMIT)
-    if since is None:
-        print("standing loss: UNKNOWN — the clause commit %s could not be read from the "
-              "reviewed repository" % CLAUSE_COMMIT)
+    loss = standing_loss(home, since, copy_since)
+    if not loss.get("decided"):
+        print("standing loss: UNKNOWN — %s" % loss.get("reason"))
     else:
-        loss = standing_loss(home, since, copy_since)
-        if not loss.get("decided"):
-            print("standing loss: UNKNOWN — %s" % loss.get("reason"))
+        lost = loss["lost_writable"] + loss["lost_readonly"] + loss["missing"]
+        print("standing loss since the clause (%d bound row(s) read):" % loss["total"])
+        print("  lost, file writable now (no clause was applied) : %d" % loss["lost_writable"])
+        print("  lost, file read-only now (the clause was defeated): %d" % loss["lost_readonly"])
+        print("  bound file missing                              : %d" % loss["missing"])
+        print("  of those %d lost row(s):" % lost)
+        print("    drift over held bytes (the store has them)    : %d" % loss["held"])
+        if copy_since is None:
+            print("    no copy held (the store commit %s is unreadable) : UNKNOWN"
+                  % COPY_COMMIT)
         else:
-            lost = loss["lost_writable"] + loss["lost_readonly"] + loss["missing"]
-            print("standing loss since the clause (%d bound row(s) read):" % loss["total"])
-            print("  lost, file writable now (no clause was applied) : %d" % loss["lost_writable"])
-            print("  lost, file read-only now (the clause was defeated): %d" % loss["lost_readonly"])
-            print("  bound file missing                              : %d" % loss["missing"])
-            print("  of those %d lost row(s):" % lost)
-            print("    drift over held bytes (the store has them)    : %d" % loss["held"])
-            if copy_since is None:
-                print("    no copy held (the store commit %s is unreadable) : UNKNOWN"
-                      % COPY_COMMIT)
-            else:
-                print("    no copy, published before the store           : %d (UNKNOWN, not lost)"
-                      % loss["unheld_pre_store"])
-                print("    no copy, published while the store was live   : %d"
-                      % loss["unheld_after_store"])
-                if loss["unheld_after_store"]:
-                    failed = True
-                    print("            a row published after %s has no held copy: the writer "
-                          "was live and did not keep the bytes it bound" % COPY_COMMIT)
+            print("    no copy, published before the store           : %d (UNKNOWN, not lost)"
+                  % loss["unheld_pre_store"])
+            print("    no copy, published while the store was live   : %d"
+                  % loss["unheld_after_store"])
+            if loss["unheld_after_store"]:
+                failed = True
+                print("            a row published after %s has no held copy: the writer "
+                      "was live and did not keep the bytes it bound" % COPY_COMMIT)
 
     if failed:
         return 2
@@ -712,13 +716,14 @@ def main(argv=None) -> int:
 
 
 def _clause_stamp(repo: Path) -> str:
-    """The clause commit's date, as text, or a note that it cannot be read."""
+    """The clause commit's date, as text, or the recorded date when unreadable."""
     result = subprocess.run(
         ["git", "-C", str(repo), "log", "-1", "--format=%cI", CLAUSE_COMMIT],
         capture_output=True, text=True, timeout=60)
-    if result.returncode != 0:
-        return "unreadable"
-    return result.stdout.strip() or "unreadable"
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return "recorded %s (the commit object is not in this clone)" % datetime.datetime.fromtimestamp(
+        CLAUSE_DATE, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 if __name__ == "__main__":

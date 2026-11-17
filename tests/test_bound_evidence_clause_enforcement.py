@@ -17,6 +17,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 CHECK = REPO / "checks" / "bound-evidence-clause-enforcement.py"
 PACKAGE = "mishe_tauftauf"
@@ -246,6 +248,36 @@ def test_absent_root_is_a_failure(tmp_path):
     assert result.returncode == 2, result.stdout + result.stderr
     assert "DOES NOT CARRY the clause" in result.stdout
     assert str(bad_root) in result.stdout
+
+
+def test_standing_loss_is_decided_when_the_clause_commit_is_unreadable(tmp_path):
+    """A fresh clone has no 3c22087 (unreachable from every ref): the recorded date decides."""
+    pin = _make_root(tmp_path, "pin-date", WALL_SOURCE)
+    home = _make_site(tmp_path, pin=pin, cli=pin)
+    target = home / "artifacts" / "kept.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("kept\n", encoding="utf-8")
+    _write_record(home, "r.json", target, _digest(target))
+    not_a_repo = tmp_path / "not-a-repo"
+    not_a_repo.mkdir()
+    result = _run(home, not_a_repo)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "standing loss since the clause" in result.stdout
+    assert "clause commit 3c22087 could not be read" not in result.stdout
+    assert "recorded 2026-10-06T16:22:11Z" in result.stdout
+
+
+def test_recorded_clause_date_matches_the_commit_when_readable():
+    """The literal is the frozen commit date, not a second guess."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("clause_check_date", str(CHECK))
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+    actual = mod.commit_time(REPO, mod.CLAUSE_COMMIT)
+    if actual is None:
+        pytest.skip("3c22087 is absent from this clone, as it is in CI")
+    assert actual == mod.CLAUSE_DATE
 
 
 def test_mode_loss_alone_is_not_a_failure_when_the_bytes_are_kept(tmp_path):
