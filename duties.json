@@ -574,6 +574,25 @@
       "covers": "the shared cargo build cache holds only ELF installed binaries: RED names any text stub a delivery check would test against (2026-11-16, 08547645); UNKNOWN when the cache cannot be read"
     },
     {
+      "name": "components",
+      "command": [
+        "{python}",
+        "{repo}/checks/component-verify.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 900,
+      "timeout": 60,
+      "max_age": 1800,
+      "red_codes": [2],
+      "unknown_codes": [3],
+      "resolver": "genome",
+      "replaces": [],
+      "covers": "every promoted component still matches its ledger and the live $SITE/bin install: components.verify is GREEN and, where consumers still read $SITE/bin/NAME before component-deploy step 3, its sha256 equals the promoted bytes, so a promotion and a later hand install cannot drift apart silently; RED names the component and the differing digests, UNKNOWN when no component is promoted or the detector cannot be imported"
+    },
+    {
       "name": "push-lag",
       "command": [
         "{python}",
