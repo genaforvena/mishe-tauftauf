@@ -11,15 +11,28 @@ the moment it binds it.
 That last part is the only thing standing between a bound row and a later edit
 that drops it permanently — and it does not hold.
 
-A read-only **mode** protects an **inode**. Every writer in this plant that
-saves a file does so by writing a temporary sibling and renaming it over the
-target (``os.replace`` in ``seed._write_handoff``, ``cli.cmd_handoff``,
-``checks.publish_report``, ``feed.Feed``), and a rename replaces the *path*,
-not the inode the mode was applied to. The new file arrives with the writer's
-own mode, so a bound file that was ``0444`` at publication is ``0644`` again
-after the next save — and the row's recorded digest no longer matches the
-bytes on disk. The mode can even be re-applied afterwards, so a file that
-*looks* write-once now may already have lost its bytes.
+A read-only **mode** protects an **inode**, and the inode's owner can always
+undo it. Two mechanisms defeat the clause, and they leave different traces.
+
+* **Replacement.** Writers that save by writing a temporary sibling and
+  renaming it over the target (``os.replace`` in ``seed._write_handoff``,
+  ``cli.cmd_handoff``, ``checks.publish_report``, ``feed.Feed``) replace the
+  *path*, not the inode the mode was applied to. The new inode arrives with
+  the writer's own mode, so a bound file that was ``0444`` at publication is
+  ``0644`` again after the next save, and the row's recorded digest no longer
+  matches the bytes on disk.
+* **Owner rewrite.** The evidence's own author reopens the bound inode with
+  ``chmod u+w PATH``, writes or appends, then restores the mode, so the file
+  still *looks* write-once. Measured on this plant: the pub wake of
+  2026-11-14 (05:18–05:58Z) appended to
+  ``artifacts/pub-outcome-evidence-20261114-wake17.md`` — bound at 05:53:41Z,
+  appended at 05:58:03Z — with exactly ``chmod u+w … && cat >> … ; chmod 400
+  …`` recorded in that wake's own transcript, and left it ``0400`` with a
+  digest that no longer matches.
+
+No mode can stop the second, because the owner may chmod its own file; the
+mode is advisory. The durable defence is to keep the bound bytes themselves
+(a content-addressed copy taken at publication) and to detect drift by digest.
 
 This is not hypothetical. Measured on this plant (2026-10-29):
 
@@ -27,7 +40,9 @@ This is not hypothetical. Measured on this plant (2026-10-29):
 * of the **5442** outcomes published since the clause, **200** no longer match
   the digest they recorded;
 * **23** of those were read-only at publication and were changed afterwards —
-  the clause was applied and then defeated;
+  the clause was applied and then defeated (re-measured 2026-11-17, the first
+  such defeat traced end to end was an owner rewrite, not a rename, so this
+  population is not evidence of the replacement class alone);
 * **177** were published writable, so no clause was ever applied to them.
 
 Both populations are reported here, from the record store directly, because
@@ -411,8 +426,10 @@ def standing_loss(home: Path, since: float | None) -> dict:
     own record of every binding it has made. The two populations are reported
     apart, because they have different causes: a row that was published
     writable never had the clause applied to it, while a row that is read-only
-    now and yet no longer matches cannot have been edited in place — the
-    clause was applied and then defeated.
+    now was rewritten either in place by its owner (who may chmod its own
+    file, e.g. ``chmod u+w``, append, ``chmod 400``) or by a mode-preserving
+    writer. A read-only mode is therefore not evidence that the bytes are the
+    bound ones; only the digest is.
     """
     directory = home / RECORDS_DIR
     if not directory.is_dir():
