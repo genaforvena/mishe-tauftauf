@@ -398,7 +398,7 @@
       ],
       "every": 120,
       "timeout": 60,
-      "max_age": 900,
+      "max_age": 720,
       "unknown_codes": [3],
       "resolver": "health",
       "replaces": [],
