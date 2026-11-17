@@ -359,12 +359,22 @@ quiesce() {
 # all three trees until it yields, and it cannot yield while it waits for this
 # script. systemd-run gives the flip its own unit, so the wake can end and the
 # queued follow-up wakes stay queued behind the disarmed triggers.
+#
+# The relaunch starts from a clean environment, so every caller-set knob has to
+# be named here or it silently reverts to its default: MIGRATION_ENGINE_TIMEOUT
+# (line 59, else a caller's short drain bound becomes the 1800 s default) and
+# MISHE_WAKE_KEY (line 132, else the launching wake's unit is no longer excluded
+# from the stop list). `set -u` plus an empty array would expand as an unbound
+# variable, hence the ${a[@]+...} guards.
 detach_relaunch() {
-    local unit=mishe-root-migration-flip
+    local unit=mishe-root-migration-flip forward=()
+    [ -n "${MIGRATION_ENGINE_TIMEOUT:-}" ] && forward+=(--setenv=MIGRATION_ENGINE_TIMEOUT="$MIGRATION_ENGINE_TIMEOUT")
+    [ -n "${MISHE_WAKE_KEY:-}" ] && forward+=(--setenv=MISHE_WAKE_KEY="$MISHE_WAKE_KEY")
     systemctl --user stop "$unit.service" 2>/dev/null
     systemd-run --user --unit="$unit" --collect \
         --setenv=MISHE_FLIP_DETACHED=1 \
         --setenv=MIGRATION_SRC="$SRC" --setenv=MIGRATION_DST="$DST" --setenv=MIGRATION_WORK="$WORK" \
+        ${forward[@]+"${forward[@]}"} \
         /bin/bash "$0" --execute --"$SHAPE" >/dev/null 2>&1 ||
         die "could not start the detached flip unit $unit.service"
     log "detached as $unit.service; the launching wake may yield, the flip continues"

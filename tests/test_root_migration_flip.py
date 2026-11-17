@@ -157,6 +157,46 @@ def test_clean_run_flips_and_restarts_units(tmp_path):
     assert any("start fake-w.path" in line for line in calls(root)), calls(root)
 
 
+def detach_argv(root):
+    path = root / "systemd-run.log"
+    lines = path.read_text().splitlines() if path.exists() else []
+    return lines[-1] if lines else ""
+
+
+def test_detach_forwards_the_callers_engine_bound_and_wake_key(tmp_path):
+    """Regression: systemd-run starts the flip in a clean environment, so
+    MIGRATION_ENGINE_TIMEOUT and MISHE_WAKE_KEY were silently dropped -- a caller's
+    short drain bound became the 1800 s default, and target_units lost the exclusion
+    that keeps the launching wake's unit out of the stop list."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+
+    flip(root, "--execute", "--scoped", "--detach",
+         extra_env={"MIGRATION_ENGINE_TIMEOUT": "45", "MISHE_WAKE_KEY": "wake-health1-1794"})
+
+    argv = detach_argv(root)
+    assert "--setenv=MIGRATION_ENGINE_TIMEOUT=45" in argv, argv
+    assert "--setenv=MISHE_WAKE_KEY=wake-health1-1794" in argv, argv
+    assert "--setenv=MIGRATION_SRC=" in argv, argv
+
+
+def test_detach_passes_no_empty_setenv_when_the_caller_sets_neither(tmp_path):
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+    env = {k: v for k, v in env_for(root).items()
+           if k not in ("MIGRATION_ENGINE_TIMEOUT", "MISHE_WAKE_KEY")}
+
+    done = subprocess.run(["bash", str(root / "work" / "flip.sh"), "--execute", "--scoped", "--detach"],
+                          env=env, capture_output=True, text=True, timeout=180)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    argv = detach_argv(root)
+    assert "--setenv=MIGRATION_ENGINE_TIMEOUT" not in argv, argv
+    assert "--setenv=MISHE_WAKE_KEY" not in argv, argv
+    # An empty array element would show up as a doubled space in the logged argv.
+    assert "  " not in argv, argv
+
+
 def test_live_wake_engine_stops_before_the_plant_is_stopped(tmp_path):
     """Regression: 2026-11-17 09:37Z, three wakes started during the delta and
     29 + 13 + 3 files changed before the verify, so the scoped shape can never
