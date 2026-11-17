@@ -229,8 +229,8 @@ RED when any of:
 
 ## `budget-view-mapping` check
 
-Command: `{python} {repo}/checks/budget-view-mapping.py {home}` — the site home is positional; the
-check has no `--home` flag. Exit codes: 0 holds, 2 RED, 3 cannot decide (ages to UNKNOWN).
+Command: `{python} {repo}/checks/budget-view-mapping.py --home {home}`. Exit codes: 0 holds, 2 RED, 3
+cannot decide (ages to UNKNOWN).
 
 It judges the window's ENGINE table, whose columns come from two clocks. `next` is the producer's
 `routing.roles[role].selected`, so it is judged against the *same file*: the view must render that

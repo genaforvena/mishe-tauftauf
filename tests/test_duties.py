@@ -100,13 +100,14 @@ def test_budget_view_mapping_duty_is_scheduled_with_its_own_exit_contract(tmp_pa
     """The window-vs-engine detector had no caller, so its FAIL and CANNOT-DECIDE could never surface.
 
     Steward's fix (e4eee616) made the comparison snapshot-internal so it no longer flaps; this asserts the
-    other half — that the repository schedules it against the committed check, with the site home passed
-    positionally (the check has no ``--home`` flag) and exit 3 declared as UNKNOWN so a missing engine
-    directory or ledger never mints ``failed-mishe-producer-budget-view-mapping-service``.
+    other half — that the repository schedules it against the committed check, with the site home on
+    ``--home`` (the convention every sibling check and the scheduler-coverage probe use) and exit 3
+    declared as UNKNOWN so a missing engine directory or ledger never mints
+    ``failed-mishe-producer-budget-view-mapping-service``.
     """
     item = next(d for d in ALL if d["name"] == "budget-view-mapping")
     check = str(REPO / "checks" / "budget-view-mapping.py")
-    assert item["command"] == ["{python}", "{repo}/checks/budget-view-mapping.py", "{home}"]
+    assert item["command"] == ["{python}", "{repo}/checks/budget-view-mapping.py", "--home", "{home}"]
     assert item["resolver"] == "senses"
     assert item["red_codes"] == [2] and item["unknown_codes"] == [3]
     home = tmp_path / "home"

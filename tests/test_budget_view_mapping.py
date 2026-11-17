@@ -105,22 +105,22 @@ def test_main_holds_when_the_window_renders_the_file(tmp_path):
     home = _site(tmp_path, {"genome": {"running": None, "next": "hy4"}})
     _ledger(home, [{"event": "select", "role": "genome", "key": "hy4"},
                    {"event": "outcome", "role": "genome", "key": "hy4"}])
-    assert mod.main(["budget-view-mapping.py", str(home)]) == 0
+    assert mod.main(["budget-view-mapping.py", "--home", str(home)]) == 0
 
 
 def test_main_fails_when_the_window_shows_a_different_engine(tmp_path):
     home = _site(tmp_path, {"genome": {"running": None, "next": "deepseek"}})
     _ledger(home, [])
-    assert mod.main(["budget-view-mapping.py", str(home)]) == 2
+    assert mod.main(["budget-view-mapping.py", "--home", str(home)]) == 2
 
 
 def test_main_fails_when_the_window_hides_a_running_wake(tmp_path):
     home = _site(tmp_path, {"genome": {"running": None, "next": "hy4"}})
     _ledger(home, [{"event": "select", "role": "genome", "key": "hy4"}])
-    assert mod.main(["budget-view-mapping.py", str(home)]) == 2
+    assert mod.main(["budget-view-mapping.py", "--home", str(home)]) == 2
 
 
 def test_main_cannot_decide_without_the_window_module(tmp_path):
     home = _site(tmp_path, {})
     (home / "operator" / "budget" / "budget_view.py").unlink()
-    assert mod.main(["budget-view-mapping.py", str(home)]) == 3
+    assert mod.main(["budget-view-mapping.py", "--home", str(home)]) == 3

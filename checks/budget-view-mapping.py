@@ -28,12 +28,13 @@ Exit codes: 0 holds (view renders the file, the file's trail picks that
 selection, the ledger agrees on running), 2 fails (a role disagrees), 3 cannot
 decide (site, budget view or ledger unreadable).
 
-Usage: budget-view-mapping.py [SITE_HOME]
+Usage: budget-view-mapping.py [--home SITE_HOME]
 SITE_HOME defaults to $MISHE_SEED_HOME, then $MISHE_TAUFTAUF_HOME, then
 ``<repo>/.mishe-tauftauf``.
 """
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import os
@@ -44,8 +45,19 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def site_home(argv: list[str]) -> Path:
-    if len(argv) > 1:
-        return Path(argv[1]).resolve()
+    """The site home from ``--home``, then the environment, then the repo's own.
+
+    ``--home`` is the convention the other checks use, including
+    ``budget-consistency.py`` and the scheduler-coverage probe that runs a tracked
+    check with ``--home``. A positional-only CLI made that probe pass ``--home``
+    itself as the path, so the check read ``<cwd>/--home`` and reported a bogus
+    CANNOT-DECIDE instead of the site's verdict (2026-11-17).
+    """
+    parser = argparse.ArgumentParser(description="The budget window must show the engine each mind runs on.")
+    parser.add_argument("--home", type=Path, help="site home of the plant")
+    args = parser.parse_args(argv[1:])
+    if args.home is not None:
+        return args.home.resolve()
     for name in ("MISHE_SEED_HOME", "MISHE_TAUFTAUF_HOME"):
         value = os.environ.get(name)
         if value:

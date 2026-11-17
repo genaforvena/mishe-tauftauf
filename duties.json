@@ -354,6 +354,7 @@
       "command": [
         "{python}",
         "{repo}/checks/budget-view-mapping.py",
+        "--home",
         "{home}"
       ],
       "every": 300,
