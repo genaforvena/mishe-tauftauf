@@ -105,12 +105,17 @@ each at most 256 000 bytes and 320 000 bytes in total, as unchanged review
 entries. The reviewer is an external model, so an added file must stay inside the
 release tree: a token that resolves outside it (a spelled `..` segment, which the
 adapter permits) or that does not resolve to a regular file in it is dropped,
-never read or handed over, never guessed. Measured cause: the docs releases
+never read or handed over, never guessed. A file whose bytes are not UTF-8 is
+dropped too — `patch_text.is_utf8` gates it — because `wall_patch.review` reads
+every entry as UTF-8 and one undecodable file would otherwise lose the whole
+review as a `review_error`. Measured cause: the docs releases
 19fb7646 and c87cd884 reviewed "unknown" because `docs/network-view.md` describes
 `checks/network-care.py`'s RED/UNKNOWN arms, which the reviewer never received.
 `tests/test_release_promotion.py::test_ordinary_review_supplies_a_file_the_changed_document_describes`
-pins the supply behaviour and
-`::test_described_paths_cannot_escape_the_release_tree` pins the containment rule.
+pins the supply behaviour,
+`::test_described_paths_cannot_escape_the_release_tree` pins the containment rule
+and `::test_ordinary_review_drops_a_described_file_that_is_not_utf8` pins the
+UTF-8 rule.
 Nothing else a page contains is read.
 
 The engine-account text adapters decode the four external provider text formats the

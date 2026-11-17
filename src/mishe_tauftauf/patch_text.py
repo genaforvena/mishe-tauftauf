@@ -126,6 +126,21 @@ def decode_lossy(data):
     return data.decode("utf-8", errors="replace")
 
 
+def is_utf8(data):
+    """Whether ``data`` decode as UTF-8 — the form a review entry is read in.
+
+    ``wall_patch.review`` decodes every supplied file as UTF-8, so a file whose
+    bytes are not UTF-8 would raise there and lose the whole review. A caller
+    that may hand over arbitrary file bytes asks this first and drops what is
+    not text.
+    """
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
 def source_parts(name: str) -> list[str]:
     """Dotted-path segments of a patched ``src/`` file, or [] for other paths."""
     if name[:4] != "src/":

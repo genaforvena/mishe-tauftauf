@@ -277,6 +277,29 @@ def test_described_paths_cannot_escape_the_release_tree(tmp_path):
     assert p._described_paths(source, ["docs/page.md"], []) == ["checks/care.py"]
 
 
+def test_ordinary_review_drops_a_described_file_that_is_not_utf8(tree,monkeypatch):
+    # wall_patch.review reads every entry as UTF-8, so a described file with
+    # non-UTF-8 bytes would raise UnicodeDecodeError there and lose the whole
+    # review as a review_error. It must be dropped, not handed over, so the
+    # review still runs and only the decodable file joins it.
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha);p.materialize(home,repo,old)
+    (source/"checks").mkdir(exist_ok=True)
+    (source/"checks"/"care.py").write_text("UPLINK_RED_PER_HOUR = 400\n")
+    (source/"checks"/"blob.py").write_bytes(b"\xff\xfeKEEP = 1\n")
+    (source/"docs"/"page.md").write_text("see `checks/care.py` and `checks/blob.py`\n")
+    identity="described-binary"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",
+        source=str(source),paths=["docs/page.md"],check=dict(output="pass",code=0),
+        observe_argv=["probe"],observe=dict(code=0,output="ok"),review_pending=True))
+    seen={}
+    monkeypatch.setattr(p.wall_patch,"review",lambda h,patch:(seen.__setitem__("patch",patch) or dict(clear=True,response={})))
+    monkeypatch.setattr(p,"config_paths",lambda *a:[])
+    p.review(home,identity)
+    assert "checks/care.py" in seen["patch"]["files"]
+    assert "checks/blob.py" not in seen["patch"]["files"]
+
+
 def test_release_intent_is_empty_when_the_worktree_is_gone(tmp_path):
     assert p._release_intent(tmp_path/"missing","a","b")==""
 

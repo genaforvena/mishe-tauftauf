@@ -61,3 +61,8 @@ def test_no_newline_marker_and_blank_additions_are_ignored():
 def test_patch_ids_maps_sha_to_id_and_skips_malformed_lines():
     output = "aaa111 sha1\nbbb222 sha2\nmalformed\n\nccc333 sha1\n"
     assert patch_text.patch_ids(output) == {"sha1": "ccc333", "sha2": "bbb222"}
+
+
+def test_is_utf8_distinguishes_text_from_undecodable_bytes():
+    assert patch_text.is_utf8("ok\n".encode()) is True
+    assert patch_text.is_utf8(b"\xff\xfeKEEP = 1\n") is False

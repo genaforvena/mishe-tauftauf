@@ -14,7 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from . import hold_text, page_paths_text, release_boundary, work_boundary as boundary, wall_patch, proc_table
+from . import hold_text, page_paths_text, patch_text, release_boundary, work_boundary as boundary, wall_patch, proc_table
 from .git_base_text import commit_intent_text
 from .state_files import read_json, write_json, write_text_atomic
 from .work_receipts import digest
@@ -701,7 +701,10 @@ def _described_paths(source, paths, included):
     resolved against the release tree and returned as unchanged review entries;
     a token that escapes that tree is dropped, never read or handed over.
     Deterministic: first-appearance order, capped at ``DESCRIBED_PATH_MAX``;
-    an over-size file is skipped, never truncated.
+    an over-size file is skipped, never truncated, and a file whose bytes are
+    not UTF-8 is skipped too, because ``wall_patch.review`` decodes every entry
+    as UTF-8 and one undecodable described file would otherwise lose the whole
+    review as a ``review_error``.
     """
     found, seen, total = [], set(included), 0
     source_root = source.resolve()
@@ -721,6 +724,8 @@ def _described_paths(source, paths, included):
                 continue
             size = candidate.stat().st_size
             if size > _DESCRIBED_MAX_BYTES or total + size > _DESCRIBED_TOTAL_BYTES:
+                continue
+            if not patch_text.is_utf8(candidate.read_bytes()):
                 continue
             seen.add(token); found.append(token); total += size
             if len(found) >= DESCRIBED_PATH_MAX:
