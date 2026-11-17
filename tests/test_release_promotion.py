@@ -514,12 +514,12 @@ def test_work_poll_scan_rearms_only_a_lost_retry(tmp_path,monkeypatch):
     record("rel-armed",review_retry_attempts=0,review_retry_state="scheduled in 1800s",
            review_retry_due=int(now+600))
     record("rel-fresh")
-    armed=p.rearm_lost_review_retries(tmp_path,clock=lambda: now)
+    armed=p.rearm_lost_review_retries(tmp_path,clock=lambda: now,live_units={})
     assert sorted(armed)==["rel-legacy","rel-overdue"], armed
     assert len(launched)==2, launched
     assert read_json(p.record_path(tmp_path,"rel-armed"))["review_retry_due"]==int(now+600)
     assert "review_retry_state" not in read_json(p.record_path(tmp_path,"rel-fresh"))
-    assert p.rearm_lost_review_retries(tmp_path,clock=lambda: now)==[]
+    assert p.rearm_lost_review_retries(tmp_path,clock=lambda: now,live_units={})==[]
     assert len(launched)==2, launched
 
 
@@ -547,7 +547,7 @@ def test_a_malformed_record_does_not_fail_the_work_poll(tmp_path,monkeypatch):
     write_json(p.record_path(tmp_path,"rel-empty-id"),
                dict(id="",sha="7"*40,source=str(tmp_path),review_pending=True,
                     review_retry_attempts=0,review_retry_state="scheduled in 1800s"))
-    assert p.rearm_lost_review_retries(tmp_path,clock=lambda: now)==["rel-good"]
+    assert p.rearm_lost_review_retries(tmp_path,clock=lambda: now,live_units={})==["rel-good"]
     assert len(launched)==1, launched
     assert read_json(p.record_path(tmp_path,"rel-noid"))["review_retry_state"]=="scheduled in 1800s"
 
@@ -568,15 +568,50 @@ def test_a_record_with_a_live_retry_unit_is_not_armed_again(tmp_path,monkeypatch
                     review_retry_attempts=0,review_retry_state="scheduled in 1800s",
                     review_retry_due=int(now-p.REVIEW_RETRY_REARM_GRACE_S-1)))
     armed=p.rearm_lost_review_retries(tmp_path,clock=lambda: now,
-                                      live_units=frozenset({legacy_sha[:12]}))
+                                      live_units={legacy_sha[:12]:
+                                                  {"timers": (f"mishe-release-review-retry-{legacy_sha[:12]}-1794930448.timer",),
+                                                   "services": ()}})
     assert armed==["rel-overdue"], armed
     assert len(launched)==1, launched
-    # Once the overdue rung is armed by the manager it is live too, and the next
-    # poll leaves both records alone.
+    # Once the overdue rung is armed, its record names a fresh deadline and the
+    # next poll leaves both records alone even though both units are live.
     assert p.rearm_lost_review_retries(
         tmp_path,clock=lambda: now,
-        live_units=frozenset({legacy_sha[:12],overdue_sha[:12]}))==[]
+        live_units={legacy_sha[:12]:{"timers": (f"mishe-release-review-retry-{legacy_sha[:12]}-1794930448.timer",), "services": ()},
+                    overdue_sha[:12]:{"timers": (f"mishe-release-review-retry-{overdue_sha[:12]}-1794930449.timer",), "services": ()}})==[]
     assert len(launched)==1, launched
+
+
+def test_a_timer_postponed_past_its_deadline_is_replaced(tmp_path,monkeypatch):
+    # A user-manager daemon-reload recomputes a monotonic timer's base from the
+    # reload, so a pending retry can outlive the deadline its record names
+    # (2026-11-17: sixteen retries due 16:05-16:32 all moved to reload+delay and
+    # none fired). A live timer this far past its recorded deadline is stopped
+    # and re-armed; a review running now is a service, not a timer, and is never
+    # duplicated.
+    from mishe_tauftauf import release_promotion as p
+    (tmp_path/"work/reviews").mkdir(parents=True)
+    (tmp_path/"work/releases").mkdir(parents=True)
+    calls=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:calls.append(argv))
+    now=time.time()
+    stale,running="4"*40,"5"*40
+    for name,sha in (("rel-stale",stale),("rel-running",running)):
+        write_json(p.record_path(tmp_path,name),
+                   dict(id=name,sha=sha,source=str(tmp_path),review_pending=True,
+                        review_retry_attempts=0,review_retry_state="scheduled in 7200s",
+                        review_retry_due=int(now-p.REVIEW_RETRY_REARM_GRACE_S-1)))
+    stale_timer=f"mishe-release-review-retry-{stale[:12]}-1794930448.timer"
+    live={stale[:12]:{"timers": (stale_timer,), "services": ()},
+          running[:12]:{"timers": (),
+                        "services": (f"mishe-release-review-retry-{running[:12]}-1794930448.service",)}}
+    armed=p.rearm_lost_review_retries(tmp_path,clock=lambda: now,live_units=live)
+    assert armed==["rel-stale"], armed
+    stops=[c for c in calls if c[0]=="systemctl" and "stop" in c]
+    assert stops==[["systemctl","--user","stop",stale_timer]], stops
+    runs=[c for c in calls if c[0]=="systemd-run"]
+    assert len(runs)==1 and any(a.startswith("--on-calendar=") for a in runs[0]), runs
+    assert read_json(p.record_path(tmp_path,"rel-running"))["review_retry_due"]==int(now-p.REVIEW_RETRY_REARM_GRACE_S-1)
 
 
 def test_retry_over_an_unmerged_failure_reruns_the_review(tree,monkeypatch):

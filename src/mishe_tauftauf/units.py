@@ -322,14 +322,17 @@ REVIEW_RETRY_LIVE_STATES = frozenset({"active", "activating", "reloading"})
 """``ACTIVE`` column values that mean a retry rung still exists and will still fire."""
 
 
-def live_review_retry_shas(prefix: str = REVIEW_RETRY_UNIT_PREFIX, *, run=None) -> frozenset[str]:
-    """``sha[:12]`` prefixes whose review-retry unit still exists in a live state.
+def live_review_retry_units(prefix: str = REVIEW_RETRY_UNIT_PREFIX, *, run=None) -> dict[str, dict[str, tuple[str, ...]]]:
+    """``sha[:12]`` → ``{"timers": (...), "services": (...)}`` of live retry units.
 
     A retry unit is named ``<prefix><sha[:12]>-<epoch>``, so the name carries the
     record it retries. ``--all`` also lists units that were stopped, which is how
     a rung a stop/collect cycle removed is told apart from one that merely has not
     fired yet (``active``/``waiting``) or is running now (``active``/``activating``).
-    A manager that cannot answer yields no prefix: the caller then re-arms, the
+    The groups let a caller replace a pending deadline without killing work: a
+    ``.timer`` may be stopped and re-armed, a ``.service`` is a review running now
+    and must never be duplicated.
+    A manager that cannot answer yields no entry: the caller then re-arms, the
     earlier behaviour, which costs one duplicate and never a stranded review.
     """
     run = subprocess.run if run is None else run
@@ -337,14 +340,17 @@ def live_review_retry_shas(prefix: str = REVIEW_RETRY_UNIT_PREFIX, *, run=None) 
         result = run(["systemctl", "--user", "list-units", prefix + "*", "--all",
                       "--plain", "--no-legend"], capture_output=True, text=True)
     except (OSError, subprocess.SubprocessError):
-        return frozenset()
-    shas = set()
+        return {}
+    found = {}
     for row in (getattr(result, "stdout", "") or "").splitlines():
         columns = row.split()
         if len(columns) > 2 and columns[0].startswith(prefix) \
                 and columns[2] in REVIEW_RETRY_LIVE_STATES:
-            shas.add(columns[0][len(prefix):].split("-", 1)[0])
-    return frozenset(shas)
+            sha = columns[0][len(prefix):].split("-", 1)[0]
+            group = found.setdefault(sha, {"timers": [], "services": []})
+            group["timers" if columns[0].endswith(".timer") else "services"].append(columns[0])
+    return {sha: {key: tuple(names) for key, names in groups.items()}
+            for sha, groups in found.items()}
 
 
 def timers_run_release(timers: list[str], root: str) -> bool:

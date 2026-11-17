@@ -543,16 +543,23 @@ def _review_attempts(home, identity):
     return len(list((Path(home)/"work/reviews").glob(f"{identity}-*.failed-attempt.json")))
 
 
-def _review_retry_lost(current, now, live_units=frozenset()):
-    """True when a recorded retry rung is neither armed nor running any more.
+def _review_retry_lost(current, now, live_units=frozenset(), timer_shas=frozenset()):
+    """True when a recorded retry rung must be armed again.
 
-    A transient calendar unit cannot be started again once a stop/collect
-    cycle removed it, and it leaves no result, so the record itself has to notice
-    the loss. A rung is lost when its unit is not among ``live_units`` and either
+    A transient unit cannot be started again once a stop/collect cycle removed
+    it, and it leaves no result, so the record itself has to notice the loss. A
+    rung is lost when
 
-    * a recorded ``review_retry_due`` is more than ``REVIEW_RETRY_REARM_GRACE_S``
-      past -- the unit should have fired by now; the grace keeps a review that is
-      merely running late from being duplicated, or
+    * its unit is not among ``live_units`` and a recorded ``review_retry_due`` is
+      more than ``REVIEW_RETRY_REARM_GRACE_S`` past -- the unit should have fired
+      by now; the grace keeps a review that is merely running late from being
+      duplicated, or
+    * it is live only as a ``.timer`` (its sha is in ``timer_shas``) and that due
+      time is this far past: a timer whose deadline came and went without firing
+      was postponed, not merely late. A user-manager ``daemon-reload`` gave every
+      pending ``--on-active`` retry a new base and pushed sixteen of them to
+      reload+delay (2026-11-17), so the deadline the record names is the truth.
+      A live ``.service`` is a review running now and is never duplicated, or
     * the record is legacy, naming only ``scheduled in ...`` from before the due
       time was recorded (2026-11-17). Its unit may still exist; ``live_units``
       answers that exactly, where the record cannot.
@@ -560,11 +567,13 @@ def _review_retry_lost(current, now, live_units=frozenset()):
     A record with neither a due time nor a recorded retry state was never armed:
     its first review is still running and nothing is lost.
     """
-    if (current.get("sha") or "")[:12] in live_units:
-        return False
+    sha = (current.get("sha") or "")[:12]
     due = current.get("review_retry_due")
+    overdue = isinstance(due, (int, float)) and now >= due + REVIEW_RETRY_REARM_GRACE_S
+    if sha in live_units:
+        return overdue and sha in timer_shas
     if isinstance(due, (int, float)):
-        return now >= due + REVIEW_RETRY_REARM_GRACE_S
+        return overdue
     # Legacy records (2026-11-17, before the due time was recorded) carry only
     # the state line. Key presence separates an armed record from one never
     # armed; "exhausted" is this module's own value for a spent ladder and is
@@ -685,24 +694,34 @@ def _identity(record):
     return identity if isinstance(identity, str) and identity else None
 
 
-def rearm_lost_review_retries(home, *, clock=time.time, live_units=None):
-    """Re-arm the retries whose transient unit a stop/collect cycle removed.
+def _postponed_retry_timers(record, live):
+    """The live ``.timer`` units for ``record``'s sha."""
+    return list(live.get((record.get("sha") or "")[:12], {}).get("timers", ()))
+
+
+def rearm_lost_review_retries(home, *, clock=time.time, live_units=None, stop=None):
+    """Re-arm the retries whose transient unit a stop/collect cycle removed or postponed.
 
     ``merge_review`` only reaches a record when a result arrives, and a destroyed
     retry unit never produces one, so the loss needs a scan: ``work poll`` runs
     every couple of minutes over the whole home. ``_review_retry_lost`` decides
-    which records are affected; a record whose retry unit is still live, is
-    running or was never scheduled is left untouched. Each re-arm takes the
-    delivery lock and re-reads the record, so a concurrent merge is not
-    overwritten; a busy lock is skipped and the next poll tries again.
+    which records are affected; a record whose retry unit is still live and whose
+    deadline has not been missed is left untouched, as is one running a review
+    now. Each re-arm takes the delivery lock and re-reads the record, so a
+    concurrent merge is not overwritten; a busy lock is skipped and the next poll
+    tries again. A live timer whose recorded deadline is long past is stopped
+    before the replacement is armed, so only one rung is pending.
 
-    ``live_units`` is the ``units.live_review_retry_shas()`` answer; it is computed
-    once per scan so the whole home costs one manager query and every record sees
-    the same snapshot.
+    ``live_units`` is the ``units.live_review_retry_units()`` answer; it is
+    computed once per scan so the whole home costs one manager query and every
+    record sees the same snapshot.
 
     Returns the identities re-armed, for the poll's log line.
     """
-    live = units.live_review_retry_shas() if live_units is None else live_units
+    live = units.live_review_retry_units() if live_units is None else live_units
+    live_shas = frozenset(live)
+    timer_shas = frozenset(sha for sha, groups in live.items() if groups.get("timers"))
+    stop = _stop_timers if stop is None else stop
     armed = []
     for path in sorted((Path(home)/"work/releases").glob("*.json")):
         try:
@@ -714,7 +733,7 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None):
                 continue
             if current.get("review_retry_attempts") != _review_attempts(home, identity):
                 continue
-            if not _review_retry_lost(current, clock(), live):
+            if not _review_retry_lost(current, clock(), live_shas, timer_shas):
                 continue
             with delivery_lock(home):
                 current = read_json(path)
@@ -725,8 +744,9 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None):
                     continue
                 if current.get("review_retry_attempts") != _review_attempts(home, identity):
                     continue
-                if not _review_retry_lost(current, clock(), live):
+                if not _review_retry_lost(current, clock(), live_shas, timer_shas):
                     continue
+                stop(_postponed_retry_timers(current, live))
                 schedule_review_retry_if_needed(home, current)
                 write_json(path, current)
         except (OSError, ValueError, subprocess.SubprocessError):
@@ -736,6 +756,13 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None):
             continue
         armed.append(identity)
     return armed
+
+
+def _stop_timers(names):
+    """Stop the named transient timers; already-elapsed ones make this a no-op."""
+    if names:
+        subprocess.run(["systemctl", "--user", "stop", *names],
+                       capture_output=True, text=True, timeout=30)
 
 
 def review_queue_path(home, record):

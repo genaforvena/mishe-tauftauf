@@ -537,11 +537,12 @@ def test_sync_reloads_systemd_once_not_once_per_enabled_trigger(cfg):
     assert enables and all("--no-reload" in c for c in enables)
 
 
-def test_live_review_retry_shas_reads_only_units_that_will_still_fire():
+def test_live_review_retry_units_reads_only_units_that_will_still_fire():
     # 2026-11-17 live: record 2c6380ae kept only "scheduled in 1800s" while its
     # transient timer still waited. The record cannot tell that from a lost unit,
     # so the retry scan asks the manager; --all lists stopped units too, and only
-    # an active one means the rung still exists.
+    # an active one means the rung still exists. The name also says whether the
+    # rung is a pending timer or a review running now.
     listing = (
         "mishe-release-review-retry-2c6380ae6925-1794914557.timer loaded active waiting A timer\n"
         "mishe-release-review-retry-aaaaaaaaaaaa-1794914557.timer loaded inactive dead A timer\n"
@@ -551,12 +552,16 @@ def test_live_review_retry_shas_reads_only_units_that_will_still_fire():
         stdout = listing
         returncode = 0
 
-    assert units.live_review_retry_shas(run=lambda argv, **kw: Answered()) == frozenset(
-        {"2c6380ae6925", "bbbbbbbbbbbb"})
+    assert units.live_review_retry_units(run=lambda argv, **kw: Answered()) == {
+        "2c6380ae6925": {"timers": ("mishe-release-review-retry-2c6380ae6925-1794914557.timer",),
+                         "services": ()},
+        "bbbbbbbbbbbb": {"timers": (),
+                         "services": ("mishe-release-review-retry-bbbbbbbbbbbb-1794914557.service",)},
+    }
 
     def broken(argv, **kw):
         raise OSError("no systemd")
 
     # A manager that cannot answer is not evidence of a live unit: the scan falls
     # back to re-arming, never to silence.
-    assert units.live_review_retry_shas(run=broken) == frozenset()
+    assert units.live_review_retry_units(run=broken) == {}
