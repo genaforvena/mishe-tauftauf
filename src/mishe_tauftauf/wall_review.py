@@ -184,7 +184,13 @@ def review_answer(model: str, directory: Path, path: Path, runner=subprocess.run
             continue
         elapsed = time.monotonic() - began
         if result.returncode:
-            raise RuntimeError(f"patch reader failed: {result.stderr[-1000:]}")
+            # The reason is not always on stderr: when the Claude account is out
+            # of quota the CLI exits non-zero with "You've hit your weekly limit
+            # · resets <time>" on stdout and an empty stderr, so a message built
+            # from stderr alone said only "patch reader failed:" (2026-11-17).
+            raise RuntimeError(
+                f"patch reader failed: reviewer exited {result.returncode}; "
+                f"stdout tail {result.stdout[-400:]!r}; stderr tail {result.stderr[-400:]!r}")
         raw = result.stdout.strip()
         if not raw:
             history.append(f"attempt {attempt}: empty after {elapsed:.1f}s")

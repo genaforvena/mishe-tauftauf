@@ -314,6 +314,8 @@ def test_explicit_retry_after_reviewer_error_preserves_failed_attempt(tree,monke
     source=p.materialize(home,repo,sha);p.materialize(home,repo,old)
     identity="review-retry"
     write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",source=str(source),paths=["docs/page.md"],check=dict(output="pass"),review_pending=True))
+    launched=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:launched.append(argv))
     calls=[]
     def reviewer(*args):
         calls.append(1)
@@ -324,6 +326,26 @@ def test_explicit_retry_after_reviewer_error_preserves_failed_attempt(tree,monke
     assert p.review(home,identity)["phase"]=="reviewed"
     assert len(calls)==2
     assert list((home/"work/reviews").glob("*.failed-attempt.json"))
+    # A failed review used to be stranded: a later attempt had to be started by
+    # hand. The first failure now schedules one delayed re-run; the success does not.
+    retries=[argv for argv in launched if any("review-retry" in str(a) for a in argv)]
+    assert len(retries)==1
+    assert "--on-active=1800" in retries[0]
+    assert retries[0][-4:]==["release","review","--id",identity]
+    assert read_json(p.record_path(home,identity))["review_retry_state"]=="scheduled in 1800s"
+
+
+def test_review_retry_delay_backs_off_and_gives_up(tmp_path):
+    from mishe_tauftauf import release_promotion as p
+    reviews=tmp_path/"work/reviews";reviews.mkdir(parents=True)
+    delays=[]
+    for attempt in range(p.REVIEW_RETRY_MAX_ATTEMPTS):
+        delays.append(p.review_retry_delay(tmp_path,"rel-1"))
+        (reviews/f"rel-1-{attempt}.failed-attempt.json").write_text("{}")
+    assert delays==[1800,3600,7200,14400,28800,28800,28800,28800]
+    assert p.review_retry_delay(tmp_path,"rel-1") is None
+    # Another release's archives do not count against this one.
+    assert p.review_retry_delay(tmp_path,"rel-2")==1800
 
 
 def test_config_inventory_excludes_host_guards_and_other_sites(tmp_path):

@@ -537,17 +537,25 @@ def test_empty_reviewer_output_names_the_failure_when_retries_exhaust(tmp_path, 
 
 
 def test_review_answer_reports_a_nonzero_reviewer_exit(tmp_path, monkeypatch):
+    # A non-zero exit is not an answer. The failure must name the exit code and
+    # keep the stdout tail as well: when the Claude account is out of quota the
+    # CLI exits 1 with "You've hit your weekly limit · resets …" on stdout and an
+    # empty stderr, so a stderr-only message explained nothing (2026-11-17).
     from mishe_tauftauf import wall_review
     import importlib
 
     monkeypatch.setenv("MISHE_WALL_REVIEW_TIMEOUT", "120")
     importlib.reload(wall_review)
-    with pytest.raises(RuntimeError, match="patch reader failed"):
+    with pytest.raises(RuntimeError, match="patch reader failed") as info:
         wall_review.review_answer("claude-haiku-5-5", tmp_path, _req_file(tmp_path),
                                   runner=lambda *a, **k:
-                                  type("R", (), {"returncode": 2, "stdout": "",
+                                  type("R", (), {"returncode": 1,
+                                                 "stdout": "You've hit your weekly limit · resets Nov 18, 3am (UTC)\n",
                                                  "stderr": "boom"})())
     importlib.reload(wall_review)
+    message = str(info.value)
+    assert "reviewer exited 1" in message
+    assert "weekly limit" in message and "boom" in message
 
 
 def test_review_answer_retries_an_answer_that_fails_validation(tmp_path, monkeypatch):

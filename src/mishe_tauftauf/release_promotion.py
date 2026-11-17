@@ -490,6 +490,47 @@ def enqueue_review(home, record):
                    env=dict(os.environ, PYTHONPATH=str(Path(record["source"])/"src")), capture_output=True, timeout=15, check=True)
 
 
+REVIEW_RETRY_BASE_S = 1800
+"""First delay before a failed asynchronous review is re-run."""
+
+REVIEW_RETRY_MAX_ATTEMPTS = 8
+"""How many failed reviews a release re-runs before it stops trying."""
+
+
+def review_retry_delay(home, identity, base=REVIEW_RETRY_BASE_S, attempts_max=REVIEW_RETRY_MAX_ATTEMPTS):
+    """Seconds to wait before re-running a failed review, or None when spent.
+
+    A reviewer outage used to strand a release's asynchronous review for good:
+    ``enqueue_review`` starts exactly one unit and nothing invoked it again
+    (2026-11-17: the Claude account's weekly quota was spent, the reviewer exited
+    non-zero and the record kept ``review_pending`` true with no retry). Every
+    failed attempt already leaves a ``<identity>-<ns>.failed-attempt.json``
+    archive, so the number of archives counts the attempts without new state.
+    The delay doubles up to eight times the base — roughly 30m, 1h, 2h, 4h then
+    8h each — which spans about forty hours of outage before giving up.
+    """
+    done = len(list((Path(home)/"work/reviews").glob(f"{identity}-*.failed-attempt.json")))
+    if done >= attempts_max:
+        return None
+    return base * (2 ** min(done, 4))
+
+
+def schedule_review_retry(home, record, *, delay, runner=None):
+    """Start one delayed unit that re-runs this release's failed review."""
+    run = subprocess.run if runner is None else runner
+    unit = f"mishe-release-review-retry-{record['sha'][:12]}-{int(time.time())}"
+    pythonpath = str(Path(record["source"])/"src")
+    return run(["systemd-run", "--user", "--collect", f"--unit={unit}",
+                f"--on-active={int(delay)}",
+                "--slice=mishe-plants.slice",
+                "--setenv=PYTHONPATH=" + pythonpath,
+                "--setenv=MISHE_SEED_HOME=" + str(home),
+                sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
+                "release", "review", "--id", record["id"]],
+               env=dict(os.environ, PYTHONPATH=pythonpath),
+               capture_output=True, timeout=15, check=True)
+
+
 def review_queue_path(home, record):
     # The same SHA from a different base has a different scoped diff to read.
     key = record["sha"] + ("-" + record["previous"] if record.get("previous") else "")
@@ -748,6 +789,17 @@ def review(home, identity):
     write_json(queued, dict(id=identity, result=result, merged=False))
     merge_review(home, queued)
     current = read_json(path)
+    if current.get("review_pending") is not False and "review_error" in current:
+        delay = review_retry_delay(home, identity)
+        try:
+            if delay is None:
+                current["review_retry_state"] = "exhausted"
+            else:
+                schedule_review_retry(home, current, delay=delay)
+                current["review_retry_state"] = f"scheduled in {int(delay)}s"
+        except (OSError, subprocess.SubprocessError) as exc:
+            current["review_retry_state"] = f"scheduling failed: {exc}"
+        write_json(path, current)
     return dict(phase="reviewed" if current.get("review_pending") is False else "review-pending", id=identity)
 
 
