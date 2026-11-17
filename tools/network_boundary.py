@@ -112,6 +112,23 @@ def decode_wifi(stdout):
     return bands
 
 
+def decode_wifi_radio(lines):
+    """Channel, frequency and noise floor from one radio's read-only ``iwinfo ... info`` lines.
+
+    Missing or unknown fields stay None (UNKNOWN in the window); no SSID, MAC or signal is kept.
+    """
+    info = {"channel": None, "freq_ghz": None, "noise_dbm": None}
+    for line in lines:
+        m = CHANNEL_LINE.search(line)
+        if m:
+            info["channel"] = int(m.group(1))
+            info["freq_ghz"] = float(m.group(2))
+        m = NOISE_LINE.search(line)
+        if m:
+            info["noise_dbm"] = int(m.group(1))
+    return info if any(v is not None for v in info.values()) else None
+
+
 def utc_epoch(stamp):
     """'2026-11-10T09:49:30Z' -> epoch seconds."""
     import calendar
@@ -148,6 +165,8 @@ def router_over_limit(rl):
 
 STATION_LINE = re.compile(r"^([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\s+(-?\d+)\s+dBm")
 RATE_LINE = re.compile(r"^\s*(RX|TX):\s*([\d.]+)\s*MBit/s")
+CHANNEL_LINE = re.compile(r"Channel:\s*(\d+)\s*\(([\d.]+)\s*GHz\)")
+NOISE_LINE = re.compile(r"Noise:\s*(-?\d+)\s*dBm")
 
 
 def decode_router_output(stdout, bands, client_id):
@@ -179,11 +198,15 @@ def decode_router_output(stdout, bands, client_id):
             host = parts[3] if parts[3] != "*" else ""
             names[parts[1].lower()] = host or "unnamed device"
 
+    radios = []
     clients = []
     for key in [k for k in sections if k.startswith("RADIO ")]:
         radio = key.split()[1]
         if radio not in bands:
             continue
+        info = decode_wifi_radio(sections[key])
+        if info is not None:
+            radios.append({"band": bands[radio], **info})
         current_station = None
         for line in sections[key]:
             m = STATION_LINE.match(line.strip())
@@ -211,6 +234,7 @@ def decode_router_output(stdout, bands, client_id):
     if wan_device and isinstance(wan_device, str):
         uplink = decode_link_counters(sections.get("LINKS", []), wan_device)
     return {"uptime_s": round(uptime_s), "wan": wan, "uplink": uplink, "clients": clients,
+            "radios": radios,
             "router_load": decode_router_load(sections.get("LOAD", [])),
             "vpn": decode_router_vpn(sections.get("VPN", []))}
 

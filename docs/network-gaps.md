@@ -2,7 +2,7 @@
 
 One line per promised slot in the network charter. Checked against `tools/network_view.py`
 (`draw()` and its helpers) and `tools/network_router.py` and `rust/mishe-network-probe`, on 2026-11-13.
-Day-trend and baseline rows rechecked 2026-11-17.
+Day-trend, baseline and Wi-Fi channel/noise rows rechecked 2026-11-17.
 
 Status words: **BUILT** (the window shows it with an age or UNKNOWN), **PARTLY** (some of it is
 shown), **MISSING** (not measured or not shown).
@@ -34,7 +34,7 @@ shown), **MISSING** (not measured or not shown).
 | --- | --- | --- |
 | Number of clients | BUILT | `wifi_facts()`: total and per band (2.4 / 5 GHz) |
 | Who is weak, by a name the household knows | PARTLY | the RECORDED line names the weakest device and its dBm; the live WI-FI line does not name devices ("no devices named") |
-| Noisy or channel trouble | MISSING | no channel, noise floor or retry counters are read |
+| Noisy or channel trouble | PARTLY | `WI-FI RADIO` shows each known radio's channel, frequency and noise floor from a read-only `iwinfo <radio> info` pass in the router read, with age and UNKNOWN/STALE guards; `network-wifi` is UNKNOWN when the sub-reading vanishes. Retry counters and a comparison of the two APs' channels are still missing |
 | Weak-signal flag | BUILT | "WEAK SIGNAL" when the weakest client is below `WEAK_WIFI_DBM` |
 
 ## Router and uplink
@@ -60,10 +60,10 @@ shown), **MISSING** (not measured or not shown).
 ## Count
 
 - BUILT: 15
-- PARTLY: 4
-- MISSING: 6
+- PARTLY: 5
+- MISSING: 5
 
 ## Next gaps, in order of value
 
 1. Upload speed, one bounded night-time try alongside the download.
-2. Wi-Fi channel, noise floor and retry counters — a read-only `iwinfo <radio> info` pass on the router (the "noisy or channel trouble" row above).
+2. Wi-Fi retry counters and co-channel trouble: a read-only per-radio stats read on the router, and a comparison of the two APs' channels (`ra0` and `ra1` both reported channel 13 on 2026-11-17; what `ra1` is, is not yet established).

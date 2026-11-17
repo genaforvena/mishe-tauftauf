@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Detectors for the network window and for the network mind's improvement.
+"""Detectors for the network window, router readings and the network mind's improvement.
 
   window    the outer tmux window "network" exists and its pane runs tools/network_view.py
   progress  the network mind's wall is fresh and network files were committed recently
   uplink    the WAN receive-drop rate (eth0 rx_dropped) from router readings stays under the bound
+  vpn       sing-box is running and tun0 is up in the newest router reading
+  wifi      the read-only iwinfo channel/noise sub-reading is present and plausible
 
 Exit: 0 GREEN, 2 RED (the window is missing/wrong, or the mind has gone quiet), 3 UNKNOWN
 (tmux or git cannot be read).  Nothing here holds a signal GREEN by hand.
@@ -314,9 +316,63 @@ def vpn(home):
     return code
 
 
+WIFI_MAX_AGE_S = 900         # the newest Wi-Fi radio reading must be this fresh, else UNKNOWN
+WIFI_WINDOW_S = 30 * 60      # only readings from this window count
+
+
+def wifi_state(rows, now):
+    """Judge the Wi-Fi channel/noise sub-reading from the router readings.
+
+    Row shape: {"ts", "ok", "radios": [{"band", "channel", "freq_ghz", "noise_dbm"}, ...]}.
+    Returns (code, message): 0 GREEN, 2 RED, 3 UNKNOWN. A missing, stale or incomplete reading
+    is UNKNOWN; impossible channel or noise values are RED. This detects a dead sub-probe —
+    the whole router read can still succeed while iwinfo silently yields nothing.
+    """
+    fresh = []
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("ok"):
+            continue
+        radios = row.get("radios")
+        if not isinstance(radios, list) or not radios:
+            continue
+        try:
+            ts = float(row["ts"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0 <= now - ts <= WIFI_WINDOW_S and ts <= now + START_SLACK_S:
+            fresh.append((ts, radios))
+    if not fresh:
+        return 3, "network-care: no Wi-Fi channel/noise reading in the last 30 minutes"
+    fresh.sort(key=lambda item: item[0])
+    ts, radios = fresh[-1]
+    ago = now - ts
+    if ago > WIFI_MAX_AGE_S:
+        return 3, f"network-care: newest Wi-Fi radio reading is {ago / 60:.0f} min old"
+    parts = []
+    for radio in radios:
+        if not isinstance(radio, dict):
+            return 3, "network-care: Wi-Fi radio reading unreadable"
+        band, ch, noise = radio.get("band"), radio.get("channel"), radio.get("noise_dbm")
+        if not band or not isinstance(ch, int) or not isinstance(noise, int):
+            return 3, "network-care: Wi-Fi radio reading incomplete (channel or noise missing)"
+        if ch < 1 or ch > 196 or noise >= 0 or noise < -120:
+            return 2, f"network-care: impossible Wi-Fi channel {ch} or noise {noise} dBm on {band} GHz"
+        parts.append(f"{band} GHz ch {ch}, noise {noise} dBm")
+    return 0, "network-care: Wi-Fi radio GREEN (" + "; ".join(parts) + ")"
+
+
+def wifi(home):
+    rows = router_readings(home)
+    if rows is None:
+        return 3
+    code, message = wifi_state(rows, time.time())
+    print(message, file=sys.stderr if code else sys.stdout)
+    return code
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("what", choices=("window", "progress", "uplink", "vpn"))
+    ap.add_argument("what", choices=("window", "progress", "uplink", "vpn", "wifi"))
     ap.add_argument("--home", type=Path, required=True)
     ap.add_argument("--repo", type=Path, required=True)
     ap.add_argument("--session", default="plants")
@@ -325,6 +381,8 @@ def main():
         return uplink(a.home)
     if a.what == "vpn":
         return vpn(a.home)
+    if a.what == "wifi":
+        return wifi(a.home)
     return window(a.session, a.home, a.repo) if a.what == "window" else progress(a.home, a.repo)
 
 

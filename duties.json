@@ -986,6 +986,30 @@
       "replaces": []
     },
     {
+      "name": "network-wifi",
+      "command": [
+        "{python}",
+        "{repo}/checks/network-care.py",
+        "wifi",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 300,
+      "timeout": 30,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "network",
+      "covers": "the Wi-Fi channel and noise-floor sub-reading from the router's read-only iwinfo pass in network/router.jsonl: RED when a fresh reading carries impossible channel or noise values, UNKNOWN when no fresh reading carries the sub-reading or a field is missing, GREEN when both bands report plausible numbers",
+      "replaces": []
+    },
+    {
       "name": "network-window",
       "command": [
         "{python}",

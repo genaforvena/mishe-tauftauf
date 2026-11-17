@@ -6,7 +6,8 @@ connection in plain words. Every number carries its age, and anything unmeasured
 ## Router log: `network/router.jsonl`
 
 Written by `tools/network_router.py` every 300 s (duty `network-router`, timeout 30 s).
-The probe is read-only: it reads the router's status, Wi-Fi clients and DHCP names over LAN.
+The probe is read-only: it reads the router's status, Wi-Fi clients, DHCP names and each
+radio's channel and noise floor over LAN.
 
 One JSON object per line, oldest first.
 
@@ -14,6 +15,7 @@ One JSON object per line, oldest first.
 | --- | --- |
 | `ts` | epoch seconds (float), when the read ran |
 | `ok` | `true` if the read worked, `false` if it failed or the pass was skipped |
+| `radios` | only when `ok` is true: one object per known radio, `{"band": str, "channel": int or null, "freq_ghz": float or null, "noise_dbm": int or null}`, from a read-only `iwinfo <radio> info` pass; `[]` when the router did not report channel/noise. No SSID, MAC or signal is stored here |
 | `clients` | only when `ok` is true: list of Wi-Fi clients |
 | `uptime_s` | only when `ok` is true: router uptime in seconds |
 | `wan` | only when `ok` is true: `{"up": bool, "uptime_s": int}` |
@@ -46,6 +48,12 @@ cannot read the log is UNKNOWN, never a quiet pass. A row whose `uplink` object 
 missing or `null` is skipped, so a reading that does not carry the counters can
 neither raise nor clear the alarm.
 
+The `network-wifi` duty (same checker, subcommand `wifi`, every 300 s, `max_age` 900 s,
+resolver `network`) watches that sub-reading separately: the router read can succeed while
+`iwinfo` silently yields no channel/noise lines. It is UNKNOWN when no fresh reading carries
+them or a field is missing, RED only on impossible values (channel outside 1–196 or noise
+outside -120…0 dBm), GREEN when both known radios report plausible numbers.
+
 The same checker also guards the network area's own continuity. The
 `network-progress` duty (`checks/network-care.py`, subcommand `progress`, every
 900 s, `max_age` 1800 s, resolver `network`) is RED when the network mind's wall
@@ -58,6 +66,8 @@ is not mistaken for a quiet mind.
 ## What the view says about it
 
 - `RECORDED`: client count by band, weakest device by name and dBm, the age of the last read.
+- `WI-FI RADIO`: each known radio's channel, frequency and noise floor from the read-only router
+  pass, with the age of the reading; UNKNOWN when the sub-reading is absent, STALE past 15 minutes.
 - `UNKNOWN`: the log has no reading, or the last read failed.
 - `STALE`: the last good reading is older than 15 minutes.
 - Trends and weekday baselines are UNKNOWN until two days of comparable rows exist.
@@ -66,7 +76,10 @@ is not mistaken for a quiet mind.
 
 - Signal values are one sample per 5 minutes. A single strong reading is not a finding; it
   becomes one only when it repeats over a day.
-- Not measured yet: upload speed. VPN (sing-box) state is shown as "running" and "tun0 up" from the
+- Not measured yet: upload speed and Wi-Fi retry counters. Channel and noise floor are measured once
+  per 5 minutes; a single reading is not evidence of channel trouble, and the view does not yet
+  compare the two APs' channels.
+- VPN (sing-box) state is shown as "running" and "tun0 up" from the
   router's process list; it does not say which clients use the tunnel. The WAN error and drop counters
   are measured: the view reports them from the last recorded router read, and the drop
   count over a window needs at least 10 minutes of counters (`_wan_drops` in

@@ -30,7 +30,8 @@ COOLDOWN_S = 900  # after a read over the router self-limit, do not ssh the rout
 BANDS = {"ra0": "2.4", "rax0": "5"}  # radio name -> GHz; ra0 is the 2.4 GHz radio, rax0 the 5 GHz one
 REMOTE = (
     'echo "UPTIME $(cut -d" " -f1 /proc/uptime)"; '
-    "for d in ra0 rax0; do echo \"RADIO $d\"; iwinfo $d assoclist 2>/dev/null; done; "
+    "for d in ra0 rax0; do echo \"RADIO $d\"; iwinfo $d info 2>/dev/null | grep -E 'Channel:|Noise:'; "
+    "iwinfo $d assoclist 2>/dev/null; done; "
     'echo LEASES; cat /tmp/dhcp.leases 2>/dev/null; echo WAN; '
     'ubus call network.interface.wan status 2>/dev/null; echo LOAD; cat /proc/loadavg 2>/dev/null; '
     'grep -E "^MemAvailable:" /proc/meminfo 2>/dev/null; echo LINKS; ip -s link show 2>/dev/null; '

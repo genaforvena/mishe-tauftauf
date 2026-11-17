@@ -409,6 +409,37 @@ def vpn_line(now=None):
     return f"{proc}, {tun} on the router; read {ago:.0f} s ago{stale}"
 
 
+def wifi_radio_line(now=None):
+    """Wi-Fi channel and noise floor from the newest recorded router read.
+
+    A read with no radio info is UNKNOWN, never a quiet channel; an old read is STALE.
+    """
+    now = time.time() if now is None else now
+    rows_ = router_rows()
+    if not rows_:
+        return "UNKNOWN (no router reading recorded yet)"
+    reads = [r for r in rows_ if r.get("ok") and r.get("radios")]
+    if not reads:
+        return "UNKNOWN (Wi-Fi channel/noise not in the router reads)"
+    last = reads[-1]
+    ago = now - last["ts"]
+    parts = []
+    for radio in last["radios"]:
+        if not isinstance(radio, dict):
+            parts.append("UNKNOWN")
+            continue
+        band = radio.get("band", "?")
+        ch, freq, noise = radio.get("channel"), radio.get("freq_ghz"), radio.get("noise_dbm")
+        if ch is None or freq is None:
+            parts.append(f"{band} GHz channel UNKNOWN")
+            continue
+        text = f"{band} GHz ch {ch} ({freq:g} GHz)"
+        text += f", noise {noise} dBm" if noise is not None else ", noise UNKNOWN"
+        parts.append(text)
+    stale = "  STALE" if ago > STALE_ROUTER_S else ""
+    return f"{'; '.join(parts)}; read {ago:.0f} s ago{stale}"
+
+
 def _wan_drops(reads, lo, hi):
     """Receive drops between the first and last WAN read in [lo, hi]; a reboot restarts the span.
 
@@ -590,6 +621,7 @@ def draw():
     out.append("  OUTAGES (home internet DOWN, from the probes)")
     out.extend(outage_lines(data))
     out.append("  WI-FI         " + wifi_line() + "   (read-only, clients counted, no devices named)")
+    out.append("  WI-FI RADIO   " + wifi_radio_line() + "   (read-only iwinfo on the router)")
     out.append("  RECORDED      " + recorded_clients_line())
     rf = router_facts()
     out.append("  ROUTER        " + (rf or "UNKNOWN (ssh read failed)") + "   (read-only)")
