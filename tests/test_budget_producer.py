@@ -632,3 +632,13 @@ def test_decision_line_bad_config_is_unknown_not_default(tmp_path):
     line = bp.decision_line(tmp_path, now, {"balance": 1.0})
     assert line["state"] == "UNKNOWN" and line["daily_cap"] is None
     assert line["reason"].startswith("decision config unreadable")
+
+
+def test_non_fresh_tap_publishes_no_window_but_keeps_its_cause():
+    # The fail-closed rule stays: a non-FRESH native sample publishes no claude window. What it must
+    # also publish is why (2026-11-17: an idle five_hour window made the account UNREADABLE with no
+    # cause, so every consumer could only repeat "account state UNREADABLE").
+    accounts = bp.build_accounts(None, tap(state="UNKNOWN", error="five_hour reset not yet reported; sample not trusted"), NOW)
+    assert accounts["claude"]["state"] == "UNREADABLE"
+    assert accounts["claude"]["windows"] == {}
+    assert accounts["claude"]["reason"] == "five_hour reset not yet reported; sample not trusted"

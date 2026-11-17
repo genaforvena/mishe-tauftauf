@@ -15,9 +15,16 @@ def evaluate(rows, account, *, now):
         return "UNKNOWN", "provider window contract not configured"
     # An error tagged with another account (e.g. codex-a STALE) does not make this provider's evidence incomplete;
     # an untagged error (unreadable file, accounting failure) still does.
-    if not isinstance(rows, list) or any(
-            not isinstance(r, dict) or (r.get("error") and r.get("account", account) == account) for r in rows):
-        return "UNKNOWN", "budget collection or accounting incomplete"
+    if not isinstance(rows, list):
+        return "UNKNOWN", "budget collection or accounting incomplete: evidence is not a row list"
+    for r in rows:
+        if not isinstance(r, dict):
+            return "UNKNOWN", "budget collection or accounting incomplete: malformed evidence row"
+        if r.get("error") and r.get("account", account) == account:
+            # Carry the cause, not a fixed phrase: a subscriber woken by UNKNOWN must see which read
+            # failed (2026-11-17: the live claude UNKNOWN said "collection or accounting incomplete"
+            # while the missing piece was its idle five_hour window).
+            return "UNKNOWN", f"budget collection or accounting incomplete: {r['error']}"
     selected = [r for r in rows if r.get("account") == account]
     if (len(selected) != 2 or any(r.get("window") not in ("5h", "7d") for r in selected)
             or {r["window"] for r in selected} != {"5h", "7d"}):
@@ -61,7 +68,14 @@ def rows_from_engine_budget(home, now):
     rows = []
     for account, body in accounts.items():
         if not isinstance(body, dict) or body.get("state") != "FRESH":
-            rows.append(dict(account=account, error=f"{account}: account state {body.get('state') if isinstance(body, dict) else 'malformed'}"))
+            if isinstance(body, dict):
+                detail = f"{account}: account state {body.get('state')}"
+                reason = body.get("reason")
+                if isinstance(reason, str) and reason:
+                    detail += f" ({reason})"
+            else:
+                detail = f"{account}: account state malformed"
+            rows.append(dict(account=account, error=detail))
             continue
         windows = body.get("windows")
         if not isinstance(windows, dict) or not windows:

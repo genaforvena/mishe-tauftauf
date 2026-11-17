@@ -216,6 +216,12 @@ def build_accounts(status: dict | None, tap, now: float, burn: dict | None = Non
     accounts["claude"] = {"provider": "claude-code", "windows": claude}
     if bad:
         accounts["claude"]["malformed"] = bad
+    reason = tap.get("error") if isinstance(tap, dict) else None
+    if isinstance(reason, str) and reason and not claude:
+        # Why the account has no window at all: the tap's own diagnosis (2026-11-17: the native
+        # sample's idle five_hour window reports no reset, so the whole account published as
+        # UNREADABLE and every consumer could only repeat "unreadable", never the cause).
+        accounts["claude"]["reason"] = reason[:200]
     for name, row in accounts.items():
         _attach_burn(row["windows"], name, burn, now)
         states = {w["state"] for w in row["windows"].values()}

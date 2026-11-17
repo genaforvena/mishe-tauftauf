@@ -146,7 +146,11 @@ only that file and computes nothing itself.
   `FRESH` only when every window is `FRESH`, `UNREADABLE` with no windows, otherwise `STALE`.
   Provenance is the engine's own `observed_at` (window, else account); a window with no
   observation time is dropped, never stamped with the collection time. A missing or unreadable
-  account is `UNREADABLE`, never OK. `routing.state` is `UNKNOWN` when a windowed candidate's
+  account is `UNREADABLE`, never OK. An account with no windows carries the source's own
+  diagnosis as `reason` when that source reported one (2026-11-17: the native tap's
+  `five_hour reset not yet reported; sample not trusted`), so a consumer names the cause
+  instead of repeating `UNREADABLE`; it is evidence about a failed read, never a window and
+  never a headroom claim. `routing.state` is `UNKNOWN` when a windowed candidate's
   account row is missing or non-`FRESH` (the Claude safety net reads no window and is not
   counted), so missing collector output cannot read as GREEN.
 - **`free_models`** are the `routes.json` candidates with `free: true` / `account: null`.

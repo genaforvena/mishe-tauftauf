@@ -113,3 +113,14 @@ def test_other_account_error_does_not_blind_healthy_claude():
 def test_untagged_error_still_holds_claude_unknown():
     evidence = rows() + [dict(error="engine/budget.json unreadable")]
     assert budget.evaluate(evidence, "claude", now=100)[0] == "UNKNOWN"
+
+
+def test_unknown_reason_names_the_failing_account_read():
+    # 2026-11-17: the live claude UNKNOWN said only "collection or accounting incomplete" while the
+    # account row already carried the cause; a subscriber re-derives nothing from a fixed phrase.
+    evidence = rows() + [dict(account="claude",
+                              error="claude: account state UNREADABLE (five_hour reset not yet reported)")]
+    state, reason = budget.evaluate(evidence, "claude", now=100)
+    assert state == "UNKNOWN"
+    assert "account state UNREADABLE" in reason
+    assert "five_hour reset not yet reported" in reason
