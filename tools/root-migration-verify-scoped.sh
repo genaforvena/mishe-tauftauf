@@ -34,6 +34,11 @@ done
 [ ${#trees[@]} -eq 0 ] && trees=(mishe-tauftauf .omp .codex)
 [ -n "$SINCE" ] || SINCE=$(date -u -r "$WORK/bulk.log" +%FT%TZ 2>/dev/null)
 [ -n "$SINCE" ] || { echo "no --since and no $WORK/bulk.log mtime to derive one" >&2; exit 2; }
+# The changed list and the sample are evidence files; a verdict computed without
+# them is a guess. Until 2026-11-17 a missing MIGRATION_WORK made every write fail,
+# the comparisons ran on empty strings and the tree still printed VERIFIED.
+[ -d "$WORK" ] || mkdir -p "$WORK" || { echo "cannot create work dir $WORK" >&2; exit 2; }
+[ -w "$WORK" ] || { echo "work dir $WORK is not writable" >&2; exit 2; }
 
 rc_all=0
 for t in "${trees[@]}"; do
@@ -61,10 +66,16 @@ for t in "${trees[@]}"; do
     while read -r p; do
         sz=$(stat -c %s "$s/$p" 2>/dev/null || echo 0)
         acc=$((acc + sz))
-        [ "$acc" -gt "$SAMPLE_BYTES" ] && break
+        # The cap stops a handful of huge logs from dominating the read, but it must
+        # never leave the sample empty: a first sampled file larger than the cap used
+        # to break before writing anything, and `nsampled=0` then passed as clean
+        # while no content was compared at all (2026-11-17).
+        [ -s "$sample" ] && [ "$acc" -gt "$SAMPLE_BYTES" ] && break
         printf '%s\n' "$p" >>"$sample"
     done < <( cd "$s" && find . -xdev -type f ! -newermt "$SINCE" -print 2>/dev/null | sort | awk -v k="$step" 'NR % k == 0' )
     nsample=$(wc -l <"$sample")
+    [ -f "$list" ] || { echo "changed list $list is missing" >&2; exit 2; }
+    [ -f "$sample" ] || { echo "sample file $sample is missing" >&2; exit 2; }
     sampled=$(rsync -aHxc --dry-run --itemize-changes --files-from="$sample" "$s/" "$d/" 2>&1)
     nsampled=$(printf '%s' "$sampled" | grep -c '^[<>ch]f' || true)
     # 4. counts and bytes, same filters as the copy.
@@ -74,7 +85,15 @@ for t in "${trees[@]}"; do
     bdst=$(du -sb --apparent-size "$d" | cut -f1)
     echo "  size+mtime-delta=$n changed-since=$nchanged_files files ($nchanged entries) sample=$nsample files ($nsampled entries)"
     echo "  entries-src=$nsrc entries-dst=$ndst bytes-src=$bsrc bytes-dst=$bdst"
-    if [ "$n" -eq 0 ] && [ "$nchanged" -eq 0 ] && [ "$nsampled" -eq 0 ] &&
+    # Clause 3 is "a deterministic sample of the rest": with old files present, an
+    # empty sample compares nothing and must not read as clean (it did until
+    # 2026-11-17, when a size+mtime-preserving corruption passed as VERIFIED).
+    nosample=0
+    [ "$total" -gt 0 ] && [ "$nsample" -eq 0 ] && nosample=1
+    if [ "$nosample" -eq 1 ]; then
+        echo "  NOT-CLEAN $t: no file sampled from $total unchanged file(s)"
+        rc_all=1
+    elif [ "$n" -eq 0 ] && [ "$nchanged" -eq 0 ] && [ "$nsampled" -eq 0 ] &&
        [ "$nsrc" -eq "$ndst" ] && [ "$bsrc" -eq "$bdst" ]; then
         echo "  VERIFIED $t"
     else
