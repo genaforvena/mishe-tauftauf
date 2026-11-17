@@ -484,11 +484,12 @@ def probe_root(root: Path, site: Path | None = None) -> dict:
 
 
 def commit_time(repo: Path, commit: str) -> float | None:
-    """When ``commit`` landed, as a POSIX timestamp.
+    """When ``commit`` landed, as a POSIX timestamp, or None if it is absent.
 
     The date is taken from the commit that introduced the behaviour rather than
     from a literal in this file, so the measurement does not drift as the tree
-    moves.
+    moves. Callers fall back to a recorded date only when the object is
+    unreachable (``3c22087`` after the history rewrite), never to move the window.
     """
     result = subprocess.run(
         ["git", "-C", str(repo), "log", "-1", "--format=%ct", commit],
@@ -722,7 +723,7 @@ def _clause_stamp(repo: Path) -> str:
         capture_output=True, text=True, timeout=60)
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
-    return "recorded %s (the commit object is not in this clone)" % datetime.datetime.fromtimestamp(
+    return "recorded %s; the commit object is not in this clone" % datetime.datetime.fromtimestamp(
         CLAUSE_DATE, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
