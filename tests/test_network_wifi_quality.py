@@ -82,6 +82,19 @@ def test_line_falls_back_to_the_newest_read_that_carries_counters(tmp_path, monk
     assert "since boot" in line and "read 300 s ago" in line, line
 
 
+def test_line_names_a_band_whose_counters_are_missing(tmp_path, monkeypatch):
+    log = tmp_path / "router.jsonl"
+    import json
+    rows = [{"ts": NOW - 60, "ok": True, "uptime_s": 900,
+             "radios": [radio("2.4", {"tx_ok": 1000, "tx_fail": 10}),
+                        {"band": "5", "channel": 40, "freq_ghz": 5.2, "noise_dbm": -56}]}]
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    monkeypatch.setattr(view, "ROUTER_LOG", log)
+    line = view.wifi_quality_line(now=NOW)
+    assert "2.4 GHz 1.0% of transmit attempts failed since boot" in line, line
+    assert "5 GHz transmission counters UNKNOWN (missing from the newest read)" in line, line
+
+
 def test_line_is_unknown_and_stale_for_an_old_read(tmp_path, monkeypatch):
     log = tmp_path / "router.jsonl"
     import json

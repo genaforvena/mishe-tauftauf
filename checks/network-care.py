@@ -349,6 +349,7 @@ def wifi_state(rows, now):
     if ago > WIFI_MAX_AGE_S:
         return 3, f"network-care: newest Wi-Fi radio reading is {ago / 60:.0f} min old"
     parts = []
+    missing = []
     for radio in radios:
         if not isinstance(radio, dict):
             return 3, "network-care: Wi-Fi radio reading unreadable"
@@ -358,10 +359,15 @@ def wifi_state(rows, now):
         if ch < 1 or ch > 196 or noise >= 0 or noise < -120:
             return 2, f"network-care: impossible Wi-Fi channel {ch} or noise {noise} dBm on {band} GHz"
         parts.append(f"{band} GHz ch {ch}, noise {noise} dBm")
-    counted = [r for r in radios if isinstance(r, dict) and isinstance(r.get("stats"), dict)
-               and isinstance(r["stats"].get("tx_ok"), int) and isinstance(r["stats"].get("tx_fail"), int)]
-    if not counted:
+        stats = radio.get("stats")
+        if not (isinstance(stats, dict) and isinstance(stats.get("tx_ok"), int)
+                and isinstance(stats.get("tx_fail"), int)):
+            missing.append(band)
+    if len(missing) == len(radios):
         return 3, "network-care: Wi-Fi transmission counters missing from the newest router read"
+    if missing:
+        return 3, ("network-care: Wi-Fi transmission counters missing on "
+                   + ", ".join(f"{band} GHz" for band in missing) + " in the newest router read")
     return 0, "network-care: Wi-Fi radio GREEN (" + "; ".join(parts) + ")"
 
 

@@ -105,6 +105,15 @@ def wifi_row(ts, radios=None, ok=True):
     return {"ts": ts, "ok": ok, "radios": radios}
 
 
+def test_detector_unknown_when_one_bands_counters_are_missing():
+    radios = [{"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -55,
+               "stats": {"tx_ok": 5000, "tx_fail": 50}},
+              {"band": "5", "channel": 40, "freq_ghz": 5.2, "noise_dbm": -55}]
+    code, message = care.wifi_state([wifi_row(NOW - 60, radios=radios)], NOW)
+    assert code == 3, message
+    assert "counters missing on 5 GHz" in message
+
+
 def test_detector_unknown_when_the_counters_are_missing():
     no_stats = [{"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -55}]
     code, message = care.wifi_state([wifi_row(NOW - 60, radios=no_stats)], NOW)

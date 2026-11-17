@@ -1060,7 +1060,7 @@
         3
       ],
       "resolver": "network",
-      "covers": "the Wi-Fi channel and noise-floor sub-reading from the router's read-only iwinfo pass in network/router.jsonl: RED when a fresh reading carries impossible channel or noise values, UNKNOWN when no fresh reading carries the sub-reading or a field is missing, GREEN when both bands report plausible numbers",
+      "covers": "the Wi-Fi channel, noise-floor and transmit-counter sub-reading from the router's read-only iwinfo and iwpriv passes in network/router.jsonl: RED when a fresh reading carries impossible channel or noise values, UNKNOWN when no fresh reading carries the sub-reading, a field is missing, or any radio's transmit counters are missing (one dead iwpriv must not look like a quiet band), GREEN when both bands report plausible numbers and counters",
       "replaces": []
     },
     {

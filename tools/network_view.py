@@ -492,7 +492,8 @@ def wifi_quality_line(now=None):
     """Share of Wi-Fi transmissions that failed, since the router booted and over the last hour.
 
     Read from the recorded per-radio ``iwpriv ... stat`` counters. A read without the counters, or a
-    stale newest read, is UNKNOWN; a rate is shown only when two reads an hour or less apart bracket it.
+    stale newest read, is UNKNOWN; a band whose counters are missing from the newest read is named as
+    UNKNOWN rather than dropped; a rate is shown only when two reads an hour or less apart bracket it.
     """
     now = time.time() if now is None else now
     reads = [r for r in router_rows() if r.get("ok") and isinstance(r.get("radios"), list)
@@ -509,11 +510,12 @@ def wifi_quality_line(now=None):
     for radio in last["radios"]:
         if not isinstance(radio, dict):
             continue
+        band = radio.get("band", "?")
         stats = radio.get("stats")
         total = _radio_sends(stats) if isinstance(stats, dict) else None
         if not total:
+            parts.append(f"{band} GHz transmission counters UNKNOWN (missing from the newest read)")
             continue
-        band = radio.get("band", "?")
         text = f"{band} GHz {100.0 * stats['tx_fail'] / total:.1f}% of transmit attempts failed since boot"
         got = _radio_fail_window(reads, band, now - 3600, now)
         if got is None:

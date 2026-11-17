@@ -92,7 +92,9 @@ is not mistaken for a quiet mind.
   at least 10 minutes apart), plus the highest radio temperature. Read from the driver's own
   `iwpriv <radio> stat` counters. Attempts, not frames given up on: the driver counts each try, so
   this is "how often the radio had to send again or gave up", not "how many packets the household
-  lost". UNKNOWN when the newest read carries no counters, when fewer than two reads an hour apart
+  lost". UNKNOWN when the newest read carries no counters on any radio (a band whose counters are
+  missing from the newest read is named "UNKNOWN (missing from the newest read)" rather than
+  dropped, and `network-wifi` turns UNKNOWN too), when fewer than two reads an hour apart
   bracket the rate, or after a router reboot restarts the counters; STALE past 15 minutes.
 - `UNKNOWN`: the log has no reading, or the last read failed.
 - `STALE`: the last good reading is older than 15 minutes.
