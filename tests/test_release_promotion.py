@@ -469,7 +469,12 @@ def test_work_poll_scan_rearms_only_a_lost_retry(tmp_path,monkeypatch):
     (tmp_path/"work/reviews").mkdir(parents=True)
     (tmp_path/"work/releases").mkdir(parents=True)
     launched=[]
-    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:launched.append(argv))
+    class NoUnits: stdout=""; returncode=0
+    def fake(argv,**kw):
+        if argv[0]=="systemd-run":
+            launched.append(argv)
+        return NoUnits()
+    monkeypatch.setattr(p.subprocess,"run",fake)
     now=time.time()
     def record(identity, **extra):
         payload=dict(id=identity,sha=(identity*40)[:40],source=str(tmp_path),review_pending=True)
@@ -488,6 +493,33 @@ def test_work_poll_scan_rearms_only_a_lost_retry(tmp_path,monkeypatch):
     assert "review_retry_state" not in read_json(p.record_path(tmp_path,"rel-fresh"))
     assert p.rearm_lost_review_retries(tmp_path,clock=lambda: now)==[]
     assert len(launched)==2, launched
+
+
+def test_a_record_with_a_live_retry_unit_is_not_armed_again(tmp_path,monkeypatch):
+    from mishe_tauftauf import release_promotion as p
+    (tmp_path/"work/releases").mkdir(parents=True)
+    (tmp_path/"work/reviews").mkdir(parents=True)
+    launched=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:launched.append(argv))
+    now=time.time()
+    legacy_sha,overdue_sha="2"*40,"3"*40
+    write_json(p.record_path(tmp_path,"rel-legacy"),
+               dict(id="rel-legacy",sha=legacy_sha,source=str(tmp_path),review_pending=True,
+                    review_retry_attempts=0,review_retry_state="scheduled in 1800s"))
+    write_json(p.record_path(tmp_path,"rel-overdue"),
+               dict(id="rel-overdue",sha=overdue_sha,source=str(tmp_path),review_pending=True,
+                    review_retry_attempts=0,review_retry_state="scheduled in 1800s",
+                    review_retry_due=int(now-p.REVIEW_RETRY_REARM_GRACE_S-1)))
+    armed=p.rearm_lost_review_retries(tmp_path,clock=lambda: now,
+                                      live_units=frozenset({legacy_sha[:12]}))
+    assert armed==["rel-overdue"], armed
+    assert len(launched)==1, launched
+    # Once the overdue rung is armed by the manager it is live too, and the next
+    # poll leaves both records alone.
+    assert p.rearm_lost_review_retries(
+        tmp_path,clock=lambda: now,
+        live_units=frozenset({legacy_sha[:12],overdue_sha[:12]}))==[]
+    assert len(launched)==1, launched
 
 
 def test_retry_over_an_unmerged_failure_reruns_the_review(tree,monkeypatch):

@@ -14,7 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from . import hold_text, page_paths_text, patch_text, release_boundary, work_boundary as boundary, wall_patch, proc_table
+from . import hold_text, page_paths_text, patch_text, release_boundary, units, work_boundary as boundary, wall_patch, proc_table
 from .git_base_text import commit_intent_text
 from .state_files import read_json, write_json, write_text_atomic
 from .work_receipts import digest
@@ -517,24 +517,25 @@ def _review_attempts(home, identity):
     return len(list((Path(home)/"work/reviews").glob(f"{identity}-*.failed-attempt.json")))
 
 
-def _review_retry_lost(current, now):
+def _review_retry_lost(current, now, live_units=frozenset()):
     """True when a recorded retry rung is neither armed nor running any more.
 
     A transient ``--on-active`` unit cannot be started again once a stop/collect
     cycle removed it, and it leaves no result, so the record itself has to notice
-    the loss. Two shapes count:
+    the loss. A rung is lost when its unit is not among ``live_units`` and either
 
-    * a recorded ``review_retry_due`` more than ``REVIEW_RETRY_REARM_GRACE_S``
+    * a recorded ``review_retry_due`` is more than ``REVIEW_RETRY_REARM_GRACE_S``
       past -- the unit should have fired by now; the grace keeps a review that is
-      merely running late from being duplicated, and
-    * a legacy record that only names ``scheduled in ...`` from before the due
-      time was recorded (2026-11-17: the live ``2c6380ae`` record, armed for
-      12:13Z). Its unit may still exist, so re-arming can duplicate one rung;
-      that is cheaper than the alternative, a review stranded for good.
+      merely running late from being duplicated, or
+    * the record is legacy, naming only ``scheduled in ...`` from before the due
+      time was recorded (2026-11-17). Its unit may still exist; ``live_units``
+      answers that exactly, where the record cannot.
 
     A record with neither a due time nor a recorded retry state was never armed:
     its first review is still running and nothing is lost.
     """
+    if (current.get("sha") or "")[:12] in live_units:
+        return False
     due = current.get("review_retry_due")
     if isinstance(due, (int, float)):
         return now >= due + REVIEW_RETRY_REARM_GRACE_S
@@ -627,19 +628,24 @@ def schedule_review_retry_if_needed(home, current):
     current["review_retry_attempts"] = attempts
 
 
-def rearm_lost_review_retries(home, *, clock=time.time):
+def rearm_lost_review_retries(home, *, clock=time.time, live_units=None):
     """Re-arm the retries whose transient unit a stop/collect cycle removed.
 
     ``merge_review`` only reaches a record when a result arrives, and a destroyed
     retry unit never produces one, so the loss needs a scan: ``work poll`` runs
     every couple of minutes over the whole home. ``_review_retry_lost`` decides
-    which records are affected; a record whose retry is armed, running or not yet
-    scheduled is left untouched. Each re-arm takes the delivery lock and re-reads
-    the record, so a concurrent merge is not overwritten; a busy lock is skipped
-    and the next poll tries again.
+    which records are affected; a record whose retry unit is still live, is
+    running or was never scheduled is left untouched. Each re-arm takes the
+    delivery lock and re-reads the record, so a concurrent merge is not
+    overwritten; a busy lock is skipped and the next poll tries again.
+
+    ``live_units`` is the ``units.live_review_retry_shas()`` answer; it is computed
+    once per scan so the whole home costs one manager query and every record sees
+    the same snapshot.
 
     Returns the identities re-armed, for the poll's log line.
     """
+    live = units.live_review_retry_shas() if live_units is None else live_units
     armed = []
     for path in sorted((Path(home)/"work/releases").glob("*.json")):
         try:
@@ -648,7 +654,7 @@ def rearm_lost_review_retries(home, *, clock=time.time):
                 continue
             if current.get("review_retry_attempts") != _review_attempts(home, current["id"]):
                 continue
-            if not _review_retry_lost(current, clock()):
+            if not _review_retry_lost(current, clock(), live):
                 continue
             with delivery_lock(home):
                 current = read_json(path)
@@ -656,7 +662,7 @@ def rearm_lost_review_retries(home, *, clock=time.time):
                     continue
                 if current.get("review_retry_attempts") != _review_attempts(home, current["id"]):
                     continue
-                if not _review_retry_lost(current, clock()):
+                if not _review_retry_lost(current, clock(), live):
                     continue
                 schedule_review_retry_if_needed(home, current)
                 write_json(path, current)
