@@ -25,8 +25,10 @@ existence test over every retained output, not the newest `--limit`: a model tha
 merely stopped being routed must not read as never-run.
 
 On a failure with --route, the renderer owner (genome) gets one DM per distinct
-failure, naming the sample wake key. The same failure is not re-sent: the
-signature is kept in SITE/checks/wakes-view-engines-route.json.
+failure, naming the sample wake key. The same failure is not re-sent, and it is
+the same failure when the live pin renders it too: the tree that produced it is
+not part of the identity, so a pin move while a fix is being delivered does not
+re-route it. The identity is kept in SITE/checks/wakes-view-engines-route.json.
 
 Exit status:
   0  every model in use renders readably in both modes
@@ -198,14 +200,20 @@ def render_problems(path: Path, machine_syntax, output_view) -> tuple[list[str],
     return problems, wake_key(path)
 
 
-def signature(sample_key: str, problems: list[str]) -> str:
-    return hashlib.sha256('\n'.join([sample_key, *sorted(problems)]).encode()).hexdigest()
+def failure_key(problems: list[tuple[str, str, str, str]]) -> str:
+    """The identity of a route: the sample and the violation, not the tree that rendered it.
+
+    HEAD and the live pin usually differ by a delivery or two, so the pin keeps
+    rendering a violation HEAD already fixed until the fix is delivered. That is
+    one renderer failure for its owner, not a new one each time the pin moves.
+    """
+    return hashlib.sha256('\n'.join(sorted(f'{k}|{p}' for _, k, _, p in problems)).encode()).hexdigest()
 
 
-def route(home: Path, problems: list[tuple[str, str, str]]) -> str:
+def route(home: Path, problems: list[tuple[str, str, str, str]]) -> str:
     """One DM to the renderer owner per distinct failure; nothing for a repeat. Returns what happened."""
     state_path = home / 'checks' / 'wakes-view-engines-route.json'
-    key_sig = hashlib.sha256('\n'.join(sorted(f'{k}|{p}' for _, k, p in problems)).encode()).hexdigest()
+    key_sig = failure_key(problems)
     try:
         last = json.loads(state_path.read_text(encoding='utf-8')).get('signature')
     except (OSError, ValueError, AttributeError):
@@ -215,8 +223,8 @@ def route(home: Path, problems: list[tuple[str, str, str]]) -> str:
     lines = ['[dm] to=genome',
              'Wakes view: a renderer failure for the engine outputs listed below (check wakes-view-engines).',
              'Resolver=genome (renderer). Live path: src/mishe_tauftauf/plant_view_boundary.py output_view and stream_text.']
-    for model, sample_key, problem in problems[:12]:
-        lines.append(f'- model={model} sample={sample_key}: {problem}')
+    for model, sample_key, target, problem in problems[:12]:
+        lines.append(f'- model={model} sample={sample_key}: {target}: {problem}')
     lines.append('Re-run: checks/wakes-view-engines.py --home SITE --repo REPO. A repeated failure is not re-sent.')
     cli = home / 'bin' / 'mishe-tauftauf'
     try:
@@ -264,13 +272,14 @@ def evaluate(home: Path, repo: Path, limit: int, do_route: bool) -> tuple[int, l
         try:
             machine_syntax, output_view = load_renderer(root)
         except Exception as exc:
-            failures.append(('-', '-', f'{label}: renderer cannot be imported from {root}/src: {type(exc).__name__}: {str(exc)[:120]}'))
+            failures.append(('-', '-', label,
+                             f'renderer cannot be imported from {root}/src: {type(exc).__name__}: {str(exc)[:120]}'))
             continue
         for model, path in sorted(newest.items()):
             problems, sample = render_problems(path, machine_syntax, output_view)
             state = 'FAIL' if problems else 'PASS'
             lines.append(f'{label} model {model}: {state} (sample {sample})')
-            failures += [(model, sample, f'{label}: {p}') for p in problems]
+            failures += [(model, sample, label, p) for p in problems]
     pending = []
     missing = [(role, engine, model) for role, (engine, model) in sorted(roles.items())
                if model not in newest]
@@ -284,7 +293,7 @@ def evaluate(home: Path, repo: Path, limit: int, do_route: bool) -> tuple[int, l
         out = [f'{len(failures)} rendering violation(s) across {len(newest)} model(s) and {len(targets(home, repo))} renderer(s)']
         if do_route:
             out.append(route(home, failures))
-        out += [f'{m} sample={k}: {p}' for m, k, p in failures[:12]]
+        out += [f'{m} sample={k}: {t}: {p}' for m, k, t, p in failures[:12]]
         return 2, out + lines + pending
     if pending:
         return 3, lines + pending

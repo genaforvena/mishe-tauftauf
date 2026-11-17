@@ -165,11 +165,16 @@ def test_route_sends_once_per_distinct_failure(tmp_path, monkeypatch):
     sent = tmp_path / "sent.txt"
     cli.write_text(f'#!/bin/sh\ncat >> "{sent}"\necho "--- end" >> "{sent}"\n')
     cli.chmod(0o755)
-    failures = [("gpt-6.1-terra", "wake-genome-2", "UNKNOWN event for known type turn_end")]
+    failures = [("gpt-6.1-terra", "wake-genome-2", "HEAD", "UNKNOWN event for known type turn_end")]
     check.route(home, failures)
     check.route(home, failures)
     assert sent.read_text().count("[dm] to=genome") == 1
-    check.route(home, [("gpt-6.1-terra", "wake-genome-5", "UNKNOWN event for known type turn_end")])
+    # The live pin keeps rendering the same violation until the fix is delivered:
+    # that is the same failure for the renderer owner, not a new one.
+    check.route(home, [("gpt-6.1-terra", "wake-genome-2", "live pin 0123456789",
+                        "UNKNOWN event for known type turn_end")])
+    assert sent.read_text().count("[dm] to=genome") == 1
+    check.route(home, [("gpt-6.1-terra", "wake-genome-5", "HEAD", "UNKNOWN event for known type turn_end")])
     assert sent.read_text().count("[dm] to=genome") == 2
 
 
@@ -179,7 +184,8 @@ def test_failed_send_is_reported_and_not_remembered(tmp_path):
     cli = home / "bin" / "mishe-tauftauf"
     cli.write_text("#!/bin/sh\necho 'site home mismatch' >&2\nexit 2\n")
     cli.chmod(0o755)
-    outcome = check.route(home, [("gpt-6.1-terra", "wake-genome-7", "UNKNOWN stream record for known type message_end")])
+    outcome = check.route(home, [("gpt-6.1-terra", "wake-genome-7", "HEAD",
+                                  "UNKNOWN stream record for known type message_end")])
     assert outcome.startswith("route UNKNOWN: genome not told") and "site home mismatch" in outcome
     assert not (home / "checks" / "wakes-view-engines-route.json").exists()
 
