@@ -39,13 +39,54 @@ soft deadline, then hit the hard cap). The block markers must match too: pub wak
 was carried 35 min to the hard cap on thinking_start/thinking_end lines, which the delta-only prefix let through."""
 
 
-def progress_bytes(data):
+JOB_COUNTERS = ('toolCount', 'requests', 'tokens')
+"""Counters that show the async job behind a heartbeat is still doing work. Wall-clock fields
+(``durationMs``, ``totalDurationMs``) are not counters: they advance while a job is frozen."""
+
+
+def job_advanced(line, jobs):
+    """Record the async-job counters in one heartbeat ``line``; return True if a job advanced.
+
+    ``jobs`` is the caller's state across reads, keyed by job id. A line that repeats the same
+    counters advances nothing. A line with no ``progress`` entries (a plain ``wait`` ping carries
+    only job ids and durations) advances nothing either.
+    """
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return False
+    details = (row.get('partialResult') or {}).get('details') if isinstance(row, dict) else None
+    entries = details.get('progress') if isinstance(details, dict) else None
+    if not isinstance(entries, list):
+        return False
+    advanced = False
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            continue
+        key = entry.get('id') if isinstance(entry.get('id'), str) else index
+        values = tuple(entry.get(name) if type(entry.get(name)) is int else None
+                       for name in JOB_COUNTERS)
+        previous = jobs.get(key)
+        jobs[key] = values
+        if previous is not None and any(
+                now is not None and before is not None and now > before
+                for now, before in zip(values, previous)):
+            advanced = True
+    return advanced
+
+
+def progress_bytes(data, jobs=None):
     """Split engine output bytes into (progress bytes, bytes consumed).
 
     Only complete lines count: the consumed figure stops at the last newline, so a
     half-written line is picked up on the next read. Heartbeat lines (``HEARTBEAT_PREFIX``)
     re-report a running wait tool and are not progress; reasoning deltas (``THINKING_PREFIX``)
     are not progress either, so a model that only thinks cannot extend a wake past its deadline.
+
+    A heartbeat is not automatically silence, though. When ``jobs`` is passed (the caller keeps
+    the dict across reads), a heartbeat whose async job advanced its ``JOB_COUNTERS`` counts as
+    progress: the wait is on a subagent that is demonstrably working, not on a frozen one. A
+    repeated frozen job still advances nothing, and a plain ``wait`` ping still counts nothing.
     """
     end = data.rfind(b'\n')
     if end < 0:
@@ -53,6 +94,8 @@ def progress_bytes(data):
     progress = 0
     for line in data[:end + 1].splitlines(keepends=True):
         if not line.startswith((HEARTBEAT_PREFIX, THINKING_PREFIX)):
+            progress += len(line)
+        elif jobs is not None and line.startswith(HEARTBEAT_PREFIX) and job_advanced(line, jobs):
             progress += len(line)
     return progress, end + 1
 

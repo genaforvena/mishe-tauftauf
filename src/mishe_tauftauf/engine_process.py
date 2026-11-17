@@ -39,17 +39,16 @@ slow turn — for an engine that writes its own turns.
 Progress here is the same as the idle reader's (heartbeats and thinking deltas do not count),
 and a live tool child still defers the cut, because ``_awaiting_tools`` follows parent-pid
 links. A wake waiting on an in-process subagent is neither: the omp ``task`` tool is not an OS
-child, and the only thing such a wait writes is ``tool_execution_update`` lines, which
-``progress_bytes`` drops as heartbeats. So a parent whose scout is still working — senses
-2026-11-17 02:44Z: 3,723 task/wait updates, the scout at 80 tool calls, 133k context — reads as
-silent and is cut at this gap, and the subagent's results, including 10.5 minutes of its work,
-are discarded with it. The 178 s worst case above does not cover that shape.
+child, and its ``tool_execution_update`` lines are heartbeats. So a parent whose scout is still
+working — senses 2026-11-17 02:44Z (scout at 80 tool calls), genome 2026-11-17 03:47Z (reviewer
+``DutyReview`` at 74 tool calls, 53 requests, 148k tokens, cut at 600 s and its review discarded)
+— used to read as silent and be cut at this gap.
 
-A candidate repair is to count a ``tool_execution_update`` as progress when the async job it
-reports has advanced (``toolCallCount``, ``requests``, ``tokens``), not when the line merely
-repeats. Keying on the counters matters: the 2026-11-13 docs wake wrote the same stuck wait for
-an hour and was cut at the 3600 s cap, and byte growth from a frozen job must keep reading as
-silence.
+A heartbeat now counts as progress when the async job it reports has advanced its counters
+(``toolCount``, ``requests``, ``tokens``: ``engine_boundary.job_advanced``), not when the line
+merely repeats. Keying on the counters matters: the 2026-11-13 docs wake wrote the same stuck
+wait for an hour and was cut at the 3600 s cap, and a frozen job must keep reading as silence —
+``durationMs`` and byte growth from a frozen job both advance without work.
 """
 TOOL_WAIT_GRACE_S = 600.0
 """How far past the soft deadline a silent wait on a live child may defer the idle cut.
@@ -115,15 +114,19 @@ class _ProgressReader:
 
     Heartbeat lines (see ``HEARTBEAT_PREFIX``) are left out: a mind stuck in a wait on a
     subagent that never returns keeps writing them, and counting them kept the run alive to the
-    hard cap (docs wake 2026-11-13, cut at 3600 s). Only complete lines are counted, so a
-    half-written line is picked up on the next sample. ``poll`` returns None when there is no
-    file to watch or it cannot be read, as the plain size check did.
+    hard cap (docs wake 2026-11-13, cut at 3600 s). The exception is a heartbeat whose async job
+    advanced its own counters (``toolCount``/``requests``/``tokens``): that wait is on a subagent
+    that is working, not frozen (genome wake 2026-11-17 03:47Z, cut at 600 s of silence while its
+    reviewer was on its 74th tool call). Only complete lines are counted, so a half-written line
+    is picked up on the next sample. ``poll`` returns None when there is no file to watch or it
+    cannot be read, as the plain size check did.
     """
 
     def __init__(self, path: Path | None):
         self.path = path
         self.offset = 0
         self.progress = 0
+        self.jobs: dict = {}
 
     def poll(self) -> int | None:
         if self.path is None:
@@ -134,7 +137,7 @@ class _ProgressReader:
                 data = handle.read()
         except OSError:
             return None
-        progress, consumed = engine_boundary.progress_bytes(data)
+        progress, consumed = engine_boundary.progress_bytes(data, self.jobs)
         self.offset += consumed
         self.progress += progress
         return self.progress
