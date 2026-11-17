@@ -39,6 +39,19 @@ def test_controlled_failure_a_pane_that_dumps_json_is_red_and_names_the_line(tmp
     assert code == 2 and any('health bottom' in line and 'ttft_ms' in line for line in lines)
 
 
+def test_a_finding_past_column_eighty_keeps_its_whole_line(tmp_path):
+    # Live 2026-11-17 07:13Z: health top/bottom line 1 (the generated title) was blamed for "a quoted key" that the
+    # 80-character message never showed. The log must hold the tail, or the next occurrence is undiagnosable again.
+    title = 'health — model m — view at 07:13Z — Verdict: RED — ' + 'x' * 40 + " 'cause': value"
+    def leaky(home, role, *, now, output):
+        return title if role == 'health' and not output else 'fine'
+    code, lines = run(home_with_walls(tmp_path, 'genome', 'health'), leaky)
+    assert code == 2 and any('whole lines in' in line for line in lines)
+    kept = (tmp_path / 'views' / 'view-readability-findings.log').read_text()
+    assert "'cause': value" in kept and 'Verdict: RED' in kept
+    assert len(kept.strip().splitlines()) == 1  # top only: the bottom pane is clean
+
+
 def test_unrenderable_view_and_missing_walls_never_read_green(tmp_path):
     def broken(home, role, *, now, output):
         raise ValueError('boom')
