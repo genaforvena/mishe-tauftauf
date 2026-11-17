@@ -57,6 +57,7 @@ SIGNAL_MAX_AGE = 900.0
 TALLY_WINDOW_S = 604800.0   # a week: long enough to rank a rarely-tried candidate, short enough to forget an old burst
 DEFAULT_COOL_OFF_S = 1800
 DEFAULT_ACCOUNT_COOL_OFF_S = 5400  # a quota-exhausted account is out for a window, not a role retry
+MAX_QUOTA_COOL_OFF_S = 86400     # ceiling of a provider-stated quota reset, one day
 DEFAULT_HARD_TIMEOUT_S = 3600     # total runtime a wake may reach when it is still producing output
 DEFAULT_RATE_LIMIT_COOL_OFF_S = 300   # a rate limit waits minutes, not the site-wide window
 MAX_RETRY_AFTER_COOL_OFF_S = 28800   # cap for a provider-stated retry-after, 8 h
@@ -535,14 +536,32 @@ class RoutedEngine:
             return QwenEngine(cand["model"])
         return OmpEngine(cand["model"], thinking=cand.get("thinking"))
 
-    def _cool(self, cand: dict, now_ms: float, *, role_only: bool = False, off_ms: float | None = None) -> None:
+    def _cool(self, cand: dict, now_ms: float, *, role_only: bool = False, off_ms: float | None = None,
+              force: bool = False) -> None:
         # The Claude safety net is never cooled: a cooled last candidate leaves the role with no engine.
-        if _is_safety_net(cand):
+        # A quota exhaustion is the one exception. The account is demonstrably spent, so leaving the net
+        # first in the roster only makes every wake pay the same failure before it falls through.
+        # The cool-off is bounded, so the net returns when the provider says the window resets.
+        if _is_safety_net(cand) and not force:
             return
         state = _load_state(self.home)
         key = candidate_key(cand)
         state["cooling"][role_key(self.role, key) if role_only else key] = now_ms + (off_ms or self.cool_off_ms)
         _save_state(self.home, state)
+
+    def quota_cool_off_ms(self, engine, now_ms: float) -> float:
+        """How long a spent account stays out, from the reset the provider named when it named one.
+
+        A provider that says when its window resets is trusted up to a bound: the message can be
+        stale, so a far-off reset must not take the net out of service for a year. Without a stated
+        reset the site's own account window applies.
+        """
+        reset = getattr(engine, "reset_at", None)
+        if isinstance(reset, (int, float)) and not isinstance(reset, bool):
+            left = reset * 1000 - now_ms
+            if left > 0:
+                return min(left, MAX_QUOTA_COOL_OFF_S * 1000)
+        return self.account_cool_off_ms
 
     def _clear(self, key: str) -> None:
         state = _load_state(self.home)
@@ -617,9 +636,12 @@ class RoutedEngine:
             except EngineExhausted as exc:
                 # The account is out of quota: no effect, and every role on that account would fail the same
                 # way, so cool the account key (shared by all roles) for a window rather than a role retry.
+                now = time.time() * 1000
+                off = self.quota_cool_off_ms(engine, now)
                 record(self.home, {"role": self.role, "event": "fallback", "wake": key_wake, "key": key,
-                                   "reason": f"quota: {exc}", "scope": "account"}, now_ms=time.time() * 1000)
-                self._cool(cand, time.time() * 1000, off_ms=self.account_cool_off_ms)
+                                   "reason": f"quota: {exc}", "scope": "account",
+                                   "cool_off_s": off / 1000}, now_ms=now)
+                self._cool(cand, now, off_ms=off, force=_is_safety_net(cand))
                 tried.add(key)
                 continue
             except EngineRateLimited as exc:
@@ -672,7 +694,8 @@ class RoutedEngine:
             if yielded:
                 self._clear(key)
             elif spent:
-                self._cool(cand, time.time() * 1000, off_ms=self.account_cool_off_ms)
+                now = time.time() * 1000
+                self._cool(cand, now, off_ms=self.quota_cool_off_ms(engine, now), force=_is_safety_net(cand))
             else:
                 self._cool(cand, time.time() * 1000)
             self._observe(status, time.time() * 1000)

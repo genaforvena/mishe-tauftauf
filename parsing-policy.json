@@ -7,6 +7,7 @@
     "src/mishe_tauftauf/chat_protocol.py",
     "src/mishe_tauftauf/codex_text.py",
     "src/mishe_tauftauf/ci_watch.py",
+    "src/mishe_tauftauf/claude_error_text.py",
     "src/mishe_tauftauf/claude_quota_text.py",
     "src/mishe_tauftauf/cli.py",
     "src/mishe_tauftauf/commit_risk_text.py",
