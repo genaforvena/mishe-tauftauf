@@ -78,13 +78,22 @@ def inventory(home, previous=None):
     return result
 
 
-def cgroup_pids(group):
+CGROUP_ROOT = Path('/sys/fs/cgroup')
+
+
+def cgroup_pids(group, root=CGROUP_ROOT):
     if not group: return []
-    path = Path('/sys/fs/cgroup') / group.lstrip('/')
-    if not path.resolve().is_relative_to(Path('/sys/fs/cgroup')): raise ValueError('cgroup path escapes')
+    path = Path(root) / group.lstrip('/')
+    if not path.resolve().is_relative_to(Path(root).resolve()): raise ValueError('cgroup path escapes')
     if not path.exists(): return []  # kernel removes a cgroup only once it has no processes
     files = list(path.rglob('cgroup.procs'))
-    if not files: raise ValueError('cgroup enumeration missing: ' + group)
+    if not files:
+        # A oneshot consumer can exit between the check above and this scan, and the kernel then
+        # deletes the whole group in one step. Re-read it: a group that is gone holds no process to
+        # drain, while one that is still there with no cgroup.procs (every live group has one) is a
+        # real enumeration failure. This race rolled back a good release on 2026-11-17 20:34Z.
+        if not path.exists(): return []
+        raise ValueError('cgroup enumeration missing: ' + group)
     pids = []
     for file in files:
         try: pids.extend(int(v) for v in file.read_text().split())

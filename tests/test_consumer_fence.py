@@ -236,3 +236,39 @@ def test_verify_future_still_rejects_an_installed_consumer_on_old_bytes(tmp_path
     monkeypatch.setattr(fence, 'inventory', lambda h, previous=None: {'mishe-arm.service': row})
     with pytest.raises(ValueError, match='wrong pin: mishe-arm.service'):
         fence.verify_future(home, home / 'runtime' / 'current' / 'src', {})
+
+
+def test_cgroup_removed_during_the_scan_reads_as_no_processes(tmp_path, monkeypatch):
+    """A oneshot that exits mid-read has its group deleted in one step; that is not an enumeration failure.
+
+    Backs the 2026-11-17 20:34Z rollback: mishe-producer-initiatives-rust-plan.service started at
+    20:34:26 and finished at 20:34:27 while the promotion drain was reading it, and the probe answered
+    `cgroup enumeration missing` for a release whose own checks had passed.
+    """
+    root = tmp_path / 'cgroup'
+    group = root / 'mishe-plants.slice' / 'mishe-producer-x.service'
+    group.mkdir(parents=True)
+    real_rglob = Path.rglob
+    def vanishing(self, pattern):
+        if self == group: group.rmdir()  # the kernel removes the group between exists() and the scan
+        return real_rglob(self, pattern)
+    monkeypatch.setattr(Path, 'rglob', vanishing)
+    assert fence.cgroup_pids('/mishe-plants.slice/mishe-producer-x.service', root=root) == []
+
+
+def test_cgroup_present_without_procs_is_still_an_error(tmp_path):
+    """A group that is still there and has no cgroup.procs is a real failure, not a disappearance."""
+    root = tmp_path / 'cgroup'
+    (root / 'mishe-x.service').mkdir(parents=True)
+    with pytest.raises(ValueError, match='cgroup enumeration missing: /mishe-x.service'):
+        fence.cgroup_pids('/mishe-x.service', root=root)
+
+
+def test_cgroup_pids_reads_the_group_and_its_child_groups(tmp_path):
+    root = tmp_path / 'cgroup'
+    group = root / 'mishe-plants.slice' / 'mishe-x.service'
+    child = group / 'child'
+    child.mkdir(parents=True)
+    (group / 'cgroup.procs').write_text('31\n32\n')
+    (child / 'cgroup.procs').write_text('33\n')
+    assert fence.cgroup_pids('/mishe-plants.slice/mishe-x.service', root=root) == [31, 32, 33]
