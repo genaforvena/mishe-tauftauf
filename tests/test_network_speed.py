@@ -134,6 +134,7 @@ def _pin_outside_offpeak(monkeypatch):
     """The clock decides off-peak; these tests need 12:00 local so they never reach a live download."""
     real_due = ns.due
     monkeypatch.setattr(ns, "due", lambda now, last, hour: real_due(now, last, 12))
+    monkeypatch.setattr(ns, "clock_hour", lambda now: 12)
 
 
 def test_not_due_with_no_reading_is_unknown_not_green(tmp_path, capsys, monkeypatch):
@@ -265,3 +266,68 @@ def test_main_retries_failed_upload_within_window_while_download_fresh(tmp_path,
     assert ns.main(["--home", str(tmp_path)]) == 0
     assert ran == ["up"]
     assert "not due: measured recently" in capsys.readouterr().out
+
+
+def _write_up_rows(home, rows):
+    import json
+    path = home / "network" / ns.UP_LOG_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def test_upload_state_missing_log_is_honest_only_outside_the_window():
+    assert ns.upload_state([], NOW, 12) == (True, "no upload reading yet")
+    assert ns.upload_state([], NOW, 3) == (False, "no upload attempt recorded in the off-peak window")
+
+
+def test_upload_state_failed_attempt_is_unknown_not_the_old_figure():
+    rows = [
+        {"ts": NOW - 7200, "ok": True, "up_mbps": 18.6},
+        {"ts": NOW - 600, "ok": False, "error": "timeout: uplink gone"},
+    ]
+    ok, why = ns.upload_state(rows, NOW, 12)
+    assert ok is False
+    assert why == "last upload 10 min ago failed: timeout: uplink gone"
+
+
+def test_upload_state_good_row_is_green_with_its_age():
+    assert ns.upload_state([{"ts": NOW - 7200, "ok": True, "up_mbps": 18.6}], NOW, 12) == (
+        True, "upload 18.6 Mbps, 2.0 h ago")
+
+
+def test_upload_state_stale_good_row_is_unknown():
+    ok, why = ns.upload_state([{"ts": NOW - 40 * 3600, "ok": True, "up_mbps": 18.6}], NOW, 12)
+    assert ok is False and why == "last upload is 40 h old"
+
+
+def test_upload_state_unreadable_success_row_is_unknown():
+    ok, why = ns.upload_state([{"ts": NOW - 60, "ok": True}], NOW, 12)
+    assert ok is False and why == "last upload row is unreadable"
+
+
+def test_failed_upload_makes_the_duty_unknown_not_green(tmp_path, capsys, monkeypatch):
+    # A night of failing uploads must wake me: the download is fine, but the upload line is not.
+    import time
+    _pin_outside_offpeak(monkeypatch)
+    _write_rows(tmp_path, [{"ts": time.time() - 3600, "ok": True, "down_mbps": 80.0}])
+    _write_up_rows(tmp_path, [{"ts": time.time() - 300, "ok": False, "error": "timeout: uplink gone"}])
+    assert ns.main(["--home", str(tmp_path)]) == 3
+    out = capsys.readouterr().out
+    assert "upload UNKNOWN: last upload 5 min ago failed: timeout: uplink gone" in out
+
+
+def test_good_upload_keeps_the_duty_green(tmp_path, capsys, monkeypatch):
+    import time
+    _pin_outside_offpeak(monkeypatch)
+    _write_rows(tmp_path, [{"ts": time.time() - 3600, "ok": True, "down_mbps": 80.0}])
+    _write_up_rows(tmp_path, [{"ts": time.time() - 7200, "ok": True, "up_mbps": 20.0}])
+    assert ns.main(["--home", str(tmp_path)]) == 0
+    assert "upload: upload 20 Mbps, 2.0 h ago" in capsys.readouterr().out
+
+
+def test_no_upload_reading_yet_is_not_a_failure_outside_the_window(tmp_path, capsys, monkeypatch):
+    import time
+    _pin_outside_offpeak(monkeypatch)
+    _write_rows(tmp_path, [{"ts": time.time() - 3600, "ok": True, "down_mbps": 80.0}])
+    assert ns.main(["--home", str(tmp_path)]) == 0
+    assert "upload: no upload reading yet" in capsys.readouterr().out

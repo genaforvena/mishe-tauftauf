@@ -40,6 +40,11 @@ LOG_NAME = "speed.jsonl"
 UP_LOG_NAME = "speed-up.jsonl"
 
 
+def clock_hour(now):
+    """The local clock hour of an epoch second (the off-peak window is local)."""
+    return time.localtime(now).tm_hour
+
+
 def due(now, last_ts, local_hour):
     """(True, reason) when a measurement should run now, else (False, why not)."""
     start, end = OFF_PEAK_HOURS
@@ -68,6 +73,33 @@ def read_rows(path):
     except OSError:
         return []
     return nb.decode_json_lines(text)
+
+
+def upload_state(rows, now, hour):
+    """(True, phrase) when the upload reading can be trusted, else (False, why it is UNKNOWN).
+
+    A log that does not exist yet is honest outside the night window (nothing was due), but once the
+    window is open the producer must record an attempt — success or the error — or the reading says
+    nothing and the duty must not call that a calm GREEN. A failed attempt or a good reading older
+    than STALE_AFTER_S is UNKNOWN for the same reason the window prints UNKNOWN.
+    """
+    start, end = OFF_PEAK_HOURS
+    if not rows:
+        if start <= hour < end:
+            return False, "no upload attempt recorded in the off-peak window"
+        return True, "no upload reading yet"
+    last = rows[-1]
+    if not last.get("ok"):
+        age_min = (now - last["ts"]) / 60 if isinstance(last.get("ts"), (int, float)) else None
+        when = f"{age_min:.0f} min ago" if age_min is not None else "at an unreadable time"
+        return False, f"last upload {when} failed: {str(last.get('error', '?'))[:80]}"
+    ts, mbps = last.get("ts"), last.get("up_mbps")
+    if not isinstance(ts, (int, float)) or not isinstance(mbps, (int, float)):
+        return False, "last upload row is unreadable"
+    hours = (now - ts) / 3600
+    if hours > STALE_AFTER_S / 3600:
+        return False, f"last upload is {hours:.0f} h old"
+    return True, f"upload {mbps:g} Mbps, {hours:.1f} h ago"
 
 
 def measure(url=URL, timeout=TIMEOUT_S, opener=urllib.request.urlopen):
@@ -139,7 +171,7 @@ def main(argv=None):
     last = last_attempt(rows)
     good = last_good(rows)
     now = time.time()
-    hour = time.localtime(now).tm_hour
+    hour = clock_hour(now)
     ok, why = due(now, good["ts"] if good else None, hour)
     if ok and last is not None and not last.get("ok") and now - last["ts"] < FAILED_RETRY_S:
         ok, why = False, "last try failed; retry not before 30 min"
@@ -173,7 +205,11 @@ def main(argv=None):
         with up_path.open("a") as fh:
             fh.write(json.dumps(up_row, sort_keys=True) + "\n")
         print(json.dumps(up_row, sort_keys=True))
-    return 0 if down_ok else 3
+    # The verdict is read back after the possible write: a failed attempt is UNKNOWN here too,
+    # with the error in plain words, so a night of failing uploads cannot pass as GREEN.
+    up_ok_state, up_phrase = upload_state(read_rows(up_path), now, hour)
+    print(("upload: " if up_ok_state else "upload UNKNOWN: ") + up_phrase)
+    return 0 if (down_ok and up_ok_state) else 3
 
 
 if __name__ == "__main__":

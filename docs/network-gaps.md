@@ -25,7 +25,7 @@ shown), **MISSING** (not measured or not shown).
 | slot | status | evidence |
 | --- | --- | --- |
 | Download speed | PARTLY | `speed_line()`: last good 5 MB download in `speed.jsonl`, age shown, one night-time try (02-05 local) |
-| Upload speed | BUILT | `speed_up_line()` reads `speed-up.jsonl`: last good 2 MB upload with age, written by the same night-time duty with its own 30-minute failed-retry; UNKNOWN when never measured, last try failed, or older than 36 h |
+| Upload speed | BUILT | `speed_up_line()` reads `speed-up.jsonl`: last good 2 MB upload with age, written by the same night-time duty with its own 30-minute failed-retry; UNKNOWN when never measured, last try failed, or older than 36 h. The same duty now reports UNKNOWN in those cases (`upload_state()`), so the signal follows the upload too |
 | Method and age shown | BUILT | both speed lines give the method and hours since the reading |
 
 ## Home Wi-Fi

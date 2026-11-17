@@ -84,7 +84,10 @@ is not mistaken for a quiet mind.
   connection setup and are a trend, not a calibrated line test. A failed last try shows its error
   instead of the older good number; no reading at all, or one older than 36 h, is UNKNOWN. The
   upload has its own log and its own 30-minute retry inside the night, so a failed upload does not
-  erase the download and a transient failure does not cost the whole night.
+  erase the download and a transient failure does not cost the whole night. The duty that produces
+  both follows the upload as well: a failed upload attempt, a good upload older than 36 h, or no
+  attempt at all once the night window is open makes the `network-speed` signal UNKNOWN, so a night
+  of failing uploads wakes the network mind instead of passing as GREEN.
 - `RECORDED`: client count by band, weakest device by name and dBm, the age of the last read.
 - `WHERE TIME GOES`: of the page-load time just above, how much went into reaching the site
   (`connect_ms`) and how much into the secure handshake (`tls_ms`), for the newest probe only.
