@@ -188,9 +188,10 @@ def main(argv=None):
     else:
         if good is None or now - good["ts"] >= STALE_AFTER_S:
             print("not due: " + why + "; no good reading in the last 36 h, so UNKNOWN")
-            return 3
-        print("not due: " + why)
-        down_ok = True
+            down_ok = False
+        else:
+            print("not due: " + why)
+            down_ok = True
     # Upload has its own gate: a failed upload retries inside the same night instead of waiting
     # for the download's 12 h interval. The off-peak check in due() keeps it off the daytime network.
     up_rows = read_rows(up_path)

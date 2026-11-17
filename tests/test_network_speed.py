@@ -159,6 +159,18 @@ def test_not_due_with_stale_good_reading_is_unknown(tmp_path, capsys, monkeypatc
     assert ns.main(["--home", str(tmp_path)]) == 3
 
 
+def test_stale_download_with_failed_upload_names_both_causes(tmp_path, capsys, monkeypatch):
+    # Both readings untrustworthy: the detail must record both, and the duty must stay UNKNOWN.
+    import time
+    _pin_outside_offpeak(monkeypatch)
+    _write_rows(tmp_path, [{"ts": time.time() - 40 * 3600, "ok": True, "down_mbps": 80.0}])
+    _write_up_rows(tmp_path, [{"ts": time.time() - 300, "ok": False, "error": "timeout: uplink gone"}])
+    assert ns.main(["--home", str(tmp_path)]) == 3
+    out = capsys.readouterr().out
+    assert "no good reading in the last 36 h, so UNKNOWN" in out
+    assert "upload UNKNOWN: last upload 5 min ago failed: timeout: uplink gone" in out
+
+
 def test_measure_sends_named_user_agent_not_urllib_default():
     # Cloudflare returns 403 to the default Python-urllib agent; the reading must name its client.
     seen = {}
