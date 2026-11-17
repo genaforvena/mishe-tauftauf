@@ -1014,6 +1014,30 @@ def test_held_lock_gives_up_when_the_wake_never_settles_and_still_releases_the_h
     assert not (tmp_path / "hold").exists()
 
 
+def test_a_manual_hold_written_in_the_claim_window_is_neither_overwritten_nor_released(tmp_path):
+    handle = _hold_dispatch_lock(tmp_path)
+    from mishe_tauftauf import wake
+    mp = pytest.MonkeyPatch()
+    mp.setattr(wake, "resume_owed", lambda *a, **k: None)
+    mp.setattr("mishe_tauftauf.roles.declared", lambda home: [])
+    real_open = os.open
+
+    def racing_open(path, flags, mode=0o777):
+        # The human's `mishe hold on` lands between the exists() check and our create.
+        (tmp_path / "hold").write_text("operator: covered 16:00-16:10\n")
+        return real_open(path, flags, mode)
+
+    mp.setattr(p.os, "open", racing_open)
+    try:
+        with pytest.raises(p.DeliveryBusy):
+            with p.held_delivery_lock(tmp_path, 0.01, sleep=lambda s: None, patience_s=0):
+                pass
+    finally:
+        mp.undo()
+        handle.close()
+    assert (tmp_path / "hold").read_text() == "operator: covered 16:00-16:10\n"
+
+
 def test_a_delivered_promotion_publishes_the_outcome_signal_as_an_edge_per_sha(tree):
     from mishe_tauftauf import signal_store
     repo,home,old,sha=tree

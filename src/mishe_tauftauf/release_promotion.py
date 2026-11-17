@@ -265,9 +265,19 @@ def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=600, clock=
                     # a hold its owner still wants (a manual `mishe hold on`, or plant_boot's
                     # boot-guard hold that must outlive the boot), and unlinking it on the way
                     # out would resume wakes under that owner.
+                    # Exclusive create, not exists()+write_text: a manual `mishe hold on`
+                    # written in that window would otherwise be overwritten and unlinked
+                    # on the way out. On FileExistsError the hold belongs to its owner.
                     if not hold.exists():
-                        held_text = f"{HOLD_TEXT}\npid={os.getpid()} started={int(time.time())}\n"
-                        hold.write_text(held_text)
+                        candidate = f"{HOLD_TEXT}\npid={os.getpid()} started={int(time.time())}\n"
+                        try:
+                            fd = os.open(hold, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+                        except FileExistsError:
+                            pass
+                        else:
+                            with os.fdopen(fd, "w") as fh:
+                                fh.write(candidate)
+                            held_text = candidate
                     held = True
                     deadline = clock() + wait_s
                 if held and clock() >= deadline:

@@ -378,7 +378,7 @@ arm_watchdog() {
         --description="root migration flip watchdog" \
         /bin/bash -c "$body" >/dev/null 2>&1 ||
         die "could not arm the watchdog; refusing to stop anything"
-    log "watchdog armed: ${WATCHDOG_SECONDS}s sleep, then waits up to 600s for flip pid $FLIP_PID to end; unit $name.service"
+    log "watchdog armed: ${WATCHDOG_SECONDS}s sleep, then waits up to $((WATCHDOG_FLIP_WAIT_TICKS * 10))s for flip pid $FLIP_PID to end; unit $name.service"
 }
 
 # --- hold --------------------------------------------------------------------
