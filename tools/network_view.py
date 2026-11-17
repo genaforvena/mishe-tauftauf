@@ -116,6 +116,11 @@ def nb_speed_rows():
     return network_speed.read_rows(SITE / "network" / network_speed.LOG_NAME)
 
 
+def nb_speed_up_rows():
+    import network_speed
+    return network_speed.read_rows(SITE / "network" / network_speed.UP_LOG_NAME)
+
+
 def age(row):
     return nb.row_age_seconds(row)
 
@@ -666,7 +671,23 @@ def speed_line(speed_rows, now=None):
     hours = (now - best["ts"]) / 3600
     if hours > 36:
         return f"UNKNOWN (last reading is {hours:.0f} h old)"
-    return f"DOWN {best['down_mbps']:g} Mbps, measured {hours:.1f} h ago (5 MB download, night only, no upload yet)"
+    return f"DOWN {best['down_mbps']:g} Mbps, measured {hours:.1f} h ago (5 MB download, night only)"
+
+
+def speed_up_line(up_rows, now=None):
+    """UPLOAD in plain words: the last good upload with its age, or UNKNOWN (never a calm old number)."""
+    now = time.time() if now is None else now
+    if not up_rows:
+        return "UNKNOWN (no upload reading yet; one 2 MB upload a night, 02-05 local)"
+    last = up_rows[-1]
+    if not last.get("ok"):
+        return f"UNKNOWN (last upload {int((now - last['ts']) // 60)} min ago failed: {last.get('error', '?')[:60]})"
+    good = [r for r in up_rows if r.get("ok")]
+    best = good[-1]
+    hours = (now - best["ts"]) / 3600
+    if hours > 36:
+        return f"UNKNOWN (last upload is {hours:.0f} h old)"
+    return f"UP {best['up_mbps']:g} Mbps, measured {hours:.1f} h ago (2 MB upload, night only)"
 
 
 def probe_cadence_phrase(data):
@@ -721,6 +742,7 @@ def draw():
     out.append(usuality_line(data))
     out.append("")
     out.append("  SPEED         " + speed_line(nb_speed_rows()))
+    out.append("  UPLOAD        " + speed_up_line(nb_speed_up_rows()))
     out.append("")
     out.append("  OUTAGES (home internet DOWN, from the probes)")
     out.extend(outage_lines(data))

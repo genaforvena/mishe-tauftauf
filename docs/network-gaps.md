@@ -24,9 +24,9 @@ shown), **MISSING** (not measured or not shown).
 
 | slot | status | evidence |
 | --- | --- | --- |
-| Download speed | PARTLY | `speed_line()`: last good 5 MB download, age shown, one night-time try (02-05 local) |
-| Upload speed | MISSING | `speed_line()` says "no upload yet" |
-| Method and age shown | BUILT | the speed line gives the method and hours since the reading |
+| Download speed | PARTLY | `speed_line()`: last good 5 MB download in `speed.jsonl`, age shown, one night-time try (02-05 local) |
+| Upload speed | BUILT | `speed_up_line()` reads `speed-up.jsonl`: last good 2 MB upload with age, written by the same night-time duty with its own 30-minute failed-retry; UNKNOWN when never measured, last try failed, or older than 36 h |
+| Method and age shown | BUILT | both speed lines give the method and hours since the reading |
 
 ## Home Wi-Fi
 
@@ -59,11 +59,10 @@ shown), **MISSING** (not measured or not shown).
 
 ## Count
 
-- BUILT: 15
+- BUILT: 16
 - PARTLY: 5
-- MISSING: 5
+- MISSING: 4
 
 ## Next gaps, in order of value
 
-1. Upload speed, one bounded night-time try alongside the download.
-2. Wi-Fi retry counters and co-channel trouble: a read-only per-radio stats read on the router, and a comparison of the two APs' channels (`ra0` and `ra1` both reported channel 13 on 2026-11-17; what `ra1` is, is not yet established).
+1. Wi-Fi retry counters and co-channel trouble: a read-only per-radio stats read on the router, and a comparison of the two APs' channels (`ra0` and `ra1` both reported channel 13 on 2026-11-17; what `ra1` is, is not yet established).

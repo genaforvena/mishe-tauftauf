@@ -948,7 +948,7 @@
         3
       ],
       "resolver": "network",
-      "covers": "the bounded download speed reading (rows in network/speed.jsonl): one 5 MB download, only 02-05 local and at most every 12 h; UNKNOWN when the last attempt failed, RED when the duty itself cannot run",
+      "covers": "the bounded speed readings (network/speed.jsonl for the 5 MB download, network/speed-up.jsonl for the 2 MB upload): one of each, only 02-05 local and at most every 12 h; upload has its own 30-minute failed-retry; UNKNOWN when the last attempt failed, RED when the duty itself cannot run",
       "replaces": []
     },
     {

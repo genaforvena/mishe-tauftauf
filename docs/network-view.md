@@ -65,6 +65,13 @@ is not mistaken for a quiet mind.
 
 ## What the view says about it
 
+- `SPEED` and `UPLOAD`: the last good download and upload with the method and age of each. One
+  5 MB download and one 2 MB upload per night, only in 02:00–04:59 local, at most every 12 h;
+  both are single bounded requests against Cloudflare's speed endpoint, so the times include
+  connection setup and are a trend, not a calibrated line test. A failed last try shows its error
+  instead of the older good number; no reading at all, or one older than 36 h, is UNKNOWN. The
+  upload has its own log and its own 30-minute retry inside the night, so a failed upload does not
+  erase the download and a transient failure does not cost the whole night.
 - `RECORDED`: client count by band, weakest device by name and dBm, the age of the last read.
 - `WHERE TIME GOES`: of the page-load time just above, how much went into reaching the site
   (`connect_ms`) and how much into the secure handshake (`tls_ms`), for the newest probe only.
@@ -88,9 +95,9 @@ is not mistaken for a quiet mind.
 
 - Signal values are one sample per 5 minutes. A single strong reading is not a finding; it
   becomes one only when it repeats over a day.
-- Not measured yet: upload speed and Wi-Fi retry counters. Channel and noise floor are measured once
-  per 5 minutes; a single reading is not evidence of channel trouble, and the view does not yet
-  compare the two APs' channels.
+- Not measured yet: Wi-Fi retry counters. Channel and noise floor are measured once per 5 minutes;
+  a single reading is not evidence of channel trouble, and the view does not yet compare the two
+  APs' channels.
 - VPN (sing-box) state is shown as "running" and "tun0 up" from the
   router's process list; it does not say which clients use the tunnel. The WAN error and drop counters
   are measured: the view reports them from the last recorded router read, and the drop

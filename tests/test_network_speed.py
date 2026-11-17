@@ -95,6 +95,28 @@ def test_speed_line_stale_good_reading_is_unknown():
     assert view.speed_line(rows, NOW).startswith("UNKNOWN (last reading is 40 h old)")
 
 
+def test_speed_up_line_unknown_when_never_measured():
+    assert view.speed_up_line([], NOW).startswith("UNKNOWN (no upload reading yet")
+
+
+def test_speed_up_line_shows_last_good_with_age():
+    rows = [{"ts": NOW - 7200, "ok": True, "up_mbps": 18.6}]
+    assert view.speed_up_line(rows, NOW).startswith("UP 18.6 Mbps, measured 2.0 h ago")
+
+
+def test_speed_up_line_failed_last_try_is_unknown_not_the_old_number():
+    rows = [
+        {"ts": NOW - 7200, "ok": True, "up_mbps": 18.6},
+        {"ts": NOW - 600, "ok": False, "error": "timeout: too slow"},
+    ]
+    assert view.speed_up_line(rows, NOW).startswith("UNKNOWN (last upload 10 min ago failed: timeout")
+
+
+def test_speed_up_line_stale_good_is_unknown():
+    rows = [{"ts": NOW - 40 * 3600, "ok": True, "up_mbps": 18.6}]
+    assert view.speed_up_line(rows, NOW).startswith("UNKNOWN (last upload is 40 h old)")
+
+
 def test_check_mode_writes_nothing(tmp_path, capsys):
     rc = ns.main(["--home", str(tmp_path), "--check"])
     assert rc == 0
@@ -150,6 +172,37 @@ def test_measure_sends_named_user_agent_not_urllib_default():
     assert "Python-urllib" not in seen["ua"]
 
 
+def test_measure_up_posts_bounded_payload_with_named_agent():
+    seen = {}
+
+    def opener(req, timeout):
+        seen["method"] = req.get_method()
+        seen["ua"] = req.get_header("User-agent")
+        seen["length"] = len(req.data)
+        seen["timeout"] = timeout
+        return _Resp(b"")
+
+    row = ns.measure_up(opener=opener)
+    assert row["ok"] is True
+    assert row["up_mbps"] > 0
+    assert "error" not in row
+    assert seen == {
+        "method": "POST",
+        "ua": ns.USER_AGENT,
+        "length": ns.UP_EXPECT_BYTES,
+        "timeout": ns.UP_TIMEOUT_S,
+    }
+
+
+def test_measure_up_exception_is_failed_row_not_a_raise():
+    def boom(req, timeout):
+        raise OSError("uplink gone")
+
+    row = ns.measure_up(opener=boom)
+    assert row["ok"] is False
+    assert row["error"].startswith("OSError")
+
+
 def test_failed_try_is_retried_in_window_after_30_min_not_next_day(tmp_path, capsys, monkeypatch):
     # A 403 at 02:01 must not block the rest of the night: failures retry after 30 min, successes wait 12 h.
     import time
@@ -173,3 +226,42 @@ def test_good_reading_throttle_ignores_later_failures(tmp_path, capsys, monkeypa
     ])
     assert ns.main(["--home", str(tmp_path), "--check"]) == 0
     assert capsys.readouterr().out.startswith("not due: measured recently")
+
+
+def test_main_writes_both_logs_when_due(tmp_path, capsys, monkeypatch):
+    import time
+    real_due = ns.due
+    monkeypatch.setattr(ns, "due", lambda now, last, hour: real_due(now, last, 3))
+    monkeypatch.setattr(ns, "measure", lambda: {"ts": time.time(), "ok": True, "down_mbps": 90.0})
+    monkeypatch.setattr(ns, "measure_up", lambda: {"ts": time.time(), "ok": True, "up_mbps": 20.0})
+    assert ns.main(["--home", str(tmp_path)]) == 0
+    assert (tmp_path / "network" / "speed.jsonl").exists()
+    assert (tmp_path / "network" / "speed-up.jsonl").exists()
+    assert '"up_mbps": 20.0' in capsys.readouterr().out
+
+
+def test_main_retries_failed_upload_within_window_while_download_fresh(tmp_path, capsys, monkeypatch):
+    # A failed upload at 02:01 retries after 30 min even though the download's 12 h throttle holds.
+    import json
+    import time
+    real_due = ns.due
+    monkeypatch.setattr(ns, "due", lambda now, last, hour: real_due(now, last, 3))
+    _write_rows(tmp_path, [{"ts": time.time() - 60, "ok": True, "down_mbps": 90.0}])
+    up_path = tmp_path / "network" / "speed-up.jsonl"
+    up_path.parent.mkdir(parents=True, exist_ok=True)
+    up_path.write_text(json.dumps({"ts": time.time() - 31 * 60, "ok": False, "error": "timeout"}) + "\n")
+    ran = []
+
+    def no_download():
+        ran.append("down")
+        return {"ts": time.time(), "ok": True, "down_mbps": 90.0}
+
+    def do_upload():
+        ran.append("up")
+        return {"ts": time.time(), "ok": True, "up_mbps": 20.0}
+
+    monkeypatch.setattr(ns, "measure", no_download)
+    monkeypatch.setattr(ns, "measure_up", do_upload)
+    assert ns.main(["--home", str(tmp_path)]) == 0
+    assert ran == ["up"]
+    assert "not due: measured recently" in capsys.readouterr().out
