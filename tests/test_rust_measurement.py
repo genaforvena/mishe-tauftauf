@@ -144,3 +144,49 @@ def test_duty_measures_release_source_not_editable_checkout(tmp_path):
                                      "--no-artifact"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stderr
     assert "3 entries" in proc.stdout
+
+
+def test_history_appends_a_completed_sample_with_its_guard(tmp_path):
+    # 10.45's 60 bar rests on one measured point; the history is where the next
+    # calibration gets a curve, so a sample must keep both the reading and the
+    # pressure it was taken under.
+    home = tmp_path / "site"
+    home.mkdir()
+    proc = subprocess.run(
+        [sys.executable, str(CHECK), "--home", str(home), "--repo", str(REPO),
+         "--roles", "senses", "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000",
+         "--max-load", "100000", "--max-cpu-pressure", "100000",
+         "--max-mem-pressure", "100000"],
+        capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    lines = (home / "artifacts" / "rust-plan-20261107"
+             / "rust-measurement-history.jsonl").read_text().splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["verdict"] == "green" and record["readings"][0]["role"] == "senses"
+    assert "cpu_pressure_some_avg10" in record["guard"]
+
+
+def test_history_records_a_guard_skip_with_the_facts_it_saw(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir()
+    proc = subprocess.run(
+        [sys.executable, str(CHECK), "--home", str(home), "--repo", str(REPO),
+         "--roles", "senses", "--max-load", "-1"],
+        capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 3 and "skipped, host busy" in proc.stderr
+    record = json.loads((home / "artifacts" / "rust-plan-20261107"
+                         / "rust-measurement-history.jsonl").read_text().splitlines()[0])
+    assert record["verdict"] == "skipped" and "loadavg" in record["skip"]
+    assert record["guard"]["load1"] >= 0
+
+
+def test_history_is_bounded_to_the_newest_lines(tmp_path):
+    home = tmp_path / "site"
+    home.mkdir()
+    mod = check_module()
+    path = home / mod.ARTIFACT_DIR / "rust-measurement-history.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text("".join('{"n":%d}\n' % i for i in range(5)))
+    mod.append_history(home, {"n": 5}, max_lines=3)
+    assert path.read_text().splitlines() == ['{"n":3}', '{"n":4}', '{"n":5}']

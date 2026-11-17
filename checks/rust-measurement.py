@@ -32,7 +32,12 @@ Verdicts:
   UNKNOWN 3  skipped by the host guard, a child failed, or the site is missing.
 
 The latest reading is written to an ignored artifact under the site home so a
-person can read the raw numbers.
+person can read the raw numbers. Every run also appends one JSON line to
+`rust-measurement-history.jsonl` next to it: a completed sample keeps its
+readings and guard facts, a guard skip keeps the reason and the guard facts it
+observed. The 60 bar in §10.45 rests on one measured point, so the history is
+how the next calibration gets a curve instead of another forced fold; it is
+bounded to the newest `HISTORY_MAX_LINES` lines.
 """
 from __future__ import annotations
 
@@ -57,6 +62,8 @@ DEFAULT_MAX_CPU_PRESSURE = 60.0
 DEFAULT_MAX_MEMORY_PRESSURE = 10.0  # percent of a 10 s window stalled on memory
 DEFAULT_MIN_FREE_KB = 8 * 1024 * 1024
 DEFAULT_TIMEOUT_S = 240
+ARTIFACT_DIR = Path("artifacts") / "rust-plan-20261107"
+HISTORY_MAX_LINES = 2000
 
 CHILD = r"""
 import json, resource, sys, time
@@ -160,6 +167,24 @@ def fold_role(repo: Path, home: Path, role: str, timeout: int) -> dict:
     return json.loads(lines[-1])
 
 
+def append_history(home: Path, record: dict, max_lines: int = HISTORY_MAX_LINES) -> None:
+    """Append one run to the bounded history beside the latest artifact.
+
+    A history write failure must not change the duty's verdict: the sample and the
+    signal already exist, so the error is printed and the run continues.
+    """
+    path = home / ARTIFACT_DIR / "rust-measurement-history.jsonl"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as fh:
+            fh.write(json.dumps(record, separators=(",", ":")) + "\n")
+        lines = path.read_text().splitlines()
+        if len(lines) > max_lines:
+            path.write_text("\n".join(lines[-max_lines:]) + "\n")
+    except OSError as exc:
+        print(f"rust-measurement: history not written: {exc.strerror or exc}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", required=True, type=Path)
@@ -188,6 +213,13 @@ def main(argv: list[str] | None = None) -> int:
     skip, guard = host_guard(args.max_load, args.min_free_kb,
                              args.max_cpu_pressure, args.max_mem_pressure)
     if skip:
+        if not args.no_artifact:
+            append_history(home, {
+                "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "verdict": "skipped",
+                "skip": skip,
+                "guard": guard,
+            })
         print(f"rust-measurement: UNKNOWN skipped, host busy: {skip}; re-run when quiet",
               file=sys.stderr)
         return 3
@@ -212,11 +244,12 @@ def main(argv: list[str] | None = None) -> int:
                         f"{r['entries']} entries" for r in readings)
 
     if not args.no_artifact:
-        out = home / "artifacts" / "rust-plan-20261107" / "rust-measurement-latest.json"
+        measured_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        out = home / ARTIFACT_DIR / "rust-measurement-latest.json"
         try:
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps({
-                "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "measured_at": measured_at,
                 "readings": readings,
                 "triggers": {"cpu_s": args.cpu_trigger, "rss_kb": args.rss_trigger_kb},
                 "guard": guard,
@@ -224,6 +257,13 @@ def main(argv: list[str] | None = None) -> int:
             }, indent=1) + "\n")
         except OSError as exc:
             print(f"rust-measurement: artifact not written: {exc.strerror or exc}", file=sys.stderr)
+        append_history(home, {
+            "measured_at": measured_at,
+            "verdict": "over" if over else "green",
+            "readings": readings,
+            "guard": guard,
+            "over": over,
+        })
 
     if over:
         print(f"rust-measurement: RED trigger hit, slice may reopen: {'; '.join(over)} [{summary}]",

@@ -2979,3 +2979,32 @@ cadence observation: the next automatic run (hourly, due 07:34Z) is still the
 thing that proves the timer path. The artifact and signal freshness markers are
 the detectors; a missing `.seen` after 07:35Z means the cadence, not the guard,
 is what to look at.
+
+### 10.48 The measurement keeps a bounded history, so the 60 bar can be calibrated from samples instead of forced folds (2026-11-17)
+
+§10.45 set the CPU-pressure bar at 60 from a single measured point and said so.
+Each hourly run produced a sample with its guard facts and then overwrote it:
+`rust-measurement-latest.json` is the only artifact, so the curve could only be
+rebuilt by loading the host with more forced folds.
+
+`checks/rust-measurement.py` now also appends one JSON line per run to
+`artifacts/rust-plan-20261107/rust-measurement-history.jsonl`:
+
+- a completed sample keeps `measured_at`, `verdict` (`green`/`over`), every
+  role's `cpu_s`/`maxrss_kb`/`entries`, and the full `guard` block;
+- a guard skip keeps `verdict: skipped`, the skip reason, and the guard facts it
+  had read before stopping, so skip frequency under the 60 bar becomes visible;
+- the file is trimmed to the newest 2000 lines (`HISTORY_MAX_LINES`), roughly a
+  quarter of hourly runs; a history write error is printed and never changes the
+  verdict, and `--no-artifact` writes nothing.
+
+Smoke on the live site with the changed checker (not the producer wrapper, which
+would also move the signal): senses 3.785 CPU-s / 116 MB, genome 3.737 CPU-s /
+97 MB at `some avg10` 32.35, `over []`. The 06:58Z producer sample at
+`some avg10` 41.69 was 3.769 / 4.274. Two points are not a curve; they are the
+start of the file that will become one.
+
+**Limit and follow-up.** The live instance of this change appears only after the
+promotion reaches the pin; the detector of that is the first history line whose
+`measured_at` is an automatic hourly run after the pin moves, with the pin's
+checker sha in the release. Until then the file has exactly the smoke line.
