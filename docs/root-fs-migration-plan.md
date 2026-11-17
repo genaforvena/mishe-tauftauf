@@ -159,7 +159,14 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
   count and byte checks. Two defects found and fixed by the tests: a sample stride of 1
   selected nothing (`NR % 1 == 1`), and `--files-from` adds the parent directories of the
   listed files, whose mtimes were being counted as content differences — the checksum
-  stages now count file entries only.
+  stages now count file entries only. A later review found two more ways to pass after
+  comparing nothing: the byte cap could empty the sample before the first path was
+  written (a size+mtime-preserving corruption of that file then read as `VERIFIED`), and
+  a missing work directory made every evidence write fail while the verdict still said
+  `VERIFIED`. Both now fail closed — at least one path is always sampled, an empty
+  sample over a non-empty tree is `NOT-CLEAN`, the work dir is created or the run exits
+  2, and the evidence files are asserted before the verdict — pinned by
+  `tests/test_root_migration_verify_scoped.py`.
 - Live run on the unquiesced `.omp`: 9.3 s, 27 size+mtime churn entries, 22 file entries
   changed since the bulk pass, and **0 content mismatches in a 199-file sample**. That is
   the intended discrimination: churn is reported, corruption is not invented.
@@ -243,8 +250,9 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
    - **Scoped (recommended, fits one wake):** after the step-2 quiesce and a
      final non-checksummed delta, check (i) exhaustive size+mtime equality — the
      dry run reports zero transfers; (ii) content equality with `-c` for every
-     file changed since the bulk pass; (iii) a random content sample of the rest;
-     (iv) file counts and `du -sb` equal. Implemented as
+     file changed since the bulk pass; (iii) a deterministic content sample of the
+     rest (evenly spaced by path, at least one file always compared); (iv) file
+     counts and `du -sb` equal. Implemented as
      `tools/root-migration-verify-scoped.sh` (deployed to
      `/mnt/mishe-scratch/mishe-migration/verify-scoped.sh`), which is what
      `flip.sh` runs by default. `--since` defaults to `bulk.log`'s mtime, the
