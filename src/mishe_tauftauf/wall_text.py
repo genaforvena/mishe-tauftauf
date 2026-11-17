@@ -120,17 +120,23 @@ def message_subject(text: str) -> str:
             return line.lstrip("#").strip()
     return ""
 
+_DM_ADDRESS_RE = re.compile(r"\[dm\] to=\S+")
+
+
 def message_excerpt(text: str) -> str:
-    """The first non-empty prose line after the address line; '' when none.
+    """The first prose line after the address line, skipping repeated addresses; '' when none.
 
     Live addressed DMs carry their content as plain prose after the ``[dm] to=ROLE``
     line, not as a markdown heading, so ``message_subject`` sees nothing there.
     This is the one bounded prose line the classifier may read instead; the
     caller caps it at the same excerpt budget as ``first_line`` and ``subject``.
+    Some walls repeat the address line, so a second ``[dm] to=ROLE`` is not content;
+    skip it and take the next real prose line.
     """
     for line in text.splitlines()[1:]:
-        if line.strip():
-            return line.strip()
+        stripped = line.strip()
+        if stripped and not _DM_ADDRESS_RE.fullmatch(stripped):
+            return stripped
     return ""
 
 def sender_role(source: str) -> str:

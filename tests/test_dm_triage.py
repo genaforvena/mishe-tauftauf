@@ -102,6 +102,14 @@ class DmTriageTests(unittest.TestCase):
         self.assertLessEqual(len(state["content"]), dt.MAX_EXCERPT_CHARS)
         self.assertNotIn("opaque " * 50, json.dumps(state))
 
+    def test_derived_state_skips_repeated_address_line(self):
+        body = ("[dm] to=system1\n[dm] to=system1\nPlease review the diff\n"
+                + ("opaque " * 400))
+        state = dt.derived_state(44, "field-review", body, roles=("system1",))
+        self.assertEqual(state["content"], "Please review the diff")
+        self.assertNotIn("[dm]", state["content"])
+        self.assertNotIn("opaque " * 50, json.dumps(state))
+
     def test_record_and_dedup(self):
         provider = _provider(self.root)
         mail = [(101, "[dm] to=system1\nfirst"), (102, "[ci] state=ok\n")]
