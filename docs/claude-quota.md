@@ -21,8 +21,8 @@ The result is `operator/budget/claude-native-quota.json`. Every attempt retains
 its original stdout/stderr and previous observation in `operator/budget/native-evidence/`.
 Failure publishes no current windows; last-good readings remain evidence and
 cannot admit work. The producer should run at least every ten minutes; the
-existing budget view expires readings after fifteen minutes. A missing or stale
-producer therefore cannot establish budget readiness. Senses owns acquisition
+producer and the budget pane expire readings after fifteen minutes (`MAX_AGE_S`
+900 s). A missing or stale producer therefore cannot establish budget readiness. Senses owns acquisition
 failures; the `budget-claude` signal carries the verdict and, for a RED, the cause that
 held work. The tracked publisher registers
 that signal with no subscribers, so a site that wants the verdict routed registers its own
@@ -36,25 +36,29 @@ remain in effect. A fresh report can still hold spontaneous work RED.
 The previous statusLine tap remains historical evidence. Its callback timestamp
 establishes a render, while `rate_limits` only appears after an API response in
 the session. Do not renew quota freshness merely by redrawing an idle terminal.
-The budget view uses the independent native report after its reviewed activation.
+The budget pane shows the producer's file, which reads the independent native
+report after its reviewed activation.
 
 References: [native commands](https://code.claude.com/docs/en/commands),
 [status line data](https://code.claude.com/docs/en/statusline). Observed native
 contract: Claude Code 2.1.319 on 2026-11-06; unsupported future formats fail closed.
 
-## Spending policy (decided; enforced in the budget view, not in the router)
+## Spending policy (decided; pace is reported, not gated by a percentage test)
 
-Status: the 50% threshold is enforced in the site's budget view, and the router
-does not read it.
+Status: no code applies a 50% gate, and the router does not read the policy.
 
-- The rule lives in the site-local `operator/budget/budget_view.py`, which is not
-  tracked in Git. Its window verdict is `RUNS OUT BEFORE RESET` only when the
-  window is at or above 50% used and the burn projection empties it before the
-  reset; below 50% the projection is information, not a verdict.
-- `src/mishe_tauftauf/provider_budget.py` consumes those verdicts and turns a
-  non-`ok` Claude window into RED, so the site's Claude readiness does read the
-  weekly figure — through the view's verdict, not through a percentage test of
-  its own. The tracked module has no weekly-percentage rule.
+- The alert rule lives in the site-local `operator/budget_snapshot.py`, run by the
+  `budget` duty's `producers/budget.sh` and not tracked in Git. It alerts only on
+  UNKNOWN or stale readings, so a spent (`LOW`) window with a known reset and a
+  burn projection are informational; above 50% weekly use shows as pace in
+  `operator/budget.md`. The pane `operator/budget/budget_view.py` has been
+  render-only since 2026-11-12: it draws the producer's burn and ETA and decides
+  nothing.
+- `src/mishe_tauftauf/provider_budget.py` builds the Claude rows from
+  `engine/budget.json` itself (`rows_from_engine_budget`) and turns a non-`ok`
+  window into the `budget-claude` RED: `LOW` when `used > 0.9`, `RUNS OUT BEFORE
+  RESET` when the producer's `eta_s` lands before the reset. The tracked module
+  has no weekly-percentage rule.
 - The router does not read it. `engine_policy._classify_account` judges a window
   by its remaining fraction against a reserve threshold of 15%, so a weekly
   window at 60% or 80% used still classifies as healthy and admission depends

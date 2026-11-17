@@ -12,8 +12,9 @@ Each fresh window also carries `burn_h` (used
 fraction per hour over the rate history, at least 1500 s of span, same reset only) and `eta_s` (seconds
 to 100% at that burn); a non-fresh window gets null for both. `burn_source` says where a burn came from: `history` (a measured
 rate reading) or `window-elapsed` (estimate: used / hours elapsed in a 5h or 7d window, used only when history has no
-honest reading and at least 0.25 h of the window has passed). A window-elapsed burn is an estimate, not a measurement. Still open: candidate token counts and
-verdicts in the producer, the render-only budget view (step 3) and deleting the old writers (step 5). The `budget` duty
+honest reading and at least 0.25 h of the window has passed). A window-elapsed burn is an estimate, not a measurement. Still open: per-candidate token
+attribution in the producer and deleting the old writers (step 5); the file already carries routing and ledger verdicts. The render-only budget view
+(step 3) shipped 2026-11-12. The `budget` duty
 now runs the producer (step 2): the site-local `producers/budget.sh` runs the old collector
 first and `mishe budget-produce` after it, so the producer reads this tick's `quota.json`
 rather than the previous tick's. Observed on the timer 2026-11-11
@@ -25,9 +26,9 @@ Roles whose candidates are all free models or the Claude safety net read no wind
 and are unaffected.
 Owner of the model/account mapping: `engine/routes.json`. Owner of this contract: steward.
 
-## Problem
+## Problem (state before the 2026-11-12 cutover)
 
-The budget window today has three independent writers and a viewer that carries its own
+The budget window had three independent writers and a viewer that carried its own
 mapping:
 
 - `operator/budget/collector.py` writes `state.json` (turns/tokens from transcripts).
@@ -258,7 +259,11 @@ honest.
    git-tracked, so re-installing it loses the line; the durable home is a tracked duty entry
    (scheduler change: activation, revert and reapply checks, plus a fresh review after delivery).
 3. Switch `budget_view.py` to render-only from `engine/budget.json`; delete its `MAP`,
-   `rows()`, `models()`, `window_models()` computations. **Open.**
+   `rows()`, `models()`, `window_models()` computations. **Done 2026-11-12.** The
+   site-local `operator/budget/budget_view.py` reads `engine/budget.json` and the
+   routing-ledger tail (to name the engine a role runs right now) and nothing else;
+   none of those computations or the three collector-file reads remain. Per-candidate
+   token columns still read UNK until the producer attributes them (`unknowns`).
 4. Switch `engine_router.assess()`/`live_status()` to read account windows from
    `engine/budget.json`; delete the direct `engine_usage.status` read from the router.
    **Done** (`live_status()` maps the accounts windows into the policy row shape; the
