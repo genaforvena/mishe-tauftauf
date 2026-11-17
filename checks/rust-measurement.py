@@ -29,7 +29,8 @@ never GREEN.
 Verdicts:
   GREEN   0  every role measured and under both triggers; the slice stays closed.
   RED     2  a role is over a trigger; the slice's pre-gate A/B may open.
-  UNKNOWN 3  skipped by the host guard, a child failed, or the site is missing.
+  UNKNOWN 3  skipped by the host guard, a child failed, the site is missing, or
+              the installed bytes could not be checked against the release.
 
 The latest reading is written to an ignored artifact under the site home so a
 person can read the raw numbers. Every run also appends one JSON line to
@@ -47,8 +48,10 @@ install commit to the release commit over that crate's `.rs`, `Cargo.toml`,
 `Cargo.lock` and `build.rs` is positive drift: the reading then cannot stand for
 the release's source, so the run is RED and names the rebuild. A record whose
 sha256 no longer matches its bytes is RED too, since the resolver refuses those
-bytes. A site with no `bin/` installs, or a release whose commit or one install
-commit git cannot resolve, reports the gap and keeps the CPU verdict.
+bytes. A site with no `bin/` installs, a crate with no install record, a release
+whose commit git cannot read, or an install commit git cannot resolve is
+UNKNOWN (exit 3): unverified bytes cannot stand behind a GREEN about the path
+that runs them.
 """
 from __future__ import annotations
 
@@ -212,6 +215,7 @@ def binary_provenance(home: Path, repo: Path) -> dict:
     read at all; it is reported and never turns into GREEN on its own.
     """
     facts: dict = {"checked": 0, "drift": [], "broken": [], "unknown": None}
+    missing: list[str] = []
     bin_dir = home / "bin"
     if not bin_dir.is_dir():
         facts["unknown"] = f"no bin dir under {home}; no Rust installs to check"
@@ -224,6 +228,7 @@ def binary_provenance(home: Path, repo: Path) -> dict:
     for binary, crate in CRATES.items():
         record_path = bin_dir / f"{binary}.install.json"
         if not record_path.is_file():
+            missing.append(binary)
             continue
         try:
             record = json.loads(record_path.read_text())
@@ -251,6 +256,9 @@ def binary_provenance(home: Path, repo: Path) -> dict:
         elif diff.returncode != 0:
             facts["unknown"] = (f"{binary}: cannot compare {install_commit[:8]}..{pin[:8]}: "
                                 f"{(diff.stderr or diff.stdout).strip()[:200]}")
+    if missing:
+        facts["unknown"] = (f"{len(missing)} crate(s) with no install record, bytes "
+                           f"unverified: {', '.join(missing)}")
     return facts
 
 
@@ -332,10 +340,11 @@ def main(argv: list[str] | None = None) -> int:
                         f"{r['entries']} entries" for r in readings)
     drift = provenance["drift"]
     broken = provenance["broken"]
+    unknown = provenance["unknown"]
     binaries = (f"{provenance['checked']} checked"
                 + (f", {len(drift)} drift" if drift else "")
                 + (f", {len(broken)} broken" if broken else "")
-                + (f", unknown: {provenance['unknown']}" if provenance["unknown"] else ""))
+                + (f", unknown: {unknown}" if unknown else ""))
 
     if not args.no_artifact:
         measured_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -354,7 +363,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"rust-measurement: artifact not written: {exc.strerror or exc}", file=sys.stderr)
         append_history(home, {
             "measured_at": measured_at,
-            "verdict": "red" if over or drift or broken else "green",
+            "verdict": "red" if over or drift or broken else
+                       ("unknown" if unknown else "green"),
             "readings": readings,
             "guard": guard,
             "over": over,
@@ -369,6 +379,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"rust-measurement: RED trigger hit, slice may reopen: {'; '.join(over)} [{summary}]",
               file=sys.stderr)
         return 2
+    if unknown:
+        print("rust-measurement: UNKNOWN installed-byte provenance unreadable, the CPU reading "
+              f"cannot be trusted as GREEN: {unknown} [{summary}]", file=sys.stderr)
+        return 3
     print(f"rust-measurement: GREEN under triggers, slice stays closed: {summary} "
           f"[binaries {binaries}]")
     return 0

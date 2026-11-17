@@ -3134,3 +3134,46 @@ detector. Detecting drift is not rebuilding: the release still does not carry
 its binaries (§10.46, component-deploy step 3 open), so a drifted install needs
 `tools/install-rust-binaries.sh` run from the release. A rebuild inside release
 construction is delivery-mechanism work and stays separate.
+
+### 10.51 The new detector's own gap: unreadable install evidence still printed GREEN (2026-11-17)
+
+§10.50 claimed that a site with no `bin/`, or an install commit git cannot
+resolve, "is reported as unknown and never becomes GREEN". The commit did not do
+that: `binary_provenance` filled `unknown`, and `main` computed its verdict from
+`over`, `drift` and `broken` alone, so the run printed
+`GREEN under triggers, slice stays closed … [binaries 0 checked]` and exited 0
+on a site where nothing was verified. Reproduced with the pre-change checker
+against a temporary site holding an empty `bin/`: `senses 0.0 CPU-s 20 MB 0
+entries [binaries 0 checked]`, exit 0. A missing install directory, an unreadable
+release commit, an unresolvable install commit and an empty record set therefore
+all read as a GREEN about a path whose bytes nobody checked.
+
+**The change.** `unknown` now ranks below RED and above GREEN: a run with
+unverified install evidence prints `UNKNOWN installed-byte provenance unreadable,
+the CPU reading cannot be trusted as GREEN: …`, exits 3 (the duty already
+declares exit 3 as unknown, so the producer marks the run UNKNOWN rather than
+failing it), and the history line records `"verdict": "unknown"`. A `bin/`
+directory that holds no install record at all is also unknown, so `0 checked` can
+no longer stand in for clean. RED still wins when drift or a hash mismatch is
+present, because that is positive evidence, not missing evidence.
+
+**Checks.** Same temporary site now: exit 3 with the text above. A crate listed
+in `CRATES` with no install record is unknown too — the binary the resolver would
+refuse is no longer dropped from the count: `9 crate(s) with no install record,
+bytes unverified: …` replaces the old `[binaries 0 checked]` GREEN. Live pin
+(`f2025680`) under a 2 GB nice-19 scope:
+`senses 3.29 CPU-s 116 MB 36386 entries; genome 3.481 CPU-s 97 MB 30336 entries
+[binaries 9 checked]`, exit 0 — the change leaves the real verdict intact, and the
+19:44Z hourly line already carries `checked 9, drift [], broken [], unknown null`
+on that pin, so §10.50's detector is live. `tests/test_rust_measurement.py` 20
+passed: three new cases (empty record set → exit 3; an unresolvable
+`source_commit` → exit 3; one deleted record named in `unknown`, `checked`
+8 of 9), and the fold-verdict tests now install a complete record set so they
+exercise the coupling they used to skip. `tools/check_parsing.py` PASS.
+
+**Limits.** The checker still cannot tell a *stale but committed* install (bytes
+built from an older commit of identical source) from a fresh one — it compares
+source, not build identity. That is the same information `install.json` already
+carries, so a rebuild only becomes necessary when drift is reported. The release
+still does not carry its binaries (§10.46), so a real drift still needs
+`tools/install-rust-binaries.sh` run from the release.

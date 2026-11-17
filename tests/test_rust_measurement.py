@@ -1,9 +1,10 @@
 """The rust-measurement duty: a deterministic fold reading, not a hand-written GREEN.
 
-The verdict is GREEN only when every role was measured under both triggers, RED
-when a trigger is hit, and UNKNOWN when the host guard or the fold prevents a
-reading. These tests drive the real checker against an empty site home so they
-stay fast and do not load the live tape.
+The verdict is GREEN only when every role was measured under both triggers and
+the installed bytes match the release source; RED when a trigger or binary drift
+is hit, and UNKNOWN when the host guard, the fold, or unreadable installed-byte
+provenance prevents a reading. These tests drive the real checker against an
+empty site home so they stay fast and do not load the live tape.
 """
 import importlib.util
 import json
@@ -75,6 +76,7 @@ def test_pressure_some_avg10_reads_the_psi_layout(tmp_path):
 def test_under_triggers_is_green(tmp_path):
     home = tmp_path / "site"
     home.mkdir()
+    _install_all(home, REPO)
     proc = run(home, "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000",
                "--max-load", "100000")
     assert proc.returncode == 0, proc.stderr
@@ -84,14 +86,45 @@ def test_under_triggers_is_green(tmp_path):
 def test_trigger_hit_is_red(tmp_path):
     home = tmp_path / "site"
     home.mkdir()
+    _install_all(home, REPO)
     proc = run(home, "--cpu-trigger", "-1", "--max-load", "100000")
     assert proc.returncode == 2
     assert "RED" in proc.stderr and "senses cpu" in proc.stderr
 
 
+def test_install_records_missing_is_unknown_not_green(tmp_path):
+    # A CPU reading of a path whose installed bytes nobody verified cannot be GREEN
+    # on its own; the verdict is the site's state, not just the fold number.
+    home = tmp_path / "site"
+    (home / "bin").mkdir(parents=True)
+    proc = run(home, "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000",
+               "--max-load", "100000")
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    assert "UNKNOWN" in proc.stderr and "with no install record" in proc.stderr
+    assert "GREEN" not in proc.stdout
+
+
+def test_unresolvable_install_commit_is_unknown_not_green(tmp_path):
+    # A record whose commit git cannot resolve leaves those bytes unverified: the
+    # checker must not fall back to the CPU verdict and call it GREEN.
+    home = tmp_path / "site"
+    home.mkdir()
+    _install_all(home, REPO)
+    record_path = home / "bin" / "mishe-tape.install.json"
+    record = json.loads(record_path.read_text())
+    record["source_commit"] = "0" * 40
+    record_path.write_text(json.dumps(record))
+    proc = run(home, "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000",
+               "--max-load", "100000")
+    assert proc.returncode == 3, proc.stdout + proc.stderr
+    assert "UNKNOWN" in proc.stderr and "mishe-tape" in proc.stderr
+    assert "GREEN" not in proc.stdout
+
+
 def test_artifact_records_the_reading(tmp_path):
     home = tmp_path / "site"
     home.mkdir()
+    _install_all(home, REPO)
     proc = subprocess.run(
         [sys.executable, str(CHECK), "--home", str(home), "--repo", str(REPO),
          "--roles", "senses", "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000",
@@ -133,6 +166,11 @@ def test_duty_measures_release_source_not_editable_checkout(tmp_path):
             f"    def role_entries(self, role, _force_full=False): return [None] * {count}\n"
         )
     (release / "duties.json").write_text((REPO / "duties.json").read_text())
+    # The duty compares the installed bytes with the release commit, so the release
+    # needs a commit and the site a matching install record set.
+    subprocess.run(["git", "-C", str(release), "init", "-q"], check=True)
+    _commit(release, "release")
+    _install_all(home, release)
     duty = next(d for d in duties.declared(checkout, home, source=release)
                 if d["name"] == "rust-measurement")
     # The checker itself is the real one; only its target source trees differ.
@@ -152,6 +190,7 @@ def test_history_appends_a_completed_sample_with_its_guard(tmp_path):
     # pressure it was taken under.
     home = tmp_path / "site"
     home.mkdir()
+    _install_all(home, REPO)
     proc = subprocess.run(
         [sys.executable, str(CHECK), "--home", str(home), "--repo", str(REPO),
          "--roles", "senses", "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000",
@@ -237,13 +276,36 @@ def _install(home: Path, repo: Path) -> Path:
     return body
 
 
+def _install_all(home: Path, repo: Path) -> None:
+    """A record for every crate the checker knows, all built from repo's HEAD.
+
+    The checker will not report GREEN unless it could verify the installed bytes,
+    so a test that drives the CPU verdict needs a complete install set.
+    """
+    import hashlib
+
+    bin_dir = home / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    commit = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    for binary in check_module().CRATES:
+        body = bin_dir / binary
+        body.write_bytes(b"built bytes for " + binary.encode() + b"\n")
+        (bin_dir / f"{binary}.install.json").write_text(json.dumps({
+            "binary": binary,
+            "sha256": hashlib.sha256(body.read_bytes()).hexdigest(),
+            "source_commit": commit,
+        }))
+
+
 def test_binary_provenance_is_clean_when_the_crates_match_the_installed_bytes(tmp_path):
     mod = check_module()
     repo = _rust_release(tmp_path)
     home = tmp_path / "site"
-    _install(home, repo)
+    _install_all(home, repo)
     facts = mod.binary_provenance(home, repo)
-    assert facts["checked"] == 1 and facts["drift"] == [] and facts["broken"] == []
+    assert facts["checked"] == len(mod.CRATES)
+    assert facts["drift"] == [] and facts["broken"] == []
     assert facts["unknown"] is None
 
 
@@ -253,11 +315,11 @@ def test_binary_provenance_flags_crate_source_newer_than_the_installed_bytes(tmp
     mod = check_module()
     repo = _rust_release(tmp_path)
     home = tmp_path / "site"
-    _install(home, repo)
+    _install_all(home, repo)
     (repo / "rust" / "mishe-tape" / "src" / "main.rs").write_text("fn main() { }\n")
     _commit(repo, "newer crate source")
     facts = mod.binary_provenance(home, repo)
-    assert facts["checked"] == 1
+    assert facts["checked"] == len(mod.CRATES)
     assert len(facts["drift"]) == 1 and "mishe-tape" in facts["drift"][0]
     assert facts["broken"] == []
 
@@ -266,11 +328,24 @@ def test_binary_provenance_flags_bytes_that_no_longer_match_their_record(tmp_pat
     mod = check_module()
     repo = _rust_release(tmp_path)
     home = tmp_path / "site"
-    body = _install(home, repo)
-    body.write_bytes(b"not the built bytes\n")
+    _install_all(home, repo)
+    (home / "bin" / "mishe-tape").write_bytes(b"not the built bytes\n")
     facts = mod.binary_provenance(home, repo)
-    assert facts["checked"] == 1 and facts["drift"] == []
+    assert facts["checked"] == len(mod.CRATES) and facts["drift"] == []
     assert len(facts["broken"]) == 1 and "sha256" in facts["broken"][0]
+
+
+def test_binary_provenance_names_a_crate_with_no_install_record(tmp_path):
+    # A crate the resolver would refuse must not be silently dropped from the count
+    # that the GREEN line advertises.
+    mod = check_module()
+    repo = _rust_release(tmp_path)
+    home = tmp_path / "site"
+    _install_all(home, repo)
+    (home / "bin" / "mishe-records.install.json").unlink()
+    facts = mod.binary_provenance(home, repo)
+    assert facts["checked"] == len(mod.CRATES) - 1
+    assert facts["unknown"] is not None and "mishe-records" in facts["unknown"]
 
 
 def test_installed_binary_drift_is_red_not_green(tmp_path):
