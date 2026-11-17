@@ -111,6 +111,18 @@ def test_load_registers_declared_signals_and_returns_units_producers(home):
     assert loaded[0].command[:5] == [PY, "-m", "mishe_tauftauf", "--home", str(home)]
 
 
+def test_load_without_register_leaves_the_registry_untouched(home):
+    # The doctor reads the manifest to predict units; if it also registered, the watch lines it
+    # predicts would change under it (2026-11-17: a duty registered without its unit installed).
+    (home / "producers.json").write_text(
+        '[{"name":"probe","command":["/bin/true"],"every":300,"signal":{"max_age":900,"subscribers":["genome"]}}]')
+    loaded = producers.load(home, python=PY, register=False)
+    assert [p.name for p in loaded] == ["probe"]
+    assert "probe" not in store.registry(home)
+    producers.load(home, python=PY)
+    assert store.registry(home)["probe"]["subscribers"] == ["genome"]
+
+
 def test_declared_command_runs_through_the_signal_run_adapter(home):
     (home / "producers.json").write_text(
         '[{"name":"egress","command":["/bin/true"],"every":300,"timeout":50,"signal":{"max_age":900,"subscribers":[]}}]')

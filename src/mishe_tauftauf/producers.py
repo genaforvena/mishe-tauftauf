@@ -261,8 +261,14 @@ def produce(home, name: str, *, now: float, **kw) -> str | None:
     return value
 
 
-def load(home, *, python: str, declared=None) -> list:
-    """Declared producers (``producers.json`` unless given); registers their signals."""
+def load(home, *, python: str, declared=None, register: bool = True) -> list:
+    """Declared producers (``producers.json`` unless given); registers their signals.
+
+    ``register=False`` builds the same list without touching the site's registry: an observer
+    (``doctor``) must not add watches for a manifest it did not install, or its own next reading
+    finds drift it created (2026-11-17: a registry entry for a duty the release did not carry put a
+    ``PathChanged`` line into the expected unit while the installed unit had none).
+    """
     if declared is None:
         declared = read_json(Path(home) / "producers.json") or []
     found = []
@@ -273,9 +279,10 @@ def load(home, *, python: str, declared=None) -> list:
         # A declared signal that stays RED or UNKNOWN is re-offered to its subscriber at this interval; without
         # reoffer a standing fault woke its resolver once and then nothing returned it (yielding.py re-offers only
         # signals registered with reoffer).
-        signal_store.register(home, name, max_age=spec["max_age"], subscribers=spec.get("subscribers", []),
-                              reoffer=spec.get("reoffer", DECLARED_REOFFER_SECONDS),
-                              wake_on=spec.get("wake_on", "change"))
+        if register:
+            signal_store.register(home, name, max_age=spec["max_age"], subscribers=spec.get("subscribers", []),
+                                  reoffer=spec.get("reoffer", DECLARED_REOFFER_SECONDS),
+                                  wake_on=spec.get("wake_on", "change"))
         timeout = item.get("timeout", 120)
         red = ",".join(str(c) for c in item.get("red_codes", [2])) or "none"
         unknown = ",".join(str(c) for c in item.get("unknown_codes", [])) or "none"

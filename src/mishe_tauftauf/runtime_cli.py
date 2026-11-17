@@ -430,8 +430,12 @@ def run_units(args, home: Path, now: float) -> int:
     from .state_files import write_json
     from .work_boundary import runtime_source
     source_repo = Path(getattr(args, "source_repo", None) or runtime_source(cfg.repo, args.pythonpath)).resolve()
-    declared = producers.load(home, python=sys.executable, declared=duties.declared(cfg.repo, home, source=source_repo))
-    declared += producers.load(home, python=sys.executable)
+    # Only the writer registers: a doctor run that added watches for the manifest it is reading would
+    # change the expectation it is checked against (see producers.load).
+    register = args.command == "sync"
+    declared = producers.load(home, python=sys.executable, declared=duties.declared(cfg.repo, home, source=source_repo),
+                              register=register)
+    declared += producers.load(home, python=sys.executable, register=register)
     resolvers = duties.resolvers(source_repo, args.prefix)
     write_json(home / "resolvers.generated.json", resolvers)
     if args.command == "sync":
