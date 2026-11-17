@@ -627,6 +627,21 @@
       "covers": "local main reaches GitHub within a quarter hour (checks/push-lag.py --repo: a normal push finishes in under a minute, and two commits made with a hooks-disabled commit command sat unpublished 16 min under the old two-hour bound on 2026-11-17): RED when the oldest unpushed commit is older, or main has diverged; UNKNOWN when the remote cannot be read"
     },
     {
+      "name": "main-publication",
+      "command": [
+        "{python}",
+        "{repo}/checks/main-publication.py",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 300,
+      "timeout": 150,
+      "max_age": 900,
+      "resolver": "genome",
+      "replaces": [],
+      "covers": "local main reaches origin/main without depending on the post-commit hook (checks/main-publication.py --repo: a commit made with a hooks-disabled command was never pushed, so 4290a757 sat unpublished 14 min until a mind read, 2026-11-17): the duty fast-forwards origin/main itself when it is a strict ancestor of local main and names how many commits it published; RED when the push fails, main has diverged, or local main is behind; UNKNOWN when the remote cannot be read"
+    },
+    {
       "name": "next-due-armed",
       "command": [
         "{python}",
