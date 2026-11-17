@@ -727,6 +727,34 @@ def _postponed_retry_timers(record, live):
     return list(live.get((record.get("sha") or "")[:12], {}).get("timers", ()))
 
 
+@contextmanager
+def review_records_lock(home):
+    """Serialise the read-modify-write of ``work/releases`` review records.
+
+    The re-arm scan and ``merge_review`` each read a record, decide, and write it
+    back; a delivery or activation writes records too but takes ``delivery_lock``
+    exclusively, which both callers still take *shared*. This lock orders the two
+    shared readers against each other, which ``delivery_lock`` cannot do: it is
+    held shared by every running wake, so making either caller exclusive there
+    starves it exactly while any role is awake (measured 2026-11-17: all sixteen
+    overdue retries and seventy queued review results were refused).
+
+    Non-blocking: a busy record write is this poll's skip and the next poll's
+    turn. The scan holds it for one pass and a merge for one result.
+    """
+    path = Path(home)/"work"/".review-records.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise DeliveryBusy("another scan or merge holds the review records") from None
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def rearm_lost_review_retries(home, *, clock=time.time, live_units=None, stop=None, skipped=None):
     """Re-arm the retries whose transient unit a stop/collect cycle removed or postponed.
 
@@ -735,15 +763,14 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None, stop=No
     every couple of minutes over the whole home. ``_review_retry_lost`` decides
     which records are affected; a record whose retry unit is still live and whose
     deadline has not been missed is left untouched, as is one running a review
-    now. Each re-arm re-reads the record under a *shared* ``delivery_lock``, so a
-    concurrent merge (which takes it exclusively) is not overwritten while the
-    scan still runs during wakes: a wake runner holds the same lock shared for
-    its whole run, and an exclusive taker is refused for exactly that time
-    (measured 2026-11-17: with three wakes up, all sixteen overdue records were
-    skipped, so the re-arm never happened). The scan itself is serialised by
-    ``work/.review-rearm.lock`` so two polls cannot arm the same rung twice; a
-    busier lock skips this poll, and ``skipped`` collects the identities a
-    delivery or activation held off so the poll line shows the starvation. A
+    now. The scan takes ``delivery_lock`` *shared*, so it runs while a wake holds
+    the same lock shared and is still refused while a delivery or activation holds
+    it exclusively (measured 2026-11-17: an exclusive scan was refused exactly
+    while any role was awake, so all sixteen overdue records were skipped and the
+    re-arm never happened). ``review_records_lock`` serialises the scan against
+    ``merge_review``, which now shares the same two locks; two polls cannot arm
+    the same rung twice, and ``skipped`` collects the identities a delivery or
+    activation held off so the poll line shows the starvation. A
     live timer whose recorded deadline is long past is replaced: the calendar
     rung is armed first and the postponed timer is then stopped, so only one rung
     is pending.
@@ -754,21 +781,16 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None, stop=No
 
     Returns the identities re-armed, for the poll's log line.
     """
-    scan_path = Path(home)/"work"/".review-rearm.lock"
-    scan_path.parent.mkdir(parents=True, exist_ok=True)
-    with scan_path.open("a+") as scan:
-        try:
-            fcntl.flock(scan.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            return []
-        try:
+    try:
+        with review_records_lock(home):
             return _rearm_scan(home, clock=clock, live_units=live_units, stop=stop, skipped=skipped)
-        finally:
-            fcntl.flock(scan.fileno(), fcntl.LOCK_UN)
+    except DeliveryBusy:
+        # A merge is writing a result; this poll leaves the record to the next one.
+        return []
 
 
 def _rearm_scan(home, *, clock, live_units, stop, skipped):
-    """The single scanned pass: called only while ``work/.review-rearm.lock`` is held."""
+    """The single scanned pass: called only while ``review_records_lock`` is held."""
     live = units.live_review_retry_units() if live_units is None else live_units
     live_shas = frozenset(live)
     timer_shas = frozenset(sha for sha, groups in live.items() if groups.get("timers"))
@@ -1102,10 +1124,11 @@ def review(home, identity):
     except (OSError,ValueError,subprocess.SubprocessError) as exc:
         result = dict(review_error=str(exc))
     # Persist before trying the shared lock. Never lose a completed model call
-    # because a wake is running, and never write a stale delivery transition.
+    # because a delivery is running, and never write a stale delivery transition.
     write_json(queued, dict(id=identity, result=result, merged=False))
-    # merge_review records the error and its retry state; when a wake holds the
-    # lock it defers both, and the work-watch poll's later merge does the same.
+    # merge_review records the error and its retry state; when a delivery or
+    # activation holds the lock exclusively it defers both, and the work-watch
+    # poll's later merge does the same.
     merge_review(home, queued)
     current = read_json(path)
     return dict(phase="reviewed" if current.get("review_pending") is False else "review-pending", id=identity)
@@ -1119,9 +1142,9 @@ REVIEW_MERGE_BUDGET_S = 20
 
 The work-watch producer gives `work poll` 45s (signal run --timeout 45). A
 per-result 30s retry times out the whole poll once a few results are pending
-behind a wake-held dispatch lock, flapping failed-mishe-producer-work-watch-service
-RED. Bound the batch instead: reviews still merge at once in a lock-free gap,
-and pending results are retried on the next poll.
+behind an exclusive delivery or activation hold, flapping
+failed-mishe-producer-work-watch-service RED. Bound the batch instead: a busy
+merge still retries within it, and pending results are retried on the next poll.
 """
 
 
@@ -1135,7 +1158,7 @@ def merge_review(home, queued, *, sleep=time.sleep, clock=time.monotonic,
     try:
         while True:
             try:
-                with delivery_lock(home):
+                with review_records_lock(home), delivery_lock(home, shared=True):
                     path = record_path(home, outcome["id"])
                     current = read_json(path)
                     if not current:

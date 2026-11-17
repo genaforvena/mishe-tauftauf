@@ -733,14 +733,15 @@ def test_rearm_scan_counts_records_an_exclusive_holder_blocks(tmp_path,monkeypat
 
 
 def test_a_held_scan_lock_skips_the_poll_instead_of_arming_twice(tmp_path,monkeypatch):
-    # Two polls must not arm two units for the same rung. The scan's own exclusive
-    # lock makes the late one a no-op; the next poll then sees the fresh deadline.
+    # Two polls must not arm two units for the same rung. The records lock that
+    # serialises scans also makes the late one a no-op; the next poll then sees
+    # the fresh deadline.
     import fcntl
     calls=[]
     monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:calls.append(argv))
     now=time.time(); timer=_overdue_retry(tmp_path,now)
     live={("a"*12):{"timers":(timer,),"services":()}}
-    scan=(tmp_path/"work/.review-rearm.lock").open("a+")
+    scan=(tmp_path/"work/.review-records.lock").open("a+")
     fcntl.flock(scan.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     try:
         assert p.rearm_lost_review_retries(tmp_path,clock=lambda: now,live_units=live)==[]
@@ -826,7 +827,7 @@ def test_review_merge_retries_a_transient_wake_lock(tree, monkeypatch):
     write_json(queued,dict(id=identity,result=dict(review=dict(clear=True)),merged=False))
     attempts=[]
     @contextmanager
-    def flaky_lock(h):
+    def flaky_lock(h, **kw):
         attempts.append(1)
         if len(attempts)<3: raise p.DeliveryBusy("running wake holds dispatch lock")
         yield
@@ -837,6 +838,63 @@ def test_review_merge_retries_a_transient_wake_lock(tree, monkeypatch):
     assert read_json(queued)["merged"] is True and "merge_error" not in read_json(queued)
     record=read_json(p.record_path(home,identity))
     assert record["review_pending"] is False and record["review_state"]=="clear"
+
+
+def test_review_merge_runs_while_a_wake_holds_the_quiet_lock(tree, monkeypatch):
+    # A wake runner holds .dispatch.lock SHARED for its whole run. The merge only
+    # needs to exclude delivery/activation, so it joins the shared hold; an
+    # exclusive merge was refused exactly while any role was awake (measured
+    # 2026-11-17: seventy queued results carried merge_error for that reason).
+    import fcntl
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha); p.materialize(home,repo,old)
+    identity="wake-merge"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",
+        source=str(source),paths=["docs/page.md"],check=dict(output="pass"),owner="genome",review_pending=True))
+    queued=home/"work/reviews"/f"{identity}.result.json"
+    queued.parent.mkdir(parents=True,exist_ok=True)
+    write_json(queued,dict(id=identity,result=dict(review=dict(clear=True)),merged=False))
+    (home/"dispatch").mkdir(exist_ok=True)
+    quiet=(home/"dispatch/.dispatch.lock").open("a+")
+    fcntl.flock(quiet.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+    try:
+        now=[0.0]
+        p.merge_review(home,queued,sleep=lambda s:now.__setitem__(0,now[0]+s),clock=lambda:now[0],retry_s=2.0)
+    finally:
+        quiet.close()
+    assert read_json(queued)["merged"] is True and "merge_error" not in read_json(queued)
+    record=read_json(p.record_path(home,identity))
+    assert record["review_pending"] is False and record["review_state"]=="clear"
+
+
+def test_review_merge_defers_to_a_scan_then_merges(tree, monkeypatch):
+    # The merge and the re-arm scan read-modify-write the same records, so one
+    # must not overwrite the other. The shared dispatch lock cannot order them
+    # (wakes hold it shared too); the records lock does, and a busy one is a
+    # retry rather than a lost result.
+    import fcntl
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha); p.materialize(home,repo,old)
+    identity="scan-merge"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",
+        source=str(source),paths=["docs/page.md"],check=dict(output="pass"),owner="genome",review_pending=True))
+    queued=home/"work/reviews"/f"{identity}.result.json"
+    queued.parent.mkdir(parents=True,exist_ok=True)
+    write_json(queued,dict(id=identity,result=dict(review=dict(clear=True)),merged=False))
+    held=(home/"work/.review-records.lock").open("a+")
+    fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    now=[0.0]; released=[]
+    def sleep(s):
+        now[0]+=s
+        if not released:
+            fcntl.flock(held.fileno(), fcntl.LOCK_UN); released.append(1)
+    try:
+        p.merge_review(home,queued,sleep=sleep,clock=lambda:now[0],retry_s=5.0)
+    finally:
+        held.close()
+    assert released==[1] and now[0]>0
+    assert read_json(queued)["merged"] is True
+    assert read_json(p.record_path(home,identity))["review_pending"] is False
 
 
 def test_review_merge_keeps_pending_evidence_when_lock_never_frees(tree, monkeypatch):
@@ -851,7 +909,7 @@ def test_review_merge_keeps_pending_evidence_when_lock_never_frees(tree, monkeyp
     write_json(queued,dict(id=identity,result=dict(review=dict(clear=True)),merged=False))
     attempts=[]
     @contextmanager
-    def always_busy(h):
+    def always_busy(h, **kw):
         attempts.append(1)
         raise p.DeliveryBusy("running wake holds dispatch lock")
         yield
@@ -877,7 +935,7 @@ def test_review_merge_batch_budget_bounds_work_poll_time(tree, monkeypatch):
         write_json(queued, dict(id=identity, result=dict(review=dict(clear=True)), merged=False))
     attempts = []
     @contextmanager
-    def always_busy(h):
+    def always_busy(h, **kw):
         attempts.append(1)
         raise p.DeliveryBusy("running wake holds dispatch lock")
         yield
