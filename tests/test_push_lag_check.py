@@ -47,8 +47,10 @@ def test_a_young_unpushed_commit_is_green_and_an_old_one_is_red(tmp_path):
     _, work = clone_with_remote(tmp_path)
     commit(work, 'a', T0 + 100)
     commit(work, 'b', T0 + 200)
+    code, lines = lag.evaluate(work, T0 + 100 + 600)
+    assert code == 0 and '2 unpushed' in lines[0] and '(limit 15 min)' in lines[0]
     code, lines = lag.evaluate(work, T0 + 100 + 3600)
-    assert code == 0 and '2 unpushed' in lines[0]
+    assert code == 2 and 'the oldest is 1.0 h old' in lines[0]
     code, lines = lag.evaluate(work, T0 + 100 + 3 * 3600)
     assert code == 2 and 'the oldest is 3.0 h old' in lines[0]
 

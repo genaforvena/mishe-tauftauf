@@ -18,7 +18,12 @@ import sys
 import time
 from pathlib import Path
 
-MAX_AGE_S = 2 * 3600.0
+MAX_AGE_S = 15 * 60.0
+"""A normal push finishes within a minute (the hook settles 30 s, then pushes), so a quarter hour of lag
+is a broken publisher, not a slow one. Two hours was the old bound and it hid a real loss: two commits
+made with ``git -c core.hooksPath=/dev/null commit`` (which skips the post-commit push hook entirely,
+2026-11-17 22:54Z and 22:59Z) sat unpublished for 16 minutes while this check read GREEN, and only the
+end-of-wake inspection found them. The producer runs every 600 s, so the worst-case detection is ~25 min."""
 
 
 def git(repo: Path, *args: str, timeout: float = 45.0) -> tuple[int, str]:
@@ -29,6 +34,11 @@ def git(repo: Path, *args: str, timeout: float = 45.0) -> tuple[int, str]:
     except (OSError, subprocess.SubprocessError) as exc:
         return 127, str(exc)
     return done.returncode, done.stdout.strip() if done.returncode == 0 else (done.stderr.strip() or done.stdout.strip())
+
+
+def _span(seconds: float) -> str:
+    """Minutes below an hour, one decimal in hours above it: a 15-minute bound must not print as 0.2 h."""
+    return f"{seconds / 3600:.1f} h" if seconds >= 3600 else f"{seconds / 60:.0f} min"
 
 
 def evaluate(repo: Path, now: float, max_age: float = MAX_AGE_S, remote: str = "origin") -> tuple[int, list[str]]:
@@ -52,7 +62,7 @@ def evaluate(repo: Path, now: float, max_age: float = MAX_AGE_S, remote: str = "
     if not times:
         return 3, ["HEAD differs from the remote but no unpushed commit was found"]
     age = now - times[0]
-    summary = f"{len(times)} unpushed commit(s); the oldest is {age / 3600:.1f} h old (limit {max_age / 3600:.1f} h)"
+    summary = f"{len(times)} unpushed commit(s); the oldest is {_span(age)} old (limit {_span(max_age)})"
     return (2, [summary]) if age > max_age else (0, [summary])
 
 
