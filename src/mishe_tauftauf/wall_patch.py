@@ -411,25 +411,35 @@ def _parsed(text):
         return None
 
 
-def _symbol_references(text, symbol):
-    """0-based line numbers where a file that imports `symbol` from the package uses it."""
+def _reference_index(text, wanted):
+    """Per-file map of the `wanted` names a file imports from the package and uses.
+
+    One parse and one walk answer every changed symbol at once. Asking
+    ``_symbol_references`` per symbol re-walked (and, past the 512-entry parse
+    cache, re-parsed) the whole corpus for every name: a 2026-11-17 release
+    changing 231 names over a 562-file corpus parsed ~7 MB 231 times and held a
+    review unit at one core for 20 minutes. The filter is the old one exactly: a
+    ``from``-import of the name in this file, at package depth, makes its uses
+    references; a file that merely uses the name does not.
+    """
     tree = _parsed(text)
     if tree is None:
-        return []
-    imports = [node for node in ast.walk(tree)
-               if isinstance(node, ast.ImportFrom)
-               and any(alias.name == symbol for alias in node.names)
-               and (node.level or in_package(node.module or ""))]
-    if not imports:
-        return []
-    lines = set()
+        return {}
+    imported, lines = set(), {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id == symbol:
-            lines.add(node.lineno - 1)
-        elif isinstance(node, ast.Attribute) and node.attr == symbol:
-            lines.add(node.lineno - 1)
-    lines.update(node.lineno - 1 for node in imports)
-    return sorted(lines)
+        if isinstance(node, ast.ImportFrom):
+            if node.level or in_package(node.module or ""):
+                for alias in node.names:
+                    if alias.name in wanted:
+                        imported.add(alias.name)
+                        lines.setdefault(alias.name, set()).add(node.lineno - 1)
+        elif isinstance(node, ast.Name):
+            if node.id in wanted:
+                lines.setdefault(node.id, set()).add(node.lineno - 1)
+        elif isinstance(node, ast.Attribute):
+            if node.attr in wanted:
+                lines.setdefault(node.attr, set()).add(node.lineno - 1)
+    return {name: sorted(lines[name]) for name in imported}
 
 
 def _statement_names(node):
@@ -598,18 +608,26 @@ def symbol_context(home, record):
                 rel = path.relative_to(root).as_posix()
                 if rel not in patched:
                     corpus[rel] = path.read_text(errors="replace")
+    index = {}
+    for rel, text in corpus.items():
+        refs = _reference_index(text, changed)
+        if refs:
+            index[rel] = refs
+    split = {}
     for symbol in sorted(changed):
         windows, sites = [], 0
-        for rel, text in corpus.items():
-            refs = _symbol_references(text, symbol)
-            if not refs:
+        for rel, refs in index.items():
+            hits = refs.get(symbol)
+            if not hits:
                 continue
-            lines = split_lines(text)
-            sites += len(refs)
-            for index in refs:
+            lines = split.get(rel)
+            if lines is None:
+                lines = split[rel] = split_lines(corpus[rel])
+            sites += len(hits)
+            for line in hits:
                 if len(windows) < CALLER_SITES:
-                    low, high = max(0, index - CALLER_RADIUS), index + CALLER_RADIUS + 1
-                    windows.append(f"{rel}:{index + 1}\n" + "\n".join(lines[low:high]))
+                    low, high = max(0, line - CALLER_RADIUS), line + CALLER_RADIUS + 1
+                    windows.append(f"{rel}:{line + 1}\n" + "\n".join(lines[low:high]))
         if windows:
             callers.append((f"callers:{symbol}", "shared checkout", "\n---\n".join(windows)))
             if sites > CALLER_SITES:

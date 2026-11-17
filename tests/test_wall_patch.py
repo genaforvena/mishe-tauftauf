@@ -1017,6 +1017,44 @@ def test_removed_symbol_callers_reach_the_reviewer(tmp_path):
     assert context["unresolved"] == []
 
 
+def test_corpus_parse_count_does_not_grow_with_changed_names(tmp_path, monkeypatch):
+    # The caller scan used to parse the whole corpus once per changed name: a
+    # release changing 231 names over a 562-file corpus parsed ~7 MB 231 times
+    # and held one review unit at a core for 20 minutes (measured 2026-11-17).
+    # Each corpus file is parsed and walked once before the per-name loop, so
+    # the parse count is independent of how many names the patch changes.
+    import base64
+
+    def parses_for(names):
+        base = tmp_path / f"names{names}"
+        base.mkdir()
+        home, source, deployed = layout(base)
+        for i in range(8):
+            (base / "src/mishe_tauftauf" / f"mod{i}.py").write_text(
+                f"from mishe_tauftauf.example import g0\nvalue = g0({i})\n")
+        old = "".join(f"def g{n}(x):\n    return x\n" for n in range(names))
+        new = "".join(f"def g{n}(x):\n    return x + 1\n" for n in range(names))
+        source.write_text(new)
+        record = {"runtime": str(base / "runtime"),
+                  "files": {"src/mishe_tauftauf/example.py": {
+                      "before": {"bytes": base64.b64encode(old.encode()).decode(), "mode": 0o644},
+                      "after": {"bytes": base64.b64encode(new.encode()).decode(), "mode": 0o644}}}}
+        calls = {"n": 0}
+        real = wall_patch._parsed
+
+        def counting(text):
+            calls["n"] += 1
+            return real(text)
+
+        monkeypatch.setattr(wall_patch, "_parsed", counting)
+        context = wall_patch.symbol_context(home, record)
+        monkeypatch.undo()
+        assert "callers:g0" in context["modules"]
+        return calls["n"]
+
+    assert parses_for(40) == parses_for(5)
+
+
 def test_changed_definition_callers_are_budgeted_before_imports(tmp_path, monkeypatch):
     # Imported definitions must not starve the call sites of changed definitions:
     # the caller excerpt survives, and the imported one is what gets omitted.
