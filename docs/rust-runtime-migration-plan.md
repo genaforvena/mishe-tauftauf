@@ -335,7 +335,13 @@ Measured values at 23:46Z are shown; each trigger is checked again immediately b
 | Containment | `/var/lib/mishe-containment/tripped` absent | absent | pass |
 | Mind windows | no `mishe-wake@*` running and no wake starting within the build window | not checked in this pass | UNKNOWN; must be checked immediately before build |
 | Niceness and caps | build under `nice -n 19`, `--jobs 2` (`CARGO_BUILD_JOBS`/`MISHE_BUILD_JOBS`), and a transient cgroup with `MemoryMax` set below the host limit | not applicable (no build) | enforced by `tools/install-rust-binaries.sh` and `tools/delivery_check.py` since §10.49 |
-| Location | build once in a throwaway directory, outside the repo checkout and outside `src/` | not applicable | to be enforced |
+| Location | build once in a throwaway directory, outside the repo checkout and outside `src/` | not applicable | enforced: both paths set `--target-dir` to `$MISHE_BUILD_CACHE`, else `/mnt/mishe-scratch/mishe-cargo-target`, else the site cache |
+
+Since the 07:06Z stall was the root device's own throughput and not host load
+(§10.49), these triggers bound host contention but cannot make a root-resident
+write burst fast. A build that writes to root — a cold cargo registry fetch, for
+instance — can coincide with an fsync tail at any load, so when a stall is
+diagnosed, record whether the build wrote to root before blaming its jobs.
 
 If any trigger fails: no build. The slice slips. The Python path stays authoritative, and the Python-first steps continue on their own assignments.
 
@@ -3007,9 +3013,10 @@ start of the file that will become one.
 **Limit and follow-up.** The live instance of this change appears only after the
 promotion reaches the pin; the detector of that is the first history line whose
 `measured_at` is an automatic hourly run after the pin moves, with the pin's
-checker sha in the release. Until then the file has exactly the smoke line.
+checker sha in the release. Until then the file holds the smoke line and any
+manual run's line, not an automatic one.
 
-### 10.49 The bootstrap build takes the §6.2 caps, so a release build cannot saturate the host (2026-11-17)
+### 10.49 The bootstrap build takes the §6.2 caps; the cap bounds parallelism, not the root fsync tail (2026-11-17)
 
 **Evidence.** The 07:06:26Z root-filesystem stall coincides with six
 `nice-19 cargo build --release` jobs from release `16df940c` started at
@@ -3020,6 +3027,22 @@ serial loop still put a 16-way compile behind every crate.
 `tools/delivery_check.py` already built with `--jobs 2` inside
 `systemd-run --scope -p MemoryMax=2G nice -n 19`; the bootstrap script had no
 cap at all, which §6.2 lists as "to be defined by the build assignment".
+
+**Correction (measured).** The coincidence is real; the mechanism assumed above
+is not the whole one. A controlled 1 GiB burst on the plant's root LV at
+`nice -n 19`, `ionice` idle takes 68.1 s — 15 MiB/s, the device's own limit — with
+probe fsyncs of 6.5–13.4 s at `psi_mem` 0.0, while the same burst on
+`/mnt/mishe-scratch` takes 1.0 s; raw `O_DIRECT` reads are 62 MiB/s on
+`nvme0n1p3` against 1280 MiB/s on `nvme1n1p1`, SMART is clean and the trim
+current. It reproduces outside the plant slice, so it is neither cgroup nor page
+cache (`docs/root-fs-migration-plan.md`, commit `55efec22`, DM #302330). So the
+cap bounds how many rustc jobs run, their priority and a build phase's memory and
+dirty output; it cannot shorten an fsync tail on the root device, and a
+build-coincident stall now needs the build to have written to root rather than
+merely to have run. Both build paths already put `--target-dir` off root (§6.2,
+"Location"), so the remaining root-write path during a bootstrap is a cold cargo
+registry fetch. That fetch, not the job count, is what to check first when a
+build coincides with a stall.
 
 **Change.** `tools/install-rust-binaries.sh` now builds with
 `--jobs "${MISHE_BUILD_JOBS:-2}"` through the same wrapper as
@@ -3042,9 +3065,16 @@ change — it builds the same bytes it built before, only more slowly — so it
 takes the ordinary path; the capped argv becomes live with the next build from
 any checked checkout or promoted release.
 
-**Observed (07:34:56Z).** The detector fired inside this wake: starting the
-pinned unit by hand (`releases/16df940c…`, its ExecStart already naming that
-release) ran 11.4 s with `outcome=exit=0` and appended the first line written by
-the checker under the pin — `verdict: green`, senses 3.313 CPU-s / 119,676 KB,
-genome 3.418 CPU-s / 100,412 KB, guard `load1` 2.07, `some avg10` 2.96,
-`over []`. The hourly timer's own run is next due 07:58:08Z.
+**Observed (07:34:56Z).** Starting the pinned unit by hand
+(`releases/16df940c…`, its ExecStart already naming that release) ran 11.4 s with
+`outcome=exit=0` and appended the first line written by the checker under the
+pin — `verdict: green`, senses 3.313 CPU-s / 119,676 KB, genome 3.418 CPU-s /
+100,412 KB, guard `load1` 2.07, `some avg10` 2.96, `over []`. The file's earlier
+line, `07:02:17Z`, is §10.48's bare-checker smoke (3.785 / 3.737).
+
+That run was mine, not the timer's, and it moved the timer's own schedule: the
+unit is `OnUnitActiveSec=3600` with a 120 s randomized delay, so
+`LastTriggerUSec` stayed at 06:34:43Z, the 07:35Z automatic run was displaced,
+and the next automatic run is 08:35:37Z. §10.48's detector — a history line from
+an automatic run under the pin — is therefore still pending. One automatic
+sample moved by an hour; none was lost.

@@ -57,8 +57,11 @@ bin_dir="$site/bin"
 mkdir -p "$bin_dir"
 
 # Build caps from docs/rust-runtime-migration-plan.md §6.2: two jobs, nice 19 and a
-# transient cgroup memory cap. Cargo's default -j is one job per online CPU, and a
-# 2026-11-17 07:06Z release build at that default drove the host into a root-fs stall.
+# transient cgroup memory cap. Cargo's default -j is one job per online CPU. The
+# 2026-11-17 07:06Z root-fs stall coincided with six such builds, but the stall is the
+# root device's own throughput (15 MiB/s writes, docs/root-fs-migration-plan.md), so
+# these caps bound parallelism, priority and build memory, not an fsync tail. Build
+# output stays off root through $cache above.
 build_jobs="${MISHE_BUILD_JOBS:-2}"
 build_wrap=()
 if command -v systemd-run >/dev/null 2>&1 &&
