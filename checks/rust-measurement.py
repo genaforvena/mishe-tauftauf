@@ -212,10 +212,13 @@ def binary_provenance(home: Path, repo: Path) -> dict:
     Drift is source the release carries that the installed bytes were not built
     from; `broken` is an install record that no longer matches its bytes and that
     the resolvers therefore refuse. `unknown` names evidence this run could not
-    read at all; it is reported and never turns into GREEN on its own.
+    read at all; it is reported and never turns into GREEN on its own. Every
+    unreadable fact is named: one crate's unreadable record does not hide
+    another's, because a person diagnosing the gap needs both.
     """
     facts: dict = {"checked": 0, "drift": [], "broken": [], "unknown": None}
     missing: list[str] = []
+    unknowns: list[str] = []
     bin_dir = home / "bin"
     if not bin_dir.is_dir():
         facts["unknown"] = f"no bin dir under {home}; no Rust installs to check"
@@ -254,11 +257,13 @@ def binary_provenance(home: Path, repo: Path) -> dict:
                 f"{binary}: rust/{crate} differs between install {install_commit[:8]} "
                 f"and release {pin[:8]}")
         elif diff.returncode != 0:
-            facts["unknown"] = (f"{binary}: cannot compare {install_commit[:8]}..{pin[:8]}: "
-                                f"{(diff.stderr or diff.stdout).strip()[:200]}")
+            unknowns.append(f"{binary}: cannot compare {install_commit[:8]}..{pin[:8]}: "
+                            f"{(diff.stderr or diff.stdout).strip()[:200]}")
     if missing:
-        facts["unknown"] = (f"{len(missing)} crate(s) with no install record, bytes "
-                           f"unverified: {', '.join(missing)}")
+        unknowns.append(f"{len(missing)} crate(s) with no install record, bytes "
+                        f"unverified: {', '.join(missing)}")
+    if unknowns:
+        facts["unknown"] = "; ".join(unknowns)
     return facts
 
 

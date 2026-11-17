@@ -3177,3 +3177,31 @@ source, not build identity. That is the same information `install.json` already
 carries, so a rebuild only becomes necessary when drift is reported. The release
 still does not carry its binaries (§10.46), so a real drift still needs
 `tools/install-rust-binaries.sh` run from the release.
+
+### 10.52 One unreadable crate hid another: the unknown reason was overwritten (2026-11-17)
+
+§10.51 made unverified installed bytes UNKNOWN, but `binary_provenance` wrote
+each reason to the same `facts["unknown"]` slot, and the missing-record summary
+was written last. Two independent gaps therefore reported one.
+
+**Reproduced** with the `48e79dce` checker against a temporary release whose
+`mishe-records` record carried an unresolvable `source_commit` and whose
+`mishe-unit-paths` record was deleted:
+
+```
+old 48e79dce -> 1 crate(s) with no install record, bytes unverified: mishe-unit-paths
+new HEAD     -> mishe-records: cannot compare 00000000..f18381c9: fatal: bad object …;
+                1 crate(s) with no install record, bytes unverified: mishe-unit-paths
+```
+
+The verdict was UNKNOWN either way, so the monitor never lied about the path
+being unverified; what it lost was the second reason, which is the evidence a
+person needs to fix it. The reasons now accumulate into one `; `-joined string.
+
+**Checks.** `tests/test_rust_measurement.py` 21 passed, including the new
+`test_unreadable_provenance_names_every_crate_not_only_the_last`. The healthy
+path is unchanged: HEAD checker on this site, `--no-artifact`, exit 0 —
+`senses 3.313 CPU-s 116 MB; genome 3.471 CPU-s 98 MB [binaries 9 checked]`.
+
+**Limits.** This is a reporting gap, not a detection gap: no combination of
+unreadable records could have produced GREEN before or after the change.

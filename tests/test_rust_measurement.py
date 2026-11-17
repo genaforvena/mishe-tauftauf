@@ -348,6 +348,24 @@ def test_binary_provenance_names_a_crate_with_no_install_record(tmp_path):
     assert facts["unknown"] is not None and "mishe-records" in facts["unknown"]
 
 
+def test_unreadable_provenance_names_every_crate_not_only_the_last(tmp_path):
+    # Two independent gaps must both appear: a missing record used to overwrite
+    # the earlier "cannot compare" reason, leaving a person with half the story.
+    mod = check_module()
+    repo = _rust_release(tmp_path)
+    home = tmp_path / "site"
+    _install_all(home, repo)
+    (home / "bin" / "mishe-records.install.json").write_text(json.dumps({
+        "binary": "mishe-records",
+        "sha256": "0" * 64,
+        "source_commit": "0" * 40,
+    }))
+    (home / "bin" / "mishe-unit-paths.install.json").unlink()
+    facts = mod.binary_provenance(home, repo)
+    assert "mishe-records" in facts["unknown"]
+    assert "mishe-unit-paths" in facts["unknown"]
+
+
 def test_installed_binary_drift_is_red_not_green(tmp_path):
     home = tmp_path / "site"
     home.mkdir()
