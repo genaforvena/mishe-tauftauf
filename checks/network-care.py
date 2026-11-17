@@ -228,7 +228,8 @@ def uplink_state(rows, now):
     return 0, f"network-care: uplink GREEN ({text})"
 
 
-def uplink(home):
+def router_readings(home):
+    """The tail of the router's JSONL log as decoded rows, or None when it cannot be read."""
     path = home / "network" / "router.jsonl"
     rows = []
     try:
@@ -246,21 +247,84 @@ def uplink(home):
                 continue
     except OSError as exc:
         print(f"network-care: router readings unreadable: {exc}", file=sys.stderr)
+        return None
+    return rows
+
+
+def uplink(home):
+    rows = router_readings(home)
+    if rows is None:
         return 3
     code, message = uplink_state(rows, time.time())
     print(message, file=sys.stderr if code else sys.stdout)
     return code
 
 
+VPN_MAX_AGE_S = 900         # the newest VPN reading must be this fresh, else UNKNOWN
+VPN_WINDOW_S = 30 * 60      # only readings from this window count
+
+
+def vpn_state(rows, now):
+    """Judge sing-box and tun0 from the newest fresh router VPN reading.
+
+    Row shape: {"ts", "ok", "vpn": {"ps_ok", "sing_box", "tun0"}}. Returns (code, message):
+    0 GREEN, 2 RED, 3 UNKNOWN. A missing/stale reading, an unreadable process list or an unknown
+    process/link is UNKNOWN, never GREEN; a readable "sing-box NOT running" or a tun0 down/absent
+    is RED. Like the window's VPN line, this judges the single newest reading: the tunnel process
+    either exists at that instant or it does not.
+    """
+    fresh = []
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("ok"):
+            continue
+        v = row.get("vpn")
+        if not isinstance(v, dict):
+            continue
+        try:
+            ts = float(row["ts"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0 <= now - ts <= VPN_WINDOW_S and ts <= now + START_SLACK_S:
+            fresh.append((ts, v))
+    if not fresh:
+        return 3, "network-care: no VPN reading in the last 30 minutes"
+    fresh.sort(key=lambda item: item[0])
+    ts, v = fresh[-1]
+    ago = now - ts
+    if ago > VPN_MAX_AGE_S:
+        return 3, f"network-care: newest VPN reading is {ago / 60:.0f} min old"
+    if not v.get("ps_ok"):
+        return 3, "network-care: sing-box UNKNOWN (router process list not read)"
+    if v.get("sing_box") is False:
+        return 2, "network-care: sing-box NOT running on the router"
+    tun = v.get("tun0")
+    if tun in ("down", "absent"):
+        return 2, f"network-care: tun0 {tun.upper()} on the router"
+    if v.get("sing_box") is not True or tun != "up":
+        return 3, "network-care: VPN state unreadable (unknown process or link)"
+    return 0, "network-care: VPN GREEN (sing-box running, tun0 up)"
+
+
+def vpn(home):
+    rows = router_readings(home)
+    if rows is None:
+        return 3
+    code, message = vpn_state(rows, time.time())
+    print(message, file=sys.stderr if code else sys.stdout)
+    return code
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("what", choices=("window", "progress", "uplink"))
+    ap.add_argument("what", choices=("window", "progress", "uplink", "vpn"))
     ap.add_argument("--home", type=Path, required=True)
     ap.add_argument("--repo", type=Path, required=True)
     ap.add_argument("--session", default="plants")
     a = ap.parse_args()
     if a.what == "uplink":
         return uplink(a.home)
+    if a.what == "vpn":
+        return vpn(a.home)
     return window(a.session, a.home, a.repo) if a.what == "window" else progress(a.home, a.repo)
 
 

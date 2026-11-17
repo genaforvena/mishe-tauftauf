@@ -941,6 +941,30 @@
       "replaces": []
     },
     {
+      "name": "network-vpn",
+      "command": [
+        "{python}",
+        "{repo}/checks/network-care.py",
+        "vpn",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 300,
+      "timeout": 30,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "network",
+      "covers": "the router's VPN tunnel (sing-box process and tun0 link, from the router readings in network/router.jsonl): RED when a fresh reading shows sing-box NOT running or tun0 down or absent, UNKNOWN when there is no fresh reading, the router process list was unreadable or the link state is unknown",
+      "replaces": []
+    },
+    {
       "name": "network-window",
       "command": [
         "{python}",

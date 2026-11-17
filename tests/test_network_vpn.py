@@ -3,7 +3,9 @@
 A missing or unreadable process list is UNKNOWN, never "not running"; no command line is kept.
 """
 import importlib.util
+import json
 import sys
+import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -88,3 +90,62 @@ def test_vpn_line_shows_unreadable_process_list(tmp_path, monkeypatch):
     log.write_text('{"ts": 1000.0, "ok": true, "vpn": {"ps_ok": false, "sing_box": null, "tun0": "up"}}\n')
     monkeypatch.setattr(view, "ROUTER_LOG", log)
     assert "sing-box UNKNOWN" in view.vpn_line(now=1060.0)
+
+
+care_spec = importlib.util.spec_from_file_location("network_care_vpn_under_test", REPO / "checks" / "network-care.py")
+care = importlib.util.module_from_spec(care_spec)
+care_spec.loader.exec_module(care)
+
+NOW = 1_800_000_000.0
+
+
+def vpn_row(ts, sing_box=True, tun0="up", ps_ok=True, ok=True):
+    return {"ts": ts, "ok": ok, "vpn": {"ps_ok": ps_ok, "sing_box": sing_box, "tun0": tun0}}
+
+
+class VpnDetectorTests(unittest.TestCase):
+    def test_no_reading_is_unknown(self):
+        self.assertEqual(care.vpn_state([], NOW)[0], 3)
+
+    def test_healthy_reading_is_green(self):
+        code, message = care.vpn_state([vpn_row(NOW - 60)], NOW)
+        self.assertEqual(code, 0, message)
+        self.assertIn("sing-box running", message)
+
+    def test_sing_box_not_running_is_red(self):
+        code, message = care.vpn_state([vpn_row(NOW - 60, sing_box=False, tun0="absent")], NOW)
+        self.assertEqual(code, 2, message)
+        self.assertIn("NOT running", message)
+
+    def test_tun_down_is_red(self):
+        self.assertEqual(care.vpn_state([vpn_row(NOW - 60, tun0="down")], NOW)[0], 2)
+
+    def test_tun_absent_is_red(self):
+        self.assertEqual(care.vpn_state([vpn_row(NOW - 60, tun0="absent")], NOW)[0], 2)
+
+    def test_unreadable_process_list_is_unknown_not_red(self):
+        code, _ = care.vpn_state([vpn_row(NOW - 60, ps_ok=False, sing_box=None)], NOW)
+        self.assertEqual(code, 3)
+
+    def test_unknown_link_is_unknown(self):
+        self.assertEqual(care.vpn_state([vpn_row(NOW - 60, tun0=None)], NOW)[0], 3)
+
+    def test_stale_newest_reading_is_unknown_not_green(self):
+        self.assertEqual(care.vpn_state([vpn_row(NOW - 3600)], NOW)[0], 3)
+
+    def test_failed_and_malformed_rows_are_ignored(self):
+        rows = [vpn_row(NOW - 60, ok=False), {"ts": "x"}, vpn_row(NOW - 30)]
+        self.assertEqual(care.vpn_state(rows, NOW)[0], 0)
+
+    def test_old_green_does_not_hide_new_negative(self):
+        rows = [vpn_row(NOW - 600), vpn_row(NOW - 60, sing_box=False, tun0="absent")]
+        self.assertEqual(care.vpn_state(rows, NOW)[0], 2)
+
+    def test_network_vpn_duty_runs_the_vpn_check_with_the_standard_codes(self):
+        duties = json.loads((REPO / "duties.json").read_text(encoding="utf-8"))
+        items = duties if isinstance(duties, list) else duties.get("duties", [])
+        (duty,) = [d for d in items if d.get("name") == "network-vpn"]
+        self.assertEqual(duty["command"][1:], ["{repo}/checks/network-care.py", "vpn", "--home", "{home}", "--repo", "{repo}"])
+        self.assertEqual(duty["red_codes"], [2])
+        self.assertEqual(duty["unknown_codes"], [3])
+        self.assertEqual(duty["resolver"], "network")
