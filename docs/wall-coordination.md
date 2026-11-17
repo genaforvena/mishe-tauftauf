@@ -167,9 +167,12 @@ The two files contain nonempty JSON argument arrays for relevant checks and an
 actual-consumer probe. Every change uses the same committed promotion, automatic
 rollback on failed observation, and asynchronous review. A review outage remains
 pending evidence and does not block delivery; `review-backlog` publishes that
-backlog (AMBER while every unreviewed release holds a live retry rung, with the
-newest reviewer failure reason in the detail, RED when one cannot recover on its
-own), because the ladder that keeps an outage survivable otherwise hides it.
+backlog (RED once any delivered release owes a review — the detail carries the
+count, the next retry rung and the newest reviewer failure reason, and names the
+records that cannot recover on their own), because the ladder that keeps an
+outage survivable otherwise hides it. The signal layer has no intermediate code:
+a check that exits 1 publishes UNKNOWN with the reason "check exit 1" and fails
+its producer unit, so an owed review is RED.
 
 Every change takes this one path (operator policy, 2026-11-14): delivery is
 automatic, continuous and never held for a mind. A scoped `mishe_tauftauf.wall_patch`

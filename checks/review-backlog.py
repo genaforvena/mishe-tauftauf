@@ -13,17 +13,26 @@ every signal on the dashboard read GREEN, so the only way to see it was to read
 This reads those records (no writes) and reports the queue:
 
   GREEN    every delivered record's review merged
-  AMBER    delivered records owe a review and each holds a live rung, so the
-           ladder is carrying them; the detail names the count, the next rung and
-           the newest failure reason (the quota message, verbatim)
-  RED      a delivered record owes a review and cannot recover on its own: its
-           ladder is exhausted, or it has no rung and none is due after
-           ``--grace`` seconds, or its rung is that far overdue and never fired
-           — an operator or a fix must re-arm it
+  RED      delivered records owe a review. While the retry ladder is carrying
+           them the detail names the count, the next rung and the newest failure
+           reason (the quota message, verbatim); a record that cannot recover on
+           its own — ladder exhausted, no rung and none due after ``--grace``, or
+           a rung that far overdue and never fired — is named with its state, so
+           an operator or a fix must re-arm it
   UNKNOWN  there is no ``work/releases`` directory, or it holds no delivered
            record at all (nothing to judge is not GREEN)
 
-Exit status: 0 GREEN, 1 AMBER, 2 RED, 3 UNKNOWN.
+Exit status: 0 GREEN, 2 RED, 3 UNKNOWN.
+
+There is no intermediate exit code. The producer contract (``producers.run``)
+treats a non-zero code that is neither declared red nor declared unknown as an
+unreadable observation: the signal becomes UNKNOWN with the reason "check exit
+N" — losing this check's own words — and the producer unit exits 2, which the
+failure hook reports as a broken producer. So a backlog still inside the
+ladder's care is RED, not a fourth code: the review is owed evidence, the ladder
+is a retry rather than a resolution, and the detail says when the next attempt
+fires. Measured 2026-11-17 22:29Z in a scratch home: exit 1 published
+``state: UNKNOWN, value: null, reason: "check exit 1"`` for the 31-record queue.
 """
 from __future__ import annotations
 
@@ -108,8 +117,7 @@ def evaluate(site: Path, now: float, grace: float = GRACE_S) -> tuple[int, list[
     if broken:
         shas = ", ".join(f"{str(r.get('sha'))[:12]} ({state})" for state, r in broken[:8])
         lines.append(f"cannot recover without a fix or an operator: {shas}")
-        return 2, lines
-    return (1 if pending else 0), lines
+    return (2 if pending else 0), lines
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -121,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="seconds a rung may be past due, or a review absent, before it is lost")
     args = parser.parse_args(argv)
     code, lines = evaluate(args.site, time.time(), args.grace)
-    state = {0: "GREEN", 1: "AMBER", 2: "RED", 3: "UNKNOWN"}[code]
+    state = {0: "GREEN", 2: "RED", 3: "UNKNOWN"}[code]
     print(f"review-backlog {state}")
     for line in lines:
         print(line)

@@ -1408,7 +1408,7 @@
         3
       ],
       "resolver": "genome",
-      "covers": "delivered releases whose asynchronous review has not merged are visible: GREEN when every delivered record's review merged, AMBER (exit 1) while each unreviewed release holds a live retry rung — with the count, the next rung and the newest reviewer failure reason, so a spent reviewer quota is seen instead of hidden behind the ladder — RED (exit 2) when one cannot recover on its own (ladder exhausted, no rung past the grace, or a rung that never fired), UNKNOWN when no release record can be read",
+      "covers": "delivered releases whose asynchronous review has not merged are visible: GREEN when every delivered record's review merged, RED (exit 2) once any delivered release owes a review — the detail carries the count, the next retry rung and the newest reviewer failure reason, so a spent reviewer quota is seen instead of hidden behind the ladder, and it names the records that cannot recover on their own (ladder exhausted, no rung past the grace, or a rung that never fired) — UNKNOWN when no release record can be read. There is no intermediate code: an undeclared non-zero exit would publish UNKNOWN with the reason 'check exit N' and fail the producer unit (measured 2026-11-17 22:29Z)",
       "replaces": []
     },
     {
