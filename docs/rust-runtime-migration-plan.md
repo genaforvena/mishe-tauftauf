@@ -2801,6 +2801,7 @@ folds, `checks/rust-measurement.py --max-load 100 --no-artifact`):**
 | 2.93 | 3.421 / 116 MB | 3.214 / 97 MB |
 | 2.95 | 3.207 / 116 MB | 3.240 / 98 MB |
 | 2.79 | 3.349 / 116 MB | 3.427 / 98 MB |
+| 3.00 (new guard, artifact written) | 3.477 / 116 MB | 3.296 / 98 MB |
 
 Triggers are 5.0 CPU-s / 204,800 KB. Every fold is under both, with ≥1.1 CPU-s
 (≈29%) of headroom above the highest sample, the same band as the quiet runs
