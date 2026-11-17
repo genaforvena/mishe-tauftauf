@@ -16,20 +16,37 @@ import subprocess
 from pathlib import Path
 
 
-def children_by_parent() -> dict[int, list[int]] | None:
+TABLE_TIMEOUT_S = 5.0
+"""A table read that blocks longer than this is unreadable, not worth waiting for.
+
+The wake engine's hard-cap path reads the table *before* it kills the group (an escaped child
+reparents once the root dies, so attribution must happen while the root is alive). An untimed
+read therefore delays the kill by the read's own duration while the engine keeps emitting:
+measured 2026-11-17 with a ``ps`` shim that slept 8 s, ``run_bounded`` raised its 2 s hard cap
+at +10.02 s and the child wrote ~8 s more output. The network wake at 17:50Z the same day
+emitted about 2.5 min past its 2100 s cap with the unit's pid alive 3 min longer, the same
+shape (that instance was not instrumented, so its blocking read is inferred, not measured).
+A timeout reads as UNKNOWN: None, never a guessed tree.
+"""
+
+
+def children_by_parent(timeout: float = TABLE_TIMEOUT_S) -> dict[int, list[int]] | None:
     """Child pids keyed by parent pid; None when the table is unreadable.
 
     None is not "no children": a caller that reads an unreadable table as an
     empty one acts on an observation it never got. The two are kept apart here
     so a sweep can skip what it cannot attribute and a liveness reader can say
     UNKNOWN instead of "childless" (wake engine cut at 600 s of silence on
-    2026-11-17 while its bash job was still running).
+    2026-11-17 while its bash job was still running). A blocked read counts as
+    unreadable after ``timeout``, so a caller on a deadline is not held by it.
     """
     try:
-        listing = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True, text=True, check=False)
-    except (OSError, UnicodeError):
-        # A missing binary or an undecodable table is unreadable input, not a
-        # caller error: the sweep must still reap what it can attribute.
+        listing = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True, text=True,
+                                 check=False, timeout=timeout)
+    except (OSError, UnicodeError, subprocess.TimeoutExpired):
+        # A missing binary, an undecodable table or a read past its timeout is
+        # unreadable input, not a caller error: the sweep must still reap what
+        # it can attribute.
         return None
     if listing.returncode != 0:
         return None

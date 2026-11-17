@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -48,6 +49,30 @@ class ProcessTableTests(unittest.TestCase):
         failure = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
         with mock.patch.object(proc_table.subprocess, "run", side_effect=failure):
             self.assertIsNone(proc_table.children_by_parent())
+
+    def test_a_blocked_read_is_unknown_and_the_timeout_reaches_subprocess(self):
+        """The hard-cap kill reads the table before killing; a blocked read must not hold it.
+
+        Measured 2026-11-17: an untimed read let a 2 s hard cap fire at +10.02 s while the
+        engine wrote 960 bytes more, and a wake emitted about 2.5 min past its cap the same day.
+        """
+        directory = Path(tempfile.mkdtemp())
+        (directory / "ps").write_text("#!/bin/sh\nsleep 5\n")
+        (directory / "ps").chmod(0o755)
+        old = os.environ["PATH"]
+        os.environ["PATH"] = str(directory) + os.pathsep + old
+        try:
+            started = time.monotonic()
+            self.assertIsNone(proc_table.children_by_parent(timeout=0.3))
+            elapsed = time.monotonic() - started
+        finally:
+            os.environ["PATH"] = old
+        self.assertLess(elapsed, 2.0)
+
+    def test_a_read_timeout_is_unknown_not_empty(self):
+        expired = subprocess.TimeoutExpired(["ps"], 0.2)
+        with mock.patch.object(proc_table.subprocess, "run", side_effect=expired):
+            self.assertIsNone(proc_table.children_by_parent(timeout=0.2))
 
 
     def test_pane_pids_accepts_text_output(self):
