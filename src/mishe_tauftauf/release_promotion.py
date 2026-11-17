@@ -496,6 +496,21 @@ REVIEW_RETRY_BASE_S = 1800
 REVIEW_RETRY_MAX_ATTEMPTS = 8
 """How many failed reviews a release re-runs before it stops trying."""
 
+REVIEW_RETRY_REARM_GRACE_S = 900
+"""How long past its due time a recorded retry may stay silent before it is armed again.
+
+The retry is a transient ``systemd-run --on-active`` unit, and a transient timer
+does not survive a stop/start cycle: the root-migration flip's quiesce stops every
+unit that names a moved tree and ``--collect`` removes the stopped unit, so the
+restore cannot start that name again (``restart failed:
+mishe-release-review-retry-...``, 2026-11-17). The attempt count cannot see the
+loss -- the retry ladder only advances when a retry actually *runs* and archives a
+failed attempt -- so the record would keep ``review_pending`` true and the armed
+state forever. A record whose due time is this far past is therefore treated as
+lost and armed again; the grace keeps a review that is merely running late from
+being duplicated.
+"""
+
 
 def review_retry_delay(home, identity, base=REVIEW_RETRY_BASE_S, attempts_max=REVIEW_RETRY_MAX_ATTEMPTS):
     """Seconds to wait before re-running a failed review, or None when spent.
@@ -548,19 +563,30 @@ def schedule_review_retry_if_needed(home, current):
     the first retry and left the ladder's eight attempts unreachable
     (2026-11-17). The caller holds the delivery lock and writes ``current``
     afterwards.
+
+    The scheduled time is recorded as ``review_retry_due`` so a retry unit that a
+    stop/collect cycle removed is armed again once that time is
+    ``REVIEW_RETRY_REARM_GRACE_S`` past, instead of stranding the review for good.
     """
     if current.get("review_pending") is False:
         return
     attempts = len(list((Path(home)/"work/reviews").glob(f"{current['id']}-*.failed-attempt.json")))
     if current.get("review_retry_attempts") == attempts:
-        return
+        # The recorded rung was already scheduled. Arm it again only when its due
+        # time is long past with no archive since: that is a retry unit that was
+        # stopped and collected (a flip, a unit reset), not one waiting to fire.
+        due = current.get("review_retry_due")
+        if not isinstance(due, (int, float)) or time.time() < due + REVIEW_RETRY_REARM_GRACE_S:
+            return
     delay = review_retry_delay(home, current["id"])
     try:
         if delay is None:
             current["review_retry_state"] = "exhausted"
+            current.pop("review_retry_due", None)
         else:
             schedule_review_retry(home, current, delay=delay)
             current["review_retry_state"] = f"scheduled in {int(delay)}s"
+            current["review_retry_due"] = int(time.time() + delay)
     except (OSError, subprocess.SubprocessError) as exc:
         # Leave the attempt uncounted so a later merge retries the scheduling.
         current["review_retry_state"] = f"scheduling failed: {exc}"

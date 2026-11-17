@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 import pytest
 from mishe_tauftauf import release_promotion as p
@@ -415,6 +416,30 @@ def test_one_failed_attempt_schedules_one_retry(tmp_path,monkeypatch):
     (tmp_path/"work/reviews"/"rel-1-1.failed-attempt.json").write_text("{}")
     p.schedule_review_retry_if_needed(tmp_path,current)
     assert len(launched)==2 and current["review_retry_attempts"]==1
+
+
+def test_a_collected_retry_unit_is_armed_again(tmp_path,monkeypatch):
+    # A transient `--on-active` retry cannot be restarted after a stop/collect
+    # (the root-migration flip stops every unit that names a moved tree). No
+    # attempt is archived, so the attempt count alone cannot see the loss: the
+    # recorded due time has to re-arm it, or the release stays review_pending.
+    from mishe_tauftauf import release_promotion as p
+    (tmp_path/"work/reviews").mkdir(parents=True)
+    launched=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:launched.append(argv))
+    current=dict(id="rel-1",sha="a"*40,source=str(tmp_path),review_pending=True)
+    p.schedule_review_retry_if_needed(tmp_path,current)
+    due=current["review_retry_due"]
+    assert len(launched)==1 and due > 0
+    # Armed and not yet due: no duplicate unit.
+    p.schedule_review_retry_if_needed(tmp_path,current)
+    assert len(launched)==1
+    # The unit was stopped and collected: due long past, still no archive.
+    current["review_retry_due"]=time.time() - p.REVIEW_RETRY_REARM_GRACE_S - 1
+    p.schedule_review_retry_if_needed(tmp_path,current)
+    assert len(launched)==2
+    assert current["review_retry_due"] > time.time()
+    assert current["review_retry_state"]=="scheduled in 1800s"
 
 
 def test_retry_over_an_unmerged_failure_reruns_the_review(tree,monkeypatch):
