@@ -21,15 +21,23 @@
 # delivery-free. The default verify shape is the scoped one accepted in step 7;
 # --full selects the exhaustive shape, which needs ~23-24 min of source reads.
 #
-# Safety: before anything is stopped, a watchdog transient unit is armed with a
-# timeout longer than the whole flip. If this script dies for any reason, the
-# watchdog restores a working plant (rollback if the rename half-happened,
-# restart otherwise). It never deletes a *.pre-migration tree.
+# Safety: before anything is stopped, a watchdog transient unit is armed. If this
+# script is killed outright (SIGKILL, host reset) the watchdog restores a working
+# plant: rollback if the rename half-happened, restart otherwise. Every other
+# ending is restored in-process by the EXIT trap, in seconds rather than after the
+# watchdog's sleep -- a failed delta at minute 3 used to leave the plant down for
+# the rest of the timeout. Neither path deletes a *.pre-migration tree. The
+# watchdog waits for this process to disappear before acting, so a slow flip is
+# never mistaken for a dead one.
 set -u
 
-SRC=/home/mesh-home
-DST=/mnt/mishe-scratch/home-mesh-home
-WORK=/mnt/mishe-scratch/mishe-migration
+# Defaults are the production paths; the overrides exist so the abort paths can be
+# rehearsed on a sandbox tree instead of asserted (the scoped verify helper already
+# takes the same three variables). Whenever they are overridden the run logs the
+# paths it used.
+SRC=${MIGRATION_SRC:-/home/mesh-home}
+DST=${MIGRATION_DST:-/mnt/mishe-scratch/home-mesh-home}
+WORK=${MIGRATION_WORK:-/mnt/mishe-scratch/mishe-migration}
 LOG=$WORK/flip.log
 UNITS=$WORK/flip.units
 DONE=$WORK/flip.done
@@ -37,8 +45,15 @@ TREES=(mishe-tauftauf .omp .codex)
 
 MODE=dry-run
 SHAPE=scoped
-WATCHDOG_SECONDS=900
+WATCHDOG_SECONDS=
 PRINT_WATCHDOG=0
+# Measured stage bounds, not guesses: the live delta pass was 2 min 20 s for all
+# three trees (docs/root-fs-migration-plan.md, 08:30:45-08:33:05Z), the scoped
+# verify 9.3 s on .omp, and the full checksum pass is 23-24 min of reads. A stage
+# that outlives its bound is a hang, not slow work; the EXIT trap restores then.
+DELTA_TIMEOUT=1800
+VERIFY_TIMEOUT_SCOPED=1800
+VERIFY_TIMEOUT_FULL=3600
 while [ $# -gt 0 ]; do
     case "$1" in
         --execute) MODE=execute ;;
@@ -52,8 +67,21 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# The watchdog's sleep now only bounds how long a hard kill can leave the plant
+# down, because it waits for this process to end before restoring anyway. The
+# full shape's 23-24 min of reads would have outlived the old fixed 900 s.
+if [ -z "$WATCHDOG_SECONDS" ]; then
+    if [ "$SHAPE" = full ]; then WATCHDOG_SECONDS=3600; else WATCHDOG_SECONDS=900; fi
+fi
+START=$(date +%s)
+elapsed() { echo $(($(date +%s) - START)); }
+
 log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$LOG" >&2; }
 die() { log "FAIL: $*"; exit 1; }
+
+FLIP_PID=$$
+FLIP_BASE=$(basename "$0")
+log "paths: src=$SRC dst=$DST work=$WORK (pid $FLIP_PID)"
 
 self_unit() { awk -F/ '/^0::/{print $NF}' /proc/$$/cgroup 2>/dev/null; }
 
@@ -70,7 +98,12 @@ writers_present() {
             log "process naming $SRC/$t"; hit=1
         fi
     done
-    return "$hit"
+    # Status convention: 0 means "a writer is present", so the drain loop can be
+    # `writers_present || break`. The first version returned $hit, which read as
+    # "no writer" in the loop and "writer" in the warning: every execute slept the
+    # full 30 s and then warned about writers it had not found.
+    [ "$hit" -eq 0 ] && return 1
+    return 0
 }
 
 # Units that were active before the flip and name a moved tree or the site home.
@@ -115,15 +148,40 @@ watchdog_body() {
     cat <<EOF
 sleep $WATCHDOG_SECONDS
 L=$LOG
+D=$DONE
+F=$FLIP_PID
 p() { printf '%s watchdog: %s\n' "\$(date -u +%FT%TZ)" "\$*" >>"\$L"; }
-if [ -e $DONE ]; then p 'flip reported done'; exit 0; fi
-p 'flip did not report done; restoring a working plant'
+flip_alive() {
+    [ -r /proc/\$F/cmdline ] || return 1
+    tr '\0' ' ' </proc/\$F/cmdline | grep -qF '$FLIP_BASE'
+}
+if [ -e "\$D" ]; then p 'flip reported done'; exit 0; fi
+# A slow flip is not a dead flip. Restarting units while the flip sits between
+# verify and rename puts writes into the source trees that the rename then hides
+# in *.pre-migration, while the flipped tree serves stale bytes. Wait for the
+# flip process to end (bounded); the script's own EXIT trap restores within
+# seconds of any ordinary failure, so this path is for a hard kill.
+i=0
+while flip_alive; do
+    if [ -e "\$D" ]; then p 'flip reported done'; exit 0; fi
+    i=\$((i + 1))
+    if [ "\$i" -ge 60 ]; then
+        p "flip pid \$F still alive \$((i * 10))s after the timeout; not restoring under a live flip"
+        exit 0
+    fi
+    sleep 10
+done
+p 'flip process is gone; restoring a working plant'
 for t in ${TREES[*]}; do
-    if [ ! -L $SRC/\$t ] && [ -d $SRC/\$t.pre-migration ] && [ -d $DST/\$t ]; then
-        p "rollback \$t"
-        mv $SRC/\$t.pre-migration $SRC/\$t
-    elif [ -L $SRC/\$t ] && [ -d $DST/\$t ]; then
+    if [ -L $SRC/\$t ] && [ "\$(readlink -f $SRC/\$t)" = "$DST/\$t" ]; then
         p "\$t is flipped and consistent"
+    elif [ -e $SRC/\$t.pre-migration ]; then
+        p "rollback \$t"
+        [ -L $SRC/\$t ] && rm -f $SRC/\$t
+        rmdir $SRC/\$t 2>/dev/null
+        mv $SRC/\$t.pre-migration $SRC/\$t
+    elif [ -d $SRC/\$t ]; then
+        p "\$t untouched"
     else
         p "\$t state unclear: left untouched"
     fi
@@ -143,8 +201,50 @@ arm_watchdog() {
         --description="root migration flip watchdog" \
         /bin/bash -c "$body" >/dev/null 2>&1 ||
         die "could not arm the watchdog; refusing to stop anything"
-    log "watchdog armed: ${WATCHDOG_SECONDS}s, unit $name.service"
+    log "watchdog armed: ${WATCHDOG_SECONDS}s sleep, then waits up to 600s for flip pid $FLIP_PID to end; unit $name.service"
 }
+
+# --- restore -----------------------------------------------------------------
+# Same three-state decision the watchdog makes, but in-process. A failed delta or
+# a NOT-CLEAN at minute 3 of a ~15-minute window used to leave 90-plus units
+# stopped until the watchdog's sleep expired; the plant must come back as soon as
+# the flip decides not to proceed.
+QUIESCED=0
+RESTORED=0
+
+restore_plant() {
+    local t
+    for t in "${TREES[@]}"; do
+        if [ -L "$SRC/$t" ] && [ "$(readlink -f "$SRC/$t")" = "$DST/$t" ]; then
+            log "restore: $t is flipped and consistent"
+        elif [ -e "$SRC/$t.pre-migration" ]; then
+            log "restore: rollback $t"
+            [ -L "$SRC/$t" ] && rm -f "$SRC/$t"
+            rmdir "$SRC/$t" 2>/dev/null   # never let mv land inside a directory
+            mv "$SRC/$t.pre-migration" "$SRC/$t" || log "restore: rollback of $t failed"
+        elif [ -d "$SRC/$t" ]; then
+            log "restore: $t untouched"
+        else
+            log "restore: $t state unclear; left untouched"
+        fi
+    done
+    restart_recorded
+}
+
+on_exit() {
+    local rc=$?
+    trap - EXIT
+    [ "$RESTORED" = 1 ] && return 0
+    [ "$MODE" = execute ] || return 0
+    [ "$QUIESCED" = 1 ] || return 0        # nothing was stopped; leave the plant alone
+    [ -e "$DONE" ] && return 0             # the flip completed; nothing to restore
+    RESTORED=1
+    log "flip exited rc=$rc after $(elapsed)s without a done marker; restoring the plant"
+    restore_plant
+    systemctl --user stop mishe-root-migration-watchdog.service 2>/dev/null
+    log "plant restored after $(elapsed)s; pre-migration trees untouched"
+}
+trap on_exit EXIT
 
 # --- preconditions -----------------------------------------------------------
 preflight() {
@@ -201,8 +301,10 @@ quiesce() {
         return 0
     fi
     arm_watchdog
+    QUIESCED=1   # from here on, any exit path must restart these units
     while read -r u; do systemctl --user stop "$u" 2>/dev/null || log "stop failed (continuing): $u"; done <"$UNITS"
-    # Bounded wait for writers to drain; the watchdog restarts them if we die here.
+    # Bounded wait for writers to drain; the EXIT trap and the watchdog both
+    # restart from $UNITS if we die here.
     local i
     for i in $(seq 1 30); do
         writers_present || break
@@ -215,29 +317,34 @@ quiesce() {
 delta() {
     local t rc_all=0 rc
     for t in "${TREES[@]}"; do
-        log "delta $t start"
-        rsync -aHx --stats "$SRC/$t/" "$DST/$t/" >>"$LOG" 2>&1; rc=$?
-        log "delta $t rc=$rc"
+        log "delta $t start (+$(elapsed)s)"
+        timeout "$DELTA_TIMEOUT" rsync -aHx --stats "$SRC/$t/" "$DST/$t/" >>"$LOG" 2>&1; rc=$?
+        log "delta $t rc=$rc (+$(elapsed)s)"
         [ "$rc" -ne 0 ] && rc_all=$rc
     done
-    [ "$rc_all" -eq 0 ] || die "delta pass failed rc=$rc_all"
+    [ "$rc_all" -eq 0 ] || die "delta pass failed rc=$rc_all (124 = outlived ${DELTA_TIMEOUT}s)"
 }
 
 verify() {
-    local out
+    local out rc limit helper
     if [ "$SHAPE" = full ]; then
-        out=$("$WORK/verify-copy.sh" 2>&1); echo "$out" >>"$LOG"
-        printf '%s\n' "$out" | grep -q 'NOT-CLEAN' && die "full verify NOT-CLEAN"
-        printf '%s\n' "$out" | grep -q 'VERIFIED' || die "full verify produced no verdict"
-        log "verify full: VERIFIED"
+        limit=$VERIFY_TIMEOUT_FULL; helper=verify-copy.sh
     else
-        # Scoped shape (step 7): exhaustive size+mtime, -c on what the delta
-        # touched, random content sample of the rest, equal counts and bytes.
-        out=$("$WORK/verify-scoped.sh" 2>&1); echo "$out" >>"$LOG"
-        printf '%s\n' "$out" | grep -q 'NOT-CLEAN' && die "scoped verify NOT-CLEAN"
-        printf '%s\n' "$out" | grep -q 'VERIFIED' || die "scoped verify produced no verdict"
-        log "verify scoped: VERIFIED"
+        limit=$VERIFY_TIMEOUT_SCOPED; helper=verify-scoped.sh
     fi
+    # The verdict is the helper's exit status plus its final summary line. The
+    # helpers print tree by tree and exit 2 when a per-tree evidence file is
+    # missing, so matching "VERIFIED" anywhere in the output let a partial run
+    # pass on one tree's word.
+    out=$(timeout "$limit" "$WORK/$helper" 2>&1); rc=$?
+    printf '%s\n' "$out" >>"$LOG"
+    if printf '%s\n' "$out" | grep -q 'NOT-CLEAN'; then
+        die "$SHAPE verify NOT-CLEAN (helper rc=$rc)"
+    fi
+    [ "$rc" -eq 0 ] || die "$SHAPE verify helper exited $rc without a full verdict (124 = outlived ${limit}s)"
+    printf '%s\n' "$out" | grep -q 'verify done rc=0' ||
+        die "$SHAPE verify helper exited 0 but printed no 'verify done rc=0' summary"
+    log "verify $SHAPE: VERIFIED (helper rc=0, +$(elapsed)s)"
 }
 
 # --- cutover -----------------------------------------------------------------
@@ -250,8 +357,13 @@ cutover() {
     for t in "${TREES[@]}"; do
         if ! ln -s "$DST/$t" "$SRC/$t"; then
             log "symlink $t failed; rolling back"
-            rm -f "$SRC/$t"
-            for t in "${TREES[@]}"; do mv "$SRC/$t.pre-migration" "$SRC/$t" 2>/dev/null; done
+            for t in "${TREES[@]}"; do
+                # `mv dir symlink-to-dir` would move the tree *inside* the
+                # destination; drop the link first.
+                [ -L "$SRC/$t" ] && rm -f "$SRC/$t"
+                [ -d "$SRC/$t.pre-migration" ] && mv "$SRC/$t.pre-migration" "$SRC/$t"
+            done
+            RESTORED=1
             restart_recorded
             die "symlink $t failed, rolled back"
         fi
@@ -260,7 +372,7 @@ cutover() {
     done
     date -u +%FT%TZ >"$DONE"
     restart_recorded
-    log "flip complete; rollback: rm the three symlinks and mv *.pre-migration back"
+    log "flip complete in $(elapsed)s; rollback: rm the three symlinks and mv *.pre-migration back"
 }
 
 [ "$PRINT_WATCHDOG" = 1 ] && { arm_watchdog; exit 0; }

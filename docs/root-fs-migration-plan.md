@@ -177,6 +177,37 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
   half-flipped tree (rename done, no symlink) rolls back, a fully flipped tree is kept and
   its units restarted, an untouched tree is left alone, and an existing done marker exits
   without touching anything.
+- **Review of 2026-11-17 found two fail-open paths in the driver itself, both fixed and
+  pinned by `tests/test_root_migration_flip.py`:**
+  - `verify()` kept only the helper's stdout and grepped it for `VERIFIED`. The helper
+    prints tree by tree and exits 2 when a per-tree evidence file cannot be written, so
+    `VERIFIED mishe-tauftauf` followed by exit 2 passed. Reproduced on the pre-fix bytes:
+    the fake helper verified one tree, exited 2, and the flip renamed all three, wrote the
+    done marker and returned 0. The verdict is now the helper's exit status *and* its
+    `verify done rc=0` summary line; the same reproduction dies with
+    `scoped verify helper exited 2 without a full verdict` and touches nothing.
+  - A clean abort (nonzero delta, NOT-CLEAN) called `die()` at minute ~3 of a ~15-minute
+    window, and the plant stayed stopped until the watchdog's sleep expired. Worse, the
+    watchdog never asked whether the flip was still running: delta+verify longer than
+    900 s (the `--full` shape needs 23-24 min) made it restart units *under a live flip*,
+    and writes landing after the verify but before the rename would be hidden in
+    `*.pre-migration` while the flipped tree served stale bytes. Now an EXIT trap rolls
+    back a half-flip and restarts the recorded units in-process (exercised in the sandbox:
+    the NOT-CLEAN run logs `restarted 1 units` within the same second), and the watchdog
+    waits for the flip's PID to disappear — identity-checked through `cmdline` — before
+    restoring, up to 600 s; if the flip is still alive at that bound it logs
+    `not restoring under a live flip` and leaves the decision to a human. The watchdog's
+    sleep now only bounds how long a SIGKILL can leave the plant down: 900 s scoped,
+    3600 s for `--full`. Delta and verify are also bounded (1800 s, 3600 s for `--full`)
+    so a hang becomes an abort the trap restores instead of an indefinite quiesce.
+  - The symlink-failure rollback could move a `.pre-migration` tree *inside* the
+    destination when an earlier tree was already linked (`mv dir symlink-to-dir`); it now
+    removes the link first, and `restore_plant` compares the link target instead of only
+    testing that one exists.
+  - Paths are overridable by `MIGRATION_SRC`/`MIGRATION_DST`/`MIGRATION_WORK` (the scoped
+    helper already used them) so these paths can be rehearsed on a sandbox tree; every run
+    logs the paths it used, and `verify-copy.sh` now honours the same overrides rather
+    than silently verifying the default trees.
 - Preflight checks the *deployed* helper's sha256, not just that it is executable: on
   2026-11-17 the deployed `verify-scoped.sh` was still the pre-`0e8bafdc` bytes
   (`a852b2ef…`) while the fix (`0955773945…`) was committed, and the old preflight would
@@ -284,10 +315,14 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
     selected shape, differs from the committed copy under `tools/`.
     `--dry-run` is the default and prints the stop list and preflight readings without
     changing anything; `--execute` performs the cutover. Before anything is stopped it
-    arms a watchdog transient unit (`mishe-root-migration-watchdog`, 900 s) that restores
-    a working plant if the flip dies: it rolls the rename back when the symlink
-    half-happened and restarts the recorded units otherwise. The stop list is recorded in
-    `flip.units` and restarted from that same file.
+    arms a watchdog transient unit (`mishe-root-migration-watchdog`, 900 s sleep for the
+    scoped shape / 3600 s for `--full`, then it waits for the flip process to end). Any
+    ordinary failure — nonzero delta, NOT-CLEAN, a helper without a full verdict, a stage
+    past its bound — is restored by the script's own EXIT trap within seconds: it rolls
+    the rename back when the symlink half-happened and restarts the recorded units
+    otherwise. The watchdog covers only a hard kill (SIGKILL, host reset); it never
+    restarts units under a live flip and never deletes a `*.pre-migration` tree. The stop
+    list is recorded in `flip.units` and restarted from that same file.
 11. After 24h stable: removal of `*.pre-migration` is deletion of data. Requires explicit human approval; not run by default. Until approved, keep pre-migration dirs.
 
 ## Rollback

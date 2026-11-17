@@ -2,8 +2,10 @@
 # Root-drive migration, step 7 verification: dry-run delta, file count and byte count
 # must all agree. Usage: verify-copy.sh [tree ...]   (default: all three)
 set -u
-SRC=/home/mesh-home
-DST=/mnt/mishe-scratch/home-mesh-home
+# Same overrides as verify-scoped.sh and the flip driver: otherwise a flip run
+# with overridden paths would verify (and then cut over) the default trees.
+SRC=${MIGRATION_SRC:-/home/mesh-home}
+DST=${MIGRATION_DST:-/mnt/mishe-scratch/home-mesh-home}
 trees=("$@")
 [ ${#trees[@]} -eq 0 ] && trees=(mishe-tauftauf .omp .codex)
 rc_all=0
