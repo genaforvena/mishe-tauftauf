@@ -48,6 +48,7 @@ import math
 from pathlib import Path
 import re
 import shlex
+import tempfile
 from typing import Final
 
 from .feed import Feed, publication_lock
@@ -68,6 +69,18 @@ OUTCOME_REFUSAL_AUDIT = "logs/outcome-refusal-audit.jsonl"
 The writer's refusals are the plant's only direct evidence that the outcome
 instrument denied a role; without them a plant-wide denial is indistinguishable
 from a plant that produced nothing.
+"""
+
+BOUND_BYTES_DIR = "bound-bytes"
+"""Where a publication keeps one content-addressed copy of the bytes it binds.
+
+A read-only mode protects an inode, and the plant's own save path writes a
+temporary sibling and renames it over the target, so the bound path comes back
+writable under a new inode; the file's owner can also chmod its own file before
+rewriting it. The copy is written once per digest at publication, so a later
+digest mismatch can be read as drift over bytes the plant still holds instead of
+an unrecoverable claim. It does not replace the mode: the clause still refuses
+the accidental edit first.
 """
 
 # --- ICMJE authorship vocabulary (ICMJE Recommendations II.A, updated January 2026) ---
@@ -568,6 +581,38 @@ def resolve_outcome_evidence(home: Path, evidence: Path) -> Path:
     return cwd_form
 
 
+def _preserve_bound_bytes(home: Path, digest: str, data: bytes) -> Path:
+    """Keep the bytes an outcome binds, once per digest, and return the copy.
+
+    Written before the record, so a published row always has its bytes. A store
+    that cannot be written refuses the publication: a row whose bytes cannot be
+    kept would claim an evidence file the plant can no longer verify.
+    """
+    store = home / BOUND_BYTES_DIR
+    copy = store / digest
+    if copy.is_file():
+        return copy
+    temporary = None
+    try:
+        store.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(dir=str(store), prefix=digest + ".")
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o400)
+        os.replace(temporary, copy)
+    except OSError as exc:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+        raise ValueError(
+            f"cannot keep the bound evidence bytes in {store}: {exc}") from exc
+    return copy
+
+
 def _publish_outcome(home: Path, role: str, kind: str, text: str, evidence: Path,
                      supersedes: list[str] | None = None):
     original_evidence = resolve_outcome_evidence(home, evidence)
@@ -612,8 +657,10 @@ def _publish_outcome(home: Path, role: str, kind: str, text: str, evidence: Path
         data = evidence.read_bytes()
         if not data:
             raise ValueError("outcome evidence must not be empty")
+        digest = hashlib.sha256(data).hexdigest()
+        _preserve_bound_bytes(home, digest, data)
         payload = {"role": role, "kind": kind, "text": text.strip(),
-                   "evidence": {"path": str(evidence), "sha256": hashlib.sha256(data).hexdigest()}}
+                   "evidence": {"path": str(evidence), "sha256": digest}}
         if linked:
             payload["supersedes"] = linked
         original_mode = evidence.stat().st_mode & 0o7777

@@ -744,6 +744,40 @@ def test_wall_outcome_without_a_supersession_carries_no_link(tmp_path):
     assert "supersedes" not in payload(Feed(tmp_path).entries()[-1])
 
 
+def test_wall_outcome_keeps_a_copy_of_the_bound_bytes(tmp_path):
+    """A mode protects an inode; the copy is what survives a later replace."""
+    from mishe_tauftauf import wall
+    setup_wall(tmp_path)
+    evidence = tmp_path / "artifacts" / "kept.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("bound bytes")
+    wall.outcome(tmp_path, "discover", "accepted", "Kept outcome.", evidence)
+    digest = hashlib.sha256(b"bound bytes").hexdigest()
+    copy = tmp_path / wall.BOUND_BYTES_DIR / digest
+    assert copy.read_bytes() == b"bound bytes"
+    assert oct(copy.stat().st_mode & 0o777) == "0o400"
+    # The plant's own writers save by renaming a temporary over the target, so
+    # the bound path comes back as a new inode; the copy is unaffected, which
+    # is what makes a later digest mismatch readable as drift.
+    replacement = evidence.with_name("kept.md.new")
+    replacement.write_text("rewritten bytes")
+    os.replace(replacement, evidence)
+    assert copy.read_bytes() == b"bound bytes"
+
+
+def test_wall_outcome_refuses_when_the_bound_bytes_cannot_be_kept(tmp_path):
+    """A row whose bytes cannot be kept is refused, not published unverifiable."""
+    from mishe_tauftauf import wall
+    setup_wall(tmp_path)
+    (tmp_path / wall.BOUND_BYTES_DIR).write_text("not a directory")
+    evidence = tmp_path / "artifacts" / "lost.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("bound bytes")
+    with pytest.raises(ValueError, match="cannot keep the bound evidence bytes"):
+        wall.outcome(tmp_path, "discover", "accepted", "Refused.", evidence)
+    assert Feed(tmp_path).entries() == []
+
+
 def test_wall_outcome_cli_writes_the_supersession_link(tmp_path):
     """The flag reaches the record; the link is not a prose convention."""
     from mishe_tauftauf.cli import main
