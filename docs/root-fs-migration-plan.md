@@ -163,6 +163,12 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
 - Live run on the unquiesced `.omp`: 9.3 s, 27 size+mtime churn entries, 22 file entries
   changed since the bulk pass, and **0 content mismatches in a 199-file sample**. That is
   the intended discrimination: churn is reported, corruption is not invented.
+- The watchdog body is the one piece whose nested quoting cannot be reviewed by eye, so
+  `flip.sh --print-watchdog` prints exactly what the transient unit will run. The printed
+  body passes `bash -n` and was exercised against a sandbox tree in all four states: a
+  half-flipped tree (rename done, no symlink) rolls back, a fully flipped tree is kept and
+  its units restarted, an untouched tree is left alone, and an existing done marker exits
+  without touching anything.
 - Not run: the flip itself. It waits on the reviewer's answer about the step-7 shape and a
   wake window that can hold quiesce + delta + verify + cutover.
 

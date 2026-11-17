@@ -31,12 +31,14 @@ TREES=(mishe-tauftauf .omp .codex)
 MODE=dry-run
 SHAPE=scoped
 WATCHDOG_SECONDS=900
+PRINT_WATCHDOG=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --execute) MODE=execute ;;
         --dry-run) MODE=dry-run ;;
         --full) SHAPE=full ;;
         --scoped) SHAPE=scoped ;;
+        --print-watchdog) PRINT_WATCHDOG=1 ;;
         --watchdog-seconds) WATCHDOG_SECONDS=${2:?--watchdog-seconds needs a value}; shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -100,31 +102,39 @@ restart_recorded() {
     log "restarted $n units from $UNITS"
 }
 
+# The watchdog body is built as text so `--print-watchdog` can show exactly what
+# the transient unit will run; nested quoting here is not reviewable by eye.
+watchdog_body() {
+    cat <<EOF
+sleep $WATCHDOG_SECONDS
+L=$LOG
+p() { printf '%s watchdog: %s\n' "\$(date -u +%FT%TZ)" "\$*" >>"\$L"; }
+if [ -e $DONE ]; then p 'flip reported done'; exit 0; fi
+p 'flip did not report done; restoring a working plant'
+for t in ${TREES[*]}; do
+    if [ ! -L $SRC/\$t ] && [ -d $SRC/\$t.pre-migration ] && [ -d $DST/\$t ]; then
+        p "rollback \$t"
+        mv $SRC/\$t.pre-migration $SRC/\$t
+    elif [ -L $SRC/\$t ] && [ -d $DST/\$t ]; then
+        p "\$t is flipped and consistent"
+    else
+        p "\$t state unclear: left untouched"
+    fi
+done
+while read -r u; do systemctl --user start "\$u" 2>/dev/null || p "restart failed: \$u"; done <$UNITS
+p 'restore done'
+EOF
+}
+
 arm_watchdog() {
-    local name=mishe-root-migration-watchdog
+    local name=mishe-root-migration-watchdog body
+    body=$(watchdog_body)
+    if [ "$PRINT_WATCHDOG" = 1 ]; then printf '%s\n' "$body"; return 0; fi
     rm -f "$DONE"   # a stale marker would make the watchdog exit without restoring
     systemctl --user stop "$name.service" 2>/dev/null
     systemd-run --user --unit="$name" --collect \
         --description="root migration flip watchdog" \
-        /bin/bash -c "
-            sleep $WATCHDOG_SECONDS
-            L=$LOG
-            p() { printf '%s watchdog: %s\n' \"\$(date -u +%FT%TZ)\" \"\$*\" >>\"\$L\"; }
-            if [ -e $DONE ]; then p 'flip reported done'; exit 0; fi
-            p 'flip did not report done; restoring a working plant'
-            for t in ${TREES[*]}; do
-                if [ ! -L $SRC/\$t ] && [ -d $SRC/\$t.pre-migration ] && [ -d $DST/\$t ]; then
-                    p \"rollback \$t\"
-                    mv $SRC/\$t.pre-migration $SRC/\$t
-                elif [ -L $SRC/\$t ] && [ -d $DST/\$t ]; then
-                    p \"\$t is flipped and consistent\"
-                else
-                    p \"\$t state unclear: left untouched\"
-                fi
-            done
-            while read -r u; do systemctl --user start \"\$u\" 2>/dev/null || p \"restart failed: \$u\"; done <$UNITS
-            p 'restore done'
-        " >/dev/null 2>&1 ||
+        /bin/bash -c "$body" >/dev/null 2>&1 ||
         die "could not arm the watchdog; refusing to stop anything"
     log "watchdog armed: ${WATCHDOG_SECONDS}s, unit $name.service"
 }
@@ -234,6 +244,7 @@ cutover() {
     log "flip complete; rollback: rm the three symlinks and mv *.pre-migration back"
 }
 
+[ "$PRINT_WATCHDOG" = 1 ] && { arm_watchdog; exit 0; }
 preflight
 quiesce
 [ "$MODE" = dry-run ] && { log "dry-run complete"; exit 0; }
