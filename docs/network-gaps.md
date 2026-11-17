@@ -2,6 +2,7 @@
 
 One line per promised slot in the network charter. Checked against `tools/network_view.py`
 (`draw()` and its helpers) and `tools/network_router.py` and `rust/mishe-network-probe`, on 2026-11-13.
+Day-trend and baseline rows rechecked 2026-11-17.
 
 Status words: **BUILT** (the window shows it with an age or UNKNOWN), **PARTLY** (some of it is
 shown), **MISSING** (not measured or not shown).
@@ -52,17 +53,17 @@ shown), **MISSING** (not measured or not shown).
 | slot | status | evidence |
 | --- | --- | --- |
 | Sparkline (last hour) | BUILT | sparklines on gateway, web and DNS lines (last 40 probes, about 40 minutes) |
-| Last day sparkline | MISSING | the view only spans the last 40 probes; no day view |
-| "Worse than usual?" | MISSING | no baseline; the router log will allow a comparison after two days of rows (see `docs/network-view.md`) |
+| Last day sparkline | BUILT | `usuality_line()` / `day_spark()` show a 40-bucket trend of web latency over the last day's probe rows, labelled with the real span (not a flat "24 h"), alongside the 40-probe (~40 min) sparklines on the per-site lines |
+| "Worse than usual?" | BUILT | `usuality_line()` compares the median of the last 10 web samples with the median of the last-day samples excluding the most recent 60: "about usual" / "slower than usual" / "much slower than usual", with both numbers shown and UNKNOWN / STALE guards |
 | Outages with start and end | BUILT | `outage_lines()` from `outage_episodes()` |
 
 ## Count
 
-- BUILT: 13
+- BUILT: 15
 - PARTLY: 4
-- MISSING: 8
+- MISSING: 6
 
 ## Next gaps, in order of value
 
 1. Upload speed, one bounded night-time try alongside the download.
-2. Worse-than-usual baseline, once two days of `network/router.jsonl` rows exist.
+2. Wi-Fi channel, noise floor and retry counters — a read-only `iwinfo <radio> info` pass on the router (the "noisy or channel trouble" row above).

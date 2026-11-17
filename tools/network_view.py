@@ -8,6 +8,7 @@ is shown as UNKNOWN.  The network mind improves this file.
 import hashlib
 import json
 import os
+import statistics
 import subprocess
 import sys
 import time
@@ -23,6 +24,12 @@ STALE_S = 300
 ROUTER_EVERY_S = 60
 SLOW_WEB_MS = 1500
 SLOW_DNS_MS = 500
+
+# "Was it worse than usual?" — a day baseline built only from probe rows already loaded for the window.
+USUAL_MIN_SAMPLES = 120    # minimum web samples for a meaningful baseline
+USUAL_RECENT = 10          # "now" is the median of the last ten web samples
+USUAL_EXCLUDE = 60         # keep recent samples out of the baseline so a spike cannot inflate it
+USUAL_BUCKETS = 40         # width of the trend sparkline
 _router = {"at": 0.0, "text": None}
 _wifi = {"at": 0.0, "text": None, "weak": False}
 WEAK_WIFI_DBM = -75
@@ -481,6 +488,66 @@ def web_line(label, name, data):
     return f"  {label:<22}{now:>10}  {spark(vals)}  failed in last {min(len(vals), 40)}: {failed}"
 
 
+def web_sample(row):
+    """Mean total time of the secure web checks in one row, or None when none answered."""
+    vals = [v for v in (web_ms(row, name) for name in ("gstatic", "cloudflare")) if v is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def day_spark(samples, buckets=USUAL_BUCKETS):
+    """Bucket web-latency samples across the loaded window into `buckets` means for a sparkline."""
+    if not samples:
+        return "(no data)"
+    n = len(samples)
+    means = []
+    for i in range(buckets):
+        chunk = samples[i * n // buckets:(i + 1) * n // buckets]
+        vals = [v for v in chunk if v is not None]
+        means.append(sum(vals) / len(vals) if vals else None)
+    return spark(means)
+
+
+def usuality_line(data, now=None):
+    """'Was it worse than usual?': web latency now vs the last day's typical, with a trend sparkline.
+    Built only from probe rows already loaded for the window; UNKNOWN when too few samples or stale."""
+    now = time.time() if now is None else now
+    recent = []
+    for row in data:
+        stamp = row.get("at") if isinstance(row, dict) else None
+        if not isinstance(stamp, str):
+            continue
+        try:
+            t = nb.utc_epoch(stamp)
+        except (ValueError, TypeError):
+            continue
+        if now - t <= 86400:
+            recent.append(row)
+    samples = [web_sample(r) for r in recent]
+    good = [v for v in samples if v is not None]
+    if len(good) < USUAL_MIN_SAMPLES:
+        return f"UNKNOWN (only {len(good)} web samples in the last day; need {USUAL_MIN_SAMPLES})"
+    cur = statistics.median(good[-USUAL_RECENT:])
+    base_pool = good[:-USUAL_EXCLUDE] if len(good) >= USUAL_EXCLUDE + USUAL_RECENT else good
+    base = statistics.median(base_pool)
+    ratio = cur / base if base else 1.0
+    if ratio < 1.25:
+        compare = "about usual"
+    elif ratio < 2:
+        compare = "slower than usual"
+    else:
+        compare = "much slower than usual"
+    stamps = [nb.utc_epoch(r["at"]) for r in recent]
+    span_h = (max(stamps) - min(stamps)) / 3600
+    span = f"{span_h:.0f} h" if span_h < 48 else f"{span_h / 24:.1f} d"
+    stale = ""
+    if data:
+        a = age(data[-1])
+        if a is not None and a > STALE_S:
+            stale = f" (STALE: last probe {a:.0f}s ago)"
+    return (f"  {'USUAL':<22}now {cur:.0f} ms vs typical {base:.0f} ms ({compare}, over {span})"
+            f"  trend: {day_spark(samples)}{stale}")
+
+
 def speed_line(speed_rows, now=None):
     """SPEED in plain words: the last good download with its age, or UNKNOWN (never a calm old number)."""
     now = time.time() if now is None else now
@@ -516,6 +583,7 @@ def draw():
     out.append(web_line("cloudflare.com", "cloudflare", data))
     dns = [r.get("dns_ms") for r in data]
     out.append(f"  DNS lookup            {('%.0f ms' % dns[-1]) if dns and dns[-1] is not None else 'UNKNOWN':>10}  {spark(dns)}")
+    out.append(usuality_line(data))
     out.append("")
     out.append("  SPEED         " + speed_line(nb_speed_rows()))
     out.append("")

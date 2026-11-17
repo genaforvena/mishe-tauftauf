@@ -268,3 +268,77 @@ def test_router_health_unknown_without_numbers(tmp_path, monkeypatch):
     now = 1_000_000.0
     _router_log(tmp_path, monkeypatch, {"ts": now, "ok": True, "clients": [], "router_load": None})
     assert view.router_health_line(now).startswith("UNKNOWN")
+
+
+def _web_rows(n, ms, ok=True):
+    at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return [{"at": at, "internet": {name: {"ok": ok, "total_ms": ms if ok else None}
+                                    for name in ("gstatic", "cloudflare")}} for _ in range(n)]
+
+
+def test_usuality_unknown_with_no_rows():
+    assert view.usuality_line([]).startswith("UNKNOWN")
+
+
+def test_usuality_unknown_with_too_few_samples():
+    line = view.usuality_line(_web_rows(10, 300))
+    assert line.startswith("UNKNOWN") and "10" in line and "120" in line
+
+
+def test_usuality_flat_day_is_about_usual():
+    line = view.usuality_line(_web_rows(200, 300))
+    assert "about usual" in line and "now 300 ms vs typical 300 ms" in line
+
+
+def test_usuality_uses_only_the_last_day_not_all_loaded_rows():
+    # 240 rows ten minutes apart span 40 h; only the last day (300 ms) must shape the baseline.
+    now = time.time()
+    rows = []
+    for age_steps in range(240):
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - age_steps * 600))
+        ms = 100.0 if age_steps >= 144 else 300.0  # older than a day: a misleading fast dip
+        rows.append({"at": at, "internet": {name: {"ok": True, "total_ms": ms}
+                                            for name in ("gstatic", "cloudflare")}})
+    rows.reverse()  # probe.jsonl is oldest-first
+    line = view.usuality_line(rows, now=now)
+    assert "about usual" in line and "over 24 h" in line
+    assert "over 1.7 d" not in line and "much slower" not in line
+
+
+def test_usuality_recent_spike_is_slower_than_usual():
+    rows = _web_rows(200, 300)
+    for row in rows[-10:]:
+        for check in row["internet"].values():
+            check["total_ms"] = 450.0  # 1.5x the day's typical
+    line = view.usuality_line(rows)
+    assert "slower than usual" in line and "about usual" not in line
+
+
+def test_usuality_big_spike_is_much_slower_than_usual():
+    rows = _web_rows(200, 300)
+    for row in rows[-10:]:
+        for check in row["internet"].values():
+            check["total_ms"] = 900.0  # 3x the day's typical
+    assert "much slower than usual" in view.usuality_line(rows)
+
+
+def test_usuality_excludes_failed_web_checks_from_the_baseline():
+    rows = _web_rows(200, 300)
+    for row in rows[:50]:
+        for check in row["internet"].values():
+            check["ok"] = False
+            check["total_ms"] = None
+    line = view.usuality_line(rows)
+    assert not line.startswith("UNKNOWN") and "300 ms" in line
+
+
+def test_usuality_marks_a_stale_last_probe():
+    rows = _web_rows(200, 300)
+    old = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600))
+    rows[-1]["at"] = old
+    assert "STALE" in view.usuality_line(rows)
+
+
+def test_day_spark_buckets_the_day_and_handles_empty():
+    assert len(view.day_spark([300.0] * 200)) == view.USUAL_BUCKETS
+    assert view.day_spark([]) == "(no data)"
