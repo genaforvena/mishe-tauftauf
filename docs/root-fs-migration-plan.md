@@ -39,6 +39,29 @@ The destination already holds `/mnt/mishe-scratch/mishe-cargo-target` (the Rust 
   falsified and the copy stays a relief bet. fstab persistence waits for that
   observation.
 
+## Measured 2026-11-17 07:24Z: the coincident load was Rust builds on the other drive
+
+- Six `nice-19 cargo build --release` jobs from release `16df940c` started at
+  07:04:30-31 with target dir `/mnt/mishe-scratch`; at the stall the host had
+  23 GB buff/cache, 2 GB free and both old swap files full. That is the load the
+  probe sampled as mem_psi 5.18/18.72/22.03.
+- The build outputs landed on nvme1n1 (all `mishe-cargo-target/*/release`
+  artifacts dated 07:04), and the probe's own nvme1n1 directories
+  (`/var/tmp`, `/mnt/mishe-scratch/probe`) recorded no slow probe in the
+  07:00-07:10Z window — they have 3 and 4 slow probes in the log's whole
+  history. The root probe (`/var/lib/mishe-rootprobe`, nvme0) has 276 slow
+  probes in 24 h, 7 of them >= 5 s. So the stall is specific to the nvme0 root
+  LV path, which also carries the site home, the journal and `/swap.img`.
+- Census before the swapfile experiment: per UTC hour (root probes >= 0.3 s,
+  `>= 5 s` marked): 11-16 12Z 32, 13Z 38 (3), 14Z 12, 19Z 5 (1), 21Z 16, 22Z 15;
+  11-17 02Z 18, 03Z 28, 05Z 27 (1), 07Z 6 (1). Total 24 h: 276 slow, 7 >= 5 s.
+- The probe now also logs `{"event": "swap"}` every 10 s with `pswpin`,
+  `pswpout`, `swap_free_kib` and each swap file's used KiB
+  (`operator/dual_probe.py` in the site home, restarted 07:47Z, verified: two
+  records, `/swap.img` 7995808 KiB used, the nvme1 file 0). A future stall can
+  therefore be read against swapout directly: pages charged to `/swap.img`
+  support the hypothesis, a flat `/swap.img` beside pswpout growth does not.
+
 ## Steps
 
 1. Pre-check: ensure no active process using targets beyond shell; record `lsof`/`fuser` for each.
