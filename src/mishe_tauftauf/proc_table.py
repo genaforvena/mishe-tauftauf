@@ -16,14 +16,23 @@ import subprocess
 from pathlib import Path
 
 
-def children_by_parent() -> dict[int, list[int]]:
-    """Child pids keyed by parent pid; empty when the table is unreadable."""
+def children_by_parent() -> dict[int, list[int]] | None:
+    """Child pids keyed by parent pid; None when the table is unreadable.
+
+    None is not "no children": a caller that reads an unreadable table as an
+    empty one acts on an observation it never got. The two are kept apart here
+    so a sweep can skip what it cannot attribute and a liveness reader can say
+    UNKNOWN instead of "childless" (wake engine cut at 600 s of silence on
+    2026-11-17 while its bash job was still running).
+    """
     try:
         listing = subprocess.run(["ps", "-eo", "pid=,ppid="], capture_output=True, text=True, check=False)
     except (OSError, UnicodeError):
         # A missing binary or an undecodable table is unreadable input, not a
         # caller error: the sweep must still reap what it can attribute.
-        return {}
+        return None
+    if listing.returncode != 0:
+        return None
     children: dict[int, list[int]] = {}
     for line in listing.stdout.splitlines():
         fields = line.split()

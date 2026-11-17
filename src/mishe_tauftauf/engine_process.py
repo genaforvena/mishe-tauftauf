@@ -74,14 +74,17 @@ def _kill_group(process: subprocess.Popen) -> None:
             continue
 
 
-def _descendants(root: int) -> set[int]:
-    """Live descendants of ``root`` by parent-pid links, regardless of session.
+def _descendants(root: int) -> set[int] | None:
+    """Live descendants of ``root`` by parent-pid links, regardless of session; None if unread.
 
     A child that calls ``setsid`` leaves the engine's process group, so a group
     kill alone does not reach it; its parent link still does. Collect these
     while the root is alive: once the root dies, orphans reparent away.
+    An unreadable table yields None, never an empty set.
     """
     children = proc_table.children_by_parent()
+    if children is None:
+        return None
     found: set[int] = set()
     frontier = [root]
     while frontier:
@@ -92,13 +95,19 @@ def _descendants(root: int) -> set[int]:
     return found
 
 
-def _awaiting_tools(process: subprocess.Popen) -> bool:
-    """True while the engine has a live child, e.g. a background shell job it is waiting on.
+def _awaiting_tools(process: subprocess.Popen) -> bool | None:
+    """Whether the engine has a live child, e.g. a background shell job it is waiting on.
 
     A mind that waits for a tool it started prints nothing meanwhile; that silence is not a
     stall. The hard cap still bounds such a wait, so this only defers the idle cut.
+
+    None when the process table cannot be read: unknown is not "childless". Cutting on an
+    unreadable table discarded a live wake's work (genome 2026-11-17 19:04Z: cut at 600 s of
+    silence while its bash job was still reported running), so only a confirmed empty tree
+    can end a run.
     """
-    return bool(_descendants(process.pid))
+    found = _descendants(process.pid)
+    return None if found is None else bool(found)
 
 
 def _kill_pids(pids: set[int]) -> None:
@@ -193,7 +202,8 @@ def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
         except EngineTimeout:
             escaped = _descendants(process.pid)
             _kill_group(process)
-            _kill_pids(escaped)
+            if escaped is not None:      # None: the table was unreadable, nothing to attribute
+                _kill_pids(escaped)
             raise
         finally:
             _kill_group(process) if process.poll() is None else None
@@ -261,12 +271,16 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
             # child still defers the cut, exactly as it does past the deadline, so a mind that is
             # silently waiting on a background job is not cut; and a run with no output at all is
             # left to the first-output bound and the soft deadline, unchanged.
-            if last_growth > start and now - last_growth >= stall_gap and not _awaiting_tools(process):
-                raise EngineTimeout(f"silent {stall_gap:g}s before the {timeout:g}s deadline")
+            # Only a confirmed childless tree ends the run: an unreadable process table is
+            # UNKNOWN, and acting on it cut a live wake at 600 s of silence (genome 2026-11-17
+            # 19:04Z) while its bash job was still reported running. The soft deadline and the
+            # hard cap still bound an engine whose children cannot be read.
+            if last_growth > start and now - last_growth >= stall_gap and _awaiting_tools(process) is False:
+                raise EngineTimeout(f"silent {stall_gap:g}s before the {timeout:g}s deadline (no live child)")
             boundary = soft_at
         else:
             if size is None or now - last_growth >= idle_gap:
-                if size is None or now >= defer_until or not _awaiting_tools(process):
+                if size is None or now >= defer_until or _awaiting_tools(process) is False:
                     raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
                 last_growth = now
             boundary = last_growth + idle_gap
@@ -295,6 +309,6 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
         if first_at is not None and now >= first_at and not saw_first(size):
             raise EngineTimeout(f"no first output within {first_output_s:g}s")
         if now >= soft_at and (size is None or now - last_growth >= idle_gap):
-            if size is None or now >= defer_until or not _awaiting_tools(process):
+            if size is None or now >= defer_until or _awaiting_tools(process) is False:
                 raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
             last_growth = now

@@ -146,3 +146,41 @@ def test_a_silent_child_wait_is_cut_after_the_bounded_grace(tmp_path: Path, monk
     elapsed = time.monotonic() - started
     assert "hard cap" not in str(caught.value), "the stuck wait ran to the hard cap"
     assert 2.5 <= elapsed < 12, f"the stuck wait was cut {elapsed:.1f}s in, not at soft + grace"
+
+
+# A table that cannot be read is UNKNOWN, not "no children": the stall cut that acts on it
+# discarded a live wake at 600 s of silence (genome 2026-11-17 19:04Z, its bash job still
+# reported running). Only a confirmed empty tree may end a silent run early.
+OUTPUT_THEN_SILENT = (
+    "import time\n"
+    "print('real output', flush=True)\n"
+    "time.sleep(60)\n"
+)
+
+
+def test_an_unreadable_process_table_does_not_cut_a_silent_engine_early(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(proc.proc_table, "children_by_parent", lambda: None)
+    monkeypatch.setattr(proc, "TOOL_WAIT_GRACE_S", 1.0)
+    out = tmp_path / "stream"
+    started = time.monotonic()
+    with pytest.raises(EngineTimeout) as caught:
+        proc.run_bounded([sys.executable, "-c", OUTPUT_THEN_SILENT], env=dict(os.environ),
+                         cwd=tmp_path, timeout=2, stdout_to=out, hard_timeout=60,
+                         idle_gap=1.0, stall_gap=1.0)
+    elapsed = time.monotonic() - started
+    assert "silent" not in str(caught.value), "an unknown child table was read as childless"
+    assert "exceeded 2s" in str(caught.value)
+    assert elapsed >= 2.5, f"the run was cut {elapsed:.1f}s in, before its soft deadline"
+
+
+def test_a_confirmed_childless_engine_is_still_cut_at_the_stall_gap(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(proc.proc_table, "children_by_parent", lambda: {})
+    out = tmp_path / "stream"
+    started = time.monotonic()
+    with pytest.raises(EngineTimeout) as caught:
+        proc.run_bounded([sys.executable, "-c", OUTPUT_THEN_SILENT], env=dict(os.environ),
+                         cwd=tmp_path, timeout=30, stdout_to=out, hard_timeout=60,
+                         idle_gap=1.0, stall_gap=1.0)
+    elapsed = time.monotonic() - started
+    assert str(caught.value) == "silent 1s before the 30s deadline (no live child)"
+    assert elapsed < 12, f"a childless silent engine was tolerated {elapsed:.1f}s"

@@ -33,19 +33,21 @@ class ProcessTableTests(unittest.TestCase):
             self._decode("  junk line\n  12\n  13      12  extra\n  14      12\n"),
             {12: [14]})
 
-    def test_unreadable_table_yields_no_relation(self):
+    def test_unreadable_table_is_unknown_not_empty(self):
+        # None is UNKNOWN: "no rows" must not be read as "no children" (a wake engine was cut
+        # at 600 s of silence on 2026-11-17 while its bash job was still running).
         result = subprocess.CompletedProcess([], 1, b"", b"ps: not found")
         with mock.patch.object(proc_table.subprocess, "run", return_value=result):
-            self.assertEqual(proc_table.children_by_parent(), {})
+            self.assertIsNone(proc_table.children_by_parent())
 
-    def test_missing_ps_binary_yields_no_relation(self):
+    def test_missing_ps_binary_is_unknown_not_empty(self):
         with mock.patch.object(proc_table.subprocess, "run", side_effect=FileNotFoundError("ps")):
-            self.assertEqual(proc_table.children_by_parent(), {})
+            self.assertIsNone(proc_table.children_by_parent())
 
-    def test_undecodable_table_yields_no_relation(self):
+    def test_undecodable_table_is_unknown_not_empty(self):
         failure = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
         with mock.patch.object(proc_table.subprocess, "run", side_effect=failure):
-            self.assertEqual(proc_table.children_by_parent(), {})
+            self.assertIsNone(proc_table.children_by_parent())
 
 
     def test_pane_pids_accepts_text_output(self):
