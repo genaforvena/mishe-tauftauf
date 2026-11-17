@@ -260,7 +260,12 @@ own `PYTHONPATH` and never reads the site pin, so `consumer_fence.pin_independen
 leaves it out of both the drain and the future-pin check. Counting a queued retry
 as a consumer with the wrong pin failed a correct promotion's probe and then its
 rollback probe on 2026-11-17, leaving the delivery record UNKNOWN with a correct
-pin above it.
+pin above it. A consumer group can also vanish between the drain's existence
+check and its scan, because the kernel deletes a oneshot's cgroup when its last
+process exits: a group gone on re-read holds nothing to drain, while a group still
+present without `cgroup.procs` remains a real enumeration failure (that race rolled
+back a correct `0c567f9d` promotion on 2026-11-17 20:34Z naming
+`mishe-producer-initiatives-rust-plan.service`).
 
 After every delivery, compare the units' `PYTHONPATH` with `runtime/current`: it
 should resolve to the release just delivered. A GREEN test or doctor does not prove
