@@ -22,7 +22,7 @@ SHA = 'c0ffee1234567890abcdef'
 
 
 def record(home, *, sha=SHA, phase='delivered', pending=True, due=None, state=None,
-           delivered_at=None, error=None, created_at=None):
+           delivered_at=None, error=None, created_at=None, name=None):
     root = home / 'work' / 'releases'
     root.mkdir(parents=True, exist_ok=True)
     body = {'version': 1, 'id': f'{sha}-1', 'sha': sha, 'phase': phase,
@@ -35,7 +35,7 @@ def record(home, *, sha=SHA, phase='delivered', pending=True, due=None, state=No
         body['review_retry_state'] = state
     if error is not None:
         body['review_error'] = error
-    (root / f'{sha}-1.json').write_text(json.dumps(body))
+    (root / (name or f'{sha}-1.json')).write_text(json.dumps(body))
     return home
 
 
@@ -102,6 +102,17 @@ def test_exhausted_ladder_is_red(tmp_path):
     code, lines = backlog.evaluate(tmp_path, NOW)
     assert code == 2
     assert 'exhausted' in '\n'.join(lines)
+
+
+def test_double_delivered_sha_counts_once_as_a_release(tmp_path):
+    # A sha can be delivered twice (a retry after a failed observation), and the
+    # live site already holds one such pair. The count is of releases, so one
+    # pending record for one release reads "1 of 1", not "2 of 2".
+    record(tmp_path, pending=False, name='first.json')
+    record(tmp_path, pending=True, name='second.json', due=NOW + 3600)
+    code, lines = backlog.evaluate(tmp_path, NOW)
+    assert code == 2
+    assert '1 of 1' in lines[0]
 
 
 def test_unreadable_record_is_skipped_not_fatal(tmp_path):

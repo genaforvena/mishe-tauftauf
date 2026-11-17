@@ -106,7 +106,12 @@ def evaluate(site: Path, now: float, grace: float = GRACE_S) -> tuple[int, list[
         if state in ("overdue", "stranded", "exhausted"):
             broken.append((state, record))
 
-    lines = [f"{len(pending)} of {len(delivered)} delivered release(s) owe an unmerged review"]
+    # A sha can carry more than one delivered record (a retry after a failed
+    # observation); the count is of releases, so one pending record for one
+    # release reads "1 of 1" rather than "2 of 2".
+    pending_shas = {r.get("sha") for r in pending}
+    delivered_shas = {r.get("sha") for r in delivered}
+    lines = [f"{len(pending_shas)} of {len(delivered_shas)} delivered release(s) owe an unmerged review"]
     newest = max(pending, key=lambda r: r.get("delivered_at") or r.get("created_at") or 0) if pending else None
     if newest is not None:
         lines.append(f"newest unreviewed release {str(newest.get('sha'))[:12]}: {_reason(newest)}")
