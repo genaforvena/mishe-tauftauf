@@ -6,6 +6,7 @@ future consumers, under the same lock held across a running wake.
 """
 from __future__ import annotations
 from contextlib import ExitStack, contextmanager
+from datetime import datetime, timezone
 import fcntl
 import hashlib
 import json
@@ -589,20 +590,39 @@ def review_retry_delay(home, identity, base=REVIEW_RETRY_BASE_S, attempts_max=RE
     return base * (2 ** min(done, 4))
 
 
-def schedule_review_retry(home, record, *, delay, runner=None):
-    """Start one delayed unit that re-runs this release's failed review."""
+def _calendar_time(due):
+    """The ``systemd-run --on-calendar`` argument for an epoch deadline."""
+    return datetime.fromtimestamp(due, timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def schedule_review_retry(home, record, *, due, runner=None):
+    """Start one unit that re-runs this release's failed review at ``due`` (epoch seconds).
+
+    The timer names an absolute calendar time, not ``--on-active``: a
+    user-manager ``daemon-reload`` — every activation does one — recomputes a
+    monotonic timer's base from the reload, so a pending retry is pushed back
+    to reload+delay and can be starved for good while reloads keep arriving.
+    Measured 2026-11-17: sixteen retries due 16:05–16:32 all moved to
+    16:26:47+delay after one reload, and none had fired. A calendar deadline
+    keeps its time across reloads (same measurement).
+
+    Returns the deadline the timer was armed for: at least one second ahead,
+    because a calendar time already past never fires.
+    """
     run = subprocess.run if runner is None else runner
-    unit = f"mishe-release-review-retry-{record['sha'][:12]}-{int(time.time())}"
+    at = max(int(due), int(time.time()) + 1)
+    unit = f"mishe-release-review-retry-{record['sha'][:12]}-{at}"
     pythonpath = str(Path(record["source"])/"src")
-    return run(["systemd-run", "--user", "--collect", f"--unit={unit}",
-                f"--on-active={int(delay)}",
-                "--slice=mishe-plants.slice",
-                "--setenv=PYTHONPATH=" + pythonpath,
-                "--setenv=MISHE_SEED_HOME=" + str(home),
-                sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
-                "release", "review", "--id", record["id"]],
-               env=dict(os.environ, PYTHONPATH=pythonpath),
-               capture_output=True, timeout=15, check=True)
+    run(["systemd-run", "--user", "--collect", f"--unit={unit}",
+         f"--on-calendar={_calendar_time(at)}",
+         "--slice=mishe-plants.slice",
+         "--setenv=PYTHONPATH=" + pythonpath,
+         "--setenv=MISHE_SEED_HOME=" + str(home),
+         sys.executable, "-m", "mishe_tauftauf", "--home", str(home),
+         "release", "review", "--id", record["id"]],
+        env=dict(os.environ, PYTHONPATH=pythonpath),
+        capture_output=True, timeout=15, check=True)
+    return at
 
 
 def schedule_review_retry_if_needed(home, current):
@@ -643,9 +663,9 @@ def schedule_review_retry_if_needed(home, current):
             current["review_retry_state"] = "exhausted"
             current.pop("review_retry_due", None)
         else:
-            schedule_review_retry(home, current, delay=delay)
+            armed = schedule_review_retry(home, current, due=time.time() + delay)
             current["review_retry_state"] = f"scheduled in {int(delay)}s"
-            current["review_retry_due"] = int(time.time() + delay)
+            current["review_retry_due"] = armed
     except (OSError, subprocess.SubprocessError) as exc:
         # Leave the attempt uncounted so a later merge retries the scheduling.
         current["review_retry_state"] = f"scheduling failed: {exc}"

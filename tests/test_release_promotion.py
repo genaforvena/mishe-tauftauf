@@ -354,9 +354,11 @@ def test_explicit_retry_after_reviewer_error_preserves_failed_attempt(tree,monke
     # hand. The first failure now schedules one delayed re-run; the success does not.
     retries=[argv for argv in launched if any("review-retry" in str(a) for a in argv)]
     assert len(retries)==1
-    assert "--on-active=1800" in retries[0]
+    record=read_json(p.record_path(home,identity))
+    assert f"--on-calendar={p._calendar_time(record['review_retry_due'])}" in retries[0]
+    assert not any(a.startswith("--on-active=") for a in retries[0])
     assert retries[0][-4:]==["release","review","--id",identity]
-    assert read_json(p.record_path(home,identity))["review_retry_state"]=="scheduled in 1800s"
+    assert record["review_retry_state"]=="scheduled in 1800s"
 
 
 def test_deferred_review_error_merge_schedules_the_retry(tree,monkeypatch):
@@ -376,7 +378,8 @@ def test_deferred_review_error_merge_schedules_the_retry(tree,monkeypatch):
     record=read_json(p.record_path(home,identity))
     assert record["review_error"]=="reviewer quota spent" and record["review_pending"] is True
     retries=[argv for argv in launched if any("review-retry" in str(a) for a in argv)]
-    assert len(retries)==1 and "--on-active=1800" in retries[0]
+    assert len(retries)==1
+    assert f"--on-calendar={p._calendar_time(record['review_retry_due'])}" in retries[0]
     assert record["review_retry_state"]=="scheduled in 1800s"
 
 
@@ -400,8 +403,33 @@ def test_retry_ladder_advances_on_each_failed_attempt(tree,monkeypatch):
     p.merge_reviews(home)
     assert read_json(p.record_path(home,identity))["review_retry_state"]=="scheduled in 3600s"
     retries=[argv for argv in launched if any("review-retry" in str(a) for a in argv)]
-    delays=[next(a for a in argv if a.startswith("--on-active=")) for argv in retries]
-    assert delays==["--on-active=1800","--on-active=3600"]
+    deadlines=[next(a for a in argv if a.startswith("--on-calendar=")) for argv in retries]
+    assert len(deadlines)==2 and deadlines[0]!=deadlines[1]
+    for argv in retries:
+        assert not any(a.startswith("--on-active=") for a in argv)
+
+
+def test_retry_deadline_is_absolute_so_a_reload_cannot_postpone_it(tmp_path,monkeypatch):
+    # A user-manager daemon-reload recomputes a transient --on-active timer
+    # from the reload moment (measured 2026-11-17: sixteen pending retries due
+    # 16:05-16:32 all moved to reload+delay and none fired). The unit must name
+    # an absolute deadline instead, and the record must name the same one.
+    from mishe_tauftauf import release_promotion as p
+    (tmp_path/"work/reviews").mkdir(parents=True)
+    launched=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:launched.append(argv))
+    current=dict(id="rel-1",sha="b"*40,source=str(tmp_path),review_pending=True)
+    p.schedule_review_retry_if_needed(tmp_path,current)
+    argv=launched[0]
+    due=current["review_retry_due"]
+    assert f"--on-calendar={p._calendar_time(due)}" in argv
+    assert not any(a.startswith("--on-active=") for a in argv)
+    assert due>int(time.time())+p.REVIEW_RETRY_BASE_S-2
+    # A deadline already past never fires, so the armed time moves ahead; the
+    # returned value is what the record must keep.
+    armed=p.schedule_review_retry(tmp_path,current,due=time.time()-10)
+    assert armed>=int(time.time())
+    assert f"--on-calendar={p._calendar_time(armed)}" in launched[1]
 
 
 def test_one_failed_attempt_schedules_one_retry(tmp_path,monkeypatch):
