@@ -208,6 +208,18 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
     helper already used them) so these paths can be rehearsed on a sandbox tree; every run
     logs the paths it used, and `verify-copy.sh` now honours the same overrides rather
     than silently verifying the default trees.
+  - A second review found the done marker's meaning wrong: `flip.done` was written *before*
+    `restart_recorded`, while both restorers return early on the marker (the EXIT trap and the
+    watchdog's first check). A kill or cut inside the restart loop therefore left every listed
+    unit stopped with nothing to restart them — reproduced on the committed bytes, twice: a
+    fake `systemctl` that terminates the flip on its second `start` left 2 of 3 units started,
+    rc 143 and the marker present with no restore line, and the printed watchdog body run with
+    the marker present and a dead pid exited 0 with zero starts. Since preflight refuses a
+    re-run while `*.pre-migration` exists, the plant would have stayed down. The marker now
+    means "flipped *and* the plant is back" and is written after the restart; without it both
+    paths reach `restore_plant`, which keeps a consistent flipped tree, restarts from
+    `flip.units` and never deletes `*.pre-migration`. Pinned by
+    `test_termination_during_restart_starts_every_listed_unit`.
 - Preflight checks the *deployed* helper's sha256, not just that it is executable: on
   2026-11-17 the deployed `verify-scoped.sh` was still the pre-`0e8bafdc` bytes
   (`a852b2ef…`) while the fix (`0955773945…`) was committed, and the old preflight would

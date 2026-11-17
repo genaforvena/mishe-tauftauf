@@ -28,9 +28,20 @@ TREES = ("mishe-tauftauf", ".omp", ".codex")
 SYSTEMCTL = r"""#!/bin/bash
 printf '%s\n' "$*" >>"$SANDBOX/systemctl.log"
 case "$*" in
-  *"list-units"*"--state=active"*) printf 'fake-a.service loaded active running x\n' ;;
+  *"list-units"*"--state=active"*)
+      printf 'fake-a.service loaded active running x\nfake-b.service loaded active running x\nfake-c.service loaded active running x\n' ;;
   *"list-units"*) : ;;
-  *" cat fake-a.service"*) echo "ExecStart=/bin/true $SANDBOX/src/mishe-tauftauf/x" ;;
+  *" cat "*) echo "ExecStart=/bin/true $SANDBOX/src/mishe-tauftauf/x" ;;
+  *" start "*)
+      # One-shot cut for the restart-order regression: terminate the flip in the
+      # middle of restart_recorded, once, and let later starts through.
+      if [ -n "${KILL_ON_START:-}" ] && [ ! -e "$SANDBOX/killed" ]; then
+          n=$(grep -c ' start ' "$SANDBOX/systemctl.log")
+          if [ "$n" -ge "$KILL_ON_START" ]; then
+              : >"$SANDBOX/killed"
+              kill -TERM "$PPID"
+          fi
+      fi ;;
 esac
 exit 0
 """
@@ -79,9 +90,11 @@ def env_for(root):
             "PATH": f"{root / 'bin'}:{os.environ['PATH']}"}
 
 
-def flip(root, *args):
+def flip(root, *args, extra_env=None):
+    env = env_for(root)
+    env.update(extra_env or {})
     return subprocess.run(["bash", str(root / "work" / "flip.sh"), *args],
-                          env=env_for(root), capture_output=True, text=True, timeout=180)
+                          env=env, capture_output=True, text=True, timeout=180)
 
 
 def calls(root):
@@ -137,6 +150,28 @@ def test_clean_run_flips_and_restarts_units(tmp_path):
     # full 30 s and then warned about writers it had not found.
     assert "no writers left on the moved trees" in done.stdout + done.stderr
     assert "warning: writers still present" not in done.stdout + done.stderr
+
+
+def test_termination_during_restart_starts_every_listed_unit(tmp_path):
+    """Regression: flip.done was written before restart_recorded, and both the EXIT
+    trap and the watchdog return early on that marker. A cut inside the restart loop
+    therefore left stopped units with nothing to restart them: on the pre-fix bytes
+    this test saw 2 of 3 units started, rc 143 and no restore line. The marker is now
+    written after the restart, so the trap reaches restore_plant, which recognises
+    the consistent symlinks and only restarts."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+
+    done = flip(root, "--execute", extra_env={"KILL_ON_START": "2"})
+
+    assert done.returncode != 0, done.stdout + done.stderr
+    starts = [line for line in calls(root) if " start " in line]
+    for unit in ("fake-a.service", "fake-b.service", "fake-c.service"):
+        assert any(f"start {unit}" in line for line in starts), (unit, calls(root))
+    # The cut came after the rename: the restore must not roll a flipped tree back.
+    for tree in TREES:
+        assert (root / "src" / tree).is_symlink()
+        assert (root / "src" / f"{tree}.pre-migration").is_dir()
 
 
 def watchdog_body(root, *, bound, pid):

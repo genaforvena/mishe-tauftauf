@@ -370,8 +370,14 @@ cutover() {
         [ "$(readlink -f "$SRC/$t")" = "$DST/$t" ] || die "$SRC/$t does not resolve to $DST/$t"
         log "symlink $t -> $DST/$t ok"
     done
-    date -u +%FT%TZ >"$DONE"
+    # The marker means "flipped and the plant is back", not just "renamed": both
+    # restorers return early on it (the EXIT trap and the watchdog's first check),
+    # so writing it before restart_recorded left a kill inside the restart loop
+    # with every listed unit still stopped and nothing left to start them. Without
+    # the marker, both paths reach restore_plant, which sees the consistent
+    # symlinks and only restarts -- no rollback, no pre-migration deletion.
     restart_recorded
+    date -u +%FT%TZ >"$DONE"
     log "flip complete in $(elapsed)s; rollback: rm the three symlinks and mv *.pre-migration back"
 }
 
