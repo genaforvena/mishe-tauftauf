@@ -234,7 +234,14 @@ UNKNOWN effect requiring reconciliation. A reverted patch or changed observer
 needs a fresh checked record before another apply. Installed
 consumer files and transient timer consumers have different contracts: check
 loaded installed pins against disk, and retain invocation/cgroup draining and
-future-pin checks for active or pending transients.
+future-pin checks for active or pending transients. One transient is exempt: a
+unit whose argv runs `release review`, including the delayed
+`mishe-release-review-retry-*` units, evaluates one release's own bytes under its
+own `PYTHONPATH` and never reads the site pin, so `consumer_fence.pin_independent`
+leaves it out of both the drain and the future-pin check. Counting a queued retry
+as a consumer with the wrong pin failed a correct promotion's probe and then its
+rollback probe on 2026-11-17, leaving the delivery record UNKNOWN with a correct
+pin above it.
 
 After every delivery, compare the units' `PYTHONPATH` with `runtime/current`: it
 should resolve to the release just delivered. A GREEN test or doctor does not prove
