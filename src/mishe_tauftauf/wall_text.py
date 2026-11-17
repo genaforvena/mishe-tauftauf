@@ -107,6 +107,19 @@ def record_tag(text: str) -> str | None:
     match = _TAG_RE.match(first)
     return match.group(1) if match else None
 
+
+def message_subject(text: str) -> str:
+    """The first markdown heading after the first line, stripped of '#' and spaces; '' when none.
+
+    A bounded subject line is the one prose form a classifier may read from a body;
+    everything past it stays opaque.
+    """
+    lines = text.splitlines()
+    for line in lines[1:]:
+        if line.startswith("#"):
+            return line.lstrip("#").strip()
+    return ""
+
 def sender_role(source: str) -> str:
     """The sender's own role from a feed source, whether it signs as ROLE or mind/ROLE."""
     return source.removeprefix("mind/")

@@ -16,7 +16,7 @@ import pathlib
 import time
 
 from . import decision_provider as dp
-from .wall_text import dm_recipient, first_line, record_tag, sender_role
+from .wall_text import dm_recipient, first_line, message_subject, record_tag, sender_role
 LOG_NAME = "dm-triage.jsonl"
 QUESTION = "dm-triage-class"
 THRESHOLD = 0.7
@@ -84,6 +84,7 @@ def derived_state(seq: int, source: str, body: str, roles=()) -> dict:
         "tag": record_tag(body),
         "len": _len_bucket(len(body)),
         "first_line": first[:MAX_EXCERPT_CHARS],
+        "subject": message_subject(body)[:MAX_EXCERPT_CHARS],
     }
 
 

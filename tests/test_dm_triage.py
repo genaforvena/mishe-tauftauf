@@ -85,10 +85,11 @@ class DmTriageTests(unittest.TestCase):
         self.assertIsNone(result["label"])
 
     def test_derived_state_carries_no_full_body(self):
-        body = "[dm] to=system1\n" + ("secret detail " * 200)
+        body = "[dm] to=system1\n# Secret subject line\n" + ("secret detail " * 200)
         state = dt.derived_state(42, "mind/genome", body, roles=("system1",))
         self.assertEqual(state["from"], "genome")
         self.assertEqual(state["to"], "system1")
+        self.assertEqual(state["subject"], "Secret subject line")
         self.assertLessEqual(len(state["first_line"]), dt.MAX_EXCERPT_CHARS)
         self.assertNotIn("secret detail " * 50, json.dumps(state))
         self.assertIn(state["len"], {"<=120", "<=400", "<=1200", "<=4000", ">4000"})
