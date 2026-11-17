@@ -24,6 +24,21 @@ The second entry is DM triage in shadow, `src/mishe_tauftauf/dm_triage.py` (init
 - Log: `.mishe-tauftauf/decision-log/dm-triage.jsonl`, one row per triaged message, written at the wake mail seam (`wake.py` `_execute`) and never raising. Shadow only: nothing reads it for dispatch. A missing or failing provider leaves `escalate` rows; it never stops the wake.
 - Measured 2026-11-17: the first backfill (address-line-only state) escaped 58/60; adding the bounded subject brought live decisions to 52 `system1` rows of 140 total (43 `fyi`, 9 `action`), the rest escalate. Thresholds are not calibrated yet; `outcome` stays null until a real outcome is joined.
 
+## Retired: per-start wake-needed decision
+
+The wake gate once asked a System One model on every wake start whether the wake
+had owed work (`owed-work` / `repeat` / `unclear`). Measured 2026-11-16:
+`owed-work` precision was 43% against an always-wake base rate of 41%, so the
+model added no useful discrimination. The per-start call was removed. New rows in
+`decision-log/wake-gate.jsonl` keep `decision: null` so old and new rows share one
+schema; the System 0 `same_dossier_as_last` verdict is the only gate signal, and
+the live action log `wake-gate-live.jsonl` has no producer. Do not re-add the model
+without new evidence that beats the base rate.
+
+Both live registry entries are advisory: commit-risk never gates delivery and
+DM triage never gates dispatch. A missing or failing decision service degrades to
+the mind path; the logs keep an `escalate` row rather than stopping work.
+
 ## The duty
 
 The `commit-risk` duty (hourly, `duties.json`) runs the advisory pass over recent commits:
