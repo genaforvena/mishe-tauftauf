@@ -2924,3 +2924,23 @@ cadences. That is a real but small number: it is worth a slice only if the
 contract also gets simpler (no import graph in the producer path), not on CPU
 grounds alone. The fold stays under trigger at 3.2 CPU-s; nothing here reopens
 the slice.
+
+**The install step's current exposure is zero.** `$SITE/bin` holds real copies,
+not links into the release (installed 11-09 … 11-17), so a pin move does not
+refresh them. Checked each crate against its `install.json` `source_commit`:
+`mishe-systemd-show` has no source diff since `1200ef67`, `mishe-records`/`mishe-tape`
+/`mishe-unit-paths`/`mishe-cgroup-counters` have no commits since their build,
+`mishe-signal-freshness` differs from `63da1a20` only in `CONTRACT.md`, and
+`mishe-network-probe`/`mishe-tape-facts` only in docs and `.gitignore`. So the
+missing rebuild step is a mechanism gap with no live instance today, not an
+active stale-binary defect.
+
+**A stale-looking signal that is not stale.** `rust-measurement.json` still
+carried `observed_at` 05:22:46 with `state: OK, value: GREEN` at 06:35, which
+reads like a 70-minute-old GREEN. It is not: the state file's `observed_at` is
+when the *value last changed*, and freshness is the `signals/<name>.seen` marker
+(06:34, rewritten by every run, whatever the outcome; `.detail` always,
+`.memory.json` on config changes). The hourly run at 06:34:44Z did complete:
+`senses 3.884 CPU-s 116 MB 36385 entries; genome 3.995 CPU-s 98 MB 30335
+entries`, GREEN. So the slice stays closed on live bytes independent of the
+guard question, with 1.0 CPU-s (20%) headroom above the highest role.
