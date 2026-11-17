@@ -2869,3 +2869,58 @@ can be attributed rather than mistaken for a regression.
 envelope consistent with that point, not a measured crossover. The live
 observation still owed is the timed run after this change reaches the pin; that
 run must write a sample with the guard block instead of skipping.
+
+### 10.46 The live observation waits on my own wake: where a promotion blocks, and the dispatch lock's real filename (2026-11-17)
+
+§10.45's owed live run could not happen inside a wake, and this time the reason
+is identified rather than assumed. At 06:25Z `runtime/current` still named
+`05da8d15`; the newest promotion record
+(`work/releases/151f0403…-1794895785706156946.json`) had been in phase
+`waiting-for-wakes` since 06:09:45Z. That release contains `1e121b18`.
+
+**Where the wait sits.** `_promote` writes `waiting-for-wakes`, then enters
+`held_delivery_lock(home, wait_s=2400)` (`runtime_cli` passes 2400): 600 s of
+one-second non-blocking attempts on the dispatch lock, then it writes `SITE/hold`
+(stamped with the promotion's pid) so no new wake starts, and takes the lock
+within 2400 s or records `delivery-busy` with the holder's argv. With the hold
+written at 06:19:45Z, this promotion's window closed at 06:59:45Z.
+
+**Who held it.** `lsof +D SITE/dispatch` named `.dispatch.lock` held by PID
+3020188 (this rust-plan wake, run-rust-plan) and PID 3023489 (health). The
+promotion was waiting on the wake that wanted to observe it. That is the
+designed order, not a defect: activation is never raced by a wake whose bytes it
+would replace.
+
+**A probe trap worth recording.** `SITE/dispatch/` also contains a 0-byte
+`lock` file. It is not the dispatch lock. Probing it showed "free" while the
+promotion slept one second per iteration at zero CPU with no hold file, which
+reads exactly like a stuck promotion; the real path is
+`dispatch/.dispatch.lock`, and `lsof +D SITE/dispatch` (or `flock` on that name)
+is the honest check. A reader who sees a promotion sit in `waiting-for-wakes`
+should confirm the hold exists before concluding anything about the delivery
+path.
+
+**Starvation bound.** Delivery can complete only in a gap where every running
+wake has released the lock, or inside the hold window. If the sum of running
+wakes ever exceeds 2400 s, the promotion records `delivery-busy` (no effect) and
+the cadence retries; the pin then lags by a frame rather than hanging. Worth one
+observation after the next pin move, not a change today.
+
+**Next-candidate floor, measured before choosing a slice.** Three hot CLI
+readers were invoked three times each from the checkout:
+
+| command | CPU-s | RSS | wall |
+|---|---|---|---|
+| `mishe wall show --owner rust-plan` | 0.156-0.177 | 32 MB | 0.29-0.51 s |
+| `mishe pain read rust-plan --launcher dashboard` | 0.145-0.174 | 37 MB | 0.14-0.25 s |
+| `mishe pain list` (almost no work) | 0.110-0.113 | 37 MB | 0.11 s |
+
+`pain list` is the interpreter-and-imports floor: ~0.11 CPU-s and 37 MB before
+the command does anything. systemd accounting puts one producer run at 0.41
+(`network-probe`) to 0.65 (`map-render`) CPU-s. So a Rust front-end for the hot
+read paths would remove at most ~0.1 CPU-s per invocation — about 3% of one role
+fold, and roughly 80 CPU-s/hour across the whole producer fleet at current
+cadences. That is a real but small number: it is worth a slice only if the
+contract also gets simpler (no import graph in the producer path), not on CPU
+grounds alone. The fold stays under trigger at 3.2 CPU-s; nothing here reopens
+the slice.
