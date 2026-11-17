@@ -6,7 +6,7 @@ spurious wake (2026-11-11: genome's ``reoffer-view-readability`` and
 ``reoffer-observer-checks`` both sat under OK/GREEN).
 """
 import pytest
-from mishe_tauftauf import intentions, owed, signal_store, yielding
+from mishe_tauftauf import dispositions, intentions, owed, signal_store, yielding
 from mishe_tauftauf.state_files import write_json
 
 
@@ -52,6 +52,32 @@ def test_settle_keeps_the_reoffer_while_the_signal_is_unreadable(tmp_path):
     assert "reoffer-observer-checks" in _ids(home, "genome")
     _open(home, "genome", "wake-g-2"); _settle(home, "genome", "wake-g-2", 40)
     assert "reoffer-observer-checks" in _ids(home, "genome")         # missing evidence is not recovery
+
+
+def test_known_disposition_swaps_the_reoffer_for_its_recheck(tmp_path):
+    # A resolver's expiring answer stops the hourly re-send; the watcher asks again at recheck_at
+    # (2026-11-17: household-phones and budget re-offered hourly while both were dispositioned).
+    home = tmp_path / "site"; home.mkdir()
+    signal_store.register(home, "standing-fault", max_age=900, subscribers=["genome"], reoffer=3600, now=10)
+    signal_store.observe(home, "standing-fault", "RED", now=10, source="test")
+    dispositions.set_disposition(home, "standing-fault", "known", "resolver", "evidence", ttl=3600, now=20)
+    _open(home, "genome", "wake-g-1"); _settle(home, "genome", "wake-g-1", 30)
+    assert "reoffer-standing-fault" not in _ids(home, "genome")
+    due = {e["id"]: e["due"] for e in intentions.list_(home, "genome") if "due" in e}
+    assert due["disposition-standing-fault"] == 20 + 3600
+
+
+def test_expired_disposition_brings_the_reoffer_back(tmp_path):
+    # No open-ended mute: once the answer expires the finding is re-sent, so a stale judgement
+    # never hides a standing fault.
+    home = tmp_path / "site"; home.mkdir()
+    signal_store.register(home, "standing-fault", max_age=900, subscribers=["genome"], reoffer=3600, now=10)
+    signal_store.observe(home, "standing-fault", "RED", now=10, source="test")
+    dispositions.set_disposition(home, "standing-fault", "known", "resolver", "evidence", ttl=5, now=10)
+    _open(home, "genome", "wake-g-1"); _settle(home, "genome", "wake-g-1", 20)
+    ids = _ids(home, "genome")
+    assert "reoffer-standing-fault" in ids
+    assert "disposition-standing-fault" not in ids
 
 
 def _budget(home, now, remaining=0.9, age=0, reset_at=None):
