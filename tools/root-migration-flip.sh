@@ -361,14 +361,20 @@ quiesce() {
     # tree until it ends. Disarm the triggers before waiting so the set of
     # engines only shrinks: a .path unit that fired mid-delta started genome,
     # pub and system1 at 09:39-09:41Z and no delta under them could verify.
+    # A failed stop is not fatal -- the drain below re-samples the engines and the
+    # delivery guard, so a trigger that refused to stop is caught by those bounds.
+    # It must still be visible in flip.log: `|| true` here hid the 09:34 abort class,
+    # where a trigger stayed armed and fired a wake into the delta.
     systemctl --user stop 'mishe-wake-*.path' 'mishe-wake-debounce-*.timer' \
-        mishe-producer-dispatch.timer 'mishe-next-due-*.timer' 2>/dev/null || true
+        mishe-producer-dispatch.timer 'mishe-next-due-*.timer' 2>/dev/null ||
+        log "wake trigger stop failed (continuing): rc=$?; a wake can still start during the drain"
     # The delivery triggers go first, for the same reason: the cadence fires
     # every 600 s, so a promotion started inside the drain below would run its
     # whole-suite check and activate while the trees are renamed (field-review,
     # 2026-11-17: preflight samples the guard before a wait that can last
     # ENGINE_DRAIN_TIMEOUT, so a clear guard is necessary but not sufficient).
-    systemctl --user stop "${DELIVERY_TRIGGERS[@]}" 2>/dev/null || true
+    systemctl --user stop "${DELIVERY_TRIGGERS[@]}" 2>/dev/null ||
+        log "delivery trigger stop failed (continuing): rc=$?; a promotion can start during the drain"
     engines=$(wake_engines)
     if [ -n "$engines" ]; then
         log "wake engines still running; waiting up to ${ENGINE_DRAIN_TIMEOUT}s for them to end"

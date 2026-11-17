@@ -28,6 +28,12 @@ TREES = ("mishe-tauftauf", ".omp", ".codex")
 SYSTEMCTL = r"""#!/bin/bash
 printf '%s\n' "$*" >>"$SANDBOX/systemctl.log"
 case "$*" in
+  *" stop "*)
+      # A trigger that refuses to stop: the flip must log it and keep draining.
+      if [ -e "$SANDBOX/stop-fails" ] &&
+         printf '%s' "$*" | grep -qE 'mishe-(wake-|next-due-|producer-dispatch|producer-delivery)'; then
+          echo "Failed to stop unit: masked (fake)" >&2; exit 1
+      fi ;;
   *"is-active"*)
       if [ -e "$SANDBOX/flip_active" ]; then echo active; exit 0; fi
       echo inactive; exit 3 ;;
@@ -158,6 +164,29 @@ def test_clean_run_flips_and_restarts_units(tmp_path):
     # Regression: target_units asked for services and timers only, so the
     # mishe-wake-*.path triggers stayed armed and fired new wakes mid-delta.
     assert any("start fake-w.path" in line for line in calls(root)), calls(root)
+
+
+def test_a_failed_trigger_stop_is_logged_and_the_flip_continues(tmp_path):
+    """Regression (field-review review, chat #302375): quiesce stopped the wake and
+    delivery triggers with `|| true`, so a trigger that refused to stop left no
+    evidence in flip.log while it could still fire a wake or a promotion into the
+    drain -- the 09:34 abort class. The stop stays non-fatal: the engine and delivery
+    re-samples are the bounds that catch it."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+    (root / "stop-fails").write_text("")
+
+    done = flip(root, "--execute")
+
+    out = done.stdout + done.stderr
+    assert done.returncode == 0, out
+    assert "wake trigger stop failed (continuing)" in out, out
+    assert "delivery trigger stop failed (continuing)" in out, out
+    for tree in TREES:
+        assert (root / "src" / tree).is_symlink(), out
+    assert (root / "work" / "flip.done").exists()
+    # The per-unit stop loop already logged failures; it must not have been affected.
+    assert any("start fake-a.service" in line for line in calls(root)), calls(root)
 
 
 def detach_argv(root):
