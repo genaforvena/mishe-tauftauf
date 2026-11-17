@@ -55,6 +55,14 @@ def test_pressure_guard_is_unknown_not_green(tmp_path):
     assert "cpu pressure" in proc.stderr
 
 
+def test_default_cpu_pressure_bar_admits_the_measured_busy_host():
+    # A live pin run skipped at `some avg10` 32.85 with load1 1.17; forced at 39.56
+    # the fold still measured 4.161 CPU-s, 17% under the 5.0 trigger. A bar at or
+    # below that pressure turns ordinary host activity into UNKNOWN without
+    # protecting the verdict (plan 10.45).
+    assert check_module().DEFAULT_MAX_CPU_PRESSURE > 40.0
+
+
 def test_pressure_some_avg10_reads_the_psi_layout(tmp_path):
     mod = check_module()
     psi = tmp_path / "cpu.pressure"

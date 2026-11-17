@@ -2815,7 +2815,8 @@ reading, not on ambient activity:
 
 - loadavg bar is saturation: one runnable task per online CPU
   (`DEFAULT_MAX_LOAD_FRAC = 1.0`, 16 here), still overridable with `--max-load`;
-- host CPU pressure `some avg10` above 25% or memory pressure above 10% skips;
+- host CPU pressure `some avg10` above 25% or memory pressure above 10% skips
+  (raised to 60 in 10.45: the live pin then skipped at 32.85 with load1 1.17);
 - `MemAvailable` below 8 GB still skips;
 - an unreadable loadavg, `/proc/pressure/*` or meminfo is still **UNKNOWN**, never
   GREEN. The pressure files being absent therefore reads UNKNOWN rather than
@@ -2832,3 +2833,39 @@ cache dropping is forbidden. The one machine and the 4-sample spread remain the
 limits; the ≥29% headroom is the margin that matters. If a completed sample ever
 exceeds 5.0 CPU-s for a role, that is a real RED and the pre-gate A/B may open —
 this change only restores the observation, it does not move the trigger.
+### 10.45 The restored guard skipped the live pin; a fold at `some avg10` 39.56 still clears the trigger (2026-11-17)
+
+The §10.44 guard reached the running bytes: the pin is `05da8d15` (promoted
+05:28Z), it contains `3ccb9b54`, the pin's `checks/rust-measurement.py` is
+byte-identical to HEAD, and the producer unit's ExecStart names that release.
+The first run under the new guard was started by hand at 05:32:57Z — the timed
+05:22Z run had still used the old pin. It skipped:
+
+    mishe: rust-measurement: ran ... outcome=exit=3
+    detail='rust-measurement: UNKNOWN skipped, host busy: cpu pressure some
+    avg10 32.85 above the 25 bar; re-run when quiet'
+
+with `loadavg 1.17 2.54 3.11` and 25.6 GB available. So the bar that blocks
+samples is no longer loadavg, it is CPU pressure, and `/proc/pressure/cpu`
+`some avg10` on this box moved 4.14 (04:33Z) → 32.85 (05:32Z) → 39.56 (05:34Z).
+
+**Does pressure distort the verdict?** Ran the pin's own fold with the pressure
+bar lifted (`--max-cpu-pressure 100 --max-load 16 --no-artifact`) at
+`some avg10=39.56 avg60=33.35` and load1 6.07: senses 4.161 CPU-s / 116 MB,
+genome 4.09 CPU-s / 97 MB, `GREEN under triggers`, 17% under the 5.0 CPU-s
+trigger. Elapsed was 25.2 s for 8.25 CPU-s of work, so roughly two thirds of the
+wall time was waiting; the reading still separated a 3.2 CPU-s baseline from the
+5.0 trigger. Raw numbers: `artifacts/rust-plan-20261107/reopen-guard-live-20261117.json`.
+
+**Decision.** `DEFAULT_MAX_CPU_PRESSURE` 25 → 60. Pressure around 40 inflates a
+fold (3.24 → 4.16 CPU-s, ×1.28) but cannot turn a 3.2 CPU-s baseline into a RED;
+only severe contention, where a fold would likely time out or cross the trigger,
+still skips. The 25 bar was calibrated on a single quiet sample (`some avg10`
+4.14) and turned a normally busy hour into UNKNOWN — the churn §10.44 set out to
+end. The guard facts stay in the artifact, so a RED completed at high pressure
+can be attributed rather than mistaken for a regression.
+
+**Limits.** One machine, one point on the pressure/inflation curve: 60 is an
+envelope consistent with that point, not a measured crossover. The live
+observation still owed is the timed run after this change reaches the pin; that
+run must write a sample with the guard block instead of skipping.

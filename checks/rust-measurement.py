@@ -20,7 +20,11 @@ floor. The earlier flat `load1 > 2` bar skipped on the minds' own model drivers:
 three forced folds under load1 2.93-3.29 came in at 3.207/3.421/3.869 CPU-s for
 senses and 3.214/3.240/3.613 for genome against a 5.0 CPU-s trigger, the same
 band as the quiet runs, while 21% of hourly runs were skipped (plan 10.41/10.44).
-An unreadable load, pressure or meminfo file is still UNKNOWN, never GREEN.
+A 25% CPU-pressure bar then skipped the live pin at `some avg10` 32.85 with
+load1 1.17; forced at `some avg10` 39.56 the same fold measured 4.161 CPU-s,
+17% under the trigger, so the bar is 60 and only severe contention skips
+(plan 10.45). An unreadable load, pressure or meminfo file is still UNKNOWN,
+never GREEN.
 
 Verdicts:
   GREEN   0  every role measured and under both triggers; the slice stays closed.
@@ -44,7 +48,12 @@ DEFAULT_ROLES = ("senses", "genome")
 DEFAULT_CPU_TRIGGER_S = 5.0
 DEFAULT_RSS_TRIGGER_KB = 200 * 1024
 DEFAULT_MAX_LOAD_FRAC = 1.0  # runnable tasks per online CPU; above it the host is saturated
-DEFAULT_MAX_CPU_PRESSURE = 25.0  # percent of a 10 s window stalled on CPU
+# Percent of a 10 s window stalled on CPU. Measured: a fold at some avg10 39.56
+# came in at 4.161 CPU-s, 17% under the 5.0 trigger, so pressure this high still
+# leaves the verdict intact; only severe contention (>60%) skips. A 25 bar was
+# calibrated on one quiet sample (some avg10 4.14) and skipped the live pin at
+# some avg10 32.85 with load1 1.17 (plan 10.45).
+DEFAULT_MAX_CPU_PRESSURE = 60.0
 DEFAULT_MAX_MEMORY_PRESSURE = 10.0  # percent of a 10 s window stalled on memory
 DEFAULT_MIN_FREE_KB = 8 * 1024 * 1024
 DEFAULT_TIMEOUT_S = 240
