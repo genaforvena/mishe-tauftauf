@@ -193,7 +193,16 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
             # after a failed or timed-out debounce and skipped the spacing. A failed debounce starts nothing;
             # the owed inbox is picked up by the next resume_owed.
             + f"ExecStart={_cmd(cfg, 'wake-debounce', role, '--window', str(wake_debounce_seconds(role)))}\n"
-            + f"TimeoutStartSec={WAKE_DEBOUNCE_TIMEOUT}\n")
+            + f"TimeoutStartSec={WAKE_DEBOUNCE_TIMEOUT}\n"
+            # A root-migration flip stops this unit as part of its quiesce
+            # (`systemctl --user stop 'mishe-wake-debounce-*.service'`). Without
+            # this, the deliberate SIGTERM read as "Failed with result 'signal'",
+            # fired OnFailure and minted a RED failed-mishe-wake-debounce-<role>
+            # signal for an intended stop (2026-11-17 12:00:41Z: health,
+            # field-review and genome all at once). A TimeoutStartSec kill still
+            # records `timeout`, and an OOM SIGKILL stays a failure, so only the
+            # deliberate stop becomes quiet.
+            + "SuccessExitStatus=SIGTERM\n")
         files[f"{p}-wake-{role}.path"] = _file(
             f"[Unit]\nDescription=Mishe wake triggers for {role}",
             "[Path]\n" + "\n".join(watched) + f"\nUnit={target}",
@@ -304,6 +313,38 @@ def user_timer_names(glob: str) -> list[str]:
          "--no-legend", glob],
         check=False, capture_output=True, text=True).stdout
     return [line.split()[0] for line in listed.splitlines() if line.strip()]
+
+
+REVIEW_RETRY_UNIT_PREFIX = "mishe-release-review-retry-"
+"""Unit-name prefix a failed release review's transient retry unit is started under."""
+
+REVIEW_RETRY_LIVE_STATES = frozenset({"active", "activating", "reloading"})
+"""``ACTIVE`` column values that mean a retry rung still exists and will still fire."""
+
+
+def live_review_retry_shas(prefix: str = REVIEW_RETRY_UNIT_PREFIX, *, run=None) -> frozenset[str]:
+    """``sha[:12]`` prefixes whose review-retry unit still exists in a live state.
+
+    A retry unit is named ``<prefix><sha[:12]>-<epoch>``, so the name carries the
+    record it retries. ``--all`` also lists units that were stopped, which is how
+    a rung a stop/collect cycle removed is told apart from one that merely has not
+    fired yet (``active``/``waiting``) or is running now (``active``/``activating``).
+    A manager that cannot answer yields no prefix: the caller then re-arms, the
+    earlier behaviour, which costs one duplicate and never a stranded review.
+    """
+    run = subprocess.run if run is None else run
+    try:
+        result = run(["systemctl", "--user", "list-units", prefix + "*", "--all",
+                      "--plain", "--no-legend"], capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError):
+        return frozenset()
+    shas = set()
+    for row in (getattr(result, "stdout", "") or "").splitlines():
+        columns = row.split()
+        if len(columns) > 2 and columns[0].startswith(prefix) \
+                and columns[2] in REVIEW_RETRY_LIVE_STATES:
+            shas.add(columns[0][len(prefix):].split("-", 1)[0])
+    return frozenset(shas)
 
 
 def timers_run_release(timers: list[str], root: str) -> bool:

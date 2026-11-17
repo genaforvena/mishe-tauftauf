@@ -497,6 +497,16 @@ def test_health_path_triggers_are_coalesced_like_senses(cfg):
     assert "Unit=mishe-wake-debounce-genome.service" in files["mishe-wake-genome.path"]
 
 
+def test_a_flip_stop_of_the_debounce_is_not_a_failure(cfg):
+    # 2026-11-17 12:00:41Z: the root-migration quiesce stops 'mishe-wake-debounce-*.service'; each
+    # deliberate SIGTERM read as "Failed with result 'signal'", fired OnFailure and minted a RED
+    # failed-mishe-wake-debounce-<role> for an intended stop (health, field-review and genome at
+    # once). The stop must be quiet, but a TimeoutStartSec kill and an OOM SIGKILL stay failures.
+    debounce = units.render(cfg, ["health"])["mishe-wake-debounce-health.service"]
+    assert "SuccessExitStatus=SIGTERM" in debounce
+    assert "OnFailure=mishe-failed@%n.service" in debounce
+
+
 def test_every_role_gets_a_coalescing_window_with_the_default_length(cfg):
     # DM 300343 (c): a burst of path triggers for any role must start its wake once, not once per touch.
     from mishe_tauftauf.units import WAKE_DEBOUNCE_DEFAULT_SECONDS, wake_debounce_seconds
@@ -525,3 +535,28 @@ def test_sync_reloads_systemd_once_not_once_per_enabled_trigger(cfg):
     enables = [c for c in calls if "enable" in c]
     assert len(reloads) == 1
     assert enables and all("--no-reload" in c for c in enables)
+
+
+def test_live_review_retry_shas_reads_only_units_that_will_still_fire():
+    # 2026-11-17 live: record 2c6380ae kept only "scheduled in 1800s" while its
+    # transient timer still waited. The record cannot tell that from a lost unit,
+    # so the retry scan asks the manager; --all lists stopped units too, and only
+    # an active one means the rung still exists.
+    listing = (
+        "mishe-release-review-retry-2c6380ae6925-1794914557.timer loaded active waiting A timer\n"
+        "mishe-release-review-retry-aaaaaaaaaaaa-1794914557.timer loaded inactive dead A timer\n"
+        "mishe-release-review-retry-bbbbbbbbbbbb-1794914557.service loaded activating start A service\n")
+
+    class Answered:
+        stdout = listing
+        returncode = 0
+
+    assert units.live_review_retry_shas(run=lambda argv, **kw: Answered()) == frozenset(
+        {"2c6380ae6925", "bbbbbbbbbbbb"})
+
+    def broken(argv, **kw):
+        raise OSError("no systemd")
+
+    # A manager that cannot answer is not evidence of a live unit: the scan falls
+    # back to re-arming, never to silence.
+    assert units.live_review_retry_shas(run=broken) == frozenset()
