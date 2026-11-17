@@ -3221,3 +3221,59 @@ were measured, since their per-run cost is multiplied by the most runs. Under
 At 288 and 720 runs a day these are tens of CPU-seconds per day in total — three
 orders below the role fold they would have to beat. No Rust slice here; recorded
 so the same three files are not re-measured as a candidate.
+### 10.54 The fold's measured cost is not the fold's cost (2026-11-17)
+
+The provenance fix is live and observed: `runtime/current` resolves to release
+`6906ad2b…`, the live and checkout `checks/rust-measurement.py` are the same
+bytes (`sha256 c64eb3fc…`), and a duty-argv run printed `GREEN under triggers,
+slice stays closed: senses 3.622 CPU-s 116 MB 36385 entries; genome 3.803 CPU-s
+97 MB 30337 entries [binaries 9 checked]`, exit 0, no `unknown` reason. The
+21:47Z hourly line agrees (`green`, all nine binaries checked, `drift []`,
+`broken []`, `unknown null`).
+
+While looking for a next slice I measured where a role read's CPU goes, and found
+two places where the number the duty reports is narrower than the cost it claims
+to bound.
+
+**1. The CPU reading excludes the Rust children it spawns.** `fold_role`'s child
+records `time.process_time()` only. Same fold, same home, five runs, split by
+`RUSAGE_CHILDREN`:
+
+| role | Python CPU-s | Rust children CPU-s | total CPU-s |
+|---|---|---|---|
+| senses | 3.53 / 3.83 / 3.31 / 3.84 / 3.95 | 3.06 / 3.61 / 3.37 / 3.06 / 3.61 | 6.59 / 7.44 / 6.69 |
+| genome | 3.85 / 3.42 / 4.39 | 3.68 / 3.14 / 3.83 | 7.53 / 6.56 / 8.22 |
+
+So the 5.0 CPU-s trigger is applied to roughly half the work a fold performs:
+`senses` at 3.6 reported is ~7.0 actual. The reading answers "how expensive is the
+Python reader", not "how expensive is the fold", which is what `covers` states.
+
+**2. Peak RSS is not reproducible across launch contexts.** The identical fold
+reports 111,968 and 120,044 KB when spawned by a Python parent (`fold_role`, and
+`subprocess.run` of the same script) and 349,152 / 351,140 / 352,244 / 354,452 /
+362,120 KB when launched from the shell — five repeats each, same interpreter
+(`/usr/bin/python3`), same cwd, same tape (36,385 entries), same module bytes, and
+with `env -i` plus only `PATH`, `PYTHONPATH` and `MISHE_SEED_HOME` still 362,120
+KB. **Cause UNKNOWN**, hypothesis untested: glibc arena/threshold behaviour
+differing by parent process. The duty happens to use the Python-parent path and
+its own history is stable there (119,760 KB at 21:47Z), so the 204,800 KB trigger
+is not currently lying — but a 3x spread on the same work means the RSS reading
+is valid only for the launch context it was taken in.
+
+**Disposition.** No change to the trigger, the verdict codes or `covers` this
+wake: widening the CPU measurement without recalibrating the trigger would turn a
+deviation-free fold RED and reopen a slice that §10.43 and this measurement both
+close. The bounded next change is to record `children_cpu_s` beside `cpu_s`, keep
+the trigger on a named quantity ("reader CPU") with the total reported, and
+bisect the RSS spread (one test that spawns the fold from a Python parent with
+`MALLOC_ARENA_MAX` pinned and compares `VmHWM`). Until then the honest reading of
+the history is: reader 3.3-4.4 CPU-s, fold ~7 CPU-s, peak RSS between 110 and
+360 MB depending on who launches it.
+
+**Side note, not a defect.** `_tape_binary()` resolves the framer from
+`MISHE_SEED_HOME`/`MISHE_TAUFTAUF_HOME` rather than the `home` the reader was
+given, so an `env -i` fold is UNKNOWN (`mishe-tape unavailable: no site home and
+no MISHE_TAPE_BIN`) even though the caller passed an explicit site home. That is
+fail-closed, which is the right direction; recorded because it makes any
+measurement harness that scrubs the environment silently UNKNOWN rather than
+wrong.
