@@ -261,10 +261,16 @@ when the `--when` condition already holds, in the same message that flags an unr
 signal, so a written wait that is no wait is visible the moment it is written.
 
 A yield also sets the idle pace. The default idle initiative returns in two hours, but a
-role with a ready lane in its work record and fresh spare budget returns in thirty
-minutes instead. The spare budget must be fresh evidence: an account whose windows are
-missing, stale, unreadable or dated in the future is not spare, so the slower pace holds.
-A lane that is not ready, or budget that cannot be measured, keeps the two-hour pace;
-neither condition is ever read as permission to skip the work.
+role with a ready lane in its work record and fresh spare capacity returns in thirty
+minutes instead. Spare capacity is fresh evidence: either a paid account whose 5h and 7d
+windows are FRESH, unexpired and above the spare floor, or a free route still admitted in
+`routes.json` with a recent FREE reading in `engine/budget.json`. A free model has no
+account window, so an exhausted Claude weekly window does not by itself cap the pace while
+such a route is live. Windows and free-route readings that are missing, stale, unreadable,
+retired or dated in the future are not spare, so the slower pace holds. A lane that is not
+ready, or capacity that cannot be measured, keeps the two-hour pace; neither condition is
+ever read as permission to skip the work.
+The same free-route evidence releases a spontaneous intention held by a RED or unreadable
+Claude budget signal; a missing, stale or retired free reading keeps the hold.
 
 See [Mesh](mesh.md) and [Protocol boundaries](protocol-boundaries.md).

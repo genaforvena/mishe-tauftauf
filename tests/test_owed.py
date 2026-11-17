@@ -243,3 +243,40 @@ def test_settle_when_without_again_sets_a_paired_deadline(tmp_path):
     pairs = {i["id"]: i.get("pair") for i in intentions.list_(tmp_path, "genome")}
     assert pairs["again"] == "wake-11" and pairs["when-ci"] == "wake-11"
     assert "deadline was set" in msg
+
+
+def _free_budget(home, now, age=0, **changes):
+    from mishe_tauftauf.state_files import write_json
+    row = dict(free=True, in_routes=True, verdict="FREE", observed_at=now - age)
+    row.update(changes)
+    write_json(home / "engine" / "budget.json",
+               dict(accounts={}, free_models={"omp:opencode-go/hy4-flash-free:-": row}))
+
+
+def test_live_free_route_admits_spontaneous_work_despite_red_budget(home):
+    # Claude's exhausted window holds the budget signal, but hy4-flash has no window to hold.
+    store.observe(home, "budget", "RED", now=100, source="t")
+    _free_budget(home, 100)
+    intentions.add(home, "genome", "idle", note="n", due=10, spontaneous=True)
+    snap = owed.check(home, "genome", now=100)
+    assert snap.held == []
+    assert snap.reasons == ["intention:idle"]
+
+
+@pytest.mark.parametrize("changes,age", [({"in_routes": False}, 0), ({}, 7200)])
+def test_free_route_that_is_not_live_keeps_spontaneous_work_held(home, changes, age):
+    store.observe(home, "budget", "RED", now=100, source="t")
+    _free_budget(home, 100, age=age, **changes)
+    intentions.add(home, "genome", "idle", note="n", due=10, spontaneous=True)
+    assert owed.check(home, "genome", now=100).held == ["intention:idle"]
+
+
+def test_configured_claude_signal_is_overridden_only_by_a_live_free_route(home):
+    from mishe_tauftauf.state_files import write_json
+    write_json(home / "engines/genome.json", dict(engine="claude", budget_signal="budget-claude"))
+    store.register(home, "budget-claude", max_age=60, subscribers=[])
+    store.observe(home, "budget-claude", "RED", now=100, source="claude")
+    intentions.add(home, "genome", "idle", note="n", due=10, spontaneous=True)
+    assert owed.check(home, "genome", now=100).held == ["intention:idle"]
+    _free_budget(home, 100)
+    assert owed.check(home, "genome", now=100).held == []

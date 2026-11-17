@@ -47,6 +47,29 @@ def spare_budget(home, now) -> bool:
             continue
     return False
 
+def fresh_free_route(home, now) -> bool:
+    """True when budget.json still shows a free route that routes.json admits.
+
+    A free route has no account window, so ``spare_budget`` cannot see it. Requiring
+    ``in_routes``, the producer's FREE verdict and a recent observation keeps this
+    evidence: a retired or stale free route does not hold the faster idle pace.
+    """
+    data = read_json(Path(home) / "engine" / "budget.json")
+    if not isinstance(data, dict) or not isinstance(data.get("free_models"), dict):
+        return False
+    for row in data["free_models"].values():
+        if not isinstance(row, dict):
+            continue
+        if row.get("free") is not True or row.get("in_routes") is not True or row.get("verdict") != "FREE":
+            continue
+        try:
+            age = now - float(row["observed_at"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0 <= age <= BUDGET_MAX_AGE:
+            return True
+    return False
+
 
 def open_lane(home, role) -> bool:
     from . import work_state
@@ -71,7 +94,7 @@ def _pending_recheck(home, role, now):
 
 
 def idle_delay(home, role, now, idle_seconds) -> float:
-    if idle_seconds == DEFAULT_IDLE_SECONDS and open_lane(home, role) and spare_budget(home, now):
+    if idle_seconds == DEFAULT_IDLE_SECONDS and open_lane(home, role) and (spare_budget(home, now) or fresh_free_route(home, now)):
         return OPEN_LANE_SECONDS
     return idle_seconds
 

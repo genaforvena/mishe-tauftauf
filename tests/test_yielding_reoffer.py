@@ -5,6 +5,7 @@ it never retired it when the signal recovered, so a healthy signal kept firing a
 spurious wake (2026-11-11: genome's ``reoffer-view-readability`` and
 ``reoffer-observer-checks`` both sat under OK/GREEN).
 """
+import pytest
 from mishe_tauftauf import intentions, owed, signal_store, yielding
 from mishe_tauftauf.state_files import write_json
 
@@ -99,3 +100,33 @@ def test_spare_budget_is_false_at_and_after_the_window_reset(tmp_path):
     assert yielding.spare_budget(home, 1001) is False
     _lane(home, "genome")
     assert yielding.idle_delay(home, "genome", 1000, yielding.DEFAULT_IDLE_SECONDS) == yielding.DEFAULT_IDLE_SECONDS
+
+
+def _free_budget(home, now, age=0, **changes):
+    row = dict(free=True, in_routes=True, verdict="FREE", observed_at=now - age)
+    row.update(changes)
+    write_json(home / "engine" / "budget.json",
+               dict(accounts={}, free_models={"omp:opencode-go/hy4-flash-free:-": row}))
+
+
+def test_open_lane_with_a_fresh_free_route_returns_in_thirty_minutes(tmp_path):
+    # hy4-flash has no account window, so spare_budget is False while the route is live in routes.json.
+    home = tmp_path / "site"; home.mkdir(); _free_budget(home, 1000); _lane(home, "genome")
+    _open(home, "genome", "w1"); _settle(home, "genome", "w1", 1000)
+    assert yielding.spare_budget(home, 1000) is False
+    assert yielding.fresh_free_route(home, 1000) is True
+    assert _idle_due(home, "genome") == 1000 + yielding.OPEN_LANE_SECONDS
+
+
+@pytest.mark.parametrize("changes,age", [
+    ({"in_routes": False}, 0),
+    ({"verdict": "RETIRED"}, 0),
+    ({"free": False}, 0),
+    ({}, yielding.BUDGET_MAX_AGE + 1),
+    ({}, -1),
+])
+def test_free_route_that_is_not_live_keeps_the_slow_pace(tmp_path, changes, age):
+    home = tmp_path / "site"; home.mkdir(); _free_budget(home, 10000, age=age, **changes); _lane(home, "genome")
+    _open(home, "genome", "w1"); _settle(home, "genome", "w1", 10000)
+    assert yielding.fresh_free_route(home, 10000) is False
+    assert _idle_due(home, "genome") == 10000 + yielding.DEFAULT_IDLE_SECONDS

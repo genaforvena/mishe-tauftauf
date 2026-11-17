@@ -138,7 +138,11 @@ using a partial tape as evidence.
 Claude subscription readings use the native local `/usage` command without a
 model request. They renew independently of an interactive chat window; failed
 or stale readings hold spontaneous work. Fresh readings still have to satisfy
-the existing budget forecast. See [quota acquisition](claude-quota.md).
+the existing budget forecast. A live free route has no account window, so its
+admitted reading in `engine/budget.json` is separate evidence: it admits
+spontaneous work at the faster idle pace even while the Claude verdict is RED
+or unreadable. A missing, stale or retired free reading never does. See
+[quota acquisition](claude-quota.md).
 
 The camera sense asks the household who is in the room. The `frame-label-tick`
 duty runs every five minutes: it sweeps frames that got no answer, applies the

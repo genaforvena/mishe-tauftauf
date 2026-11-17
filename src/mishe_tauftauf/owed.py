@@ -90,7 +90,13 @@ def _budget_green(home, now: float, role: str) -> bool:
         sig = signal_store.read(home, name, now=now)
     except (OSError, ValueError):
         return False
-    return sig.state == "OK" and sig.value == BUDGET_OK
+    if sig.state == "OK" and sig.value == BUDGET_OK:
+        return True
+    # A free route has no account window, so the Claude budget signal cannot describe it.
+    # An admitted live free route admits spontaneous work; a missing, stale or retired
+    # free reading fails closed because it comes from the same budget view.
+    from . import yielding
+    return yielding.fresh_free_route(home, now)
 
 
 def inbox_unread(home, role: str) -> bool:
