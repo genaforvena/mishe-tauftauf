@@ -519,8 +519,21 @@ def run_check(repo: Path, name: str, home: Path) -> tuple[int, str]:
         raise Undecidable("cannot read HEAD:" + CHECKS_DIR + "/" + name)
     import tempfile
     with tempfile.TemporaryDirectory() as directory:
-        script = Path(directory) / name
-        script.write_bytes(blob.stdout)
+        # Materialise the whole tracked checks tree, not just this file: a
+        # check may import a sibling module (initiative-progress.py imports
+        # initiatives.py), and the import must resolve from the same reviewed
+        # bytes an uncommitted edit cannot change.
+        archive = subprocess.run(["git", "-C", str(repo), "archive", "HEAD", CHECKS_DIR],
+                                 capture_output=True)
+        if archive.returncode:
+            raise Undecidable("cannot archive HEAD:" + CHECKS_DIR + ": " +
+                              archive.stderr.decode("utf-8", "replace").strip())
+        extract = subprocess.run(["tar", "-x", "-C", directory], input=archive.stdout,
+                                 capture_output=True)
+        if extract.returncode:
+            raise Undecidable("cannot extract HEAD:" + CHECKS_DIR + ": " +
+                              extract.stderr.decode("utf-8", "replace").strip())
+        script = Path(directory) / CHECKS_DIR / name
         # A check that takes a shared checkout (release-lag.py requires it)
         # declares --repo in its source; pass it only to those, so checks that
         # take only --home still run with the arguments they accept.

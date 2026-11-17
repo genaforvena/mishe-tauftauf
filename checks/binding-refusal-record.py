@@ -37,9 +37,9 @@ def main() -> int:
         site = repo / ".mishe-tauftauf"
 
         # Initialize the bound site.
-        result = run_cli(site, "seed", "init", "--slug", "genome")
+        result = run_cli(site, "init")
         if result.returncode != 0:
-            print(f"FAIL: seed init failed: {result.stderr}")
+            print(f"FAIL: init failed: {result.stderr}")
             return 1
 
         # 1. Command with mismatched --home exits 2.
