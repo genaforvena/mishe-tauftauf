@@ -3307,3 +3307,30 @@ forced sample.
 `tests/test_rust_measurement.py` covers the new fields, the summary text and the
 reader-named RED reason. The §10.54 RSS spread (110 MB from a Python parent vs
 350-360 MB from a shell) is still unexplained and unlanded.
+
+### 10.56 The first admitted fold after the change carries its children's CPU, live (2026-11-17)
+
+The 22:48Z hourly run passed the binaries but its guard skipped the fold
+(`memory pressure some avg10 25.25 above the 10 bar`), so §10.55's fields had
+never been seen in an admitted line. The 23:50:14Z run did pass
+(`load1 3.28`, `memory_pressure_some_avg10 0.0`, 24.9 GB available) and is the
+first history line carrying them:
+
+| role | reader CPU-s | children CPU-s | total CPU-s | peak RSS | entries |
+|---|---|---|---|---|---|
+| senses | 3.248 | 2.836 | 6.083 | 120,196 KB | 36,386 |
+| genome | 3.249 | 2.955 | 6.204 | 100,680 KB | 30,339 |
+
+`binaries: 9 checked, drift []`, no `over`, verdict `green`. The duty detail
+names the same three quantities, exit 0, and the service `ExecStart` is
+`releases/4290a75783bb…/checks/rust-measurement.py`, sha256 `69830e75…` equal to
+the checkout's; the pin (moved 23:28Z) contains `0f67b4e1`
+(`git merge-base --is-ancestor` true). So the authoritative hourly consumer
+executed the changed bytes and reported the fold's real cost: ~6.1-6.2 CPU-s at
+quiet load, with the reader-only bar GREEN at 3.25.
+
+Two things this sample settles: the change has no silent no-op path (children CPU
+is non-zero in live bytes), and the total is closest to the reader at quiet load
+rather than only under contention. The RSS reading stays in the low (Python-parent)
+band at 100-120 MB, so §10.54's spread is still open and is the next bounded
+measurement; nothing here licenses a total-CPU bar from one sample.
