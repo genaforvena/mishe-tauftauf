@@ -2944,3 +2944,38 @@ when the *value last changed*, and freshness is the `signals/<name>.seen` marker
 `senses 3.884 CPU-s 116 MB 36385 entries; genome 3.995 CPU-s 98 MB 30335
 entries`, GREEN. So the slice stays closed on live bytes independent of the
 guard question, with 1.0 CPU-s (20%) headroom above the highest role.
+
+### 10.47 §10.45's owed live run is observed: the pin carries the 60 bar and the unit wrote a sample, not a skip (2026-11-17)
+
+The promotion that §10.46 watched from the outside finished after that wake
+released the dispatch lock: `runtime/current` moved at 06:54Z to
+`02980d11` (release `releases/02980d1177224f055628714323601e0f1e119b6c`). Two
+facts make the bytes checkable rather than assumed:
+
+- `git merge-base --is-ancestor 1e121b18 02980d11` exits 0, so the 60 bar is in
+  the pin.
+- the pin's `checks/rust-measurement.py` and the checkout's are the same file,
+  sha256 `b035626a…87 9e`, and the producer unit's ExecStart names that release
+  directory (it followed the pin, not the checkout).
+
+Then the unit ran on it, started by hand at 06:57:39Z (`systemctl --user start
+mishe-producer-rust-measurement.service`), exit 0, 26.6 s wall. It wrote a
+sample instead of skipping:
+
+    senses 3.769 CPU-s 119832 KB 36384 entries
+    genome 4.274 CPU-s 100220 KB 30337 entries
+    guard load1 8.07 bar 16, cpu some avg10 41.69, memory some avg10 0.00,
+    mem available 25334 MB; over []
+
+This is the live confirmation §10.45 owed: the same host state (CPU pressure
+41.69) that would have skipped at the old 25 bar now completes and records its
+guard block. The busiest role, genome at 4.274 CPU-s, is 0.73 CPU-s (14.5%)
+under the 5.0 trigger, inside the 4-sample spread and under the earlier
+3.2 CPU-s baseline plus one pressure inflation factor. `signals/rust-measurement`
+stays GREEN with `.seen` and `.detail` rewritten at 06:57-06:58.
+
+**Limit.** A hand start through the same unit is a bytes observation, not a
+cadence observation: the next automatic run (hourly, due 07:34Z) is still the
+thing that proves the timer path. The artifact and signal freshness markers are
+the detectors; a missing `.seen` after 07:35Z means the cadence, not the guard,
+is what to look at.
