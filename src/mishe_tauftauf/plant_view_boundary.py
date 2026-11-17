@@ -119,6 +119,7 @@ def stream_text(text: str) -> str:
     """Decode OMP JSON-lines at the literal output boundary, never as actions."""
     out, pending = [], ''
     open_tool = None  # index in `out` of the running tool's output line: updates and the end replace it, not repeat it
+    open_call = None  # index in `out` of the running tool's call line, the block a repeated result follows
     # The last finished tool result, as (index in `out`, its text, times seen). A result identical to it, with only
     # tool-call lines between, is one repeated result: the line is counted, not printed again. The raw file keeps each record.
     last_result = None
@@ -161,6 +162,7 @@ def stream_text(text: str) -> str:
             if kind == 'tool_execution_start':
                 out.append('[tool ' + str(event.get('toolName', '?')) + '] ' + _tool_args(event.get('args')))
                 open_tool = None
+                open_call = len(out) - 1
             elif kind in {'tool_execution_update', 'tool_execution_end'}:
                 key = 'partialResult' if kind == 'tool_execution_update' else 'result'
                 content = _content_text(event.get(key))
@@ -168,17 +170,24 @@ def stream_text(text: str) -> str:
                 line_text = '[' + label + '] ' + (content or '[non-text result; see raw record]')
                 if open_tool is not None:
                     out[open_tool] = line_text
-                    last_result = (open_tool, line_text, 1)   # a streamed result counts once, when it is finished
-                elif (last_result is not None and last_result[1] == line_text
-                      and all(s.startswith('[tool ') and not s.startswith(TOOL_LABELS) for s in out[last_result[0] + 1:])):
-                    last_result = (last_result[0], line_text, last_result[2] + 1)
-                    out[last_result[0]] = line_text + f' (repeated {last_result[2]} times)'
                 else:
                     out.append(line_text)
                     open_tool = len(out) - 1
-                    last_result = (open_tool, line_text, 1)
                 if kind == 'tool_execution_end':
+                    # Only the finished text can decide a repeat: an engine's partial update differs from the
+                    # result it ends with, so the update branch above must not reset the previous result.
+                    stop = open_call + 1 if open_call is not None else open_tool
+                    if (last_result is not None and last_result[1] == line_text
+                          and all(s.startswith('[tool ') and not s.startswith(TOOL_LABELS)
+                                  for s in out[last_result[0] + 1:stop])):
+                        count = last_result[2] + 1
+                        out[last_result[0]] = line_text + f' (repeated {count} times)'
+                        del out[open_tool]
+                        last_result = (last_result[0], line_text, count)
+                    else:
+                        last_result = (open_tool, line_text, 1)
                     open_tool = None
+                    open_call = None
             elif kind == 'auto_retry_start':
                 out.append('[provider retry] attempt ' + str(event.get('attempt', '?')) + ': '
                            + str(event.get('errorMessage') or event.get('error') or 'provider error')[:300])

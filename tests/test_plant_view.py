@@ -407,6 +407,28 @@ def test_repeated_identical_tool_errors_print_once_with_a_count(tmp_path):
     assert again.count('[tool error] Validation failed') == 2 and '(repeated' not in again
 
 
+def test_a_streamed_result_repeats_by_its_finished_text_not_its_updates(tmp_path):
+    """An engine's partial update differs from the result it ends with, so the repeat is decided at the end."""
+    from mishe_tauftauf.plant_view_boundary import stream_text
+    partial = '\n\n\n\n\n\n\n\n'
+    finished = '\n\n\n\n\n\n\n\n\n\nWall time: 0.02 seconds'
+    events = []
+    for command in ('tmux capture-pane -p | tail -8', 'tmux capture-pane -p | tail -8 | cut -c1-200'):
+        events.append({'type': 'tool_execution_start', 'toolName': 'bash', 'args': {'command': command}})
+        events.append({'type': 'tool_execution_update', 'toolName': 'bash',
+                       'partialResult': {'content': [{'type': 'text', 'text': partial}]}})
+        events.append({'type': 'tool_execution_end', 'toolName': 'bash',
+                       'result': {'content': [{'type': 'text', 'text': finished}]}})
+    text = stream_text('\n'.join(json.dumps(e) for e in events))
+    assert text.count('[tool output]') == 1
+    assert '(repeated 2 times)' in text
+    assert text.count('[tool bash]') == 2          # each call stays visible; only its result is counted
+    different = events[:3] + [{'type': 'tool_execution_start', 'toolName': 'bash', 'args': {'command': 'ls'}},
+                              {**events[2], 'result': {'content': [{'type': 'text', 'text': 'other'}]}}]
+    again = stream_text('\n'.join(json.dumps(e) for e in different))
+    assert again.count('[tool output]') == 2 and '(repeated' not in again
+
+
 def test_unchanged_panes_print_identical_text_between_refreshes(tmp_path):
     # An identical text is not redrawn; a text that changed every 5 s once filled tmux scrollback until OOM.
     settled_wake(tmp_path)
