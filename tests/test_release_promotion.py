@@ -651,6 +651,81 @@ def test_a_failed_rearm_leaves_the_postponed_timer_running(tmp_path,monkeypatch)
     assert record["review_retry_due"]==stale_due and record["review_pending"] is True
 
 
+def _overdue_retry(tmp_path, now, sha="a"*40, identity="rel-overdue"):
+    (tmp_path/"work/reviews").mkdir(parents=True, exist_ok=True)
+    (tmp_path/"work/releases").mkdir(parents=True, exist_ok=True)
+    write_json(p.record_path(tmp_path,identity),
+               dict(id=identity,sha=sha,source=str(tmp_path),review_pending=True,
+                    review_retry_attempts=0,review_retry_state="scheduled in 7200s",
+                    review_retry_due=int(now-p.REVIEW_RETRY_REARM_GRACE_S-1)))
+    return f"mishe-release-review-retry-{sha[:12]}-1794930448.timer"
+
+
+def test_rearm_scan_runs_while_a_wake_holds_the_quiet_lock(tmp_path,monkeypatch):
+    # A wake runner holds .dispatch.lock SHARED for its whole run (core.supervisor:
+    # delivery waits for every running wake to end), so an exclusive re-arm scan is
+    # refused exactly while any role is awake. Measured 2026-11-17 with three wakes
+    # up: all sixteen overdue records hit DeliveryBusy and no retry was re-armed.
+    # The scan must exclude the exclusive writers only, so a shared hold runs it.
+    import fcntl
+    (tmp_path/"dispatch").mkdir()
+    calls=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:calls.append(argv))
+    now=time.time(); timer=_overdue_retry(tmp_path,now)
+    quiet=(tmp_path/"dispatch/.dispatch.lock").open("a+")
+    fcntl.flock(quiet.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+    try:
+        armed=p.rearm_lost_review_retries(tmp_path,clock=lambda: now,
+            live_units={("a"*12):{"timers":(timer,),"services":()}},skipped=[])
+    finally:
+        quiet.close()
+    assert armed==["rel-overdue"], armed
+    runs=[c for c in calls if c[0]=="systemd-run"]
+    assert len(runs)==1 and any(a.startswith("--on-calendar=") for a in runs[0]), runs
+    # The superseded monotonic timer is stopped only after the replacement is armed.
+    assert [c for c in calls if c[0]=="systemctl"]==[["systemctl","--user","stop",timer]]
+
+
+def test_rearm_scan_counts_records_an_exclusive_holder_blocks(tmp_path,monkeypatch):
+    # A delivery or activation holds the same lock exclusively. The record cannot be
+    # read-modified-written then, so the scan skips it and reports that skip instead
+    # of leaving a starved retry looking like nothing was overdue.
+    import fcntl
+    (tmp_path/"dispatch").mkdir()
+    calls=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:calls.append(argv))
+    now=time.time(); timer=_overdue_retry(tmp_path,now)
+    quiet=(tmp_path/"dispatch/.dispatch.lock").open("a+")
+    fcntl.flock(quiet.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    skipped=[]
+    try:
+        armed=p.rearm_lost_review_retries(tmp_path,clock=lambda: now,
+            live_units={("a"*12):{"timers":(timer,),"services":()}},skipped=skipped)
+    finally:
+        quiet.close()
+    assert armed==[] and skipped==["rel-overdue"], (armed,skipped)
+    assert calls==[] and read_json(p.record_path(tmp_path,"rel-overdue"))["review_pending"] is True
+
+
+def test_a_held_scan_lock_skips_the_poll_instead_of_arming_twice(tmp_path,monkeypatch):
+    # Two polls must not arm two units for the same rung. The scan's own exclusive
+    # lock makes the late one a no-op; the next poll then sees the fresh deadline.
+    import fcntl
+    calls=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:calls.append(argv))
+    now=time.time(); timer=_overdue_retry(tmp_path,now)
+    live={("a"*12):{"timers":(timer,),"services":()}}
+    scan=(tmp_path/"work/.review-rearm.lock").open("a+")
+    fcntl.flock(scan.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert p.rearm_lost_review_retries(tmp_path,clock=lambda: now,live_units=live)==[]
+    finally:
+        scan.close()
+    assert [c for c in calls if c[0]=="systemd-run"]==[]
+    assert p.rearm_lost_review_retries(tmp_path,clock=lambda: now,live_units=live)==["rel-overdue"]
+    assert len([c for c in calls if c[0]=="systemd-run"])==1
+
+
 def test_retry_over_an_unmerged_failure_reruns_the_review(tree,monkeypatch):
     # The scheduled retry must re-run the model even when a wake deferred the first
     # failure's merge. Merely merging it would record the error and return without

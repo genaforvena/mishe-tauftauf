@@ -121,14 +121,24 @@ def closure(source, env):
 
 
 @contextmanager
-def delivery_lock(home):
+def delivery_lock(home, *, shared=False):
+    """Exclusive by default; ``shared`` joins the readers instead of excluding them.
+
+    A wake runner holds the same file *shared* for its whole run
+    (``core.supervisor``: delivery waits for every running wake to end), so an
+    exclusive taker is refused whenever any role is awake. A caller that only
+    needs to exclude the exclusive writers -- delivery, activation, a review
+    merge -- takes it shared and still runs during wakes. Two shared takers can
+    overlap, so such a caller needs its own serialisation.
+    """
     from .core.state import DispatchStore
     from .delivery_requests import check_admission
+    mode = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
     check_admission(home)
     path = DispatchStore(Path(home) / "dispatch").lock_path
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+") as handle:
-        try: fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try: fcntl.flock(handle.fileno(), mode | fcntl.LOCK_NB)
         except OSError: raise DeliveryBusy("running wake or promotion holds dispatch lock; promote after wake settles") from None
         check_admission(home)
         try: yield
@@ -705,7 +715,7 @@ def _postponed_retry_timers(record, live):
     return list(live.get((record.get("sha") or "")[:12], {}).get("timers", ()))
 
 
-def rearm_lost_review_retries(home, *, clock=time.time, live_units=None, stop=None):
+def rearm_lost_review_retries(home, *, clock=time.time, live_units=None, stop=None, skipped=None):
     """Re-arm the retries whose transient unit a stop/collect cycle removed or postponed.
 
     ``merge_review`` only reaches a record when a result arrives, and a destroyed
@@ -713,11 +723,18 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None, stop=No
     every couple of minutes over the whole home. ``_review_retry_lost`` decides
     which records are affected; a record whose retry unit is still live and whose
     deadline has not been missed is left untouched, as is one running a review
-    now. Each re-arm takes the delivery lock and re-reads the record, so a
-    concurrent merge is not overwritten; a busy lock is skipped and the next poll
-    tries again. A live timer whose recorded deadline is long past is replaced:
-    the calendar rung is armed first and the postponed timer is then stopped, so
-    only one rung is pending.
+    now. Each re-arm re-reads the record under a *shared* ``delivery_lock``, so a
+    concurrent merge (which takes it exclusively) is not overwritten while the
+    scan still runs during wakes: a wake runner holds the same lock shared for
+    its whole run, and an exclusive taker is refused for exactly that time
+    (measured 2026-11-17: with three wakes up, all sixteen overdue records were
+    skipped, so the re-arm never happened). The scan itself is serialised by
+    ``work/.review-rearm.lock`` so two polls cannot arm the same rung twice; a
+    busier lock skips this poll, and ``skipped`` collects the identities a
+    delivery or activation held off so the poll line shows the starvation. A
+    live timer whose recorded deadline is long past is replaced: the calendar
+    rung is armed first and the postponed timer is then stopped, so only one rung
+    is pending.
 
     ``live_units`` is the ``units.live_review_retry_units()`` answer; it is
     computed once per scan so the whole home costs one manager query and every
@@ -725,6 +742,21 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None, stop=No
 
     Returns the identities re-armed, for the poll's log line.
     """
+    scan_path = Path(home)/"work"/".review-rearm.lock"
+    scan_path.parent.mkdir(parents=True, exist_ok=True)
+    with scan_path.open("a+") as scan:
+        try:
+            fcntl.flock(scan.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return []
+        try:
+            return _rearm_scan(home, clock=clock, live_units=live_units, stop=stop, skipped=skipped)
+        finally:
+            fcntl.flock(scan.fileno(), fcntl.LOCK_UN)
+
+
+def _rearm_scan(home, *, clock, live_units, stop, skipped):
+    """The single scanned pass: called only while ``work/.review-rearm.lock`` is held."""
     live = units.live_review_retry_units() if live_units is None else live_units
     live_shas = frozenset(live)
     timer_shas = frozenset(sha for sha, groups in live.items() if groups.get("timers"))
@@ -742,25 +774,33 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None, stop=No
                 continue
             if not _review_retry_lost(current, clock(), live_shas, timer_shas):
                 continue
-            with delivery_lock(home):
-                current = read_json(path)
-                if not current or current.get("review_pending") is not True:
-                    continue
-                identity = _identity(current)
-                if identity is None:
-                    continue
-                if current.get("review_retry_attempts") != _review_attempts(home, identity):
-                    continue
-                if not _review_retry_lost(current, clock(), live_shas, timer_shas):
-                    continue
-                if schedule_review_retry_if_needed(home, current):
-                    # The replacement is armed; the postponed timer must not fire
-                    # a second review. When the ladder is spent or the start
-                    # failed nothing replaced it, and the old unit is left to run
-                    # its one attempted review rather than be lost to a
-                    # scheduling decision.
-                    stop(_postponed_retry_timers(current, live))
-                write_json(path, current)
+            try:
+                with delivery_lock(home, shared=True):
+                    current = read_json(path)
+                    if not current or current.get("review_pending") is not True:
+                        continue
+                    identity = _identity(current)
+                    if identity is None:
+                        continue
+                    if current.get("review_retry_attempts") != _review_attempts(home, identity):
+                        continue
+                    if not _review_retry_lost(current, clock(), live_shas, timer_shas):
+                        continue
+                    if schedule_review_retry_if_needed(home, current):
+                        # The replacement is armed; the postponed timer must not fire
+                        # a second review. When the ladder is spent or the start
+                        # failed nothing replaced it, and the old unit is left to run
+                        # its one attempted review rather than be lost to a
+                        # scheduling decision.
+                        stop(_postponed_retry_timers(current, live))
+                    write_json(path, current)
+            except DeliveryBusy:
+                # A delivery or activation holds the lock exclusively; this poll
+                # cannot read-modify-write safely. Count it so the skip is visible
+                # instead of looking like nothing was overdue.
+                if skipped is not None:
+                    skipped.append(identity)
+                continue
         except (OSError, ValueError, subprocess.SubprocessError):
             # A transient start failure or a record being rewritten keeps its
             # evidence; the next poll re-reads it. A malformed record is not

@@ -251,10 +251,12 @@ def run(args) -> int:
             from . import release_promotion, delivery_requests
             delivery_requests.consume(home)
             release_promotion.merge_reviews(home)
-            rearmed = release_promotion.rearm_lost_review_retries(home)
+            skipped = []
+            rearmed = release_promotion.rearm_lost_review_retries(home, skipped=skipped)
             work_state.sweep(home, repo=args.repo, now=now)
             print("work watches checked" +
-                  (f"; re-armed {len(rearmed)} lost review retries" if rearmed else ""))
+                  (f"; re-armed {len(rearmed)} lost review retries" if rearmed else "") +
+                  (f"; skipped {len(skipped)} review retries on a busy lock" if skipped else ""))
             return 0
         if args.work_command == "check":
             from . import work_receipts, work_boundary
