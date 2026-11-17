@@ -154,6 +154,7 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
     # A signal wait always carries a deadline (DM 300071 item 3): without --again the
     # yield sets the default one rather than leaving a wait that may never fire.
     deadline_note = ""
+    explicit_again = again is not None
     if when is not None and again is None:
         again = WHEN_DEADLINE_SECONDS
         deadline_note = f"; no --again given, so a {WHEN_DEADLINE_SECONDS // 3600}h deadline was set with the signal wait"
@@ -164,8 +165,14 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
         again, clamp_note = _clamp(again, lane_open, "--again")
     idle, idle_clamp = _clamp(idle_delay(home, role, now, idle_seconds), lane_open, "idle")
     clamp_note += idle_clamp
+    # A condition that already holds is not a wait: it fires at the next due tick and, paired, retires the
+    # fallback timer the mind asked for. A mind that named an explicit --again wants that timer, so the
+    # condition is left unarmed rather than spending a wake now (2026-11-17 genome: armed on the flipping
+    # pin's VERIFIED latch, was woken five minutes later and lost the 50-minute timer it had paired).
+    already_met = when is not None and intentions.is_met(home, {"when": when}, now=now)
+    arm_when = when is not None and not (already_met and explicit_again)
     # The fallback timer and the signal condition of one yield share a pair: whichever fires first retires the other.
-    pair = key if (requested_again is not None and when is not None) else None
+    pair = key if (requested_again is not None and arm_when) else None
     if requested_again is not None:
         # The explicit deadline is kept whole, so a clamp cannot retire it early (DM 300156). The clamp is
         # a separate, unpaired recheck: waking on it consumes only itself and the deadline still stands.
@@ -190,16 +197,25 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
     # An intention is a claim about the present, not an edge (intentions.is_met is level). A --when whose
     # condition already holds is therefore not a wait: the role reads as owed at once and the next due tick
     # wakes it, retiring its paired --again. A latch signal (moving-pin-delivery stays VERIFIED between pins)
-    # makes the pattern fatal: "wake me on the next move" can never be written this way. Say so at the yield
-    # so the mind can use --again instead (2026-11-16 health: woke 33 s after yielding for an unmoved pin).
-    if when is not None and intentions.is_met(home, {"when": when}, now=now):
-        dead_wait += (f"; WARNING --when signal {when['signal']!r} already reads its awaited value, so the wait"
-                      f" fires at once and retires any paired --again; use --again for a timer")
+    # makes the pattern fatal: "wake me on the next move" can never be written this way (2026-11-16 health:
+    # woke 33 s after yielding for an unmoved pin). With an explicit --again the timer is what the mind asked
+    # for, so the condition is not armed at all and the timer stands alone.
+    if already_met:
+        if arm_when:
+            dead_wait += (f"; WARNING --when signal {when['signal']!r} already reads its awaited value, so the wait"
+                          f" fires at once and retires any paired --again; use --again for a timer")
+        else:
+            dead_wait += (f"; --when signal {when['signal']!r} already reads its awaited value, so it is not armed;"
+                          f" the --again timer stands and no wake is spent on it now")
     wait = requested_again if requested_again is not None else idle
     if wait > CLAMP_SECONDS and not _subscribed_signals(home, role):
         dead_wait += f"; WARNING {role} subscribes to no signal, so a wait over {CLAMP_SECONDS // 3600}h has nothing to wake it early"
-    if when is not None:
+    if arm_when:
         intentions.add(home, role, f"when-{when['signal']}", note="signal condition you asked to be woken on", when=when, pair=pair)
+    elif when is not None and already_met:
+        # The same id would have been overwritten by the add above. A superseded condition left behind would
+        # fire on the next tick anyway (it is met), so this yield would still spend the wake it just avoided.
+        intentions.remove(home, role, f"when-{when['signal']}")
     for name, entry in sorted(signal_store.registry(home).items()):
         if role in entry.get("subscribers", []) and "reoffer" in entry:
             sig = signal_store.read(home, name, now=now)

@@ -46,6 +46,33 @@ def test_clamp_recheck_does_not_retire_the_paired_deadline(tmp_path):
     assert "again-recheck" not in left
 
 
+def test_an_already_true_condition_does_not_spend_the_paired_timer(tmp_path):
+    """2026-11-17: a latch that already reads VERIFIED fired at once and retired the 50 min fallback timer."""
+    home = tmp_path / "site"; home.mkdir()
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"], now=10)
+    signal_store.observe(home, "moving-pin-delivery", "VERIFIED", now=10, source="t", event="p1")
+    # A first yield armed an unmet condition on the same signal; the second must supersede it, not leave it
+    # behind to fire on the next tick.
+    _settle(home, "field-review", "wake-f-latch-0", 900, again=3000,
+            when={"signal": "moving-pin-delivery", "equals": "FAILED"})
+    msg = _settle(home, "field-review", "wake-f-latch", 1000, again=3000,
+                  when={"signal": "moving-pin-delivery", "equals": "VERIFIED"})
+    ids = {e["id"] for e in intentions.list_(home, "field-review")}
+    assert "when-moving-pin-delivery" not in ids              # nothing to wait for: the value already holds
+    assert _again_due(home, "field-review") == 1000 + 3000    # the timer the mind asked for stands, unpaired
+    assert "is not armed" in msg and "timer stands" in msg
+
+
+def test_an_already_true_condition_without_a_timer_still_arms(tmp_path):
+    """Level semantics survive for the standing-fault case: no --again, so the condition is still armed."""
+    home = tmp_path / "site"; home.mkdir()
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"], now=10)
+    signal_store.observe(home, "moving-pin-delivery", "VERIFIED", now=10, source="t", event="p1")
+    _settle(home, "field-review", "wake-f-latch-2", 1000,
+            when={"signal": "moving-pin-delivery", "equals": "VERIFIED"})
+    assert "when-moving-pin-delivery" in {e["id"] for e in intentions.list_(home, "field-review")}
+
+
 def test_repeated_pin_value_is_an_edge_only_under_a_new_event(tmp_path):
     home = tmp_path / "site"; home.mkdir()
     signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"], now=10)
