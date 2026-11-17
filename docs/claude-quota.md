@@ -47,11 +47,11 @@ contract: Claude Code 2.1.319 on 2026-11-06; unsupported future formats fail clo
 
 Status: no code applies a 50% gate, and the router does not read the policy.
 
-- The alert rule lives in the site-local `operator/budget_snapshot.py`, run by the
-  `budget` duty's `producers/budget.sh` and not tracked in Git. It alerts only on
+- The alert rule lives in the site-local `SITE_HOME/operator/budget_snapshot.py`, run by the
+  `budget` duty's `SITE_HOME/producers/budget.sh` and not tracked in Git. It alerts only on
   UNKNOWN or stale readings, so a spent (`LOW`) window with a known reset and a
   burn projection are informational; above 50% weekly use shows as pace in
-  `operator/budget.md`. The pane `operator/budget/budget_view.py` has been
+  `SITE_HOME/operator/budget.md`. The pane `SITE_HOME/operator/budget/budget_view.py` has been
   render-only since 2026-11-12: it draws the producer's burn and ETA and decides
   nothing.
 - `src/mishe_tauftauf/provider_budget.py` builds the Claude rows from
