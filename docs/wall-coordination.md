@@ -166,7 +166,10 @@ mishe release request --sha FULL_SHA --previous FULL_SHA \
 The two files contain nonempty JSON argument arrays for relevant checks and an
 actual-consumer probe. Every change uses the same committed promotion, automatic
 rollback on failed observation, and asynchronous review. A review outage remains
-pending evidence and does not block delivery.
+pending evidence and does not block delivery; `review-backlog` publishes that
+backlog (AMBER while every unreviewed release holds a live retry rung, with the
+newest reviewer failure reason in the detail, RED when one cannot recover on its
+own), because the ladder that keeps an outage survivable otherwise hides it.
 
 Every change takes this one path (operator policy, 2026-11-14): delivery is
 automatic, continuous and never held for a mind. A scoped `mishe_tauftauf.wall_patch`
