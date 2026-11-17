@@ -468,8 +468,12 @@ def runner_provenance(repo: Path, home: Path) -> tuple[str, str]:
     that carry those tables must be reviewable: a reader must be able to see
     a diff that changes what the plant reads, and a revert must be a commit.
 
-    The runner lives under the site home, which is gitignored, so its bytes
-    are not in the tree by default. This returns the state and the detail:
+    The runner is installed by ``mishe sync`` as a link to the pinned
+    release's copy (``../runtime/current/checks-runner/observer-checks.py``),
+    so those bytes come from a commit; a hand copy left in its place is the
+    drift this reading catches (2026-11-17: the live copy was one release
+    behind and only a stale docstring differed). This returns the state and
+    the detail:
 
     * ``"reviewed"`` — some commit in the repository carries exactly these
       bytes, so the schedule is reviewable and revertible;

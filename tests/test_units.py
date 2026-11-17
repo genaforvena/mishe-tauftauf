@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -193,6 +194,43 @@ def test_sync_creates_the_watched_parent_directories_not_the_files(cfg):
     units.sync(cfg, ROLES, runner=lambda c: None)
     assert (cfg.home / "inbox").is_dir() and (cfg.home / "signals").is_dir()
     assert not (cfg.home / "inbox" / "genome").exists()       # a pre-created inbox would read as mail
+
+
+def _pin_runner(cfg, content=b"# runner\n"):
+    """A pin at ``SITE/runtime/current`` whose release carries ``checks-runner``."""
+    release = cfg.home / "releases" / "abc"
+    (release / "checks-runner").mkdir(parents=True)
+    (release / "checks-runner" / "observer-checks.py").write_bytes(content)
+    (cfg.home / "runtime").mkdir(parents=True, exist_ok=True)
+    (cfg.home / "runtime" / "current").symlink_to(release)
+    return release
+
+
+def test_sync_links_the_schedule_runner_to_the_pinned_release(cfg):
+    _pin_runner(cfg, b"# reviewed\n")
+    report = units.sync(cfg, ROLES, runner=lambda c: None)
+    link = cfg.home / "checks-runner" / "observer-checks.py"
+    assert link.is_symlink()
+    assert os.readlink(link) == units.RUNNER_LINK
+    assert link.read_bytes() == b"# reviewed\n"          # the bytes the schedule runs are the pin's
+    assert report.linked == [str(units.RUNNER_SITE_PATH)]
+    assert units.sync(cfg, ROLES, runner=lambda c: None).linked == []    # idempotent
+
+
+def test_a_hand_copied_runner_is_kept_aside_not_overwritten(cfg):
+    _pin_runner(cfg)
+    stale = cfg.home / "checks-runner" / "observer-checks.py"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"# stale copy\n")
+    units.sync(cfg, ROLES, runner=lambda c: None)
+    assert stale.is_symlink()
+    aside = list(stale.parent.glob("observer-checks.py.pre-link-*"))
+    assert len(aside) == 1 and aside[0].read_bytes() == b"# stale copy\n"
+
+
+def test_no_pinned_runner_leaves_the_schedule_path_alone(cfg):
+    units.sync(cfg, ROLES, runner=lambda c: None)
+    assert not (cfg.home / "checks-runner" / "observer-checks.py").exists()
 
 
 def test_enable_symlinks_are_not_stale_units(cfg):

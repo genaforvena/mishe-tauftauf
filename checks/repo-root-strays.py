@@ -39,7 +39,7 @@ Exit status:
   3  the repository root cannot be listed
 
 Revert: remove this file and its INVENTORY row in
-``SITE/checks-runner/observer-checks.py``.
+``checks-runner/observer-checks.py``.
 """
 from __future__ import annotations
 

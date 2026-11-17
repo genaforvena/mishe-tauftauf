@@ -19,6 +19,12 @@ These tests pin the two facts that make the schedule reviewable:
   bytes of the release the plant runs (what ``runtime/current`` names), so the
   table the plant runs is the table a reader reviews.
 
+``mishe sync`` installs the live path as a link to that pinned copy, so the
+second fact holds without anyone copying a file (2026-11-17: a hand copy from
+the previous day made promotion of ``0e67fdb1`` fail here). The test stays
+because the link can be replaced by a copy again, and a copy is the drift this
+compares for.
+
 The second test deliberately does not compare against HEAD. Activation copies
 the release tree and then advances the pointer, so a commit that changes the
 runner cannot have its bytes installed until the pin contains that commit.

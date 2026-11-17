@@ -2,7 +2,9 @@
 
 ``render`` is pure and deterministic. ``sync`` writes exactly what render says
 and removes only stale files it generated (each carries MARKER), so units that
-belong to anything else are never touched. Each installed unit is written to a
+belong to anything else are never touched; it also installs the site's runner
+path as a link to the pinned release (``_install_runner_link``), because the
+schedule must run reviewed bytes. Each installed unit is written to a
 hidden sibling and renamed into place, so a concurrent reload or doctor read
 never sees a half-written file. ``doctor`` compares expected and installed files
 and never reports GREEN on missing or unreadable evidence.
@@ -13,6 +15,7 @@ import ast
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -57,6 +60,12 @@ WAKE_MEMORY_HIGH_BYTES = 1536 * 1024 * 1024
 PRODUCER_MEMORY_HIGH = "1536M"
 PRODUCER_MEMORY_HIGH_BYTES = 1536 * 1024 * 1024
 
+#: The schedule's runner path, as ``duties.json`` names it under the site home.
+RUNNER_SITE_PATH = Path("checks-runner") / "observer-checks.py"
+
+#: Where that path points: the pinned release's copy, relative so the site home may move.
+RUNNER_LINK = os.path.join("..", "runtime", "current", "checks-runner", "observer-checks.py")
+
 
 @dataclass
 class Config:
@@ -84,6 +93,7 @@ class Producer:
 class SyncReport:
     written: list = field(default_factory=list)
     removed: list = field(default_factory=list)
+    linked: list = field(default_factory=list)
 
 
 @dataclass
@@ -371,6 +381,38 @@ def _installed(cfg: Config) -> dict:
     return found
 
 
+def _install_runner_link(home: Path, report: SyncReport) -> None:
+    """Make the schedule's runner path open the pinned release's bytes.
+
+    ``duties.json`` runs ``SITE/checks-runner/observer-checks.py`` every 900 s, and the
+    checks that read the runner's tables read that same path. It used to be a hand-copied
+    file: nothing installed it, so it kept whatever bytes were current when someone last
+    copied it. Measured 2026-11-17: promotion of ``0e67fdb1`` failed
+    ``tests/test_runner_bytes.py`` because the live copy hashed ``43f980fd`` (the
+    2026-11-16 file) while the commit carried ``9a84df2f``, and only a stale docstring
+    differed.
+
+    Pointing the path through ``runtime/current`` fixes the class rather than that copy:
+    the pointer is swapped atomically at activation, and every activation runs this sync,
+    so the schedule and the checks that read it open the reviewed bytes of the release the
+    plant runs. A regular file already at the path is kept, renamed aside as
+    ``<name>.pre-link-<epoch>``, never silently overwritten.
+    """
+    link = Path(home) / RUNNER_SITE_PATH
+    if not (Path(home) / "runtime" / "current" / RUNNER_SITE_PATH).is_file():
+        return                      # no pin carrying the runner: leave the path as it is
+    if link.is_symlink() and os.readlink(link) == RUNNER_LINK:
+        return
+    if link.is_symlink() or link.exists():
+        aside = link.with_name(f"{link.name}.pre-link-{int(time.time())}")
+        while aside.exists() or aside.is_symlink():
+            aside = aside.with_name(aside.name + "-" + str(os.getpid()))
+        link.rename(aside)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink(RUNNER_LINK, link)
+    report.linked.append(str(RUNNER_SITE_PATH))
+
+
 def sync(cfg: Config, roles, *, producers=(), runner=None, uninstall: bool = False,
          enable: bool = True) -> SyncReport:
     """Write generated units, remove stale generated ones, reload systemd.
@@ -387,6 +429,8 @@ def sync(cfg: Config, roles, *, producers=(), runner=None, uninstall: bool = Fal
             (cfg.home / name).mkdir(parents=True, exist_ok=True)
     expected = {} if uninstall else render(cfg, roles, producers=producers)
     report = SyncReport()
+    if not uninstall:
+        _install_runner_link(cfg.home, report)
     for rel, text in expected.items():
         path = cfg.unit_dir / rel
         if not path.exists() or path.read_text(encoding="utf-8") != text:

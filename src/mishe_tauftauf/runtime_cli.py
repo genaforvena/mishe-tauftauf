@@ -411,6 +411,8 @@ def run_units(args, home: Path, now: float) -> int:
         report = units.sync(cfg, roles, producers=declared, runner=runner, uninstall=args.uninstall,
                             enable=not args.no_enable)
         print(f"written {len(report.written)}, removed {len(report.removed)}")
+        if report.linked:
+            print("linked " + ", ".join(report.linked))
         return 0
     report = units.doctor(cfg, roles, producers=declared)
     from . import release_promotion
