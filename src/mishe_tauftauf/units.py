@@ -142,7 +142,46 @@ def _is_wake_failure_signal(name: str, prefix: str) -> bool:
     return name.startswith(f"failed-{prefix}-wake-")
 
 
-def render(cfg: Config, roles, *, producers=()) -> dict:
+def _onfailure_units(cfg: Config, roles, producers) -> list:
+    """Every unit this renderer installs with ``OnFailure=mishe-failed@%n.service``."""
+    p = cfg.prefix
+    found = [f"{p}-doctor.service", f"{p}-dual-probe.service"]
+    found += [f"{p}-producer-{prod.name}.service" for prod in producers]
+    found += [f"{p}-wake@{role}.service" for role in sorted(roles)]
+    found += [f"{p}-wake-debounce-{role}.service" for role in sorted(roles)]
+    return found
+
+
+def failure_watch(cfg: Config, roles, producers, resolvers=None) -> dict:
+    """``role`` → failure signals that role's path unit must watch, known before any failure.
+
+    ``failure.report`` registers ``failed-<unit>`` only when the unit first fails, so a
+    watched list rendered from the registry alone is wrong exactly once per new unit: the
+    activation's sync writes the path units, the new unit fails seconds later, the registry
+    gains a signal, and the generated units are stale from that moment (2026-11-17
+    22:38:53Z live: ``review-backlog`` was declared by the pin delivered at 22:39:54Z, its
+    first failure 4 s after that activation's sync registered
+    ``failed-mishe-producer-review-backlog-service`` for genome, and doctor went RED at
+    22:39:16 — a self-inflicted health wake, because the sync could not have listed a signal
+    that did not exist yet). The resolver of a unit is fixed when the units are generated
+    (``duties.resolvers``), so the path can already name it.
+
+    Wake and debounce failures are filtered out by ``_is_wake_failure_signal``: those files
+    must never re-trigger a wake.
+    """
+    from . import failure
+    watched: dict = {}
+    for unit in _onfailure_units(cfg, roles, producers):
+        name = signal_name(unit)
+        if _is_wake_failure_signal(name, cfg.prefix):
+            continue
+        role = failure.resolver_role(cfg.home, unit, declared=roles, configured=resolvers)
+        if role in roles:
+            watched.setdefault(role, []).append(name)
+    return watched
+
+
+def render(cfg: Config, roles, *, producers=(), resolvers=None) -> dict:
     from .delivery_requests import admission_path
     p = cfg.prefix
     failed = f"OnFailure={p}-failed@%n.service"
@@ -166,6 +205,7 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         # drop-in can shadow this value; the wake restores its own floor at runtime (wake_memory).
         f"MemoryAccounting=yes\nMemoryHigh={WAKE_MEMORY_HIGH}\nMemoryMax=2G\nTasksMax=256\nCPUWeight=50\nIOWeight=50\n")
     registry = signal_store.registry(cfg.home)
+    predicted = failure_watch(cfg, roles, producers, resolvers)
     for role in sorted(roles):
         slice_name = cfg.lifeline_slice if role in cfg.lifeline_roles else cfg.plants_slice
         if slice_name:
@@ -173,9 +213,11 @@ def render(cfg: Config, roles, *, producers=()) -> dict:
         watched = [f"PathChanged={cfg.home}/inbox/{role}"]
         # A failed wake writes its own failure signal through OnFailure. Triggering on those would let two roles
         # re-fire each other (health <-> genome) and hit StartLimitBurst; the wake still reads them in its dossier.
-        watched += [f"PathChanged={cfg.home}/signals/{name}.json"
-                    for name, entry in sorted(registry.items())
-                    if role in entry.get("subscribers", []) and not _is_wake_failure_signal(name, p)]
+        # The predicted names are the same files before their unit has failed once (see ``failure_watch``).
+        names = {name for name, entry in registry.items()
+                 if role in entry.get("subscribers", []) and not _is_wake_failure_signal(name, p)}
+        names.update(predicted.get(role, ()))
+        watched += [f"PathChanged={cfg.home}/signals/{name}.json" for name in sorted(names)]
         # A path change starts this oneshot, which sleeps out the burst and then starts the wake once.
         # A change while it sleeps is a no-op (the unit is already active), so one burst of signal writes
         # becomes one wake start. Uncoalesced, senses restarted every ~100 s and hit StartLimitBurst=3
@@ -460,7 +502,7 @@ def _install_runner_link(home: Path, report: SyncReport) -> None:
     report.linked.append(str(RUNNER_SITE_PATH))
 
 
-def sync(cfg: Config, roles, *, producers=(), runner=None, uninstall: bool = False,
+def sync(cfg: Config, roles, *, producers=(), resolvers=None, runner=None, uninstall: bool = False,
          enable: bool = True) -> SyncReport:
     """Write generated units, remove stale generated ones, reload systemd.
 
@@ -474,7 +516,7 @@ def sync(cfg: Config, roles, *, producers=(), runner=None, uninstall: bool = Fal
             signal_store.register(cfg.home, "doctor", max_age=3 * cfg.doctor_every, subscribers=["health"])
         for name in ("inbox", "signals"):       # watched parents must exist; the watched files must not
             (cfg.home / name).mkdir(parents=True, exist_ok=True)
-    expected = {} if uninstall else render(cfg, roles, producers=producers)
+    expected = {} if uninstall else render(cfg, roles, producers=producers, resolvers=resolvers)
     report = SyncReport()
     if not uninstall:
         _install_runner_link(cfg.home, report)
@@ -649,9 +691,9 @@ def _wrapper_pin_problems(home: Path) -> list:
     return [f"wrapper {p}" for p in _pin_import_problems(pin)]
 
 
-def doctor(cfg: Config, roles, *, producers=()) -> DoctorReport:
+def doctor(cfg: Config, roles, *, producers=(), resolvers=None) -> DoctorReport:
     try:
-        expected = render(cfg, roles, producers=producers)
+        expected = render(cfg, roles, producers=producers, resolvers=resolvers)
         installed = _installed(cfg)
     except OSError as exc:
         return DoctorReport("UNKNOWN", [f"cannot read installed units: {exc}"])

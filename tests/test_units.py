@@ -464,6 +464,46 @@ def test_wake_failure_filter_follows_configured_prefix(cfg):
     assert "failed-mishe-wake-genome-service" in health  # another prefix's signal is an ordinary subscription
 
 
+def _review_backlog():
+    return ([units.Producer(name="review-backlog", command=["/bin/true"], every_seconds=600, timeout=45)],
+            {"mishe-producer-review-backlog.service": "genome"})
+
+
+def test_a_declared_units_failure_signal_is_watched_before_it_first_fails(cfg):
+    # 2026-11-17 22:38:53Z live: the activation's sync wrote mishe-wake-genome.path at 22:38, the
+    # review-backlog producer it had just declared failed 4 s later and registered
+    # failed-mishe-producer-review-backlog-service for genome. The generated path unit went stale from
+    # that second on (doctor RED 22:39:16, which woke health for a drift its own plant had caused), because
+    # the watched list came only from signals that already existed. The resolver of a declared unit is
+    # known when the units are generated, so the line can be there before the first failure.
+    producers, resolvers = _review_backlog()
+    files = units.render(cfg, ROLES, producers=producers, resolvers=resolvers)
+    line = f"PathChanged={cfg.home}/signals/failed-mishe-producer-review-backlog-service.json"
+    assert line in files["mishe-wake-genome.path"]
+    assert line not in files["mishe-wake-health.path"]
+
+
+def test_the_first_failure_of_a_declared_unit_does_not_stale_the_generated_units(cfg):
+    producers, resolvers = _review_backlog()
+    units.sync(cfg, ROLES, producers=producers, resolvers=resolvers, runner=lambda c: None)
+    report = units.doctor(cfg, ROLES, producers=producers, resolvers=resolvers)
+    assert report.state == "GREEN" and report.problems == []
+    store.register(cfg.home, "failed-mishe-producer-review-backlog-service", max_age=604800,
+                   subscribers=["genome"])            # what failure.report does on that first failure
+    report = units.doctor(cfg, ROLES, producers=producers, resolvers=resolvers)
+    assert report.problems == []                      # no drift, so no doctor RED and no wake
+
+
+def test_a_declared_units_failure_is_watched_under_the_default_resolver(cfg):
+    # A site without resolvers.generated.json falls back to the default resolver (health), which must
+    # watch the names too: the fallback is the same one failure.resolver_role applies at registration.
+    producers = [units.Producer(name="plain", command=["/bin/true"], every_seconds=600, timeout=45)]
+    files = units.render(cfg, ROLES, producers=producers)
+    line = f"PathChanged={cfg.home}/signals/failed-mishe-producer-plain-service.json"
+    assert line in files["mishe-wake-health.path"]
+    assert "failed-mishe-producer-plain-service" not in files["mishe-wake-genome.path"]
+
+
 def test_senses_path_triggers_go_through_a_debounce_that_starts_the_wake_once(cfg):
     files = units.render(cfg, ["senses", "genome"])
     debounce = files["mishe-wake-debounce-senses.service"]

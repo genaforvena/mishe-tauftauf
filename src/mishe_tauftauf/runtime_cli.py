@@ -432,16 +432,17 @@ def run_units(args, home: Path, now: float) -> int:
     source_repo = Path(getattr(args, "source_repo", None) or runtime_source(cfg.repo, args.pythonpath)).resolve()
     declared = producers.load(home, python=sys.executable, declared=duties.declared(cfg.repo, home, source=source_repo))
     declared += producers.load(home, python=sys.executable)
-    write_json(home / "resolvers.generated.json", duties.resolvers(source_repo, args.prefix))
+    resolvers = duties.resolvers(source_repo, args.prefix)
+    write_json(home / "resolvers.generated.json", resolvers)
     if args.command == "sync":
         runner = None if args.no_systemctl else (lambda c: subprocess.run(c, check=True))
-        report = units.sync(cfg, roles, producers=declared, runner=runner, uninstall=args.uninstall,
-                            enable=not args.no_enable)
+        report = units.sync(cfg, roles, producers=declared, resolvers=resolvers, runner=runner,
+                            uninstall=args.uninstall, enable=not args.no_enable)
         print(f"written {len(report.written)}, removed {len(report.removed)}")
         if report.linked:
             print("linked " + ", ".join(report.linked))
         return 0
-    report = units.doctor(cfg, roles, producers=declared)
+    report = units.doctor(cfg, roles, producers=declared, resolvers=resolvers)
     from . import release_promotion
     for problem in release_promotion.probe_problems(home, cfg.unit_dir, now=now):
         report.state = "RED"

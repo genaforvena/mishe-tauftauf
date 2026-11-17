@@ -17,9 +17,12 @@ SIGNAL_MAX_AGE = 7 * 86400
 REOFFER_SECONDS = 3600
 
 
-def resolver_for(home, unit: str) -> str:
-    configured = {**(read_json(Path(home) / "resolvers.generated.json") or {}),
-                  **(read_json(Path(home) / "resolvers.json") or {})}     # the owner's file wins
+def resolver_for(home, unit: str, *, configured=None) -> str:
+    """The role that resolves ``unit``'s failure. ``configured`` is the declared unit→role map when the
+    caller already computed it (``duties.resolvers``); otherwise the site's files are read, owner's wins."""
+    if configured is None:
+        configured = read_json(Path(home) / "resolvers.generated.json") or {}
+    configured = {**configured, **(read_json(Path(home) / "resolvers.json") or {})}   # the owner's file wins
     if unit in configured:
         return configured[unit]
     if units.is_health_wake(unit):
@@ -27,13 +30,16 @@ def resolver_for(home, unit: str) -> str:
     return DEFAULT_RESOLVER
 
 
-def resolver_role(home, unit: str) -> str:
+def resolver_role(home, unit: str, *, declared=None, configured=None) -> str:
     """The role ``report`` announces to, mirroring its undeclared-role fallback so the re-offer it adds and the
-    re-offer ``clear_recovered`` removes are the same file."""
+    re-offer ``clear_recovered`` removes are the same file. ``declared`` and ``configured`` let a caller that
+    already holds the roster and the resolver map render a generated unit without re-reading the site
+    (``units.failure_watch`` does, so a unit's path is watched before that unit has ever failed)."""
     from . import roles
-    role = resolver_for(home, unit)
-    if role not in roles.declared(home) and roles.declared(home):
-        role = "steward" if "steward" in roles.declared(home) else FALLBACK_RESOLVER
+    role = resolver_for(home, unit, configured=configured)
+    declared = roles.declared(home) if declared is None else declared
+    if role not in declared and declared:
+        role = "steward" if "steward" in declared else FALLBACK_RESOLVER
     return role
 
 

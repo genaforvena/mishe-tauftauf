@@ -102,7 +102,11 @@ def boot_start(home: Path, artifact: Path, request_id: str, *, timeout=1000):
                        pythonpath=str(runtime / 'src'), unit_dir=Path.home() / '.config/systemd/user')
     declared = producers.load(home, python=sys.executable, declared=duties.declared(home.parent, home))
     declared += producers.load(home, python=sys.executable)
-    report = units.doctor(cfg, roles.declared(home), producers=declared)
+    from .work_boundary import runtime_source
+    # The same resolver map the `mishe sync` below will write, so the check compares against the
+    # units that sync is about to generate rather than against a map left from the previous boot.
+    resolvers = duties.resolvers(Path(runtime_source(home.parent, str(runtime / 'src'))).resolve(), 'mishe')
+    report = units.doctor(cfg, roles.declared(home), producers=declared, resolvers=resolvers)
     if report.state != 'GREEN':
         raise RuntimeError(f'exact unit check failed: {report.problems}')
     run('sync', '--repo', str(home.parent), '--pythonpath', str(runtime / 'src'))
