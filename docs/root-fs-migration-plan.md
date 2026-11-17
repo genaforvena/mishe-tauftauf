@@ -36,10 +36,17 @@ The destination already holds `/mnt/mishe-scratch/mishe-cargo-target` (the Rust 
   `/mnt/mishe-scratch` at priority 0 (above the root file's -2) so new swapout
   goes to the idle drive. Baseline before it: 24 h = 7 stalls >= 5 s, worst
   8.46 s; revert is `swapoff /mnt/mishe-scratch/swap.img`.
-- This is evidence for a candidate chain (reclaim/swapout to nvme0 → long
-  fsync), not proof. If the stall rate does not fall, the hypothesis is
-  falsified and the copy stays a relief bet. fstab persistence waits for that
-  observation.
+- Routing is now **confirmed** (census 07:27:42Z → 08:00:32Z, 32 min of probe
+  records): `pswpout` grew 84792 pages (331 MiB); `/mnt/mishe-scratch/swap.img`
+  used went 0 → 301 MiB while `/swap.img` on nvme0 *fell* 7808 → 7736 MiB. New
+  swapout goes to the fast drive, and the root swapfile even gave pages back.
+  So the priority-0 file is doing exactly what it was added for.
+- The candidate chain itself (reclaim/swapout to nvme0 → long root fsync) is not
+  what produces the stall class: the 07:41-07:57Z measurement below shows a
+  purely I/O-bound fsync cliff with `psi_mem 0.0`. Keep the fast swapfile as
+  headroom and containment (the root file is 94 % full and cannot grow), not as
+  the remedy; the remedy is the move. fstab persistence is a small separate step
+  if the operator wants it to survive reboot.
 
 ## Measured 2026-11-17 07:24Z: the coincident load was Rust builds on the other drive
 
@@ -113,6 +120,12 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
      `.git/worktrees/<sha>` gitdir points at the same absolute path and stays valid through the
      symlink (`git -C …/.mishe-tauftauf/runtime/current rev-parse HEAD` still works).
    - `/etc/systemd/system/mesh-router-phaedra-relay.service` names `~/.mesh/…` only — not moved.
+   - Sandboxing (checked 2026-11-17 07:57Z across all 110 user units naming the
+     checkout): no `ProtectHome`, `ProtectSystem`, `ReadOnlyPaths`, `BindPaths` or
+     `InaccessiblePaths`; the only sandbox directive is `PrivateTmp=true` in three
+     units. So a destination under `/mnt` is reachable from every unit, and nothing
+     narrows the view to `/home` in a way a symlink would defeat. Re-run this check
+     if units change before the flip.
    The realpath check is still run once after the flip (step 10) as a guard, not as a repointing task.
 4. Causal status (2026-11-17 07:57Z): diagnosed to the device path, not to a plant
    writestorm and not to swap. The root LV sustains ~15 MiB/s writes and ~62 MiB/s
@@ -122,8 +135,10 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
    SMART is clean (26 % used, 0 media errors). Acceptance after the move: root-dir
    probe events with `fsync >= 0.3 s` drop toward the nvme1n1 rate (3-4 ever), and
    the recurrence detector stays armed. If stalls continue after the move, the
-   remaining root writers are journal and `/swap.img`; then revisit the pending
-   swapout-to-nvme1 evidence and the journal's `Storage=`.
+   remaining root writers are journal and `.mesh` (left in place by design) and
+   any page still swapping from the old `/swap.img`; routing is already fixed
+   (see the 07:21Z section), so the next suspect is the journal's `Storage=`
+   (currently the default `auto`, i.e. persistent, 3.0 G in `/var/log/journal`).
    Device-throughput watch (run when stalls recur or monthly; 1 GiB each, safe,
    delete the files):
    `dd if=/dev/zero of=/var/lib/mishe-rootprobe/t.bin bs=4M count=256 oflag=direct`
@@ -134,8 +149,21 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
    live — sources untouched, resumable), then under the step-2 quiesce the final
    `rsync -aHxc --itemize-changes SRC/ DST/` (checksummed delta). Do not run a heavy pass while a
    moving-pin delivery check is running: it competes for I/O and can push the check past its timeout
-   (a wasted delivery window).
-7. Verification after copy: `rsync -aHxc --dry-run --itemize-changes SRC/ DST/` MUST show zero changes; plus matching file count (`find ... | wc -l`) and `du -sb` match. All three must agree.
+   (a wasted delivery window). A wake holds dispatch, and delivery waits for wakes to end, so a
+   wake-held slot *is* the safe window for the bulk pass.
+   **First pass running since 2026-11-17 07:53:47Z** as transient user unit
+   `mishe-root-migration-bulk` (`IOWeight=10`, `Nice=19`), script
+   `/mnt/mishe-scratch/mishe-migration/bulk-copy.sh`, log
+   `/mnt/mishe-scratch/mishe-migration/bulk.log`; order checkout → `.omp` → `.codex`.
+   Observed rate 55-63 MB/s: the checkout finished rc=0 at 08:01:58Z with
+   30,925,374,169 bytes copied of 30,954,635,352 on the source (the 30 MB gap is
+   live churn — sqlite `-shm`/WAL, walls — and the delta pass closes it). Watch with
+   `systemctl --user is-active mishe-root-migration-bulk; tail -2 …/bulk.log`.
+   The copy itself does not create the stall class: with it running the root probe
+   recorded 2 slow events in 10 min, worst 1.11 s (vs 8 events ≥ 5 s during the
+   deliberate 1 GiB `dd` bursts), so the extra load is reads, not a root writeback
+   backlog.
+7. Verification after copy: `rsync -aHxc --dry-run --itemize-changes SRC/ DST/` MUST show zero changes; plus matching file count and `du -sb` match. All three must agree. `/mnt/mishe-scratch/mishe-migration/verify-copy.sh [tree …]` runs the three checks per tree and prints `VERIFIED`/`NOT-CLEAN`; it can only pass on a quiesced tree, so its natural place is the step-2 window, and a nonzero delta outside one is live churn rather than a copy defect.
 8. Rename source dirs to `*.pre-migration` (atomic, reversible): `mv .omp .omp.pre-migration` etc. Keep for rollback window.
 9. Create symlinks: `ln -s /mnt/mishe-scratch/.../.omp /home/mesh-home/.omp` etc.
 10. Restart affected services/processes; verify reads/writes to new path.
