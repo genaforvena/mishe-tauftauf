@@ -28,6 +28,9 @@ TREES = ("mishe-tauftauf", ".omp", ".codex")
 SYSTEMCTL = r"""#!/bin/bash
 printf '%s\n' "$*" >>"$SANDBOX/systemctl.log"
 case "$*" in
+  *"is-active"*)
+      if [ -e "$SANDBOX/flip_active" ]; then echo active; exit 0; fi
+      echo inactive; exit 3 ;;
   *"list-units"*"--type=path"*)
       printf 'fake-a.service loaded active running x\nfake-b.service loaded active running x\nfake-c.service loaded active running x\nfake-w.path loaded active waiting x\n' ;;
   *"list-units"*"--state=active"*)
@@ -164,18 +167,22 @@ def detach_argv(root):
 
 
 def test_detach_forwards_the_callers_engine_bound_and_wake_key(tmp_path):
-    """Regression: systemd-run starts the flip in a clean environment, so
-    MIGRATION_ENGINE_TIMEOUT and MISHE_WAKE_KEY were silently dropped -- a caller's
-    short drain bound became the 1800 s default, and target_units lost the exclusion
-    that keeps the launching wake's unit out of the stop list."""
+    """Regression: systemd-run starts the flip in a clean environment, so the
+    caller's MIGRATION_ENGINE_TIMEOUT, MIGRATION_DELIVERY_DRAIN_TIMEOUT and
+    MISHE_WAKE_KEY were silently dropped -- a caller's short bound became the
+    default, and target_units lost the exclusion that keeps the launching wake's
+    unit out of the stop list."""
     root = sandbox(tmp_path)
     install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
 
     flip(root, "--execute", "--scoped", "--detach",
-         extra_env={"MIGRATION_ENGINE_TIMEOUT": "45", "MISHE_WAKE_KEY": "wake-health1-1794"})
+         extra_env={"MIGRATION_ENGINE_TIMEOUT": "45",
+                    "MIGRATION_DELIVERY_DRAIN_TIMEOUT": "120",
+                    "MISHE_WAKE_KEY": "wake-health1-1794"})
 
     argv = detach_argv(root)
     assert "--setenv=MIGRATION_ENGINE_TIMEOUT=45" in argv, argv
+    assert "--setenv=MIGRATION_DELIVERY_DRAIN_TIMEOUT=120" in argv, argv
     assert "--setenv=MISHE_WAKE_KEY=wake-health1-1794" in argv, argv
     assert "--setenv=MIGRATION_SRC=" in argv, argv
 
@@ -195,6 +202,40 @@ def test_detach_passes_no_empty_setenv_when_the_caller_sets_neither(tmp_path):
     assert "--setenv=MISHE_WAKE_KEY" not in argv, argv
     # An empty array element would show up as a doubled space in the logged argv.
     assert "  " not in argv, argv
+
+
+def test_detach_relaunches_with_an_absolute_script_path(tmp_path):
+    """Regression: the relaunch runs in systemd's clean working directory, so a
+    relative $0 (the documented `./flip.sh --detach` from the work dir) asked
+    systemd to run `/bin/bash ./flip.sh` in $HOME; the unit exited 127 before any
+    unit was stopped (production journal, 2026-11-17 11:01:55Z)."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+
+    done = subprocess.run(["bash", "./flip.sh", "--execute", "--scoped", "--detach"],
+                          cwd=root / "work", env=env_for(root),
+                          capture_output=True, text=True, timeout=180)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    tokens = detach_argv(root).split()
+    assert tokens[-4] == "/bin/bash", tokens
+    assert os.path.isabs(tokens[-3]), tokens
+    assert Path(tokens[-3]).resolve() == (root / "work" / "flip.sh").resolve(), tokens
+
+
+def test_detach_refuses_to_stop_a_flip_that_is_already_running(tmp_path):
+    """Regression: the unit name is fixed, so stale-unit cleanup used to `stop`
+    a live cutover; two minds launching in the same minute is ordinary."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+    (root / "flip_active").touch()
+
+    done = flip(root, "--execute", "--scoped", "--detach")
+
+    assert done.returncode != 0, done.stdout + done.stderr
+    assert "already running" in done.stdout + done.stderr
+    assert not (root / "systemd-run.log").exists(), detach_argv(root)
+    assert not any("stop mishe-root-migration-flip.service" in line for line in calls(root)), calls(root)
 
 
 def test_live_wake_engine_stops_before_the_plant_is_stopped(tmp_path):

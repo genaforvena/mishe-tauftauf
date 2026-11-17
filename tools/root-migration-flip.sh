@@ -420,22 +420,36 @@ quiesce() {
 # script. systemd-run gives the flip its own unit, so the wake can end and the
 # queued follow-up wakes stay queued behind the disarmed triggers.
 #
-# The relaunch starts from a clean environment, so every caller-set knob has to
-# be named here or it silently reverts to its default: MIGRATION_ENGINE_TIMEOUT
-# (line 59, else a caller's short drain bound becomes the 1800 s default) and
-# MISHE_WAKE_KEY (line 132, else the launching wake's unit is no longer excluded
-# from the stop list). `set -u` plus an empty array would expand as an unbound
-# variable, hence the ${a[@]+...} guards.
+# The relaunch starts from a clean environment AND a clean working directory, so
+# every caller-set knob has to be named here and this script must be named by
+# absolute path: `./flip.sh --detach` from the work dir otherwise asks systemd to
+# run `/bin/bash ./flip.sh` in $HOME and the unit exits 127 before any unit is
+# stopped (observed 2026-11-17 11:01:55Z). MIGRATION_ENGINE_TIMEOUT (line 59,
+# else a caller's short drain bound becomes the 1800 s default),
+# MIGRATION_DELIVERY_DRAIN_TIMEOUT (line 69, else a caller's delivery-drain bound
+# becomes the 900 s default) and MISHE_WAKE_KEY (line 132, else the launching
+# wake's unit is no longer excluded from the stop list). `set -u` plus an empty
+# array would expand as an unbound variable, hence the ${a[@]+...} guards.
 detach_relaunch() {
-    local unit=mishe-root-migration-flip forward=()
-    [ -n "${MIGRATION_ENGINE_TIMEOUT:-}" ] && forward+=(--setenv=MIGRATION_ENGINE_TIMEOUT="$MIGRATION_ENGINE_TIMEOUT")
-    [ -n "${MISHE_WAKE_KEY:-}" ] && forward+=(--setenv=MISHE_WAKE_KEY="$MISHE_WAKE_KEY")
+    local unit=mishe-root-migration-flip forward=() self
+    # The unit name is fixed, so the stale-unit cleanup below must not stop a
+    # flip that is already running: two minds can launch in the same minute and
+    # the second `stop` would kill a live cutover mid-rename, with its EXIT trap
+    # then restoring the plant under the first one.
+    if systemctl --user is-active --quiet "$unit.service"; then
+        die "a flip is already running as $unit.service; not relaunching"
+    fi
     systemctl --user stop "$unit.service" 2>/dev/null
+    self=$(readlink -f -- "$0" 2>/dev/null) || self=$0
+    [ -f "$self" ] || die "cannot resolve this script's path for the detached relaunch: $0"
+    [ -n "${MIGRATION_ENGINE_TIMEOUT:-}" ] && forward+=(--setenv=MIGRATION_ENGINE_TIMEOUT="$MIGRATION_ENGINE_TIMEOUT")
+    [ -n "${MIGRATION_DELIVERY_DRAIN_TIMEOUT:-}" ] && forward+=(--setenv=MIGRATION_DELIVERY_DRAIN_TIMEOUT="$MIGRATION_DELIVERY_DRAIN_TIMEOUT")
+    [ -n "${MISHE_WAKE_KEY:-}" ] && forward+=(--setenv=MISHE_WAKE_KEY="$MISHE_WAKE_KEY")
     systemd-run --user --unit="$unit" --collect \
         --setenv=MISHE_FLIP_DETACHED=1 \
         --setenv=MIGRATION_SRC="$SRC" --setenv=MIGRATION_DST="$DST" --setenv=MIGRATION_WORK="$WORK" \
         ${forward[@]+"${forward[@]}"} \
-        /bin/bash "$0" --execute --"$SHAPE" >/dev/null 2>&1 ||
+        /bin/bash "$self" --execute --"$SHAPE" >/dev/null 2>&1 ||
         die "could not start the detached flip unit $unit.service"
     log "detached as $unit.service; the launching wake may yield, the flip continues"
     exit 0
