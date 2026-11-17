@@ -1,4 +1,6 @@
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from mishe_tauftauf import unit_cpu
@@ -71,7 +73,14 @@ def test_read_unit_cpu_samples_a_fake_slice_across_the_window(tmp_path: Path) ->
         _write_cpu(slice_path / "tmux-spawn-a.scope", 100 + 200_000)
         _write_cpu(slice_path / "mishe-senses.service", 200 + 100_000)
 
-    with patch("mishe_tauftauf.unit_cpu.time.sleep", side_effect=advance):
+    # Patch the module's ``time`` name, not the process-global ``time.sleep``: the suite leaves
+    # other threads running, and one of their sleeps would otherwise run ``advance`` early,
+    # writing the after values before the baseline snapshot (2026-11-17: unit_sum 0 with root
+    # 300000 failed the delivery check for 8594e897).
+    module_time = SimpleNamespace(sleep=advance, monotonic=time.monotonic)
+    with patch("mishe_tauftauf.unit_cpu.time", module_time):
+        time.sleep(0.0)  # a stray sleep elsewhere in the process must not advance the fake slice
+        assert (slice_path / "cpu.stat").read_text(encoding="utf-8").startswith("usage_usec 1000")
         reading = unit_cpu.read_unit_cpu(cgroup_root=tmp_path, sample_seconds=0.3)
     assert reading["id"] == unit_cpu.SENSE_ID
     assert reading["root_usec"] == 300_000
