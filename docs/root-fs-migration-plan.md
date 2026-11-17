@@ -21,6 +21,24 @@ The destination already holds `/mnt/mishe-scratch/mishe-cargo-target` (the Rust 
 - 116 user unit files under `~/.config/systemd/user` reference the checkout path. **The retained
   symlink keeps every one valid** — see step 3.
 
+## Measured 2026-11-17 07:21Z: the swapfile is on the stalling drive
+
+- `/proc/swaps` had one swapfile, `/swap.img`, on the same
+  `ubuntu--vg-ubuntu--lv` (nvme0) as root, and it was 98.3 % used (8.0 GiB of
+  8.4 GiB). The destination drive `/mnt/mishe-scratch` (nvme1n1) was idle.
+- The 07:06:26Z stall (5.43 s, `fsync` 5.43, `create` 0.0001, io_psi 21.17,
+  mem_psi 5.18) is the first stall with a memory-pressure sample; the next two
+  probes in that span recorded mem_psi 18.72 and 22.03. It was one fsync waiting
+  under I/O and memory contention, not write volume.
+- Bounded, reversible experiment applied: an 8 GiB swapfile on
+  `/mnt/mishe-scratch` at priority 0 (above the root file's -2) so new swapout
+  goes to the idle drive. Baseline before it: 24 h = 7 stalls >= 5 s, worst
+  8.46 s; revert is `swapoff /mnt/mishe-scratch/swap.img`.
+- This is evidence for a candidate chain (reclaim/swapout to nvme0 → long
+  fsync), not proof. If the stall rate does not fall, the hypothesis is
+  falsified and the copy stays a relief bet. fstab persistence waits for that
+  observation.
+
 ## Steps
 
 1. Pre-check: ensure no active process using targets beyond shell; record `lsof`/`fuser` for each.
