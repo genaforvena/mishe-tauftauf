@@ -582,6 +582,36 @@ def _review_attempts(home, identity):
     return len(list((Path(home)/"work/reviews").glob(f"{identity}-*.failed-attempt.json")))
 
 
+def _merged_failed_attempt(home, identity):
+    """True when the newest archived failed attempt was merged but never recorded.
+
+    A retry archives the predecessor's failed result, re-runs the reviewer and
+    merges a second failure: both raise the archive count by one while the record
+    names the count at arming time. ``merge_review`` normally rewrites the record
+    in that same pass, but a write lost to an earlier race leaves the count
+    behind with the result already ``merged``. Nothing revisits a merged result,
+    so the scan must treat this state as a lost rung rather than an in-flight
+    merge (measured 2026-11-17: five delivered records with
+    ``review_retry_attempts`` 0-1 against 1-2 archives, no unit and a due time
+    hours past). A merged *successful* review is not a retry rung and stays out.
+    """
+    queued = read_json(Path(home)/"work/reviews"/f"{identity}.result.json")
+    return (isinstance(queued, dict) and queued.get("merged") is True
+            and "review_error" in (queued.get("result") or {}))
+
+
+def _accepted_attempt(recorded, attempts, failed_merged):
+    """Whether the scan may arm a rung the record has not counted yet.
+
+    The count names the rung scheduled for the newest *recorded* attempt, so an
+    equal count is the normal armed case. A larger archive count is only a lost
+    rung when its result is already merged; an unmerged one still belongs to
+    ``merge_review``, which arms the next rung itself and would otherwise be
+    duplicated by this scan.
+    """
+    return recorded == attempts or (attempts > recorded and failed_merged)
+
+
 def _review_retry_lost(current, now, live_units=frozenset(), timer_shas=frozenset()):
     """True when a recorded retry rung must be armed again.
 
@@ -868,7 +898,9 @@ def _rearm_scan(home, *, clock, live_units, stop, skipped):
             identity = _identity(current)
             if identity is None:
                 continue
-            if (current.get("review_retry_attempts") or 0) != _review_attempts(home, identity):
+            if not _accepted_attempt(current.get("review_retry_attempts") or 0,
+                                     _review_attempts(home, identity),
+                                     _merged_failed_attempt(home, identity)):
                 continue
             if not _review_retry_lost(current, clock(), live_shas, timer_shas):
                 continue
@@ -880,7 +912,9 @@ def _rearm_scan(home, *, clock, live_units, stop, skipped):
                     identity = _identity(current)
                     if identity is None:
                         continue
-                    if (current.get("review_retry_attempts") or 0) != _review_attempts(home, identity):
+                    if not _accepted_attempt(current.get("review_retry_attempts") or 0,
+                                             _review_attempts(home, identity),
+                                             _merged_failed_attempt(home, identity)):
                         continue
                     if not _review_retry_lost(current, clock(), live_shas, timer_shas):
                         continue

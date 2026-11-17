@@ -602,6 +602,44 @@ def test_work_poll_scan_rearms_only_a_lost_retry(tmp_path,monkeypatch):
     assert len(launched)==2, launched
 
 
+def test_scan_rearms_a_record_whose_merged_attempt_never_advanced_it(tmp_path,monkeypatch):
+    # The record names the rung armed before its last failed attempt; that retry
+    # then archived the attempt and re-ran the reviewer, and the merge wrote the
+    # result but lost the record write. The attempt-count gate read the lag as "a
+    # merge is pending" and stranded the release for good: five delivered records
+    # on 2026-11-17 named attempts 0-1 against 1-2 archives, with no unit and a
+    # due time hours past. A merged failed result is that lost rung; an unmerged
+    # one still belongs to merge_review, which arms the next rung itself.
+    from mishe_tauftauf import release_promotion as p
+    (tmp_path/"work/reviews").mkdir(parents=True)
+    (tmp_path/"work/releases").mkdir(parents=True)
+    launched=[]
+    class NoUnits: stdout=""; returncode=0
+    def fake(argv,**kw):
+        if argv[0]=="systemd-run":
+            launched.append(argv)
+        return NoUnits()
+    monkeypatch.setattr(p.subprocess,"run",fake)
+    now=time.time()
+    due=int(now-p.REVIEW_RETRY_REARM_GRACE_S-1)
+    for identity, merged in (("rel-merged",True),("rel-unmerged",False)):
+        write_json(p.record_path(tmp_path,identity),
+                   dict(id=identity,sha=(identity*4)[:40],source=str(tmp_path),phase="delivered",
+                        review_pending=True,review_retry_attempts=0,
+                        review_retry_state="scheduled in 1800s",review_retry_due=due))
+        (tmp_path/"work/reviews"/f"{identity}-1.failed-attempt.json").write_text("{}")
+        write_json(tmp_path/"work/reviews"/f"{identity}.result.json",
+                   dict(id=identity,result=dict(review_error="reviewer quota spent"),merged=merged))
+    armed=p.rearm_lost_review_retries(tmp_path,clock=lambda: now,live_units={})
+    assert armed==["rel-merged"], armed
+    repaired=read_json(p.record_path(tmp_path,"rel-merged"))
+    assert repaired["review_retry_attempts"]==1
+    assert repaired["review_retry_state"]=="scheduled in 3600s"
+    assert repaired["review_retry_due"]>now
+    assert len(launched)==1, launched
+    assert read_json(p.record_path(tmp_path,"rel-unmerged"))["review_retry_due"]==due
+
+
 def test_a_malformed_record_does_not_fail_the_work_poll(tmp_path,monkeypatch):
     # Review note on 3a2379dd: a record without "id" raised KeyError outside the
     # scan's caught tuple, so one bad write failed the whole work poll. The scan
