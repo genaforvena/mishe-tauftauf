@@ -54,6 +54,16 @@ resolver `network`) watches that sub-reading separately: the router read can suc
 them or a field is missing, RED only on impossible values (channel outside 1–196 or noise
 outside -120…0 dBm), GREEN when both known radios report plausible numbers.
 
+The `network-router-load` duty (same checker, subcommand `load`, every 300 s, `max_age` 900 s,
+resolver `network`) watches the router's own self-limit — the same 5-minute load above 1.0 or
+free RAM below 120 MB that makes the producer back off and that `ROUTER LOAD` prints. A single
+spiky sample is GREEN but the message names the breach; an unbroken run of over-limit readings
+spanning at least 30 minutes is RED, so a persistently busy router wakes a person instead of
+only changing one line in the window. A throttled read carries no load numbers, so it neither
+raises nor hides the alarm; a gap of more than 20 minutes between load readings ends the run
+rather than joining two breaches; no load reading in six hours, or a newest one over 15 minutes
+old, is UNKNOWN.
+
 The same checker also guards the network area's own continuity. The
 `network-progress` duty (`checks/network-care.py`, subcommand `progress`, every
 900 s, `max_age` 1800 s, resolver `network`) is RED when the network mind's wall
