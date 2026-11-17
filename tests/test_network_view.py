@@ -359,3 +359,64 @@ def test_probe_cadence_follows_a_slow_producer():
 def test_probe_cadence_unknown_without_usable_timestamps():
     assert view.probe_cadence_phrase([]) == "probe cadence UNKNOWN"
     assert view.probe_cadence_phrase([{"at": "not-a-time"}]) == "probe cadence UNKNOWN"
+
+
+def _phase_rows(count, connect, tls, hour, day=10):
+    """Probes at a fixed UTC clock hour carrying both phases; the baseline reads the hour from `at` alone."""
+    at = f"2026-11-{day:02d}T{hour:02d}:00:00Z"
+    return [{"at": at, "internet": {name: {"ok": True, "connect_ms": connect, "tls_ms": tls}
+                                    for name in ("gstatic", "cloudflare")}} for _ in range(count)]
+
+
+def _fresh_phase_row(connect, tls):
+    at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return {"at": at, "internet": {name: {"ok": True, "connect_ms": connect, "tls_ms": tls}
+                                   for name in ("gstatic", "cloudflare")}}
+
+
+def test_phase_line_splits_reaching_the_site_from_the_handshake():
+    line = view.phase_line([_fresh_phase_row(70.0, 900.0)])
+    assert "reaching the site 70 ms" in line and "secure handshake 900 ms" in line
+    assert "last probe" in line
+
+
+def test_phase_line_is_unknown_for_a_stale_probe():
+    row = _fresh_phase_row(70.0, 900.0)
+    row["at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600))
+    assert view.phase_line([row]).startswith("UNKNOWN")
+
+
+def test_phase_line_is_unknown_when_the_probe_did_not_measure_the_phases():
+    at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    row = {"at": at, "internet": {name: {"ok": True, "total_ms": 300.0}
+                                  for name in ("gstatic", "cloudflare")}}
+    line = view.phase_line([row])
+    assert line.startswith("UNKNOWN") and "did not measure both phases" in line
+
+
+def test_phase_line_is_unknown_when_both_checks_failed():
+    at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    row = {"at": at, "internet": {name: {"ok": False, "connect_ms": None, "tls_ms": None}
+                                  for name in ("gstatic", "cloudflare")}}
+    assert view.phase_line([row]).startswith("UNKNOWN")
+
+
+def test_phase_line_is_unknown_without_rows():
+    assert view.phase_line([]).startswith("UNKNOWN")
+
+
+def test_phase_line_reports_the_night_and_evening_handshake_baselines():
+    rows = _phase_rows(80, 70.0, 270.0, hour=2) + _phase_rows(80, 70.0, 460.0, hour=19)
+    rows.append(_fresh_phase_row(70.0, 300.0))
+    line = view.phase_line(rows)
+    assert "nights ~270" in line and "evenings ~460" in line
+    assert not line.startswith("UNKNOWN")
+
+
+def test_phase_line_drops_a_baseline_it_cannot_support():
+    rows = _phase_rows(10, 70.0, 270.0, hour=2)  # ten night rows, far under PHASE_BASELINE_MIN
+    rows.append(_fresh_phase_row(70.0, 300.0))
+    line = view.phase_line(rows)
+    assert line.startswith("reaching the site")
+    assert "nights" not in line and "evenings" not in line
+    assert "too few probes" in line

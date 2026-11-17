@@ -66,6 +66,15 @@ is not mistaken for a quiet mind.
 ## What the view says about it
 
 - `RECORDED`: client count by band, weakest device by name and dBm, the age of the last read.
+- `WHERE TIME GOES`: of the page-load time just above, how much went into reaching the site
+  (`connect_ms`) and how much into the secure handshake (`tls_ms`), for the newest probe only.
+  It also gives the handshake's usual median over the loaded rows and, when both have at least
+  `PHASE_BASELINE_MIN` rows, the medians for overnight (00:00–05:59) and the busy evening
+  (18:00–20:59). Those two hours were chosen because the handshake median is elevated there in
+  both the eight-day log and the shorter window the view loads; 17:00 and 21:00 sit near the
+  daytime baseline in both. The line says where the time went, not why: household traffic and the
+  ISP's evening peak look the same from here. UNKNOWN when the newest probe is stale or did not
+  carry both phases.
 - `WI-FI RADIO`: each known radio's channel, frequency and noise floor from the read-only router
   pass, with the age of the reading; UNKNOWN when the sub-reading is absent, STALE past 15 minutes.
 - `UNKNOWN`: the log has no reading, or the last read failed.

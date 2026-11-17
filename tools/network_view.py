@@ -525,6 +525,80 @@ def web_sample(row):
     return sum(vals) / len(vals) if vals else None
 
 
+SECURE_HOSTS = ("gstatic", "cloudflare")
+NIGHT_HOURS = range(0, 6)      # the household is asleep; the quiet baseline for a handshake
+# The busy evening, 18:00-20:59 clock time: the only hours where the handshake median is elevated in
+# BOTH the 8-day file and the 3.4-day window the view loads (18/19/20 = 462/526/408 ms and 469/459/423 ms;
+# 17:00 and 21:00 sit near the daytime baseline in both). The household asks "why are pages slow at 7pm?",
+# so these hours get named; the cause (household traffic or the ISP's evening peak) is not asserted.
+EVENING_HOURS = range(18, 21)
+PHASE_BASELINE_MIN = 60        # rows needed before a night/evening median means anything
+
+
+def phase_ms(row, name, field):
+    """One phase (connect_ms or tls_ms) of a secure web check, or None when it did not load or was not measured."""
+    check = ((row or {}).get("internet") or {}).get(name)
+    return check.get(field) if isinstance(check, dict) and check.get("ok") else None
+
+
+def _sample_mean(row, field):
+    """Mean of one check phase across the secure hosts in a row, or None when none measured it."""
+    vals = [phase_ms(row, name, field) for name in SECURE_HOSTS]
+    vals = [v for v in vals if v is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def _hour_median(data, field, hours):
+    """Median of per-row phase means over probes taken in `hours` of the UTC clock, or None when too few.
+
+    Per-row means, not pooled per-host values: the INTERNET lines and the USUAL baseline are per-row
+    means too, and pooling lets one fast host dilute a slow one, which hides the evening rise.
+    """
+    vals = []
+    for row in data:
+        try:
+            hour = time.gmtime(nb.utc_epoch(row["at"])).tm_hour
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        if hour in hours:
+            v = _sample_mean(row, field)
+            if v is not None:
+                vals.append(v)
+    return statistics.median(vals) if len(vals) >= PHASE_BASELINE_MIN else None
+
+
+def phase_line(data, now=None):
+    """Where a page load's time goes: reaching the site vs the secure handshake, with the age of the reading.
+
+    The INTERNET lines above show the whole page load and already flag "slower than usual"; this says
+    which half moved. The two phases fail differently: a slow connect points at the path (router, WAN,
+    ISP), a slow handshake at the encrypted setup. Stating both lets a household tell "the line is bad"
+    from "the secure setup is slow tonight" without reading raw probes.
+    """
+    now = time.time() if now is None else now
+    last = data[-1] if data else None
+    if last is None:
+        return "UNKNOWN (no probe row)"
+    a = age(last)
+    if a is None:
+        return "UNKNOWN (last probe has no readable time)"
+    if a > STALE_S:
+        return f"UNKNOWN (last probe {a / 60:.0f} min old)"
+    conn, tls = _sample_mean(last, "connect_ms"), _sample_mean(last, "tls_ms")
+    if conn is None or tls is None:
+        return f"UNKNOWN (the probe {a:.0f} s ago did not measure both phases)"
+    usual = _hour_median(data, "tls_ms", range(24))
+    night = _hour_median(data, "tls_ms", NIGHT_HOURS)
+    evening = _hour_median(data, "tls_ms", EVENING_HOURS)
+    sent = f"reaching the site {conn:.0f} ms, secure handshake {tls:.0f} ms"
+    if usual is None:
+        return f"{sent}; handshake usually UNKNOWN (too few probes for a baseline); last probe {a:.0f} s ago"
+    if night is None or evening is None:
+        return f"{sent}; handshake usually {usual:.0f} ms; last probe {a:.0f} s ago"
+    return (f"{sent}; handshake usually {usual:.0f} ms"
+            f" (nights ~{night:.0f}, evenings ~{evening:.0f}); last probe {a:.0f} s ago")
+
+
 def day_spark(samples, buckets=USUAL_BUCKETS):
     """Bucket web-latency samples across the loaded window into `buckets` means for a sparkline."""
     if not samples:
@@ -643,6 +717,7 @@ def draw():
     out.append(web_line("cloudflare.com", "cloudflare", data))
     dns = [r.get("dns_ms") for r in data]
     out.append(f"  DNS lookup            {('%.0f ms' % dns[-1]) if dns and dns[-1] is not None else 'UNKNOWN':>10}  {spark(dns)}")
+    out.append("  WHERE TIME GOES  " + phase_line(data))
     out.append(usuality_line(data))
     out.append("")
     out.append("  SPEED         " + speed_line(nb_speed_rows()))
