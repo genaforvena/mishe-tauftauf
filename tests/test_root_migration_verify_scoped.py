@@ -46,6 +46,11 @@ def test_clean_pair_verifies(tmp_path):
     put(src, "small.txt", b"C", size=50)
     shutil.copy2(src / "t" / "payload.bin", dst / "t" / "payload.bin")
     shutil.copy2(src / "t" / "small.txt", dst / "t" / "small.txt")
+    # A real `rsync -a` copy preserves directory mtimes too. Copying files into an
+    # existing directory bumps that directory's mtime, so without this the size+mtime
+    # clause fails whenever the copy straddles a second boundary (CI 2026-11-17).
+    shutil.copystat(src / "t", dst / "t")
+    shutil.copystat(src, dst)
 
     done = verify(tmp_path, src, dst)
 
