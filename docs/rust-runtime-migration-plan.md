@@ -3205,3 +3205,19 @@ path is unchanged: HEAD checker on this site, `--no-artifact`, exit 0 —
 
 **Limits.** This is a reporting gap, not a detection gap: no combination of
 unreadable records could have produced GREEN before or after the change.
+
+### 10.53 The frequent read-only checks are not a seam (2026-11-17)
+
+Before reaching for a third role-read slice, the duties on the shortest timers
+were measured, since their per-run cost is multiplied by the most runs. Under
+`/usr/bin/time` from this checkout:
+
+| check | every | one run |
+|---|---|---|
+| `checks/pin-lag.py` | 300 s | 0.19 s wall, 99% CPU, 27.5 MB |
+| `checks/pin-delivery.py` | 120 s | 0.02 s wall, 95% CPU, 13.2 MB |
+| `checks/rust-plan-progress.py` | 300 s | 0.02 s wall, 100% CPU, 12.8 MB |
+
+At 288 and 720 runs a day these are tens of CPU-seconds per day in total — three
+orders below the role fold they would have to beat. No Rust slice here; recorded
+so the same three files are not re-measured as a candidate.
