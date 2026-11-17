@@ -94,6 +94,21 @@ def test_consecutive_duplicate_tool_output_fails_and_distinct_outputs_pass():
     assert check.lint(distinct) == []
 
 
+def test_identical_output_after_the_mind_spoke_is_not_a_renderer_repeat():
+    # wake-genome-1794943237051468667: the mind read one file three times, so the pane printed the same
+    # result again with the agent's own words between. The renderer collapsed only the adjacent repeats it
+    # is meant to collapse; this is content, and it must not mint a RED that clears when the sample ages out.
+    text = ('[tool output] [src/mishe_tauftauf/yielding.py#5A92]\n1:"""doc"""\n'
+            '[assistant] You have received this identical output 3 times.\n'
+            '[tool read] path: /x/yielding.py\n'
+            '[tool output] [src/mishe_tauftauf/yielding.py#5A92]\n1:"""doc"""\n')
+    assert check.lint(text) == []
+    # The repeat the renderer is supposed to count, with only the tool call between the two blocks, is a
+    # renderer printing one result twice.
+    assert any("consecutive duplicate tool output" in p for p in check.lint(
+        '[tool output] listing\nfile-a\n[tool read] path: /x\n[tool output] listing\nfile-a\n'))
+
+
 def test_raw_envelope_and_json_lines_fail_but_tool_content_does_not():
     leaked = '{"type":"message_end","message":{}}'
     assert any("raw JSON object line" in p for p in check.lint(leaked))

@@ -163,16 +163,22 @@ def lint(text: str) -> list[str]:
             except ValueError:
                 pass
     blocks, current = [], None
-    for line in lines:
+    for index, line in enumerate(lines):
         if line.startswith(TOOL_LABELS):
-            current = [line]
+            current = (index, [line])
             blocks.append(current)
         elif LABEL.match(line) or line.startswith('UNKNOWN'):
             current = None
         elif current is not None:
-            current.append(line)
-    for before, after in zip(blocks, blocks[1:]):
-        if '\n'.join(after) == '\n'.join(before) and before[0].strip():
+            current[1].append(line)
+    # The renderer counts a repeated result instead of printing it again (stream_text's `last_result`), so a
+    # repeat it should have collapsed can only reach the pane as two identical blocks with nothing between
+    # them but tool-call lines. Two identical blocks separated by the mind's own words are that mind really
+    # running the same call twice (2026-11-17: three reads of one file): content, not a renderer repeat.
+    for (start_a, before), (start_b, after) in zip(blocks, blocks[1:]):
+        between = lines[start_a + len(before):start_b]
+        if ('\n'.join(after) == '\n'.join(before) and before[0].strip()
+                and all(line.startswith('[tool ') and not line.startswith(TOOL_LABELS) for line in between)):
             problems.append('consecutive duplicate tool output: ' + before[0][:60])
     return problems
 
