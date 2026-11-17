@@ -224,8 +224,13 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
     back a half-flip and restarts the recorded units in-process (exercised in the sandbox:
     the NOT-CLEAN run logs `restarted 1 units` within the same second), and the watchdog
     waits for the flip's PID to disappear — identity-checked through `cmdline` — before
-    restoring, up to 600 s; if the flip is still alive at that bound it logs
-    `not restoring under a live flip` and leaves the decision to a human. The watchdog's
+    restoring; if the flip is still alive at that bound it logs
+    `not restoring under a live flip` and leaves the decision to a human. That
+    bound is `WATCHDOG_FLIP_WAIT_TICKS` (900 ticks of a 10 s poll = 9000 s), the
+    sum of the stage bounds below plus restart slack. It was a fixed 600 s and
+    expired at 12:25:31Z on 2026-11-17 while the 12:00:40Z run still drained its
+    engines: the watchdog then exited and left delta, verify and rename with no
+    restorer. Pinned by `test_watchdog_wait_covers_the_flip_stage_bounds`. The watchdog's
     sleep now only bounds how long a SIGKILL can leave the plant down: 900 s scoped,
     3600 s for `--full`. Delta and verify are also bounded (1800 s, 3600 s for `--full`)
     so a hang becomes an abort the trap restores instead of an indefinite quiesce.
@@ -357,7 +362,8 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
     `--dry-run` is the default and prints the stop list and preflight readings without
     changing anything; `--execute` performs the cutover. Before anything is stopped it
     arms a watchdog transient unit (`mishe-root-migration-watchdog`, 900 s sleep for the
-    scoped shape / 3600 s for `--full`, then it waits for the flip process to end). Any
+    scoped shape / 3600 s for `--full`, then it waits for the flip process to end, up to
+    `WATCHDOG_FLIP_WAIT_TICKS` = 9000 s, the sum of the stage bounds). Any
     ordinary failure — nonzero delta, NOT-CLEAN, a helper without a full verdict, a stage
     past its bound — is restored by the script's own EXIT trap within seconds: it rolls
     the rename back when the symlink half-happened and restarts the recorded units

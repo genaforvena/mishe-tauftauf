@@ -471,13 +471,32 @@ def watchdog_body(root, *, bound, pid):
     body = printed.stdout
     import re
     body = re.sub(r"^F=.*$", f"F={pid}", body, flags=re.M)
-    return body.replace("-ge 60", f"-ge {bound}").replace("\nsleep 10\n", "\nsleep 1\n")
+    body = re.sub(r"-ge \d+", f"-ge {bound}", body)
+    return body.replace("\nsleep 10\n", "\nsleep 1\n")
 
 
 def watchdog_hold_token(body):
     """The token line the watchdog compares the hold against: the flip's own text."""
     line = next(l for l in body.splitlines() if l.startswith("T="))
     return line.split("=", 1)[1].strip("'")
+
+
+def test_watchdog_wait_covers_the_flip_stage_bounds(tmp_path):
+    """Regression (2026-11-17 12:25:31Z): the watchdog slept 900 s and then waited
+    only 600 s for the flip pid, so it abandoned the live 12:00:40Z run inside its
+    engine drain and left delta/verify/rename with no restorer. Its poll cap must
+    cover the sum of the flip's own stage bounds, not an arbitrary 10 minutes."""
+    root = sandbox(tmp_path)
+    printed = subprocess.run(["bash", str(root / "work" / "flip.sh"),
+                              "--print-watchdog", "--watchdog-seconds", "0"],
+                             env=env_for(root), capture_output=True, text=True, timeout=60)
+    assert printed.returncode == 0, printed.stderr
+    import re
+    cap = re.search(r'-ge (\d+)', printed.stdout)
+    assert cap, printed.stdout
+    seconds = int(cap.group(1)) * 10          # one tick per 10 s poll
+    stage_sum = 1800 + 900 + 1800 + 3600 + 600
+    assert seconds >= stage_sum, (seconds, stage_sum)
 
 
 def test_watchdog_rolls_back_when_the_flip_is_gone(tmp_path):

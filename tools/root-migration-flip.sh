@@ -33,7 +33,11 @@
 # watchdog's sleep -- a failed delta at minute 3 used to leave the plant down for
 # the rest of the timeout. Neither path deletes a *.pre-migration tree. The
 # watchdog waits for this process to disappear before acting, so a slow flip is
-# never mistaken for a dead one.
+# never mistaken for a dead one -- up to WATCHDOG_FLIP_WAIT_TICKS, which covers
+# the sum of the stage bounds below (8700 s), not the 600 s it used to wait.
+# Both restorers release only the hold this flip wrote (its `root migration flip
+# <pid>` token); a manual `mishe hold on` or plant_boot's boot-guard hold passes
+# through untouched.
 set -u
 
 # Defaults are the production paths; the overrides exist so the abort paths can be
@@ -74,6 +78,14 @@ ENGINE_DRAIN_TIMEOUT=${MIGRATION_ENGINE_TIMEOUT:-1800}
 # about 18 min (10:08:18 -> 10:26:42Z on 2026-11-17), so the bound is generous
 # but still aborts a wedged unit before anything is stopped.
 DELIVERY_DRAIN_TIMEOUT=${MIGRATION_DELIVERY_DRAIN_TIMEOUT:-900}
+# How long the watchdog keeps watch over a live flip pid before it gives up and
+# leaves the plant alone (ticks of its 10 s poll). It must cover the sum of the
+# flip's own stage bounds: engine drain 1800 + delivery drain 900 + delta 1800 +
+# full verify 3600 + restart slack ~600 = 8700 s. It did not on 2026-11-17: the
+# 900 s sleep plus the old fixed 600 s wait expired at 12:25:31Z while the
+# 12:00:40Z run was still inside its engine drain, so the delta, verify and
+# rename would have run with no restorer at all.
+WATCHDOG_FLIP_WAIT_TICKS=${MIGRATION_WATCHDOG_FLIP_WAIT_TICKS:-900}
 # How long writers on the moved trees get to finish after the plant is stopped.
 # Any write into a tree after the delta pass makes the verify's size+mtime and
 # changed-since checks report entries, and the scoped shape can then only fail --
@@ -299,13 +311,17 @@ if [ -e "\$D" ]; then p 'flip reported done'; exit 0; fi
 # A slow flip is not a dead flip. Restarting units while the flip sits between
 # verify and rename puts writes into the source trees that the rename then hides
 # in *.pre-migration, while the flipped tree serves stale bytes. Wait for the
-# flip process to end (bounded); the script's own EXIT trap restores within
-# seconds of any ordinary failure, so this path is for a hard kill.
+# flip process to end; the script's own EXIT trap restores within seconds of any
+# ordinary failure, so this path is for a hard kill. The wait covers the sum of
+# the flip's own stage bounds, not an arbitrary 600 s: on 2026-11-17 the old cap
+# expired at 12:25:31Z while the flip was still inside its engine drain, leaving
+# delta and rename with no restorer. Past the cap the pid is treated as stuck and
+# the plant is left alone, loudly.
 i=0
 while flip_alive; do
     if [ -e "\$D" ]; then p 'flip reported done'; exit 0; fi
     i=\$((i + 1))
-    if [ "\$i" -ge 60 ]; then
+    if [ "\$i" -ge $WATCHDOG_FLIP_WAIT_TICKS ]; then
         p "flip pid \$F still alive \$((i * 10))s after the timeout; not restoring under a live flip"
         exit 0
     fi
@@ -662,6 +678,7 @@ detach_relaunch() {
     [ -f "$self" ] || die "cannot resolve this script's path for the detached relaunch: $0"
     [ -n "${MIGRATION_ENGINE_TIMEOUT:-}" ] && forward+=(--setenv=MIGRATION_ENGINE_TIMEOUT="$MIGRATION_ENGINE_TIMEOUT")
     [ -n "${MIGRATION_DELIVERY_DRAIN_TIMEOUT:-}" ] && forward+=(--setenv=MIGRATION_DELIVERY_DRAIN_TIMEOUT="$MIGRATION_DELIVERY_DRAIN_TIMEOUT")
+    [ -n "${MIGRATION_WATCHDOG_FLIP_WAIT_TICKS:-}" ] && forward+=(--setenv=MIGRATION_WATCHDOG_FLIP_WAIT_TICKS="$MIGRATION_WATCHDOG_FLIP_WAIT_TICKS")
     [ -n "${MIGRATION_WRITER_DRAIN_TIMEOUT:-}" ] && forward+=(--setenv=MIGRATION_WRITER_DRAIN_TIMEOUT="$MIGRATION_WRITER_DRAIN_TIMEOUT")
     [ -n "${MISHE_WAKE_KEY:-}" ] && forward+=(--setenv=MISHE_WAKE_KEY="$MISHE_WAKE_KEY")
     systemd-run --user --unit="$unit" --collect \
