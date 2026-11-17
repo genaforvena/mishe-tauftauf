@@ -1422,7 +1422,10 @@
       "units": [
         "substrate-watch"
       ],
-      "why": "no resident runtime can lag the checkout; a wake pins its release at start and doctor compares installed units with the pin"
+      "checks": [
+        "substrate-verdict-age.py"
+      ],
+      "why": "no resident runtime can lag the checkout; a wake pins its release at start and doctor compares installed units with the pin. The producer's age detector was removed with it (2026-11-17): it aged checks/substrate-watch.json, which froze UNKNOWN at 2026-11-04 when the module went, so it could only ever report a stale snapshot nobody writes. A producer that stops is now visible through its duty signal's max_age (arm expires it and wakes the resolver; tests/test_signal_store_freshness.py), a dead unit through units-after-trip.py, and the pin and host guard bytes through pin-integrity.py and guard-bytes-drift.py"
     },
     {
       "units": [

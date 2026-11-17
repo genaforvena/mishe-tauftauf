@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """Scheduled runner: the plant's observer checks are run, recorded and routed.
 
-The gap this closes.  The plant owns a family of detector scripts under
-``checks/`` that answer whether the evidence every pane shows is the evidence
-the reviewed tree publishes — ``observer-view-agreement.py`` (projections
-present?), ``observer-evidence-field-agreement.py`` (fields present within a
-present line?), ``observer-verdict-agreement.py``, ``substrate-verdict-age.py``,
-``outcome-channel-state.py``, ``observer-refresh-closure.py``.  Each is correct
-and each is manual: nothing schedules them, so a difference is seen only when a
-mind happens to run the check by hand.  Measured 2026-10-21: the observer
-bundle's ``initiative.py`` predated ``d526771``, every published role row lacked
-the ``checked-evidence-age`` field, and the plant learned it from a peer's wake
-rather than from its own monitoring.
+The gap this closes.  On 2026-10-21 the plant owned a family of detector scripts
+under ``checks/`` that answered whether the evidence every role shows is the
+evidence the reviewed tree publishes (``outcome-channel-state.py`` is the
+survivor; the ``observer-*-agreement`` checks and ``substrate-verdict-age.py``
+were retired with the resident observers whose readings they judged).  Each was
+correct and each was manual: nothing scheduled them, so a difference was seen
+only when a mind happened to run the check by hand.  Measured 2026-10-21: the
+observer bundle's ``initiative.py`` predated ``d526771``, every published role
+row lacked the ``checked-evidence-age`` field, and the plant learned it from a
+peer's wake rather than from its own monitoring.
 
 What this runner does, once per cycle:
 
