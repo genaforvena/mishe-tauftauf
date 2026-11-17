@@ -522,8 +522,11 @@ def run_check(repo: Path, name: str, home: Path) -> tuple[int, str]:
         # Materialise the whole tracked checks tree, not just this file: a
         # check may import a sibling module (initiative-progress.py imports
         # initiatives.py), and the import must resolve from the same reviewed
-        # bytes an uncommitted edit cannot change.
-        archive = subprocess.run(["git", "-C", str(repo), "archive", "HEAD", CHECKS_DIR],
+        # bytes an uncommitted edit cannot change. ``src/`` comes with it
+        # because a check that drives the CLI (binding-refusal-record.py) sets
+        # PYTHONPATH to ``<its own parent>/src``, which from a temp directory
+        # holds nothing and made the package unimportable.
+        archive = subprocess.run(["git", "-C", str(repo), "archive", "HEAD", CHECKS_DIR, "src"],
                                  capture_output=True)
         if archive.returncode:
             raise Undecidable("cannot archive HEAD:" + CHECKS_DIR + ": " +
