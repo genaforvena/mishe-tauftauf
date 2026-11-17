@@ -58,8 +58,10 @@ End every wake with `mishe yield --result changed|verified|blocked`, your update
 wall on stdin. Use `--continue`, `--again DURATION` or `--when signal:NAME=VALUE` for
 concrete follow-up, not unchanged polling. A wake that ends without a yield has an
 unknown effect: the next wake begins by reconciling it before acting. A yield is a
-transport fact, not proof of success. Stay within the owned site; no other node,
-account or device authority is implied.
+transport fact, not proof of success. The engine is one-shot: a command the harness
+backgrounds keeps running only while the wake does, and its output is never delivered
+after the reply ends, so never let a background job be the last thing you do. Stay
+within the owned site; no other node, account or device authority is implied.
 
 ## Durable areas and useful wakes
 

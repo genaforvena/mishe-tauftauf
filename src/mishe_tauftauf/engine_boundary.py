@@ -100,6 +100,43 @@ def progress_bytes(data, jobs=None):
     return progress, end + 1
 
 
+BACKGROUND_NOTICE = re.compile(rb'Backgrounded as job ([A-Za-z0-9_]+)')
+"""The bash tool's notice that a command outlived its foreground window. Its job result is delivered
+as a follow-up only while the engine process lives, so a one-shot wake engine that ends its reply on
+this notice never receives the output (operator wake 1794888664164281312 ended on ``bg_1`` and exited
+86 s before the job finished; the wake settled ``unknown (engine exit 0 without a yield)``)."""
+
+
+def background_left_running(stream):
+    """The job id the run's last tool result backgrounded, else None.
+
+    ``pending`` is the last ``Backgrounded as job <id>`` notice in the stream, cleared by any later
+    user or tool-result message: that message is the job's completion follow-up, or at least proof
+    that the turn continued past the backgrounding call. Assistant text is ignored because a model
+    that quotes the notice has not received the job. An ``agent_end`` envelope repeats the whole
+    transcript, so only ``message_*`` events are read.
+    """
+    pending = None
+    try:
+        handle = open(stream, 'rb')
+    except OSError:
+        return None
+    with handle:
+        for line in handle:
+            if not line.startswith(b'{"type":"message_'):
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            message = row.get('message') if isinstance(row, dict) else None
+            if not isinstance(message, dict) or message.get('role') not in ('user', 'toolResult'):
+                continue
+            match = BACKGROUND_NOTICE.search(line) if message.get('role') == 'toolResult' else None
+            pending = match.group(1).decode('ascii', 'replace') if match else None
+    return pending
+
+
 def _finite(value):
     return type(value) in (int, float) and math.isfinite(value)
 

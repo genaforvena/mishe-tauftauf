@@ -193,6 +193,9 @@ def build(home, role: str, snap, *, key: str, now: float, mail: list, reconcile_
             "Finish by running `mishe yield --result changed|verified|blocked` with your updated wall on stdin "
             "(add `--continue`, `--again 2h` or `--when signal:NAME=VALUE` for follow-ups). "
             "A wake that ends without a yield is treated as having an unknown effect.",
+            "This engine is one-shot: a command the harness backgrounds keeps running only while this run "
+            "does, and its output is never delivered after the reply ends. Never let a background job be "
+            "the last thing you do; run `mishe yield` whether or not its output arrived.",
             "A RED failure signal schedules a reoffer one hour later by default: if it has not moved "
             "or been dispositioned by then, yield with `--again 1h` (or `--when signal:NAME=GREEN`) and name "
             "the resolver, instead of waiting out the wake.", ""]

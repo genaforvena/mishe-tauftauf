@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import decision_provider as _dp
-from . import delivery_requests, dm_triage, dossier, feed, owed, wake_gate_log, wake_memory, work_receipts, yielding
+from . import delivery_requests, dm_triage, dossier, engine_boundary, feed, owed, wake_gate_log, wake_memory, work_receipts, yielding
 from .budget_producer import DECISION_CONFIG, DECISION_PROVIDER
 from .wall import addressed
 from .core.dispatch_record import process_alive
@@ -386,7 +386,11 @@ def _execute_engine(home, role, key, *, engine, now, snap, mail, reconcile_of, r
         work_receipts.complete(home, key, now=time.time(), engine_seconds=time.monotonic() - engine_started)
     if yielding.receipt_path(home, key).exists():
         return "yielded", f"engine exit {code}"
-    return "unknown", f"engine exit {code} without a yield"
+    detail = f"engine exit {code} without a yield"
+    left = engine_boundary.background_left_running(yielding.wakes_dir(home) / f"{key}.prompt.out.jsonl")
+    if left:
+        detail += f" (background job {left} left running)"
+    return "unknown", detail
 
 
 class _Worker:
