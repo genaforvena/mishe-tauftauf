@@ -2,7 +2,7 @@
 
 One line per promised slot in the network charter. Checked against `tools/network_view.py`
 (`draw()` and its helpers) and `tools/network_router.py` and `rust/mishe-network-probe`, on 2026-11-13.
-Speed, day-trend, baseline and Wi-Fi channel/noise rows rechecked 2026-11-17.
+Speed, day-trend, baseline and Wi-Fi channel/noise/counter rows rechecked 2026-11-17.
 
 Status words: **BUILT** (the window shows it with an age or UNKNOWN), **PARTLY** (some of it is
 shown), **MISSING** (not measured or not shown).
@@ -34,7 +34,7 @@ shown), **MISSING** (not measured or not shown).
 | --- | --- | --- |
 | Number of clients | BUILT | `wifi_facts()`: total and per band (2.4 / 5 GHz) |
 | Who is weak, by a name the household knows | PARTLY | the RECORDED line names the weakest device and its dBm; the live WI-FI line does not name devices ("no devices named") |
-| Noisy or channel trouble | PARTLY | `WI-FI RADIO` shows each known radio's channel, frequency and noise floor from a read-only `iwinfo <radio> info` pass in the router read, with age and UNKNOWN/STALE guards; `network-wifi` is UNKNOWN when the sub-reading vanishes. Retry counters and a comparison of the two APs' channels are still missing |
+| Noisy or channel trouble | BUILT | `WI-FI RADIO` shows each known radio's channel, frequency and noise floor from a read-only `iwinfo <radio> info` pass in the router read, with age and UNKNOWN/STALE guards. `WI-FI QUALITY` shows the share of transmit attempts that failed since boot and over the last hour, plus radio temperature, from the driver's read-only `iwpriv <radio> stat` counters. `network-wifi` is UNKNOWN when either sub-reading vanishes. There is one access point per band, so there are no two APs to compare channels with (`apcli0`/`apclix0` are client-mode interfaces on the same radios) |
 | Weak-signal flag | BUILT | "WEAK SIGNAL" when the weakest client is below `WEAK_WIFI_DBM` |
 
 ## Router and uplink
@@ -59,10 +59,16 @@ shown), **MISSING** (not measured or not shown).
 
 ## Count
 
-- BUILT: 18
-- PARTLY: 5
+- BUILT: 19
+- PARTLY: 4
 - MISSING: 2
 
 ## Next gaps, in order of value
 
-1. Wi-Fi retry counters and co-channel trouble: a read-only per-radio stats read on the router, and a comparison of the two APs' channels (`ra0` and `ra1` both reported channel 13 on 2026-11-17; what `ra1` is, is not yet established).
+1. Wi-Fi retry counters and co-channel trouble: DONE on 2026-11-17. The per-radio counters come from `iwpriv <radio> stat`
+   (the router has no `iw` and no debugfs), and the "two APs on channel 13" question is closed: `ra0` is the
+   2.4 GHz access point, `rax0` the 5 GHz one, and `apcli0`/`apclix0` are client-mode interfaces on the same
+   radios whose `-256 dBm` signal is meaningless. What the counters mean exactly is the open question: the
+   driver prints its own PER (3.3% on 2.4 GHz, 0.1% on 5 GHz) while the success/fail counters give 14.6% and
+   6.3%, so the fail counter probably counts each retry attempt. Watch the last-hour rate for a few days before
+   turning it into a threshold, and add a comparison with the driver PER line if the two disagree consistently.

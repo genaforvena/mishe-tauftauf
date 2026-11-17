@@ -15,7 +15,7 @@ One JSON object per line, oldest first.
 | --- | --- |
 | `ts` | epoch seconds (float), when the read ran |
 | `ok` | `true` if the read worked, `false` if it failed or the pass was skipped |
-| `radios` | only when `ok` is true: one object per known radio, `{"band": str, "channel": int or null, "freq_ghz": float or null, "noise_dbm": int or null}`, from a read-only `iwinfo <radio> info` pass; `[]` when the router did not report channel/noise. No SSID, MAC or signal is stored here |
+| `radios` | only when `ok` is true: one object per known radio, `{"band": str, "channel": int or null, "freq_ghz": float or null, "noise_dbm": int or null, "stats": object or null}`, from a read-only `iwinfo <radio> info` pass; `[]` when the router did not report channel/noise. `stats` is `{"tx_ok", "tx_fail", "rx_ok", "rx_crc", "temp_c"}` from a read-only `iwpriv <radio> stat` pass, cumulative since the router booted, `null` when the driver printed no counters. No SSID, MAC or signal is stored here |
 | `clients` | only when `ok` is true: list of Wi-Fi clients |
 | `uptime_s` | only when `ok` is true: router uptime in seconds |
 | `wan` | only when `ok` is true: `{"up": bool, "uptime_s": int}` |
@@ -87,6 +87,13 @@ is not mistaken for a quiet mind.
   did not carry both phases.
 - `WI-FI RADIO`: each known radio's channel, frequency and noise floor from the read-only router
   pass, with the age of the reading; UNKNOWN when the sub-reading is absent, STALE past 15 minutes.
+- `WI-FI QUALITY`: per radio, the share of transmit attempts that failed since the router booted,
+  and the share that failed over the last hour (the difference between two recorded counter reads,
+  at least 10 minutes apart), plus the highest radio temperature. Read from the driver's own
+  `iwpriv <radio> stat` counters. Attempts, not frames given up on: the driver counts each try, so
+  this is "how often the radio had to send again or gave up", not "how many packets the household
+  lost". UNKNOWN when the newest read carries no counters, when fewer than two reads an hour apart
+  bracket the rate, or after a router reboot restarts the counters; STALE past 15 minutes.
 - `UNKNOWN`: the log has no reading, or the last read failed.
 - `STALE`: the last good reading is older than 15 minutes.
 - Trends and weekday baselines are UNKNOWN until two days of comparable rows exist.
@@ -95,9 +102,10 @@ is not mistaken for a quiet mind.
 
 - Signal values are one sample per 5 minutes. A single strong reading is not a finding; it
   becomes one only when it repeats over a day.
-- Not measured yet: Wi-Fi retry counters. Channel and noise floor are measured once per 5 minutes;
-  a single reading is not evidence of channel trouble, and the view does not yet compare the two
-  APs' channels.
+- Channel, noise floor and the driver's transmit counters are measured once per 5 minutes; a single
+  reading is not evidence of channel trouble. There is one access point per band (2.4 GHz and 5 GHz),
+  so there is no second AP to compare channels with: `iwinfo` also lists `apcli0`/`apclix0`, which
+  are client-mode interfaces on the same two radios, not extra access points.
 - VPN (sing-box) state is shown as "running" and "tun0 up" from the
   router's process list; it does not say which clients use the tunnel. The WAN error and drop counters
   are measured: the view reports them from the last recorded router read, and the drop

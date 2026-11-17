@@ -47,8 +47,8 @@ def test_router_row_carries_both_radios_without_changing_clients():
     ])
     body = boundary.decode_router_output(stdout, {"ra0": "2.4", "rax0": "5"}, lambda mac: "x")
     assert body["radios"] == [
-        {"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -56},
-        {"band": "5", "channel": 40, "freq_ghz": 5.2, "noise_dbm": -56},
+        {"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -56, "stats": None},
+        {"band": "5", "channel": 40, "freq_ghz": 5.2, "noise_dbm": -56, "stats": None},
     ]
     assert len(body["clients"]) == 2 and body["clients"][0]["rx"] == 39.0
 
@@ -98,9 +98,18 @@ NOW = 1_800_000_000.0
 
 
 def wifi_row(ts, radios=None, ok=True):
-    radios = [{"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -55},
-              {"band": "5", "channel": 40, "freq_ghz": 5.2, "noise_dbm": -55}] if radios is None else radios
+    stats = {"tx_ok": 5000, "tx_fail": 50, "temp_c": 60}
+    radios = [{"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -55, "stats": stats},
+              {"band": "5", "channel": 40, "freq_ghz": 5.2, "noise_dbm": -55, "stats": stats}] \
+        if radios is None else radios
     return {"ts": ts, "ok": ok, "radios": radios}
+
+
+def test_detector_unknown_when_the_counters_are_missing():
+    no_stats = [{"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -55}]
+    code, message = care.wifi_state([wifi_row(NOW - 60, radios=no_stats)], NOW)
+    assert code == 3, message
+    assert "counters missing" in message
 
 
 def test_detector_is_green_on_a_fresh_reading():

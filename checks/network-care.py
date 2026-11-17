@@ -321,12 +321,12 @@ WIFI_WINDOW_S = 30 * 60      # only readings from this window count
 
 
 def wifi_state(rows, now):
-    """Judge the Wi-Fi channel/noise sub-reading from the router readings.
+    """Judge the Wi-Fi channel/noise/counter sub-reading from the router readings.
 
-    Row shape: {"ts", "ok", "radios": [{"band", "channel", "freq_ghz", "noise_dbm"}, ...]}.
+    Row shape: {"ts", "ok", "radios": [{"band", "channel", "freq_ghz", "noise_dbm", "stats"}, ...]}.
     Returns (code, message): 0 GREEN, 2 RED, 3 UNKNOWN. A missing, stale or incomplete reading
     is UNKNOWN; impossible channel or noise values are RED. This detects a dead sub-probe —
-    the whole router read can still succeed while iwinfo silently yields nothing.
+    the whole router read can still succeed while iwinfo or iwpriv silently yields nothing.
     """
     fresh = []
     for row in rows:
@@ -358,6 +358,10 @@ def wifi_state(rows, now):
         if ch < 1 or ch > 196 or noise >= 0 or noise < -120:
             return 2, f"network-care: impossible Wi-Fi channel {ch} or noise {noise} dBm on {band} GHz"
         parts.append(f"{band} GHz ch {ch}, noise {noise} dBm")
+    counted = [r for r in radios if isinstance(r, dict) and isinstance(r.get("stats"), dict)
+               and isinstance(r["stats"].get("tx_ok"), int) and isinstance(r["stats"].get("tx_fail"), int)]
+    if not counted:
+        return 3, "network-care: Wi-Fi transmission counters missing from the newest router read"
     return 0, "network-care: Wi-Fi radio GREEN (" + "; ".join(parts) + ")"
 
 

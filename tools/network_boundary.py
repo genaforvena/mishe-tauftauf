@@ -167,6 +167,29 @@ STATION_LINE = re.compile(r"^([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\s+(-?\d+)\s+
 RATE_LINE = re.compile(r"^\s*(RX|TX):\s*([\d.]+)\s*MBit/s")
 CHANNEL_LINE = re.compile(r"Channel:\s*(\d+)\s*\(([\d.]+)\s*GHz\)")
 NOISE_LINE = re.compile(r"Noise:\s*(-?\d+)\s*dBm")
+RADIO_STAT_LINES = {
+    "tx_ok": re.compile(r"^\s*Tx success\s*=\s*(\d+)"),
+    "tx_fail": re.compile(r"^\s*Tx fail count\s*=\s*(\d+)"),
+    "rx_ok": re.compile(r"^\s*Rx success\s*=\s*(\d+)"),
+    "rx_crc": re.compile(r"^\s*Rx with CRC\s*=\s*(\d+)"),
+    "temp_c": re.compile(r"^\s*CurrentTemperature\s*=\s*(-?\d+)"),
+}
+
+
+def decode_radio_stats(lines):
+    """Transmit/receive counters and temperature from one radio's read-only ``iwpriv ... stat`` lines.
+
+    All counters are cumulative since the router booted, so they are useful only as a difference
+    between two reads. A counter the driver did not print stays out of the dict (None in the
+    window), and a radio that printed none of them yields None, never a clean radio.
+    """
+    stats = {}
+    for line in lines:
+        for key, pattern in RADIO_STAT_LINES.items():
+            m = pattern.match(line)
+            if m:
+                stats[key] = int(m.group(1))
+    return stats or None
 
 
 def decode_router_output(stdout, bands, client_id):
@@ -206,7 +229,7 @@ def decode_router_output(stdout, bands, client_id):
             continue
         info = decode_wifi_radio(sections[key])
         if info is not None:
-            radios.append({"band": bands[radio], **info})
+            radios.append({"band": bands[radio], **info, "stats": decode_radio_stats(sections[key])})
         current_station = None
         for line in sections[key]:
             m = STATION_LINE.match(line.strip())
