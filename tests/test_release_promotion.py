@@ -442,6 +442,54 @@ def test_a_collected_retry_unit_is_armed_again(tmp_path,monkeypatch):
     assert current["review_retry_state"]=="scheduled in 1800s"
 
 
+def test_legacy_retry_without_a_recorded_due_time_is_armed_again(tmp_path,monkeypatch):
+    # Live 2026-11-17: record 2c6380ae was armed before review_retry_due existed
+    # (state "scheduled in 1800s", no archives, no due). The flip stops and
+    # collects that transient unit, and the due-time check alone returned early
+    # forever, so the review stayed stranded.
+    from mishe_tauftauf import release_promotion as p
+    (tmp_path/"work/reviews").mkdir(parents=True)
+    launched=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:launched.append(argv))
+    current=dict(id="rel-1",sha="a"*40,source=str(tmp_path),review_pending=True,
+                 review_retry_attempts=0,review_retry_state="scheduled in 1800s")
+    p.schedule_review_retry_if_needed(tmp_path,current)
+    assert len(launched)==1 and current["review_retry_due"]>time.time()
+    # Now that the due time is recorded, the next call leaves the unit alone.
+    p.schedule_review_retry_if_needed(tmp_path,current)
+    assert len(launched)==1
+
+
+def test_work_poll_scan_rearms_only_a_lost_retry(tmp_path,monkeypatch):
+    # A destroyed retry unit leaves no result, so merge_review never reaches the
+    # record: work poll's scan is the deterministic detector. It must arm a
+    # legacy and an overdue record, leave an armed one and a still-unreviewed
+    # record alone, and re-arming must be idempotent within the same poll.
+    from mishe_tauftauf import release_promotion as p
+    (tmp_path/"work/reviews").mkdir(parents=True)
+    (tmp_path/"work/releases").mkdir(parents=True)
+    launched=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:launched.append(argv))
+    now=time.time()
+    def record(identity, **extra):
+        payload=dict(id=identity,sha=(identity*40)[:40],source=str(tmp_path),review_pending=True)
+        payload.update(extra)
+        write_json(p.record_path(tmp_path,identity),payload)
+    record("rel-legacy",review_retry_attempts=0,review_retry_state="scheduled in 1800s")
+    record("rel-overdue",review_retry_attempts=0,review_retry_state="scheduled in 1800s",
+           review_retry_due=int(now-p.REVIEW_RETRY_REARM_GRACE_S-1))
+    record("rel-armed",review_retry_attempts=0,review_retry_state="scheduled in 1800s",
+           review_retry_due=int(now+600))
+    record("rel-fresh")
+    armed=p.rearm_lost_review_retries(tmp_path,clock=lambda: now)
+    assert sorted(armed)==["rel-legacy","rel-overdue"], armed
+    assert len(launched)==2, launched
+    assert read_json(p.record_path(tmp_path,"rel-armed"))["review_retry_due"]==int(now+600)
+    assert "review_retry_state" not in read_json(p.record_path(tmp_path,"rel-fresh"))
+    assert p.rearm_lost_review_retries(tmp_path,clock=lambda: now)==[]
+    assert len(launched)==2, launched
+
+
 def test_retry_over_an_unmerged_failure_reruns_the_review(tree,monkeypatch):
     # The scheduled retry must re-run the model even when a wake deferred the first
     # failure's merge. Merely merging it would record the error and return without
