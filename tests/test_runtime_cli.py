@@ -94,7 +94,23 @@ def test_hold_on_needs_a_reason(site):
     assert cli("hold", "on", "--reason", "held") == 2
     assert not (site / "hold").exists()
     assert cli("hold", "on", "--reason", "operator: migration window 16:00-16:10") == 0
-    assert (site / "hold").read_text() == "operator: migration window 16:00-16:10\n"
+    text = (site / "hold").read_text()
+    assert text.startswith("operator: migration window 16:00-16:10\n")
+    assert "writer: uid=" in text
+    assert cli("hold", "off") == 0
+
+
+def test_hold_on_records_the_invoking_wake(site, monkeypatch):
+    monkeypatch.setenv("MISHE_ROLE", "health")
+    monkeypatch.setenv("MISHE_WAKE_KEY", "wake-health-123")
+    monkeypatch.setenv("INVOCATION_ID", "inv-456")
+    assert cli("hold", "on", "--reason", "maintenance") == 0
+    text = (site / "hold").read_text()
+    assert text.startswith("maintenance\nwriter: ")
+    assert "role=health" in text
+    assert "wake=wake-health-123" in text
+    assert "invocation=inv-456" in text
+    assert "uid=" in text
     assert cli("hold", "off") == 0
 
 

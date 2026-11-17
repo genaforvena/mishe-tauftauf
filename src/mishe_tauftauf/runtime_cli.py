@@ -18,6 +18,23 @@ def duration(text: str) -> float:
     return float(text[:-1]) * UNITS[text[-1]]
 
 
+def _hold_writer_identity(environ=None) -> str:
+    """Identity tokens for whoever ran `mishe hold on`.
+
+    Appended to the hold text so a short hold that ends with no recorded
+    disposition still names its writer when the detector's later RED is read.
+    A wake caller carries role/wake/invocation; a plain shell carries only uid.
+    """
+    environ = os.environ if environ is None else environ
+    tokens = [f"uid={os.getuid()}"]
+    for env_key, label in (("MISHE_ROLE", "role"), ("MISHE_WAKE_KEY", "wake"),
+                           ("INVOCATION_ID", "invocation")):
+        value = environ.get(env_key)
+        if value:
+            tokens.append(f"{label}={value}")
+    return " ".join(tokens)
+
+
 # Tape entries whose record payloads doctor verifies per run. A cold slice of 2000
 # entries measured 0.3-0.5 s (2026-11-09), so 20000 keeps a run to a few seconds
 # and a cold full tape (~230 s measured) completes in about 15 doctor runs.
@@ -348,7 +365,7 @@ def run(args) -> int:
                 print("mishe hold on needs --reason explaining why autonomous work must stop; "
                       "the old default 'held' is refused", file=sys.stderr)
                 return 2
-            path.write_text(reason + "\n")
+            path.write_text(f"{reason}\nwriter: {_hold_writer_identity()}\n")
         elif args.state == "off":
             path.unlink(missing_ok=True)
             wake.resume_owed(home, declared_roles(home), now=now)  # wakes that arrived while held would not otherwise return
