@@ -488,6 +488,31 @@ def test_legacy_retry_without_a_recorded_due_time_is_armed_again(tmp_path,monkey
     assert len(launched)==1
 
 
+def test_scan_arms_a_legacy_review_that_failed_without_a_recorded_retry(tmp_path,monkeypatch):
+    # Two delivered records carried a merged: true result with a reviewer error,
+    # review_retry_attempts 0 and no retry state (2026-11-17). Nothing revisits a
+    # merged record, so they stayed review_pending for good. A record that
+    # already reported an error is not "a first review still running"; a fresh
+    # record still is.
+    (tmp_path/"work/reviews").mkdir(parents=True)
+    (tmp_path/"work/releases").mkdir(parents=True)
+    calls=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:calls.append(argv))
+    now=time.time()
+    write_json(p.record_path(tmp_path,"rel-failed"),
+               dict(id="rel-failed",sha="b"*40,source=str(tmp_path),phase="delivered",
+                    review_pending=True,review_error="reviewer process failed"))
+    write_json(tmp_path/"work/reviews"/"rel-failed-1.result.json",
+               dict(id="rel-failed",result=dict(review_error="reviewer process failed"),merged=True))
+    write_json(p.record_path(tmp_path,"rel-fresh"),
+               dict(id="rel-fresh",sha="c"*40,source=str(tmp_path),phase="delivered",review_pending=True))
+    assert p.rearm_lost_review_retries(tmp_path,clock=lambda: now,live_units={})==["rel-failed"]
+    assert len([c for c in calls if c[0]=="systemd-run"])==1
+    record=read_json(p.record_path(tmp_path,"rel-failed"))
+    assert record["review_retry_due"]>now and record["review_retry_attempts"]==0, record
+    assert "review_retry_state" not in read_json(p.record_path(tmp_path,"rel-fresh"))
+
+
 def test_work_poll_scan_rearms_only_a_lost_retry(tmp_path,monkeypatch):
     # A destroyed retry unit leaves no result, so merge_review never reaches the
     # record: work poll's scan is the deterministic detector. It must arm a

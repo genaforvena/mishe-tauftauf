@@ -572,10 +572,14 @@ def _review_retry_lost(current, now, live_units=frozenset(), timer_shas=frozense
       A live ``.service`` is a review running now and is never duplicated, or
     * the record is legacy, naming only ``scheduled in ...`` from before the due
       time was recorded (2026-11-17). Its unit may still exist; ``live_units``
-      answers that exactly, where the record cannot.
+      answers that exactly, where the record cannot, or
+    * the record names no retry at all but already carries a ``review_error``:
+      the review finished with an error before the ladder existed, and a merged
+      record is never revisited, so it is as lost as a destroyed unit.
 
-    A record with neither a due time nor a recorded retry state was never armed:
-    its first review is still running and nothing is lost.
+    A record with neither a due time, a recorded retry state nor a
+    ``review_error`` was never armed: its first review is still running and
+    nothing is lost.
     """
     sha = (current.get("sha") or "")[:12]
     due = current.get("review_retry_due")
@@ -588,7 +592,15 @@ def _review_retry_lost(current, now, live_units=frozenset(), timer_shas=frozense
     # the state line. Key presence separates an armed record from one never
     # armed; "exhausted" is this module's own value for a spent ladder and is
     # written after a scheduling attempt, never before one.
-    return "review_retry_state" in current and current["review_retry_state"] != "exhausted"
+    if "review_retry_state" in current:
+        return current["review_retry_state"] != "exhausted"
+    # Nothing was ever armed. A record whose review already reported an error is
+    # not a first review still running: its result is merged and no other path
+    # revisits a merged record, so it would keep review_pending true for good
+    # (2026-11-17: two delivered records with merged: true, a reviewer error,
+    # no attempts and no retry state). A fresh record has no review_error and is
+    # still left alone.
+    return "review_error" in current
 
 
 def review_retry_delay(home, identity, base=REVIEW_RETRY_BASE_S, attempts_max=REVIEW_RETRY_MAX_ATTEMPTS):
@@ -770,7 +782,7 @@ def _rearm_scan(home, *, clock, live_units, stop, skipped):
             identity = _identity(current)
             if identity is None:
                 continue
-            if current.get("review_retry_attempts") != _review_attempts(home, identity):
+            if (current.get("review_retry_attempts") or 0) != _review_attempts(home, identity):
                 continue
             if not _review_retry_lost(current, clock(), live_shas, timer_shas):
                 continue
@@ -782,7 +794,7 @@ def _rearm_scan(home, *, clock, live_units, stop, skipped):
                     identity = _identity(current)
                     if identity is None:
                         continue
-                    if current.get("review_retry_attempts") != _review_attempts(home, identity):
+                    if (current.get("review_retry_attempts") or 0) != _review_attempts(home, identity):
                         continue
                     if not _review_retry_lost(current, clock(), live_shas, timer_shas):
                         continue
