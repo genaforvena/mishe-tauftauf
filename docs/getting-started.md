@@ -89,7 +89,10 @@ mishe doctor                # exits 0 when units match what was generated
 
 `sync` writes the user units (`mishe-wake@.service`, a path unit per role, producer
 timers, `mishe-failed@`, the doctor) and enables the paths and timers.
-`systemctl --user list-units 'mishe*'` shows them.
+`systemctl --user list-units 'mishe*'` shows them. A delivery in flight is a transient
+`moving-pin-delivery-HHMMSS.service`; its name carries no `mishe-` prefix, so pass that
+pattern too (`list-units 'mishe*' 'moving-pin-delivery-*'`) when you want to see whether
+the pin is being moved.
 
 ## 5. Start
 
