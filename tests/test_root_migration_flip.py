@@ -27,6 +27,10 @@ TREES = ("mishe-tauftauf", ".omp", ".codex")
 
 SYSTEMCTL = r"""#!/bin/bash
 printf '%s\n' "$*" >>"$SANDBOX/systemctl.log"
+# Record the calls made while quiesce holds the plant: the hold must be in place
+# before the triggers are disarmed, not written afterwards.
+[ -e "$SANDBOX/src/mishe-tauftauf/.mishe-tauftauf/hold" ] &&
+    printf '%s\n' "$*" >>"$SANDBOX/hold-seen.log"
 case "$*" in
   *" stop "*)
       # A trigger that refuses to stop: the flip must log it and keep draining.
@@ -588,4 +592,68 @@ def test_delivery_outliving_the_bound_aborts_before_the_plant_is_stopped(tmp_pat
     assert "still running after 1s" in done.stdout + done.stderr
     assert not (root / "work" / "flip.done").exists()
     assert not any("stop fake-a.service" in line for line in calls(root)), calls(root)
+    assert any("start fake-a.service" in line for line in calls(root)), calls(root)
+
+
+def hold_path(root):
+    return root / "src" / "mishe-tauftauf" / ".mishe-tauftauf" / "hold"
+
+
+def test_quiesce_holds_wake_starts_and_releases_them_on_success(tmp_path):
+    """Regression (2026-11-17 12:00-12:12Z): the flip waited up to 1800 s for live
+    wake engines, and the plant's own triggers kept starting new ones inside that
+    window -- a debounce oneshot started genome at 12:11:55Z and health at
+    12:12:11Z, eleven minutes into the drain. The hold must be written before the
+    triggers are stopped, so such a start exits `held` instead of running an
+    engine, and released only after the units are back."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+
+    done = flip(root, "--execute")
+
+    out = done.stdout + done.stderr
+    assert done.returncode == 0, out
+    assert "hold: wake starts paused" in out, out
+    assert "hold: released" in out, out
+    assert not hold_path(root).exists(), out
+    # The hold was already on disk when the triggers were disarmed, not written
+    # afterwards: every stop call in that phase saw it.
+    seen = (root / "hold-seen.log").read_text()
+    assert "stop mishe-wake-*.path" in seen, seen
+    assert "mishe-producer-dispatch.timer" in seen, seen
+
+
+def test_an_aborted_flip_releases_the_hold(tmp_path):
+    """A NOT-CLEAN abort restarts the units; it must also release the hold, or a
+    failed flip leaves the plant with no wake ever starting again."""
+    root = sandbox(tmp_path)
+    install_helper(root, 1, "  VERIFIED mishe-tauftauf\n  NOT-CLEAN .omp\n=== scoped verify done rc=1")
+
+    done = flip(root, "--execute")
+
+    out = done.stdout + done.stderr
+    assert done.returncode == 1, out
+    assert "hold: wake starts paused" in out, out
+    assert "hold: released" in out, out
+    assert not hold_path(root).exists(), out
+    assert "restore:" in out, out
+
+
+def test_watchdog_releases_a_hold_left_by_a_hard_killed_flip(tmp_path):
+    """A SIGKILL skips the EXIT trap, so the watchdog is the only restorer left.
+    It restarts the units and must remove the hold too; otherwise the plant comes
+    back with every wake permanently held."""
+    root = sandbox(tmp_path)
+    (root / "work" / "flip.units").write_text("fake-a.service\n")
+    hold_path(root).parent.mkdir(parents=True)
+    hold_path(root).write_text("root migration flip 123\n")
+    body = watchdog_body(root, bound=1, pid=999999)
+
+    run = subprocess.run(["bash", "-c", body], env=env_for(root),
+                         capture_output=True, text=True, timeout=120)
+
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert not hold_path(root).exists(), run.stdout + run.stderr
+    log = (root / "work" / "flip.log").read_text()
+    assert "released the hold" in log, log
     assert any("start fake-a.service" in line for line in calls(root)), calls(root)

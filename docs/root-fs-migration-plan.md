@@ -127,6 +127,19 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
   waiting up to `MIGRATION_DELIVERY_DRAIN_TIMEOUT` (900 s) for a live delivery to
   end before anything is stopped. A clear guard at launch is therefore necessary
   but not sufficient; the re-sample is what covers the drain.
+- **Wake starts are held, not merely disarmed.** Measured 2026-11-17 12:00-12:12Z:
+  `disarm_triggers` stops the `.path`, debounce and next-due units, but a `due`
+  service already running re-arms a transient timer, and a debounce oneshot that
+  fired mid-window started genome at 12:11:55Z and this health wake at 12:12:11Z —
+  eleven minutes into a drain that was waiting for the previous engines to end.
+  `quiesce` now writes `$SITE/hold` before it stops anything; a wake that finds it
+  exits `held` in milliseconds (`src/mishe_tauftauf/wake.py`, `run_wake`), so only
+  the engines that already exist have to end. Every restore path — `restore_plant`,
+  the success tail of `cutover`, and the generated watchdog body — removes the file
+  and resumes the roles that were owed while it was in place. The hold suppresses
+  wake starts only: a unit that fails still records its OnFailure signal. A SIGKILL
+  with the watchdog also dead would leave the plant held; `mishe hold status` names
+  the flip pid that wrote it, which is the detector.
 - `.codex` churn is 5.95 GB in 28 files: `logs_2.sqlite`, `state_5.sqlite`,
   `thread_history_1.sqlite` and their `-wal`/`-shm`. Cheap to re-copy, but
   `.codex` cannot be verified clean while a coder CLI runs.

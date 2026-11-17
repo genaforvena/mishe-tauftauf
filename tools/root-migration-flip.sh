@@ -47,6 +47,13 @@ LOG=$WORK/flip.log
 UNITS=$WORK/flip.units
 DONE=$WORK/flip.done
 TREES=(mishe-tauftauf .omp .codex)
+# The site home whose `hold` file pauses wake starts: a wake that finds it exits
+# `held` in milliseconds instead of running an engine (src/mishe_tauftauf/wake.py,
+# `run_wake`). The flip writes it once it starts quiescing, so the plant's own
+# scheduler cannot start an engine into the drain or the delta; every restore path
+# removes it. Overridable so the sandbox test never touches the live site.
+SITE=${MISHE_SITE:-$SRC/mishe-tauftauf/.mishe-tauftauf}
+HOLD=$SITE/hold
 
 MODE=dry-run
 SHAPE=scoped
@@ -274,6 +281,7 @@ sleep $WATCHDOG_SECONDS
 L=$LOG
 D=$DONE
 F=$FLIP_PID
+H=$HOLD
 p() { printf '%s watchdog: %s\n' "\$(date -u +%FT%TZ)" "\$*" >>"\$L"; }
 flip_alive() {
     [ -r /proc/\$F/cmdline ] || return 1
@@ -321,6 +329,9 @@ while read -r u; do
 done <$UNITS
 systemctl --user start mishe-arm.service 2>/dev/null && p 're-armed the next-due timer' ||
     p 're-arm failed: mishe-arm.service (the next-due producer will re-arm on its next run)'
+# The flip writes this before it stops anything, so a hard kill would otherwise
+# leave every wake held with no process left to release it.
+[ -e "\$H" ] && rm -f "\$H" && p 'released the hold: wake starts resume'
 p 'restore done'
 EOF
 }
@@ -336,6 +347,40 @@ arm_watchdog() {
         /bin/bash -c "$body" >/dev/null 2>&1 ||
         die "could not arm the watchdog; refusing to stop anything"
     log "watchdog armed: ${WATCHDOG_SECONDS}s sleep, then waits up to 600s for flip pid $FLIP_PID to end; unit $name.service"
+}
+
+# --- hold --------------------------------------------------------------------
+# Pause wake starts for the whole quiesce window. The drains below can last the
+# 1800 s engine bound, and the plant's own triggers keep starting engines into
+# that window: on 2026-11-17 a debounce oneshot started genome at 12:11:55Z and
+# health at 12:12:11Z, eleven minutes into a drain that was waiting for the
+# previous engines to end. A held wake exits `held` in milliseconds instead of
+# running an engine, so the drain converges on the engines that already exist.
+# The hold suppresses wake starts only: a unit that fails still records its
+# OnFailure signal, so a real fault during the window stays visible.
+hold_plant() {
+    mkdir -p "$SITE" || { log "hold: cannot create $SITE"; return 1; }
+    printf 'root migration flip %s\n' "$FLIP_PID" >"$HOLD" ||
+        { log "hold: cannot write $HOLD"; return 1; }
+    log "hold: wake starts paused ($HOLD)"
+}
+
+# Release the hold and resume the roles that were owed while it was in place. A
+# held wake exits without running and nothing re-fires it, so the resume has to
+# happen here. The site venv python is the only CLI handle this script has; when
+# it is absent (the unit-test sandbox) nothing is started and the next arm
+# resumes, with the skip visible in flip.log.
+release_hold() {
+    [ -e "$HOLD" ] || return 0
+    rm -f "$HOLD" || { log "hold: cannot remove $HOLD; wakes stay paused until it is deleted"; return 1; }
+    log "hold: released"
+    local py=$SRC/mishe-tauftauf/.venv/bin/python
+    if [ -x "$py" ]; then
+        "$py" -m mishe_tauftauf --home "$SITE" hold off >>"$LOG" 2>&1 ||
+            log "hold: resume after release failed: rc=$? (the next arm retries it)"
+    else
+        log "hold: no venv python at $py; owed roles resume on the next arm"
+    fi
 }
 
 # --- restore -----------------------------------------------------------------
@@ -363,6 +408,7 @@ restore_plant() {
         fi
     done
     restart_recorded
+    release_hold
 }
 
 on_exit() {
@@ -449,8 +495,13 @@ quiesce() {
         fi
         return 0
     fi
-    arm_watchdog
     QUIESCED=1   # from here on, any exit path must restart these units
+    # Pause wake starts before arming the watchdog: the drains below can outlive
+    # a trigger's armed timer, and an engine started mid-drain rewrites every
+    # moved tree. Failing to write the hold is not fatal -- the writer drain is
+    # still the bound before the delta -- but it must be visible in flip.log.
+    hold_plant || log "hold not written; a wake can still start during the drain"
+    arm_watchdog
     # A wake needs a trigger and a dispatcher, and a live engine rewrites every
     # tree until it ends. Disarm the triggers before waiting so the set of
     # engines only shrinks: a .path unit that fired mid-delta started genome,
@@ -633,6 +684,7 @@ cutover() {
     # the marker, both paths reach restore_plant, which sees the consistent
     # symlinks and only restarts -- no rollback, no pre-migration deletion.
     restart_recorded
+    release_hold
     date -u +%FT%TZ >"$DONE"
     log "flip complete in $(elapsed)s; rollback: rm the three symlinks and mv *.pre-migration back"
 }
