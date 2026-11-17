@@ -38,12 +38,19 @@ case "$*" in
       if [ -e "$SANDBOX/flip_active" ]; then echo active; exit 0; fi
       echo inactive; exit 3 ;;
   *"list-units"*"--type=path"*)
-      printf 'fake-a.service loaded active running x\nfake-b.service loaded active running x\nfake-c.service loaded active running x\nfake-w.path loaded active waiting x\n' ;;
+      printf 'fake-a.service loaded active running x\nfake-b.service loaded active running x\nfake-c.service loaded active running x\nfake-w.path loaded active waiting x\n'
+      # A transient next-due timer: the stop removes it and the restart cannot
+      # start that name again (observed 2026-11-17 11:28:18Z).
+      [ -e "$SANDBOX/transient-timer" ] &&
+          printf 'mishe-next-due-abc123.timer loaded active waiting x\n' ;;
   *"list-units"*"--state=active"*)
       printf 'fake-a.service loaded active running x\nfake-b.service loaded active running x\nfake-c.service loaded active running x\n' ;;
   *"list-units"*) : ;;
   *" cat "*) echo "ExecStart=/bin/true $SANDBOX/src/mishe-tauftauf/x" ;;
   *" start "*)
+      if printf '%s' "$*" | grep -qE ' start +mishe-next-due-'; then
+          echo "Unit mishe-next-due-abc123.timer could not be found." >&2; exit 1
+      fi
       # One-shot cut for the restart-order regression: terminate the flip in the
       # middle of restart_recorded, once, and let later starts through.
       if [ -n "${KILL_ON_START:-}" ] && [ ! -e "$SANDBOX/killed" ]; then
@@ -292,6 +299,55 @@ def test_live_wake_engine_stops_before_the_plant_is_stopped(tmp_path):
     # Nothing of the plant was stopped before the engines drained.
     assert not any("stop fake-a.service" in line for line in calls(root)), calls(root)
     assert any("start fake-a.service" in line for line in calls(root)), calls(root)
+
+
+def test_writers_left_after_the_stop_abort_before_the_delta(tmp_path):
+    """Regression (2026-11-17 11:28Z): after the plant was stopped the flip only
+    logged `warning: writers still present after 30 s` and went on. Five wakes had
+    started inside the drain, wrote into the trees during the delta, and the scoped
+    verify reported `changed-since=… (29 entries)` on mishe-tauftauf and NOT-CLEAN
+    on all three trees after ~25 min. A write under a moved tree after the delta
+    pass cannot verify clean, so the writers wait must abort there instead."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+    writer = subprocess.Popen(["python3", "-c", "import time; time.sleep(60)"],
+                              cwd=str(root / "src" / "mishe-tauftauf"))
+    try:
+        done = flip(root, "--execute", extra_env={"MIGRATION_WRITER_DRAIN_TIMEOUT": "1"})
+    finally:
+        writer.kill()
+        writer.wait()
+
+    out = done.stdout + done.stderr
+    assert done.returncode == 1, out
+    assert "writers still present after 1s; aborting before the delta" in out, out
+    assert "delta mishe-tauftauf start" not in out, out
+    for tree in TREES:
+        assert (root / "src" / tree).is_dir(), out
+        assert not (root / "src" / tree).is_symlink(), out
+        assert not (root / "src" / f"{tree}.pre-migration").exists(), out
+    assert not (root / "work" / "flip.done").exists()
+    assert any("start fake-a.service" in line for line in calls(root)), calls(root)
+
+
+def test_transient_next_due_timer_is_rearmed_not_restarted(tmp_path):
+    """Regression (2026-11-17 11:28:18Z): `restarted 96 units` was preceded by
+    `restart failed: mishe-next-due-92e2a1ca02bb.timer`. The snapshot holds a
+    transient timer that the disarm removed, so its name cannot be started again
+    and the plant would be left with no next-due timer armed. Restart skips the
+    transient unit and re-arms through mishe-arm.service."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+    (root / "transient-timer").write_text("")
+
+    done = flip(root, "--execute")
+
+    out = done.stdout + done.stderr
+    assert done.returncode == 0, out
+    assert (root / "work" / "flip.done").exists()
+    assert "restart failed: mishe-next-due-abc123.timer" not in out, out
+    assert any("start mishe-arm.service" in line for line in calls(root)), calls(root)
+    assert "re-armed the next-due timer" in out, out
 
 
 def test_termination_during_restart_starts_every_listed_unit(tmp_path):

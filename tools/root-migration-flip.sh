@@ -67,6 +67,12 @@ ENGINE_DRAIN_TIMEOUT=${MIGRATION_ENGINE_TIMEOUT:-1800}
 # about 18 min (10:08:18 -> 10:26:42Z on 2026-11-17), so the bound is generous
 # but still aborts a wedged unit before anything is stopped.
 DELIVERY_DRAIN_TIMEOUT=${MIGRATION_DELIVERY_DRAIN_TIMEOUT:-900}
+# How long writers on the moved trees get to finish after the plant is stopped.
+# Any write into a tree after the delta pass makes the verify's size+mtime and
+# changed-since checks report entries, and the scoped shape can then only fail --
+# on 2026-11-17 the pass that ran with five live engines ended `NOT-CLEAN` after
+# ~25 min of delta+verify. Aborting here costs seconds and names the processes.
+WRITER_DRAIN_TIMEOUT=${MIGRATION_WRITER_DRAIN_TIMEOUT:-120}
 # Units that START a promotion. They are stopped before the drain (a delivery
 # begun inside a 1800 s drain checks and activates against the trees being
 # renamed) and are recorded in $UNITS so the restart paths bring them back.
@@ -126,6 +132,20 @@ writers_present() {
     return 0
 }
 
+# Everything that can start a wake engine or a promotion. `mishe-next-due-<hash>`
+# is a *transient* unit: a `due` service that runs inside the drain calls arm.py,
+# which replaces it with a timer under a new hash, so the snapshot in $UNITS (and
+# one stop at the start of an 1800 s drain) cannot cover it. Observed 2026-11-17
+# 11:23-11:26Z: after `stop failed (continuing): mishe-next-due-92e2a1ca02bb.timer`
+# the new timer fired and started field-review, senses, genome, network and health
+# inside the delta; the verify then found 29 changed entries and could not be
+# clean. Disarm again inside the writer wait, immediately before the delta.
+disarm_triggers() {
+    systemctl --user stop 'mishe-wake-*.path' 'mishe-wake-debounce-*.timer' \
+        mishe-producer-dispatch.timer 'mishe-next-due-*.timer' \
+        'mishe-next-due-*.service' mishe-arm.service 2>/dev/null
+}
+
 # A live wake engine is an `omp` process launched with a wake prompt under the
 # site home (observed cmdline: ... @/home/mesh-home/mishe-tauftauf/.mishe-tauftauf/
 # wakes/wake-genome-...prompt.md). Every engine writes into all three moved trees
@@ -177,9 +197,20 @@ restart_recorded() {
     local u n=0
     [ -s "$UNITS" ] || { log "no unit list to restart"; return 0; }
     while read -r u; do
+        # A transient next-due timer is not restartable: stopping it removes it,
+        # and the snapshot name cannot be started again (`restart failed:
+        # mishe-next-due-92e2a1ca02bb.timer`, 2026-11-17 11:28:18Z). The arming
+        # oneshot below re-arms one under the current release instead.
+        case "$u" in
+            mishe-next-due-*) continue ;;
+        esac
         systemctl --user start "$u" 2>/dev/null && n=$((n + 1)) || log "restart failed: $u"
     done <"$UNITS"
     log "restarted $n units from $UNITS"
+    # Re-arm the next-due timer that the disarm removed. Starting a unit that is
+    # already active is a no-op, so this is safe when the snapshot had no timer.
+    systemctl --user start mishe-arm.service 2>/dev/null && log "re-armed the next-due timer" ||
+        log "re-arm failed: mishe-arm.service (the next-due producer will re-arm on its next run)"
 }
 
 # The watchdog body is built as text so `--print-watchdog` can show exactly what
@@ -365,8 +396,7 @@ quiesce() {
     # delivery guard, so a trigger that refused to stop is caught by those bounds.
     # It must still be visible in flip.log: `|| true` here hid the 09:34 abort class,
     # where a trigger stayed armed and fired a wake into the delta.
-    systemctl --user stop 'mishe-wake-*.path' 'mishe-wake-debounce-*.timer' \
-        mishe-producer-dispatch.timer 'mishe-next-due-*.timer' 2>/dev/null ||
+    disarm_triggers ||
         log "wake trigger stop failed (continuing): rc=$?; a wake can still start during the drain"
     # The delivery triggers go first, for the same reason: the cadence fires
     # every 600 s, so a promotion started inside the drain below would run its
@@ -413,12 +443,24 @@ quiesce() {
     fi
     while read -r u; do systemctl --user stop "$u" 2>/dev/null || log "stop failed (continuing): $u"; done <"$UNITS"
     # Bounded wait for writers to drain; the EXIT trap and the watchdog both
-    # restart from $UNITS if we die here.
-    for i in $(seq 1 30); do
+    # restart from $UNITS if we die here. Re-disarm inside the wait: a `due`
+    # service that was running when the list was stopped re-arms the transient
+    # next-due timer under a new name, and that timer starts a fresh engine.
+    # Writers are fatal before the delta, not a warning: every write into a tree
+    # after the delta pass shows up in the verify's size+mtime and changed-since
+    # checks, so the scoped shape cannot be clean under them. Abort cheap.
+    for i in $(seq 1 "$WRITER_DRAIN_TIMEOUT"); do
         writers_present || break
+        if [ $((i % 5)) -eq 0 ]; then disarm_triggers || log "re-disarm failed: rc=$?"; fi
         sleep 1
     done
-    writers_present && log "warning: writers still present after 30 s (see log above)" || log "no writers left on the moved trees"
+    if writers_present; then
+        die "writers still present after ${WRITER_DRAIN_TIMEOUT}s; aborting before the delta (writes under the moved trees can never verify clean)"
+    fi
+    log "no writers left on the moved trees"
+    # One last disarm once the writers are gone: nothing the stopped plant left
+    # behind can start an engine into the delta that follows.
+    disarm_triggers || log "final disarm failed: rc=$?"
 }
 
 # Execute in production must be detached: the launching wake keeps writing into
@@ -433,9 +475,11 @@ quiesce() {
 # stopped (observed 2026-11-17 11:01:55Z). MIGRATION_ENGINE_TIMEOUT (line 59,
 # else a caller's short drain bound becomes the 1800 s default),
 # MIGRATION_DELIVERY_DRAIN_TIMEOUT (line 69, else a caller's delivery-drain bound
-# becomes the 900 s default) and MISHE_WAKE_KEY (line 132, else the launching
-# wake's unit is no longer excluded from the stop list). `set -u` plus an empty
-# array would expand as an unbound variable, hence the ${a[@]+...} guards.
+# becomes the 900 s default), MIGRATION_WRITER_DRAIN_TIMEOUT (line 75, else a
+# rehearsal's short writer bound becomes the 120 s default) and MISHE_WAKE_KEY
+# (line 132, else the launching wake's unit is no longer excluded from the stop
+# list). `set -u` plus an empty array would expand as an unbound variable, hence
+# the ${a[@]+...} guards.
 detach_relaunch() {
     local unit=mishe-root-migration-flip forward=() self
     # The unit name is fixed, so the stale-unit cleanup below must not stop a
@@ -450,6 +494,7 @@ detach_relaunch() {
     [ -f "$self" ] || die "cannot resolve this script's path for the detached relaunch: $0"
     [ -n "${MIGRATION_ENGINE_TIMEOUT:-}" ] && forward+=(--setenv=MIGRATION_ENGINE_TIMEOUT="$MIGRATION_ENGINE_TIMEOUT")
     [ -n "${MIGRATION_DELIVERY_DRAIN_TIMEOUT:-}" ] && forward+=(--setenv=MIGRATION_DELIVERY_DRAIN_TIMEOUT="$MIGRATION_DELIVERY_DRAIN_TIMEOUT")
+    [ -n "${MIGRATION_WRITER_DRAIN_TIMEOUT:-}" ] && forward+=(--setenv=MIGRATION_WRITER_DRAIN_TIMEOUT="$MIGRATION_WRITER_DRAIN_TIMEOUT")
     [ -n "${MISHE_WAKE_KEY:-}" ] && forward+=(--setenv=MISHE_WAKE_KEY="$MISHE_WAKE_KEY")
     systemd-run --user --unit="$unit" --collect \
         --setenv=MISHE_FLIP_DETACHED=1 \
