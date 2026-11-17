@@ -531,6 +531,29 @@ def schedule_review_retry(home, record, *, delay, runner=None):
                capture_output=True, timeout=15, check=True)
 
 
+def schedule_review_retry_if_needed(home, current):
+    """Record one delayed re-run for ``current``'s unanswered review error, once.
+
+    Both merge paths reach a review error: ``review()`` merging its own result and
+    the work-watch poll merging a result a wake deferred behind the dispatch lock.
+    Before this only ``review()`` scheduled the retry, so a deferred merge recorded
+    ``review_error`` and left ``review_pending`` true with no retry unit
+    (2026-11-17), stranding the release exactly as the in-process path used to.
+    The caller holds the delivery lock and writes ``current`` afterwards.
+    """
+    if current.get("review_pending") is False or current.get("review_retry_state") is not None:
+        return
+    delay = review_retry_delay(home, current["id"])
+    try:
+        if delay is None:
+            current["review_retry_state"] = "exhausted"
+        else:
+            schedule_review_retry(home, current, delay=delay)
+            current["review_retry_state"] = f"scheduled in {int(delay)}s"
+    except (OSError, subprocess.SubprocessError) as exc:
+        current["review_retry_state"] = f"scheduling failed: {exc}"
+
+
 def review_queue_path(home, record):
     # The same SHA from a different base has a different scoped diff to read.
     key = record["sha"] + ("-" + record["previous"] if record.get("previous") else "")
@@ -742,8 +765,11 @@ def review(home, identity):
     queued = Path(home)/"work/reviews"/f"{identity}.result.json"
     if queued.exists():
         prior = read_json(queued)
-        if prior.get("merged") and "review_error" in prior.get("result", {}):
+        if "review_error" in prior.get("result", {}):
             # An explicit retry is a new attempt; retain the unavailable result.
+            # A wake can defer this error's merge, so an unmerged failed result
+            # also belongs here: merging it would only record the error and
+            # return without re-running the model.
             archive = queued.parent/f"{identity}-{time.time_ns()}.failed-attempt.json"
             write_json(archive, prior)
         else:
@@ -792,19 +818,10 @@ def review(home, identity):
     # Persist before trying the shared lock. Never lose a completed model call
     # because a wake is running, and never write a stale delivery transition.
     write_json(queued, dict(id=identity, result=result, merged=False))
+    # merge_review records the error and its retry state; when a wake holds the
+    # lock it defers both, and the work-watch poll's later merge does the same.
     merge_review(home, queued)
     current = read_json(path)
-    if current.get("review_pending") is not False and "review_error" in current:
-        delay = review_retry_delay(home, identity)
-        try:
-            if delay is None:
-                current["review_retry_state"] = "exhausted"
-            else:
-                schedule_review_retry(home, current, delay=delay)
-                current["review_retry_state"] = f"scheduled in {int(delay)}s"
-        except (OSError, subprocess.SubprocessError) as exc:
-            current["review_retry_state"] = f"scheduling failed: {exc}"
-        write_json(path, current)
     return dict(phase="reviewed" if current.get("review_pending") is False else "review-pending", id=identity)
 
 
@@ -850,6 +867,7 @@ def merge_review(home, queued, *, sleep=time.sleep, clock=time.monotonic,
                             default_notify(home, current["owner"], f"Release {outcome['id']}: review finding; decide fix/revert within six hours. Evidence: {path}")
                     elif "review_error" in result:
                         current["review_error"] = result["review_error"]
+                        schedule_review_retry_if_needed(home, current)
                     write_json(path, current)
                     shared_path = review_queue_path(home, current)
                     shared = read_json(shared_path)

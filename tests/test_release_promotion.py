@@ -358,6 +358,44 @@ def test_explicit_retry_after_reviewer_error_preserves_failed_attempt(tree,monke
     assert read_json(p.record_path(home,identity))["review_retry_state"]=="scheduled in 1800s"
 
 
+def test_deferred_review_error_merge_schedules_the_retry(tree,monkeypatch):
+    # A wake can hold the dispatch lock when a failed review persists its result;
+    # merge_review then writes merge_error and returns. The work-watch poll merges
+    # later through merge_reviews, and must schedule the retry itself: before this
+    # the deferred merge recorded review_error and left review_pending true with no
+    # retry unit, stranding the release exactly as the in-process path used to.
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha);p.materialize(home,repo,old)
+    identity="deferred-retry"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",source=str(source),paths=["docs/page.md"],check=dict(output="pass"),review_pending=True))
+    write_json(home/"work/reviews"/f"{identity}.result.json",dict(id=identity,result=dict(review_error="reviewer quota spent"),merged=False))
+    launched=[]
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:launched.append(argv))
+    p.merge_reviews(home)
+    record=read_json(p.record_path(home,identity))
+    assert record["review_error"]=="reviewer quota spent" and record["review_pending"] is True
+    retries=[argv for argv in launched if any("review-retry" in str(a) for a in argv)]
+    assert len(retries)==1 and "--on-active=1800" in retries[0]
+    assert record["review_retry_state"]=="scheduled in 1800s"
+
+
+def test_retry_over_an_unmerged_failure_reruns_the_review(tree,monkeypatch):
+    # The scheduled retry must re-run the model even when a wake deferred the first
+    # failure's merge. Merely merging it would record the error and return without
+    # a second attempt, wasting the retry.
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha);p.materialize(home,repo,old)
+    identity="retry-unmerged"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",source=str(source),paths=["docs/page.md"],check=dict(output="pass"),review_pending=True))
+    write_json(home/"work/reviews"/f"{identity}.result.json",dict(id=identity,result=dict(review_error="reviewer quota spent"),merged=False))
+    calls=[]
+    monkeypatch.setattr(p.wall_patch,"review",lambda *a,**k:calls.append(1) or dict(clear=True))
+    monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:None)
+    assert p.review(home,identity)["phase"]=="reviewed"
+    assert len(calls)==1
+    assert list((home/"work/reviews").glob("*.failed-attempt.json"))
+
+
 def test_review_retry_delay_backs_off_and_gives_up(tmp_path):
     from mishe_tauftauf import release_promotion as p
     reviews=tmp_path/"work/reviews";reviews.mkdir(parents=True)
