@@ -350,6 +350,26 @@
       "covers": "budget accounts consistency and freshness"
     },
     {
+      "name": "budget-view-mapping",
+      "command": [
+        "{python}",
+        "{repo}/checks/budget-view-mapping.py",
+        "{home}"
+      ],
+      "every": 300,
+      "timeout": 60,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "senses",
+      "replaces": [],
+      "covers": "the budget window shows the engine each mind runs on: the file's own routing selection and the live ledger"
+    },
+    {
       "name": "root-fs-stall",
       "command": [
         "{python}",

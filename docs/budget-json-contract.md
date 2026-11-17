@@ -227,6 +227,26 @@ RED when any of:
    (`yielding.spare_budget`, `engine_router.live_status`, `provider_budget.rows_from_engine_budget`);
    the whole file is still rejected as UNKNOWN once `produced_at` is older than `MAX_AGE_S`.
 
+## `budget-view-mapping` check
+
+Command: `{python} {repo}/checks/budget-view-mapping.py {home}` — the site home is positional; the
+check has no `--home` flag. Exit codes: 0 holds, 2 RED, 3 cannot decide (ages to UNKNOWN).
+
+It judges the window's ENGINE table, whose columns come from two clocks. `next` is the producer's
+`routing.roles[role].selected`, so it is judged against the *same file*: the view must render that
+selection, and that selection must be the first candidate the file's own `trail` marks eligible. A
+fresh `engine_router.assess()` at check time is wrong — running counts move between writes, every top
+candidate has `max_parallel` 3, and 11 roles share those keys, so one wake starting between publish
+and check flipped `selected` for 5 of 11 roles and failed a correct window (2026-11-17, fixed by
+e4eee616). `running` is read live on both sides and compared against `engine/routing-ledger.jsonl`.
+
+The checkout declares a `budget-view-mapping` duty: every 300 s, timeout 60 s, signal max age 900 s,
+resolver **senses**, exit 3 declared as UNKNOWN so a missing engine directory or ledger never fails
+the unit. Installed as `mishe-producer-budget-view-mapping.{service,timer}`. Residual limit: a file
+written with `running=None` still has a self-consistent trail, so the check cannot see that omission;
+`budget_producer.build_routing` sharing its call with `engine_router.publish` is what keeps the two
+honest.
+
 ## Migration checklist
 
 1. Ship `src/mishe_tauftauf/budget_producer.py` + `checks/budget-consistency.py` + this

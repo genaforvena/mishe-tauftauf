@@ -96,6 +96,34 @@ def test_budget_consistency_missing_input_does_not_leave_green(tmp_path):
     assert "signal:budget-consistency" in owed.check(tmp_path, "senses", now=NOW + 1).reasons
 
 
+def test_budget_view_mapping_duty_is_scheduled_with_its_own_exit_contract(tmp_path):
+    """The window-vs-engine detector had no caller, so its FAIL and CANNOT-DECIDE could never surface.
+
+    Steward's fix (e4eee616) made the comparison snapshot-internal so it no longer flaps; this asserts the
+    other half — that the repository schedules it against the committed check, with the site home passed
+    positionally (the check has no ``--home`` flag) and exit 3 declared as UNKNOWN so a missing engine
+    directory or ledger never mints ``failed-mishe-producer-budget-view-mapping-service``.
+    """
+    item = next(d for d in ALL if d["name"] == "budget-view-mapping")
+    check = str(REPO / "checks" / "budget-view-mapping.py")
+    assert item["command"] == ["{python}", "{repo}/checks/budget-view-mapping.py", "{home}"]
+    assert item["resolver"] == "senses"
+    assert item["red_codes"] == [2] and item["unknown_codes"] == [3]
+    home = tmp_path / "home"
+    loaded = producers.load(home, python=PY, declared=duties.declared(REPO, home))
+    producer = next(p for p in loaded if p.name == "budget-view-mapping")
+    assert check in producer.command and producer.command[-1] == str(home)
+    cfg = units.Config(home=home, repo=REPO, python=PY, pythonpath=str(REPO / "src"),
+                       unit_dir=tmp_path / "units")
+    rendered = units.render(cfg, ["senses"], producers=[producer])
+    service = rendered["mishe-producer-budget-view-mapping.service"]
+    assert check in service and "--red-codes 2" in service and "--unknown-codes 3" in service
+    assert "OnUnitActiveSec=300" in rendered["mishe-producer-budget-view-mapping.timer"]
+    assert producers.run(home, item["name"], [PY, "-c", "raise SystemExit(3)"], now=NOW, timeout=10,
+                         red_codes=(2,), unknown_codes=(3,)) == 0
+    assert store.read(home, item["name"], now=NOW).state == "UNKNOWN"
+
+
 def test_readings_renewal_has_a_bounded_senses_owned_producer():
     item = next(d for d in ALL if d["name"] == "readings")
     assert item["resolver"] == "senses"
