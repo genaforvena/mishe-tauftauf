@@ -1,19 +1,32 @@
 #!/usr/bin/env python3
 """Detector: the budget window must show the engine each mind actually runs on.
 
-The budget window's ENGINE table is computed by ``budget_view.engine_view()``.
-It must agree with two independent readings of the router's own state:
+The ENGINE table is ``budget_view.engine_view()`` over ``engine/budget.json``.
+Two of its columns come from different clocks, so they are judged separately:
 
-1. ``engine_router.assess()`` over the live routes, live account status and
-   cooling state gives the engine each role would pick for its next wake.
-2. ``engine/routing-ledger.jsonl`` gives the engine running now: the latest
-   ``select`` for a role with no ``outcome`` after it.
+1. ``next`` is the producer's ``routing.roles[role].selected``, computed by
+   ``engine_router.assess()`` when the file was written (every 600 s). It is
+   judged against that same file, not against a fresh ``assess()``: running
+   counts and cooling move between writes, and a live comparison would fail on
+   the snapshot's age instead of on a defect. Two properties are checked — the
+   view renders the file's own ``selected``, and that ``selected`` is the first
+   candidate the file's own ``trail`` marks eligible. A view that fell back to
+   the first candidate of ``routes.json`` (or to ``engines/ROLE.json``) breaks
+   one of the two.
+2. ``running`` is the engine occupied right now: the latest ``select`` with no
+   ``outcome`` after it in ``engine/routing-ledger.jsonl``. Read live on both
+   sides (the view's and this check's), so it is a same-clock comparison.
 
 It must NOT be compared against the first candidate of ``routes.json`` or
 against ``engines/ROLE.json``; that shortcut was the earlier wrong mapping.
 
-Exit codes: 0 holds (view agrees with router + ledger), 2 fails (a role's
-view disagrees), 3 cannot decide (site, router or budget view unreadable).
+Limit: a file written with ``running=None`` (caps ignored) still shows a
+self-consistent trail, so this check cannot see that omission; the producer's
+``build_routing`` shares its call with the router's own ``publish``.
+
+Exit codes: 0 holds (view renders the file, the file's trail picks that
+selection, the ledger agrees on running), 2 fails (a role disagrees), 3 cannot
+decide (site, budget view or ledger unreadable).
 
 Usage: budget-view-mapping.py [SITE_HOME]
 SITE_HOME defaults to $MISHE_SEED_HOME, then $MISHE_TAUFTAUF_HOME, then
@@ -25,7 +38,6 @@ import importlib.util
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -55,31 +67,58 @@ def load_view(home: Path):
     return module, None
 
 
-def router_next(home: Path) -> tuple[dict | None, str | None]:
-    """Per-role next engine from engine_router.assess() on live inputs."""
-    src = home.parent / "src"
-    if str(src) not in sys.path:
-        sys.path.insert(0, str(src))
-    try:
-        from mishe_tauftauf import engine_router as er
-    except Exception as exc:  # noqa: BLE001
-        return None, f"engine_router import failed: {str(exc)[:120]}"
-    try:
-        routes = er.load_routes(home)
-        now_ms = time.time() * 1000
-        running = None
-        if routes is not None:
-            running = er.running_candidates(home, now_ms=now_ms,
-                                            horizon_s=routes.get("hard_timeout_s", er.DEFAULT_HARD_TIMEOUT_S))
-        tally = er.measured_tally(home, now_ms=now_ms)
-        a = er.assess(routes, er.live_status(home), er._load_state(home)["cooling"], now_ms,
-                      running=running, tally=tally)
-    except Exception as exc:  # noqa: BLE001
-        return None, f"assess failed: {str(exc)[:120]}"
-    roles = a.get("roles")
-    if roles is None:
-        return None, f"assess returned no roles (state {a.get('state')})"
-    return {role: row.get("selected") for role, row in roles.items()}, None
+def published_routing(budget: dict) -> tuple[dict | None, str | None]:
+    """Per-role ``selected`` and ``trail`` from the budget file's own routing section."""
+    routing = budget.get("routing")
+    if not isinstance(routing, dict):
+        return None, "routing section missing or malformed"
+    roles = routing.get("roles")
+    if not isinstance(roles, dict):
+        return None, "routing.roles malformed"
+    out = {}
+    for role, row in roles.items():
+        if not isinstance(row, dict):
+            return None, f"routing.roles[{role!r}] malformed"
+        trail = row.get("trail")
+        out[role] = {"selected": row.get("selected"),
+                     "decision": row.get("decision"),
+                     "trail": trail if isinstance(trail, list) else None}
+    return out, None
+
+
+def first_eligible(trail) -> str | None:
+    """The key the published trail's own verdicts choose: the first candidate marked eligible."""
+    for step in trail or []:
+        if isinstance(step, dict) and step.get("verdict") == "eligible":
+            return step.get("key")
+    return None
+
+
+def at_capacity(trail) -> int:
+    """How many candidates the publisher skipped for a full cap; reported, never a verdict."""
+    return sum(1 for step in trail or []
+               if isinstance(step, dict) and step.get("verdict") == "at-capacity")
+
+
+def disagreements(view: dict, published: dict, running: dict) -> list[str]:
+    """One line per role that disagrees. Pure, so the three properties stay separately testable."""
+    bad = []
+    for role in sorted(r for r in view if isinstance(view.get(r), dict)):
+        row = view[role]
+        if row.get("running") != running.get(role):
+            bad.append(f"{role}: view running={row.get('running')} ledger running={running.get(role)}")
+        pub = published.get(role)
+        if pub is None:
+            bad.append(f"{role}: view shows a role the file's routing section does not carry")
+            continue
+        if row.get("next") != pub["selected"]:
+            bad.append(f"{role}: view next={row.get('next')} file routing.selected={pub['selected']}")
+            continue
+        want = first_eligible(pub["trail"])
+        if want != pub["selected"]:
+            bad.append(f"{role}: file routing.selected={pub['selected']} "
+                       f"but its own trail's first eligible candidate is {want}")
+    return bad
 
 
 def ledger_running(home: Path) -> tuple[dict | None, str | None]:
@@ -123,8 +162,8 @@ def main(argv: list[str]) -> int:
     if view.get("error"):
         print(f"budget-view-mapping: CANNOT-DECIDE engine_view error {view['error']}")
         return 3
-    nxt, err = router_next(home)
-    if nxt is None:
+    published, err = published_routing(budget)
+    if published is None:
         print(f"budget-view-mapping: CANNOT-DECIDE {err}")
         return 3
     running, err = ledger_running(home)
@@ -136,19 +175,14 @@ def main(argv: list[str]) -> int:
     if not roles:
         print("budget-view-mapping: CANNOT-DECIDE view has no role rows")
         return 3
-    bad = []
-    for role in roles:
-        row = view[role]
-        want_next = nxt.get(role)
-        want_run = running.get(role)
-        if row.get("next") != want_next or row.get("running") != want_run:
-            bad.append((role, row.get("running"), want_run, row.get("next"), want_next))
+    bad = disagreements(view, published, running)
     if bad:
-        for role, vr, wr, vn, wn in bad:
-            print(f"budget-view-mapping: FAIL {role}: view running={vr} router-ledger running={wr}; "
-                  f"view next={vn} assess next={wn}")
+        for line in bad:
+            print(f"budget-view-mapping: FAIL {line}")
         return 2
-    print(f"budget-view-mapping: HOLDS {len(roles)} roles agree with assess() and the ledger")
+    capped = sum(at_capacity(row["trail"]) for row in published.values())
+    note = f"; {capped} candidate(s) were at capacity when the file was written" if capped else ""
+    print(f"budget-view-mapping: HOLDS {len(roles)} roles render the file's own selection and the ledger's running{note}")
     return 0
 
 
