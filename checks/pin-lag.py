@@ -47,17 +47,24 @@ FAILURE_PATTERN = re.compile(r"exit [1-9]|not clear|refused|failed|unavailable|s
 # (the exit-code legend is not). Map what the record says to the reported stage and failure reason.
 PHASE_STAGE = {
     "checking": "check", "check-failed": "check",
+    "check-mutated-source": "check", "check-mutated-command": "check",
     "waiting-for-wakes": "activate", "delivery-busy": "activate", "activating": "activate",
     "review": "review", "review-failed": "review",
     "applying": "apply", "applied": "apply", "apply-failed": "apply",
     "verified": "verify", "delivered": "verify", "rolled-back": "verify", "verify-failed": "verify",
 }
 # Phases a promote writes while it is still working. A record in one of these is a live run, not a
-# result: the pin is about to move, so a lagging pin is progress rather than a fault.
-IN_FLIGHT_PHASES = frozenset({"checking", "waiting-for-wakes", "delivery-busy", "activating",
+# result: the pin is about to move, so a lagging pin is progress rather than a fault. ``delivery-busy``
+# is deliberately absent: the promote writes it only as it gives up, so a record in that phase is a
+# dead run, not a live one (2026-11-17: counting it as live let a delivery that never started read
+# "delivery in flight" for up to red_age while the outcome signal still said VERIFIED).
+IN_FLIGHT_PHASES = frozenset({"checking", "waiting-for-wakes", "activating",
                               "review", "applying"})
 PHASE_FAILURE = {
     "check-failed": "check failed",
+    "check-mutated-source": "committed source changed during checks",
+    "check-mutated-command": "command changed during check",
+    "delivery-busy": "delivery lock was not free in time",
     "review-failed": "review not clear",
     "apply-failed": "apply failed",
     "verify-failed": "verify failed",

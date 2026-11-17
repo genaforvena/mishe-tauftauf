@@ -616,9 +616,11 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
             record["phase"]="check-failed"; save(); return record
         closure(source, env)
         if not boundary.clean_tree(source) or boundary.head(source) != sha:
-            record["phase"]="check-mutated-source"; save(); raise ValueError("committed source changed during checks")
+            record["phase"]="check-mutated-source"; record["failure"]="committed source changed during checks"
+            save(); publish_outcome(home, record); raise ValueError(record["failure"])
         if commands != wall_patch.command_artifacts(home, [check, observe], cwd=source):
-            record["phase"]="check-mutated-command"; save(); raise ValueError("command changed during check")
+            record["phase"]="check-mutated-command"; record["failure"]="command changed during check"
+            save(); publish_outcome(home, record); raise ValueError(record["failure"])
         record["tests_passed"]=True
         # Only now the dispatch lock: the check above ran the whole suite without holding wakes back.
         record["phase"]="waiting-for-wakes"; save()
@@ -626,7 +628,10 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
             stack.enter_context(held_delivery_lock(home, wait_s))
         except DeliveryBusy as exc:
             record["held_delivery_lock_holder"] = getattr(exc, "holders", None)
-            record["phase"] = "delivery-busy"; save()
+            record["phase"] = "delivery-busy"
+            record["failure"] = (f"dispatch lock still held after a {int(wait_s)}s activation hold"
+                                 if wait_s else "dispatch lock busy")
+            save(); publish_outcome(home, record)
             raise
         record["phase"]="activating"; save()
         configs = {str(p):wall_patch.snapshot(p) for p in config_paths(home)} if activate is None else {}

@@ -167,9 +167,32 @@ def test_a_record_naming_a_commit_outside_this_clone_is_not_in_flight(tmp_path):
     assert code == 1, detail
 
 
+def test_a_delivery_busy_record_does_not_mask_the_lag(tmp_path):
+    # A promote that never started writes delivery-busy and raises. Counting that as live made a
+    # stalled delivery read GREEN "delivery in flight" for up to red_age while nothing ran.
+    _, home, shas = make_repo(tmp_path, [NOW - 3000, NOW - 1800])
+    pin_to(home, shas[0])
+    write_live_record(home, 'delivery-busy', created_at=NOW - 60, sha=shas[1])
+    code, detail = lag.evaluate(home, NOW, green_age=600, red_age=10800)
+    assert code == 1, detail
+    assert any('delivery in flight' in ln for ln in detail) is False, detail
+
+
 def test_in_flight_ignores_a_terminal_phase(tmp_path):
     write_live_record(tmp_path, 'delivered', created_at=1000.0)
     assert lag.in_flight(tmp_path, 1100.0) is None
+
+
+def test_in_flight_ignores_a_delivery_busy_record(tmp_path):
+    write_live_record(tmp_path, 'delivery-busy', created_at=1000.0)
+    assert lag.in_flight(tmp_path, 1100.0) is None
+
+
+def test_a_check_mutated_record_names_the_failure_and_is_not_in_flight(tmp_path):
+    write_live_record(tmp_path, 'check-mutated-source', created_at=1000.0)
+    assert lag.in_flight(tmp_path, 1100.0) is None
+    stage, failure = lag.record_stage_and_failure({'phase': 'check-mutated-source', 'sha': 'b' * 40})
+    assert stage == 'check' and failure == 'committed source changed during checks (bbbbbbbb)'
 
 
 def test_in_flight_names_the_stage_of_a_live_record(tmp_path):

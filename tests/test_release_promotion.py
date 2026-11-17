@@ -1028,7 +1028,9 @@ def test_held_lock_give_up_attaches_holder_info_to_delivery_busy(tmp_path):
 
 
 def test_promotion_records_lock_holder_and_phase_on_delivery_busy(tree, monkeypatch):
+    from mishe_tauftauf import signal_store
     repo, home, old, sha = tree
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"])
 
     def lock(home_arg, wait_s, **kw):
         exc = p.DeliveryBusy("busy")
@@ -1039,12 +1041,32 @@ def test_promotion_records_lock_holder_and_phase_on_delivery_busy(tree, monkeypa
     with pytest.raises(p.DeliveryBusy):
         p.promote(home, repo, sha, check=[sys.executable, "-c", "assert True"], observe=["probe"],
                   previous=old, activate=lambda *a: None, probe=lambda *a, **k: dict(code=0, output="ok"),
-                  reviewer=lambda *a: None, closure=lambda *a: None, wait_s=1)
+                  reviewer=lambda *a: None, closure=lambda *a: None, wait_s=2400)
     records = list((home / "work/releases").glob("*.json"))
     assert len(records) == 1
     record = read_json(records[0])
     assert record["phase"] == "delivery-busy"
     assert record["held_delivery_lock_holder"]["holders"][0]["pid"] == "4242"
+    # The raise must still publish: otherwise the signal keeps the previous reading (often VERIFIED).
+    reading = signal_store.recorded(home, "moving-pin-delivery")
+    assert reading["value"] == "FAILED" and reading["event"] == sha + ":delivery-busy"
+    detail = (home / "signals" / "moving-pin-delivery.detail").read_text()
+    assert sha[:8] in detail and "delivery-busy" in detail and "2400s activation hold" in detail
+
+
+def test_a_source_mutated_during_checks_publishes_failed(tree, monkeypatch):
+    from mishe_tauftauf import signal_store
+    repo, home, old, sha = tree
+    signal_store.register(home, "moving-pin-delivery", max_age=7200, subscribers=["field-review"])
+    monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
+    mutating = "open('mutated-during-check','w').write('x')"
+    with pytest.raises(ValueError, match="committed source changed during checks"):
+        p.promote(home, repo, sha, check=[sys.executable, "-c", mutating], observe=["probe"],
+                  previous=old, activate=lambda *a: None, probe=lambda *a, **k: dict(code=0, output="ok"),
+                  reviewer=lambda *a: None, closure=lambda *a: None)
+    reading = signal_store.recorded(home, "moving-pin-delivery")
+    assert reading["value"] == "FAILED" and reading["event"] == sha + ":check-mutated-source"
+    assert "check-mutated-source" in (home / "signals" / "moving-pin-delivery.detail").read_text()
 
 def test_stale_hold_with_a_dead_writer_pid_is_cleared_when_the_dispatch_lock_is_free(tmp_path):
     hold = tmp_path / "hold"
