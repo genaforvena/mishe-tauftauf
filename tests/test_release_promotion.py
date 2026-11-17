@@ -595,22 +595,30 @@ def test_a_timer_postponed_past_its_deadline_is_replaced(tmp_path,monkeypatch):
     calls=[]
     monkeypatch.setattr(p.subprocess,"run",lambda argv,**kw:calls.append(argv))
     now=time.time()
-    stale,running="4"*40,"5"*40
-    for name,sha in (("rel-stale",stale),("rel-running",running)):
+    stale,running,spent="4"*40,"5"*40,"6"*40
+    for name,sha,attempts in (("rel-stale",stale,0),("rel-running",running,0),
+                              ("rel-spent",spent,p.REVIEW_RETRY_MAX_ATTEMPTS)):
         write_json(p.record_path(tmp_path,name),
                    dict(id=name,sha=sha,source=str(tmp_path),review_pending=True,
-                        review_retry_attempts=0,review_retry_state="scheduled in 7200s",
+                        review_retry_attempts=attempts,review_retry_state="scheduled in 7200s",
                         review_retry_due=int(now-p.REVIEW_RETRY_REARM_GRACE_S-1)))
+    for attempt in range(p.REVIEW_RETRY_MAX_ATTEMPTS):
+        (tmp_path/"work/reviews"/f"rel-spent-{attempt}.failed-attempt.json").write_text("{}")
     stale_timer=f"mishe-release-review-retry-{stale[:12]}-1794930448.timer"
+    spent_timer=f"mishe-release-review-retry-{spent[:12]}-1794930448.timer"
     live={stale[:12]:{"timers": (stale_timer,), "services": ()},
           running[:12]:{"timers": (),
-                        "services": (f"mishe-release-review-retry-{running[:12]}-1794930448.service",)}}
+                        "services": (f"mishe-release-review-retry-{running[:12]}-1794930448.service",)},
+          spent[:12]:{"timers": (spent_timer,), "services": ()}}
     armed=p.rearm_lost_review_retries(tmp_path,clock=lambda: now,live_units=live)
-    assert armed==["rel-stale"], armed
+    assert sorted(armed)==["rel-spent","rel-stale"], armed
     stops=[c for c in calls if c[0]=="systemctl" and "stop" in c]
+    # The spent ladder gets no replacement, so its pending unit is left to run
+    # its one review rather than be stopped with nothing to take its place.
     assert stops==[["systemctl","--user","stop",stale_timer]], stops
     runs=[c for c in calls if c[0]=="systemd-run"]
     assert len(runs)==1 and any(a.startswith("--on-calendar=") for a in runs[0]), runs
+    assert read_json(p.record_path(tmp_path,"rel-spent"))["review_retry_state"]=="exhausted"
     assert read_json(p.record_path(tmp_path,"rel-running"))["review_retry_due"]==int(now-p.REVIEW_RETRY_REARM_GRACE_S-1)
 
 

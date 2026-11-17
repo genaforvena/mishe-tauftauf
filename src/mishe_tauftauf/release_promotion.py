@@ -709,8 +709,9 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None, stop=No
     deadline has not been missed is left untouched, as is one running a review
     now. Each re-arm takes the delivery lock and re-reads the record, so a
     concurrent merge is not overwritten; a busy lock is skipped and the next poll
-    tries again. A live timer whose recorded deadline is long past is stopped
-    before the replacement is armed, so only one rung is pending.
+    tries again. A live timer whose recorded deadline is long past is replaced:
+    the calendar rung is armed first and the postponed timer is then stopped, so
+    only one rung is pending.
 
     ``live_units`` is the ``units.live_review_retry_units()`` answer; it is
     computed once per scan so the whole home costs one manager query and every
@@ -746,8 +747,13 @@ def rearm_lost_review_retries(home, *, clock=time.time, live_units=None, stop=No
                     continue
                 if not _review_retry_lost(current, clock(), live_shas, timer_shas):
                     continue
-                stop(_postponed_retry_timers(current, live))
                 schedule_review_retry_if_needed(home, current)
+                if isinstance(current.get("review_retry_due"), (int, float)):
+                    # The replacement is armed; the postponed timer must not fire
+                    # a second review. When the ladder is exhausted (no due is
+                    # recorded) the old unit is left to run its one attempted
+                    # review rather than be lost to a scheduling decision.
+                    stop(_postponed_retry_timers(current, live))
                 write_json(path, current)
         except (OSError, ValueError, subprocess.SubprocessError):
             # A transient start failure or a record being rewritten keeps its
