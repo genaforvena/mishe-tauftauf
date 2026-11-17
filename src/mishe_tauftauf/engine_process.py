@@ -140,6 +140,8 @@ class _ProgressReader:
         self.offset = 0
         self.progress = 0
         self.jobs: dict = {}
+        self.job_states: dict = {}
+        self.job_beats: dict = {}
 
     def poll(self) -> int | None:
         if self.path is None:
@@ -150,10 +152,26 @@ class _ProgressReader:
                 data = handle.read()
         except OSError:
             return None
-        progress, consumed = engine_boundary.progress_bytes(data, self.jobs)
+        fresh: dict = {}
+        progress, consumed = engine_boundary.progress_bytes(data, self.jobs, fresh)
+        for job, status in fresh.items():
+            self.job_states[job] = status
+            if status == 'running':
+                self.job_beats[job] = time.monotonic()
         self.offset += consumed
         self.progress += progress
         return self.progress
+
+    def awaiting_job(self, now: float, grace: float) -> bool:
+        """Whether any launched job reported running within ``grace`` seconds.
+
+        A wait tool's ``details.jobs`` status is authoritative at the boundary even when the
+        job is not an OS descendant of the engine (a harness-backgrounded bash job). Only a new
+        heartbeat refreshes a job's beat, so ordinary output cannot pin a finished job; the hard
+        cap still bounds a genuinely hung one.
+        """
+        return any(status == 'running' and now - self.job_beats.get(job, 0) < grace
+                   for job, status in self.job_states.items())
 
 
 def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
@@ -279,12 +297,14 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
             # UNKNOWN, and acting on it cut a live wake at 600 s of silence (genome 2026-11-17
             # 19:04Z) while its bash job was still reported running. The soft deadline and the
             # hard cap still bound an engine whose children cannot be read.
-            if last_growth > start and now - last_growth >= stall_gap and _awaiting_tools(process) is False:
+            # A wait tool's job state defers the cut too: a backgrounded bash job is not an OS
+            # descendant, so _awaiting_tools alone cannot see it (genome 2026-11-17 19:04Z).
+            if last_growth > start and now - last_growth >= stall_gap and _awaiting_tools(process) is False and not reader.awaiting_job(now, stall_gap):
                 raise EngineTimeout(f"silent {stall_gap:g}s before the {timeout:g}s deadline (no live child)")
             boundary = soft_at
         else:
             if size is None or now - last_growth >= idle_gap:
-                if size is None or now >= defer_until or _awaiting_tools(process) is False:
+                if size is None or now >= defer_until or (_awaiting_tools(process) is False and not reader.awaiting_job(now, stall_gap)):
                     raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
                 last_growth = now
             boundary = last_growth + idle_gap
@@ -313,6 +333,6 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
         if first_at is not None and now >= first_at and not saw_first(size):
             raise EngineTimeout(f"no first output within {first_output_s:g}s")
         if now >= soft_at and (size is None or now - last_growth >= idle_gap):
-            if size is None or now >= defer_until or _awaiting_tools(process) is False:
+            if size is None or now >= defer_until or (_awaiting_tools(process) is False and not reader.awaiting_job(now, stall_gap)):
                 raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
             last_growth = now

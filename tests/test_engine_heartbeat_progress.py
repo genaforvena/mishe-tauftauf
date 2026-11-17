@@ -184,3 +184,92 @@ def test_a_confirmed_childless_engine_is_still_cut_at_the_stall_gap(tmp_path: Pa
     elapsed = time.monotonic() - started
     assert str(caught.value) == "silent 1s before the 30s deadline (no live child)"
     assert elapsed < 12, f"a childless silent engine was tolerated {elapsed:.1f}s"
+
+
+# A backgrounded bash job reports status=running in the wait tool's details.jobs but is not an
+# OS descendant of the engine, so _awaiting_tools cannot see it. Its wall-clock durationMs still
+# advances, which is why counters-only progress accounting ignored it (genome 2026-11-17 19:04Z).
+RUNNING_JOB_WAIT = (
+    "import json, time\n"
+    "print('real output', flush=True)\n"
+    "for i in range(120):\n"
+    "    row = {'type':'tool_execution_update','toolName':'wait','partialResult':"
+    "{'details':{'op':'wait','jobs':[{'id':'bg_1','type':'bash','status':'running',"
+    "'durationMs':i*1000}]}}}\n"
+    "    print(json.dumps(row, separators=(',',':')), flush=True)\n"
+    "    time.sleep(0.05)\n"
+)
+BRIEF_JOB_WAIT = (
+    "import json, time\n"
+    "print('real output', flush=True)\n"
+    "for i in range(4):\n"
+    "    row = {'type':'tool_execution_update','toolName':'wait','partialResult':"
+    "{'details':{'op':'wait','jobs':[{'id':'bg_1','type':'bash','status':'running',"
+    "'durationMs':i*1000}]}}}\n"
+    "    print(json.dumps(row, separators=(',',':')), flush=True)\n"
+    "    time.sleep(0.05)\n"
+    "time.sleep(10)\n"
+)
+
+
+def test_a_wait_heartbeat_decodes_its_running_job_state(tmp_path: Path):
+    states: dict = {}
+    proc.engine_boundary.progress_bytes(wait_heartbeat(9000).encode(), {}, states)
+    assert states == {"DutyReview": "running"}
+
+
+def test_a_running_job_with_an_empty_child_table_defers_the_stall_cut(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(proc, "POLL_S", 0.2)
+    monkeypatch.setattr(proc.proc_table, "children_by_parent", lambda: {})
+    monkeypatch.setattr(proc, "TOOL_WAIT_GRACE_S", 1.0)
+    out = tmp_path / "stream"
+    started = time.monotonic()
+    with pytest.raises(EngineTimeout) as caught:
+        proc.run_bounded([sys.executable, "-c", RUNNING_JOB_WAIT], env=dict(os.environ),
+                         cwd=tmp_path, timeout=2, stdout_to=out, hard_timeout=8,
+                         idle_gap=0.5, stall_gap=0.5)
+    elapsed = time.monotonic() - started
+    assert "silent" not in str(caught.value), "a running wait job was cut as an early stall"
+    assert elapsed >= 2.6, f"the running job did not defer the cut ({elapsed:.1f}s)"
+
+
+def test_a_job_that_stops_heartbeating_expires_and_the_stall_cut_fires(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(proc, "POLL_S", 0.2)
+    monkeypatch.setattr(proc.proc_table, "children_by_parent", lambda: {})
+    out = tmp_path / "stream"
+    started = time.monotonic()
+    with pytest.raises(EngineTimeout) as caught:
+        proc.run_bounded([sys.executable, "-c", BRIEF_JOB_WAIT], env=dict(os.environ),
+                         cwd=tmp_path, timeout=30, stdout_to=out, hard_timeout=60,
+                         idle_gap=1.0, stall_gap=1.0)
+    elapsed = time.monotonic() - started
+    assert "silent 1s" in str(caught.value), "a stale running job blocked the stall cut"
+    assert elapsed < 8, f"a stopped job held the engine {elapsed:.1f}s"
+
+
+# One running-job heartbeat, then only reasoning deltas (not progress, no job state). Ordinary
+# output must not refresh the job's claim, or the docs 2026-11-13 hard-cap class returns.
+STALE_JOB_WITH_THINKING = (
+    "import json, time\n"
+    "print('real output', flush=True)\n"
+    "print(json.dumps({'type':'tool_execution_update','toolName':'wait','partialResult':"
+    "{'details':{'jobs':[{'id':'bg_1','status':'running'}]}}},separators=(',',':')), flush=True)\n"
+    "for i in range(200):\n"
+    "    print(json.dumps({'type':'message_update','assistantMessageEvent':"
+    "{'type':'thinking_delta'}},separators=(',',':')), flush=True)\n"
+    "    time.sleep(0.05)\n"
+)
+
+
+def test_ordinary_output_does_not_refresh_a_stale_running_job(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(proc, "POLL_S", 0.2)
+    monkeypatch.setattr(proc.proc_table, "children_by_parent", lambda: {})
+    out = tmp_path / "stream"
+    started = time.monotonic()
+    with pytest.raises(EngineTimeout) as caught:
+        proc.run_bounded([sys.executable, "-c", STALE_JOB_WITH_THINKING], env=dict(os.environ),
+                         cwd=tmp_path, timeout=30, stdout_to=out, hard_timeout=60,
+                         idle_gap=1.0, stall_gap=0.5)
+    elapsed = time.monotonic() - started
+    assert "silent 0.5s" in str(caught.value), "non-heartbeat output kept a stale job alive"
+    assert elapsed < 8, f"a stale job held the engine {elapsed:.1f}s"

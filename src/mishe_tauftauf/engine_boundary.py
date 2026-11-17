@@ -75,7 +75,31 @@ def job_advanced(line, jobs):
     return advanced
 
 
-def progress_bytes(data, jobs=None):
+def job_states(line, states):
+    """Record each job's status from one heartbeat ``line`` into ``states``.
+
+    ``states`` is the caller's per-read dict, keyed by job id. A ``wait`` tool reports its live
+    jobs under ``partialResult.details.jobs`` with a ``status``. Unlike ``progress`` counters,
+    that status is authoritative at the boundary and does not depend on an OS parent-pid link:
+    a harness-backgrounded bash job is not a live descendant of the engine, yet still reports
+    ``status=running``. The caller times out its own read of that state when heartbeats stop, so
+    a backgrounded job defers the cut while live but cannot pin the engine (genome 2026-11-17
+    19:04Z silent-wait cut).
+    """
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return
+    details = (row.get('partialResult') or {}).get('details') if isinstance(row, dict) else None
+    entries = details.get('jobs') if isinstance(details, dict) else None
+    if not isinstance(entries, list):
+        return
+    for entry in entries:
+        if isinstance(entry, dict) and isinstance(entry.get('id'), str):
+            states[entry['id']] = entry.get('status')
+
+
+def progress_bytes(data, jobs=None, states=None):
     """Split engine output bytes into (progress bytes, bytes consumed).
 
     Only complete lines count: the consumed figure stops at the last newline, so a
@@ -87,6 +111,9 @@ def progress_bytes(data, jobs=None):
     the dict across reads), a heartbeat whose async job advanced its ``JOB_COUNTERS`` counts as
     progress: the wait is on a subagent that is demonstrably working, not on a frozen one. A
     repeated frozen job still advances nothing, and a plain ``wait`` ping still counts nothing.
+    A second dict, ``states``, records the ``status`` of jobs in ``details.jobs``. A consumer
+    defers a silent-wait cut while a job still reports ``running`` even when that job is not an
+    OS descendant of the engine, expiring the claim when heartbeats stop.
     """
     end = data.rfind(b'\n')
     if end < 0:
@@ -95,8 +122,11 @@ def progress_bytes(data, jobs=None):
     for line in data[:end + 1].splitlines(keepends=True):
         if not line.startswith((HEARTBEAT_PREFIX, THINKING_PREFIX)):
             progress += len(line)
-        elif jobs is not None and line.startswith(HEARTBEAT_PREFIX) and job_advanced(line, jobs):
-            progress += len(line)
+        elif line.startswith(HEARTBEAT_PREFIX):
+            if states is not None:
+                job_states(line, states)
+            if jobs is not None and job_advanced(line, jobs):
+                progress += len(line)
     return progress, end + 1
 
 
