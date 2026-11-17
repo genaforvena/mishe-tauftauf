@@ -28,6 +28,8 @@ TREES = ("mishe-tauftauf", ".omp", ".codex")
 SYSTEMCTL = r"""#!/bin/bash
 printf '%s\n' "$*" >>"$SANDBOX/systemctl.log"
 case "$*" in
+  *"list-units"*"--type=path"*)
+      printf 'fake-a.service loaded active running x\nfake-b.service loaded active running x\nfake-c.service loaded active running x\nfake-w.path loaded active waiting x\n' ;;
   *"list-units"*"--state=active"*)
       printf 'fake-a.service loaded active running x\nfake-b.service loaded active running x\nfake-c.service loaded active running x\n' ;;
   *"list-units"*) : ;;
@@ -150,6 +152,36 @@ def test_clean_run_flips_and_restarts_units(tmp_path):
     # full 30 s and then warned about writers it had not found.
     assert "no writers left on the moved trees" in done.stdout + done.stderr
     assert "warning: writers still present" not in done.stdout + done.stderr
+    # Regression: target_units asked for services and timers only, so the
+    # mishe-wake-*.path triggers stayed armed and fired new wakes mid-delta.
+    assert any("start fake-w.path" in line for line in calls(root)), calls(root)
+
+
+def test_live_wake_engine_stops_before_the_plant_is_stopped(tmp_path):
+    """Regression: 2026-11-17 09:37Z, three wakes started during the delta and
+    29 + 13 + 3 files changed before the verify, so the scoped shape can never
+    be clean under a live engine. The flip must wait for the engine, and abort
+    before stopping the plant if it outlives the bound."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+    prompt = root / "src" / "mishe-tauftauf" / ".mishe-tauftauf" / "wakes" / "wake-x.prompt.md"
+    prompt.parent.mkdir(parents=True)
+    engine = subprocess.Popen(["python3", "-c", "import time; time.sleep(60)", str(prompt)])
+    try:
+        done = flip(root, "--execute", extra_env={"MIGRATION_ENGINE_TIMEOUT": "1"})
+    finally:
+        engine.kill()
+        engine.wait()
+
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "wake engines still live after 1s" in done.stdout + done.stderr
+    for tree in TREES:
+        assert (root / "src" / tree).is_dir()
+        assert not (root / "src" / tree).is_symlink()
+    assert not (root / "work" / "flip.done").exists()
+    # Nothing of the plant was stopped before the engines drained.
+    assert not any("stop fake-a.service" in line for line in calls(root)), calls(root)
+    assert any("start fake-a.service" in line for line in calls(root)), calls(root)
 
 
 def test_termination_during_restart_starts_every_listed_unit(tmp_path):

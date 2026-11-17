@@ -54,9 +54,15 @@ PRINT_WATCHDOG=0
 DELTA_TIMEOUT=1800
 VERIFY_TIMEOUT_SCOPED=1800
 VERIFY_TIMEOUT_FULL=3600
+# How long the flip waits for live wake engines to finish before it stops the
+# plant (production execute is detached, so the launching wake can yield).
+ENGINE_DRAIN_TIMEOUT=${MIGRATION_ENGINE_TIMEOUT:-1800}
+PROD_SRC=/home/mesh-home
+DETACH=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --execute) MODE=execute ;;
+        --detach) MODE=execute; DETACH=1 ;;
         --dry-run) MODE=dry-run ;;
         --full) SHAPE=full ;;
         --scoped) SHAPE=scoped ;;
@@ -106,6 +112,16 @@ writers_present() {
     return 0
 }
 
+# A live wake engine is an `omp` process launched with a wake prompt under the
+# site home (observed cmdline: ... @/home/mesh-home/mishe-tauftauf/.mishe-tauftauf/
+# wakes/wake-genome-...prompt.md). Every engine writes into all three moved trees
+# for as long as it runs: dispatch and routing ledgers, signal files, agent db WAL
+# and per-session logs. A delta taken under one can never verify clean (measured
+# 2026-11-17 09:37-09:41Z: 29 + 13 + 3 files changed between delta and verify).
+wake_engines() {
+    pgrep -af -- "$SRC/" 2>/dev/null | grep -F '/wakes/wake-' || true
+}
+
 # Units that were active before the flip and name a moved tree or the site home.
 # Data-driven rather than a hardcoded list: the plant has 250+ active units and
 # the inventory changes with every delivery.
@@ -114,7 +130,7 @@ target_units() {
     own=$(self_unit)
     wake=
     [ -n "${MISHE_WAKE_KEY:-}" ] && wake=$(systemctl --user list-units --state=active --no-legend --plain 'mishe-wake-*' 2>/dev/null | awk '{print $1}' | grep -F "$MISHE_WAKE_KEY" | head -1)
-    systemctl --user list-units --state=active --no-legend --plain --type=service --type=timer 2>/dev/null |
+    systemctl --user list-units --state=active --no-legend --plain --type=service --type=timer --type=path 2>/dev/null |
     awk '{print $1}' | while read -r u; do
         case "$u" in
             mishe-root-migration-*) continue ;;   # this script and its watchdog
@@ -292,25 +308,67 @@ preflight() {
 
 # --- quiesce -----------------------------------------------------------------
 quiesce() {
-    local u
+    local u i engines
     target_units | sort >"$UNITS" || die "could not enumerate units"
     log "units to stop: $(wc -l <"$UNITS") (list $UNITS)"
     if [ "$MODE" = dry-run ]; then
         log "dry-run: would stop these units, delta, verify ($SHAPE), rename, symlink, restart"
         sed 's/^/  /' "$UNITS" >&2
+        engines=$(wake_engines)
+        if [ -n "$engines" ]; then
+            log "dry-run: wake engines that must exit first (up to ${ENGINE_DRAIN_TIMEOUT}s):"
+            printf '%s\n' "$engines" >&2
+        fi
         return 0
     fi
     arm_watchdog
     QUIESCED=1   # from here on, any exit path must restart these units
+    # A wake needs a trigger and a dispatcher, and a live engine rewrites every
+    # tree until it ends. Disarm the triggers before waiting so the set of
+    # engines only shrinks: a .path unit that fired mid-delta started genome,
+    # pub and system1 at 09:39-09:41Z and no delta under them could verify.
+    systemctl --user stop 'mishe-wake-*.path' 'mishe-wake-debounce-*.timer' \
+        mishe-producer-dispatch.timer 'mishe-next-due-*.timer' 2>/dev/null || true
+    engines=$(wake_engines)
+    if [ -n "$engines" ]; then
+        log "wake engines still running; waiting up to ${ENGINE_DRAIN_TIMEOUT}s for them to end"
+        i=0
+        while :; do
+            engines=$(wake_engines)
+            [ -z "$engines" ] && break
+            i=$((i + 10))
+            if [ "$i" -ge "$ENGINE_DRAIN_TIMEOUT" ]; then
+                printf '%s\n' "$engines" >&2
+                die "wake engines still live after ${ENGINE_DRAIN_TIMEOUT}s; aborting before stopping the plant"
+            fi
+            sleep 10
+        done
+        log "wake engines exited after ${i}s"
+    fi
     while read -r u; do systemctl --user stop "$u" 2>/dev/null || log "stop failed (continuing): $u"; done <"$UNITS"
     # Bounded wait for writers to drain; the EXIT trap and the watchdog both
     # restart from $UNITS if we die here.
-    local i
     for i in $(seq 1 30); do
         writers_present || break
         sleep 1
     done
     writers_present && log "warning: writers still present after 30 s (see log above)" || log "no writers left on the moved trees"
+}
+
+# Execute in production must be detached: the launching wake keeps writing into
+# all three trees until it yields, and it cannot yield while it waits for this
+# script. systemd-run gives the flip its own unit, so the wake can end and the
+# queued follow-up wakes stay queued behind the disarmed triggers.
+detach_relaunch() {
+    local unit=mishe-root-migration-flip
+    systemctl --user stop "$unit.service" 2>/dev/null
+    systemd-run --user --unit="$unit" --collect \
+        --setenv=MISHE_FLIP_DETACHED=1 \
+        --setenv=MIGRATION_SRC="$SRC" --setenv=MIGRATION_DST="$DST" --setenv=MIGRATION_WORK="$WORK" \
+        /bin/bash "$0" --execute --"$SHAPE" >/dev/null 2>&1 ||
+        die "could not start the detached flip unit $unit.service"
+    log "detached as $unit.service; the launching wake may yield, the flip continues"
+    exit 0
 }
 
 # --- delta and verify --------------------------------------------------------
@@ -383,6 +441,14 @@ cutover() {
 
 [ "$PRINT_WATCHDOG" = 1 ] && { arm_watchdog; exit 0; }
 preflight
+# Production execute is detached: the wake that starts it must be free to yield,
+# and the flip then waits for the running engines itself before stopping anything.
+if [ "$MODE" = execute ] && [ "${MISHE_FLIP_DETACHED:-0}" != 1 ]; then
+    if [ "$SRC" = "$PROD_SRC" ] && [ "$DETACH" != 1 ]; then
+        die "refusing to cut over in-process: a live wake engine writes into all three trees; pass --detach"
+    fi
+    [ "$DETACH" = 1 ] && detach_relaunch
+fi
 quiesce
 [ "$MODE" = dry-run ] && { log "dry-run complete"; exit 0; }
 delta
