@@ -1103,6 +1103,62 @@ def test_with_no_gap_the_hold_starts_only_after_the_patience_window(tmp_path):
 
 
 
+def test_a_foreign_hold_is_left_alone_and_never_resumed(tmp_path):
+    """Regression (2026-11-17 12:27-12:32Z): the delivery wrote its promotion hold
+    after patience, unconditionally, and unlinked it in `finally`. A manual
+    `mishe hold on` — or plant_boot's boot-guard hold — is already stopping wakes;
+    overwriting it and then unlinking resumes wakes its owner still wants held."""
+    handle = _hold_dispatch_lock(tmp_path)
+    manual = "authorized reboot: waiting for current-boot guard admission\n"
+    (tmp_path / "hold").write_text(manual)
+    resumed = []
+
+    from mishe_tauftauf import wake
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    mp.setattr(wake, "resume_owed", lambda *a, **k: resumed.append(True))
+    mp.setattr("mishe_tauftauf.roles.declared", lambda home: [])
+    try:
+        with pytest.raises(p.DeliveryBusy):
+            with p.held_delivery_lock(tmp_path, 0.01, sleep=lambda s: None, patience_s=0):
+                pass
+    finally:
+        mp.undo()
+        handle.close()
+    assert (tmp_path / "hold").read_text() == manual
+    assert resumed == []
+
+
+def test_a_hold_rewritten_while_the_delivery_waited_is_left_to_its_new_owner(tmp_path):
+    handle = _hold_dispatch_lock(tmp_path)
+    now = {"t": 0.0}
+    resumed = []
+
+    def clock():
+        return now["t"]
+
+    def sleep(_):
+        now["t"] += 100.0
+        hold = tmp_path / "hold"
+        if hold.exists() and "manual" not in hold.read_text():
+            hold.write_text("manual hold\n")
+            handle.close()   # the wake settles after the manual hold appears
+
+    from mishe_tauftauf import wake
+    import pytest as _pytest
+    mp = _pytest.MonkeyPatch()
+    mp.setattr(wake, "resume_owed", lambda *a, **k: resumed.append(True))
+    mp.setattr("mishe_tauftauf.roles.declared", lambda home: [])
+    try:
+        with p.held_delivery_lock(tmp_path, 1000, sleep=sleep, patience_s=100, clock=clock):
+            pass
+    finally:
+        mp.undo()
+        handle.close()
+    assert (tmp_path / "hold").read_text() == "manual hold\n"
+    assert resumed == []
+
+
 def test_lock_holder_info_reads_pid_and_argv_from_lsof_and_ps(tmp_path):
     calls = []
 

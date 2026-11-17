@@ -235,8 +235,10 @@ def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=600, clock=
     Wakes are short (median under a minute, p90 about 7 min) and at most a few run at once, so the lock is usually free
     for a moment. For ``patience_s`` seconds it is tried every second WITHOUT touching the hold, so a delivery that finds
     a gap costs no wake any delay. Only when no gap appears does the site's ``hold`` file stop new wakes, the running ones
-    settle (the site hard cap bounds them), the lock is taken and the hold is released (owed wakes resume) when the block
-    ends, whatever happened inside it. ``wait_s`` 0 takes the lock at once or raises DeliveryBusy.
+    settle (the site hard cap bounds them), the lock is taken and the hold released (owed wakes resume) when the block
+    ends, whatever happened inside it. Only a hold this call wrote is released: a manual ``mishe hold on``, plant_boot's
+    boot-guard hold, or one rewritten while the delivery held, stays with its owner and fires no resume. ``wait_s`` 0
+    takes the lock at once or raises DeliveryBusy.
     """
     if not wait_s:
         with delivery_lock(home):
@@ -245,6 +247,8 @@ def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=600, clock=
     stack = ExitStack()
     hold = Path(home) / "hold"
     held = False
+    held_text = None      # the exact bytes this call wrote, so it removes only its own hold
+    # Only a promotion hold with a dead writer is stale; a manual hold is not eligible.
     if clear_stale_hold(home):
         from . import wake
         from .roles import declared
@@ -257,7 +261,13 @@ def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=600, clock=
                 break
             except DeliveryBusy:
                 if not held and clock() >= patience_until:
-                    hold.write_text(f"{HOLD_TEXT}\npid={os.getpid()} started={int(time.time())}\n")
+                    # An existing hold already stops wake starts. Overwriting it would destroy
+                    # a hold its owner still wants (a manual `mishe hold on`, or plant_boot's
+                    # boot-guard hold that must outlive the boot), and unlinking it on the way
+                    # out would resume wakes under that owner.
+                    if not hold.exists():
+                        held_text = f"{HOLD_TEXT}\npid={os.getpid()} started={int(time.time())}\n"
+                        hold.write_text(held_text)
                     held = True
                     deadline = clock() + wait_s
                 if held and clock() >= deadline:
@@ -268,11 +278,16 @@ def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=600, clock=
         yield
     finally:
         stack.close()
-        if held:
-            hold.unlink(missing_ok=True)
-            from . import wake
-            from .roles import declared
-            wake.resume_owed(home, declared(home), now=time.time())
+        if held_text is not None:
+            try:
+                still_ours = hold.read_text() == held_text
+            except FileNotFoundError:
+                still_ours = False
+            if still_ours:
+                hold.unlink(missing_ok=True)
+                from . import wake
+                from .roles import declared
+                wake.resume_owed(home, declared(home), now=time.time())
 
 
 def config_paths(home):

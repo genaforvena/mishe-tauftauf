@@ -210,6 +210,11 @@ mishe hold on                         # no more model calls; units stay installe
 mishe sync --uninstall                # remove the generated units
 ```
 
+The hold file belongs to whoever wrote it. A promotion or a root-migration flip that
+writes its own hold removes only a hold still carrying its own text, so a manual
+`mishe hold on` and plant_boot's boot-guard hold survive both and resume only through
+`mishe hold off`.
+
 ## Area ownership and presentation
 
 A mind owns a durable area and carries useful initiatives through investigation,
