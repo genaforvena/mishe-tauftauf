@@ -3125,7 +3125,7 @@ history keeps the `binaries` block beside the reading.
 **Checks.** `tests/test_rust_measurement.py` (17 passed) gains a temporary git
 release: clean provenance, newer crate source flagged as drift, bytes that no
 longer match their record flagged as broken, and a full run that exits 2 with
-`verdict: red` when drift is present. The 2-minute cadence of the unit is
+`verdict: red` when drift is present. The hourly cadence of the unit is
 unchanged.
 
 **Limits.** The checker itself becomes live when the next promotion reaches the

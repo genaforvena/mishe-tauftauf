@@ -94,8 +94,10 @@ is not mistaken for a quiet mind.
   this is "how often the radio had to send again or gave up", not "how many packets the household
   lost". UNKNOWN when the newest read carries no counters on any radio (a band whose counters are
   missing from the newest read is named "UNKNOWN (missing from the newest read)" rather than
-  dropped, and `network-wifi` turns UNKNOWN too), when fewer than two reads an hour apart
-  bracket the rate, or after a router reboot restarts the counters; STALE past 15 minutes.
+  dropped, and `network-wifi` turns UNKNOWN too), or when a reboot has left fewer than two
+  counter reads (10 minutes apart) in the hour. A reboot restarts the counters from zero, so only
+  reads after it bracket a rate; with two post-reboot reads the line shows that shorter span
+  instead of UNKNOWN. STALE past 15 minutes.
 - `UNKNOWN`: the log has no reading, or the last read failed.
 - `STALE`: the last good reading is older than 15 minutes.
 - Trends and weekday baselines are UNKNOWN until two days of comparable rows exist.
