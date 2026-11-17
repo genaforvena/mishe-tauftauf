@@ -164,6 +164,15 @@ def make_repo(path: Path, checks: dict[str, str]) -> Path:
     directory.mkdir(exist_ok=True)
     for name, source in checks.items():
         (directory / name).write_text(source, encoding="utf-8")
+    # check-scheduler-coverage.py archives HEAD:src beside HEAD:checks, because
+    # a CLI-driving check sets PYTHONPATH to the archived tree's src/.  A real
+    # repository always carries that tree; without a tracked file here git
+    # archive fails with "pathspec 'src' did not match any files" and the check
+    # reads UNKNOWN (exit 1) instead of returning a verdict.
+    source_tree = path / "src"
+    source_tree.mkdir(exist_ok=True)
+    (source_tree / "stand_in.py").write_text(
+        '"""Stand-in for the package the CLI-driving checks import."""\n', encoding="utf-8")
     subprocess.run(["git", "-C", str(path), "add", "-A"], check=True)
     subprocess.run(["git", "-C", str(path), "commit", "-q", "-m", "checks"], check=True)
     return path
