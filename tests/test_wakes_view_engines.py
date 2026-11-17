@@ -74,6 +74,19 @@ def test_bookkeeping_line_fails():
     assert any("bookkeeping" in p for p in check.lint("UNKNOWN event message_start; raw: x"))
 
 
+def test_filename_beginning_with_event_word_is_not_bookkeeping():
+    # A glob tool listed a file called session-runner-shim.log (2026-11-17 observer-checks RED).
+    # The old \b ended the session alternative before '-', so this tool content minted a false RED.
+    content = '[tool output] # .mishe-tauftauf/\nchat.log\nsession-runner-shim.log\n'
+    assert check.lint(content) == []
+    # A tail cut can drop the label and leave the content line at column 0: still content, not chrome.
+    assert check.lint('session-runner-shim.log\n') == []
+    # Genuine bookkeeping tokens still fail, in every form the rule names.
+    assert any('bookkeeping' in p for p in check.lint('session\n'))
+    assert any('bookkeeping' in p for p in check.lint('[session]\n'))
+    assert any('bookkeeping' in p for p in check.lint('UNKNOWN event message_start; raw: x\n'))
+
+
 def test_consecutive_duplicate_tool_output_fails_and_distinct_outputs_pass():
     dup = "[tool output] listing\nfile-a\nfile-b\n[tool output] listing\nfile-a\nfile-b\n"
     assert any("consecutive duplicate tool output" in p for p in check.lint(dup))

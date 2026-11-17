@@ -52,7 +52,7 @@ KNOWN_KINDS = frozenset({
     'tool_execution_start', 'tool_execution_update', 'tool_execution_end', 'tool_stream_update',
     'auto_retry_start', 'auto_retry_end', 'thinking_level_changed', 'agent_start', 'agent_end',
 })
-BOOKKEEPING = re.compile(r'^(UNKNOWN event |\[)?(turn_start|turn_end|message_start|session|tool_stream_update|thinking_level_changed)\b')
+BOOKKEEPING = re.compile(r'^(UNKNOWN event |\[)?(turn_start|turn_end|message_start|session|tool_stream_update|thinking_level_changed)(?=$|[\s;}\]])')
 TOOL_LABELS = ('[tool output]', '[tool error]')
 # A renderer label is a bracketed word ([assistant], [tool bash], [agent_end]); a JSON array opener such as "[" or "[1," is content.
 LABEL = re.compile(r'^\[[A-Za-z_]')
@@ -152,7 +152,7 @@ def lint(text: str) -> list[str]:
                 event = None
             if isinstance(event, dict) and event.get('type') in KNOWN_KINDS:
                 problems.append(f"UNKNOWN stream record for known type {event['type']}")
-        if BOOKKEEPING.match(line):
+        if not in_tool and BOOKKEEPING.match(line):
             problems.append('bookkeeping line: ' + line.strip()[:60])
         if not in_tool and ENVELOPE_KEY.search(line):
             problems.append('raw event envelope key: ' + line.strip()[:60])
