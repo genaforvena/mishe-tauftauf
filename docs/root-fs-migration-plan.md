@@ -107,10 +107,42 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
   07:04Z were load on the same host, and the build cap now in `645d71c3` reduces
   load but cannot raise this number.
 
+## Measured 2026-11-17 08:29-08:35Z: the delta pass, and what step 7 really costs
+
+- Live size+mtime delta 30 min after the bulk pass (dry run 08:29:03Z): checkout
+  2,133 files / 1.00 GB in 27 s, `.omp` 21 files / 15 MB, `.codex` 28 files /
+  **5.95 GB**. Then the real delta pass, 08:30:45-08:33:05Z, log
+  `/mnt/mishe-scratch/mishe-migration/delta-live-0827.log`: all three rc=0 in
+  139.9 s — checkout 1.007 GB at 24.7 MB/s (2,156 small files), `.omp` 12 MB,
+  `.codex` 5.95 GB at 63.7 MB/s.
+- The checkout delta is almost one new release tree, `releases/0ccfd809…`
+  (delivered 08:23Z, between wakes), plus `signals/` and `wakes/`. **Every
+  delivery adds ~1 GB to the destination delta**, so the flip must not straddle
+  a delivery. A wake-held window is delivery-free by construction (delivery
+  waits for wakes to end), which puts delta and flip in the same wake.
+- `.codex` churn is 5.95 GB in 28 files: `logs_2.sqlite`, `state_5.sqlite`,
+  `thread_history_1.sqlite` and their `-wal`/`-shm`. Cheap to re-copy, but
+  `.codex` cannot be verified clean while a coder CLI runs.
+- 1.5 min after the delta the checkout already showed 1,812 changed files /
+  385 MB, and 229 MB of that is `chat.log` alone, then
+  `recovery/host-samples.jsonl` (27 MB), `feed.identities.sqlite3` (24 MB),
+  `operator/unit-psi.jsonl` (21 MB). Local rsync defaults to `--whole-file`, so
+  one appended line in a 229 MB log re-copies the whole file. Quiesce **before**
+  the delta; the delta must be the last write before the flip.
+- No mind was running but this one, and the site home still gained 1,785 files
+  in ten minutes: ~40 producer timers write signals and journals. The step-2
+  quiesce list must include them, plus dispatch, the probe and the bots — not
+  only wakes/observer/work-watch.
+- **Step 7's cost:** a checksummed verify over all three trees reads 89.4 GB on
+  the source. Measured source read is 62-64 MB/s (raw partition read above; the
+  `.codex` delta sustained 63.7 MB/s), so the full `-c` pass alone is
+  **~23-24 min** — it does not fit the 35-minute wake cap alongside delta and
+  flip.
+
 ## Steps
 
 1. Pre-check: ensure no active process using targets beyond shell; record `lsof`/`fuser` for each.
-2. Quiesce writers before any copy: stop minds/wakes/observer and any process writing to `.omp`, `.codex`, `mishe-tauftauf`. Named units: mishe wake units, observer-checks, work-watch. Confirm via `lsof`/`fuser` that targets are idle.
+2. Quiesce writers before any copy: stop minds/wakes/observer and any process writing to `.omp`, `.codex`, `mishe-tauftauf`. Named units: mishe wake units, observer-checks, work-watch — **and the ~40 `mishe-producer-*.timer` units, `mishe-next-due-*.timer`, dispatch and the bots** (measured 08:29Z: the site home gained 1,785 files in ten minutes with no mind running). Confirm via `lsof`/`fuser` that targets are idle.
 3. Path users of `mishe-tauftauf` (inventoried 2026-11-16): because the cutover renames the source and
    leaves a **symlink at the original path** (steps 8-9), no path reference needs editing. Verified:
    - `~/.config/systemd/user`: 116 unit files name the checkout in `WorkingDirectory`, `ExecStart`
@@ -146,24 +178,44 @@ running as the instrument. All commands `nice -n 19 ionice -c 3`.
    — a further drop in those numbers is hardware, not load.
 5. Create destination dirs: `/mnt/mishe-scratch/home-mesh-home/{.omp,.codex,mishe-tauftauf}`.
 6. Copy, in two passes so the quiesced window is short: first `rsync -aHx SRC/ DST/` (bulk, safe while
-   live — sources untouched, resumable), then under the step-2 quiesce the final
-   `rsync -aHxc --itemize-changes SRC/ DST/` (checksummed delta). Do not run a heavy pass while a
+   live — sources untouched, resumable), then under the step-2 quiesce the final delta
+   `rsync -aHx --itemize-changes SRC/ DST/` (add `-c` only in the full-verify shape of step 7). Do not run a heavy pass while a
    moving-pin delivery check is running: it competes for I/O and can push the check past its timeout
    (a wasted delivery window). A wake holds dispatch, and delivery waits for wakes to end, so a
    wake-held slot *is* the safe window for the bulk pass.
-   **First pass running since 2026-11-17 07:53:47Z** as transient user unit
+   **First pass ran 2026-11-17 07:53:47Z-08:19:46Z** as transient user unit
    `mishe-root-migration-bulk` (`IOWeight=10`, `Nice=19`), script
    `/mnt/mishe-scratch/mishe-migration/bulk-copy.sh`, log
-   `/mnt/mishe-scratch/mishe-migration/bulk.log`; order checkout → `.omp` → `.codex`.
+   `/mnt/mishe-scratch/mishe-migration/bulk.log`; order checkout → `.omp` → `.codex`,
+   all three rc=0. The live delta pass 08:30:45-08:33:05Z then closed 6.97 GB of
+   churn (see the 08:29Z section); the unit is inactive and gone.
    Observed rate 55-63 MB/s: the checkout finished rc=0 at 08:01:58Z with
    30,925,374,169 bytes copied of 30,954,635,352 on the source (the 30 MB gap is
-   live churn — sqlite `-shm`/WAL, walls — and the delta pass closes it). Watch with
-   `systemctl --user is-active mishe-root-migration-bulk; tail -2 …/bulk.log`.
+   live churn — sqlite `-shm`/WAL, walls — and the delta pass closes it). Watch a pass with
+   `tail -2 …/bulk.log` or `…/delta-live-*.log`.
    The copy itself does not create the stall class: with it running the root probe
    recorded 2 slow events in 10 min, worst 1.11 s (vs 8 events ≥ 5 s during the
    deliberate 1 GiB `dd` bursts), so the extra load is reads, not a root writeback
    backlog.
-7. Verification after copy: `rsync -aHxc --dry-run --itemize-changes SRC/ DST/` MUST show zero changes; plus matching file count and `du -sb` match. All three must agree. `/mnt/mishe-scratch/mishe-migration/verify-copy.sh [tree …]` runs the three checks per tree and prints `VERIFIED`/`NOT-CLEAN`; it can only pass on a quiesced tree, so its natural place is the step-2 window, and a nonzero delta outside one is live churn rather than a copy defect.
+7. Verification after copy — two shapes; a fresh reviewer who is not the author
+   accepts the shape before the flip runs, because the flip moves the delivery
+   worktrees and the pinned release (high-impact).
+   - **Full:** `rsync -aHxc --dry-run --itemize-changes SRC/ DST/` shows zero
+     changes, file counts equal, `du -sb` equal
+     (`/mnt/mishe-scratch/mishe-migration/verify-copy.sh [tree …]` prints
+     `VERIFIED`/`NOT-CLEAN`). Measured cost ~23-24 min of source reads (89.4 GB
+     at 62-64 MB/s), so it cannot run inside a wake: it needs a transient unit
+     with the plant quiesced across a wake gap.
+   - **Scoped (recommended, fits one wake):** after the step-2 quiesce and a
+     final non-checksummed delta, check (i) exhaustive size+mtime equality — the
+     dry run reports zero transfers; (ii) content equality with `-c` for every
+     file changed since the bulk pass (~0.4-1 GB, seconds); (iii) a random
+     content sample of the rest (a few GB, ~1 min); (iv) file counts and
+     `du -sb` equal. rsync verifies the whole-file checksum of every file it
+     transfers and the bulk pass finished rc=0, so what full `-c` adds over this
+     is post-write disk corruption on untouched files.
+   Either way `verify-copy.sh` can only pass on a quiesced tree; a nonzero delta
+   outside one is live churn, not a copy defect.
 8. Rename source dirs to `*.pre-migration` (atomic, reversible): `mv .omp .omp.pre-migration` etc. Keep for rollback window.
 9. Create symlinks: `ln -s /mnt/mishe-scratch/.../.omp /home/mesh-home/.omp` etc.
 10. Restart affected services/processes; verify reads/writes to new path.
