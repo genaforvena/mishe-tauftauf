@@ -30,17 +30,17 @@ This is not hypothetical. Measured on this plant (2026-10-29):
   the clause was applied and then defeated;
 * **177** were published writable, so no clause was ever applied to them.
 
-The second population is the one a mode can fix, and the plant's existing
-``writable-bound-evidence`` check reports it. This check reports the first
-population, which no mode can fix.
+Both populations are reported here, from the record store directly, because
+the two sibling checks that used to answer them were retired on 2026-11-17:
+``writable-bound-evidence.py`` (a bound row writable now) and
+``coverage-gap-remedy.py`` (a lost row's published remedy) read the plant's
+published coverage report ``SITE/checks/initiative.json``, whose producer was
+deleted with the pane runtime (``943276d9``, 2026-11-04); they returned
+UNKNOWN from the report's last publication (2026-11-03) until retirement.
 
-**What this check does not duplicate.** The plant's checks answer the
-neighbouring questions and each keeps to its own:
+**What this check does not duplicate.** The surviving neighbour keeps to its
+own question:
 
-* ``writable-bound-evidence.py`` asks whether a bound file is *writable now* —
-  a row at risk, arriving before the loss;
-* ``coverage-gap-remedy.py`` asks whether a lost row has a published remedy,
-  within the coverage reader's window;
 * ``check-cli-entry-root.py`` asks whether the *CLI* root carries the clause,
   by reading one root's bytes;
 * this check asks whether the clause is **effective** — whether a bound file

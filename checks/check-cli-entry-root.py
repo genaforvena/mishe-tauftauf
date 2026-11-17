@@ -25,10 +25,10 @@ on this plant (2026-10-23):
   its bound evidence file writable, and a later edit drops that row
   permanently.
 
-The symptom was visible only in aggregate — the plant's
-``writable-bound-evidence`` check reported 3577 bound evidence files still
-writable — and nothing named the root that caused it. This check names the
-root.
+The symptom was visible only in aggregate — the plant's then-live
+``writable-bound-evidence`` check (retired 2026-11-17 with its stale report
+input) reported 3577 bound evidence files still writable — and nothing named
+the root that caused it. This check names the root.
 
 The check answers one question, read-only:
 

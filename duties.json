@@ -1475,6 +1475,15 @@
         "release-lag.py"
       ],
       "why": "the duty was dropped on 2026-11-15 (f1341a56) because pin-lag reads the same lag with one threshold, but the check file outlived it unscheduled: no timer ran it, and its 30-minute limit sits below the measured promotion duration (20.9, 28.4, 35.8, 47.9, 58.9 min in the records under SITE/work/releases), so it could only fire while a promotion was legitimately in flight, and it made check-scheduler-coverage FAILING-UNOBSERVED on every run. The check and its test were removed (2026-11-17). The scheduled pin-lag duty replaces it: same comparison, GREEN under 60 minutes, AMBER to 3 h, RED beyond, and it prints the newest delivery stage and failure"
+    },
+    {
+      "units": [],
+      "checks": [
+        "writable-bound-evidence.py",
+        "coverage-gap-remedy.py",
+        "ledger-band-second-reader.py"
+      ],
+      "why": "all three read the plant's published coverage report SITE/checks/initiative.json, whose only producer was deleted with the pane runtime (943276d9, 2026-11-04). The report's last publication is 2026-11-03T21:37Z, so writable-bound-evidence and coverage-gap-remedy returned UNKNOWN (exit 3, report 1152917 s stale on 2026-11-17) and ledger-band-second-reader's premise, the coverage reader initiative.collect publishing a band per row, was deleted with the same commit. None was ever registered in this repository's duties.json, so no verdict they produced was read. Retired with their tests on 2026-11-17. The writable population stays reported by checks/bound-evidence-clause-enforcement.py, which reads SITE/records directly and measured 176 writable and 31 defeated rows that day. The remedy question (does a lost row carry a published remedy) now has no detector; it is named here rather than dropped, and would need a reader of the record store, not of the deleted report"
     }
   ],
   "kept": [
