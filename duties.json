@@ -1442,6 +1442,29 @@
       "covers": "memory PSI avg10, anon memory and charged memory (Cached + Slab), one row every three minutes in the signal sample store (a 60 s timer hit the host StartLimitBurst=3 per 5 min and failed on the fourth start); a gap is a gap, UNKNOWN when the store or the reading fails"
     },
     {
+      "name": "hold-state",
+      "command": [
+        "{python}",
+        "{repo}/checks/hold-state.py",
+        "--home",
+        "{home}",
+        "--state",
+        "{home}/health/hold-state.json"
+      ],
+      "every": 120,
+      "timeout": 60,
+      "max_age": 600,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "health",
+      "replaces": [],
+      "covers": "the site's hold file: no hold, a hold whose named writer (a promotion pid, a flip pid) is alive, RED when that writer is gone, RED when an anonymous manual or boot hold stands longer than its --max-age (3600 s, refreshed by re-running `mishe hold on`), and one RED after such a hold ends with no recorded disposition. A hold suppresses wake starts, so its own fault cannot wake anyone while it stands: this producer runs on a timer and its verdict is visible in the signals and after the wake resumes"
+    },
+    {
       "name": "footprint",
       "builtin": true,
       "every": 180,

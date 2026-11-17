@@ -25,3 +25,24 @@ def fields(text):
         if sep:
             result[key] = value
     return result
+
+
+FLIP_PREFIX = "root migration flip "
+
+
+def owner_pid(text):
+    """The pid whose liveness decides whether this hold is still owned, or None.
+
+    A promotion hold names it as ``pid=N``; a root-migration flip's legacy token is
+    ``root migration flip <pid>``. Every other hold -- a manual ``mishe hold on``
+    reason, plant_boot's boot guard -- names no writer, so nothing but its age can
+    say whether it outlived the work it was written for.
+    """
+    if is_promotion_hold(text):
+        pid = fields(text).get("pid", "")
+        return int(pid) if pid.isdigit() else None
+    token = text.strip()
+    if token.startswith(FLIP_PREFIX):
+        rest = token[len(FLIP_PREFIX):].strip()
+        return int(rest) if rest.isdigit() else None
+    return None
