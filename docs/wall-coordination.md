@@ -110,6 +110,25 @@ paragraph it keeps a trailer's continuation lines with its value rather than
 stranding them in the body (outside that paragraph a following indented line is
 body text and stays put, as Git does not fold it there).
 
+A commit on `main` reaches GitHub through the checkout's post-commit hook,
+`tools/post-commit-push.sh`, installed by `tools/install-post-commit-push.sh`.
+The hook re-runs itself as a transient user unit so the push outlives the
+committing wake, settles thirty seconds first, and appends one line to
+`SITE_HOME/push-hook.log`. It always exits 0, so a rejected push is silent in
+the log and `push-lag` is what reads it.
+
+That settle covers one narrow case: a rewrite made within thirty seconds of the
+commit, whose superseded sha is then never published. A later rewrite is a
+sibling of the commit already on the remote, not a descendant, so the push is
+rejected as non-fast-forward and local `main` stays diverged until someone
+reconciles it. On 2026-11-17 a docs rewrite committed 98 s after its own push
+did exactly this, and `push-lag` reported "local main and origin/main have
+diverged". Land a correction to a published commit as a new commit on top of it;
+to repair a divergence, keep the published commit and re-apply the newer content
+above it, then confirm the tree you intended is unchanged against the rewrite
+you preserved (`git diff PRESERVED HEAD` prints nothing) and that the remote
+names the new commit.
+
 Running code comes from committed snapshots, through one pin. `SITE_HOME/runtime/current`
 is a symlink to the committed release that running code uses. The units name only
 that path in their `PYTHONPATH`, so moving the symlink moves the consumers; a wake
