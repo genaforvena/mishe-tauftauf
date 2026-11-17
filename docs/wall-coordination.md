@@ -110,12 +110,23 @@ paragraph it keeps a trailer's continuation lines with its value rather than
 stranding them in the body (outside that paragraph a following indented line is
 body text and stays put, as Git does not fold it there).
 
-A commit on `main` reaches GitHub through the checkout's post-commit hook,
-`tools/post-commit-push.sh`, installed by `tools/install-post-commit-push.sh`.
-The hook re-runs itself as a transient user unit so the push outlives the
-committing wake, settles thirty seconds first, and appends one line to
-`SITE_HOME/push-hook.log`. It always exits 0, so a rejected push is silent in
-the log and `push-lag` is what reads it.
+A commit on `main` reaches GitHub through two independent paths. The checkout's
+post-commit hook, `tools/post-commit-push.sh` (installed by
+`tools/install-post-commit-push.sh`), re-runs itself as a transient user unit so
+the push outlives the committing wake, settles thirty seconds first, and appends
+one line to `SITE_HOME/push-hook.log`. It always exits 0, so a rejected push is
+silent in the log.
+
+The `main-publication` duty (`checks/main-publication.py`, every 300 s, resolver
+genome) is the bounded fallback under it: it fetches and fast-forwards
+`origin/main` whenever that is a strict ancestor of local `main`, names how many
+commits it published, never force-pushes and creates no commit. It exists because
+`git -c core.hooksPath=/dev/null commit` skips every hook: on 2026-11-17 two such
+commits sat unpublished for 14 and 19 minutes with no CI run and nothing but a
+mind's end-of-wake `git status` to find them. The duty is RED when the push
+fails, main has diverged or local main is behind, and UNKNOWN when the remote
+cannot be read. `push-lag` is the independent detector over the same property:
+RED once the oldest unpushed commit is older than a quarter hour.
 
 That settle covers one narrow case: a rewrite made within thirty seconds of the
 commit, whose superseded sha is then never published. A later rewrite is a

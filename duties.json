@@ -635,11 +635,11 @@
         "{repo}"
       ],
       "every": 300,
-      "timeout": 150,
+      "timeout": 240,
       "max_age": 900,
       "resolver": "genome",
       "replaces": [],
-      "covers": "local main reaches origin/main without depending on the post-commit hook (checks/main-publication.py --repo: a commit made with a hooks-disabled command was never pushed, so 4290a757 sat unpublished 14 min until a mind read, 2026-11-17): the duty fast-forwards origin/main itself when it is a strict ancestor of local main and names how many commits it published; RED when the push fails, main has diverged, or local main is behind; UNKNOWN when the remote cannot be read"
+      "covers": "local main reaches origin/main without depending on the post-commit hook (checks/main-publication.py --repo: a commit made with a hooks-disabled command was never pushed, so 4290a757 sat unpublished 14 min until a mind read, 2026-11-17): the duty fast-forwards origin/main itself when it is a strict ancestor of local main and names how many commits it published; RED when the push fails, main has diverged, or local main is behind; UNKNOWN when the remote cannot be read (timeout 240 s covers the check's own worst case: fetch 60 + push 60 + re-fetch 60)"
     },
     {
       "name": "next-due-armed",
