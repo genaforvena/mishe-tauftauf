@@ -3,9 +3,19 @@
 
 The rust-plan `next-rust-slice` task is closed on one number (plan 10.39): the
 forced full fold of a role's tape, `Feed(home).role_entries(role, _force_full=True)`,
-measured in a fresh process. The re-open trigger is a cost above 5 CPU-s or a
-peak RSS above 200 MB for any role. Until this detector existed nothing ran that
-measurement on a schedule, so the slice could only reopen by hand.
+measured in a fresh process. The re-open trigger is a cost above 5 CPU-s of the
+Python reader or a peak RSS above 200 MB for any role. Until this detector
+existed nothing ran that measurement on a schedule, so the slice could only
+reopen by hand.
+
+The 5 CPU-s bar stays on the Python reader, whose history (3.2-4.4 CPU-s) is the
+calibration. The fold also spends CPU in the Rust children `feed.py` spawns, so
+each reading records `children_cpu_s` and their sum `fold_cpu_s`, and the summary
+prints reader, children and total. There is deliberately no bar on the total yet:
+a forced fold at load1 4.34 on 3 CPUs measured senses children 19.6 s (total
+23.6) against 3.1-3.6 s in eight quiet folds (plan 10.54/10.55), so a total bar
+calibrated on quiet runs would flap under contention. Every run now records both
+quantities in the history, which is where the total's own bar will be calibrated.
 
 This is a System 0 duty: a deterministic measurement, no judgment. Each role is
 folded in its own child process, so CPU and peak RSS are not shared between
@@ -28,7 +38,8 @@ never GREEN.
 
 Verdicts:
   GREEN   0  every role measured and under both triggers; the slice stays closed.
-  RED     2  a role is over a trigger; the slice's pre-gate A/B may open.
+  RED     2  a role is over a trigger (reader CPU or RSS); the slice's pre-gate
+              A/B may open.
   UNKNOWN 3  skipped by the host guard, a child failed, the site is missing, or
               the installed bytes could not be checked against the release.
 
@@ -80,7 +91,7 @@ CRATES = {
 SOURCE_NAMES = ("Cargo.toml", "Cargo.lock", "build.rs")
 
 DEFAULT_ROLES = ("senses", "genome")
-DEFAULT_CPU_TRIGGER_S = 5.0
+DEFAULT_CPU_TRIGGER_S = 5.0  # the Python reader's own CPU; long history, 3.2-4.4 s
 DEFAULT_RSS_TRIGGER_KB = 200 * 1024
 DEFAULT_MAX_LOAD_FRAC = 1.0  # runnable tasks per online CPU; above it the host is saturated
 # Percent of a 10 s window stalled on CPU. Measured: a fold at some avg10 39.56
@@ -99,14 +110,21 @@ CHILD = r"""
 import json, resource, sys, time
 from pathlib import Path
 from mishe_tauftauf.feed import Feed
+
+def child_cpu():
+    u = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return u.ru_utime + u.ru_stime
+
 home, role = Path(sys.argv[1]), sys.argv[2]
-c0 = time.process_time(); t0 = time.perf_counter()
+c0 = time.process_time(); k0 = child_cpu(); t0 = time.perf_counter()
 rows = Feed(home).role_entries(role, _force_full=True)
-c1 = time.process_time(); t1 = time.perf_counter()
+c1 = time.process_time(); k1 = child_cpu(); t1 = time.perf_counter()
 print(json.dumps({
     "role": role,
     "entries": len(rows),
     "cpu_s": round(c1 - c0, 3),
+    "children_cpu_s": round(k1 - k0, 3),
+    "fold_cpu_s": round((c1 - c0) + (k1 - k0), 3),
     "elapsed_s": round(t1 - t0, 3),
     "maxrss_kb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
 }))
@@ -337,12 +355,14 @@ def main(argv: list[str] | None = None) -> int:
     over = []
     for r in readings:
         if r["cpu_s"] > args.cpu_trigger:
-            over.append(f"{r['role']} cpu {r['cpu_s']} CPU-s > {args.cpu_trigger:g}")
+            over.append(f"{r['role']} reader cpu {r['cpu_s']} CPU-s > {args.cpu_trigger:g}")
         if r["maxrss_kb"] > args.rss_trigger_kb:
             over.append(f"{r['role']} rss {r['maxrss_kb'] // 1024} MB > "
                         f"{args.rss_trigger_kb // 1024} MB")
-    summary = "; ".join(f"{r['role']} {r['cpu_s']} CPU-s {r['maxrss_kb'] // 1024} MB "
-                        f"{r['entries']} entries" for r in readings)
+    summary = "; ".join(f"{r['role']} reader {r['cpu_s']} + children "
+                        f"{r['children_cpu_s']} = {r['fold_cpu_s']} CPU-s "
+                        f"{r['maxrss_kb'] // 1024} MB {r['entries']} entries"
+                        for r in readings)
     drift = provenance["drift"]
     broken = provenance["broken"]
     unknown = provenance["unknown"]

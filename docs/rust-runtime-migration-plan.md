@@ -3277,3 +3277,33 @@ no MISHE_TAPE_BIN`) even though the caller passed an explicit site home. That is
 fail-closed, which is the right direction; recorded because it makes any
 measurement harness that scrubs the environment silently UNKNOWN rather than
 wrong.
+
+### 10.55 The fold reading now carries its real CPU cost; the total's bar waits for admissible samples (2026-11-17)
+
+§10.54's bounded change landed. The child that performs a role fold now records
+`children_cpu_s` from `RUSAGE_CHILDREN` (the Rust binaries `feed.py` execs) and
+`fold_cpu_s` = reader + children; every reading and every history line carries
+all three, and the summary reads `genome reader 4.112 + children 3.879 = 7.991
+CPU-s 97 MB 30337 entries` (that run's numbers). Since the children's cost was
+invisible until this change, the total is the quantity a next-slice decision
+needs.
+
+No bar was added on the total, on purpose. The first forced sample after the
+change measured `senses` children **19.622 CPU-s** (reader 3.999, total 23.622)
+while the host carried load1 4.34 on 3 CPUs with a concurrent `cargo build` of
+the release and a speech model running; `genome` in the same run was 3.879
+children (total 7.991). Raw output is in
+`artifacts/rust-plan-20261107/fold-children-cpu-20261117-2209.txt`. Eight folds
+in §10.54 at ordinary load measured 3.1-3.6 child CPU-s, so the total can grow
+~5x under contention while the reader stays normal. A 10 CPU-s total bar,
+calibrated on those quiet folds, would therefore have turned this contention
+sample into RED and reopened the slice; the existing guard (load1 one per CPU)
+would have skipped the run, which is the honest outcome. The 5 CPU-s bar stays
+on the reader, whose 3.2-4.4 CPU-s history is its calibration; the duty's
+`covers` was updated to say so, and the history now records the total on every
+admitted run so a real bar can be calibrated from a curve rather than one
+forced sample.
+
+`tests/test_rust_measurement.py` covers the new fields, the summary text and the
+reader-named RED reason. The §10.54 RSS spread (110 MB from a Python parent vs
+350-360 MB from a shell) is still unexplained and unlanded.

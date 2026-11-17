@@ -81,6 +81,9 @@ def test_under_triggers_is_green(tmp_path):
                "--max-load", "100000")
     assert proc.returncode == 0, proc.stderr
     assert "GREEN" in proc.stdout and "senses" in proc.stdout
+    # The summary must carry both halves of the fold, not just the reader.
+    assert "reader" in proc.stdout and "children" in proc.stdout
+    assert "= " in proc.stdout and "CPU-s" in proc.stdout
 
 
 def test_trigger_hit_is_red(tmp_path):
@@ -89,7 +92,7 @@ def test_trigger_hit_is_red(tmp_path):
     _install_all(home, REPO)
     proc = run(home, "--cpu-trigger", "-1", "--max-load", "100000")
     assert proc.returncode == 2
-    assert "RED" in proc.stderr and "senses cpu" in proc.stderr
+    assert "RED" in proc.stderr and "senses reader cpu" in proc.stderr
 
 
 def test_install_records_missing_is_unknown_not_green(tmp_path):
@@ -135,6 +138,11 @@ def test_artifact_records_the_reading(tmp_path):
     data = json.loads((home / "artifacts" / "rust-plan-20261107"
                        / "rust-measurement-latest.json").read_text())
     assert data["readings"][0]["role"] == "senses"
+    # A fold reading that claims to bound the fold must name all of its cost.
+    reading = data["readings"][0]
+    assert reading["children_cpu_s"] >= 0
+    assert reading["fold_cpu_s"] >= reading["cpu_s"]
+    assert data["triggers"]["cpu_s"] == 1000.0
     assert data["over"] == []
     # The reading is only auditable if the guard facts it was taken under are kept.
     assert data["guard"]["online_cpus"] >= 1

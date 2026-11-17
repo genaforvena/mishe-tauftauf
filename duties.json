@@ -1191,7 +1191,7 @@
       "timeout": 240,
       "max_age": 7500,
       "resolver": "rust-plan",
-      "covers": "the cache-miss full fold of the senses and genome tapes, measured in fresh processes, plus the installed Rust binaries checked against their install records and this release's crate source: GREEN only when both roles are under 5 CPU-s and 200 MB (the Rust slice stays closed) and every installed binary matches; RED when a role trigger is hit (the slice may reopen), or when installed bytes no longer match their record or a crate's source drifted past the installed commit; UNKNOWN when the host guard, the fold or the installed-byte provenance cannot give a reading",
+      "covers": "the cache-miss full fold of the senses and genome tapes, measured in fresh processes, plus the installed Rust binaries checked against their install records and this release's crate source: GREEN only when both roles' Python reader stays under 5 CPU-s and peak RSS under 200 MB (the Rust slice stays closed) and every installed binary matches, with each fold's Rust-children CPU and total CPU recorded beside the reader reading (plan 10.55); RED when the reader CPU or RSS trigger is hit (the slice may reopen), or when installed bytes no longer match their record or a crate's source drifted past the installed commit; UNKNOWN when the host guard, the fold or the installed-byte provenance cannot give a reading",
       "unknown_codes": [
         3
       ],
