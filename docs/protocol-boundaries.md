@@ -68,6 +68,13 @@ nothing else:
   plain chat and wakes nobody. A warning is printed only when `near_miss_dm` finds a
   `[dm] to=ROLE` first line with words after the role; an ordinary plain-chat entry
   is silent. `mishe wall dm` is the canonical writer.
+  `first_line` returns that line alone; `record_tag` reads the bracketed tag it
+  opens with (`[ci] ...` → `ci`), the one classifier form besides the DM address;
+  `message_subject` reads the first markdown heading after it; and `sender_role`
+  strips a `mind/` prefix from a feed source. The P3 shadow `dm_triage` (called by
+  `wake.py`) reads those four, with `dm_recipient`, into the derived state it sends
+  a decision model — sequence, sender, recipient, tag, length bucket and a bounded
+  first-line excerpt — never the full private body.
 - A feed entry's first line. `addressed` reads it. The permission header
   `[permission] id=... decision=granted|revoked owner=...` counts only when the
   entry's source is `operator/permissions`. `addressed` is defined in
