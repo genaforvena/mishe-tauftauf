@@ -3849,3 +3849,62 @@ Python envelope call.
 Steps 1–3 and 5 are one ordinary verification-path commit with a separate fresh
 reviewer before activation; step 4 is a publication-gate change and takes the
 strong path on its own.
+
+### 10.67 Where the live Python CPU actually is (2026-11-18)
+
+The slices above were chosen from `checks/rust-measurement.py`, which folds a
+role with `role_entries(_force_full=True)`. That is a rebuild of the whole tape,
+and it is not what a wake pays. Measured in-process on the current pin, a live
+role read answers from `feed.role-cache/<role>.json` plus a tail extend:
+
+| role | rows | cold reader CPU | warm reader CPU | child CPU |
+|---|---|---|---|---|
+| rust-plan | 2,156 | 0.008 s | 0.002 s | 0.000 |
+| senses | 36,386 | 0.123 s | 0.004 s | 0.000 |
+| genome | 30,339 | 0.100 s | 0.002 s | 0.000 |
+
+No child process is spawned on either path. So the two refutations of a fold
+slice (§10.43 and the 20:13Z A/B that repeated it) were right for a sharper
+reason than the trigger bar: the fold is cold *for a wake*. It is live in exactly
+one place — `mishe-producer-readings`, every 600 s, whose `discover scan` calls
+`_scan_snapshot(home)` before three whole-tape readings.
+
+**One `discovery.sample()` run, stage timings** (self/child CPU from
+`getrusage` deltas around each trace event; artifact
+`stage-timing.py` and its output in the rust-plan site artifacts):
+
+| stage | wall | self CPU | child CPU | delta |
+|---|---|---|---|---|
+| `snapshot` (whole-tape fold) | 6.65 s | 2.48 | 3.05 | 6.65 s |
+| `tape-readings` (recurrence, census, hash, disposition) | 7.07 s | 1.69 | 0.00 | 0.43 s |
+| `patch-invariant` | 2.19 s | 1.06 | 0.00 | 2.99 s |
+| `patch-dv-binding` | 3.79 s | 1.44 | 0.00 | 3.79 s |
+| `local-readings` | 12.89 s | 2.66 | 2.51 | 12.89 s |
+| `body-network-readings` | 0.09 s | 0.01 | 0.01 | 0.09 s |
+| **total** | **47.85 s** | **15.26** | **7.11** | |
+
+The unit's own journal agrees: 100–151 s elapsed and 32–41 CPU-s per run, the
+extra time being blocking reads of the phones and peers.
+
+**Live ranking, all `mishe-*` units, `CPUUsageNSec` delta over 45.8 s** (21 units
+moved, 94.5 CPU-s total): `mishe-audio-listener` 75.97 (its `whisper.cpp` child
+at 184 % CPU; the Python main is 0.2 %), `mishe-producer-readings` 7.84,
+`mishe-wake@genome` 6.82, `mishe-wake@docs` 2.61, everything else below 0.3.
+The plant's Python coordinate work is a few percent of one core; the audio
+listener's cost is inference in a C++ child, where a Rust rewrite of the Python
+would save nothing.
+
+**Decision: no CPU-motivated slice is left at the current tape size.** At 36 k
+entries the tape-derived block of the readings scan is ~9.7 of its 22.4 CPU-s,
+i.e. ~1.6 % of one core every ten minutes; a Rust census could halve it, which
+does not justify a protocol-adjacent cutover. The same block cost 23.6 CPU-s
+when the tape held ~300 k entries (the `fold-profile-20261118.txt` profile shows
+302,589 per-entry calls), where the prize was real. **Trigger to revisit:** a
+tape whose `role_entries(_force_full=True)` reading exceeds 10 CPU-s again, which
+`mishe-producer-rust-measurement` already publishes every ten minutes.
+
+**Measurement trap.** `systemctl --user show` does not print properties in the
+requested order — it emits `CPUUsageNSec` before `Id`. Pairing them line by line
+shifts every reading by one unit and produced a bogus "`mishe-arm` burned
+111 CPU-s in 75 s" ranking; `mishe-arm` is a 0.30 s oneshot. Parse `show` output
+per blank-line block.
