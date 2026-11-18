@@ -9,6 +9,7 @@ import ast
 import hashlib
 import json
 import os
+import select
 import statistics
 import subprocess
 import sys
@@ -44,6 +45,7 @@ WINDOW_STATE = SITE / "network" / "window.json"
 STARTED = time.time()
 COPY_CHECK_TIMEOUT_S = 20   # a new copy that hangs at import must not freeze the redraw for long
 LIVENESS_S = 1.0            # how long a launched copy must stay up before it may replace the pane
+FIRST_FRAME_S = 5.0         # how long the launched copy may take to draw its first frame
 REFUSED_CHARS = 120         # the reason a newer copy was not run, one line in the window
 REFUSED = None              # (reason, when): the file changed but the new copy would not start
 
@@ -120,34 +122,70 @@ def copy_starts(path=None):
     return False, " ".join((lines[-1] if lines else f"exit {r.returncode}").split())
 
 
+def first_frame_seen(proc):
+    """Whether the launched copy has written its window header within FIRST_FRAME_S.
+
+    Liveness alone cannot tell a view from a truncated loop that spins without drawing: both stay
+    up.  The frame line is what a reader sees, so the copy must draw before it may replace the pane.
+    """
+    deadline = time.time() + FIRST_FRAME_S
+    buf = b""
+    while True:
+        if b"MISHE NETWORK" in buf:
+            return True
+        if proc.poll() is not None:
+            return False
+        left = deadline - time.time()
+        if left <= 0:
+            return False
+        ready, _, _ = select.select([proc.stdout], [], [], min(0.05, left))
+        if not ready:
+            continue
+        chunk = os.read(proc.stdout.fileno(), 4096)
+        if not chunk:
+            return False
+        buf += chunk
+
+
 def copy_survives(path=None):
-    """Whether the copy, launched as the window launches it, is still drawing after LIVENESS_S.
+    """Whether the copy, launched as the window launches it, draws a frame and keeps drawing.
 
     The main-block check above cannot see a save cut *inside* the guard after a complete statement:
     that copy still has the guard, imports cleanly, prints its frame and exits, so the re-exec would
     leave no window (2026-11-18, the same class).  The copy is started the way os.execv starts it —
     no arguments, so it enters its redraw loop — with a throwaway site home so the probe's window
-    state cannot overwrite the live pane's, and killed once it has survived the grace.  A copy that
-    has already exited is refused with its own last error line.  Returns (ok, reason)."""
+    state cannot overwrite the live pane's.  It must write its first frame and still be running
+    LIVENESS_S later; one frame then an exit, a silent spin, or no frame at all keeps the old pane.
+    Returns (ok, reason)."""
     path = Path(path or OWN_FILES[0])
     with tempfile.TemporaryDirectory(prefix="mishe-reload-check-") as home:
         env = dict(os.environ, MISHE_TAUFTAUF_HOME=home)
         env.pop("MISHE_SEED_HOME", None)  # the site home comes from one variable, not a stale other one
         try:
             proc = subprocess.Popen([sys.executable, str(path)], cwd=str(path.parent),
-                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.PIPE, text=True, env=env)
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, env=env)
         except (OSError, subprocess.SubprocessError) as exc:
             return False, f"{type(exc).__name__}: {exc}"
         try:
-            _, err = proc.communicate(timeout=LIVENESS_S)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+            if not first_frame_seen(proc):
+                if proc.poll() is not None:
+                    why = "the copy exits at once when it is run instead of drawing"
+                else:
+                    why = f"the copy spins without drawing a frame within {FIRST_FRAME_S:g} s"
+                return False, why
+            try:
+                proc.wait(timeout=LIVENESS_S)
+            except subprocess.TimeoutExpired:
+                return True, ""
+            lines = [line.strip() for line in proc.stderr.read().decode("utf-8", "replace").splitlines()
+                     if line.strip()]
+            reason = "the copy draws one frame and exits"
+            return False, f"{reason}: {lines[-1]}" if lines else f"{reason} (exit {proc.returncode})"
+        finally:
+            if proc.poll() is None:
+                proc.kill()
             proc.communicate()
-            return True, ""
-    lines = [line.strip() for line in (err or "").splitlines() if line.strip()]
-    reason = "the copy exits at once when it is run instead of drawing"
-    return False, f"{reason}: {lines[-1]}" if lines else f"{reason} (exit {proc.returncode})"
 
 
 def main_block_present(tree):

@@ -151,7 +151,9 @@ def test_copy_that_compiles_but_fails_at_import_is_not_run(tmp_path, monkeypatch
 def test_copy_that_starts_is_run(tmp_path, monkeypatch):
     calls = []
     fake = tmp_path / "network_view.py"
-    fake.write_text("import time\n\n\nif __name__ == '__main__':\n    while True:\n        time.sleep(0.05)\n")
+    fake.write_text("import sys\nimport time\n\n\nif __name__ == '__main__':\n"
+                    "    while True:\n        sys.stdout.write('MISHE NETWORK\\n')\n"
+                    "        sys.stdout.flush()\n        time.sleep(0.05)\n")
     (tmp_path / "boundary.py").write_text("")
     monkeypatch.setattr(view, "OWN_FILES", (fake, tmp_path / "boundary.py"))
     monkeypatch.setattr(view.os, "execv", lambda *a: calls.append(a))
@@ -159,6 +161,39 @@ def test_copy_that_starts_is_run(tmp_path, monkeypatch):
     view.maybe_reexec((0, 0))  # a copy that starts is exec'd, so this call does not return here
     assert len(calls) == 1
     assert view.REFUSED is None
+
+
+def test_a_copy_that_draws_one_frame_then_exits_is_not_run(tmp_path, monkeypatch):
+    # 2026-11-18: liveness alone passes a copy cut right after its write+flush, because it prints
+    # one frame and then exits.  The window would be replaced by a process that dies at once.
+    calls = []
+    fake = tmp_path / "network_view.py"
+    fake.write_text("import sys\n\n\nif __name__ == '__main__':\n    sys.stdout.write('MISHE NETWORK\\n')\n")
+    (tmp_path / "boundary.py").write_text("")
+    monkeypatch.setattr(view, "OWN_FILES", (fake, tmp_path / "boundary.py"))
+    monkeypatch.setattr(view.os, "execv", lambda *a: calls.append(a))
+    monkeypatch.setattr(view, "REFUSED", None)
+    old = (0, 0)
+    assert view.maybe_reexec(old) == old
+    assert calls == []
+    assert "draws one frame and exits" in view.REFUSED[0]
+
+
+def test_a_copy_that_spins_without_drawing_is_not_run(tmp_path, monkeypatch):
+    # 2026-11-18: a save cut inside the redraw loop after `STAMP = maybe_reexec(STAMP)` keeps the
+    # guard and the loop, imports cleanly and stays up forever, but never draws (and burns CPU).
+    calls = []
+    fake = tmp_path / "network_view.py"
+    fake.write_text("if __name__ == '__main__':\n    while True:\n        pass\n")
+    (tmp_path / "boundary.py").write_text("")
+    monkeypatch.setattr(view, "OWN_FILES", (fake, tmp_path / "boundary.py"))
+    monkeypatch.setattr(view.os, "execv", lambda *a: calls.append(a))
+    monkeypatch.setattr(view, "REFUSED", None)
+    monkeypatch.setattr(view, "FIRST_FRAME_S", 0.3)
+    old = (0, 0)
+    assert view.maybe_reexec(old) == old
+    assert calls == []
+    assert "without drawing" in view.REFUSED[0]
 
 
 def test_a_copy_cut_inside_its_main_guard_is_not_run(tmp_path, monkeypatch):
