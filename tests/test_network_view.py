@@ -499,6 +499,39 @@ def test_usuality_marks_a_stale_last_probe():
     assert "STALE" in view.usuality_line(rows)
 
 
+def test_headline_names_a_sustained_slowdown_without_changing_the_verdict():
+    rows = _web_rows(200, 300)
+    for row in rows[-10:]:
+        for check in row["internet"].values():
+            check["total_ms"] = 900.0  # 3x the day's typical, as the USUAL line would see it
+    assert view.headline_state("OK", rows) == "OK, but much slower than usual over the last 10 probes"
+    assert "much slower than usual" in view.usuality_line(rows)
+
+
+def test_headline_uses_the_probes_own_times_for_the_window():
+    now = time.time()
+    rows = []
+    for i in range(200):
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - (199 - i) * 204))
+        ms = 900.0 if i >= 190 else 300.0
+        rows.append({"at": at, "internet": {name: {"ok": True, "total_ms": ms}
+                                            for name in ("gstatic", "cloudflare")}})
+    assert "much slower than usual over the last 31 min" in view.headline_state("OK", rows, now=now)
+
+
+def test_headline_leaves_down_unknown_short_and_stale_states_alone():
+    rows = _web_rows(200, 300)
+    for row in rows[-10:]:
+        for check in row["internet"].values():
+            check["total_ms"] = 900.0
+    assert view.headline_state("DOWN: router answers", rows) == "DOWN: router answers"
+    assert view.headline_state("UNKNOWN (no fresh probe)", rows) == "UNKNOWN (no fresh probe)"
+    assert view.headline_state("OK", _web_rows(10, 300)) == "OK"  # no baseline yet
+    old = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600))
+    rows[-1]["at"] = old
+    assert view.headline_state("OK", rows) == "OK"  # stale is never a calm claim about slowness
+
+
 def test_day_spark_buckets_the_day_and_handles_empty():
     assert len(view.day_spark([300.0] * 200)) == view.USUAL_BUCKETS
     assert view.day_spark([]) == "(no data)"

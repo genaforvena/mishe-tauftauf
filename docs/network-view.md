@@ -90,6 +90,13 @@ is not mistaken for a quiet mind.
 
 ## What the view says about it
 
+- `HOME INTERNET`: the reachability verdict from the newest probe — DOWN when the router or the
+  secure sites stop answering, DEGRADED on loss or absolute slowness, UNKNOWN when the probe is stale
+  or older than the web checks. An otherwise OK headline also names a sustained relative slowdown
+  measured by the same ten-probe median and baseline as `USUAL`: `OK, but much slower than usual
+  over the last 31 min`. The window is named so a fast newest probe below does not look like a
+  contradiction; a stale or unmeasurable baseline leaves the headline at plain OK. `verdict` itself
+  is unchanged, so the outage list still counts only DOWN probes.
 - `SPEED` and `UPLOAD`: the last good download and upload with the method and age of each. One
   5 MB download and one 2 MB upload per night, only in 02:00–04:59 local, at most every 12 h;
   both are single bounded requests against Cloudflare's speed endpoint, so the times include

@@ -1161,8 +1161,8 @@ def _hour_median(data, field, hours):
 def phase_line(data, now=None):
     """Where a page load's time goes: three disjoint phases whose sum is the page's total time.
 
-    The INTERNET lines above show the whole page load and already flag "slower than usual"; this says
-    which part moved. The probe's curl timings are cumulative checkpoints, so the phases here are
+    The headline and USUAL line above already flag a sustained slowdown; this says which part moved.
+    The probe's curl timings are cumulative checkpoints, so the phases here are
     their differences: reaching the site, the secure handshake, and the rest of the page. A slow
     connect points at the path (router, WAN, ISP), a slow handshake at the encrypted setup, and a
     slow remainder at the page itself. Printing the raw checkpoints as phases would double count the
@@ -1209,16 +1209,12 @@ def day_spark(samples, buckets=USUAL_BUCKETS):
     return spark(means)
 
 
-def usuality_line(data, now=None):
-    """'Was it worse than usual?': the recent web latency vs the last day's typical, with a trend sparkline.
+def usuality_facts(data, now=None):
+    """The last-day web latency comparison, shared by the headline and the USUAL line.
 
-    The recent figure is the median of the last `USUAL_RECENT` samples, not the newest probe: at the
-    current ~204 s cadence that is about half an hour, and the INTERNET lines above already show the
-    newest probe. Calling this median "now" made the pane contradict itself (a fast newest probe beside
-    a slower half-hour median, both labelled as the present), so the line names the sample count and the
-    span those samples actually cover. The typical excludes the last `USUAL_EXCLUDE` samples so a spike
-    cannot inflate its own baseline. Built only from rows already loaded for the window; UNKNOWN when
-    too few samples; STALE past `STALE_S`.
+    One computation so both say the same thing about the same samples: a headline that said OK while
+    USUAL said "much slower than usual" left a reader unsure which to believe. `compare` is None when
+    there are too few samples; `stale` is set when the newest probe is older than STALE_S.
     """
     now = time.time() if now is None else now
     recent = []  # (epoch, web sample) oldest first; sample is None when the row's checks failed
@@ -1235,14 +1231,16 @@ def usuality_line(data, now=None):
     samples = [v for _, v in recent]
     good = [v for v in samples if v is not None]
     if len(good) < USUAL_MIN_SAMPLES:
-        return f"UNKNOWN (only {len(good)} web samples in the last day; need {USUAL_MIN_SAMPLES})"
+        return {"compare": None, "good_count": len(good)}
     cur_stamps = [t for t, v in recent if v is not None][-USUAL_RECENT:]
     cur = statistics.median(good[-USUAL_RECENT:])
     window = f"last {len(cur_stamps)} probes"
+    recent_phrase = window
     if len(cur_stamps) > 1:
         mins = (cur_stamps[-1] - cur_stamps[0]) / 60
         if mins >= 1:
             window += f" ({mins:.0f} min)"
+            recent_phrase = f"last {mins:.0f} min"
     base_pool = good[:-USUAL_EXCLUDE] if len(good) >= USUAL_EXCLUDE + USUAL_RECENT else good
     base = statistics.median(base_pool)
     ratio = cur / base if base else 1.0
@@ -1260,8 +1258,44 @@ def usuality_line(data, now=None):
         a = age(data[-1])
         if a is not None and a > STALE_S:
             stale = f" (STALE: last probe {a:.0f}s ago)"
-    return (f"  {'USUAL':<22}{window:<24}median {cur:.0f} ms vs typical {base:.0f} ms"
-            f" ({compare}, over {span})  trend: {day_spark(samples)}{stale}")
+    return {"cur": cur, "base": base, "compare": compare, "window": window,
+            "samples": samples, "span": span, "stale": stale, "recent_phrase": recent_phrase}
+
+
+def usuality_line(data, now=None):
+    """'Was it worse than usual?': the recent web latency vs the last day's typical, with a trend sparkline.
+
+    The recent figure is the median of the last `USUAL_RECENT` samples, not the newest probe: at the
+    current ~204 s cadence that is about half an hour, and the INTERNET lines above already show the
+    newest probe. Calling this median "now" made the pane contradict itself (a fast newest probe beside
+    a slower half-hour median, both labelled as the present), so the line names the sample count and the
+    span those samples actually cover. The typical excludes the last `USUAL_EXCLUDE` samples so a spike
+    cannot inflate its own baseline. Built only from rows already loaded for the window; UNKNOWN when
+    too few samples; STALE past `STALE_S`.
+    """
+    facts = usuality_facts(data, now)
+    if facts["compare"] is None:
+        return (f"UNKNOWN (only {facts['good_count']} web samples in the last day; "
+                f"need {USUAL_MIN_SAMPLES})")
+    return (f"  {'USUAL':<22}{facts['window']:<24}median {facts['cur']:.0f} ms"
+            f" vs typical {facts['base']:.0f} ms ({facts['compare']}, over {facts['span']})"
+            f"  trend: {day_spark(facts['samples'])}{facts['stale']}")
+
+
+def headline_state(state, data, now=None):
+    """Append a sustained relative slowdown to an otherwise-OK headline.
+
+    `verdict` is about reachability and absolute slowness; its OK must not change, or the outage list
+    would misclassify probes. A ten-probe median more than 1.25x the day's typical is a different fact
+    and belongs in the same line. DOWN/DEGRADED/UNKNOWN and a stale or unmeasurable baseline are left
+    alone so the headline never claims a slowdown it has not measured.
+    """
+    if state != "OK":
+        return state
+    facts = usuality_facts(data, now)
+    if facts["compare"] in (None, "about usual") or facts["stale"]:
+        return state
+    return f"{state}, but {facts['compare']} over the {facts['recent_phrase']}"
 
 
 def night_values(rows, key):
@@ -1386,7 +1420,7 @@ def draw():
     refused = refused_line()
     if refused:
         out.append(refused)
-    out.append(f"  HOME INTERNET: {verdict(last, a)}")
+    out.append(f"  HOME INTERNET: {headline_state(verdict(last, a), data)}")
     out.append(probe_age_line(data, a, min(len(data), 40)))
     out.append("")
     out.append("  ROUTER AND LOCAL LINK (ping, average of 5)")
