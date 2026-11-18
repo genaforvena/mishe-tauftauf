@@ -288,6 +288,23 @@ latency; the fork is visible in 0.04–0.10 s on an idle host and the file passe
 output line in both fixtures (assertions and engine behaviour unchanged), after
 a deterministic reproduction: delaying the fork past `idle_gap` gives the gate's
 exact message at 2.53 s, forking first exits 0 at 5.11 s. Delivery was then
-re-requested for `90d0f135`, previous pin `76c4256b`, and the live observation of
-the index append is still owed.
+re-requested for `90d0f135`, previous pin `76c4256b`.
+
+**Delivered and observed (2026-11-18 11:32Z).** Release `90d0f135…` reached the
+pin with `activated: true`, `observed: true` and consumer `mishe-arm.service`
+`result: success`; its check was 5,399 passed, 39 skipped in 842 s. The live
+observation printed "index-backed series live: 2144 rows, 0.0169 CPU-s, 2144
+receipts covered" against 2.044 CPU-s to parse the same corpus before the slice.
+At 11:39Z the live host had 2,144 receipts and 2,144 index lines (2,139 lines
+against 2,143 receipts at 11:14Z), so the producer rebuilt and keeps the index
+current. The stale prediction that `attempt.json` would gain a `scan_index`
+field was wrong: it records only created/scan_id/stage/status; row parity with
+the receipts is the live check. Peak RSS stays UNKNOWN: no producer
+`MemoryPeak` sample was available from the journal in this wake.
+
+The further test-only fix `b18af2ac` passed its own check (`code 0`, 11:28Z) but
+is stranded in `delivery-busy`: its recorded previous pin `76c4256b` was
+superseded by `90d0f135`. Its tree also carries other minds' in-flight commits,
+including the codex-engine change, so re-requesting it from this role would
+promote work outside this slice. Genome owns that disposition.
 
