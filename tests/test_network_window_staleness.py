@@ -231,6 +231,30 @@ def test_a_copy_cut_inside_its_main_guard_is_not_run(tmp_path, monkeypatch):
     assert "exits at once" in view.REFUSED[0]
 
 
+def test_a_copy_that_closes_its_stdout_before_exiting_is_not_called_a_spin(tmp_path, monkeypatch):
+    # 2026-11-18: the kernel closes a dying copy's stdout a moment before the parent can reap it,
+    # so end-of-stdout with proc.poll() still None is not evidence of a silent spin.  The probe must
+    # wait out that exit and report the copy's own error instead of spending FIRST_FRAME_S on it.
+    calls = []
+    fake = tmp_path / "network_view.py"
+    fake.write_text("import os, sys, time\n\n\nif __name__ == '__main__':\n"
+                    "    sys.stdout.write('1\\n')\n    sys.stdout.flush()\n"
+                    "    sys.stderr.write('RuntimeError: window state unreadable\\n')\n"
+                    "    sys.stderr.flush()\n    os.close(1)\n    time.sleep(0.2)\n"
+                    "    raise SystemExit(1)\n")
+    (tmp_path / "boundary.py").write_text("")
+    monkeypatch.setattr(view, "OWN_FILES", (fake, tmp_path / "boundary.py"))
+    monkeypatch.setattr(view.os, "execv", lambda *a: calls.append(a))
+    monkeypatch.setattr(view, "REFUSED", None)
+    old = (0, 0)
+    started = time.monotonic()
+    assert view.maybe_reexec(old) == old
+    assert time.monotonic() - started < view.FIRST_FRAME_S
+    assert calls == []
+    assert "exits at once" in view.REFUSED[0]
+    assert "window state unreadable" in view.REFUSED[0]
+
+
 def test_a_copy_truncated_before_its_main_block_is_not_run(tmp_path, monkeypatch):
     # 2026-11-18: the common half-save is a prefix of the file, not a syntax error.  A prefix that
     # ends before the main guard compiles and imports, then exits at once and takes the pane down.

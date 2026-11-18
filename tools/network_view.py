@@ -46,6 +46,7 @@ STARTED = time.time()
 COPY_CHECK_TIMEOUT_S = 20   # a new copy that hangs at import must not freeze the redraw for long
 LIVENESS_S = 1.0            # how long a launched copy must stay up before it may replace the pane
 FIRST_FRAME_S = 5.0         # how long the launched copy may take to draw its first frame
+EXIT_SETTLE_S = 0.5         # a copy that closed its stdout may still be exiting; do not call that a spin
 REFUSED_CHARS = 120         # the reason a newer copy was not run, one line in the window
 REFUSED = None              # (reason, when): the file changed but the new copy would not start
 
@@ -147,6 +148,13 @@ def first_frame_seen(proc):
         buf += chunk
 
 
+def last_stderr_line(proc):
+    """The copy's own last error line, so a refusal says what failed rather than only its shape."""
+    lines = [line.strip() for line in proc.stderr.read().decode("utf-8", "replace").splitlines()
+             if line.strip()]
+    return lines[-1] if lines else ""
+
+
 def copy_survives(path=None):
     """Whether the copy, launched as the window launches it, draws a frame and keeps drawing.
 
@@ -169,20 +177,22 @@ def copy_survives(path=None):
             return False, f"{type(exc).__name__}: {exc}"
         try:
             if not first_frame_seen(proc):
-                if proc.poll() is None:
+                # A copy that closed its stdout but has not been reaped yet looks alive for a
+                # moment; settle that brief exit before calling it a silent spin.
+                try:
+                    proc.wait(timeout=EXIT_SETTLE_S)
+                except subprocess.TimeoutExpired:
                     return False, f"the copy spins without drawing a frame within {FIRST_FRAME_S:g} s"
-                lines = [line.strip() for line in proc.stderr.read().decode("utf-8", "replace").splitlines()
-                         if line.strip()]
                 reason = "the copy exits at once when it is run instead of drawing"
-                return False, f"{reason}: {lines[-1]}" if lines else f"{reason} (exit {proc.returncode})"
+                tail = last_stderr_line(proc)
+                return False, f"{reason}: {tail}" if tail else f"{reason} (exit {proc.returncode})"
             try:
                 proc.wait(timeout=LIVENESS_S)
             except subprocess.TimeoutExpired:
                 return True, ""
-            lines = [line.strip() for line in proc.stderr.read().decode("utf-8", "replace").splitlines()
-                     if line.strip()]
             reason = "the copy draws one frame and exits"
-            return False, f"{reason}: {lines[-1]}" if lines else f"{reason} (exit {proc.returncode})"
+            tail = last_stderr_line(proc)
+            return False, f"{reason}: {tail}" if tail else f"{reason} (exit {proc.returncode})"
         finally:
             if proc.poll() is None:
                 proc.kill()
