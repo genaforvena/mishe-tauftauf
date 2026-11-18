@@ -449,3 +449,20 @@ def test_phase_line_drops_a_baseline_it_cannot_support():
     assert line.startswith("reaching the site")
     assert "nights" not in line and "evenings" not in line
     assert "too few probes" in line
+
+
+def test_render_frame_shows_the_window_when_a_line_is_fine(monkeypatch):
+    monkeypatch.setattr(view, "draw", lambda: "the window")
+    assert view.render_frame() == "the window"
+
+
+def test_render_frame_keeps_the_window_alive_and_loud_on_an_error(monkeypatch):
+    # A partly edited view once raised NameError in the SPEED line, the loop died and the outer
+    # window vanished; only the five-minute check noticed.  The frame must say it is broken.
+    def boom():
+        raise NameError("name 'SPEED_BASELINE_NIGHTS' is not defined")
+    monkeypatch.setattr(view, "draw", boom)
+    frame = view.render_frame()
+    assert "WINDOW ERROR" in frame
+    assert "NameError: name 'SPEED_BASELINE_NIGHTS' is not defined" in frame
+    assert "UNKNOWN" in frame

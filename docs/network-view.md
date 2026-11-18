@@ -87,7 +87,12 @@ is not mistaken for a quiet mind.
   erase the download and a transient failure does not cost the whole night. The duty that produces
   both follows the upload as well: a failed upload attempt, a good upload older than 36 h, or no
   attempt at all once the night window is open makes the `network-speed` signal UNKNOWN, so a night
-  of failing uploads wakes the network mind instead of passing as GREEN.
+  of failing uploads wakes the network mind instead of passing as GREEN. Both lines also answer
+  "was that usual?": tonight's figure is compared with the median of the earlier measured nights
+  (one row a night, bounded to the last 14), so `about usual vs 35 Mbps over 6 earlier nights
+  (28.1 to 41.1)` or `faster than usual` tells a reader whether the number is a bad night. One or
+  two earlier nights are named instead of being called typical, and with none the line says
+  `first night measured, no usual yet` rather than inventing a baseline.
 - `EXIT NODE`: each client's exit-node state from the `egress` duty's file with the file's age. A
   client that is not GREEN gets an indented line with that duty's own first reason, cut to one
   line at a word boundary, for at most three clients, so an UNKNOWN or RED client says why it is
@@ -127,6 +132,10 @@ is not mistaken for a quiet mind.
 
 - Signal values are one sample per 5 minutes. A single strong reading is not a finding; it
   becomes one only when it repeats over a day.
+- The view redraws every 10 s and reloads its own edited files. A redraw that raises keeps the
+  window: it prints `WINDOW ERROR <type>: <message>` and says that nothing in the pane is a reading
+  until the error clears, so a partly edited or buggy view is visibly broken instead of making the
+  outer window disappear. Only the five-minute `network-window` check would notice a vanished pane.
 - Channel, noise floor and the driver's transmit counters are measured once per 5 minutes; a single
   reading is not evidence of channel trouble. There is one access point per band (2.4 GHz and 5 GHz),
   so there is no second AP to compare channels with: `iwinfo` also lists `apcli0`/`apclix0`, which

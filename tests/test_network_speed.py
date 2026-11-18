@@ -343,3 +343,69 @@ def test_no_upload_reading_yet_is_not_a_failure_outside_the_window(tmp_path, cap
     _write_rows(tmp_path, [{"ts": time.time() - 3600, "ok": True, "down_mbps": 80.0}])
     assert ns.main(["--home", str(tmp_path)]) == 0
     assert "upload: no upload reading yet" in capsys.readouterr().out
+
+
+# --- "was that usual?" — the speed line compares tonight with earlier nights -------------------
+
+def _night(ago_days, key, value, now=NOW):
+    return {"ts": now - ago_days * 86400, "ok": True, key: value}
+
+
+def test_speed_line_compares_with_earlier_nights():
+    rows = [_night(6, "down_mbps", 30), _night(5, "down_mbps", 32), _night(4, "down_mbps", 34),
+            _night(3, "down_mbps", 36), _night(2, "down_mbps", 38), _night(1, "down_mbps", 34)]
+    line = view.speed_line(rows, NOW)
+    assert line.endswith("; about usual vs 34 Mbps over 5 earlier nights (30 to 38)")
+
+
+def test_speed_line_says_faster_or_slower_than_usual():
+    earlier = [_night(6, "down_mbps", 30), _night(5, "down_mbps", 32), _night(4, "down_mbps", 34),
+               _night(3, "down_mbps", 36), _night(2, "down_mbps", 38)]
+    fast = view.speed_line(earlier + [_night(1, "down_mbps", 45)], NOW)
+    slow = view.speed_line(earlier + [_night(1, "down_mbps", 20)], NOW)
+    assert "faster than usual vs 34 Mbps" in fast
+    assert "slower than usual vs 34 Mbps" in slow
+
+
+def test_speed_line_names_one_or_two_earlier_nights_instead_of_a_typical():
+    one = view.speed_line([_night(2, "down_mbps", 34), _night(1, "down_mbps", 40)], NOW)
+    two = view.speed_line([_night(3, "down_mbps", 34), _night(2, "down_mbps", 30),
+                           _night(1, "down_mbps", 40)], NOW)
+    assert one.endswith("; earlier night 34 Mbps")
+    assert two.endswith("; earlier nights 34 and 30 Mbps")
+
+
+def test_speed_line_first_night_has_no_invented_baseline():
+    line = view.speed_line([_night(1, "down_mbps", 40)], NOW)
+    assert line.endswith("; first night measured, no usual yet")
+
+
+def test_speed_line_counts_a_night_once():
+    # A stray second run the same night must not weight that night twice in the baseline.
+    rows = [{"ts": NOW - 4 * 86400, "ok": True, "down_mbps": 30},
+            {"ts": NOW - 4 * 86400 + 600, "ok": True, "down_mbps": 60},
+            _night(3, "down_mbps", 34), _night(2, "down_mbps", 38), _night(1, "down_mbps", 36)]
+    assert "over 3 earlier nights" in view.speed_line(rows, NOW)
+
+
+def test_speed_line_failed_rows_are_not_nights():
+    rows = [
+        {"ts": NOW - 2 * 86400, "ok": False, "error": "HTTPError: 403"},
+        {"ts": NOW - 3 * 86400, "ok": False, "error": "timeout"},
+        _night(1, "down_mbps", 36),
+    ]
+    assert view.speed_line(rows, NOW).endswith("; first night measured, no usual yet")
+
+
+def test_speed_line_baseline_is_bounded():
+    rows = [_night(30 - i, "down_mbps", 10) for i in range(20)] + [_night(1, "down_mbps", 100)]
+    line = view.speed_line(rows, NOW)
+    assert "over 13 earlier nights" in line
+    assert "over 20 earlier nights" not in line
+
+
+def test_speed_up_line_compares_with_earlier_nights():
+    rows = [_night(6, "up_mbps", 10), _night(5, "up_mbps", 12), _night(4, "up_mbps", 14),
+            _night(3, "up_mbps", 16), _night(2, "up_mbps", 18), _night(1, "up_mbps", 14)]
+    assert view.speed_up_line(rows, NOW).endswith(
+        "; about usual vs 14 Mbps over 5 earlier nights (10 to 18)")

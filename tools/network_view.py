@@ -24,6 +24,8 @@ STALE_S = 300
 ROUTER_EVERY_S = 60
 SLOW_WEB_MS = 1500
 SLOW_DNS_MS = 500
+SPEED_USUAL_RATIO = 1.10    # within 10% of the earlier nights' median counts as "about usual"
+SPEED_BASELINE_NIGHTS = 14  # measured nights the SPEED and UPLOAD lines compare against
 
 # "Was it worse than usual?" — a day baseline built only from probe rows already loaded for the window.
 USUAL_MIN_SAMPLES = 120    # minimum web samples for a meaningful baseline
@@ -773,6 +775,54 @@ def usuality_line(data, now=None):
             f"  trend: {day_spark(samples)}{stale}")
 
 
+def night_values(rows, key):
+    """Good readings collapsed to one per UTC night, oldest first.
+
+    The producers append one row a night; collapsing by date means a stray second run that night
+    cannot weight itself twice, and a failed row is never a night of its own.
+    """
+    by_date = {}
+    for row in rows:
+        if not row.get("ok"):
+            continue
+        ts, value = row.get("ts"), row.get(key)
+        if not isinstance(ts, (int, float)) or not isinstance(value, (int, float)):
+            continue
+        by_date[time.strftime("%Y-%m-%d", time.gmtime(ts))] = (ts, float(value))
+    return [value for _, value in sorted(by_date.values())]
+
+
+def night_comparison(values):
+    """Plain "was tonight usual?" phrase for a speed line; empty only when there is no reading.
+
+    The latest night is compared with the median of the earlier ones in a bounded window. One or
+    two earlier nights are named rather than called "typical", and with none the line admits there
+    is no baseline yet instead of inventing one.
+    """
+    if not values:
+        return ""
+    recent = values[-SPEED_BASELINE_NIGHTS:]
+    earlier = recent[:-1]
+    if not earlier:
+        return "; first night measured, no usual yet"
+    if len(earlier) <= 2:
+        named = " and ".join(f"{v:g}" for v in earlier)
+        word = "night" if len(earlier) == 1 else "nights"
+        return f"; earlier {word} {named} Mbps"
+    typical = statistics.median(earlier)
+    if typical <= 0:
+        return ""
+    ratio = recent[-1] / typical
+    if ratio >= SPEED_USUAL_RATIO:
+        compare = "faster than usual"
+    elif ratio <= 1 / SPEED_USUAL_RATIO:
+        compare = "slower than usual"
+    else:
+        compare = "about usual"
+    return (f"; {compare} vs {round(typical, 1):g} Mbps over {len(earlier)} earlier nights "
+            f"({min(earlier):g} to {max(earlier):g})")
+
+
 def speed_line(speed_rows, now=None):
     """SPEED in plain words: the last good download with its age, or UNKNOWN (never a calm old number)."""
     now = time.time() if now is None else now
@@ -786,7 +836,8 @@ def speed_line(speed_rows, now=None):
     hours = (now - best["ts"]) / 3600
     if hours > 36:
         return f"UNKNOWN (last reading is {hours:.0f} h old)"
-    return f"DOWN {best['down_mbps']:g} Mbps, measured {hours:.1f} h ago (5 MB download, night only)"
+    usual = night_comparison(night_values(speed_rows, "down_mbps"))
+    return f"DOWN {best['down_mbps']:g} Mbps, measured {hours:.1f} h ago (5 MB download, night only){usual}"
 
 
 def speed_up_line(up_rows, now=None):
@@ -802,7 +853,8 @@ def speed_up_line(up_rows, now=None):
     hours = (now - best["ts"]) / 3600
     if hours > 36:
         return f"UNKNOWN (last upload is {hours:.0f} h old)"
-    return f"UP {best['up_mbps']:g} Mbps, measured {hours:.1f} h ago (2 MB upload, night only)"
+    usual = night_comparison(night_values(up_rows, "up_mbps"))
+    return f"UP {best['up_mbps']:g} Mbps, measured {hours:.1f} h ago (2 MB upload, night only){usual}"
 
 
 def probe_cadence_phrase(data):
@@ -881,6 +933,32 @@ def draw():
     return "\n".join(out)
 
 
+def render_frame():
+    """The frame to print: the window, or a loud error frame when a line raises.
+
+    A redraw that raises used to kill the loop and with it the whole outer window: a partly edited
+    view (two files or two edits, not yet consistent) or any bug in one line made the pane vanish,
+    and only the five-minute check noticed.  The error frame keeps the window alive, names the
+    error, and says plainly that nothing in the pane is a reading until it clears.
+    """
+    try:
+        return draw()
+    except Exception as exc:  # noqa: BLE001 - one bad line must not take the window down
+        tb = exc.__traceback__
+        while tb is not None and tb.tb_next is not None:  # the innermost frame is the guilty line
+            tb = tb.tb_next
+        line = f" at line {tb.tb_lineno}" if tb is not None and tb.tb_lineno else ""
+        return "\n".join([
+            f"MISHE NETWORK  {time.strftime('%H:%M:%SZ', time.gmtime())}   the window cannot draw",
+            "",
+            f"  WINDOW ERROR  {type(exc).__name__}: {exc}{line}",
+            f"  view code {VERSION[0]}",
+            "",
+            "  Nothing in this pane is a network reading until this clears: the whole window is",
+            "  UNKNOWN, not calm. The view retries every 10 s and picks up its own file edits.",
+        ])
+
+
 if __name__ == "__main__":
     if "--once" in sys.argv:
         print(draw())
@@ -896,6 +974,6 @@ if __name__ == "__main__":
             if time.time() - state_at > 60:
                 report_window_state()
                 state_at = time.time()
-            sys.stdout.write("\x1b[H\x1b[2J" + draw() + "\n")
+            sys.stdout.write("\x1b[H\x1b[2J" + render_frame() + "\n")
             sys.stdout.flush()
             time.sleep(10)
