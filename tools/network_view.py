@@ -814,7 +814,9 @@ def wifi_quality_line(now=None):
     the newest read is named as UNKNOWN rather than dropped; a rate is shown only when two reads an
     hour or less apart bracket it. The driver's own PER is shown when the newest read carries it
     (older rows do not): the attempts figure counts retries, so a person needs the driver's own
-    frame-loss number next to it to tell a retrying radio from a broken one.
+    frame-loss number next to it to tell a retrying radio from a broken one. When the newest read
+    carries no PER the clause says UNKNOWN instead of vanishing: an absent number must not read as a
+    quiet radio.
     """
     now = time.time() if now is None else now
     reads = [r for r in router_rows() if r.get("ok") and isinstance(r.get("radios"), list)
@@ -849,6 +851,8 @@ def wifi_quality_line(now=None):
         per = stats.get("tx_per")
         if isinstance(per, (int, float)):
             text += f"; driver's frame loss {per:.1f}%"
+        else:
+            text += "; driver's frame loss UNKNOWN"
         parts.append(text)
     if not parts:
         return "UNKNOWN (the router read carried no transmission counters)"

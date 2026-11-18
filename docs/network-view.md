@@ -151,9 +151,10 @@ is not mistaken for a quiet mind.
   the end. Read from the driver's own `iwpriv <radio> stat` counters. Attempts, not frames given
   up on: the driver counts each try, so the attempts share is "how often the radio had to send again
   or gave up" (live: 14.5% attempts against 3.3% frame loss on 2.4 GHz), and the driver's own PER is
-  what the household actually lost. The frame-loss clause appears only when the newest read carries
-  `tx_per`; a read written before that field existed shows the attempts share alone rather than an
-  invented rate. UNKNOWN when the newest read carries no counters on any radio (a band whose
+  what the household actually lost. The frame-loss clause is a number when the newest read carries
+  `tx_per`, and `driver's frame loss UNKNOWN` when the newest read has no `tx_per` — a read
+  written before that field existed, or a driver that stopped printing it, is never shown as a quiet
+  radio. UNKNOWN when the newest read carries no counters on any radio (a band whose
   counters are missing from the newest read is named "UNKNOWN (missing from the newest read)" rather
   than dropped, and `network-wifi` turns UNKNOWN too), or when a reboot has left fewer than two
   counter reads (10 minutes apart) in the hour, which shows as `(last hour UNKNOWN)`. A reboot

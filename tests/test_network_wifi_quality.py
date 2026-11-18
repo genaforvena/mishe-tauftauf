@@ -82,12 +82,14 @@ def test_each_band_is_its_own_line_and_carries_the_drivers_frame_loss(tmp_path, 
     assert lines[0].startswith("2.4 GHz ") and "driver's frame loss 3.3%" in lines[0], lines
     assert lines[1].startswith("5 GHz ") and "driver's frame loss 0.1%" in lines[1], lines
     assert lines[1].endswith("read 60 s ago"), lines
-    # a read without the driver's PER keeps the attempts figure and invents no frame loss
+    # a read without the driver's PER keeps the attempts figure, invents no rate, and says UNKNOWN
+    # rather than dropping the clause: an absent number must not read as a quiet radio
     rows[-1]["radios"][0]["stats"].pop("tx_per")
     rows[-1]["radios"][1]["stats"].pop("tx_per")
     log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     line = view.wifi_quality_line(now=NOW)
-    assert "frame loss" not in line and "since boot" in line, line
+    assert "since boot" in line, line
+    assert line.count("driver's frame loss UNKNOWN") == 2, line
 
 
 
