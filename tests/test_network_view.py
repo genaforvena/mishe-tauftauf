@@ -461,8 +461,25 @@ def test_usuality_uses_only_the_last_day_not_all_loaded_rows():
                                             for name in ("gstatic", "cloudflare")}})
     rows.reverse()  # probe.jsonl is oldest-first
     line = view.usuality_line(rows, now=now)
-    assert "about usual" in line and "over 24 h" in line
+    assert "about usual" in line and "24 h of samples" in line
     assert "over 1.7 d" not in line and "much slower" not in line
+
+
+def test_usuality_span_is_labeled_as_samples_not_the_slowdown_duration():
+    # The headline already says the slowdown lasted N min. A bare "over 24 h" in USUAL read as the
+    # slowdown lasting a day, contradicting the line above it; that span is the sample window.
+    now = time.time()
+    rows = []
+    for i in range(200):
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - (199 - i) * 204))
+        ms = 900.0 if i >= 190 else 300.0
+        rows.append({"at": at, "internet": {name: {"ok": True, "total_ms": ms}
+                                            for name in ("gstatic", "cloudflare")}})
+    line = view.usuality_line(rows, now=now)
+    assert f"{view.usuality_facts(rows, now)['span']} of samples" in line
+    assert "slower than usual, over" not in line
+    assert "much slower than usual over 24 h" not in line
+    assert "over the last 31 min" in view.headline_state("OK", rows, now=now)
 
 
 def test_usuality_recent_spike_is_slower_than_usual():

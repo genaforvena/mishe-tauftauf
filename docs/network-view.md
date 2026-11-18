@@ -191,6 +191,9 @@ is not mistaken for a quiet mind.
   than `USUAL_MIN_SAMPLES` (120) samples is UNKNOWN. `about usual` below 1.25×, `slower than
   usual` below 2×, `much slower than usual` at 2× or more; `STALE` past 15 minutes. The trend
   sparkline buckets the whole loaded day into `USUAL_BUCKETS` (40) means.
+  The trailing span names the loaded sample window (`24 h of samples`), not the duration of the
+  slowdown — the headline above already says how long that lasted; a bare "over 24 h" read here as a
+  day-long slowdown that contradicted it.
 - `WI-FI`: the live listing, one read a minute: client count per band and the weakest client with
   its dBm, its band and the name the household knows it by when the recorded read has that client;
   a device that only just joined shows as its dBm until the next recorded read names it. WEAK SIGNAL

@@ -1405,13 +1405,16 @@ def usuality_line(data, now=None, facts=None):
     span those samples actually cover. The typical excludes the last `USUAL_EXCLUDE` samples so a spike
     cannot inflate its own baseline. Built only from rows already loaded for the window; UNKNOWN when
     too few samples; STALE past `STALE_S`.
+    The trailing span labels the loaded sample window, not the slowdown's duration: the headline
+    above already names how long the slowdown lasted, and a bare "over 24 h" here read as a
+    day-long slowdown that contradicted it.
     """
     facts = facts if facts is not None else usuality_facts(data, now)
     if facts["compare"] is None:
         return (f"UNKNOWN (only {facts['good_count']} web samples in the last day; "
                 f"need {USUAL_MIN_SAMPLES})")
     return (f"  {'USUAL':<22}{facts['window']:<24}median {facts['cur']:.0f} ms"
-            f" vs typical {facts['base']:.0f} ms ({facts['compare']}, over {facts['span']})"
+            f" vs typical {facts['base']:.0f} ms ({facts['compare']}; {facts['span']} of samples)"
             f"  trend: {day_spark(facts['samples'])}{facts['stale']}")
 
 
