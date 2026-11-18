@@ -151,6 +151,24 @@ def test_duty_timeout_leaves_the_check_room_to_report():
     assert 0 < pub.LOCAL_TIMEOUT < pub.NETWORK_TIMEOUT <= pub.BUDGET
 
 
+def test_the_rendered_duty_unit_also_leaves_the_check_room_to_report(tmp_path):
+    """The manifest number is not the one that kills the check: ``producers.load`` passes it as the
+    wrapper's ``--timeout`` and ``units.render`` writes it plus its own slack as ``TimeoutStartSec``.
+    Both must stay above the check's self-enforced budget, or a change here silently re-creates the
+    kill-before-the-reason failure that the manifest test above would still pass."""
+    from mishe_tauftauf import duties, producers
+
+    declared = duties.declared(REPO, tmp_path)
+    entry = next(d for d in declared if d['name'] == 'main-publication')
+    prod = next(p for p in producers.load(tmp_path, python='/usr/bin/python3', declared=declared, register=False)
+                if p.name == 'main-publication')
+    timeout = prod.command[prod.command.index('--timeout') + 1]
+
+    assert timeout == str(entry['timeout'])
+    assert prod.timeout > entry['timeout'] > pub.BUDGET          # TimeoutStartSec = --timeout + 30
+    assert prod.command[-3:] == [str(REPO / 'checks' / 'main-publication.py'), '--repo', str(REPO)]
+
+
 def test_an_unreadable_remote_ref_is_unknown_with_its_own_cause(tmp_path, monkeypatch):
     """A rev-parse that cannot run is not an absent origin/main: the reason must name the call."""
     _, work = clone_with_remote(tmp_path)
