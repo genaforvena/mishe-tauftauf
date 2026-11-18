@@ -48,6 +48,15 @@ def current_link(home):
     return Path(home) / "runtime" / "current"
 
 
+def pin_revision(home):
+    """The release directory ``runtime/current`` names, or "" when the pointer is missing.
+
+    The same reading as ``checks/pin-delivery.py``: the link's target name is the release id.
+    """
+    link = current_link(home)
+    return Path(os.path.realpath(link)).name if os.path.islink(link) else ""
+
+
 def point(home, source):
     """Atomically make runtime/current name ``source`` (a rename over the old link).
 
@@ -1046,6 +1055,17 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
                                  if wait_s else "dispatch lock busy")
             publish_outcome(home, record); save()
             raise
+        moved = pin_revision(home)
+        if moved and not moved.startswith(previous):
+            # Two promotions can run their check stages at once: the check deliberately runs
+            # without the delivery lock (a request consumed by a wake and the cadence promotion can
+            # overlap), so the pin may have moved before this one reaches activation. Activating
+            # here would point consumers at an older sha, and a failed probe would roll the pin
+            # back past a delivery that already succeeded. Refuse before any effect.
+            record["phase"] = "delivery-busy"
+            record["failure"] = (f"the pin moved to {moved[:8]} while this promotion checked; "
+                                 f"refusing to activate {sha[:8]} from previous {previous[:8]}")
+            save(); return record
         record["phase"]="activating"; save()
         configs = {str(p):wall_patch.snapshot(p) for p in config_paths(home)} if activate is None else {}
         record["config_before"]=configs; record["rollback_available"]=True; save()

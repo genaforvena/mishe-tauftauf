@@ -151,6 +151,37 @@ def test_a_refused_delivery_admission_is_recorded_as_a_dead_run(tree):
     assert "admission is owned" in records[0]["failure"]
 
 
+def test_a_pin_that_moved_during_the_check_cannot_be_overwritten(tree):
+    # The check stage deliberately runs without the delivery lock, so a request promotion consumed
+    # by a wake and the cadence promotion can check at the same time. The first one to activate moves
+    # the pin; the second must refuse before any effect instead of re-pointing consumers at an older
+    # sha (and, on a failed probe, rolling the pin back past a delivery that already succeeded).
+    repo,home,old,sha=tree
+    newer=home/"releases"/("f"*40); newer.mkdir(parents=True)
+    link=home/"runtime"/"current"
+    script=(f"import os; os.makedirs({str(link.parent)!r}, exist_ok=True); "
+            f"tmp={str(link)!r}+'.tmp'; os.symlink({str(newer)!r}, tmp); os.replace(tmp, {str(link)!r})")
+    activated=[]
+    r=p.promote(home,repo,sha,check=[sys.executable,"-c",script],observe=["probe"],previous=old,
+                activate=lambda *a:activated.append(a),probe=lambda *a,**k:dict(code=0,output=""),
+                reviewer=lambda *a:None,closure=lambda *a:None)
+    assert r["phase"]=="delivery-busy"
+    assert "the pin moved to ffffffff" in r["failure"]
+    assert activated==[]
+    assert Path(os.path.realpath(link)).name=="f"*40
+
+
+def test_a_pin_still_naming_previous_activates(tree):
+    repo,home,old,sha=tree
+    pin=home/"releases"/old; pin.mkdir(parents=True)
+    link=home/"runtime"/"current"; link.parent.mkdir(parents=True, exist_ok=True); os.symlink(pin, link)
+    seen=[]
+    r=p.promote(home,repo,sha,check=[sys.executable,"-c","pass"],observe=["probe"],previous=old,
+                activate=lambda source,target:seen.append(target),probe=lambda *a,**k:dict(code=0,output=""),
+                reviewer=lambda *a:None,closure=lambda *a:None)
+    assert r["phase"]=="delivered" and seen==[sha]
+
+
 def test_default_review_enqueue_uses_sha_and_retains_pending(tree, monkeypatch):
     repo,home,old,sha=tree
     calls=[]
