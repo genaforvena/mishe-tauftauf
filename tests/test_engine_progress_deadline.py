@@ -141,31 +141,47 @@ def test_a_child_wait_defers_the_stall_cut_before_the_soft_deadline(tmp_path: Pa
     assert time.monotonic() - started >= 8.0, "the engine waiting on its child was cut as idle"
 
 
-# The child exists before the engine's first line, so the idle check reads a child that is
-# already forked instead of racing the interpreter start. The earlier silent-first form needed
-# the fork to be visible inside idle_gap; measured on an idle host that takes 0.04-0.10 s, but
-# under the load of a full-suite delivery check it exceeded 2.5 s and cut a good run
-# (8c568a59 gate, 2026-11-18). Reproduced deterministically by delaying the fork past
-# idle_gap: SITE_HOME/artifacts/rust-plan-20261107/repro_live_child_race.py.
-WAITS_ON_CHILD = ("import subprocess,sys\n"
-                  "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(5)'])\n"
-                  "print('waiting on child', child.pid, flush=True)\n"
-                  "child.wait()\n")
+def _waits_on_child(seconds: float) -> str:
+    """Engine code that forks a child, announces it, then waits on it in silence."""
+    return ("import subprocess,sys\n"
+            f"child=subprocess.Popen([sys.executable,'-c','import time; time.sleep({seconds})'])\n"
+            "print('waiting on child', child.pid, flush=True)\n"
+            "child.wait()\n")
 
 
 def test_an_engine_waiting_on_a_live_child_is_not_idle(tmp_path: Path):
-    """Pub wake 19:02Z: the mind waited silently on a background job and was cut as idle."""
+    """Pub wake 19:02Z: the mind waited silently on a background job and was cut as idle.
+
+    The idle window is measured from the engine's own line, not from ``Popen``: a full-suite
+    delivery check on a loaded host took longer than ``idle_gap`` just to start the interpreter,
+    so measuring from ``Popen`` cut a good run before its child existed (8c568a59 gate,
+    2026-11-18). The callback returns once that line, and so the child, is in the stream; the
+    2.5 s window then has real teeth, because a run that ignored the child would be cut here.
+    """
     out = tmp_path / "stream"
+
+    def child_is_running(pid: int) -> None:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            try:
+                if "waiting on child" in out.read_text():
+                    return
+            except FileNotFoundError:
+                pass
+            time.sleep(0.02)
+        raise AssertionError("the engine never reported its child")
+
     started = time.monotonic()
-    code = proc.run_bounded([sys.executable, "-c", WAITS_ON_CHILD], env=dict(os.environ), cwd=tmp_path,
-                            timeout=1, stdout_to=out, hard_timeout=20, idle_gap=2.5)
+    code = proc.run_bounded([sys.executable, "-c", _waits_on_child(8)], env=dict(os.environ), cwd=tmp_path,
+                            timeout=1, stdout_to=out, hard_timeout=20, idle_gap=2.5,
+                            on_start=child_is_running)
     assert code == 0
-    assert time.monotonic() - started >= 5.0, "the engine waiting on its child was cut as idle"
+    assert time.monotonic() - started >= 8.0, "the engine waiting on its child was cut as idle"
 
 
 def test_a_child_does_not_extend_the_hard_cap(tmp_path: Path):
     out = tmp_path / "stream"
     with pytest.raises(EngineTimeout, match="hard cap"):
-        proc.run_bounded([sys.executable, "-c", WAITS_ON_CHILD.replace("5)", "60)")],
+        proc.run_bounded([sys.executable, "-c", _waits_on_child(60)],
                          env=dict(os.environ), cwd=tmp_path, timeout=1, stdout_to=out,
                          hard_timeout=3, idle_gap=1.0)
