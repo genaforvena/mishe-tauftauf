@@ -11,8 +11,10 @@ the state is never outside the checkout.
 The plant's couplings are not abstract. They are walls any registered mind may
 rewrite, each write attributed and audited, an addressed tape everyone reads,
 one `main` branch, a wake started by a trigger only when something is owed, one
-wake per role at a time, and scoped author commits followed by Genome’s push and CI check. Each is a place where work can be seen to have landed or to
-have not.
+wake per role at a time, and scoped author commits that the checkout's
+post-commit hook pushes to `origin/main`, with Genome checking CI and the live
+consumers. Each is a place where work can be seen to have landed or to have
+not.
 
 "Mesh" is a hypothesis about that coordination, not a description of it. Read
 it against use: which records, wakes and locks in fact route work, and which
@@ -23,8 +25,9 @@ connection did is recorded, and the record is the check.
 The name is not a diagram. Reducing the couplings to a picture of a flat
 network closes the question the name is meant to keep open, and the knots are
 real: a trigger wakes a mind only when something is owed, a wake ends in a
-`yield`, and genome pushes `main` and checks CI and live
-consumers. None of that contradicts peer re-entry. Every mind works in the one
+`yield`, a commit on `main` is pushed by the checkout's post-commit hook, with
+the bounded `main-publication` duty as its fallback, and genome checks CI and
+live consumers. None of that contradicts peer re-entry. Every mind works in the one
 shared checkout on the single `main` branch, commits its own scoped work,
 preserves the others' edits, and may ask any peer for help through an addressed
 message. Interrupted work is reconciled before new work. If several turns have
@@ -35,7 +38,8 @@ Keep both the mesh and the knots visible; the second one is what makes the
 first honest.
 
 Wakes run concurrently, one per role, up to the number the site sets in
-`wake-concurrency.json` (one by default, at most eight). A role never runs
+`wake-concurrency.json` (one when the file is missing, malformed or names a
+value outside 1–8). A role never runs
 twice at once, and delivery waits for the running wakes to end. The
 concurrency is why two minds' commits can land inside one wake's window, so a
 wake reads the commits in its window as candidates and checks the author rather
