@@ -21,7 +21,6 @@ from .slugs import validate_slug
 from .wall_text import addressed
 
 SOURCE_RE = re.compile(r"[A-Za-z0-9._/-]+\Z")
-FRAME_START_RE = re.compile(rb"(?m)^(?:v1 )?\d{20} \d{4}-\d{2}-\d{2}T[^\n]+ [A-Za-z0-9._/-]+ ::\n")
 RECEIPT_RE = re.compile(r"wake (?:delivered|refused) top-pain [a-z0-9-]+ for entry [1-9][0-9]*(?: generation=[1-9][0-9]*)?(?: request-id=[A-Za-z0-9._:-]{1,128})?\Z")
 INDEX_STRIDE = 128
 STREAM_CHUNK_BYTES = 1024 * 1024
@@ -214,6 +213,19 @@ def _tape_memfd(data: bytes):
         yield handle
     finally:
         handle.close()
+
+def _frame_offsets_for_data(data: bytes) -> list[int]:
+    """Frame-start byte offsets for whole-tape bytes, from the Rust framer.
+
+    Checkpoint rebuilds already frame ``data`` once through :func:`parse_feed`.
+    The offsets come from the same authority via a separate ``--offsets`` pass
+    over an identical memfd, never from a second Python regular expression.
+    The two passes see the same bytes, so the index cannot disagree with the
+    entries it describes.
+    """
+    with _tape_memfd(data) as handle:
+        return _frame_offsets(handle, 0, len(data), start_sequence=1)
+
 
 
 class TapeUnknown(RuntimeError):
@@ -1064,7 +1076,7 @@ class Feed:
         handle.seek(0)
         data = handle.read()
         entries = parse_feed(data)
-        offsets = [match.start() for match in FRAME_START_RE.finditer(data)]
+        offsets = _frame_offsets_for_data(data)
         if len(offsets) != len(entries):
             raise FeedError("feed frame index disagrees with canonical parser")
         index = {"version": 1, "sequence": len(entries),
@@ -1415,7 +1427,7 @@ class Feed:
                 continue
             if mode == "rebuild":
                 entries = parse_feed(data, home=self.home, facts=facts)
-                offsets = [match.start() for match in FRAME_START_RE.finditer(data)]
+                offsets = _frame_offsets_for_data(data)
                 if len(offsets) != len(entries):
                     raise FeedError("feed frame index disagrees with canonical parser")
                 index = {"version": 1, "sequence": len(entries),
@@ -1462,7 +1474,7 @@ class Feed:
                     data = handle.read()
         if index is None:
             entries = parse_feed(data, home=self.home)
-            offsets = [match.start() for match in FRAME_START_RE.finditer(data)]
+            offsets = _frame_offsets_for_data(data)
             if len(offsets) != len(entries):
                 raise FeedError("feed frame index disagrees with canonical parser")
             index = {"version": 1, "sequence": len(entries),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import multiprocessing
 import shutil
 import tempfile
@@ -161,11 +162,42 @@ class FeedTests(unittest.TestCase):
             path = Path(directory) / "chat.log"
             blob = b"".join(entries)
             path.write_bytes(blob)
-            whole = [m.start() for m in feed_module.FRAME_START_RE.finditer(blob)]
+            # Frozen oracle: the retired Python frame-start regex. The cutover
+            # deleted it from feed.py; keeping it here means this test still
+            # fails if the Rust framer's offsets ever disagree with the old
+            # index bytes. Test evidence, not a live second authority.
+            oracle = re.compile(rb"(?m)^(?:v1 )?\d{20} \d{4}-\d{2}-\d{2}T[^\n]+ [A-Za-z0-9._/-]+ ::\n")
+            whole = [m.start() for m in oracle.finditer(blob)]
             with path.open("rb") as handle:
                 streamed = feed_module._frame_offsets(handle, 0, len(blob))
             self.assertEqual(whole, streamed)
             self.assertEqual(len(streamed), len(entries))
+
+    @requires_tape_binary
+    def test_checkpoint_rebuild_index_bytes_match_retired_regex_oracle(self):
+        # The acceptance property is the index bytes, not just the offsets: all
+        # three rebuild paths write tail_offset and checkpoints from the frame
+        # list. Route them through mishe-tape and the saved index must still be
+        # the one the retired Python regex produced for the same bytes.
+        oracle = re.compile(rb"(?m)^(?:v1 )?\d{20} \d{4}-\d{2}-\d{2}T[^\n]+ [A-Za-z0-9._/-]+ ::\n")
+        frames = [feed_module._encode_entry(n, "2026-10-23T18:00:00Z", "seed", f"line {n}")
+                  for n in range(1, 40)]
+        blob = b"".join(frames)
+        whole = [m.start() for m in oracle.finditer(blob)]
+        expected_checkpoints = [[n, whole[i]] for i, n in
+                                enumerate(range(1, len(frames) + 1))
+                                if i % feed_module.INDEX_STRIDE == 0]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "chat.log"
+            path.write_bytes(blob)
+            feed = Feed(directory)
+            with path.open("rb") as handle:
+                index, reused = feed._load_index(handle)
+            self.assertFalse(reused)
+            self.assertEqual(index["version"], 1)
+            self.assertEqual(index["sequence"], len(frames))
+            self.assertEqual(index["tail_offset"], whole[-1])
+            self.assertEqual(index["checkpoints"], expected_checkpoints)
 
     @requires_tape_binary
     def test_role_cache_extends_from_canonical_tail_not_last_selected_entry(self):

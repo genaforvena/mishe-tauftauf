@@ -3522,3 +3522,34 @@ This section is a map and a decision, not a cutover: no source, binary, test or
 pin changed here. If rank 1's cost measurement refutes it, fall through to rank 2,
 which is confined to one classifier call; if a candidate proves to be a
 documented boundary, drop it rather than force a slice.
+
+### 10.62 Rank 1 cutover: one framer, three checkpoint rebuild paths (2026-11-18)
+
+Decision: keep. `FRAME_START_RE` is deleted from `feed.py`; `_load_index`,
+`entries` rebuild and `tail_sequence` now get frame offsets from the new
+`_frame_offsets_for_data`, a memfd pass through `mishe-tape frames --offsets`.
+The Rust framer is the only live decision about where a frame starts. No binary
+changed: the installed framer already emits those offsets.
+
+Why the extra pass is acceptable: `parse_feed(data)` already frames the same
+bytes through Rust via a memfd, and `--offsets` cannot combine with the entries
+stream, so the index needs one more pass over identical bytes. On an 8 MB prefix
+of the live tape (12,653 whole frames) the offsets pass cost 0.027 s against
+0.036 s for the entries pass (0.74x); only a checkpoint rebuild pays it, since
+normal reads reuse the checkpoint. A 231 MB whole-tape probe timed out at 300 s
+under elevated host pressure with no stage timings, so full-tape cost is
+UNKNOWN. This is not a speedup claim.
+
+Acceptance: `tests/test_feed.py` freezes the retired regex as a test-only
+oracle. `test_streamed_frame_offsets_match_the_whole_tape_scan` compares its
+offsets with the framer; `test_checkpoint_rebuild_index_bytes_match_retired_regex_oracle`
+drives the real `_load_index` path and asserts the saved `tail_offset` and
+`checkpoints`. On the live-tape prefix all 12,653 offsets are byte-equal and
+match the 12,653 parsed entries. `PYTHONPATH=src .venv/bin/pytest -q
+tests/test_feed.py`: 53 passed, 13 subtests. `python tools/check_parsing.py`:
+PASS, no new parsing sites, 495 legacy sites unchanged.
+
+Scope: `feed.py`, `tests/test_feed.py` and this section. This wake moved no pin;
+the continuous delivery path promotes the committed snapshot. Ranks 2 and 3
+remain open.
+
