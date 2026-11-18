@@ -6,7 +6,7 @@ investigation and an honestly recovered experiment can all be useful results.
 A successful yield alone does not prove a repair or live delivery.
 
 Use one shared checkout and `main`. Authors check and commit their own scoped
-changes. Genome pushes and observes CI; it does not grant permission to commit.
+changes. The checkout's post-commit hook publishes to `origin/main` (the `main-publication` duty is the fallback); Genome checks CI and live consumers and does not grant permission to commit.
 An area is stewardship, not exclusive repair authority. Coordinate actual
 concurrent edits, rather than waiting on an ownership label.
 
