@@ -755,16 +755,24 @@ cutover() {
     done
     for t in "${TREES[@]}"; do
         if ! ln -s "$DST/$t" "$SRC/$t"; then
-            log "symlink $t failed; rolling back"
+            local failed_msg="symlink $t failed"
+            log "$failed_msg; rolling back"
             for t in "${TREES[@]}"; do
                 # `mv dir symlink-to-dir` would move the tree *inside* the
                 # destination; drop the link first.
                 [ -L "$SRC/$t" ] && rm -f "$SRC/$t"
                 [ -d "$SRC/$t.pre-migration" ] && mv "$SRC/$t.pre-migration" "$SRC/$t"
             done
+            # The full in-process restore, not just the restart: this branch used
+            # to restart the units and die with RESTORED=1, so the EXIT trap
+            # skipped restore_plant and the hold stayed on disk -- wake starts
+            # paused until the watchdog's 900 s sleep expired, even though the
+            # trees were already rolled back in seconds. Every other abort gets
+            # the same restore; a failed cutover must not be the exception.
+            restore_plant
+            systemctl --user stop mishe-root-migration-watchdog.service 2>/dev/null
             RESTORED=1
-            restart_recorded
-            die "symlink $t failed, rolled back"
+            die "$failed_msg, rolled back"
         fi
         [ "$(readlink -f "$SRC/$t")" = "$DST/$t" ] || die "$SRC/$t does not resolve to $DST/$t"
         log "symlink $t -> $DST/$t ok"

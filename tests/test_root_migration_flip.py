@@ -706,6 +706,45 @@ def test_an_aborted_flip_releases_the_hold(tmp_path):
     assert "restore:" in out, out
 
 
+LN_FAILS_FOR_CODEX = r"""#!/bin/bash
+for a in "$@"; do last=$a; done
+case "$last" in
+  */src/.codex) echo "ln: cannot create symbolic link (masked)" >&2; exit 1 ;;
+esac
+exec /bin/ln "$@"
+"""
+
+
+def test_a_failed_symlink_rolls_back_and_releases_the_hold(tmp_path):
+    """Regression: the cutover's symlink-failure branch rolled the trees back and
+    restarted the units, then set RESTORED=1 and died. The EXIT trap returns early
+    on RESTORED, so restore_plant -- and with it release_hold -- never ran: the
+    hold file stayed on disk and every wake stayed paused until the watchdog's
+    900 s sleep expired, although the rollback itself finished in seconds. The
+    branch now takes the same restore every other abort takes, and names the tree
+    whose symlink failed (the rollback loop used to clobber $t first)."""
+    root = sandbox(tmp_path)
+    install_helper(root, 0, "  VERIFIED mishe-tauftauf\n=== scoped verify done rc=0")
+    link = root / "bin" / "ln"
+    link.write_text(LN_FAILS_FOR_CODEX)
+    link.chmod(0o755)
+
+    done = flip(root, "--execute")
+
+    out = done.stdout + done.stderr
+    assert done.returncode == 1, out
+    assert "symlink .codex failed" in out, out
+    for tree in TREES:
+        assert (root / "src" / tree).is_dir(), out
+        assert not (root / "src" / tree).is_symlink(), out
+        assert not (root / "src" / f"{tree}.pre-migration").exists(), out
+    assert not hold_path(root).exists(), out
+    assert "hold: released" in out, out
+    assert any("start fake-a.service" in line for line in calls(root)), calls(root)
+    assert any("stop mishe-root-migration-watchdog.service" in line for line in calls(root)), calls(root)
+    assert not (root / "work" / "flip.done").exists(), out
+
+
 def test_watchdog_releases_a_hold_left_by_a_hard_killed_flip(tmp_path):
     """A SIGKILL skips the EXIT trap, so the watchdog is the only restorer left.
     It restarts the units and must remove the hold too; otherwise the plant comes
