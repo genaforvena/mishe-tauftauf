@@ -388,14 +388,15 @@ def main(argv: list[str] | None = None) -> int:
 
     release_after, after_error = release_identity(repo)
     binaries_after = binary_provenance(home, repo)
+    release_errors = list(dict.fromkeys(filter(None, (release_error, after_error))))
     if requested_repo.resolve() != repo or release != release_after:
-        release_error = "release changed during sampling"
-    release_error = release_error or after_error
+        release_errors.append("release changed during sampling")
     if provenance != binaries_after:
-        release_error = "installed binary provenance changed during sampling"
+        release_errors.append("installed binary provenance changed during sampling")
     expected_feed = str((repo / "src/mishe_tauftauf/feed.py").resolve())
     if any(r.get("feed_path") != expected_feed for r in readings):
-        release_error = "fold imported feed from outside the release"
+        release_errors.append("fold imported feed from outside the release")
+    release_error = "; ".join(release_errors) or None
 
     over = []
     for r in readings:

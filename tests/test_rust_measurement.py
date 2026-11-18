@@ -498,6 +498,36 @@ def test_wrong_import_path_is_unknown(tmp_path, monkeypatch, capsys):
     assert "fold imported feed from outside" in capsys.readouterr().err
 
 
+def test_simultaneous_provenance_failures_remain_in_diagnostics(tmp_path, monkeypatch, capsys):
+    mod = check_module()
+    repo = _rust_release(tmp_path)
+    home = tmp_path / "site"
+    _install_all(home, repo)
+    (repo / "src/untracked.py").write_text("# dirty source\n")
+    original = mod.fold_role
+
+    def change_during_fold(*args):
+        reading = original(*args)
+        (home / "bin/mishe-tape").write_bytes(b"different executable")
+        reading["feed_path"] = "/other/feed.py"
+        return reading
+
+    monkeypatch.setattr(mod, "fold_role", change_during_fold)
+    assert mod.main(["--home", str(home), "--repo", str(repo), "--roles", "senses",
+                     "--max-load", "100000", "--max-cpu-pressure", "100000",
+                     "--max-mem-pressure", "100000"]) == 3
+    stderr = capsys.readouterr().err
+    artifact = json.loads((home / mod.ARTIFACT_DIR / "rust-measurement-latest.json").read_text())
+    history = json.loads((home / mod.ARTIFACT_DIR / "rust-measurement-history.jsonl").read_text())
+    assert history["verdict"] == "unknown"
+    for reason in ("release source has uncommitted or untracked changes",
+                   "installed binary provenance changed during sampling",
+                   "fold imported feed from outside the release"):
+        assert reason in stderr
+        assert reason in artifact["provenance_error"]
+        assert reason in history["provenance_error"]
+
+
 def test_fold_uses_release_source_despite_stale_bytecode(tmp_path):
     import py_compile
 
