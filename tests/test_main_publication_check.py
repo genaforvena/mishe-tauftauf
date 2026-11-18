@@ -1,7 +1,9 @@
 """checks/main-publication.py: publishes local main without a hook, and reports what it did."""
 import importlib.util
+import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -126,3 +128,24 @@ def test_unreadable_remote_is_unknown(tmp_path):
 
     assert code == 3
     assert 'cannot read origin/main' in lines[0]
+
+
+def test_a_spent_budget_is_unknown_and_names_the_step(tmp_path):
+    """A stalled filesystem must end as a stated UNKNOWN, not a silent kill by the duty timeout."""
+    _, work = clone_with_remote(tmp_path)
+    commit_with_hooks_disabled(work, 'late')
+
+    code, lines = pub.publish(work, deadline=time.monotonic() - 1)
+
+    assert code == 3
+    assert 'time budget exhausted before git symbolic-ref' in lines[0]
+
+
+def test_duty_timeout_leaves_the_check_room_to_report():
+    """The duty kills the check at `timeout`; the check's own bound must be shorter, or a run whose
+    local git calls stall is killed before it can say what it could not read."""
+    duties = json.loads((REPO / 'duties.json').read_text())
+    entry = next(d for d in duties['duties'] if d['name'] == 'main-publication')
+
+    assert entry['timeout'] > pub.BUDGET
+    assert 0 < pub.LOCAL_TIMEOUT < pub.NETWORK_TIMEOUT <= pub.BUDGET

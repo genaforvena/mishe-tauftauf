@@ -635,11 +635,11 @@
         "{repo}"
       ],
       "every": 300,
-      "timeout": 240,
+      "timeout": 270,
       "max_age": 900,
       "resolver": "genome",
       "replaces": [],
-      "covers": "local main reaches origin/main without depending on the post-commit hook (checks/main-publication.py --repo: a commit made with a hooks-disabled command was never pushed, so 4290a757 sat unpublished 14 min until a mind read, 2026-11-17): the duty fast-forwards origin/main itself when it is a strict ancestor of local main and names how many commits it published; RED when the push fails, main has diverged, or local main is behind; UNKNOWN when the remote cannot be read (timeout 240 s covers the check's own worst case: fetch 60 + push 60 + re-fetch 60)"
+      "covers": "local main reaches origin/main without depending on the post-commit hook (checks/main-publication.py --repo: a commit made with a hooks-disabled command was never pushed, so 4290a757 sat unpublished 14 min until a mind read, 2026-11-17): the duty fast-forwards origin/main itself when it is a strict ancestor of local main and names how many commits it published; RED when the push fails, main has diverged, or local main is behind; UNKNOWN when the remote or local HEAD cannot be read and when the run's own budget runs out mid-step (the check enforces a 240 s budget itself: local git calls 15 s, fetch and push 60 s, each call clamped to the remaining budget and a past deadline exits 3 naming the step; the push path makes 12 calls, so the old 240 s duty timeout killed it silently while the check still had work to report; timeout 270 s now exceeds the check's own bound)"
     },
     {
       "name": "next-due-armed",
