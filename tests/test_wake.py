@@ -426,13 +426,50 @@ def test_a_wake_restores_its_memory_floor_and_records_the_reading(home, monkeypa
     engine = FakeEngine(do_yield)
     result = go(home, "genome", engine)
     assert result.outcome == "completed"
-    assert asked == ["mishe-wake@genome.service"]
+    # Once before the dispatch lock wait, once at engine start to re-assert after any
+    # reload that landed during the wait and to record the evidence reading.
+    assert asked == ["mishe-wake@genome.service", "mishe-wake@genome.service"]
     records = list((home / "wakes").glob("*.memory.json"))
     assert len(records) == 1
     record = json.loads(records[0].read_text())
     assert record["applied"] is True and record["before"] == 1073741824
 
 
+
+
+def test_wake_raises_the_floor_before_the_dispatch_lock_wait(home, monkeypatch):
+    """The floor must be applied before dispatch waits for a slot, not only at engine start.
+
+    2026-11-18: an idle wake unit waited ~50 s for a dispatch slot at the host drop-in's
+    1G and wake-memory-floor went RED. On the old code the first floor call came after
+    both lock acquisitions, so this ordering assertion fails.
+    """
+    from mishe_tauftauf import wake_memory
+    order = []
+
+    monkeypatch.setattr(wake_memory, "own_unit_name",
+                        lambda role, prefix="mishe": f"mishe-wake@{role}.service")
+
+    def ensure(unit, *, floor=None):
+        order.append("floor")
+        return {"unit": unit, "before": 1073741824, "after": 1610612736, "applied": True}
+
+    monkeypatch.setattr(wake_memory, "ensure_wake_memory_high", ensure)
+    monkeypatch.setattr(wake_memory, "memory_high_path", lambda unit: None)
+
+    real_running = wake.Supervisor.running
+
+    def running(self, role):
+        order.append("lock")
+        return real_running(self, role)
+
+    monkeypatch.setattr(wake.Supervisor, "running", running)
+
+    owed.touch_inbox(home, "genome")
+    result = go(home, "genome", FakeEngine(do_yield))
+    assert result.outcome == "completed"
+    assert order[0] == "floor", order
+    assert "lock" in order, order
 
 def test_unprintable_engine_error_keeps_the_original_and_closes_the_dispatch(home):
     """Caller-level: the supervisor's UNKNOWN write must not format the error into a new exception."""

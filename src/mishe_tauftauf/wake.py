@@ -440,6 +440,11 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
     instead of exiting 0 with the owed wake dropped.
     """
     home = Path(home)
+    # A fresh unit cgroup inherits the protected host drop-in's 1G memory.high. Dispatch can
+    # wait ~50 s for a slot, and a wake-memory-floor sample inside that window is a real
+    # throttle (2026-11-18 rust-plan RED). Raise the floor before any lock wait; the later
+    # _restore_memory_floor re-asserts it if a delivery reload landed during the wait.
+    wake_memory.ensure_wake_memory_high(wake_memory.own_unit_name(role))
     # Recorded before the held return: a start that only returns "held" still spends the host's
     # start-limit budget, so resume_owed must see it (DM 300359).
     record_wake_start(home, role, now=now)
