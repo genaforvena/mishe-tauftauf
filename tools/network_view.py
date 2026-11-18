@@ -40,6 +40,9 @@ OWN_FILES = (Path(__file__).resolve(), Path(__file__).resolve().parent / "networ
 OWN_GIT_PATHS = ("tools/network_view.py", "tools/network_boundary.py")
 WINDOW_STATE = SITE / "network" / "window.json"
 STARTED = time.time()
+COPY_CHECK_TIMEOUT_S = 20   # a new copy that hangs at import must not freeze the redraw for long
+REFUSED_CHARS = 120         # the reason a newer copy was not run, one line in the window
+REFUSED = None              # (reason, when): the file changed but the new copy would not start
 
 
 def own_stamp():
@@ -92,20 +95,61 @@ def report_window_state():
         pass
 
 
-def maybe_reexec(stamp):
-    """Re-run this file in place when its own code changed on disk and the new copy compiles.
+def copy_starts(path=None):
+    """Whether the copy of this view on disk can be imported, not merely compiled.
 
-    A copy that does not compile is left running, and the check is retried on the next redraw.
-    Returns the stamp to compare against next time."""
+    A file can compile and still die while its top level runs: a name used before it is defined, a
+    call that raises, a missing import.  Re-execing into such a copy kills the whole outer window,
+    and only the five-minute check notices.  Run the new copy with its main block disabled in a
+    short subprocess and keep the running copy when that fails.  Returns (ok, reason)."""
+    path = Path(path or OWN_FILES[0])
+    probe = "import runpy, sys; runpy.run_path(sys.argv[1], run_name='reload-check')"
+    try:
+        r = subprocess.run([sys.executable, "-c", probe, str(path)],
+                           capture_output=True, text=True, timeout=COPY_CHECK_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return False, f"did not finish importing within {COPY_CHECK_TIMEOUT_S} s"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    if r.returncode == 0:
+        return True, ""
+    lines = [line for line in (r.stderr or "").splitlines() if line.strip()]
+    return False, " ".join((lines[-1] if lines else f"exit {r.returncode}").split())
+
+
+def maybe_reexec(stamp):
+    """Re-run this file in place when its own code changed on disk and the new copy starts.
+
+    A copy that does not compile or does not start is left running, the reason is shown in the
+    window (REFUSED) and the check is retried on the next redraw.  Returns the stamp to compare
+    against next time."""
+    global REFUSED
     now = own_stamp()
     if now is None or stamp is None or now == stamp:
+        REFUSED = None
         return stamp
     try:
         compile(OWN_FILES[0].read_text(), str(OWN_FILES[0]), "exec")
-    except (OSError, SyntaxError):
+    except (OSError, SyntaxError) as exc:
+        REFUSED = (f"{type(exc).__name__}: {exc}", time.time())
         return stamp
+    ok, why = copy_starts()
+    if not ok:
+        REFUSED = (why, time.time())
+        return stamp
+    REFUSED = None
     sys.stdout.flush()
     os.execv(sys.executable, [sys.executable, str(OWN_FILES[0]), *sys.argv[1:]])
+
+
+def refused_line():
+    """One line for the window when the copy on disk would not start; '' when it started (or none new)."""
+    if not REFUSED:
+        return ""
+    text = " ".join(str(REFUSED[0]).split())
+    if len(text) > REFUSED_CHARS:
+        text = text[:REFUSED_CHARS - 1] + "…"
+    return f"  EDIT REFUSED   the file on disk does not start ({text}); still running the copy above"
 
 
 def rows(limit=1440):
@@ -894,6 +938,9 @@ def draw():
     sha, committed = VERSION
     committed_txt = f", committed {(time.time() - committed) / 3600:.1f} h ago" if committed else ""
     out.append(f"  view code {sha}{committed_txt}; this copy loaded {time.time() - STARTED:.0f} s ago")
+    refused = refused_line()
+    if refused:
+        out.append(refused)
     out.append(f"  HOME INTERNET: {verdict(last, a)}")
     out.append(probe_age_line(data, a, min(len(data), 40)))
     out.append("")

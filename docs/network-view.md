@@ -136,6 +136,10 @@ is not mistaken for a quiet mind.
   window: it prints `WINDOW ERROR <type>: <message>` and says that nothing in the pane is a reading
   until the error clears, so a partly edited or buggy view is visibly broken instead of making the
   outer window disappear. Only the five-minute `network-window` check would notice a vanished pane.
+  A new copy of the file is only run after it both compiles and starts (its top level is imported
+  once in a short subprocess with the main block disabled); a copy that raises at import keeps the
+  old pane and the window prints `EDIT REFUSED` with the error, because re-execing into that copy
+  is what killed the window on 2026-11-18.
 - Channel, noise floor and the driver's transmit counters are measured once per 5 minutes; a single
   reading is not evidence of channel trouble. There is one access point per band (2.4 GHz and 5 GHz),
   so there is no second AP to compare channels with: `iwinfo` also lists `apcli0`/`apclix0`, which

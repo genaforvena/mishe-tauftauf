@@ -124,8 +124,61 @@ def test_changed_file_that_does_not_compile_is_not_run(tmp_path, monkeypatch):
     calls = []
     fake = tmp_path / "network_view.py"
     fake.write_text("def broken(:\n")
+    (tmp_path / "boundary.py").write_text("")
     monkeypatch.setattr(view, "OWN_FILES", (fake, tmp_path / "boundary.py"))
     monkeypatch.setattr(view.os, "execv", lambda *a: calls.append(a))
     old = (0, 0)
     assert view.maybe_reexec(old) == old  # keeps the old stamp, retried later
     assert calls == []
+
+
+def test_copy_that_compiles_but_fails_at_import_is_not_run(tmp_path, monkeypatch):
+    # 2026-11-18: a half-saved view compiled but its SPEED line raised at import; the pane died.
+    # Compiling is not enough: the new copy must start before it may replace the running one.
+    calls = []
+    fake = tmp_path / "network_view.py"
+    fake.write_text("VALUE = missing_name + 1\n")
+    (tmp_path / "boundary.py").write_text("")
+    monkeypatch.setattr(view, "OWN_FILES", (fake, tmp_path / "boundary.py"))
+    monkeypatch.setattr(view.os, "execv", lambda *a: calls.append(a))
+    monkeypatch.setattr(view, "REFUSED", None)
+    old = (0, 0)
+    assert view.maybe_reexec(old) == old  # keeps the old stamp, retried later
+    assert calls == []
+    assert "NameError" in view.REFUSED[0]
+
+
+def test_copy_that_starts_is_run(tmp_path, monkeypatch):
+    calls = []
+    fake = tmp_path / "network_view.py"
+    fake.write_text("VALUE = 1\n")
+    (tmp_path / "boundary.py").write_text("")
+    monkeypatch.setattr(view, "OWN_FILES", (fake, tmp_path / "boundary.py"))
+    monkeypatch.setattr(view.os, "execv", lambda *a: calls.append(a))
+    monkeypatch.setattr(view, "REFUSED", ("stale reason", 0.0))
+    view.maybe_reexec((0, 0))  # a copy that starts is exec'd, so this call does not return here
+    assert len(calls) == 1
+    assert view.REFUSED is None
+
+
+def test_an_edit_back_to_the_running_stamp_clears_the_refusal(tmp_path, monkeypatch):
+    monkeypatch.setattr(view, "REFUSED", ("stale reason", 0.0))
+    stamp = view.own_stamp()
+    assert view.maybe_reexec(stamp) == stamp
+    assert view.REFUSED is None
+
+
+def test_refused_line_says_the_copy_still_runs(monkeypatch):
+    monkeypatch.setattr(view, "REFUSED", None)
+    assert view.refused_line() == ""
+    monkeypatch.setattr(view, "REFUSED", ("NameError: name 'SPEED_BASELINE_NIGHTS' is not defined", 0.0))
+    line = view.refused_line()
+    assert "does not start" in line and "still running the copy above" in line
+    assert "SPEED_BASELINE_NIGHTS" in line
+
+
+def test_refused_line_is_bounded(monkeypatch):
+    monkeypatch.setattr(view, "REFUSED", ("x" * 500, 0.0))
+    line = view.refused_line()
+    assert len(line) <= view.REFUSED_CHARS + len("  EDIT REFUSED   the file on disk does not start ();"
+                                                  " still running the copy above")
