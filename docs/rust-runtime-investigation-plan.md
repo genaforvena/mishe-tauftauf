@@ -244,3 +244,35 @@ prerequisites, actual-consumer acceptance and rollback, plus an explicit
 go/no-go if the evidence does not support safe delivery in that time. This
 investigation remains planning only; implementation requires a separate
 assignment after the proposal.
+
+### 10.69 The scan index replaces the corpus parse (2026-11-18)
+
+**A/B first, on the live corpus and pin `76c4256b`, same host guard:** parsing
+receipts 2.044 CPU-s, indexed reading 0.0167 CPU-s, 2,139 identical rows (first
+2026-10-19T23:59:48Z, last 2026-11-18T10:17:19Z; artifact
+`artifacts/rust-plan-20261107/check_scan_index.py`). That is ~2.0 CPU-s per
+readings scan, once per 600 s — the slice clears its own ≥1 CPU-s bar, and it
+retires a cost that grows with the corpus because nothing prunes receipts.
+
+**Shape (commit `8c568a59`).** `discovery.scan()` writes the receipt, then appends
+one line to `discovery/scan-index.jsonl`: the receipt's filename stem, its
+`created`, and every verified observation whose sample coerces to an int. The
+receipt stays the record. `read_scan_series` answers from the index when it
+accounts for every receipt (by filename stem, so no receipt is opened) and
+otherwise parses the receipts once and rewrites the index — a missing, short,
+torn, malformed or older-format index rebuilds instead of dropping a scan, and a
+line whose receipt is gone is ignored. Both paths take their rows from one
+`_verified_samples` map, so they cannot drift. An append failure is recorded as
+`scan_index=failed: …` in `discovery/attempt.json` and never fails a published
+receipt.
+
+The index is 441 KB for 2,139 receipts (183 bytes/line), written in one
+`O_APPEND` write; the reader's remaining cost is the directory listing plus
+441 KB of JSON, both constant in the corpus size. Seven tests in
+`tests/test_scan_series_index.py` pin the differential equality, the fast path
+(receipts unreadable but still listed), and every rebuild trigger.
+
+**Peak RSS is UNKNOWN here.** `ru_maxrss` in this container starts from the
+parent's high-water mark: a bare `python3` already reports 463,772 KB, so no RSS
+delta from these runs means anything. The live producer's own `MemoryPeak` after
+delivery is the observation that settles it.
