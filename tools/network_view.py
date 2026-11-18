@@ -401,7 +401,7 @@ def wan_link_line(now=None):
     down = link.get("carrier_down")
     if not isinstance(down, int):
         return f"{device}: {link_txt}; carrier drops UNKNOWN (not in the read); read {ago:.0f} s ago{stale}"
-    since_boot = f"link went down {down} time{'s' if down != 1 else ''} since router boot"
+    since_boot = f"link down {down} time{'s' if down != 1 else ''} since boot"
     uptime = last.get("uptime_s")
     if isinstance(uptime, (int, float)) and uptime > 0:
         since_boot += f" ({uptime / 86400:.1f} days)"
@@ -1034,7 +1034,7 @@ def draw():
     rf = router_facts()
     out.append("  ROUTER        " + (rf or "UNKNOWN (ssh read failed)") + "   (read-only)")
     out.append("  UPLINK        " + uplink_line() + "   (read-only)")
-    out.append("  WAN LINK      " + wan_link_line() + "   (read-only, negotiated speed and carrier drops)")
+    out.append("  WAN LINK      " + wan_link_line() + "   (read-only, speed and carrier drops)")
     out.append("  UPLINK RATE   " + uplink_rate_line())
     out.append("  ROUTER LOAD   " + router_health_line() + "   (read-only, one read per 5 min)")
     out.append("  VPN           " + vpn_line() + "   (read-only, router process list and tun0)")

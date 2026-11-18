@@ -185,7 +185,7 @@ def test_wan_link_line_shows_negotiated_speed_and_quiet_drops(tmp_path, monkeypa
     _router_log(tmp_path, monkeypatch, [_wan_read(now - 1800, 2), _wan_read(now, 2)])
     line = view.wan_link_line(now)
     assert "eth0: 1000 Mb/s full duplex" in line
-    assert "link went down 2 times since router boot (12.4 days)" in line
+    assert "link down 2 times since boot (12.4 days)" in line
     assert "none in the last hour" in line
     assert "read 0 s ago" in line
 
