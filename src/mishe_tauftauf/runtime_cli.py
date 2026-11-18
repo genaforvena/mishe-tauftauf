@@ -85,7 +85,7 @@ def scheduler(home: Path):
         if installed:
             armmod.systemd_scheduler(epoch, command=[sys.executable, "-m", "mishe_tauftauf",
                                                      "--home", str(home), "due"],
-                                     lock=home / "next-due.lock")
+                                     lock=home / "next-due.lock", source=armmod.pin_source(home))
             if not (home / "hold").exists():
                 from . import wake
                 wake.resume_owed(home, declared_roles(home), now=time.time())

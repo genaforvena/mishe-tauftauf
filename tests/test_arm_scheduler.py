@@ -275,3 +275,37 @@ def test_future_target_is_never_held_back(monkeypatch):
     monkeypatch.setattr(arm.subprocess, "run", fake)
     arm.systemd_scheduler(time.time() + 600, command=["python", "due"])
     assert any(c[0] == "systemd-run" for c in fake.calls)
+
+
+def test_an_old_handler_arms_the_pin_not_its_own_release(monkeypatch, tmp_path):
+    # 2026-11-18 08:06Z rollout of f8004457: the last writer named the replaced release, so the probe
+    # saw a pending timer on the old pin and rolled the move back.
+    pin = tmp_path / "releases" / ("a" * 40) / "src"
+    (pin / "mishe_tauftauf").mkdir(parents=True)
+    (tmp_path / "runtime").mkdir()
+    (tmp_path / "runtime" / "current").symlink_to(pin.parent)
+    fake = FakeRun()
+    monkeypatch.setattr(arm.subprocess, "run", fake)
+    arm.systemd_scheduler(2_000_000_000.0, command=["python", "due"],
+                          source=arm.pin_source(str(tmp_path)))
+    env = next(a for c in fake.calls if c[0] == "systemd-run"
+               for a in c if a.startswith("--setenv=PYTHONPATH="))
+    assert env == "--setenv=PYTHONPATH=" + str(pin.resolve())
+    assert env != "--setenv=PYTHONPATH=" + arm._source_root()
+
+
+def test_pin_source_is_this_release_when_the_pointer_names_nothing(tmp_path):
+    assert arm.pin_source(str(tmp_path)) == arm._source_root()
+    (tmp_path / "runtime").mkdir()
+    (tmp_path / "runtime" / "current").symlink_to(tmp_path / "gone")
+    assert arm.pin_source(str(tmp_path)) == arm._source_root()
+
+
+def test_overdue_target_keeps_an_in_window_retry_armed_by_the_pin(monkeypatch, tmp_path):
+    import time
+    pin = str((tmp_path / "src").resolve())
+    fake = TimerListing(_listing(_row(60, "mishe-next-due-aaaa1111.timer")),
+                        env="PYTHONPATH=" + pin + " MISHE_WORKLOAD_SLICE=mishe-plants.slice")
+    monkeypatch.setattr(arm.subprocess, "run", fake)
+    arm.systemd_scheduler(time.time() - 3600, command=["python", "due"], source=pin)
+    assert not any(c[0] == "systemd-run" for c in fake.calls)

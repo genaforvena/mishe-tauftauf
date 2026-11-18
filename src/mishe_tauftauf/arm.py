@@ -72,24 +72,46 @@ def _source_root() -> str:
     return str(Path(__file__).resolve().parent.parent)
 
 
-def _armed_by_this_release(timers: list[str]) -> bool:
-    """True when every pending next-due timer's service runs this release's source.
+def _armed_by_this_release(timers: list[str], root: str) -> bool:
+    """True when every pending next-due timer's service runs ``root``.
 
     A timer keeps the PYTHONPATH of the release that armed it until it fires, so after a pin move
     an old-release timer would run old code. A retry in the window is only kept when it is ours.
     """
-    return units.timers_run_release(timers, _source_root())
+    return units.timers_run_release(timers, root)
+
+
+def pin_source(home) -> str:
+    """The source a new timer must run: the pin's, never the calling release's.
+
+    A due handler re-arms at exit with the release it is running, so a handler that outlived an
+    activation was the last writer and left a timer naming the replaced release (2026-11-18 08:06Z
+    rollout of f8004457: "active or queued consumer has wrong pin: mishe-next-due-..."). Draining
+    cannot cover a handler systemd starts from a stopped timer after the cutoff, so naming the pin
+    here makes every writer - old handler, new handler, producer - agree and ordering stops deciding.
+    """
+    candidate = Path(home) / "runtime" / "current" / "src"
+    try:
+        if (candidate / "mishe_tauftauf").is_dir():
+            return str(candidate.resolve())
+    except OSError:  # a pointer mid-replacement is not a release to arm
+        pass
+    return _source_root()
 
 
 def systemd_scheduler(epoch: float | None, *, command: list[str],
-                      lock: Path | None = None) -> None:
-    """Replace the transient next-due timer. ``None`` just removes it."""
+                      lock: Path | None = None, source=None) -> None:
+    """Replace the transient next-due timer. ``None`` just removes it.
+
+    ``source`` is the tree the timer's service must run; callers pass ``pin_source(home)`` so an arm
+    from an old-release process still names the pin. It defaults to this process's release."""
+    root = str(Path(source).resolve()) if source else _source_root()
     with _replacement_lock(lock):
         # An overdue target already has a retry pending inside the backoff window: keep it.
         # Replacing it on every arm pushed the retry out again and it never fired (2026-11-14 churn).
         # Only when that retry was armed by this release: an old-pin timer must be replaced (c14bac1f move observe failure).
         if (epoch is not None and epoch <= time.time() and _retry_due_within_window(time.time())
-                and _armed_by_this_release(_pending_timers())):
+                and _armed_by_this_release(_pending_timers(), root)):
             return
         for timer in _pending_timers():
             subprocess.run(["systemctl", "--user", "stop", timer],
@@ -107,7 +129,7 @@ def systemd_scheduler(epoch: float | None, *, command: list[str],
         result = subprocess.run(["systemd-run", "--user", f"--unit={unit}",
                                  "--service-type=oneshot",
                                  "--slice=mishe-plants.slice",
-                                 "--setenv=PYTHONPATH=" + str(Path(__file__).resolve().parent.parent),
+                                 "--setenv=PYTHONPATH=" + root,
                                  f"--on-calendar={moment:%Y-%m-%d %H:%M:%S} UTC",
                                  "--timer-property=AccuracySec=1s", "--collect", *command],
                                 capture_output=True)
