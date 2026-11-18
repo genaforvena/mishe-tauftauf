@@ -3734,7 +3734,7 @@ child's sink.
 
 **Scope correction — `records.payload` is not caller-free.** §10.64 says
 "`records.payload` has no production caller (`tests/test_wall.py:916` only)".
-Four call sites exist:
+Eleven call sites exist (checked with `rg 'payload\(' src/mishe_tauftauf/`):
 
 - `coordination_checks.py:56` (`_data`) — production: `cli.py:376` (publication
   check) and `task_state.py:506` reach it through `_full_payloads`
@@ -3746,10 +3746,19 @@ Four call sites exist:
   module is imported by production code; only `tests/test_trial_metrics.py` and
   `tests/test_witness_analysis.py` reach them (checked across `src`, `bin`,
   `tools`, `checks`, `scripts`).
+- `feed.py:1513,1530,1565,1610` (task-control bodies in `_append`; `:1565` is a
+  deliberate second read inside the publication lock, the TOCTOU guard),
+  `task_state.py:219,321` and `delivery.py:368` — seven more production sites.
+  Their bodies are a `[tag] identity` line followed by legacy JSON, so they
+  take the inline branch; `:1610` has no home and cannot read a record at all.
+  `coordination_checks.py:53-59` selects inline with `line.startswith`, while
+  `records.payload` uses `lstrip().startswith`, so an indented reference is a
+  real path difference to cover in the differential, not a cosmetic one.
 
 Deleting `records.envelope` and the record branch of `records.payload`
 therefore requires moving coordination_checks and landing onto the sink in the
-same change; the two test-only modules die with the function. The cost is
+same change; the seven inline-only sites keep the surviving inline half. The two
+test-only modules die with the record branch. The cost is
 bounded by what those two paths actually resolve: coordination_checks reads the
 displays' recent window (bounded recent-events and waiting sets), landing reads
 `[landing] ` registrations. Neither is a tape-length scan, so both can share one
