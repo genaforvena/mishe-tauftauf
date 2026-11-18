@@ -94,13 +94,24 @@ def location(home, identity):
     return Path(home) / "work/delivery-requests" / f"{identity}.json"
 
 
+class DeliveryOwned(ValueError):
+    """Another request holds delivery admission: this caller must not deliver.
+
+    A ``ValueError`` so existing callers that only refuse keep working, and its own
+    type so a promotion can record a dead run instead of letting the refusal escape
+    while the record still reads ``waiting-for-wakes`` (2026-11-18 06:13Z: the
+    cadence promotion and an admitted request reached the dispatch lock in the same
+    second, and the cadence's record read GREEN for a process that was gone).
+    """
+
+
 def check_admission(home):
     """Only the admitted consumer and its child commands may deliver."""
     path = admission_path(home)
     if path.exists():
         marker = read_json(path)
         if not isinstance(marker, dict) or not marker.get("token") or marker["token"] != os.environ.get("MISHE_DELIVERY_TOKEN"):
-            raise ValueError("delivery admission is owned by another request; inspect delivery-requests")
+            raise DeliveryOwned("delivery admission is owned by another request; inspect delivery-requests")
 
 
 def digest(value):

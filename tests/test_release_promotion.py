@@ -130,6 +130,22 @@ def test_running_wake_retains_pin(tree):
                       activate=lambda *a:None,closure=lambda *a:None)
 
 
+def test_a_refused_delivery_admission_is_recorded_as_a_dead_run(tree):
+    # 2026-11-18 06:13Z: the cadence promotion of 0148ab3e and an admitted delivery request
+    # reached the dispatch lock in the same second. The refusal was a plain ValueError, so
+    # `except DeliveryBusy` missed it and the record stayed "waiting-for-wakes" — GREEN in
+    # checks/pin-delivery.py — for a process that had already exited.
+    from mishe_tauftauf import delivery_requests
+    repo,home,old,sha=tree
+    write_json(delivery_requests.admission_path(home), dict(token="other-request", pid=os.getpid(), at=time.time()))
+    with pytest.raises(delivery_requests.DeliveryOwned, match="admission is owned"):
+        p.promote(home,repo,sha,check=[sys.executable,"-c","pass"],observe=["probe"],previous=old,
+                  activate=lambda *a:None,closure=lambda *a:None)
+    records=[read_json(path) for path in (home/"work/releases").glob("*.json")]
+    assert [record["phase"] for record in records]==["delivery-busy"]
+    assert "admission is owned" in records[0]["failure"]
+
+
 def test_default_review_enqueue_uses_sha_and_retains_pending(tree, monkeypatch):
     repo,home,old,sha=tree
     calls=[]

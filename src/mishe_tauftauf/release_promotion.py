@@ -1027,12 +1027,18 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
         record["tests_passed"]=True
         # Only now the dispatch lock: the check above ran the whole suite without holding wakes back.
         record["phase"]="waiting-for-wakes"; save()
+        from .delivery_requests import DeliveryOwned
         try:
             stack.enter_context(held_delivery_lock(home, wait_s))
-        except DeliveryBusy as exc:
+        except (DeliveryBusy, DeliveryOwned) as exc:
+            # delivery-busy is a DEAD run for checks/pin-delivery.py. An admission refusal
+            # raised here used to escape (it is a ValueError, not DeliveryBusy), leaving the
+            # record saved one line above as "waiting-for-wakes" and read GREEN for a process
+            # that was already gone (2026-11-18 06:13Z, sha 0148ab3e).
             record["held_delivery_lock_holder"] = getattr(exc, "holders", None)
             record["phase"] = "delivery-busy"
-            record["failure"] = (f"dispatch lock still held after a {int(wait_s)}s activation hold"
+            record["failure"] = (str(exc) if isinstance(exc, DeliveryOwned) else
+                                 f"dispatch lock still held after a {int(wait_s)}s activation hold"
                                  if wait_s else "dispatch lock busy")
             publish_outcome(home, record); save()
             raise
