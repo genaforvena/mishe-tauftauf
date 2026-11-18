@@ -3697,11 +3697,11 @@ reviewer, because this is protocol and durable-boundary work.
 ### 10.65 Rank 2 differential and scope correction: the payload resolver has four callers (2026-11-18)
 
 §10.64's design holds, but two of its supporting claims are wrong in bytes, and
-the differential it promised is now measured. Raw scripts and output:
-`artifacts/rust-plan-20261107/diff_payload_10_65.py`,
-`artifacts/rust-plan-20261107/diff_malformed_10_65.py` (read-only, live tape,
-2026-11-18T05:10Z).
+the differential it promised is now measured. The raw scripts and output are
+site-local artifacts (not committed; the live tape at 2026-11-18T05:10Z):
 
+- artifacts/rust-plan-20261107/diff_payload_10_65.py
+- artifacts/rust-plan-20261107/diff_malformed_10_65.py
 **Payload equivalence, measured.** 406 record-bearing entries sampled from the
 live tape (302,680 entries; 196,770 carry a `[record]` reference) were sent
 through one `mishe-records verify --home … --payloads` pass and compared with
