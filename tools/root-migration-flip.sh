@@ -209,10 +209,25 @@ cancel_queued_wakes() {
 }
 
 disarm_triggers() {
-    local rc=0
-    systemctl --user stop 'mishe-wake-*.path' 'mishe-wake-debounce-*.service' \
-        mishe-producer-dispatch.timer 'mishe-next-due-*.timer' \
-        'mishe-next-due-*.service' mishe-arm.service 2>/dev/null || rc=$?
+    local rc=0 u
+    # Stop by explicit name, not by glob, and record each name in $UNITS before
+    # stopping it. A glob stop is not filtered by target_units(), so it can catch
+    # a unit whose file does not name the moved checkout (an inactive debounce
+    # oneshot, a transient next-due timer, another plant's path unit), and every
+    # restore path restarts only $UNITS -- such a unit stayed stopped after a
+    # rollback and after a successful cutover (review finding, release f556cae1).
+    # Recording before the stop means a kill between the two only replays a start
+    # of a unit that was never stopped, which systemd treats as a no-op.
+    while read -r u; do
+        [ -n "$u" ] || continue
+        case "$u" in
+            mishe-wake-*.path|mishe-wake-debounce-*.service|mishe-producer-dispatch.timer|\
+            mishe-next-due-*.timer|mishe-next-due-*.service|mishe-arm.service) ;;
+            *) continue ;;
+        esac
+        grep -qxF "$u" "$UNITS" 2>/dev/null || echo "$u" >>"$UNITS"
+        systemctl --user stop "$u" 2>/dev/null || rc=$?
+    done < <(systemctl --user list-units --all --no-legend --plain 2>/dev/null | awk '{print $1}')
     # The caller logs a nonzero return: a trigger that refused to stop must stay
     # visible, so the queued-wake pass must not overwrite that status.
     cancel_queued_wakes

@@ -57,6 +57,17 @@ case "$*" in
           printf 'mishe-wake@queued.service loaded activating start start x\nmishe-wake@live.service loaded activating start start x\n' ;;
   *"list-units"*"--state=active"*)
       printf 'fake-a.service loaded active running x\nfake-b.service loaded active running x\nfake-c.service loaded active running x\n' ;;
+  # The full loaded inventory that disarm_triggers() filters by name. The debounce
+  # oneshot is inactive between runs, so it is exactly the glob-disarmed unit that
+  # the old restart-from-$UNITS set left stopped. `other-plant.path` must never be
+  # stopped: it is not a mishe wake trigger.
+  *"list-units --all --no-legend"*)
+      printf 'fake-a.service loaded active running x\n'
+      printf 'mishe-wake-fake.path loaded active waiting x\n'
+      printf 'mishe-wake-debounce-fake.service loaded inactive dead x\n'
+      printf 'mishe-producer-dispatch.timer loaded active waiting x\n'
+      printf 'mishe-arm.service loaded inactive dead x\n'
+      printf 'other-plant.path loaded active waiting x\n' ;;
   *"list-units"*) : ;;
   *" show "*"-p ControlGroup"*)
       # The test decides which unit's cgroup holds an omp process; the path is
@@ -364,8 +375,31 @@ def test_disarm_stops_debounce_services_that_would_start_an_engine(tmp_path):
 
     out = done.stdout + done.stderr
     assert done.returncode == 0, out
-    assert any("stop mishe-wake-*.path mishe-wake-debounce-*.service" in line
+    assert any("stop mishe-wake-fake.path" in line for line in calls(root)), calls(root)
+    assert any("stop mishe-wake-debounce-fake.service" in line
                for line in calls(root)), calls(root)
+
+
+def test_every_disarmed_trigger_is_also_restarted(tmp_path):
+    """Regression (fresh review, release f556cae1): disarm stopped the wake
+    triggers by glob, while every restore path restarted only the units named by
+    target_units(). A unit stopped by the glob whose file does not name the
+    checkout -- the inactive debounce oneshot above, a transient next-due timer --
+    therefore stayed down after the restore, and `other-plant.path` was stopped
+    without ever having been a target. The stop set and the restart set must be
+    the same set, and a non-mishe unit must not be stopped."""
+    root = sandbox(tmp_path)
+    install_helper(root, 2, "  VERIFIED mishe-tauftauf\ncannot write evidence file for .omp")
+
+    done = flip(root, "--execute")
+
+    assert done.returncode == 1, done.stdout + done.stderr
+    logged = calls(root)
+    for unit in ("mishe-wake-fake.path", "mishe-wake-debounce-fake.service",
+                 "mishe-producer-dispatch.timer"):
+        assert any(f" stop {unit}" in line for line in logged), (unit, logged)
+        assert any(f" start {unit}" in line for line in logged), (unit, logged)
+    assert not any("other-plant.path" in line for line in logged), logged
 
 
 def test_transient_review_retry_timer_is_not_restarted(tmp_path):
@@ -563,6 +597,12 @@ case "$*" in
       printf 'fake-a.service loaded active running x\nfake-b.service loaded active running x\nfake-c.service loaded active running x\nfake-w.path loaded active waiting x\n' ;;
   *"list-units"*"--state=active"*)
       printf 'fake-a.service loaded active running x\nfake-b.service loaded active running x\nfake-c.service loaded active running x\n' ;;
+  *"list-units --all --no-legend"*)
+      printf 'fake-a.service loaded active running x\n'
+      printf 'mishe-wake-fake.path loaded active waiting x\n'
+      printf 'mishe-wake-debounce-fake.service loaded inactive dead x\n'
+      printf 'mishe-producer-dispatch.timer loaded active waiting x\n'
+      printf 'mishe-arm.service loaded inactive dead x\n' ;;
   *"list-units"*) : ;;
   *" cat "*) echo "ExecStart=/bin/true $SANDBOX/src/mishe-tauftauf/x" ;;
   *" stop mishe-wake-"*)
@@ -644,7 +684,7 @@ def test_quiesce_holds_wake_starts_and_releases_them_on_success(tmp_path):
     # The hold was already on disk when the triggers were disarmed, not written
     # afterwards: every stop call in that phase saw it.
     seen = (root / "hold-seen.log").read_text()
-    assert "stop mishe-wake-*.path" in seen, seen
+    assert "stop mishe-wake-fake.path" in seen, seen
     assert "mishe-producer-dispatch.timer" in seen, seen
 
 
