@@ -5,6 +5,7 @@ Reads the rows the `network-probe` duty appends to SITE/network/probe.jsonl and,
 a few facts from the router over ssh (never writes there).  Anything not measured, or too old,
 is shown as UNKNOWN.  The network mind improves this file.
 """
+import ast
 import hashlib
 import json
 import os
@@ -117,25 +118,44 @@ def copy_starts(path=None):
     return False, " ".join((lines[-1] if lines else f"exit {r.returncode}").split())
 
 
+def main_block_present(tree):
+    """Whether the module still ends in an `if __name__ == "__main__":` guard with a body.
+
+    A save cut at any line before that guard (or an emptied file) compiles and imports as a plain
+    module, so the import probe alone would let it replace the window with a copy that exits at
+    once.  The guard is what the re-exec runs."""
+    for node in tree.body:
+        if not isinstance(node, ast.If) or not node.body:
+            continue
+        names = {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name)}
+        values = {n.value for n in ast.walk(node.test) if isinstance(n, ast.Constant)}
+        if "__name__" in names and "__main__" in values:
+            return True
+    return False
+
+
 def maybe_reexec(stamp):
     """Re-run this file in place when its own code changed on disk and the new copy starts.
 
-    A copy that does not compile or does not start is left running, the reason is shown in the
-    window (REFUSED) and the check is retried on the next redraw.  Returns the stamp to compare
-    against next time."""
+    A copy that does not compile, does not start, or has lost its main block is left running, the
+    reason is shown in the window (REFUSED) and the check is retried on the next redraw.  Returns
+    the stamp to compare against next time."""
     global REFUSED
     now = own_stamp()
     if now is None or stamp is None or now == stamp:
         REFUSED = None
         return stamp
     try:
-        compile(OWN_FILES[0].read_text(), str(OWN_FILES[0]), "exec")
-    except (OSError, SyntaxError) as exc:
+        tree = compile(OWN_FILES[0].read_text(), str(OWN_FILES[0]), "exec", ast.PyCF_ONLY_AST)
+    except (OSError, SyntaxError, ValueError) as exc:
         REFUSED = (f"{type(exc).__name__}: {exc}", time.time())
         return stamp
     ok, why = copy_starts()
     if not ok:
         REFUSED = (why, time.time())
+        return stamp
+    if not main_block_present(tree):
+        REFUSED = ("the file stops before its main block, so the copy would exit instead of drawing", time.time())
         return stamp
     REFUSED = None
     sys.stdout.flush()

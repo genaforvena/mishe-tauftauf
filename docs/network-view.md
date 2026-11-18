@@ -139,7 +139,9 @@ is not mistaken for a quiet mind.
   A new copy of the file is only run after it both compiles and starts (its top level is imported
   once in a short subprocess with the main block disabled); a copy that raises at import keeps the
   old pane and the window prints `EDIT REFUSED` with the error, because re-execing into that copy
-  is what killed the window on 2026-11-18.
+  is what killed the window on 2026-11-18. A copy with no `if __name__ == "__main__":` block — an
+  emptied file, or a save cut at a line before that block, which compiles and imports as a plain
+  module — is refused for the same reason: it would exit instead of drawing.
 - Channel, noise floor and the driver's transmit counters are measured once per 5 minutes; a single
   reading is not evidence of channel trouble. There is one access point per band (2.4 GHz and 5 GHz),
   so there is no second AP to compare channels with: `iwinfo` also lists `apcli0`/`apclix0`, which
