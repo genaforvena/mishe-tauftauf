@@ -165,6 +165,16 @@ is not mistaken for a quiet mind.
   The printed figure is still the mean of the two, so a 710 ms handshake built from gstatic 229 ms
   and cloudflare 1192 ms is explained instead of looking like a general secure-setup problem.
   One host failing to answer is not a divergence: it leaves one sample, with no second line.
+  When the headline flags a sustained slowdown, a second indented line names the phase that accounts
+  for it, using the same ten-probe window and day baseline as `USUAL` (for example `slowdown is in
+  the secure handshake: last 10 probes (31 min) 375 ms vs typical 222 ms`). This matters because the
+  three figures above are the newest probe only: it can be back to normal while the median stays
+  slow, and the two lines would otherwise disagree. A phase is named only when it adds at least half
+  the extra time and at least 20 ms; when the increase is spread across phases, no line is printed
+  rather than a guess. On 2026-11-18 the handshake added 154 of the 178 ms extra (recent median
+  375 ms against a 221 ms baseline), and every sliding slowdown window in the last 1440 probes was
+  handshake-led; the reply phase stayed near its usual 71 ms (10th–90th percentile 67–83 ms), so
+  it needs no standing explanation.
 - `USUAL`: is the web slower than usual? The recent figure is the **median of the last ten web
   samples**, and the line names that window — `last 10 probes (31 min)` — because at the current
   cadence it covers about half an hour, not the instant: the `gstatic.com` and `cloudflare.com`

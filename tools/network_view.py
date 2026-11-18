@@ -1158,7 +1158,7 @@ def _hour_median(data, field, hours):
     return statistics.median(vals) if len(vals) >= PHASE_BASELINE_MIN else None
 
 
-def phase_line(data, now=None):
+def phase_line(data, now=None, facts=None):
     """Where a page load's time goes: three disjoint phases whose sum is the page's total time.
 
     The headline and USUAL line above already flag a sustained slowdown; this says which part moved.
@@ -1167,8 +1167,11 @@ def phase_line(data, now=None):
     connect points at the path (router, WAN, ISP), a slow handshake at the encrypted setup, and a
     slow remainder at the page itself. Printing the raw checkpoints as phases would double count the
     connect and leave the three numbers short of the total the INTERNET lines show.
+    When a slowdown is flagged, a second indented line names the phase that accounts for it, using
+    the same sample window and baseline as the USUAL line below.
     """
     now = time.time() if now is None else now
+    facts = facts if facts is not None else usuality_facts(data, now)
     last = data[-1] if data else None
     if last is None:
         return "UNKNOWN (no probe row)"
@@ -1188,12 +1191,13 @@ def phase_line(data, now=None):
     sent = (f"reaching the site {conn:.0f} ms, secure handshake {hs:.0f} ms, "
             f"rest of page {body:.0f} ms")
     split = _handshake_split(last)
+    note = _slowdown_note(facts)
     if usual is None:
-        return f"{sent}; handshake usually UNKNOWN (too few probes for a baseline); last probe {a:.0f} s ago{split}"
+        return f"{sent}; handshake usually UNKNOWN (too few probes for a baseline); last probe {a:.0f} s ago{split}{note}"
     if night is None or evening is None:
-        return f"{sent}; handshake usually {usual:.0f} ms; last probe {a:.0f} s ago{split}"
+        return f"{sent}; handshake usually {usual:.0f} ms; last probe {a:.0f} s ago{split}{note}"
     return (f"{sent}; handshake usually {usual:.0f} ms"
-            f" (nights ~{night:.0f}, evenings ~{evening:.0f}); last probe {a:.0f} s ago{split}")
+            f" (nights ~{night:.0f}, evenings ~{evening:.0f}); last probe {a:.0f} s ago{split}{note}")
 
 
 def day_spark(samples, buckets=USUAL_BUCKETS):
@@ -1209,6 +1213,47 @@ def day_spark(samples, buckets=USUAL_BUCKETS):
     return spark(means)
 
 
+PHASE_LABELS = (("connect_ms", "reaching the site"),
+                ("handshake_ms", "secure handshake"),
+                ("body_ms", "rest of page"))
+
+
+def _phase_medians(rows):
+    """Median of each disjoint page phase over `rows`; None for a phase no row measured."""
+    out = {}
+    for field, _ in PHASE_LABELS:
+        vals = [v for v in (_sample_mean(row, field) for row in rows) if v is not None]
+        out[field] = statistics.median(vals) if vals else None
+    return out
+
+
+def _slowdown_note(facts):
+    """One indented line naming the phase behind a flagged slowdown; '' when it is not measurable.
+
+    The newest probe can look ordinary while the ten-probe median stays slow, so WHERE TIME GOES
+    alone cannot say which phase moved. This uses the same samples and baseline as USUAL, and
+    speaks only when one phase accounts for at least half the extra time (and at least 20 ms).
+    """
+    if facts is None or facts.get("compare") in (None, "about usual") or facts.get("stale"):
+        return ""
+    cur, base = facts.get("phase_cur"), facts.get("phase_base")
+    if not cur or not base:
+        return ""
+    extra = facts["cur"] - facts["base"]
+    if extra <= 0:
+        return ""
+    deltas = {f: cur[f] - base[f] for f, _ in PHASE_LABELS
+              if cur.get(f) is not None and base.get(f) is not None}
+    if not deltas:
+        return ""
+    field = max(deltas, key=deltas.get)
+    if deltas[field] < max(20.0, 0.5 * extra):
+        return ""
+    label = dict(PHASE_LABELS)[field]
+    return (f"\n                slowdown is in the {label}: {facts['window']} "
+            f"{cur[field]:.0f} ms vs typical {base[field]:.0f} ms")
+
+
 def usuality_facts(data, now=None):
     """The last-day web latency comparison, shared by the headline and the USUAL line.
 
@@ -1217,7 +1262,7 @@ def usuality_facts(data, now=None):
     there are too few samples; `stale` is set when the newest probe is older than STALE_S.
     """
     now = time.time() if now is None else now
-    recent = []  # (epoch, web sample) oldest first; sample is None when the row's checks failed
+    recent = []  # (epoch, web sample, row) oldest first; sample is None when the row's checks failed
     for row in data:
         stamp = row.get("at") if isinstance(row, dict) else None
         if not isinstance(stamp, str):
@@ -1227,12 +1272,12 @@ def usuality_facts(data, now=None):
         except (ValueError, TypeError):
             continue
         if now - t <= 86400:
-            recent.append((t, web_sample(row)))
-    samples = [v for _, v in recent]
+            recent.append((t, web_sample(row), row))
+    samples = [v for _, v, _ in recent]
     good = [v for v in samples if v is not None]
     if len(good) < USUAL_MIN_SAMPLES:
         return {"compare": None, "good_count": len(good)}
-    cur_stamps = [t for t, v in recent if v is not None][-USUAL_RECENT:]
+    cur_stamps = [t for t, v, _ in recent if v is not None][-USUAL_RECENT:]
     cur = statistics.median(good[-USUAL_RECENT:])
     window = f"last {len(cur_stamps)} probes"
     recent_phrase = window
@@ -1241,16 +1286,20 @@ def usuality_facts(data, now=None):
         if mins >= 1:
             window += f" ({mins:.0f} min)"
             recent_phrase = f"last {mins:.0f} min"
+    good_rows = [row for _, v, row in recent if v is not None]
     base_pool = good[:-USUAL_EXCLUDE] if len(good) >= USUAL_EXCLUDE + USUAL_RECENT else good
+    base_rows = good_rows[:-USUAL_EXCLUDE] if len(good) >= USUAL_EXCLUDE + USUAL_RECENT else good_rows
     base = statistics.median(base_pool)
     ratio = cur / base if base else 1.0
+    phase_cur = _phase_medians(good_rows[-USUAL_RECENT:])
+    phase_base = _phase_medians(base_rows)
     if ratio < 1.25:
         compare = "about usual"
     elif ratio < 2:
         compare = "slower than usual"
     else:
         compare = "much slower than usual"
-    stamps = [t for t, _ in recent]
+    stamps = [t for t, _, _ in recent]
     span_h = (max(stamps) - min(stamps)) / 3600
     span = f"{span_h:.0f} h" if span_h < 48 else f"{span_h / 24:.1f} d"
     stale = ""
@@ -1259,10 +1308,11 @@ def usuality_facts(data, now=None):
         if a is not None and a > STALE_S:
             stale = f" (STALE: last probe {a:.0f}s ago)"
     return {"cur": cur, "base": base, "compare": compare, "window": window,
-            "samples": samples, "span": span, "stale": stale, "recent_phrase": recent_phrase}
+            "samples": samples, "span": span, "stale": stale, "recent_phrase": recent_phrase,
+            "phase_cur": phase_cur, "phase_base": phase_base}
 
 
-def usuality_line(data, now=None):
+def usuality_line(data, now=None, facts=None):
     """'Was it worse than usual?': the recent web latency vs the last day's typical, with a trend sparkline.
 
     The recent figure is the median of the last `USUAL_RECENT` samples, not the newest probe: at the
@@ -1273,7 +1323,7 @@ def usuality_line(data, now=None):
     cannot inflate its own baseline. Built only from rows already loaded for the window; UNKNOWN when
     too few samples; STALE past `STALE_S`.
     """
-    facts = usuality_facts(data, now)
+    facts = facts if facts is not None else usuality_facts(data, now)
     if facts["compare"] is None:
         return (f"UNKNOWN (only {facts['good_count']} web samples in the last day; "
                 f"need {USUAL_MIN_SAMPLES})")
@@ -1282,7 +1332,7 @@ def usuality_line(data, now=None):
             f"  trend: {day_spark(facts['samples'])}{facts['stale']}")
 
 
-def headline_state(state, data, now=None):
+def headline_state(state, data, now=None, facts=None):
     """Append a sustained relative slowdown to an otherwise-OK headline.
 
     `verdict` is about reachability and absolute slowness; its OK must not change, or the outage list
@@ -1292,7 +1342,7 @@ def headline_state(state, data, now=None):
     """
     if state != "OK":
         return state
-    facts = usuality_facts(data, now)
+    facts = facts if facts is not None else usuality_facts(data, now)
     if facts["compare"] in (None, "about usual") or facts["stale"]:
         return state
     return f"{state}, but {facts['compare']} over the {facts['recent_phrase']}"
@@ -1411,6 +1461,7 @@ def probe_age_line(data, a=None, n=40):
 
 def draw():
     data = rows()
+    facts = usuality_facts(data)
     last = data[-1] if data else None
     a = age(last) if last else None
     out = [f"MISHE NETWORK  {time.strftime('%H:%M:%SZ', time.gmtime())}   derived numbers only; UNKNOWN when not measured", ""]
@@ -1420,7 +1471,7 @@ def draw():
     refused = refused_line()
     if refused:
         out.append(refused)
-    out.append(f"  HOME INTERNET: {headline_state(verdict(last, a), data)}")
+    out.append(f"  HOME INTERNET: {headline_state(verdict(last, a), data, facts=facts)}")
     out.append(probe_age_line(data, a, min(len(data), 40)))
     out.append("")
     out.append("  ROUTER AND LOCAL LINK (ping, average of 5)")
@@ -1430,8 +1481,8 @@ def draw():
     out.append(web_line("gstatic.com", "gstatic", data))
     out.append(web_line("cloudflare.com", "cloudflare", data))
     out.append(dns_line(data))
-    out.append("  WHERE TIME GOES  " + phase_line(data))
-    out.append(usuality_line(data))
+    out.append("  WHERE TIME GOES  " + phase_line(data, facts=facts))
+    out.append(usuality_line(data, facts=facts))
     out.append("")
     out.append("  SPEED         " + speed_line(nb_speed_rows()))
     out.append("  UPLOAD        " + speed_up_line(nb_speed_up_rows()))

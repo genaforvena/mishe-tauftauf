@@ -690,6 +690,59 @@ def test_phase_line_drops_a_baseline_it_cannot_support():
     assert "too few probes" in line
 
 
+def _timed_phase_rows(n, now, step, connect, tls, body=70.0):
+    """Rows spaced `step` seconds ending at `now`, each with all three curl checkpoints."""
+    rows = []
+    for i in range(n):
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - (n - 1 - i) * step))
+        rows.append({"at": at, "internet": {name: {"ok": True, "connect_ms": connect,
+                                                   "tls_ms": tls, "total_ms": tls + body}
+                                            for name in ("gstatic", "cloudflare")}})
+    return rows
+
+
+def test_phase_line_names_the_phase_behind_a_sustained_slowdown():
+    # The newest probe can be ordinary while the ten-probe median stays slow; the phase line must
+    # use the same window and baseline as USUAL so the reader can see what moved.
+    now = time.time()
+    rows = _timed_phase_rows(200, now, 204, 70.0, 290.0)
+    for row in rows[-10:]:
+        for check in row["internet"].values():
+            check["tls_ms"] = 445.0  # handshake 375 ms instead of the usual 220 ms
+            check["total_ms"] = 515.0
+    line = view.phase_line(rows, now=now)
+    assert "slowdown is in the secure handshake: last 10 probes (31 min) 375 ms vs typical 220 ms" in line
+    assert "median 515 ms vs typical 360 ms" in view.usuality_line(rows, now=now)
+    assert all(len(part) <= 172 for part in line.split("\n"))  # the pane is 172 columns
+
+
+def test_phase_line_has_no_slowdown_note_when_the_page_is_usual():
+    now = time.time()
+    line = view.phase_line(_timed_phase_rows(200, now, 204, 70.0, 290.0), now=now)
+    assert "slowdown is in" not in line
+
+
+def test_phase_line_has_no_slowdown_note_when_no_phase_dominates():
+    now = time.time()
+    rows = _timed_phase_rows(200, now, 204, 70.0, 290.0)
+    for row in rows[-10:]:
+        for check in row["internet"].values():
+            check["connect_ms"] = 100.0   # +30 ms reaching
+            check["tls_ms"] = 350.0       # handshake 250 ms instead of 220 (+30)
+            check["total_ms"] = 450.0     # +30 ms reply
+    assert "slower than usual" in view.usuality_line(rows, now=now)
+    assert "slowdown is in" not in view.phase_line(rows, now=now)
+
+
+def test_phase_line_has_no_slowdown_note_without_measured_phases():
+    rows = _web_rows(200, 300)
+    for row in rows[-10:]:
+        for check in row["internet"].values():
+            check["total_ms"] = 900.0
+    line = view.phase_line(rows)
+    assert line.startswith("UNKNOWN") and "slowdown is in" not in line
+
+
 def test_render_frame_shows_the_window_when_a_line_is_fine(monkeypatch):
     monkeypatch.setattr(view, "draw", lambda: "the window")
     assert view.render_frame() == "the window"
