@@ -12,7 +12,7 @@ import re
 import subprocess
 
 RULES = (
-    ("dispatch-path", re.compile(r"^src/mishe_tauftauf/(wake|engine_policy|engine_router|engine_usage|owed|access|"
+    ("dispatch-path", re.compile(r"^src/mishe_tauftauf/(wake|engine_\w+|owed|access|"
                                  r"delivery_requests|work_state|dispositions|failure|host_capacity)\w*\.py$")),
     ("delivery-path", re.compile(r"^(src/mishe_tauftauf/(release|deliver|delivery|heal|promotion|pin)\w*\.py"
                                  r"|scripts/.*(deliver|heal|release)\S*)")),

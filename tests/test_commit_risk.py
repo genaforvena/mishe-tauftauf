@@ -44,6 +44,11 @@ class CommitRiskTests(unittest.TestCase):
         self.assertEqual(cr.system0(["checks/initiative.py", "tests/test_initiative_check.py"]), "routine")
         self.assertEqual(cr.system0(["src/mishe_tauftauf/release_promotion.py"]), "delivery-path")
         self.assertEqual(cr.system0(["src/mishe_tauftauf/owed.py"]), "dispatch-path")
+        self.assertEqual(cr.system0(["src/mishe_tauftauf/engine_codex.py"]), "dispatch-path")
+        self.assertEqual(cr.system0(["src/mishe_tauftauf/engine_process.py",
+                                     "tests/test_engine_process.py"]), "dispatch-path")
+        self.assertEqual(cr.system0(["docs/decision-rungs.md",
+                                     "src/mishe_tauftauf/release_promotion.py"]), "delivery-path")
 
     def test_ordinary_is_a_model_only_label(self):
         self.assertIn("ordinary", cr.CRITERIA)
@@ -51,8 +56,10 @@ class CommitRiskTests(unittest.TestCase):
         self.assertIsNone(cr.system0(["src/mishe_tauftauf/budget_producer.py"]))
         self.assertIsNone(cr.system0(["src/mishe_tauftauf/decision_provider.py"]))
 
-    def test_mixed_or_unmatched_paths_are_the_residual(self):
-        self.assertIsNone(cr.system0(["docs/a.md", "src/mishe_tauftauf/owed.py"]))
+    def test_two_non_routine_rules_or_an_unmatched_path_are_the_residual(self):
+        self.assertIsNone(cr.system0(["src/mishe_tauftauf/owed.py",
+                                      "src/mishe_tauftauf/release_promotion.py"]))
+        self.assertIsNone(cr.system0(["docs/a.md", "src/mishe_tauftauf/feed.py"]))
         self.assertIsNone(cr.system0(["src/mishe_tauftauf/feed.py"]))
         self.assertIsNone(cr.system0([]))
 
@@ -109,8 +116,8 @@ class RecordNewTest(unittest.TestCase):
         self.git("config", "user.name", "t")
         self._commit(["docs/a.md"], "docs: a")
         self._commit(["src/mishe_tauftauf/release_x.py"], "release: x")
-        # Residual: one path from each of two rules, so no System 0 answer. The space checks -z parsing.
-        self._commit(["tests/t one.py", "src/mishe_tauftauf/wake.py"], "mixed: residual")
+        # Residual: feed.py matches no rule, so no System 0 answer. The space checks -z parsing.
+        self._commit(["tests/t one.py", "src/mishe_tauftauf/feed.py"], "mixed: residual")
 
     def tearDown(self):
         self.tmp.cleanup()

@@ -4,13 +4,14 @@ Labels: ``routine`` (docs, tests, observation code only), ``delivery-path`` (rel
 promotion, pin, delivery, heal, rollback), ``dispatch-path`` (wake admission, scheduling,
 locking, authorization, dispatch, failure routing), and ``ordinary`` (product code with no
 such effect; a model-only label, never a path rule). Before ``ordinary`` existed, most
-ordinary code escaped to ``unclear`` (replay 2026-11-15: 21 of 27 answers). A commit whose paths all fall in one
-rule gets that label from code with source ``system0``. A commit that mixes rules or
-touches neither is the residual: the decision provider picks one label from the criteria,
-or the escape option, and the answer is kept only if its confidence clears the threshold.
+ordinary code escaped to ``unclear`` (replay 2026-11-15: 21 of 27 answers). Docs, tests and
+checks are supporting paths: a commit whose remaining paths fall in one rule gets that label
+from code with source ``system0``. Two non-routine rules, or any unmatched path, is the
+residual: the decision provider picks one label from the criteria, or the escape option, and
+the answer is kept only if its confidence clears the threshold.
 
 The class is advisory. It is written to a ledger for later ground truth (``outcome`` is
-filled in by whoever later observes a rollback or a delivery problem); it never gates
+computed read-only from git history by ``commit_risk_outcomes.py``); it never gates
 delivery, review or promotion. A missing or failing decision service yields the label
 ``None`` with source ``escalate``, so a mind reads the commit instead.
 """
@@ -38,7 +39,11 @@ MAX_STATE_CHARS = 2000
 
 
 def system0(paths: list[str]) -> str | None:
-    """The deterministic rule. Every path must fall under one label; a mix or no match is the residual."""
+    """The deterministic rule. Docs/tests/checks support code, so a non-routine rule decides.
+
+    Every path must fall under a rule. Only routine paths means ``routine``; two different
+    non-routine rules, or any unmatched path, is the residual for the model.
+    """
     if not paths:
         return None
     labels = set()
@@ -46,8 +51,11 @@ def system0(paths: list[str]) -> str | None:
         hit = path_label(path)
         if hit is None:
             return None
-        labels.add(hit)
-    return labels.pop() if len(labels) == 1 else None
+        if hit != "routine":
+            labels.add(hit)
+    if len(labels) > 1:
+        return None
+    return labels.pop() if labels else "routine"
 
 
 def classify(subject: str, paths: list[str], provider: dp.Provider | None, *, post=None,

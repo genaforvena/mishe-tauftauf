@@ -13,6 +13,7 @@ Each System 1 decision has a registry entry: its question, its criteria text, th
 The first entry is the commit-risk class in `src/mishe_tauftauf/commit_risk.py`:
 
 - Question: `commit-risk-class`. Criteria: `routine`, `delivery-path`, `dispatch-path`, `ordinary`, plus the escape option. The first three are path rules (System 0). `ordinary` — product code with no dispatch, delivery or locking effect — is a model-only label: a path rule cannot tell ordinary product code from the rest, so the model picks it for the residual instead of escaping to `unclear`.
+- System 0 path rule: docs, tests and checks are supporting paths, so a non-routine rule decides even when they accompany the code. Engine runner modules (`engine_*.py`) are `dispatch-path`; release, promotion, pin and delivery modules are `delivery-path`. Two different non-routine rules, or any unmatched path, remains the residual. A replay of the 600-row ledger on 2026-11-18 found 58 residual commits this rule now decides: 36 of 39 model labels agreed, 3 were arguably rule-correct (`engine_codex.py`, `wake.py`, `pin_observation.py`) and 19 escalations gained a label.
 - Threshold: 0.7. Below it the commit escalates to a mind. It is not calibrated yet, because no outcome is joined.
 - Log: `.mishe-tauftauf/decision-log/commit-risk.jsonl`, one row per answered commit. A commit the service did not answer is not recorded, so a later pass asks again.
 
