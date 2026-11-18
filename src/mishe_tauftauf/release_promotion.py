@@ -1169,9 +1169,10 @@ _DESCRIBED_TOTAL_BYTES = 320_000
 def _described_paths(source, paths, included):
     """Repo files a changed page names, which the reviewer would otherwise never see.
 
-    A review supplies the bytes of ``record["paths"]`` only. A changed
-    documentation page that describes a source file it does not change therefore
-    arrives without the code it documents, and the documented rules cannot be
+    A review supplies the bytes of ``record["paths"]`` and bounded caller/import
+    excerpts from the reviewed tree (``wall_patch.symbol_context``), but a changed
+    documentation page that describes a source file it does not change still
+    arrives without that implementation, so the documented rules cannot be
     traced to code: measured on the docs releases 19fb7646 and c87cd884, where
     ``docs/network-view.md`` describes ``checks/network-care.py``'s RED/UNKNOWN
     arms and the reviewer answered "unknown" for want of that file.
