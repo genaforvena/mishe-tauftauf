@@ -32,8 +32,8 @@ module does not observe peer MACs, store a peer MAC, or link two U/L=1
 addresses to one device (no IE/sequence fingerprinting, no MAC-keyed
 AAA/802.1X/DHCP/SLAAC/ARP/NDP cache §6.1, no iw/tcpdump/raw-socket scan) — only
 the existing sysfs/``bluetoothctl`` host-state path. Any OTA MAC scan or
-cross-rotation linking is a privacy-boundary change reviewed under
-``docs/protocol-boundaries.md`` and ``docs/how-it-works.md:973``.
+cross-rotation linking is a privacy-boundary change to that contract and needs
+its own reviewed decision, not an extension of this read-only path.
 
 Privacy Considerations lens (Cooper et al., RFC 6973, IETF Informational,
 July 2013, ISSN 2070-1721, IAB consensus, not Standards-Track §§1–8): this
