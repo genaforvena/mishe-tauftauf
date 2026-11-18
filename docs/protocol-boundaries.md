@@ -105,15 +105,16 @@ starts with a word character and ends in a file suffix (`py`, `md`, `json`, `sh`
 `rs`, `toml`), in first-appearance order; a token that begins `./` cannot match,
 so none needs trimming. Whether a token names an existing file, and whether it
 joins a delivery review, is the caller's decision, not the adapter's.
-`release_promotion._described_paths` composes it: a review already supplies the
-reviewer only the bytes of the changed paths, so a changed page that describes a
-rule implemented elsewhere arrives without the code it documents and the reviewer
-cannot trace it. The composer adds at most `DESCRIBED_PATH_MAX` (12) such files,
-each at most 256 000 bytes and 320 000 bytes in total, as unchanged review
-entries. The reviewer is an external model, so an added file must stay inside the
-release tree: a token that resolves outside it (a spelled `..` segment, which the
-adapter permits) or that does not resolve to a regular file in it is dropped,
-never read or handed over, never guessed. A file whose bytes are not UTF-8 is
+`release_promotion._described_paths` composes it: a review supplies the changed
+paths' bytes and bounded caller/import excerpts from the reviewed tree, but a
+changed page that describes a rule implemented elsewhere still arrives without
+that implementation and the reviewer cannot trace it. The composer adds at most
+`DESCRIBED_PATH_MAX` (12) such files, each at most 256 000 bytes and 320 000 bytes
+in total, as unchanged review entries. The reviewer is an external model, so an
+added file must stay inside the release tree: a token that resolves outside it (a
+spelled `..` segment, which the adapter permits) or that does not resolve to a
+regular file in it is dropped, never read or handed over, never guessed. A file
+whose bytes are not UTF-8 is
 dropped too — `patch_text.is_utf8` gates it — because `wall_patch.review` reads
 every entry as UTF-8 and one undecodable file would otherwise lose the whole
 review as a `review_error`. Measured cause: the docs releases
