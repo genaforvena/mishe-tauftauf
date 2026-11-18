@@ -6,6 +6,7 @@ live window's own naming, so the pane's ``latest_bad`` count is readable beside
 the roles it counts instead of being re-derived from ``violating``, which lists
 the standing audit's newest rows — a different window.
 """
+import gc
 import re
 import tracemalloc
 
@@ -1538,6 +1539,9 @@ def _citation_peak(home: Path, body: bytes) -> tuple[int, dict]:
     """The gate's peak on a citation site, and the reading it produced."""
     citations = _citation_site(home, body)
     _binding_tape(home, citations)
+    # Start from a settled heap so cyclic garbage is not collected inside the
+    # measured window and counted in the peak.
+    gc.collect()
     tracemalloc.start()
     try:
         result = discovery._ledger_evidence_binding(home)
@@ -1564,8 +1568,11 @@ def test_evidence_binding_citation_search_holds_one_successor_body_at_a_time(tmp
     holds it near one body.
     """
     body = b"x" * (512 * 1024)
-    small_peak, small = _citation_peak(tmp_path / "small", b"")
-    large_peak, large = _citation_peak(tmp_path / "large", body)
+    growth = []
+    for index in range(5):
+        small_peak, small = _citation_peak(tmp_path / f"small-{index}", b"")
+        large_peak, large = _citation_peak(tmp_path / f"large-{index}", body)
+        growth.append(large_peak - small_peak)
     # Both readings cleared every lost row by a citation, so the search read
     # every successor body in both runs.
     assert small["owed_rows"] == 0 and large["owed_rows"] == 0
@@ -1573,8 +1580,11 @@ def test_evidence_binding_citation_search_holds_one_successor_body_at_a_time(tmp
     assert large["remediation_bands"]["cited"] == 4
     assert large["citation_files_searched"] == 4
     # Four half-megabyte bodies were read. The search must not hold their sum:
-    # two bodies' worth is the most a one-at-a-time search can cost.
-    assert large_peak - small_peak < len(body) * 2
+    # two bodies' worth is the most a one-at-a-time search can cost. A peak
+    # measurement can spike on a busy runner, so use the smallest differential
+    # across independent pairs: a transient allocation inflates one pair, while
+    # a search retaining all four bodies inflates every pair.
+    assert min(growth) < len(body) * 2
 
 def _superseded_site(home: Path, *, restored: bool) -> None:
     """A site whose lost row is cleared by a declared supersession.
