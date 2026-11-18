@@ -264,6 +264,16 @@ def test_a_whole_window_bad_uses_the_lifetime_share():
     assert "worse than usual for at least 24 h (usual 6.0% since boot)" in text, text
 
 
+def test_a_hole_does_not_make_a_long_bad_run_its_own_usual():
+    # The lifetime fallback must survive a producer gap: without it, all-bad known hours
+    # become their own baseline and the pane says "about usual" while the radio stays busy.
+    assert view.wifi_usuality(15.2, [15.0] * 10 + [None, None], 6.0) == \
+        ", worse than usual for at least 10 h (usual 6.0% since boot)"
+    # The gap still stops the reported age at the newest unbroken run.
+    text = view.wifi_usuality(15.2, [15.0] * 3 + [None, None] + [15.0] * 7, 6.0)
+    assert "for at least 3 h" in text and "for at least 12 h" not in text, text
+
+
 def test_an_elevated_hour_still_counts_plain_worse_hours():
     # 16% against 5% is 'much worse'; the two 11% hours cleared only 'worse' but still
     # extend the age, which must grow rather than reset when the label changes level.

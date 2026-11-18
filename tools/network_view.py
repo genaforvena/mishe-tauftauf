@@ -901,30 +901,28 @@ def _wifi_severity(rate, usual):
 
 
 def _wifi_run_baseline(earlier, lifetime):
-    """A 'usual' share the newest bad run cannot define, and the length of that run.
+    """A 'usual' share the newest bad run cannot define, and whether the lifetime share was used.
 
     A trailing median includes the very hours being flagged: once a bad run fills half the
     window the median becomes the bad rate and the flag quietly vanishes while the radio is
     still busy. Look for the longest newest run whose every hour is worse than the median of
     the hours before it, and take that earlier median as the baseline. When no calm hour is
     left in the window, use the lifetime since-boot share instead: thirteen days of counter
-    history cannot be captured by one bad day. Returns (baseline, run length); a run length
-    equal to len(earlier) means the lifetime figure was used.
+    history cannot be captured by one bad day. Returns (baseline, used_lifetime); a hole breaks the
+    reported duration in the caller but must not hide a long bad run behind its own bad baseline.
     """
     known = [hour for hour in earlier if hour is not None]
     if len(known) < WIFI_USUAL_MIN_HOURS:
-        return None, 0
+        return None, False
     # Known hours still inform the baseline; only the duration requires continuity.
-    earlier = known
-    n = len(earlier)
+    n = len(known)
     for split in range(n, WIFI_BASELINE_RUN_MIN - 1, -1):
-        older = [hour for hour in earlier[split:] if hour is not None]
+        older = known[split:]
         before = lifetime if split == n else statistics.median(older) if older else None
-        if before is None or not all(h is not None and _wifi_severity(h, before)
-                                     for h in earlier[:split]):
+        if before is None or not all(_wifi_severity(h, before) for h in known[:split]):
             continue
-        return before, split
-    return statistics.median(known), 0
+        return before, split == n
+    return statistics.median(known), False
 
 
 def wifi_usuality(rate, earlier, lifetime=None):
@@ -933,16 +931,16 @@ def wifi_usuality(rate, earlier, lifetime=None):
     The rate counts retries, so this is a symptom, not a diagnosis: it says the radio is working
     harder than it usually does, which is what a person notices as a slow connection. The baseline
     is taken from the hours before a sustained bad run, so a long problem cannot make its own
-    "usual" and then disappear; when the whole window is in the run, the lifetime since-boot share
+    "usual" and then disappear; when no calm hour is left, the lifetime since-boot share
     is used and named. When the current hour clears a bar, the phrase also counts the consecutive
     completed hours that cleared the same bar, so a five-hour problem does not read like a fresh
     blip. A hole or a quiet hour stops the count; the rolling hour is never counted as a completed
     one.
     """
-    usual, run = _wifi_run_baseline(earlier, lifetime if all(h is not None for h in earlier) else None)
+    usual, used_lifetime = _wifi_run_baseline(earlier, lifetime)
     if usual is None:
         return ", no usual yet"
-    since_boot = " since boot" if run == len(earlier) else ""
+    since_boot = " since boot" if used_lifetime else ""
     severity = _wifi_severity(rate, usual)
     if not severity:
         return ", about usual"

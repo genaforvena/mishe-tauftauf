@@ -236,8 +236,9 @@ is not mistaken for a quiet mind.
   baseline is the lifetime share since router boot and the line says `(usual N% since boot)`.
   When the current hour is flagged, consecutive completed hours that cleared the `worse` bar add
   `for at least N h`, so a five-hour streak does not read like a fresh blip;
-  a calm hour or a hole in the log stops the count. An hour needs at least 50 minutes between
-  readings and no gap over 15 minutes to count; insufficient history says `no usual yet`.
+  a calm hour or a hole in the log stops the count; a hole does not let a long bad run become its own
+  baseline. An hour needs at least 50 minutes between readings and no gap over 15 minutes to count;
+  insufficient history says `no usual yet`.
   It is a symptom, not a
   diagnosis: the attempts figure counts retries, and a radio can work harder at a busy hour without
   losing frames. STALE past 15 minutes.
