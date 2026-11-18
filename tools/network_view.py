@@ -169,11 +169,12 @@ def copy_survives(path=None):
             return False, f"{type(exc).__name__}: {exc}"
         try:
             if not first_frame_seen(proc):
-                if proc.poll() is not None:
-                    why = "the copy exits at once when it is run instead of drawing"
-                else:
-                    why = f"the copy spins without drawing a frame within {FIRST_FRAME_S:g} s"
-                return False, why
+                if proc.poll() is None:
+                    return False, f"the copy spins without drawing a frame within {FIRST_FRAME_S:g} s"
+                lines = [line.strip() for line in proc.stderr.read().decode("utf-8", "replace").splitlines()
+                         if line.strip()]
+                reason = "the copy exits at once when it is run instead of drawing"
+                return False, f"{reason}: {lines[-1]}" if lines else f"{reason} (exit {proc.returncode})"
             try:
                 proc.wait(timeout=LIVENESS_S)
             except subprocess.TimeoutExpired:

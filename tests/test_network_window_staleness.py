@@ -179,6 +179,24 @@ def test_a_copy_that_draws_one_frame_then_exits_is_not_run(tmp_path, monkeypatch
     assert "draws one frame and exits" in view.REFUSED[0]
 
 
+def test_a_copy_that_dies_before_its_first_frame_keeps_its_error_line(tmp_path, monkeypatch):
+    # 2026-11-18: the first-frame probe must not throw away the copy's own diagnosis.  A copy that
+    # raises before it draws (outside draw()'s try) is refused with its last stderr line, as the
+    # liveness probe did before the frame check.
+    calls = []
+    fake = tmp_path / "network_view.py"
+    fake.write_text("if __name__ == '__main__':\n    raise SystemExit('cannot write window state')\n")
+    (tmp_path / "boundary.py").write_text("")
+    monkeypatch.setattr(view, "OWN_FILES", (fake, tmp_path / "boundary.py"))
+    monkeypatch.setattr(view.os, "execv", lambda *a: calls.append(a))
+    monkeypatch.setattr(view, "REFUSED", None)
+    old = (0, 0)
+    assert view.maybe_reexec(old) == old
+    assert calls == []
+    assert "exits at once" in view.REFUSED[0]
+    assert "cannot write window state" in view.REFUSED[0]
+
+
 def test_a_copy_that_spins_without_drawing_is_not_run(tmp_path, monkeypatch):
     # 2026-11-18: a save cut inside the redraw loop after `STAMP = maybe_reexec(STAMP)` keeps the
     # guard and the loop, imports cleanly and stays up forever, but never draws (and burns CPU).
