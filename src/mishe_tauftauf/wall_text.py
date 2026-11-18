@@ -179,6 +179,32 @@ def dm_recipient(text: str, source: str, roles=()) -> str | None:
     return match.group(1)
 
 
+FAILURE_NOTICE = ("{unit} failed. Signal {name} is RED. Find the cause "
+                  "(journalctl --user -u {unit}), fix or disposition it, "
+                  "then `mishe signal observe {name} GREEN`.")
+_DM_ADDRESS_LINE = re.compile(r"\[dm\] to=\S+[ \t]*\n")
+_FAILURE_NOTICE_RE = re.compile(
+    r"^(?P<unit>\S+) failed\. Signal (?P<signal>\S+) is RED\. Find the cause "
+    r"\(journalctl --user -u (?P=unit)\), fix or disposition it, then "
+    r"`mishe signal observe (?P=signal) GREEN`\.$")
+
+
+def failure_notice(text: str) -> tuple[str, str] | None:
+    """The (unit, signal) a machine failure notice names, or None.
+
+    ``failure.report`` writes exactly one sentence after an OnFailure, and
+    ``wall.message`` addresses it with ``[dm] to=ROLE`` on the line before, so the
+    class of such a message is a lookup, not a judgment: the DM classifier can
+    label it without a decision-model call.
+    """
+    body = text.strip()
+    addressed = _DM_ADDRESS_LINE.match(body)
+    if addressed:
+        body = body[addressed.end():]
+    match = _FAILURE_NOTICE_RE.match(body)
+    return (match.group("unit"), match.group("signal")) if match else None
+
+
 def near_miss_dm(text: str) -> str | None:
     """The role named by a first line that looks like a DM but is not exactly ``[dm] to=ROLE`` (words follow it), else None."""
     first = text.splitlines()[0] if text else ""

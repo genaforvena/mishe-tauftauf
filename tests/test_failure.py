@@ -12,6 +12,16 @@ def test_failed_wake_goes_red_and_owes_the_resolver(tmp_path):
     assert sent and sent[0][0] == "health" and "mishe-wake@docs.service" in sent[0][1]
 
 
+def test_failure_notice_text_parses_back_to_unit_and_signal(tmp_path):
+    # The DM triage System 0 rule reads the text this reporter writes; one source
+    # template means a wording change cannot silently stop classifying notices.
+    from mishe_tauftauf import wall_text
+    sent = []
+    failure.report(tmp_path, "mishe-wake@docs.service", now=NOW, notify=lambda *a: sent.append(a))
+    assert wall_text.failure_notice(sent[0][1]) == (
+        "mishe-wake@docs.service", "failed-mishe-wake-docs-service")
+
+
 def test_health_failing_is_routed_to_genome_not_itself(tmp_path):
     failure.report(tmp_path, "mishe-wake@health.service", now=NOW, notify=lambda *a: None)
     assert owed.check(tmp_path, "genome", now=NOW).reasons[0] == "inbox"

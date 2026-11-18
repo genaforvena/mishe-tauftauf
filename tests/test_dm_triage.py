@@ -64,6 +64,16 @@ class DmTriageTests(unittest.TestCase):
         self.assertEqual(result["label"], "fyi")
         self.assertEqual(calls, [])
 
+    def test_failure_notice_is_a_system0_action(self):
+        notice = ("mishe-wake@genome.service failed. Signal failed-mishe-wake-genome-service is RED. "
+                  "Find the cause (journalctl --user -u mishe-wake@genome.service), fix or disposition it, "
+                  "then `mishe signal observe failed-mishe-wake-genome-service GREEN`.")
+        self.assertEqual(dt.system0_class(notice), "action")
+        self.assertEqual(dt.system0_class("[dm] to=health\n" + notice), "action")
+        result = dt.classify(7, "", "[dm] to=health\n" + notice, None)
+        self.assertEqual((result["source"], result["label"]), ("system0", "action"))
+        self.assertIsNone(dt.system0_class("[dm] to=system1\nhello there"))
+
     def test_classify_uses_model_for_residual(self):
         provider = _provider(self.root)
         post = _post("fyi", 0.9, dt.QUESTION)

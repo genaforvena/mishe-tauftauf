@@ -1,9 +1,10 @@
 """DM triage in shadow (P3): one decision-model pass per unread addressed message.
 
 Shadow only: the rows go to ``decision-log/dm-triage.jsonl`` and nothing reads them
-for dispatch. A System 0 tag rule decides the machine-addressed classes first; the
-decision model picks one label for the residual. A missing or failing decision
-service degrades to ``escalate`` rows, never to a raised error.
+for dispatch. A System 0 rule decides the machine-addressed classes first — a bracketed
+record tag, or the fixed OnFailure failure-notice sentence — and the decision model picks
+one label for the residual. A missing or failing decision service degrades to ``escalate``
+rows, never to a raised error.
 
 Derived state only: the state sent to the model carries the message's sequence,
 sender role, recipient role, tag class, body length bucket and a bounded first-line
@@ -16,7 +17,8 @@ import pathlib
 import time
 
 from . import decision_provider as dp
-from .wall_text import dm_recipient, first_line, message_excerpt, message_subject, record_tag, sender_role
+from .wall_text import (dm_recipient, failure_notice, first_line, message_excerpt, message_subject,
+                        record_tag, sender_role)
 LOG_NAME = "dm-triage.jsonl"
 QUESTION = "dm-triage-class"
 THRESHOLD = 0.7
@@ -73,6 +75,19 @@ def system0_tag(body: str) -> str | None:
     return None
 
 
+def system0_class(body: str) -> str | None:
+    """The class a deterministic rule settles for this message, or None for a genuine model residual.
+
+    Two forms are lookups: a bracketed record tag, and the fixed OnFailure sentence
+    ``failure.report`` writes ("<unit> failed. Signal <name> is RED..."). A failure
+    notice asks its resolver to act, so it is ``action`` — no model call, and no
+    chance of an escaped or low-confidence row for a message whose class is known.
+    """
+    if failure_notice(body) is not None:
+        return "action"
+    return system0_tag(body)
+
+
 def derived_state(seq: int, source: str, body: str, roles=()) -> dict:
     """The decision-relevant derived state of one message: no full private text."""
     first = first_line(body)
@@ -97,9 +112,9 @@ def classify(seq: int, source: str, body: str, provider: dp.Provider | None, rol
              *, post=None, threshold: float = THRESHOLD) -> dict:
     """One message's triage. ``source`` is ``system0``, ``system1`` or ``escalate``."""
     state = derived_state(seq, source, body, roles)
-    rule = system0_tag(body)
+    rule = system0_class(body)
     if rule is not None:
-        return {"label": rule, "source": "system0", "confidence": None, "reason": "tag rule",
+        return {"label": rule, "source": "system0", "confidence": None, "reason": "system0 rule",
                 "state": state}
     if provider is None:
         return {"label": None, "source": "escalate", "confidence": None, "reason": "no decision provider",

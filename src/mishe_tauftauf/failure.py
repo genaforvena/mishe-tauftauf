@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import intentions, owed, signal_store, units
+from . import intentions, owed, signal_store, units, wall_text
 from .state_files import read_json, write_json
 
 DEFAULT_RESOLVER = "health"
@@ -230,8 +230,7 @@ def report(home, unit: str, *, now: float, notify=None, signature="unit-failed")
     signal_store.observe(home, name, "RED", now=now, source="mishe-failed")
     intentions.add(home, role, f"reoffer-{name}", note=f"{unit} is still failing; investigate or clear signal {name}",
                    due=now + REOFFER_SECONDS)
-    text = (f"{unit} failed. Signal {name} is RED. Find the cause (journalctl --user -u {unit}), "
-            f"fix or disposition it, then `mishe signal observe {name} GREEN`.")
+    text = wall_text.FAILURE_NOTICE.format(unit=unit, name=name)
     (notify or (lambda r, t: default_notify(home, r, t)))(role, text)
     owed.touch_inbox(home, role)
     return role
