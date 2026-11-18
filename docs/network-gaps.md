@@ -2,7 +2,8 @@
 
 One line per promised slot in the network charter. Checked against `tools/network_view.py`
 (`draw()` and its helpers) and `tools/network_router.py` and `rust/mishe-network-probe`, on 2026-11-13.
-Speed, day-trend, baseline and Wi-Fi channel/noise/counter rows rechecked 2026-11-17.
+Speed, day-trend, baseline and Wi-Fi channel/noise/counter rows rechecked 2026-11-17; the upload
+duty's verdict rechecked 2026-11-18.
 
 Status words: **BUILT** (the window shows it with an age or UNKNOWN), **PARTLY** (some of it is
 shown), **MISSING** (not measured or not shown).
@@ -25,7 +26,7 @@ shown), **MISSING** (not measured or not shown).
 | slot | status | evidence |
 | --- | --- | --- |
 | Download speed | PARTLY | `speed_line()`: last good 5 MB download in `speed.jsonl`, age shown, one night-time try (02-05 local) |
-| Upload speed | BUILT | `speed_up_line()` reads `speed-up.jsonl`: last good 2 MB upload with age, written by the same night-time duty with its own 30-minute failed-retry; UNKNOWN when never measured, last try failed, or older than 36 h. The same duty now reports UNKNOWN in those cases (`upload_state()`), so the signal follows the upload too |
+| Upload speed | BUILT | `speed_up_line()` reads `speed-up.jsonl`: last good 2 MB upload with age, written by the same night-time duty with its own 30-minute failed-retry; UNKNOWN when never measured, last try failed, or older than 36 h. The producing duty's verdict follows a failed or stale upload and no attempt once the 02-05 window is open (`upload_state()`), so a night of failing uploads is UNKNOWN, not GREEN |
 | Method and age shown | BUILT | both speed lines give the method and hours since the reading |
 
 ## Home Wi-Fi

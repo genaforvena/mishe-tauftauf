@@ -3294,7 +3294,7 @@ while the host carried load1 4.34 on 3 CPUs with a concurrent `cargo build` of
 the release and a speech model running; `genome` in the same run was 3.879
 children (total 7.991). Raw output is in
 `artifacts/rust-plan-20261107/fold-children-cpu-20261117-2209.txt`. Eight folds
-in §10.54 at ordinary load measured 3.1-3.6 child CPU-s, so the total can grow
+in §10.54 at ordinary load measured 3.1-3.8 child CPU-s, so the total can grow
 ~5x under contention while the reader stays normal. A 10 CPU-s total bar,
 calibrated on those quiet folds, would therefore have turned this contention
 sample into RED and reopened the slice; the existing guard (load1 one per CPU)
