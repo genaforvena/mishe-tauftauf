@@ -204,13 +204,16 @@ UPLINK_WINDOW_S = 2 * 3600     # the rate is judged over the last two hours of r
 UPLINK_MIN_SPAN_S = 1.8 * 3600  # a RED rate needs the readings to actually cover that span
 UPLINK_MAX_AGE_S = 900         # the newest router reading must be this fresh, else UNKNOWN
 UPLINK_RED_PER_HOUR = 400      # rx_dropped per hour above this for the full span is RED
+WAN_FLAP_RED = 3               # carrier drops inside the window that mean a cable or port fault
 
 
 def uplink_state(rows, now):
-    """Judge the WAN receive-drop rate from router readings (dicts with 'ts' and 'uplink').
+    """Judge the WAN receive-drop rate and the physical link from router readings (dicts with 'ts',
+    'uplink' and 'wan_link').
 
     Returns (code, message): 0 GREEN, 2 RED, 3 UNKNOWN.  A dead or stale probe is UNKNOWN, never GREEN.
-    A counter that went backwards (router reboot or driver reset) is UNKNOWN for this window."""
+    A counter that went backwards (router reboot or driver reset) is UNKNOWN for this window and
+    suppresses the flap count, so a reboot cannot look like a flapping cable."""
     fresh = []
     for row in rows:
         try:
@@ -221,28 +224,43 @@ def uplink_state(rows, now):
         except (KeyError, TypeError, ValueError):
             continue
         if now - ts <= UPLINK_WINDOW_S and ts <= now + START_SLACK_S:
-            fresh.append((ts, dropped, errors))
+            link = row.get("wan_link")
+            fresh.append((ts, dropped, errors, link if isinstance(link, dict) else None))
     if not fresh:
         return 3, "network-care: no router uplink reading in the last two hours"
     fresh.sort()
-    last_ts, last_drop, last_err = fresh[-1]
+    last_ts, last_drop, last_err, last_link = fresh[-1]
     if now - last_ts > UPLINK_MAX_AGE_S:
         return 3, f"network-care: newest router uplink reading is {(now - last_ts) / 60:.0f} min old"
     if last_err > 0:
         return 2, f"network-care: eth0 has {last_err} receive errors (a link fault, not drops)"
+    if not last_link or last_link.get("speed_mbps") is None:
+        return 3, "network-care: the newest router read has no physical WAN link state (speed/drops)"
     if len(fresh) < 2:
         return 3, "network-care: only one router uplink reading; no rate yet"
-    first_ts, first_drop, _ = fresh[0]
+    first_ts, first_drop, _, _ = fresh[0]
     span = last_ts - first_ts
     if last_drop < first_drop:
         return 3, "network-care: rx_dropped counter went backwards in this window (reset); no rate"
     if span <= 0:
         return 3, "network-care: router uplink readings do not span a time; no rate"
+    duplex = last_link.get("duplex")
+    link_txt = f"{last_link['device']} {last_link['speed_mbps']} Mb/s" + (
+        f" {duplex} duplex" if duplex in ("full", "half") else "")
+    carriers = [(ts, link["carrier_down"]) for ts, _, _, link in fresh
+                if link and isinstance(link.get("carrier_down"), int)]
+    flaps = None
+    if len(carriers) >= 2 and carriers[-1][1] >= carriers[0][1]:
+        flaps = carriers[-1][1] - carriers[0][1]
     per_hour = (last_drop - first_drop) * 3600.0 / span
     text = f"rx_dropped {per_hour:.0f}/h over {span / 3600:.1f} h"
+    if flaps is not None and flaps >= WAN_FLAP_RED:
+        return 2, (f"network-care: the WAN link went down {flaps} times over {span / 3600:.1f} h "
+                   f"({link_txt}; a cable or port fault)")
     if per_hour > UPLINK_RED_PER_HOUR and span >= UPLINK_MIN_SPAN_S:
         return 2, f"network-care: {text}, above {UPLINK_RED_PER_HOUR}/h for the full span"
-    return 0, f"network-care: uplink GREEN ({text})"
+    flap_txt = f", link down {flaps} times in the window" if flaps else ""
+    return 0, f"network-care: uplink GREEN ({text}; {link_txt}{flap_txt})"
 
 
 def router_readings(home):

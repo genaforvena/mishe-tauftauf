@@ -373,6 +373,53 @@ def uplink_line(now=None):
             f"(since router boot; read {ago:.0f} s ago{stale})")
 
 
+def wan_link_line(now=None):
+    """Physical WAN link from the last recorded router read: negotiated speed/duplex and carrier drops.
+
+    The drop counter is the kernel's own since the router booted. The last-hour clause compares this read
+    with the oldest read inside the hour, so a cable that dropped is visible even when the boot is old;
+    a counter that went backwards means the router rebooted, not a calm link.
+    """
+    now = time.time() if now is None else now
+    rows_ = router_rows()
+    if not rows_:
+        return "UNKNOWN (no router reading recorded yet)"
+    last = rows_[-1]
+    ago = now - last["ts"]
+    if not last.get("ok"):
+        return f"UNKNOWN (last router read failed {ago:.0f} s ago: {last.get('error', 'no reason recorded')})"
+    stale = "  STALE" if ago > STALE_ROUTER_S else ""
+    link = last.get("wan_link")
+    if not link:
+        return f"UNKNOWN (the read {ago:.0f} s ago has no physical WAN link state{stale})"
+    device = link.get("device") or "?"
+    speed = link.get("speed_mbps")
+    duplex = link.get("duplex")
+    if speed is None:
+        return f"UNKNOWN ({device} link speed not reported by the router; read {ago:.0f} s ago{stale})"
+    link_txt = f"{speed} Mb/s" + (f" {duplex} duplex" if duplex in ("full", "half") else "")
+    down = link.get("carrier_down")
+    if not isinstance(down, int):
+        return f"{device}: {link_txt}; carrier drops UNKNOWN (not in the read); read {ago:.0f} s ago{stale}"
+    since_boot = f"link went down {down} time{'s' if down != 1 else ''} since router boot"
+    uptime = last.get("uptime_s")
+    if isinstance(uptime, (int, float)) and uptime > 0:
+        since_boot += f" ({uptime / 86400:.1f} days)"
+    hour = [r for r in rows_ if now - r["ts"] <= 3600 and r.get("ok")
+            and isinstance((r.get("wan_link") or {}).get("carrier_down"), int)]
+    if len(hour) >= 2:
+        before = hour[0]["wan_link"]["carrier_down"]
+        if down < before:
+            hour_txt = ", counters reset in the last hour (router reboot)"
+        elif down == before:
+            hour_txt = ", none in the last hour"
+        else:
+            hour_txt = f", {down - before} in the last hour"
+    else:
+        hour_txt = ", last-hour drops UNKNOWN"
+    return f"{device}: {link_txt}; {since_boot}{hour_txt}; read {ago:.0f} s ago{stale}"
+
+
 GUARD_TRIP_MARKER = "/var/lib/mishe-containment/tripped"
 
 
@@ -987,6 +1034,7 @@ def draw():
     rf = router_facts()
     out.append("  ROUTER        " + (rf or "UNKNOWN (ssh read failed)") + "   (read-only)")
     out.append("  UPLINK        " + uplink_line() + "   (read-only)")
+    out.append("  WAN LINK      " + wan_link_line() + "   (read-only, negotiated speed and carrier drops)")
     out.append("  UPLINK RATE   " + uplink_rate_line())
     out.append("  ROUTER LOAD   " + router_health_line() + "   (read-only, one read per 5 min)")
     out.append("  VPN           " + vpn_line() + "   (read-only, router process list and tun0)")

@@ -20,6 +20,7 @@ One JSON object per line, oldest first.
 | `uptime_s` | only when `ok` is true: router uptime in seconds |
 | `wan` | only when `ok` is true: `{"up": bool, "uptime_s": int}` |
 | `uplink` | only when `ok` is true and the WAN link device is named: `{"device": str, "rx_errors": int, "rx_dropped": int, "tx_errors": int, "tx_dropped": int}`, cumulative since the router booted; `null` when the device is not named |
+| `wan_link` | only when `ok` is true and the default route's device was named: `{"device": str, "speed_mbps": int or null, "duplex": str or null, "carrier_up": int or null, "carrier_down": int or null}` from the router's own `/sys/class/net/<device>/{speed,duplex,carrier_up_count,carrier_down_count}`; the carrier counts are cumulative since boot, a field the kernel did not report is `null` (never zero), `null` when no device was named |
 | `router_load` | only when `ok` is true: `{"load_1m": float, "load_5m": float, "mem_available_mb": float}` from the router's `/proc/loadavg` and `MemAvailable`; `null` when the read carries neither a load nor free RAM |
 | `error` | only when `ok` is false: the failure text, or a `skipped: …` reason when the pass was held off over the router's self-limit (see `docs/network-router-monitoring.md`) |
 
@@ -41,12 +42,16 @@ The rows are also the input to the `network-uplink` duty, which runs every 300 s
 (`checks/network-care.py`, subcommand `uplink`) and judges the rows of the newest
 two hours. It is RED when the newest row reports a receive error (`rx_errors`
 above zero), or when `rx_dropped` grew by more than 400 per hour across a span of
-at least 1.8 h. It is UNKNOWN when no row is newer than 15 minutes, when fewer
-than two rows fall in the window, when the `rx_dropped` counter went backwards (a
-router reboot or driver reset), or when the log is unreadable — an alarm that
-cannot read the log is UNKNOWN, never a quiet pass. A row whose `uplink` object is
-missing or `null` is skipped, so a reading that does not carry the counters can
-neither raise nor clear the alarm.
+at least 1.8 h, or when the physical link went down (`carrier_down`) three or more
+times inside the window — a cable or port fault, not ISP maintenance. It is UNKNOWN
+when no row is newer than 15 minutes, when fewer than two rows fall in the window,
+when the `rx_dropped` counter went backwards (a router reboot or driver reset),
+when the newest row carries no `wan_link` or no negotiated speed, or when the log is
+unreadable — an alarm that cannot read the log is UNKNOWN, never a quiet pass. A
+row whose `uplink` object is missing or `null` is skipped, so a reading that does not
+carry the counters can neither raise nor clear the alarm; a `carrier_down` counter
+that went backwards inside the window suppresses the flap count, so a reboot cannot
+look like a flapping cable.
 
 The `network-wifi` duty (same checker, subcommand `wifi`, every 300 s, `max_age` 900 s,
 resolver `network`) watches that sub-reading separately: the router read can succeed while
@@ -99,6 +104,14 @@ is not mistaken for a quiet mind.
   not GREEN (for example "the client could not be reached: …"). UNKNOWN when the file is missing,
   unreadable or over 15 minutes old.
 - `RECORDED`: client count by band, weakest device by name and dBm, the age of the last read.
+- `WAN LINK`: the WAN device's negotiated speed and duplex from the router's own
+  `/sys/class/net` files, plus how many times the cable's carrier dropped since the router booted
+  and how many of those were in the last hour. The last-hour count compares the newest read with
+  the oldest read inside that hour, so an old boot does not hide a fresh drop. A downgraded
+  negotiation (for example 100 Mb/s) or repeated drops is the physical cause the page-load lines
+  cannot name. UNKNOWN when the newest read failed, carries no `wan_link`, or the kernel reports no
+  speed; a counter that went backwards in the last hour reads "counters reset in the last hour
+  (router reboot)", never "none". STALE past 15 minutes.
 - `WHERE TIME GOES`: of the page-load time just above, how much went into reaching the site
   (`connect_ms`) and how much into the secure handshake (`tls_ms`), for the newest probe only.
   It also gives the handshake's usual median over the loaded rows and, when both have at least
@@ -146,6 +159,10 @@ is not mistaken for a quiet mind.
   reading is not evidence of channel trouble. There is one access point per band (2.4 GHz and 5 GHz),
   so there is no second AP to compare channels with: `iwinfo` also lists `apcli0`/`apclix0`, which
   are client-mode interfaces on the same two radios, not extra access points.
+- The negotiated WAN speed is what the router's port and the ISP handoff agreed on, not the plan's
+  speed; a 1000 Mb/s negotiation says the cable and port are fine, not that the line delivers it.
+  The carrier counters come from the same read as everything else on the router line, so a missing
+  router read is UNKNOWN, never "no drops".
 - VPN (sing-box) state is shown as "running" and "tun0 up" from the
   router's process list; it does not say which clients use the tunnel. The WAN error and drop counters
   are measured: the view reports them from the last recorded router read, and the drop

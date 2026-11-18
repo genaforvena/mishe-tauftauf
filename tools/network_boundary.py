@@ -257,7 +257,7 @@ def decode_router_output(stdout, bands, client_id):
         if line.startswith("UPTIME "):
             uptime_line = line.split(None, 1)[1]
             current = None
-        elif line in ("LEASES", "WAN", "LOAD", "LINKS", "VPN") or line.startswith("RADIO "):
+        elif line in ("LEASES", "WAN", "LOAD", "LINKS", "VPN", "PHY") or line.startswith("RADIO "):
             current = line
             sections.setdefault(current, [])
         elif current is not None:
@@ -311,7 +311,32 @@ def decode_router_output(stdout, bands, client_id):
     return {"uptime_s": round(uptime_s), "wan": wan, "uplink": uplink, "clients": clients,
             "radios": radios,
             "router_load": decode_router_load(sections.get("LOAD", [])),
-            "vpn": decode_router_vpn(sections.get("VPN", []))}
+            "vpn": decode_router_vpn(sections.get("VPN", [])),
+            "wan_link": decode_wan_link(sections.get("PHY", []))}
+
+
+def decode_wan_link(lines):
+    """Physical WAN link from the router's ``/sys/class/net/<device>`` reads, or None when absent.
+
+    ``device`` is the default route's device. ``speed_mbps``, ``duplex``, ``carrier_up`` and
+    ``carrier_down`` are the kernel's own values; a field the kernel did not report stays None, never
+    zero, so a driver without a speed file cannot look like a negotiated link.
+    """
+    fields = {}
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2:
+            fields[parts[0]] = parts[1]
+    device = fields.get("device")
+    if not device:
+        return None
+
+    def number(key):
+        value = fields.get(key)
+        return int(value) if value is not None and value.isdigit() else None
+
+    return {"device": device, "speed_mbps": number("speed"), "duplex": fields.get("duplex"),
+            "carrier_up": number("carrier_up_count"), "carrier_down": number("carrier_down_count")}
 
 
 def decode_router_vpn(lines):

@@ -11,8 +11,10 @@ _spec.loader.exec_module(care)
 NOW = 1_800_000_000.0
 
 
-def row(ts, dropped, errors=0):
-    return {"ts": ts, "uplink": {"device": "eth0", "rx_dropped": dropped, "rx_errors": errors}}
+def row(ts, dropped, errors=0, carrier_down=2, speed=1000, duplex="full"):
+    return {"ts": ts, "uplink": {"device": "eth0", "rx_dropped": dropped, "rx_errors": errors},
+            "wan_link": {"device": "eth0", "speed_mbps": speed, "duplex": duplex,
+                         "carrier_up": carrier_down, "carrier_down": carrier_down}}
 
 
 class UplinkStateTests(unittest.TestCase):
@@ -55,6 +57,33 @@ class UplinkStateTests(unittest.TestCase):
         rows = [{"ts": "x"}, {"uplink": None}, row(NOW - 1200, 100), row(NOW - 60, 130)]
         code, msg = care.uplink_state(rows, NOW)
         self.assertEqual(code, 0, msg)
+
+    def test_missing_physical_link_state_is_unknown_not_green(self):
+        rows = [{"ts": NOW - 1200, "uplink": row(NOW - 1200, 100)["uplink"]},
+                {"ts": NOW - 60, "uplink": row(NOW - 60, 130)["uplink"]}]
+        self.assertEqual(care.uplink_state(rows, NOW)[0], 3)
+
+    def test_link_without_a_negotiated_speed_is_unknown(self):
+        rows = [row(NOW - 1200, 100, speed=None), row(NOW - 60, 130, speed=None)]
+        self.assertEqual(care.uplink_state(rows, NOW)[0], 3)
+
+    def test_three_carrier_drops_in_the_window_are_red(self):
+        rows = [row(NOW - 7200 + i * 600, 1000, carrier_down=2 + i // 4) for i in range(13)]
+        code, msg = care.uplink_state(rows, NOW)
+        self.assertEqual(code, 2, msg)
+        self.assertIn("WAN link went down 3 times", msg)
+
+    def test_two_carrier_drops_in_the_window_are_green_with_a_note(self):
+        rows = [row(NOW - 7200 + i * 600, 1000, carrier_down=2 + i // 5) for i in range(13)]
+        code, msg = care.uplink_state(rows, NOW)
+        self.assertEqual(code, 0, msg)
+        self.assertIn("link down 2 times in the window", msg)
+
+    def test_carrier_counter_reset_is_not_a_flapping_cable(self):
+        rows = [row(NOW - 1200, 100, carrier_down=7), row(NOW - 60, 130, carrier_down=1)]
+        code, msg = care.uplink_state(rows, NOW)
+        self.assertEqual(code, 0, msg)
+        self.assertNotIn("went down", msg)
 
 
 class UplinkDutyDeclared(unittest.TestCase):

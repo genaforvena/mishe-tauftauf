@@ -173,6 +173,45 @@ def _uplink_read(ts, uptime, rx_dropped):
             "uplink": {"device": "eth0", "rx_errors": 0, "rx_dropped": rx_dropped, "tx_errors": 0, "tx_dropped": 0}}
 
 
+def _wan_read(ts, carrier_down, uptime=1073362, speed=1000, duplex="full"):
+    row = _uplink_read(ts, uptime, 100)
+    row["wan_link"] = {"device": "eth0", "speed_mbps": speed, "duplex": duplex,
+                       "carrier_up": carrier_down, "carrier_down": carrier_down}
+    return row
+
+
+def test_wan_link_line_shows_negotiated_speed_and_quiet_drops(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    _router_log(tmp_path, monkeypatch, [_wan_read(now - 1800, 2), _wan_read(now, 2)])
+    line = view.wan_link_line(now)
+    assert "eth0: 1000 Mb/s full duplex" in line
+    assert "link went down 2 times since router boot (12.4 days)" in line
+    assert "none in the last hour" in line
+    assert "read 0 s ago" in line
+
+
+def test_wan_link_line_counts_a_drop_in_the_last_hour(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    _router_log(tmp_path, monkeypatch, [_wan_read(now - 1800, 2), _wan_read(now, 3)])
+    assert ", 1 in the last hour" in view.wan_link_line(now)
+
+
+def test_wan_link_line_marks_a_reset_after_a_router_reboot(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    _router_log(tmp_path, monkeypatch, [_wan_read(now - 1800, 7), _wan_read(now, 1, uptime=900)])
+    line = view.wan_link_line(now)
+    assert "counters reset in the last hour (router reboot)" in line
+    assert "in the last hour," not in line
+
+
+def test_wan_link_line_unknown_without_physical_state(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    _router_log(tmp_path, monkeypatch, {"ts": now, "ok": True, "clients": [], "uplink": None})
+    assert view.wan_link_line(now).startswith("UNKNOWN")
+    _router_log(tmp_path, monkeypatch, [_wan_read(now - 60, 2, speed=None)])
+    assert view.wan_link_line(now).startswith("UNKNOWN (eth0 link speed not reported")
+
+
 def test_uplink_rate_over_the_last_hour(tmp_path, monkeypatch):
     now = 1_000_000.0
     _router_log(tmp_path, monkeypatch, _uplink_read(now - 3000, 100000, 1000))

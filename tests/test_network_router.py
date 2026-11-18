@@ -43,6 +43,12 @@ LINKS
     0        0       0       0       0       0
     TX:  bytes  packets errors dropped carrier collsns
     0        0       0       0       0       0
+PHY
+device eth0
+speed 1000
+duplex full
+carrier_up_count 2
+carrier_down_count 2
 """
 
 
@@ -84,6 +90,19 @@ def test_trim_keeps_two_days():
     now = 1_000_000.0
     rows = [{"ts": now - 3 * 86400}, {"ts": now - 60}]
     assert nr.trim(rows, now) == [{"ts": now - 60}]
+
+
+def test_wan_physical_link_is_read_from_the_router_sysfs_values():
+    body = nr.parse(SAMPLE)
+    assert body["wan_link"] == {"device": "eth0", "speed_mbps": 1000, "duplex": "full",
+                                "carrier_up": 2, "carrier_down": 2}
+
+
+def test_missing_wan_phy_values_stay_none_not_zero():
+    body = nr.parse("UPTIME 10.0\nPHY\ndevice eth0\nspeed \nduplex unknown\ncarrier_down_count 1\n")
+    assert body["wan_link"] == {"device": "eth0", "speed_mbps": None, "duplex": "unknown",
+                                "carrier_up": None, "carrier_down": 1}
+    assert nr.parse("UPTIME 10.0\nPHY\ndevice \nspeed 1000\n")["wan_link"] is None
 
 
 def test_uplink_counters_read_the_wan_device_only():

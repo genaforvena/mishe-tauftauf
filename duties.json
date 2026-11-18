@@ -1051,7 +1051,7 @@
         3
       ],
       "resolver": "network",
-      "covers": "the WAN receive-drop rate (eth0 rx_dropped per hour, from the router readings in network/router.jsonl) and rx_errors above zero; RED above 400 drops/h over a full 1.8 h span or on any rx_errors, UNKNOWN when the newest router reading is missing or older than two hours, or the counter reset",
+      "covers": "the WAN receive-drop rate (eth0 rx_dropped per hour, from the router readings in network/router.jsonl), rx_errors above zero, and the physical WAN link (negotiated speed/duplex and carrier drops from the same read); RED above 400 drops/h over a full 1.8 h span, on any rx_errors, or on three carrier drops inside the two-hour window, UNKNOWN when the newest router reading is missing or older than 15 min, the rx_dropped counter reset, or the read carries no physical link state or no negotiated speed",
       "replaces": []
     },
     {
