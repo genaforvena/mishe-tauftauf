@@ -3778,3 +3778,74 @@ about 0.1–0.14 CPU-s saved per publication-path run. That is a real but small 
 justification is the single authoritative verifier, not throughput, and the
 plan should not claim otherwise. The tape read shared by both arms costs
 1.92 CPU-s for 302,682 entries.
+
+### 10.66 Rank 2 executed inventory: outcome_events is the holdout, landing is dead (2026-11-18)
+
+§10.65's census is right about the eleven `payload(` sites but wrong about what
+the cutover must move, and the difference decides the edit order.
+
+**`records.envelope` has two callers, and §10.65 names only one.** `rg
+'envelope\(' src/mishe_tauftauf/` finds `records.py:155` (inside `payload`) and
+`outcome_events.py:204`. The scope paragraph of §10.65 says the deletion needs
+"coordination_checks and landing" moved onto the sink; it never mentions
+`outcome_events`, which is the caller that cannot take a payload sink as it
+stands. `classify_outcomes` streams the tape through `iter_feed_file`, not a
+`_VerificationPass`, and calls `records.envelope(entry)` for both fields it
+needs — `envelope['kind']` to decide whether a citation is a wall outcome at
+all, and `envelope['payload']` for the header/role/text/evidence agreement
+checks. Its other store access already bypasses the envelope: it opens
+`records._directory` and reads the 64-byte head through `KindIndex`. So the
+envelope deletion waits on moving those candidates onto one pass: collect the
+candidates the stream accepts, feed them to a single `_VerificationPass` with a
+sink, then build the events from the sink. `_directory` survives that change
+(the head peek and `KindIndex` keep it); `_read` dies with `envelope`.
+
+**`landing` needs no sink move: it has no live input.** `landing.registrations`
+calls `payload(entry)` on `[landing] ` bodies, but the live tape at
+2026-11-18T06:08Z carries **zero** such entries among 302,682
+(`Feed(home).entries(verify_records=False)` filtered on the prefix), and
+`landing.register` raises "raw landing registration is retired; authors use
+delivery submit with a committed candidate" — no writer produces the tag. The
+only parsing `validate` accepts is a first line plus inline JSON
+(`json.loads(rest.splitlines()[0])`). Removing the record branch of `payload`
+therefore leaves landing correct for every entry that can exist; its historical
+tape input is inline by construction.
+
+**The cached read is the pinned blocker.** `Feed.entries` returns cached entries
+at `feed.py:1415` before any verification, and two tests pin that as a contract:
+`tests/test_feed_records.py:158` ("a read served from the entries cache verifies
+nothing") and `tests/test_coordination_checks.py:228` (the projection's
+per-entry fallback still resolves a record after a cache hit). Both must change
+in the same commit as the split: a cached read that is given a payload sink runs
+one `--payloads` pass over its returned entries instead of leaving the sink
+empty. That is cheaper than the fallback it replaces on the measured numbers
+(§10.65: 0.174–0.175 CPU-s for one pass over 5,159 referencing entries against
+0.267–0.311 CPU-s resolving them one by one), and it is required for
+correctness once `payload` refuses a reference.
+
+**Test sites that move with the split.** `payload` is called on record-bearing
+entries at `tests/test_wall.py:681,716,744,795,1080` and
+`records.payload(...)` at `:916`; `tests/test_feed_records.py:15-17` compare a
+parsed entry's payload across three readers, and `:49,69,76,78` pin the refusal
+texts that move to the child (`tests/test_mishe_records_verify.py:237-241`
+already asserts the same texts from `mishe-records`). Each becomes a sink read
+(`Feed(...).entries(payloads=sink)`/`sink[sequence]`) or a child refusal, not a
+Python envelope call.
+
+**Order that keeps the tree green between commits:**
+
+1. `records.payload` decodes inline JSON only; a reference raises, and the mixed
+   line keeps its existing message. `envelope` stays for `outcome_events`.
+2. `coordination_checks._data(entry, payloads=None)` reads a referencing entry
+   from the sink and raises when the sink lacks it; `_full_payloads` and
+   `project` pass the sink; `episode` reads with `payloads=payloads` and the
+   `task coordination-report` CLI read passes its own sink to `anomalies`.
+3. `Feed.entries` fills the sink on the cached and extend modes with one pass
+   over the returned entries; the two cache-hit tests above invert.
+4. `outcome_events.classify_outcomes` moves its accepted candidates onto one
+   sink pass, then `records.envelope` and `_read` are deleted.
+5. `tests/test_wall.py` and `tests/test_feed_records.py` move to sink reads.
+
+Steps 1–3 and 5 are one ordinary verification-path commit with a separate fresh
+reviewer before activation; step 4 is a publication-gate change and takes the
+strong path on its own.
