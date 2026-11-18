@@ -250,3 +250,35 @@ def test_duration_counts_only_the_unbroken_run():
     # A 'worse' hour counts a prior 'much worse' hour: the lower bar was cleared too.
     assert view.wifi_usuality(11.0, [25.0, 11.0, 5.0, 5.0, 5.0]) == \
         ", worse than usual for at least 2 h (usual 5.0%)"
+
+
+def test_a_thirteen_hour_bad_run_does_not_become_its_own_usual():
+    # Thirteen hours at 15% against eleven at 5%: the trailing median is 15%, so the old
+    # comparison called the still-busy radio "about usual" and the streak vanished.
+    text = view.wifi_usuality(15.2, [15.0] * 13 + [5.0] * 11, 6.0)
+    assert "worse than usual for at least 13 h (usual 5.0%)" in text, text
+
+
+def test_a_whole_window_bad_uses_the_lifetime_share():
+    text = view.wifi_usuality(15.2, [15.0] * 24, 6.0)
+    assert "worse than usual for at least 24 h (usual 6.0% since boot)" in text, text
+
+
+def test_an_elevated_hour_still_counts_plain_worse_hours():
+    # 16% against 5% is 'much worse'; the two 11% hours cleared only 'worse' but still
+    # extend the age, which must grow rather than reset when the label changes level.
+    text = view.wifi_usuality(16.0, [11.0, 11.0, 5.0, 5.0, 5.0], 5.0)
+    assert "much worse than usual for at least 2 h (usual 5.0%)" in text, text
+
+
+def test_a_noisy_band_without_a_run_keeps_its_plain_median():
+    rates = [10.8, 13.5, 13.2, 16.1, 10.3, 15.8, 14.3, 14.8] + [14.0] * 16
+    assert view.wifi_usuality(10.8, rates, 14.2) == ", about usual"
+
+
+def test_a_whole_window_bad_names_the_lifetime_baseline(tmp_path, monkeypatch):
+    rows = counter_history(USUAL_NOW, 50,
+                           lambda t, now: 0.25 if t >= now - 26 * 3600 else 0.05)
+    write_rows(tmp_path, monkeypatch, rows)
+    line = view.wifi_quality_line(now=USUAL_NOW).split("\n")[0]
+    assert "for at least 24 h" in line and "since boot" in line, line

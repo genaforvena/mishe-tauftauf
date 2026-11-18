@@ -226,12 +226,16 @@ is not mistaken for a quiet mind.
   altogether says `radio missing from the newest read`), or when a reboot has left fewer
   than two counter reads (10 minutes apart) in the hour, which shows as `(last hour UNKNOWN)`. A reboot
   restarts the counters from zero, so only reads after it bracket a rate; with two post-reboot reads
-  the line shows that shorter span instead of UNKNOWN. After the last-hour share the line says how that
-  hour compares with the median of the last 24 completed clock hours held in the two-day router
+  the line shows that shorter span instead of UNKNOWN. After the last-hour share the line says how
+  that hour compares with the completed hours held in the two-day router
   log (`about usual`; `worse than usual (usual N%)` at 1.5× and at least five points above it;
   `much worse than usual (usual N%)` at 2× and at least ten points above; `no usual yet` with fewer
-  than three completed hours). When the current hour is flagged, consecutive completed hours that
-  cleared the same bar add `for at least N h`, so a five-hour streak does not read like a fresh blip;
+  than three completed hours). The comparison is taken from the hours *before* a sustained bad run,
+  not from a median the run would inflate: a radio busy for twelve hours still reads "worse than
+  usual" instead of quietly becoming its own normal. If every completed hour is in the run, the
+  baseline is the lifetime share since router boot and the line says `(usual N% since boot)`.
+  When the current hour is flagged, consecutive completed hours that cleared the `worse` bar add
+  `for at least N h`, so a five-hour streak does not read like a fresh blip;
   a calm hour or a hole in the log stops the count and no duration is printed. It is a symptom, not a
   diagnosis: the attempts figure counts retries, and a radio can work harder at a busy hour without
   losing frames. STALE past 15 minutes.

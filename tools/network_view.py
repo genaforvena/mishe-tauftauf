@@ -461,6 +461,7 @@ WIFI_WORSE_RATIO = 1.5      # 50% above the usual share ...
 WIFI_WORSE_PP = 5.0         # ... and at least five points above it
 WIFI_MUCH_RATIO = 2.0       # twice the usual share ...
 WIFI_MUCH_PP = 10.0         # ... and at least ten points above it
+WIFI_BASELINE_RUN_MIN = 4    # a run this long can capture a 24 h median; re-base on the earlier hours
 
 
 def router_rows():
@@ -893,29 +894,55 @@ def _wifi_severity(rate, usual):
     return 0
 
 
-def wifi_usuality(rate, earlier):
+def _wifi_run_baseline(earlier, lifetime):
+    """A 'usual' share the newest bad run cannot define, and the length of that run.
+
+    A trailing median includes the very hours being flagged: once a bad run fills half the
+    window the median becomes the bad rate and the flag quietly vanishes while the radio is
+    still busy. Look for the longest newest run whose every hour is worse than the median of
+    the hours before it, and take that earlier median as the baseline. When no calm hour is
+    left in the window, use the lifetime since-boot share instead: thirteen days of counter
+    history cannot be captured by one bad day. Returns (baseline, run length); a run length
+    equal to len(earlier) means the lifetime figure was used.
+    """
+    n = len(earlier)
+    if n < WIFI_USUAL_MIN_HOURS:
+        return None, 0
+    for split in range(n, WIFI_BASELINE_RUN_MIN - 1, -1):
+        before = lifetime if split == n else statistics.median(earlier[split:])
+        if before is None or not all(_wifi_severity(h, before) for h in earlier[:split]):
+            continue
+        return before, split
+    return statistics.median(earlier), 0
+
+
+def wifi_usuality(rate, earlier, lifetime=None):
     """Plain words for a band's last-hour failed-attempt share against its own completed hours.
 
     The rate counts retries, so this is a symptom, not a diagnosis: it says the radio is working
-    harder than it usually does, which is what a person notices as a slow connection. When the
-    current hour clears a bar, the phrase also counts the consecutive completed hours that cleared
-    the same bar, so a five-hour problem does not read like a fresh blip. A hole or a quiet hour
-    stops the count; the rolling hour is never counted as a completed one.
+    harder than it usually does, which is what a person notices as a slow connection. The baseline
+    is taken from the hours before a sustained bad run, so a long problem cannot make its own
+    "usual" and then disappear; when the whole window is in the run, the lifetime since-boot share
+    is used and named. When the current hour clears a bar, the phrase also counts the consecutive
+    completed hours that cleared the same bar, so a five-hour problem does not read like a fresh
+    blip. A hole or a quiet hour stops the count; the rolling hour is never counted as a completed
+    one.
     """
     if len(earlier) < WIFI_USUAL_MIN_HOURS:
         return ", no usual yet"
-    usual = statistics.median(earlier)
+    usual, run = _wifi_run_baseline(earlier, lifetime)
+    since_boot = " since boot" if run == len(earlier) else ""
     severity = _wifi_severity(rate, usual)
     if not severity:
         return ", about usual"
     hours = 0
     for past in earlier:  # newest completed hour first
-        if _wifi_severity(past, usual) < severity:
+        if not _wifi_severity(past, usual):  # any 'worse' hour extends the age
             break
         hours += 1
     span = f" for at least {hours} h" if hours else ""
     label = "much worse than usual" if severity == 2 else "worse than usual"
-    return f", {label}{span} (usual {usual:.1f}%)"
+    return f", {label}{span} (usual {usual:.1f}%{since_boot})"
 
 
 def wifi_quality_line(now=None):
@@ -958,7 +985,8 @@ def wifi_quality_line(now=None):
         if not total:
             parts.append(f"{band} GHz transmission counters UNKNOWN (missing from the newest read)")
             continue
-        text = f"{band} GHz {100.0 * stats['tx_fail'] / total:.1f}% of attempts failed since boot"
+        lifetime = 100.0 * stats["tx_fail"] / total
+        text = f"{band} GHz {lifetime:.1f}% of attempts failed since boot"
         got = _radio_fail_window(reads, band, now - 3600, now)
         if got is None:
             text += " (last hour UNKNOWN)"
@@ -966,7 +994,7 @@ def wifi_quality_line(now=None):
             fails, sends, span = got
             rate = 100.0 * fails / sends
             text += f", {rate:.1f}% last {span / 60:.0f} min"
-            text += wifi_usuality(rate, _hour_attempt_rates(reads, band, now))
+            text += wifi_usuality(rate, _hour_attempt_rates(reads, band, now), lifetime)
         per = stats.get("tx_per")
         if isinstance(per, (int, float)):
             text += f"; driver's error rate {per:.1f}%"
