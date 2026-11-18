@@ -46,6 +46,12 @@ RUNNING_UNITS = ("moving-pin-delivery-*", "genome-deliver-*")
 RUNNING_PROCESSES = (
     r"^(/bin/)?bash [^ ]*delivery/(deliver|heal).sh",
     r"^[^ ]*python[0-9.]* -m mishe_tauftauf.wall_patch",
+    # A delivery request consumed by another role's wake runs the same promotion as a
+    # child command, so it holds no ``moving-pin-delivery-*`` unit of its own. On
+    # 2026-11-18 06:14Z that gap let the cadence start a second promotion 54 s into a
+    # rust-plan request: both ran the whole suite for ~18 min side by side, and the
+    # cadence's copy then waited for wakes while the request delivered the older sha.
+    r"^[^ ]*python[0-9.]* -m mishe_tauftauf release advance",
 )
 """Legacy delivery/heal scripts and the patch gate, matched by argv like the retired ``cadence.sh``."""
 
@@ -74,15 +80,19 @@ def _running(cmd: list) -> bool:
     return done.returncode == 0 and bool(done.stdout)
 
 
+def _units_running() -> bool:
+    units = subprocess.run(
+        ["systemctl", "--user", "list-units", "--no-legend", "--state=activating,active,running", *RUNNING_UNITS],
+        capture_output=True, text=True)
+    return units.returncode == 0 and bool(units.stdout)
+
+
 def gate_running() -> bool:
     """True when a promotion, heal or patch gate is already running, so the cadence must skip."""
     for pattern in RUNNING_PROCESSES:
         if _running(["pgrep", "-f", pattern]):
             return True
-    units = subprocess.run(
-        ["systemctl", "--user", "list-units", "--no-legend", "--state=activating,active,running", *RUNNING_UNITS],
-        capture_output=True, text=True)
-    return units.returncode == 0 and bool(units.stdout)
+    return _units_running()
 
 
 def should_start(pin: str, head: str, newest_at: float, last: tuple | None, now: float,

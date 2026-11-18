@@ -2,6 +2,7 @@
 import importlib.util
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 CHECK = Path(__file__).resolve().parents[1] / "checks" / "delivery-cadence.py"
@@ -132,3 +133,20 @@ def test_successful_launcher_records_started_attempt(monkeypatch, tmp_path):
     monkeypatch.setattr(cadence.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "started", ""))
     assert cadence.run(tmp_path, tmp_path, now=10000) == 0
     assert cadence._read_state(tmp_path) == (HEAD, 10000, "started")
+
+
+def test_gate_sees_a_promotion_started_by_another_roles_delivery_request(monkeypatch):
+    """A request consumer's promotion is a child command with no moving-pin-delivery unit of its own."""
+    monkeypatch.setattr(cadence, "_units_running", lambda: False)
+    proc = subprocess.Popen(
+        ["bash", "-c", 'exec -a "python -m mishe_tauftauf release advance" sleep 30'],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(50):
+            if cadence.gate_running():
+                break
+            time.sleep(0.05)
+        assert cadence.gate_running(), "the cadence would start a second promotion beside a live one"
+    finally:
+        proc.kill()
+        proc.wait()
