@@ -33,14 +33,16 @@ the guard, or its cgroup write is failing -- and it is RED either way, naming th
 unit and both values.
 
 It never writes: no cgroup, no unit, no config.  A tree it cannot read, or a
-floor it cannot learn, is UNKNOWN (exit 3), never a pass.
+floor it cannot learn, is UNKNOWN (exit 3), never a pass.  A leaf whose cgroup was
+removed between /proc enumeration and the read is a oneshot that has exited: it is
+skipped, not UNKNOWN, because cgroup v2 cannot remove a populated cgroup.
 
 Exit status:
-  0  GREEN   every guarded leaf that has a process reads at least the floor
+  0  GREEN   every guarded leaf still present at read time reads at least the floor
   2  RED     a leaf with a process reads below the floor for --persist seconds
   3  UNKNOWN the declared floor cannot be learned, the process tree cannot be
-             enumerated, or a guarded leaf's memory.high cannot be read while it
-             has processes
+             enumerated, or a present guarded leaf's memory.high cannot be read
+             (or is not a number) while it has processes
 
 ``--floor`` overrides the declared floor (bytes); without it the floor comes from
 the running release's ``mishe_tauftauf.units.WAKE_MEMORY_HIGH_BYTES``.
@@ -143,10 +145,22 @@ def guarded_leaves(root: pathlib.Path = PROC) -> dict[str, pathlib.Path]:
     return leaves
 
 
-def read_high(cgroup: pathlib.Path) -> int | None:
-    """The leaf's own ``memory.high`` in bytes, or None when it is not a number (``max``)."""
+GONE = object()
+"""A leaf enumerated from /proc whose cgroup was removed before its memory.high was read."""
+
+
+def read_high(cgroup: pathlib.Path):
+    """The leaf's own memory.high in bytes, or a marker for gone / unreadable.
+
+    cgroup v2 cannot remove a populated cgroup, so ENOENT here means the oneshot has
+    exited: a dead leaf is not a floor fault and must not be reported UNKNOWN. Any other
+    OSError (EACCES, EIO, ...) is genuine unreadability and stays UNKNOWN, as does a
+    non-numeric value such as ``max``.
+    """
     try:
         text = (cgroup / "memory.high").read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, ProcessLookupError):
+        return GONE
     except OSError:
         return None
     try:
@@ -160,8 +174,11 @@ def inspect(leaves: dict[str, pathlib.Path], floor: int) -> list[dict]:
     rows = []
     for unit, cgroup in sorted(leaves.items()):
         high = read_high(cgroup)
-        rows.append({"unit": unit, "cgroup": cgroup, "high": high,
-                     "below": high is not None and high < floor})
+        gone = high is GONE
+        rows.append({"unit": unit, "cgroup": cgroup,
+                     "high": None if gone else high, "gone": gone,
+                     "unreadable": high is None,
+                     "below": isinstance(high, int) and high < floor})
     return rows
 
 
@@ -178,15 +195,22 @@ def main(argv=None) -> int:
     except Undecidable as exc:
         print(f"wake-memory-floor: {exc}", file=sys.stderr)
         return 3
-    first = inspect(leaves, floor)
+    first = [row for row in inspect(leaves, floor) if not row["gone"]]
     suspects = [row for row in first if row["below"]]
-    unreadable = [row for row in first if row["high"] is None]
+    unreadable = [row for row in first if row["unreadable"]]
     if suspects:
         time.sleep(max(0.0, args.persist))
-        again = {row["unit"]: row for row in inspect(leaves, floor)}
-        unreadable.extend(again[row["unit"]] for row in suspects
-                          if again[row["unit"]]["high"] is None)
-        suspects = [row for row in suspects if again.get(row["unit"], row)["below"]]
+        again = {row["unit"]: row for row in inspect(leaves, floor) if not row["gone"]}
+        still_below = []
+        for row in suspects:
+            reread = again.get(row["unit"])
+            if reread is None or reread["unreadable"]:
+                # A below-floor reading that vanishes or turns unreadable on
+                # confirmation stays UNKNOWN; it must not become a pass (8ad00645).
+                unreadable.append(reread or row)
+            elif reread["below"]:
+                still_below.append(reread)
+        suspects = still_below
     if suspects:
         for row in suspects:
             print(f"wake-memory-floor: RED {row['unit']} memory.high={row['high']} below the "

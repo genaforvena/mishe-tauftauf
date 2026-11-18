@@ -80,12 +80,32 @@ def test_a_low_reading_that_becomes_unreadable_is_unknown(check, monkeypatch, ca
     assert "unreadable" in captured.err
 
 
-def test_an_unreadable_floor_is_unknown_not_green(check, monkeypatch, capsys, tmp_path):
-    directory = tmp_path / "gone"  # enumerated, then gone before the read
+def test_a_vanished_oneshot_cgroup_is_skipped_not_unknown(check, monkeypatch, capsys, tmp_path):
+    directory = tmp_path / "gone"  # enumerated from /proc, cgroup removed before the read
     directory.mkdir()
+    code, text = run(check, monkeypatch, {"mishe-producer-ci.service": directory}, capsys)
+    assert code == 0
+    assert "GREEN 0 guarded unit(s)" in text
+
+
+def test_a_genuinely_unreadable_floor_is_unknown(check, monkeypatch, capsys, tmp_path):
+    directory = leaf(tmp_path, "p", FLOOR)
+    (directory / "memory.high").unlink()
+    (directory / "memory.high").mkdir()  # EISDIR: present but unreadable, not vanished
     code, text = run(check, monkeypatch, {"mishe-producer-ci.service": directory}, capsys)
     assert code == 3
     assert "unreadable" in text
+
+
+def test_a_vanished_oneshot_does_not_hide_a_real_low_floor(check, monkeypatch, capsys, tmp_path):
+    gone = tmp_path / "gone"  # oneshot enumerated, then removed before the read
+    gone.mkdir()
+    low = leaf(tmp_path, "w", 1073741824)
+    code, text = run(check, monkeypatch,
+                     {"mishe-producer-ci.service": gone, "mishe-wake@health.service": low}, capsys)
+    assert code == 2
+    assert "mishe-wake@health.service" in text
+    assert "mishe-producer-ci.service" not in text
 
 
 def test_a_non_numeric_memory_high_is_unknown(check, monkeypatch, capsys, tmp_path):
