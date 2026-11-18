@@ -84,6 +84,26 @@ def test_a_repeated_job_heartbeat_is_silence_but_an_advancing_one_is_progress(tm
     assert reader.poll() == len(advancing), "a job on its next tool call is progress"
 
 
+@pytest.mark.parametrize("partial", ["oops", 7, [1, 2], {"details": "scalar"}])
+def test_a_malformed_heartbeat_partial_result_is_silence_not_an_exception(tmp_path: Path, partial):
+    # The independent finding on e517ca20: a truthy non-object partialResult made .get('details')
+    # raise AttributeError out of progress_bytes and _ProgressReader.poll, so the wake failed with
+    # unknown effect instead of a bounded EngineTimeout. Fixed in 894e1f1b; that code-only fix
+    # had no regression test. The scalar-details case also locks in the existing details guard.
+    line = (json.dumps({"type": "tool_execution_update", "toolName": "task",
+                        "partialResult": partial}, separators=(",", ":")) + "\n").encode()
+    jobs: dict = {}
+    states: dict = {}
+    progress, consumed = proc.engine_boundary.progress_bytes(line, jobs, states)
+    assert (progress, consumed) == (0, len(line))
+    assert jobs == {} and states == {}
+    out = tmp_path / "stream"
+    out.write_bytes(line)
+    reader = proc._ProgressReader(out)
+    assert reader.poll() == 0, "a malformed heartbeat must not count as progress"
+    assert reader.jobs == {} and reader.job_states == {}
+
+
 def test_a_wait_ping_whose_durations_advance_is_still_silence(tmp_path: Path):
     out = tmp_path / "stream"
     reader = proc._ProgressReader(out)
