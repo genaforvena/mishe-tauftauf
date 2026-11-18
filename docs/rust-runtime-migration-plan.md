@@ -3474,3 +3474,51 @@ hourly duty. Both candidate rationales — CPU and interactive latency — are n
 measured negative on this plant; a future slice needs a different reason (a broken
 contract, a responsibility with two live implementations, or a new workload), not
 another optimisation of an existing one.
+
+### 10.61 The next slice is a contract deletion, not a speedup: three live duplications (2026-11-18)
+
+Sections 10.59 and 10.60 measured CPU and interactive latency negative. This
+section answers the remaining charter question directly: where does a Python
+caller still make a decision a Rust binary also makes? The map covered all nine
+crates under `rust/` and their Python adapters and callers, read-only, on HEAD
+`0348785f` (24 GB available, pressure avg10 0.00, load 2.94; no build run).
+
+Five responsibilities are already single-authority cutovers and are not slices:
+signal freshness in `expire`, unit paths apart from its declared DEFER arm,
+systemd-show's own adapter, tape framing in the feed reader, record verification
+in the feed path, signal samples and network probe. Two more paths are deliberate,
+evidence-backed boundaries, not accidental duplicates: `unit_paths.py:85-86`
+defers non-ASCII input to `unit_properties.declared_paths` because Python's
+`\w`/`\s` are Unicode-aware (`rust/mishe-unit-paths/CONTRACT.md:33-46` records the
+differential cases), and `signal_store.py:276` plus `:302-306` keep the Python
+comparison as an UNKNOWN safety net so a broken binary cannot leave a stale GREEN.
+`mishe-tape-facts` is installed but has no live caller; discovery's
+`DM_TO_RE`/`RECORD_REF_RE`/`WALL_OUTCOME_RE` are the only live implementation of
+their decisions, so a Rust binary without a consumer is not a parallel path.
+
+Three duplications are live and ranked for deletion:
+
+| Rank | Python decision | Rust authority | Blast radius |
+|---|---|---|---|
+| 1 | `feed.py:24` `FRAME_START_RE`; frame-index scans at `:1067`, `:1418`, `:1465` | `feed.py:415` `_frame_offsets` → `mishe-tape frames --offsets` | one decision, three sites within one module |
+| 2 | `records.py:31,144-187,203-302` Python envelope/payload/kind verifier; `outcome_events.py:204` calls `records.envelope(entry)` for a kind the child already wrote to `facts.kind` | `mishe-records verify` decision line (`records 0.4`) | one classifier call, but a protocol/durable boundary |
+| 3 | eight `systemctl show` `KEY=VALUE` decoders: `release_boundary.py:54`, `work_boundary.py:136-167`, `consumer_fence.py:34`, `boot_rearm.py:90`, `discovery.py:1846/1958/2024` | `mishe-systemd-show` | eight modules; do last |
+
+Decision: rank 1 is the next slice, subject to one measurement — confirm
+`_frame_offsets` can produce the same index bytes for a whole-tape read without a
+second framer pass at unacceptable cost. The acceptance test must compare the
+index bytes the current regex produces with the Rust offsets on a preserved tape
+copy, then delete `FRAME_START_RE`; a test that only checks the new path passes is
+not acceptance. Rank 1 touches the checkpoint index (durability-adjacent), so it
+takes deterministic activation, revert and reapply checks plus a fresh
+post-delivery reviewer, even though delivery itself remains the continuous path.
+
+`parsing-policy.json` names `feed.py:25`, `records.py:46`, `cpu_stat_text.py:20`,
+`unit_properties.py:69` and a legacy `discovery.py` budget:179. Any edit to those
+boundaries must run `python tools/check_parsing.py` and must not widen the frozen
+legacy budget.
+
+This section is a map and a decision, not a cutover: no source, binary, test or
+pin changed here. If rank 1's cost measurement refutes it, fall through to rank 2,
+which is confined to one classifier call; if a candidate proves to be a
+documented boundary, drop it rather than force a slice.
