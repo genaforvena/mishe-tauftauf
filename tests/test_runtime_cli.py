@@ -248,9 +248,34 @@ def test_sync_installs_declared_producers_and_doctor_agrees(site, tmp_path, monk
     assert cli("sync", "--unit-dir", str(d), "--no-systemctl") == 0
     assert (d / "mishe-producer-egress.timer").exists()
     assert "signal run egress" in (d / "mishe-producer-egress.service").read_text()
-    assert "signals/egress.json" in (d / "mishe-wake-genome.path").read_text()
+    # A render into a scratch unit dir claims nothing, so the wake watch list names no signal it
+    # did not register: an unclaimed watch would have no producer behind it.
+    assert "signals/egress.json" not in (d / "mishe-wake-genome.path").read_text()
     _healthy_root_fs_probe(site, d, monkeypatch)
     assert cli("doctor", "--unit-dir", str(d)) == 0
+
+
+def test_a_scratch_unit_dir_render_does_not_register_duties_it_does_not_install(site, tmp_path, monkeypatch):
+    """A probe render writes units systemd never loads. Registering their signals anyway leaves a
+    watch with no producer: it expires to UNKNOWN on max_age and wakes the resolver with no unit
+    to look at (2026-11-17: main-publication registered 23:30:53 by a render into /tmp/probe, no
+    mishe-producer-main-publication unit installed, signal UNKNOWN at 23:50)."""
+    probe = tmp_path / "probe"
+    assert cli("sync", "--unit-dir", str(probe), "--no-systemctl", "--repo", str(REPO_ROOT),
+               "--pythonpath", str(REPO_ROOT / "src")) == 0
+    assert (probe / "mishe-producer-ci.timer").exists()
+    assert "ci" not in store.registry(site)               # rendered, not claimed
+
+    monkeypatch.setenv("HOME", str(tmp_path))             # now the same render is the live install
+    live = tmp_path / ".config" / "systemd" / "user"
+    assert cli("sync", "--unit-dir", str(live), "--no-systemctl", "--repo", str(REPO_ROOT),
+               "--pythonpath", str(REPO_ROOT / "src")) == 0
+    assert (live / "mishe-producer-ci.timer").exists()
+    assert store.registry(site)["ci"]["subscribers"] == ["genome"]
+    assert "signals/ci.json" in (live / "mishe-wake-genome.path").read_text()   # claimed, so watched
+
+    assert cli("sync", "--unit-dir", str(live), "--uninstall", "--no-systemctl") == 0
+    assert "ci" in store.registry(site)                   # uninstall removes units, not the registration
 
 
 def test_releasing_the_hold_offers_the_owed_role(site, monkeypatch):

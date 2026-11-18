@@ -431,8 +431,15 @@ def run_units(args, home: Path, now: float) -> int:
     from .work_boundary import runtime_source
     source_repo = Path(getattr(args, "source_repo", None) or runtime_source(cfg.repo, args.pythonpath)).resolve()
     # Only the writer registers: a doctor run that added watches for the manifest it is reading would
-    # change the expectation it is checked against (see producers.load).
-    register = args.command == "sync"
+    # change the expectation it is checked against (see producers.load). And only a sync that installs
+    # where systemd loads the units may claim them: a render into a scratch --unit-dir writes no unit
+    # systemd runs, so registering its duties leaves a signal with no producer that turns UNKNOWN on
+    # its max_age and wakes the resolver (2026-11-17: main-publication registered 23:30:53 by a probe
+    # render from the checkout, no mishe-producer-main-publication unit existed, signal UNKNOWN 23:50).
+    live_units = (Path.home() / ".config" / "systemd" / "user").resolve()
+    installs = (args.command == "sync" and not getattr(args, "uninstall", False)
+                and Path(args.unit_dir).resolve() == live_units)
+    register = installs
     declared = producers.load(home, python=sys.executable, declared=duties.declared(cfg.repo, home, source=source_repo),
                               register=register)
     declared += producers.load(home, python=sys.executable, register=register)
