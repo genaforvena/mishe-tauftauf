@@ -496,3 +496,26 @@ def test_wrong_import_path_is_unknown(tmp_path, monkeypatch, capsys):
                      "--max-load", "100000", "--max-cpu-pressure", "100000",
                      "--max-mem-pressure", "100000"]) == 3
     assert "fold imported feed from outside" in capsys.readouterr().err
+
+
+def test_fold_uses_release_source_despite_stale_bytecode(tmp_path):
+    import py_compile
+
+    repo = _rust_release(tmp_path)
+    home = tmp_path / "site"
+    (repo / ".gitignore").write_text("__pycache__/\n")
+    _commit(repo, "ignore Python caches")
+    feed = repo / "src/mishe_tauftauf/feed.py"
+    source = feed.read_text()
+    altered = source.replace("* 3", "* 9")
+    assert len(source) == len(altered) and source != altered
+    stamp = 1700000000
+    feed.write_text(altered)
+    os.utime(feed, (stamp, stamp))
+    py_compile.compile(str(feed), doraise=True)
+    feed.write_text(source)
+    os.utime(feed, (stamp, stamp))
+    assert not subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain", "--", "src"], text=True)
+
+    reading = check_module().fold_role(repo, home, "senses", 30)
+    assert reading["entries"] == 3

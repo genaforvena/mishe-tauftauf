@@ -72,6 +72,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -219,9 +220,13 @@ def fold_role(repo: Path, home: Path, role: str, timeout: int) -> dict:
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     src = str(repo / "src")
     env["PYTHONPATH"] = src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    proc = subprocess.run(
-        [sys.executable, "-c", CHILD, str(home), role],
-        capture_output=True, text=True, timeout=timeout, env=env)
+    # Dont-write alone still permits reading timestamp-valid stale bytecode.
+    # Give this child an empty cache so its imports come from release sources.
+    with tempfile.TemporaryDirectory(prefix="mishe-fold-pycache-") as cache:
+        env["PYTHONPYCACHEPREFIX"] = cache
+        proc = subprocess.run(
+            [sys.executable, "-c", CHILD, str(home), role],
+            capture_output=True, text=True, timeout=timeout, env=env)
     if proc.returncode != 0:
         raise RuntimeError(f"{role} fold exited {proc.returncode}: {proc.stderr.strip()[-300:]}")
     lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
