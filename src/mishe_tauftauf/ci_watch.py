@@ -369,13 +369,19 @@ def _state_for(matches: list[dict], sha: str) -> dict[str, str]:
 CAUSE_MAX = 300
 
 
-def cause_line(reading: dict[str, str]) -> str:
+def cause_line(reading: dict[str, str], *, superseded_by: dict[str, str] | None = None) -> str:
     """One bounded line naming the run behind a reading, so a woken resolver need not re-query GitHub.
 
     The reading is this module's own decoded value, but ``detail`` carries the reader's raw error text
     for an unknown state, so collapsing it to one line is text interpretation and belongs here at the
     boundary rather than in a consumer. It is the cause a RED signal stores (2026-11-18: the ci RED
     that woke genome stored only "RED", and finding the failed commit took ``gh run list``/``run view``).
+
+    ``superseded_by`` is the newest commit's still-unfinished reading when this one is the *last
+    finished* result. Without it a RED for a commit whose fix is already pushed and running reads as a
+    live breakage of main: 2026-11-18 the cloud docs RUN failed on two ignored ``artifacts/`` paths,
+    the repair reached the branch six minutes later, and the standing RED still named the repaired
+    commit for the length of the new run. The suffix states what the reader already knew.
     """
     state = reading.get("state") or "unknown"
     sha = reading.get("sha") or "unknown"
@@ -387,7 +393,15 @@ def cause_line(reading: dict[str, str]) -> str:
     detail = reading.get("detail") or ""
     if detail:
         text += f": {detail}"
-    return " ".join(text.split())[:CAUSE_MAX]
+    newer = superseded_by or {}
+    newer_sha = newer.get("sha") or ""
+    suffix = ""
+    if newer.get("state") == "pending" and newer_sha and newer_sha != sha:
+        suffix = (f"; a newer run {newer.get('run')} for {newer_sha} is still going"
+                  if (newer.get("run") or "none") != "none"
+                  else f"; a newer commit {newer_sha} has no run registered yet")
+    text = text[:max(0, CAUSE_MAX - len(suffix))]
+    return " ".join((text + suffix).split())[:CAUSE_MAX]
 
 
 def _command(*argv: str, cwd: Path | None = None) -> str:

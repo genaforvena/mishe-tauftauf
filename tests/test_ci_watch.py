@@ -226,3 +226,19 @@ def test_read_completed_ignores_finished_runs_that_are_not_branch_pushes(tmp_pat
     ]
     with patch.object(ci_watch, "_command", side_effect=[metadata, json.dumps(rows)]):
         assert ci_watch.read_completed(tmp_path / "site")["state"] == "pending"
+
+
+def test_cause_line_names_only_a_different_commit_as_the_newer_run():
+    failed = {"state": "fail", "sha": "c" * 40, "run": "10", "url": "https://example/run/10"}
+    # The same commit still going is not "superseded": that would name a repair that does not exist.
+    same = {"state": "pending", "sha": "c" * 40, "run": "11"}
+    assert "newer" not in ci_watch.cause_line(failed, superseded_by=same)
+    # A pending reading for a later commit is what makes the failure superseded.
+    later = {"state": "pending", "sha": "d" * 40, "run": "11"}
+    line = ci_watch.cause_line(failed, superseded_by=later)
+    assert "run 10 fail for " + "c" * 40 in line
+    assert "newer run 11 for " + "d" * 40 + " is still going" in line
+    # The line stays inside one window width, so the suffix cannot push it past the bound.
+    long = dict(failed, url="https://example/" + "u" * 400)
+    assert len(ci_watch.cause_line(long, superseded_by=later)) <= ci_watch.CAUSE_MAX
+    assert ci_watch.cause_line(long, superseded_by=later).endswith("is still going")

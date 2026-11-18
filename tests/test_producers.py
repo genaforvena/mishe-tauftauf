@@ -246,6 +246,26 @@ def test_ci_green_carries_no_cause_and_a_pending_red_names_the_finished_run(tmp_
     assert "run 2 fail" in store.read(tmp_path, "ci", now=NOW + 10).reason
 
 
+def test_ci_red_for_the_last_finished_run_names_the_newer_run_still_going(tmp_path):
+    # 2026-11-18: the RED that woke genome named 89f6b744 while d6603918 — the commit carrying the
+    # repair — was already running, so the wake spent its first minutes proving the failure was
+    # superseded. The reader knows the newer run; the cause now says so.
+    store.register(tmp_path, "ci", max_age=900, subscribers=["genome"])
+    finished = {"state": "fail", "sha": "c" * 40, "run": "44241611729", "url": "https://example/run/old"}
+    newer = {"state": "pending", "sha": "d" * 40, "run": "44242178345", "url": "https://example/run/new"}
+    assert producers.produce(tmp_path, "ci", now=NOW, read=lambda h: newer,
+                             completed=lambda h: finished) == "RED"
+    reason = store.read(tmp_path, "ci", now=NOW).reason
+    assert "44241611729 fail for " + "c" * 40 in reason
+    assert "newer run 44242178345 for " + "d" * 40 + " is still going" in reason
+    # A commit with no registered run yet says that instead of naming a run id it does not have.
+    unregistered = {"state": "pending", "sha": "e" * 40, "run": "none"}
+    producers.produce(tmp_path, "ci", now=NOW + 10, read=lambda h: unregistered,
+                      completed=lambda h: finished)
+    assert "newer commit " + "e" * 40 + " has no run registered yet" in store.read(
+        tmp_path, "ci", now=NOW + 10).reason
+
+
 def test_ci_unknown_failure_carries_the_reader_detail(tmp_path):
     store.register(tmp_path, "ci", max_age=900, subscribers=["genome"])
     with pytest.raises(producers.ObservationFailed, match="CI state 'unknown': gh: rate limited"):

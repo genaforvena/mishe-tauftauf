@@ -151,7 +151,7 @@ class ObservationFailed(RuntimeError):
     """The source could not tell; the signal is left to age to UNKNOWN."""
 
 
-def _ci_cause(reading: dict) -> str:
+def _ci_cause(reading: dict, *, superseded_by: dict | None = None) -> str:
     """Name the Actions run behind a ci reading, so a woken resolver need not re-query GitHub.
 
     The reader already carries the run's id, commit, url and detail; the signal used to store only
@@ -159,7 +159,7 @@ def _ci_cause(reading: dict) -> str:
     formatting (and the collapse of raw error text to one line) lives in the ci boundary.
     """
     from .ci_watch import cause_line
-    return cause_line(reading)
+    return cause_line(reading, superseded_by=superseded_by)
 
 
 def ci(home, *, now: float, read=None, completed=None) -> "str | tuple[str, str] | None":
@@ -182,7 +182,7 @@ def ci(home, *, now: float, read=None, completed=None) -> "str | tuple[str, str]
         if finished["state"] == "pass":
             return "GREEN"
         if finished["state"] == "fail":
-            return "RED", _ci_cause(finished)
+            return "RED", _ci_cause(finished, superseded_by=reading)
         # Nothing on the branch has finished (a young branch), or GitHub could not be read: keep the
         # standing result fresh instead of aging to a false UNKNOWN.
         signal_store.refresh(home, "ci", now=now)
