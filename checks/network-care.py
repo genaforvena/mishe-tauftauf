@@ -308,11 +308,11 @@ VPN_WINDOW_S = 30 * 60      # only readings from this window count
 def vpn_state(rows, now):
     """Judge sing-box and tun0 from the newest fresh router VPN reading.
 
-    Row shape: {"ts", "ok", "vpn": {"ps_ok", "sing_box", "tun0"}}. Returns (code, message):
-    0 GREEN, 2 RED, 3 UNKNOWN. A missing/stale reading, an unreadable process list or an unknown
-    process/link is UNKNOWN, never GREEN; a readable "sing-box NOT running" or a tun0 down/absent
-    is RED. Like the window's VPN line, this judges the single newest reading: the tunnel process
-    either exists at that instant or it does not.
+    Row shape: {"ts", "ok", "vpn": {"ps_ok", "sing_box", "tun0", "tun0_rx_bytes", "tun0_tx_bytes"}}.
+    Returns (code, message): 0 GREEN, 2 RED, 3 UNKNOWN. A missing/stale reading, an unreadable process
+    list, an unknown process/link or absent tunnel counters is UNKNOWN, never GREEN; a readable
+    "sing-box NOT running" or a tun0 down/absent is RED. Like the window's VPN line, this judges the
+    single newest reading: the tunnel process either exists at that instant or it does not.
     """
     fresh = []
     for row in rows:
@@ -343,6 +343,8 @@ def vpn_state(rows, now):
         return 2, f"network-care: tun0 {tun.upper()} on the router"
     if v.get("sing_box") is not True or tun != "up":
         return 3, "network-care: VPN state unreadable (unknown process or link)"
+    if v.get("tun0_rx_bytes") is None or v.get("tun0_tx_bytes") is None:
+        return 3, "network-care: tun0 traffic counters missing from the newest VPN reading"
     return 0, "network-care: VPN GREEN (sing-box running, tun0 up)"
 
 

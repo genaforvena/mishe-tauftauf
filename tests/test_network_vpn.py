@@ -24,16 +24,29 @@ view = load(REPO / "tools" / "network_view.py", "network_view_vpn_under_test")
 
 SING_BOX = "11631 root 1394m S /usr/bin/sing-box run -c /etc/sing-box/config.json"
 TUN_UP = "tun0  UNKNOWN  <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP>"
+TUN_STATS = ["TUN0_STAT rx_bytes 13407926728", "TUN0_STAT tx_bytes 3527991552"]
 
 
 def test_running_and_tun_up():
     v = boundary.decode_router_vpn(["PS_OK", SING_BOX, TUN_UP])
-    assert v == {"ps_ok": True, "sing_box": True, "tun0": "up"}
+    assert v == {"ps_ok": True, "sing_box": True, "tun0": "up",
+                 "tun0_rx_bytes": None, "tun0_tx_bytes": None}
+
+
+def test_tun_counters_are_decoded():
+    v = boundary.decode_router_vpn(["PS_OK", SING_BOX, TUN_UP, *TUN_STATS])
+    assert (v["tun0_rx_bytes"], v["tun0_tx_bytes"]) == (13407926728, 3527991552)
+
+
+def test_a_counter_that_was_not_read_stays_none_never_zero():
+    v = boundary.decode_router_vpn(["PS_OK", SING_BOX, TUN_UP, TUN_STATS[0]])
+    assert v["tun0_rx_bytes"] == 13407926728 and v["tun0_tx_bytes"] is None
 
 
 def test_process_list_readable_but_no_sing_box_is_a_real_negative():
     v = boundary.decode_router_vpn(["PS_OK"])
-    assert v == {"ps_ok": True, "sing_box": False, "tun0": "absent"}
+    assert v == {"ps_ok": True, "sing_box": False, "tun0": "absent",
+                 "tun0_rx_bytes": None, "tun0_tx_bytes": None}
 
 
 def test_process_list_not_read_is_unknown_not_not_running():
@@ -56,10 +69,11 @@ def test_router_output_carries_vpn_section():
         "UPTIME 958323.10",
         "LOAD", "0.27 0.29 0.30 1/200 999", "MemAvailable: 200000 kB",
         "LINKS",
-        "VPN", "PS_OK", SING_BOX, TUN_UP,
+        "VPN", "PS_OK", SING_BOX, TUN_UP, *TUN_STATS,
     ])
     body = boundary.decode_router_output(stdout, {}, lambda mac: "x")
-    assert body["vpn"] == {"ps_ok": True, "sing_box": True, "tun0": "up"}
+    assert body["vpn"] == {"ps_ok": True, "sing_box": True, "tun0": "up",
+                           "tun0_rx_bytes": 13407926728, "tun0_tx_bytes": 3527991552}
 
 
 def test_vpn_line_says_running_and_up(tmp_path, monkeypatch):
@@ -92,6 +106,50 @@ def test_vpn_line_shows_unreadable_process_list(tmp_path, monkeypatch):
     assert "sing-box UNKNOWN" in view.vpn_line(now=1060.0)
 
 
+def vpn_log(tmp_path, monkeypatch, rows):
+    log = tmp_path / "router.jsonl"
+    log.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    monkeypatch.setattr(view, "ROUTER_LOG", log)
+
+
+def vpn_line_row(ts, rx=1000, tx=2000, tun0="up"):
+    return {"ts": ts, "ok": True,
+            "vpn": {"ps_ok": True, "sing_box": True, "tun0": tun0, "tun0_rx_bytes": rx, "tun0_tx_bytes": tx}}
+
+
+def test_vpn_line_reports_bytes_since_the_previous_read(tmp_path, monkeypatch):
+    vpn_log(tmp_path, monkeypatch, [vpn_line_row(1000.0), vpn_line_row(1300.0, 5 * 1024 ** 2 + 1000, 1024 ** 2 + 2000)])
+    line = view.vpn_line(now=1360.0)
+    assert "6.0 MB through tun0 in 5 min" in line and "read 60 s ago" in line
+
+
+def test_vpn_line_says_nothing_moved_when_the_counters_are_flat(tmp_path, monkeypatch):
+    vpn_log(tmp_path, monkeypatch, [vpn_line_row(1000.0), vpn_line_row(1300.0)])
+    assert "nothing through tun0 in 5 min" in view.vpn_line(now=1360.0)
+
+
+def test_vpn_line_counts_a_recreated_tun0_as_a_restart_not_a_negative_rate(tmp_path, monkeypatch):
+    vpn_log(tmp_path, monkeypatch, [vpn_line_row(1000.0, 9000, 9000), vpn_line_row(1300.0, 10, 20)])
+    assert "counters restarted" in view.vpn_line(now=1360.0)
+
+
+def test_vpn_line_says_unknown_without_an_earlier_counter_read(tmp_path, monkeypatch):
+    vpn_log(tmp_path, monkeypatch, [vpn_line_row(1000.0)])
+    assert "UNKNOWN (no earlier counter read)" in view.vpn_line(now=1060.0)
+
+
+def test_vpn_line_says_unknown_when_the_read_carries_no_counters(tmp_path, monkeypatch):
+    row = {"ts": 1000.0, "ok": True, "vpn": {"ps_ok": True, "sing_box": True, "tun0": "up"}}
+    vpn_log(tmp_path, monkeypatch, [row])
+    assert "UNKNOWN (counters not in the read)" in view.vpn_line(now=1060.0)
+
+
+def test_vpn_line_claims_no_traffic_reading_when_the_tunnel_is_down(tmp_path, monkeypatch):
+    vpn_log(tmp_path, monkeypatch, [vpn_line_row(1000.0), vpn_line_row(1300.0, tun0="down")])
+    line = view.vpn_line(now=1360.0)
+    assert "tun0 DOWN" in line and "through tun0" not in line
+
+
 care_spec = importlib.util.spec_from_file_location("network_care_vpn_under_test", REPO / "checks" / "network-care.py")
 care = importlib.util.module_from_spec(care_spec)
 care_spec.loader.exec_module(care)
@@ -99,8 +157,9 @@ care_spec.loader.exec_module(care)
 NOW = 1_800_000_000.0
 
 
-def vpn_row(ts, sing_box=True, tun0="up", ps_ok=True, ok=True):
-    return {"ts": ts, "ok": ok, "vpn": {"ps_ok": ps_ok, "sing_box": sing_box, "tun0": tun0}}
+def vpn_row(ts, sing_box=True, tun0="up", ps_ok=True, ok=True, rx=1000, tx=2000):
+    return {"ts": ts, "ok": ok, "vpn": {"ps_ok": ps_ok, "sing_box": sing_box, "tun0": tun0,
+                                        "tun0_rx_bytes": rx, "tun0_tx_bytes": tx}}
 
 
 class VpnDetectorTests(unittest.TestCase):
@@ -129,6 +188,11 @@ class VpnDetectorTests(unittest.TestCase):
 
     def test_unknown_link_is_unknown(self):
         self.assertEqual(care.vpn_state([vpn_row(NOW - 60, tun0=None)], NOW)[0], 3)
+
+    def test_missing_tunnel_counters_are_unknown_not_green(self):
+        code, message = care.vpn_state([vpn_row(NOW - 60, rx=None, tx=None)], NOW)
+        self.assertEqual(code, 3)
+        self.assertIn("counters", message)
 
     def test_stale_newest_reading_is_unknown_not_green(self):
         self.assertEqual(care.vpn_state([vpn_row(NOW - 3600)], NOW)[0], 3)

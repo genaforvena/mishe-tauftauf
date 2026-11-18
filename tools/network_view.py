@@ -719,11 +719,55 @@ def router_health_line(now=None):
             f"(limit: load {LOAD_LIMIT:g}, free RAM {MEM_FLOOR_MB:.0f} MB); read {age:.0f} s ago{stale}")
 
 
+def _data_size(n):
+    """Bytes in plain words (B/KB/MB/GB), for traffic amounts a person can judge at a glance."""
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 ** 2:
+        return f"{n / 1024:.0f} KB"
+    if n < 1024 ** 3:
+        return f"{n / 1024 ** 2:.1f} MB"
+    return f"{n / 1024 ** 3:.1f} GB"
+
+
+def tunnel_traffic(reads, last):
+    """Bytes the tunnel moved since the previous read that carried counters, in plain words.
+
+    Process and link state cannot tell a carrying tunnel from one that routes nothing, so the kernel's
+    own tun0 byte counters are differenced. Missing counters, or no earlier counter reading, is
+    UNKNOWN, never "no traffic"; a negative delta is a recreated tun0, not a rate.
+    """
+    v = last.get("vpn") or {}
+    rx, tx = v.get("tun0_rx_bytes"), v.get("tun0_tx_bytes")
+    if not isinstance(rx, int) or not isinstance(tx, int):
+        return "tun0 traffic UNKNOWN (counters not in the read)"
+    prev = None
+    for row in reversed(reads[:-1]):
+        p = row.get("vpn") or {}
+        if isinstance(p.get("tun0_rx_bytes"), int) and isinstance(p.get("tun0_tx_bytes"), int):
+            prev = row
+            break
+    if prev is None:
+        return "tun0 traffic UNKNOWN (no earlier counter read)"
+    span = last["ts"] - prev["ts"]
+    if span <= 0:
+        return "tun0 traffic UNKNOWN (the two reads share a time)"
+    p = prev["vpn"]
+    moved = (rx - p["tun0_rx_bytes"]) + (tx - p["tun0_tx_bytes"])
+    if moved < 0:
+        return "tun0 counters restarted (tun0 recreated since the previous read)"
+    when = f"{span:.0f} s" if span < 90 else f"{span / 60:.0f} min"
+    if moved == 0:
+        return f"nothing through tun0 in {when}"
+    return f"{_data_size(moved)} through tun0 in {when}"
+
+
 def vpn_line(now=None):
     """VPN (sing-box on the router) in plain words, from the newest router read that carried it.
 
-    "Running" and "tun0 up" say the tunnel process and link exist; they do not say which clients use it.
-    No VPN reading at all, or an unreadable process list, is UNKNOWN, never a calm answer.
+    "Running" and "tun0 up" say the tunnel process and link exist; the byte counters say whether it
+    carried anything since the previous read. Neither says which clients use it. No VPN reading at
+    all, or an unreadable process list, is UNKNOWN, never a calm answer.
     """
     now = time.time() if now is None else now
     reads = [r for r in router_rows() if r.get("ok") and isinstance(r.get("vpn"), dict)]
@@ -737,8 +781,10 @@ def vpn_line(now=None):
     else:
         proc = "sing-box running" if v.get("sing_box") else "sing-box NOT running"
     tun = {"up": "tun0 up", "down": "tun0 DOWN", "absent": "tun0 absent"}.get(v.get("tun0"), "tun0 UNKNOWN")
+    moved = tunnel_traffic(reads, last) if v.get("tun0") == "up" else None
+    traffic = f"; {moved}" if moved else ""
     stale = "  STALE" if ago > STALE_ROUTER_S else ""
-    return f"{proc}, {tun} on the router; read {ago:.0f} s ago{stale}"
+    return f"{proc}, {tun} on the router{traffic}; read {ago:.0f} s ago{stale}"
 
 
 def wifi_radio_line(now=None):

@@ -39,6 +39,9 @@ REMOTE = (
     'grep -E "^MemAvailable:" /proc/meminfo 2>/dev/null; echo LINKS; ip -s link show 2>/dev/null; '
     'echo VPN; if ps w >/dev/null 2>&1; then echo PS_OK; ps w 2>/dev/null | grep "[s]ing-box" | head -1; fi; '
     "ip -br link show tun0 2>/dev/null; "
+    # The tunnel's own byte counters: "up" alone cannot tell a carrying tunnel from one that routes
+    # nothing. Kernel counters, read-only; absent when tun0 does not exist, and then the row says None.
+    'for f in rx_bytes tx_bytes; do echo "TUN0_STAT $f $(cat /sys/class/net/tun0/statistics/$f 2>/dev/null)"; done; '
     'echo PHY; dev=$(ip route show default | sed -n "s/.* dev \\([^ ]*\\).*/\\1/p" | head -1); '
     'echo "device $dev"; for f in speed duplex carrier_up_count carrier_down_count; do '
     'echo "$f $(cat /sys/class/net/$dev/$f 2>/dev/null)"; done'

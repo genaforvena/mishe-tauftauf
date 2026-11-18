@@ -222,7 +222,12 @@ is not mistaken for a quiet mind.
   The carrier counters come from the same read as everything else on the router line, so a missing
   router read is UNKNOWN, never "no drops".
 - VPN (sing-box) state is shown as "running" and "tun0 up" from the
-  router's process list; it does not say which clients use the tunnel. The WAN error and drop counters
+  router's process list, followed by the tunnel's own kernel byte counters (`tun0` `rx_bytes` +
+  `tx_bytes` from `/sys/class/net`) differenced against the previous read that carried them, so a
+  tunnel that is up but routes nothing reads as `nothing through tun0 in 5 min` instead of looking
+  healthy. This says the tunnel carried traffic, not which clients use it. A read with no counters, or
+  the first read after activation, says `tun0 traffic UNKNOWN` — never "no traffic" — and a counter
+  that went backwards names a recreated `tun0`, not a negative rate. The WAN error and drop counters
   are measured: the view reports them from the last recorded router read, and the drop
   count over a window needs at least 10 minutes of counters (`_wan_drops` in
   `tools/network_view.py`).

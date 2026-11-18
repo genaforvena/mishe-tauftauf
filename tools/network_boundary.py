@@ -371,25 +371,33 @@ def decode_wan_link(lines):
 
 
 def decode_router_vpn(lines):
-    """Router VPN state: {"ps_ok", "sing_box", "tun0"}. Read-only; the process command line is never kept.
+    """Router VPN state: {"ps_ok", "sing_box", "tun0", "tun0_rx_bytes", "tun0_tx_bytes"}. Read-only;
+    the process command line is never kept.
 
     ``ps_ok`` False means the process list could not be read, so ``sing_box`` is None (unknown, not
     "not running"). ``tun0`` is "up", "down" or "absent"; a missing section gives ``ps_ok`` False and
-    ``tun0`` None, never a calm reading.
+    ``tun0`` None, never a calm reading. The byte counters are the kernel's own, for judging whether
+    the tunnel carries traffic; a counter that was not read is None, never zero, so a missing read
+    cannot look like an idle tunnel.
     """
     if not lines:
-        return {"ps_ok": False, "sing_box": None, "tun0": None}
+        return {"ps_ok": False, "sing_box": None, "tun0": None,
+                "tun0_rx_bytes": None, "tun0_tx_bytes": None}
     ps_ok = any(line.strip() == "PS_OK" for line in lines)
     sing_box = None
     if ps_ok:
         sing_box = any("sing-box" in line for line in lines)
     tun0 = "absent"
+    counters = {}
     for line in lines:
         parts = line.split()
         if parts and parts[0] == "tun0":
             flags = parts[2].strip("<>").split(",") if len(parts) > 2 else []
             tun0 = "up" if "UP" in flags and parts[1] != "DOWN" else "down"
-    return {"ps_ok": ps_ok, "sing_box": sing_box, "tun0": tun0}
+        elif len(parts) == 3 and parts[0] == "TUN0_STAT" and parts[2].isdigit():
+            counters[parts[1]] = int(parts[2])
+    return {"ps_ok": ps_ok, "sing_box": sing_box, "tun0": tun0,
+            "tun0_rx_bytes": counters.get("rx_bytes"), "tun0_tx_bytes": counters.get("tx_bytes")}
 
 
 def decode_router_load(lines):
