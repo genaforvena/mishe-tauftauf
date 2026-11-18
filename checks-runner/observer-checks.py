@@ -126,6 +126,14 @@ INVENTORY = (
     # refusals in 24 hours, over every role.  Plant level.  Revert: remove
     # this row (2026-11-01).
     ("shipped-book-vs-served-release.py", False, True, (), None),
+    # A running wake or producer throttled below the floor its unit declares: a
+    # daemon-reload writes the protected drop-in's 1G back onto running cgroups,
+    # and the engine then stalls until its timeout throws the work away.  The
+    # host PSI detector reported the 03:32:21Z recurrence seven minutes late;
+    # this reads the running leaf's own memory.high and re-reads it after a
+    # persistence window so a guard repair in progress is not a fault.  Plant
+    # level.  Revert: remove this row.
+    ("wake-memory-floor.py", False, False, (), None),
 )
 
 # Checks that exist and are not scheduled, with the measured reason.  Recorded
