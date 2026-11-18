@@ -281,9 +281,13 @@ consumer files and transient timer consumers have different contracts: check
 loaded installed pins against disk, and retain invocation/cgroup draining and
 future-pin checks for active or pending transients. One transient is exempt: a
 unit whose argv runs `release review`, including the delayed
-`mishe-release-review-retry-*` units, evaluates one release's own bytes under its
-own `PYTHONPATH` and never reads the site pin, so `consumer_fence.pin_independent`
-leaves it out of both the drain and the future-pin check. Counting a queued retry
+`mishe-release-review-retry-*` units; `consumer_fence.pin_independent` leaves it
+out of both the drain and the future-pin check. Such a unit reads one
+release's record and tree as *data* and runs the code of the
+`runtime/current/src` symlink, so a queued retry that fires after a pin move
+merges under the policy that is live then; a review is evidence after delivery
+and must never hold a promotion, which is why a running or armed review is not a
+consumer the pin fence judges. Counting a queued retry
 as a consumer with the wrong pin failed a correct promotion's probe and then its
 rollback probe on 2026-11-17, leaving the delivery record UNKNOWN with a correct
 pin above it. A consumer group can also vanish between the drain's existence

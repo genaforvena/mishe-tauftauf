@@ -136,10 +136,26 @@ def test_default_review_enqueue_uses_sha_and_retains_pending(tree, monkeypatch):
     monkeypatch.setattr(p.subprocess,"run",lambda argv,**kwargs:calls.append(argv))
     p.enqueue_review(home,dict(sha=sha,id="release",source=str(repo)))
     assert sha[:12] in calls[0][3]
-    assert f"--setenv=PYTHONPATH={repo / 'src'}" in calls[0]
+    # The unit runs the pin's code and merges its verdict with it; the release
+    # under review is only the patch data (see _review_pythonpath).
+    assert f"--setenv=PYTHONPATH={home / 'runtime/current/src'}" in calls[0]
     assert f"--setenv=MISHE_SEED_HOME={home}" in calls[0]
     assert "--slice=mishe-plants.slice" in calls[0]
     assert read_json(home/"work/reviews"/f"{sha}.json")["state"]=="pending"
+
+
+def test_review_retry_runs_the_pin_not_the_reviewed_tree(tree):
+    # d4297d91's retry merged at 06:35 on 2026-11-18 under its own pre-fix tree,
+    # after the pin had moved to the classification fix, and raised a fix/revert
+    # obligation for an `unknown`-only review. A retry re-applies the live merge
+    # policy, so it runs the pin's code and keeps the release's tree as data.
+    repo,home,old,sha=tree
+    reviewed=home/"releases"/old
+    launched=[]
+    p.schedule_review_retry(home,dict(id="old",sha=sha,previous=old,source=str(reviewed)),
+                            due=time.time()+60,runner=lambda argv,**kw:launched.append(argv))
+    assert f"--setenv=PYTHONPATH={home / 'runtime/current/src'}" in launched[0]
+    assert str(reviewed) not in " ".join(launched[0])
 
 
 def test_oneshot_observation_uses_retained_start_stamp_not_empty_invocation_id(monkeypatch):

@@ -39,18 +39,19 @@ def properties(unit):
 
 
 RELEASE_SCOPED_ARGV = ("release", "review")
-"""Command words of a unit that evaluates one release's own bytes, not the site pin."""
+"""Command words of a release-scoped unit: one release's record is its data."""
 
 
 def pin_independent(row):
-    """True for a unit scoped to a single release, which the pin must not judge.
+    """True for a unit scoped to a single release, which the pin fence must not judge.
 
-    ``mishe release review`` and its delayed retries run with ``PYTHONPATH`` naming the
-    release under test so the reviewed bytes are the ones exercised (``enqueue_review``,
-    ``schedule_review_retry``). They never read the site pin, so a queued or running review
-    is not a consumer with a "wrong pin". Treating it as one failed the functional probe of
-    every promotion while a review retry was armed (2026-11-17, a3b07b2a rolled back), and
-    the eight-rung retry ladder would have held that failure for about forty hours.
+    ``mishe release review`` and its delayed retries read one release's record and
+    tree as data while running the code of the ``runtime/current/src`` symlink
+    (``enqueue_review``, ``schedule_review_retry``). The verdict is evidence after
+    the pin has moved, never a functional consumer whose bytes the probe must
+    match: a queued retry is armed for up to about forty hours, and counting it as
+    a consumer with a "wrong pin" failed the functional probe of every promotion
+    while one was armed (2026-11-17, a3b07b2a rolled back).
     """
     argv = row.get("ExecStart", "").split()
     return all(word in argv for word in RELEASE_SCOPED_ARGV)

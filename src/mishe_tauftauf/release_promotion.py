@@ -530,6 +530,21 @@ def promote(home, repo, sha, **kwargs):
     return record
 
 
+def _review_pythonpath(home):
+    """The tree a review process runs: the current pin, not the reviewed release.
+
+    A review unit both asks the reviewer and merges the answer, and the merge
+    applies the live classification and notice policy. Naming the reviewed
+    release's own tree made a retry re-apply code the pin had already replaced:
+    d4297d91's retry fired at 06:35 on 2026-11-18, after the pin moved to
+    56262f54, and still recorded an ``unknown``-only review as ``action-needed``
+    because its own pre-fix tree has no ``merged_review_state``. The release
+    under review stays the data source (``record["source"]`` and
+    ``record["previous"]``), never the interpreter.
+    """
+    return str(Path(home)/"runtime"/"current"/"src")
+
+
 def enqueue_review(home, record):
     root = Path(home)/"work/reviews"; root.mkdir(parents=True, exist_ok=True)
     path = review_queue_path(home, record)
@@ -544,12 +559,13 @@ def enqueue_review(home, record):
         return
     write_json(path, dict(sha=record["sha"], release_id=record["id"], release_ids=[record["id"]], state="pending"))
     unit_key = record["sha"][:12] + ("-" + record["previous"][:12] if record.get("previous") else "")
+    pythonpath = _review_pythonpath(home)
     subprocess.run(["systemd-run", "--user", "--collect", f"--unit=mishe-release-review-{unit_key}",
                     "--slice=mishe-plants.slice",
-                    "--setenv=PYTHONPATH=" + str(Path(record["source"])/"src"),
+                    "--setenv=PYTHONPATH=" + pythonpath,
                     "--setenv=MISHE_SEED_HOME=" + str(home),
                     sys.executable, "-m", "mishe_tauftauf", "--home", str(home), "release", "review", "--id", record["id"]],
-                   env=dict(os.environ, PYTHONPATH=str(Path(record["source"])/"src")), capture_output=True, timeout=15, check=True)
+                   env=dict(os.environ, PYTHONPATH=pythonpath), capture_output=True, timeout=15, check=True)
 
 
 REVIEW_RETRY_BASE_S = 1800
@@ -702,7 +718,7 @@ def schedule_review_retry(home, record, *, due, runner=None):
     run = subprocess.run if runner is None else runner
     at = max(int(due), int(time.time()) + 1)
     unit = f"mishe-release-review-retry-{record['sha'][:12]}-{at}"
-    pythonpath = str(Path(record["source"])/"src")
+    pythonpath = _review_pythonpath(home)
     run(["systemd-run", "--user", "--collect", f"--unit={unit}",
          f"--on-calendar={_calendar_time(at)}",
          "--slice=mishe-plants.slice",
