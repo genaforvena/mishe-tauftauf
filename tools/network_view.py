@@ -450,7 +450,7 @@ def wifi_line():
 ROUTER_LOG = SITE / "network" / "router.jsonl"
 STALE_ROUTER_S = 15 * 60  # the producer runs every 5 min; three missed runs is stale
 # "Is the radio worse than usual?" — the last hour's share of failed transmit attempts against the
-# median of the completed clock hours in the retained router reads (two days).  A ratio alone would
+# median of the last 24 completed clock hours in the two-day retained reads.  A ratio alone would
 # call noise on the quiet 5 GHz band an emergency, so a level must also clear a points-above floor.
 WIFI_USUAL_HOURS = 24       # completed hours the usual share is taken from
 WIFI_USUAL_MIN_HOURS = 3    # fewer complete hours than this and there is no usual yet
