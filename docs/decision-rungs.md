@@ -16,15 +16,30 @@ The first entry is the commit-risk class in `src/mishe_tauftauf/commit_risk.py`:
 - Threshold: 0.7. Below it the commit escalates to a mind. It is not calibrated yet, because no outcome is joined.
 - Log: `.mishe-tauftauf/decision-log/commit-risk.jsonl`, one row per answered commit. A commit the service did not answer is not recorded, so a later pass asks again.
 
-The second entry is DM triage in shadow, `src/mishe_tauftauf/dm_triage.py` (initiative P3):
+The second registry entry was DM triage, now retired. `src/mishe_tauftauf/dm_triage.py` keeps a
+System 0 pass over machine-addressed mail: a bracketed record tag and the fixed OnFailure
+sentence `failure.report` writes decide `fyi` and `action`; prose is left to the mind. The two
+templates live in `wall_text`, shared by reporter and matcher so a wording change cannot
+silently stop classifying notices. Its log stays at `.mishe-tauftauf/decision-log/dm-triage.jsonl`,
+written at the wake mail seam (`wake.py` `_execute`), never raising, and read by nobody for dispatch.
 
-- Question: `dm-triage-class`. Criteria: `action`, `fyi`, `duplicate`, plus the escape option. Two message forms are System 0 lookups, so the model only sees the residual: a bracketed record tag (`[permission]`, `[ci]`, `[note]`, ...), and the fixed OnFailure sentence `failure.report` writes (`<unit> failed. Signal <name> is RED. Find the cause ... then mishe signal observe <name> GREEN`), which is `action`. `wall_text.FAILURE_NOTICE` is the one template both the reporter and the matcher use, so a wording change cannot silently stop classifying notices.
-- One question per residual message. The `dm-triage-urgency` and `dm-triage-answered` companions were removed on 2026-11-18: no code read their columns (`grep` found only their own tests), yet each cost a provider call before the wake engine started, so they tripled the wake's mail latency for nothing.
-- Threshold: 0.7. Escape or sub-threshold escalates to a mind.
-- State: derived only — sequence, sender role, recipient role, tag, body-length bucket, a bounded first-line excerpt, a bounded markdown subject and a bounded content excerpt (the first explicit request line — "Please review", "Request:", "review request" — else the first non-empty prose line after the `[dm] to=ROLE` address, skipping any repeated address lines, capped at 160 chars). Never the full DM body.
-- Log: `.mishe-tauftauf/decision-log/dm-triage.jsonl`, one row per triaged message, written at the wake mail seam (`wake.py` `_execute`) and never raising. Shadow only: nothing reads it for dispatch. A missing or failing provider leaves `escalate` rows; it never stops the wake.
-- Measured 2026-11-17: the 01Z backfill decided 52 of 140 rows, but live mail after 02Z escaped 69 of 71 (97%). Cause: addressed DMs carry prose, not a markdown heading, so the subject was empty and the first line was only the address — the model saw no content and answered `unclear`. `wall_text.message_excerpt` now supplies the first prose line; a probe of three real previously-escaped DMs resolves to `fyi` at 0.93-0.99 confidence. This is a coverage fix, not calibration: thresholds stay uncalibrated and `outcome` is null on every row so far, until a real outcome is joined.
-- Measured 2026-11-18: a second attribution attempt, this one tied to the message rather than the wake — did the recipient later send an addressed DM back, or did a commit within 48 h touch a path or sha the message names. It found 71 commit-attributed rows out of 302, and they ran the wrong way: `action` 12% (3/24), `fyi` 21% (22/103), escape 26% (46/175). Naming a path in a DM reports on it as often as it requests work, so this proxy cannot separate the classes either. `outcome` stays null; the lane is still uncalibrated and shadow-only.
+Its System 1 question `dm-triage-class` (criteria `action`/`fyi`/`duplicate` plus escape,
+threshold 0.7) was removed on 2026-11-18. The reasons are measured, not stylistic:
+
+- No consumer. `grep` over `src/`, `tests/`, `tools/`, `checks/` and `docs/` found only the
+  module, its wake writer, its tests and this page.
+- No outcome. Two attribution proxies failed: the containing wake's result, and a
+  message-level join (reply DM, or a later commit touching a named path/sha) over 301 rows.
+  The latter attributed 71 rows but inverted the classes — `action` 12% (3/24), `fyi` 21%
+  (22/103), escape 26% (46/175) — because naming a path reports on it as often as it
+  requests work. `outcome` is null on every row, so 0.70 was never calibrated.
+- Cost without benefit: 80 provider calls in the 24 h before removal, one per residual DM,
+  on the critical path before the wake engine started. The `urgency` and `answered`
+  companions were removed earlier the same day for the same reason (no consumer).
+
+Do not re-add the model without an outcome that separates "the recipient had to act" from
+"the recipient knew something", and a consumer of the answer. The historical rows stay as
+evidence.
 
 ## Retired: per-start wake-needed decision
 
@@ -37,9 +52,10 @@ schema; the System 0 `same_dossier_as_last` verdict is the only gate signal, and
 the live action log `wake-gate-live.jsonl` has no producer. Do not re-add the model
 without new evidence that beats the base rate.
 
-Both live registry entries are advisory: commit-risk never gates delivery and
-DM triage never gates dispatch. A missing or failing decision service degrades to
-the mind path; the logs keep an `escalate` row rather than stopping work.
+Commit-risk is the only live System 1 registry entry and it is advisory: it never gates
+delivery. A missing or failing decision service degrades to the mind path; the log keeps an
+`escalate` row rather than stopping work. The retired DM class lane left prose to the mind
+in exactly the same way.
 
 ## The duty
 

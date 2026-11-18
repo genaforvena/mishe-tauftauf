@@ -69,12 +69,13 @@ nothing else:
   `[dm] to=ROLE` first line with words after the role; an ordinary plain-chat entry
   is silent. `mishe wall dm` is the canonical writer.
   `first_line` returns that line alone; `record_tag` reads the bracketed tag it
-  opens with (`[ci] ...` → `ci`), the one classifier form besides the DM address;
+  opens with (`[ci] ...` → `ci`), the one classifier form besides the DM address.
   `message_subject` reads the first markdown heading after it; and `sender_role`
-  strips a `mind/` prefix from a feed source. The P3 shadow `dm_triage` (called by
-  `wake.py`) reads those four, with `dm_recipient`, into the derived state it sends
-  a decision model — sequence, sender, recipient, tag, length bucket and a bounded
-  first-line excerpt — never the full private body.
+  strips a `mind/` prefix from a feed source. The System 0 `dm_triage` (called by
+  `wake.py`) reads only `record_tag` and `failure_notice` to classify machine-addressed
+  mail; its former derived state and the decision model that consumed it were retired
+  on 2026-11-18, so no private body is sent anywhere. `first_line`, `message_subject`
+  and `sender_role` now have no caller outside `wall_text.py` and its tests.
 - A feed entry's first line. `addressed` reads it. The permission header
   `[permission] id=... decision=granted|revoked owner=...` counts only when the
   entry's source is `operator/permissions`. `addressed` is defined in

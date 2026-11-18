@@ -14,9 +14,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import decision_provider as _dp
 from . import delivery_requests, dm_triage, dossier, engine_boundary, feed, owed, wake_gate_log, wake_memory, work_receipts, yielding
-from .budget_producer import DECISION_CONFIG, DECISION_PROVIDER
 from .wall import addressed
 from .core.dispatch_record import process_alive
 from .core.interfaces import RECONCILED, STARTED, UNKNOWN, WorkerResult
@@ -338,13 +336,9 @@ def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, ti
     run. It never raises and never changes the outcome returned here.
     """
     wake_gate_log.record_start(home, role, key, snap=snap, mail=mail, now=now)
-    # P3 shadow: triage each unread addressed DM into decision-log/dm-triage.jsonl. Never raises,
-    # no dispatch effect; a missing decision provider just leaves escalate rows.
-    try:
-        _provider = _dp.select(_dp.load_providers(Path(home) / DECISION_CONFIG), DECISION_PROVIDER)
-    except Exception:
-        _provider = None
-    dm_triage.record_unread(home, role, mail, _provider, roles=[role], now=now)
+    # P3 shadow: System 0 triage of machine-addressed mail into decision-log/dm-triage.jsonl.
+    # Never raises, no dispatch effect, no provider call.
+    dm_triage.record_unread(home, role, mail, now=now)
     try:
         state, detail = _execute_engine(home, role, key, engine=engine, now=now, snap=snap, mail=mail,
                                         reconcile_of=reconcile_of, repo=repo, timeout=timeout, on_start=on_start)
