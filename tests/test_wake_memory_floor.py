@@ -82,10 +82,33 @@ def test_a_low_reading_that_becomes_unreadable_is_unknown(check, monkeypatch, ca
 
 def test_a_vanished_oneshot_cgroup_is_skipped_not_unknown(check, monkeypatch, capsys, tmp_path):
     directory = tmp_path / "gone"  # enumerated from /proc, cgroup removed before the read
-    directory.mkdir()
     code, text = run(check, monkeypatch, {"mishe-producer-ci.service": directory}, capsys)
     assert code == 0
     assert "GREEN 0 guarded unit(s)" in text
+
+
+def test_present_cgroup_with_missing_memory_high_is_unknown(check, monkeypatch, capsys, tmp_path):
+    directory = tmp_path / "present"
+    directory.mkdir()
+    code, text = run(check, monkeypatch, {"mishe-producer-ci.service": directory}, capsys)
+    assert code == 3
+    assert "unreadable" in text
+
+
+def test_missing_file_with_unstatable_cgroup_is_unknown(check, monkeypatch, capsys, tmp_path):
+    directory = tmp_path / "present"
+    directory.mkdir()
+    original_stat = Path.stat
+
+    def denied(path, *args, **kwargs):
+        if path == directory:
+            raise PermissionError(13, "Permission denied", str(path))
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", denied)
+    code, text = run(check, monkeypatch, {"mishe-producer-ci.service": directory}, capsys)
+    assert code == 3
+    assert "unreadable" in text
 
 
 def test_a_genuinely_unreadable_floor_is_unknown(check, monkeypatch, capsys, tmp_path):
@@ -99,7 +122,6 @@ def test_a_genuinely_unreadable_floor_is_unknown(check, monkeypatch, capsys, tmp
 
 def test_a_vanished_oneshot_does_not_hide_a_real_low_floor(check, monkeypatch, capsys, tmp_path):
     gone = tmp_path / "gone"  # oneshot enumerated, then removed before the read
-    gone.mkdir()
     low = leaf(tmp_path, "w", 1073741824)
     code, text = run(check, monkeypatch,
                      {"mishe-producer-ci.service": gone, "mishe-wake@health.service": low}, capsys)

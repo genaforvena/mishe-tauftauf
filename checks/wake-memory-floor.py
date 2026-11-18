@@ -152,15 +152,21 @@ GONE = object()
 def read_high(cgroup: pathlib.Path):
     """The leaf's own memory.high in bytes, or a marker for gone / unreadable.
 
-    cgroup v2 cannot remove a populated cgroup, so ENOENT here means the oneshot has
-    exited: a dead leaf is not a floor fault and must not be reported UNKNOWN. Any other
-    OSError (EACCES, EIO, ...) is genuine unreadability and stays UNKNOWN, as does a
-    non-numeric value such as ``max``.
+    A missing memory.high is only a vanished leaf if the cgroup directory is also
+    absent. A present or unstatable directory remains UNKNOWN. cgroup v2 cannot
+    remove a populated cgroup, so a vanished leaf is not a floor fault. Other
+    read errors and non-numeric values such as ``max`` also remain UNKNOWN.
     """
     try:
         text = (cgroup / "memory.high").read_text(encoding="utf-8").strip()
     except (FileNotFoundError, ProcessLookupError):
-        return GONE
+        try:
+            cgroup.stat()
+        except (FileNotFoundError, ProcessLookupError):
+            return GONE
+        except OSError:
+            return None
+        return None
     except OSError:
         return None
     try:
