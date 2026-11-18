@@ -55,7 +55,8 @@ def job_advanced(line, jobs):
         row = json.loads(line)
     except ValueError:
         return False
-    details = (row.get('partialResult') or {}).get('details') if isinstance(row, dict) else None
+    partial = row.get('partialResult') if isinstance(row, dict) else None
+    details = partial.get('details') if isinstance(partial, dict) else None
     entries = details.get('progress') if isinstance(details, dict) else None
     if not isinstance(entries, list):
         return False
@@ -90,7 +91,8 @@ def job_states(line, states):
         row = json.loads(line)
     except ValueError:
         return
-    details = (row.get('partialResult') or {}).get('details') if isinstance(row, dict) else None
+    partial = row.get('partialResult') if isinstance(row, dict) else None
+    details = partial.get('details') if isinstance(partial, dict) else None
     entries = details.get('jobs') if isinstance(details, dict) else None
     if not isinstance(entries, list):
         return
