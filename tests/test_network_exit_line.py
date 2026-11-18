@@ -66,3 +66,43 @@ def test_corrupt_file_is_unknown(tmp_path):
     path = tmp_path / "egress.json"
     path.write_text("{not json", encoding="utf-8")
     assert view.exit_line(now=1.0, path=path).startswith("UNKNOWN (exit-node file could not be read")
+
+
+def test_non_green_client_names_its_cause(tmp_path):
+    path, now = write(tmp_path, [
+        {"client": "mesh-home", "state": "GREEN", "reasons": []},
+        {"client": "imac-rozalia", "state": "UNKNOWN",
+         "reasons": ["the client could not be reached: ssh: connect to host 192.168.8.214 port 22: No route to host"]},
+    ])
+    line = view.exit_line(now=now, path=path)
+    head, detail = line.split("\n")
+    assert head.startswith("1 of 2 not GREEN")
+    assert "mesh-home GREEN" in head and "imac-rozalia UNKNOWN" in head
+    assert "imac-rozalia UNKNOWN: the client could not be reached" in detail
+    assert "No route to host" not in detail or len(detail) <= 17 + 24 + 2 + view.REASON_CHARS
+
+
+def test_cause_line_stays_one_window_width(tmp_path):
+    path, now = write(tmp_path, [{"client": "note3", "state": "RED",
+                                  "reasons": ["x" * 400]}])
+    detail = view.exit_line(now=now, path=path).split("\n")[1]
+    assert detail.endswith("…")
+    assert len(detail) <= 17 + 24 + 2 + view.REASON_CHARS
+
+
+def test_green_client_causes_are_not_shown(tmp_path):
+    path, now = write(tmp_path, [{"client": "mesh-home", "state": "GREEN",
+                                  "reasons": ["a stale note about something else"]}])
+    assert "\n" not in view.exit_line(now=now, path=path)
+
+
+def test_a_bad_client_without_reasons_keeps_the_head_only(tmp_path):
+    path, now = write(tmp_path, [{"client": "note3", "state": "RED", "reasons": []}])
+    assert "\n" not in view.exit_line(now=now, path=path)
+
+
+def test_at_most_three_clients_are_explained(tmp_path):
+    results = [{"client": f"c{i}", "state": "RED", "reasons": [f"cause {i}"]} for i in range(5)]
+    path, now = write(tmp_path, results)
+    lines = view.exit_line(now=now, path=path).split("\n")
+    assert len(lines) == 1 + view.REASON_CLIENTS

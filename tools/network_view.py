@@ -348,15 +348,39 @@ def exit_line(now=None, path=EGRESS_STATE):
     if not results:
         return f"UNKNOWN (exit-node reading is {age_min:.0f} min old and lists no clients)"
     states = []
+    normalized = {}
     for r in results:
         name = str(r.get("client", "?"))[:24]
         state = str(r.get("state", "UNKNOWN"))
         if state not in ("GREEN", "RED"):
             state = "UNKNOWN"
+        normalized[id(r)] = state
         states.append(f"{name} {state}")
     bad = [r for r in results if r.get("state") != "GREEN"]
     head = "all GREEN" if not bad else f"{len(bad)} of {len(results)} not GREEN"
-    return f"{head}: " + ", ".join(states) + f"; read {age_min:.0f} min ago"
+    lines = [f"{head}: " + ", ".join(states) + f"; read {age_min:.0f} min ago"]
+    for r in bad[:REASON_CLIENTS]:
+        why = first_reason(r)
+        if why:
+            lines.append(" " * 17 + f"{str(r.get('client', '?'))[:24]} {normalized[id(r)]}: {why}")
+    return "\n".join(lines)
+
+
+REASON_CLIENTS = 3       # at most this many non-GREEN clients get their cause spelled out
+REASON_CHARS = 70        # one cause per line, so the window keeps its width
+
+
+def first_reason(result):
+    """The producer's own words for a non-GREEN client, one line, bounded; '' when it gave none."""
+    for reason in result.get("reasons") or []:
+        text = " ".join(str(reason).split())
+        if len(text) > REASON_CHARS:
+            cut = text[:REASON_CHARS - 1]
+            space = cut.rfind(" ")
+            text = (cut[:space] if space > 0 else cut) + "…"
+        if text:
+            return text
+    return ""
 
 
 LOAD_LIMIT = nb.LOAD_LIMIT
@@ -846,7 +870,9 @@ def draw():
     out.append("  ROUTER LOAD   " + router_health_line() + "   (read-only, one read per 5 min)")
     out.append("  VPN           " + vpn_line() + "   (read-only, router process list and tun0)")
     out.append("  HOST GUARD    " + guard_line() + "   (read-only, marker file only)")
-    out.append("  EXIT NODE     " + exit_line() + "   (read-only, the egress duty's file)")
+    exit_lines = exit_line().split("\n")
+    out.append("  EXIT NODE     " + exit_lines[0] + "   (read-only, the egress duty's file)")
+    out.extend(exit_lines[1:])
     out.append("")
     out.append("  note: pings to public addresses are not used: the router answers them itself,")
     out.append("  so they look fast even when the internet is down. Internet checks are secure page loads.")
