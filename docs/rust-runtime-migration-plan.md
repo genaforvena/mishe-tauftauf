@@ -3926,23 +3926,24 @@ per blank-line block.
 |---|---|---|
 | `_scan_snapshot` (whole-tape fold, uncached) | 11.90 | `discovery.py:7179`, two `feed.entries()` passes |
 | `_ledger_evidence_binding` | 10.07 | whole-tape reading |
-| `_disk_trend` → `read_scan_series` | 4.37 | `feed.py:1772`, 1,062 `json.loads` of 364 KB scan receipts |
+| `_disk_trend` → `read_scan_series` | 4.37 | `feed.py:1772`, one `json.loads` per `discovery/scan-*.json` (2,176 files, 792 MB) |
 | `_patch_records` | 4.50 | reads the patch records twice |
 | `_repo_release_retention` → `_release_tree_bytes` | 4.41 | 417,421 `os.lstat` over the release worktrees |
-| `_head_rewinds` | 3.95 | re-reads scan receipts |
+| `_head_rewinds` | 3.95 | git reflog/stash children, not scan receipts |
 | `feed._iter_streamed_feed` | 8.21 | 304,397 entries framed |
 | `_RecordsChild.write` | 4.85 | 196,962 entries written to the records child |
 
 All figures include profiler overhead on Python call-heavy code; the blocked
 `select.poll` 7.2 s is separators' wait on children, not CPU.
 
-The two scan-receipt readers (`_disk_trend`, `_head_rewinds`) together re-parse
-the 792 MB `discovery/` series — 2,176 receipts — to recover a handful of
-numbers per scan. That is the cheapest real prize: a compact one-line summary per
-scan, written by the producer that already emits the receipt, retires the large
-parse without changing any decision or boundary. The release-worktree byte walk
-is the next: `os.walk`+`lstat` over 323 worktrees is the shape POSIX `du -sb`
-already owns.
+One scan-receipt reader does the re-parsing: `read_scan_series` globs every
+`discovery/scan-*.json` — 2,176 receipts, 792 MB — and `json.loads` each one to
+keep the verified samples of a single sense. Its cost grows with the corpus, and
+the corpus only grows. That is the cheapest real prize: a compact one-line
+summary per scan, written by the producer that already emits the receipt, retires
+the large parse without changing any decision or boundary. The release-worktree
+byte walk is the next: `os.walk`+`lstat` over 323 worktrees is the shape POSIX
+`du -sb` already owns.
 
 Neither is a protocol or delivery change; both are ordinary slices with a
 measured pre-gate A/B.
