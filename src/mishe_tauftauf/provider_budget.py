@@ -48,13 +48,19 @@ def evaluate(rows, account, *, now):
 
 FRESH_S = 900
 
+# A burn forecast from a near-empty window is a short-span extrapolation, not an
+# actionable overburn (2026-11-18: 7d used 0.01 after ~31 min gave eta ~52 h against a
+# reset ~161 h away, flipping budget-claude RED right after the weekly reset).
+BURN_FORECAST_MIN_USED = 0.05
+
 
 def rows_from_engine_budget(home, now):
     """Rows for ``evaluate`` from the producer's engine/budget.json (the one budget source since the 2026-11-12 cutover).
 
     The verdict keeps the pre-cutover rule: LOW on a spent window (used > 0.9), RUNS OUT BEFORE RESET when the burn ETA
-    lands before the reset, otherwise ok. An unreadable file, a malformed account or a stale observation becomes an
-    error row or a non-FRESH row, so ``evaluate`` reports UNKNOWN or STALE and never admits spontaneous work.
+    lands before the reset, otherwise ok. A forecast on a window below ``BURN_FORECAST_MIN_USED`` is a short-span
+    extrapolation and stays ok. An unreadable file, a malformed account or a stale observation becomes an error row or
+    a non-FRESH row, so ``evaluate`` reports UNKNOWN or STALE and never admits spontaneous work.
     """
     try:
         data = state_files.read_json(Path(home) / "engine" / "budget.json")
@@ -95,6 +101,8 @@ def rows_from_engine_budget(home, now):
                 verdict = "STALE"
             elif used > 0.9:
                 verdict = "LOW"
+            elif used < BURN_FORECAST_MIN_USED:
+                verdict = "ok"
             elif isinstance(eta, (int, float)) and not isinstance(eta, bool) and now + eta < reset:
                 verdict = "RUNS OUT BEFORE RESET"
             else:

@@ -96,6 +96,17 @@ def test_engine_budget_spent_or_burning_window_holds_work(tmp_path):
     assert budget.evaluate(budget.rows_from_engine_budget(tmp_path, now), "claude", now=now)[0] == "RED"
 
 
+@pytest.mark.parametrize("used,expected", [(0.01, "GREEN"), (0.1, "RED")])
+def test_engine_budget_forecast_needs_a_nontrivial_used_fraction(tmp_path, used, expected):
+    # 2026-11-18: a 1%-used 7d window ~31 min after reset had eta ~52 h against a
+    # reset ~161 h away, from one 1% step. That short extrapolation must not hold work.
+    now = 10_000.0
+    _write_engine_budget(tmp_path, _engine_budget(now, used=used, eta_s=100, reset_at=now + 500_000))
+    signal_store.register(tmp_path, "budget-claude", max_age=900, subscribers=[])
+    result = budget.publish(tmp_path, budget.rows_from_engine_budget(tmp_path, now), now=now)
+    assert result["state"] == expected
+
+
 def test_engine_budget_malformed_account_stays_unknown(tmp_path):
     now = 10_000.0
     data = _engine_budget(now)
