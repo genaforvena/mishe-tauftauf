@@ -94,10 +94,10 @@ is not mistaken for a quiet mind.
   attempt at all once the night window is open makes the `network-speed` signal UNKNOWN, so a night
   of failing uploads wakes the network mind instead of passing as GREEN. Both lines also answer
   "was that usual?": tonight's figure is compared with the median of the earlier measured nights
-  (one row a night, bounded to the last 14), so `about usual vs 35 Mbps over 6 earlier nights
-  (28.1 to 41.1)` or `faster than usual` tells a reader whether the number is a bad night. One or
-  two earlier nights are named instead of being called typical, and with none the line says
-  `first night measured, no usual yet` rather than inventing a baseline.
+  (one row a night, bounded to tonight plus the last 13 earlier nights), so `about usual vs 35 Mbps
+  over 6 earlier nights (28.1 to 41.1)` or `faster than usual` tells a reader whether the number is
+  a bad night. One or two earlier nights are named instead of being called typical, and with none
+  the line says `first night measured, no usual yet` rather than inventing a baseline.
 - `EXIT NODE`: each client's exit-node state from the `egress` duty's file with the file's age. A
   client that is not GREEN gets an indented line with that duty's own first reason, cut to one
   line at a word boundary, for at most three clients, so an UNKNOWN or RED client says why it is
