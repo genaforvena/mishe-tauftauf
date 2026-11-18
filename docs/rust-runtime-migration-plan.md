@@ -3515,7 +3515,7 @@ post-delivery reviewer, even though delivery itself remains the continuous path.
 
 `parsing-policy.json` names `feed.py:25`, `records.py:46`, `cpu_stat_text.py:20`,
 `unit_properties.py:69` and a legacy `discovery.py` budget:179. Any edit to those
-boundaries must run `python tools/check_parsing.py` and must not widen the frozen
+boundaries must run `python3 tools/check_parsing.py` and must not widen the frozen
 legacy budget.
 
 This section is a map and a decision, not a cutover: no source, binary, test or
@@ -3546,7 +3546,7 @@ offsets with the framer; `test_checkpoint_rebuild_index_bytes_match_retired_rege
 drives the real `_load_index` path and asserts the saved `tail_offset` and
 `checkpoints`. On the live-tape prefix all 12,653 offsets are byte-equal and
 match the 12,653 parsed entries. `PYTHONPATH=src .venv/bin/pytest -q
-tests/test_feed.py`: 53 passed, 13 subtests. `python tools/check_parsing.py`:
+tests/test_feed.py`: 53 passed, 13 subtests. `python3 tools/check_parsing.py`:
 PASS, no new parsing sites, 495 legacy sites unchanged.
 
 Scope: `feed.py`, `tests/test_feed.py` and this section. This wake moved no pin;
