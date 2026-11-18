@@ -331,3 +331,45 @@ def test_every_run_journals_its_start_end_elapsed_and_outcome(home, capsys):
     assert "outcome=EngineTimeout" in timed_out and "limit=0.5s" in timed_out
     assert re.search(r"start=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ end=\S+ elapsed=\d+\.\ds", timed_out)
     assert "devto: not run: EngineTimeout: exceeded 0.5s" in err
+
+
+def test_builtin_producer_restores_and_guards_its_floor(monkeypatch, tmp_path):
+    """The produce path must restore the drop-in's 1G like signal run, and keep it across a reload.
+
+    2026-11-18: `mishe-producer-delivery-requests.service` (a builtin via `produce`) ran its whole
+    5 s at memory.high=1G because the guard was only wired into `run`; `wake-memory-floor` went RED.
+    """
+    import json
+    import time
+    from mishe_tauftauf import wake_memory
+
+    store.register(tmp_path, "delivery-requests", max_age=900)
+
+    floor = wake_memory.WAKE_MEMORY_HIGH_BYTES
+    cgroup = tmp_path / "cgroup"
+    cgroup.mkdir()
+    (cgroup / "memory.high").write_text("1073741824", encoding="utf-8")
+    (cgroup / "memory.max").write_text("max", encoding="utf-8")
+    monkeypatch.setattr(wake_memory, "memory_high_path", lambda unit: cgroup)
+    monkeypatch.setattr(wake_memory, "running_unit_name",
+                        lambda: "mishe-producer-delivery-requests.service")
+
+    def reloading_builtin(home, *, now):
+        # A daemon-reload shadows the floor again after the start-time restore, mid-builtin.
+        time.sleep(0.1)
+        (cgroup / "memory.high").write_text("1073741824", encoding="utf-8")
+        time.sleep(2.5)                       # longer than the guard's 2 s poll
+        return "GREEN"
+
+    monkeypatch.setitem(producers.BUILTIN, "delivery-requests", reloading_builtin)
+    assert producers.produce(tmp_path, "delivery-requests", now=NOW) == "GREEN"
+
+    record = json.loads((tmp_path / "signals" / "delivery-requests.memory.json").read_text())
+    assert record["before"] == 1073741824
+    assert record["after"] >= floor
+    assert record["applied"] is True
+    assert record["guard"]["unit"] == "mishe-producer-delivery-requests.service"
+    assert record["guard"]["reverts"] >= 1
+    assert record["guard"]["repaired"] >= 1
+    assert record["guard"]["failed"] == 0
+    assert int((cgroup / "memory.high").read_text()) >= floor

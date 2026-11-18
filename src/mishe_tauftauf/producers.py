@@ -279,8 +279,21 @@ def produce(home, name: str, *, now: float, **kw) -> str | None:
 
     A builtin may return ``(value, reason)`` so that a not-OK reading carries its cause: the signal
     stores it, the dossier prints it, and a resolver woken by the edge reads why without re-deriving it.
+
+    Builtins run in this process under the same protected host drop-in as declared producers, so
+    restore the floor and keep it applied while the builtin works, exactly as :func:`run` does for a
+    bounded command. Without it a builtin that outlives the detector's persist window sits at the
+    drop-in's 1G and trips `wake-memory-floor` (2026-11-18, delivery-requests).
     """
-    result = BUILTIN[name](home, now=now, **kw)
+    floor = _restore_memory_floor(home, name)
+    guard = (wake_memory.MemoryFloorGuard(floor["unit"]).start()
+             if floor.get("unit") else None)
+    try:
+        result = BUILTIN[name](home, now=now, **kw)
+    finally:
+        if guard is not None:
+            guard.stop()
+            wake_memory.record_guard(Path(home) / "signals" / f"{name}.memory.json", guard)
     value, reason = result if isinstance(result, tuple) else (result, "")
     if value is not None:
         signal_store.observe(home, name, value, now=now, source=f"builtin:{name}", reason=reason)
