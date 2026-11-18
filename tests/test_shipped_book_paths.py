@@ -109,6 +109,59 @@ def test_the_gate_ignores_a_path_that_is_not_excluded(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def _repo_with_dropped_page(tmp: Path) -> Path:
+    """A repository that once shipped a page, then dropped and ignored it."""
+    repo = tmp / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+
+    def commit(message: str) -> None:
+        subprocess.run(
+            ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+             "commit", "-q", "-m", message], check=True)
+
+    (repo / "docs").mkdir()
+    (repo / "docs" / "operating.md").write_text("# Operating\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    commit("ship the operating page")
+    subprocess.run(["git", "-C", str(repo), "rm", "-q", "docs/operating.md"],
+                   check=True)
+    (repo / ".gitignore").write_text(
+        "docs/operating.md\n.mishe-tauftauf/\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    commit("drop the operating page from the public tree")
+    return repo
+
+
+def test_the_gate_rejects_a_path_the_repository_dropped(tmp_path):
+    """A page the repository once shipped and now excludes is a finding."""
+    repo = _repo_with_dropped_page(tmp_path)
+    tree = make_tree(tmp_path / "tree", {
+        "README.md": "Read `docs/operating.md` before you change anything.\n",
+    })
+    result = run_check(tree, repo=repo)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "docs/operating.md" in result.stdout
+
+
+def test_the_gate_ignores_an_ignored_site_path_the_repository_never_tracked(tmp_path):
+    """The site home is ignored, not dropped: a book may direct the reader to it.
+
+    ``.mishe-tauftauf/`` is covered by the repository's ignore rules because it
+    is the planted site's runtime state, not because a clone should hold it.
+    A procedure that tells the reader where a runtime log lives is correct, so
+    the ignore match alone must not fail the gate.
+    """
+    repo = _repo_with_dropped_page(tmp_path)
+    tree = make_tree(tmp_path / "tree", {
+        "docs/decision-rungs.md":
+            "Its log stays at `.mishe-tauftauf/decision-log/dm-triage.jsonl`,\n"
+            "written at the wake mail seam and read by nobody for dispatch.\n",
+    })
+    result = run_check(tree, repo=repo)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_the_gate_ignores_a_bare_mention_without_a_directive(tmp_path):
     """Naming a file is not the same as directing the reader to it.
 
