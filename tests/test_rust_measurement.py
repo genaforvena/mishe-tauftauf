@@ -424,3 +424,75 @@ def test_installed_binary_drift_is_red_not_green(tmp_path):
     record = json.loads((home / "artifacts" / "rust-plan-20261107"
                          / "rust-measurement-history.jsonl").read_text().splitlines()[0])
     assert record["verdict"] == "red" and record["binaries"]["drift"]
+
+
+def test_sample_records_verified_release_and_imported_feed(tmp_path):
+    repo = _rust_release(tmp_path)
+    home = tmp_path / "site"
+    _install_all(home, repo)
+    proc = subprocess.run(
+        [sys.executable, str(CHECK), "--home", str(home), "--repo", str(repo),
+         "--roles", "senses", "--max-load", "100000", "--max-cpu-pressure", "100000",
+         "--max-mem-pressure", "100000"], capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    artifact = json.loads((home / "artifacts" / "rust-plan-20261107" /
+                           "rust-measurement-latest.json").read_text())
+    commit = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    assert artifact["release"] == {"path": str(repo.resolve()), "commit": commit}
+    assert artifact["readings"][0]["feed_path"] == str((repo / "src/mishe_tauftauf/feed.py").resolve())
+    history = json.loads((home / "artifacts" / "rust-plan-20261107" /
+                          "rust-measurement-history.jsonl").read_text())
+    assert history["release"] == artifact["release"]
+
+
+def test_changed_release_during_fold_is_unknown(tmp_path, monkeypatch, capsys):
+    mod = check_module()
+    repo = _rust_release(tmp_path)
+    home = tmp_path / "site"
+    _install_all(home, repo)
+    original = mod.fold_role
+    def change_then_fold(*args):
+        reading = original(*args)
+        (repo / "src/mishe_tauftauf/feed.py").write_text("changed\n")
+        return reading
+    monkeypatch.setattr(mod, "fold_role", change_then_fold)
+    assert mod.main(["--home", str(home), "--repo", str(repo), "--roles", "senses",
+                     "--max-load", "100000", "--max-cpu-pressure", "100000",
+                     "--max-mem-pressure", "100000"]) == 3
+    assert "UNKNOWN" in capsys.readouterr().err
+    record = json.loads((home / mod.ARTIFACT_DIR / "rust-measurement-history.jsonl").read_text())
+    assert record["verdict"] == "unknown"
+
+
+def test_binary_changed_during_fold_is_unknown(tmp_path, monkeypatch, capsys):
+    mod = check_module()
+    repo = _rust_release(tmp_path)
+    home = tmp_path / "site"
+    _install_all(home, repo)
+    original = mod.fold_role
+    def change_then_fold(*args):
+        reading = original(*args)
+        (home / "bin/mishe-tape").write_bytes(b"different executable")
+        return reading
+    monkeypatch.setattr(mod, "fold_role", change_then_fold)
+    assert mod.main(["--home", str(home), "--repo", str(repo), "--roles", "senses",
+                     "--max-load", "100000", "--max-cpu-pressure", "100000",
+                     "--max-mem-pressure", "100000"]) == 3
+    assert "installed binary provenance changed" in capsys.readouterr().err
+
+
+def test_wrong_import_path_is_unknown(tmp_path, monkeypatch, capsys):
+    mod = check_module()
+    repo = _rust_release(tmp_path)
+    home = tmp_path / "site"
+    _install_all(home, repo)
+    original = mod.fold_role
+    def wrong_import(*args):
+        reading = original(*args)
+        reading["feed_path"] = "/other/feed.py"
+        return reading
+    monkeypatch.setattr(mod, "fold_role", wrong_import)
+    assert mod.main(["--home", str(home), "--repo", str(repo), "--roles", "senses",
+                     "--max-load", "100000", "--max-cpu-pressure", "100000",
+                     "--max-mem-pressure", "100000"]) == 3
+    assert "fold imported feed from outside" in capsys.readouterr().err

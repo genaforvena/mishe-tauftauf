@@ -110,6 +110,7 @@ CHILD = r"""
 import json, resource, sys, time
 from pathlib import Path
 from mishe_tauftauf.feed import Feed
+import mishe_tauftauf.feed as feed_module
 
 def child_cpu():
     u = resource.getrusage(resource.RUSAGE_CHILDREN)
@@ -133,6 +134,7 @@ rows = Feed(home).role_entries(role, _force_full=True)
 c1 = time.process_time(); k1 = child_cpu(); t1 = time.perf_counter()
 print(json.dumps({
     "role": role,
+    "feed_path": str(Path(feed_module.__file__).resolve()),
     "entries": len(rows),
     "cpu_s": round(c1 - c0, 3),
     "children_cpu_s": round(k1 - k0, 3),
@@ -214,6 +216,7 @@ def host_guard(max_load: float | None, min_free_kb: int,
 def fold_role(repo: Path, home: Path, role: str, timeout: int) -> dict:
     """Measure one role's forced full fold in a fresh child process."""
     env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     src = str(repo / "src")
     env["PYTHONPATH"] = src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     proc = subprocess.run(
@@ -246,7 +249,7 @@ def binary_provenance(home: Path, repo: Path) -> dict:
     unreadable fact is named: one crate's unreadable record does not hide
     another's, because a person diagnosing the gap needs both.
     """
-    facts: dict = {"checked": 0, "drift": [], "broken": [], "unknown": None}
+    facts: dict = {"checked": 0, "drift": [], "broken": [], "unknown": None, "digests": {}}
     missing: list[str] = []
     unknowns: list[str] = []
     bin_dir = home / "bin"
@@ -276,6 +279,7 @@ def binary_provenance(home: Path, repo: Path) -> dict:
             facts["broken"].append(f"{binary}: installed binary unreadable: {exc}")
             continue
         facts["checked"] += 1
+        facts["digests"][binary] = digest
         if digest != recorded:
             facts["broken"].append(
                 f"{binary}: sha256 {digest[:12]} != install record {recorded[:12]}")
@@ -295,6 +299,17 @@ def binary_provenance(home: Path, repo: Path) -> dict:
     if unknowns:
         facts["unknown"] = "; ".join(unknowns)
     return facts
+
+
+def release_identity(repo: Path) -> tuple[dict | None, str | None]:
+    """Identify a clean source tree; an editable or unreadable tree is unknown."""
+    head = _git(repo, "rev-parse", "--verify", "HEAD^{commit}")
+    status = _git(repo, "status", "--porcelain", "--untracked-files=all", "--", "src")
+    if head.returncode or not head.stdout.strip() or status.returncode:
+        return None, "release commit or source status unreadable"
+    if status.stdout:
+        return None, "release source has uncommitted or untracked changes"
+    return {"path": str(repo.resolve()), "commit": head.stdout.strip()}, None
 
 
 def append_history(home: Path, record: dict, max_lines: int = HISTORY_MAX_LINES) -> None:
@@ -332,7 +347,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     home: Path = args.home
-    repo: Path = args.repo
+    requested_repo: Path = args.repo
+    repo: Path = requested_repo.resolve()
     if not home.is_dir():
         print(f"rust-measurement: UNKNOWN site home missing: {home}", file=sys.stderr)
         return 3
@@ -355,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     roles = [r.strip() for r in args.roles.split(",") if r.strip()]
+    release, release_error = release_identity(repo)
     provenance = binary_provenance(home, repo)
     readings = []
     try:
@@ -363,6 +380,17 @@ def main(argv: list[str] | None = None) -> int:
     except (RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
         print(f"rust-measurement: UNKNOWN fold failed: {exc}", file=sys.stderr)
         return 3
+
+    release_after, after_error = release_identity(repo)
+    binaries_after = binary_provenance(home, repo)
+    if requested_repo.resolve() != repo or release != release_after:
+        release_error = "release changed during sampling"
+    release_error = release_error or after_error
+    if provenance != binaries_after:
+        release_error = "installed binary provenance changed during sampling"
+    expected_feed = str((repo / "src/mishe_tauftauf/feed.py").resolve())
+    if any(r.get("feed_path") != expected_feed for r in readings):
+        release_error = "fold imported feed from outside the release"
 
     over = []
     for r in readings:
@@ -377,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
                         for r in readings)
     drift = provenance["drift"]
     broken = provenance["broken"]
-    unknown = provenance["unknown"]
+    unknown = "; ".join(filter(None, (provenance["unknown"], release_error))) or None
     binaries = (f"{provenance['checked']} checked"
                 + (f", {len(drift)} drift" if drift else "")
                 + (f", {len(broken)} broken" if broken else "")
@@ -391,6 +419,8 @@ def main(argv: list[str] | None = None) -> int:
             out.write_text(json.dumps({
                 "measured_at": measured_at,
                 "readings": readings,
+                "release": release,
+                "provenance_error": release_error,
                 "triggers": {"cpu_s": args.cpu_trigger, "rss_kb": args.rss_trigger_kb},
                 "guard": guard,
                 "over": over,
@@ -402,6 +432,8 @@ def main(argv: list[str] | None = None) -> int:
             "measured_at": measured_at,
             "verdict": "red" if over or drift or broken else
                        ("unknown" if unknown else "green"),
+            "release": release,
+            "provenance_error": release_error,
             "readings": readings,
             "guard": guard,
             "over": over,
@@ -417,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
     if unknown:
-        print("rust-measurement: UNKNOWN installed-byte provenance unreadable, the CPU reading "
+        print("rust-measurement: UNKNOWN provenance unverified, the CPU reading "
               f"cannot be trusted as GREEN: {unknown} [{summary}]", file=sys.stderr)
         return 3
     print(f"rust-measurement: GREEN under triggers, slice stays closed: {summary} "
