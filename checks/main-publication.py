@@ -66,7 +66,9 @@ def _remote_main(repo: Path, deadline: float | None = None) -> tuple[int, str]:
     if code != 0:
         return 3, _tail(out)
     code, out = git(repo, "rev-parse", "--verify", f"refs/remotes/{REMOTE}/{BRANCH}", deadline=deadline)
-    if code != 0 or not out:
+    if code != 0:
+        return 3, _tail(out)
+    if not out:
         return 3, f"no {REMOTE}/{BRANCH} in this clone after fetching"
     return 0, out.split()[0]
 
@@ -135,9 +137,13 @@ def publish(repo: Path, remote: str = REMOTE, branch: str = BRANCH,
 
     # A hook-driven push may have won the race; the outcome, not this run's exit, decides.
     code2, theirs2 = _remote_main(repo, deadline)
-    if code2 == 0 and (theirs2 == head or git(repo, "merge-base", "--is-ancestor", head, theirs2,
-                                               deadline=deadline)[0] == 0):
-        return 0, [f"{remote}/{branch} reached {head[:8]} by another publisher; this push found nothing left"]
+    if code2 == 0:
+        won = 0 if theirs2 == head else git(repo, "merge-base", "--is-ancestor", head, theirs2,
+                                            deadline=deadline)[0]
+        if won == 0:
+            return 0, [f"{remote}/{branch} reached {head[:8]} by another publisher; this push found nothing left"]
+        if won != 1:
+            return 3, [f"cannot tell whether the push landed: {_tail(out)}"]
     if code == 127 or code2 != 0:
         return 3, [f"cannot tell whether the push landed: {_tail(out)}"]
     return 2, [f"push of {count} commit(s) failed: {_tail(out)}"]

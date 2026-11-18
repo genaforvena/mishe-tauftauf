@@ -149,3 +149,48 @@ def test_duty_timeout_leaves_the_check_room_to_report():
 
     assert entry['timeout'] > pub.BUDGET
     assert 0 < pub.LOCAL_TIMEOUT < pub.NETWORK_TIMEOUT <= pub.BUDGET
+
+
+def test_an_unreadable_remote_ref_is_unknown_with_its_own_cause(tmp_path, monkeypatch):
+    """A rev-parse that cannot run is not an absent origin/main: the reason must name the call."""
+    _, work = clone_with_remote(tmp_path)
+    real = pub.git
+
+    def stalled_remote_ref(repo, *args, **kwargs):
+        if args[:2] == ('rev-parse', '--verify'):
+            return 127, "Command 'git' timed out after 15 seconds"
+        return real(repo, *args, **kwargs)
+
+    monkeypatch.setattr(pub, 'git', stalled_remote_ref)
+    code, lines = pub.publish(work)
+
+    assert code == 3
+    assert 'timed out after 15 seconds' in lines[0]
+    assert 'no origin/main' not in lines[0]
+
+
+def test_a_push_recovery_that_cannot_be_read_is_unknown(tmp_path, monkeypatch):
+    """A failed push whose post-push comparison also fails is undecidable, not a proven failure."""
+    remote, work = clone_with_remote(tmp_path)
+    commit_with_hooks_disabled(work, 'late')
+    head = git(work, 'rev-parse', 'HEAD').strip()
+    hook = remote / 'hooks' / 'pre-receive'
+    hook.write_text('#!/bin/sh\nexit 1\n')
+    hook.chmod(0o755)
+
+    real = pub.git
+    comparisons = 0
+
+    def failing_recovery(repo, *args, **kwargs):
+        nonlocal comparisons
+        if args[:2] == ('merge-base', '--is-ancestor') and args[2] == head:
+            comparisons += 1
+            if comparisons == 2:  # the first is the "local is not behind" test, before the push
+                return 127, "Command 'git' timed out after 15 seconds"
+        return real(repo, *args, **kwargs)
+
+    monkeypatch.setattr(pub, 'git', failing_recovery)
+    code, lines = pub.publish(work)
+
+    assert code == 3
+    assert 'cannot tell whether the push landed' in lines[0]
