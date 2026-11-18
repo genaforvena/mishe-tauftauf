@@ -884,20 +884,38 @@ def _hour_attempt_rates(reads, band, now, hours=WIFI_USUAL_HOURS):
     return rates
 
 
+def _wifi_severity(rate, usual):
+    """0 = about usual, 1 = worse, 2 = much worse; a higher severity also clears a lower bar."""
+    if rate >= usual * WIFI_MUCH_RATIO and rate - usual >= WIFI_MUCH_PP:
+        return 2
+    if rate >= usual * WIFI_WORSE_RATIO and rate - usual >= WIFI_WORSE_PP:
+        return 1
+    return 0
+
+
 def wifi_usuality(rate, earlier):
     """Plain words for a band's last-hour failed-attempt share against its own completed hours.
 
     The rate counts retries, so this is a symptom, not a diagnosis: it says the radio is working
-    harder than it usually does, which is what a person notices as a slow connection.
+    harder than it usually does, which is what a person notices as a slow connection. When the
+    current hour clears a bar, the phrase also counts the consecutive completed hours that cleared
+    the same bar, so a five-hour problem does not read like a fresh blip. A hole or a quiet hour
+    stops the count; the rolling hour is never counted as a completed one.
     """
     if len(earlier) < WIFI_USUAL_MIN_HOURS:
         return ", no usual yet"
     usual = statistics.median(earlier)
-    if rate >= usual * WIFI_MUCH_RATIO and rate - usual >= WIFI_MUCH_PP:
-        return f", much worse than usual (usual {usual:.1f}%)"
-    if rate >= usual * WIFI_WORSE_RATIO and rate - usual >= WIFI_WORSE_PP:
-        return f", worse than usual (usual {usual:.1f}%)"
-    return ", about usual"
+    severity = _wifi_severity(rate, usual)
+    if not severity:
+        return ", about usual"
+    hours = 0
+    for past in earlier:  # newest completed hour first
+        if _wifi_severity(past, usual) < severity:
+            break
+        hours += 1
+    span = f" for at least {hours} h" if hours else ""
+    label = "much worse than usual" if severity == 2 else "worse than usual"
+    return f", {label}{span} (usual {usual:.1f}%)"
 
 
 def wifi_quality_line(now=None):

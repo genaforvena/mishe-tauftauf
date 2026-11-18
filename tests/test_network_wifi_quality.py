@@ -198,7 +198,8 @@ def test_a_bad_hour_is_named_much_worse_than_its_own_usual(tmp_path, monkeypatch
     write_rows(tmp_path, monkeypatch, rows)
     line = view.wifi_quality_line(now=USUAL_NOW).split("\n")[0]
     assert "25.0% last" in line, line
-    assert ", much worse than usual (usual 5.0%)" in line, line
+    # the flagged hour is named with its own usual; the duration clause is covered by the tests below
+    assert ", much worse than usual" in line and "(usual 5.0%)" in line, line
 
 
 def test_a_typical_hour_says_about_usual(tmp_path, monkeypatch):
@@ -222,3 +223,30 @@ def test_a_quiet_band_needs_the_points_above_and_not_only_the_ratio():
     assert view.wifi_usuality(4.5, [1.5, 1.6, 1.4]) == ", about usual"
     # but a share far above it is named, with the usual it is compared against
     assert view.wifi_usuality(16.0, [1.5, 1.6, 1.4]) == ", much worse than usual (usual 1.5%)"
+
+
+def test_a_multi_hour_bad_streak_names_its_age(tmp_path, monkeypatch):
+    # Twelve hours at 5%, the last five at 25%: five completed hours cleared the same much-worse bar.
+    rows = counter_history(USUAL_NOW, 12,
+                           lambda t, now: 0.25 if t >= now - 5 * 3600 else 0.05)
+    write_rows(tmp_path, monkeypatch, rows)
+    line = view.wifi_quality_line(now=USUAL_NOW).split("\n")[0]
+    assert ", much worse than usual for at least 5 h (usual 5.0%)" in line, line
+
+
+def test_a_one_hour_worse_blip_has_no_duration(tmp_path, monkeypatch):
+    # 11% against 5% clears 'worse' but not 'much worse'; only the current hour is elevated.
+    rows = counter_history(USUAL_NOW, 12,
+                           lambda t, now: 0.11 if t >= now - 3600 else 0.05)
+    write_rows(tmp_path, monkeypatch, rows)
+    line = view.wifi_quality_line(now=USUAL_NOW).split("\n")[0]
+    assert ", worse than usual (usual 5.0%)" in line, line
+
+
+def test_duration_counts_only_the_unbroken_run():
+    # A calm hour inside the recent hours stops the count, even if older hours were bad.
+    assert view.wifi_usuality(25.0, [25.0, 25.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0]) == \
+        ", much worse than usual for at least 2 h (usual 5.0%)"
+    # A 'worse' hour counts a prior 'much worse' hour: the lower bar was cleared too.
+    assert view.wifi_usuality(11.0, [25.0, 11.0, 5.0, 5.0, 5.0]) == \
+        ", worse than usual for at least 2 h (usual 5.0%)"

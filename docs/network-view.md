@@ -230,8 +230,11 @@ is not mistaken for a quiet mind.
   hour compares with the median of the last 24 completed clock hours held in the two-day router
   log (`about usual`; `worse than usual (usual N%)` at 1.5× and at least five points above it;
   `much worse than usual (usual N%)` at 2× and at least ten points above; `no usual yet` with fewer
-  than three completed hours). It is a symptom, not a diagnosis: the attempts figure counts retries,
-  and a radio can work harder at a busy hour without losing frames. STALE past 15 minutes.
+  than three completed hours). When the current hour is flagged, consecutive completed hours that
+  cleared the same bar add `for at least N h`, so a five-hour streak does not read like a fresh blip;
+  a calm hour or a hole in the log stops the count and no duration is printed. It is a symptom, not a
+  diagnosis: the attempts figure counts retries, and a radio can work harder at a busy hour without
+  losing frames. STALE past 15 minutes.
 - `UNKNOWN`: the log has no reading, or the last read failed.
 - `STALE`: the last good reading is older than 15 minutes.
 - Trends and weekday baselines are UNKNOWN until two days of comparable rows exist.
