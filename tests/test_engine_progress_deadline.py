@@ -126,13 +126,14 @@ def test_a_stalled_engine_is_cut_before_the_soft_deadline(tmp_path: Path):
 def test_a_child_wait_defers_the_stall_cut_before_the_soft_deadline(tmp_path: Path):
     """A silent wait on a live child is not a stall, before the deadline as well as after it.
 
-    The child starts a moment after the engine's one line, so the run is silent well past the
-    stall gap while the child sleeps; the cut must not fire, and the engine exits cleanly.
+    The child exists before the engine's one line, so the silence that follows it is a wait on a
+    child already in the table; the cut must not fire, and the engine exits cleanly.
     """
     out = tmp_path / "stream"
     writes_then_waits = ("import subprocess,sys,time\n"
+                         "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(8)'])\n"
                          "print('x'*100, flush=True)\n"
-                         "subprocess.run([sys.executable,'-c','import time; time.sleep(8)'])\n")
+                         "child.wait()\n")
     started = time.monotonic()
     code = proc.run_bounded([sys.executable, "-c", writes_then_waits], env=dict(os.environ), cwd=tmp_path,
                             timeout=60, stdout_to=out, hard_timeout=120, idle_gap=30.0, stall_gap=1.0)
@@ -140,8 +141,16 @@ def test_a_child_wait_defers_the_stall_cut_before_the_soft_deadline(tmp_path: Pa
     assert time.monotonic() - started >= 8.0, "the engine waiting on its child was cut as idle"
 
 
+# The child exists before the engine's first line, so the idle check reads a child that is
+# already forked instead of racing the interpreter start. The earlier silent-first form needed
+# the fork to be visible inside idle_gap; measured on an idle host that takes 0.04-0.10 s, but
+# under the load of a full-suite delivery check it exceeded 2.5 s and cut a good run
+# (8c568a59 gate, 2026-11-18). Reproduced deterministically by delaying the fork past
+# idle_gap: SITE_HOME/artifacts/rust-plan-20261107/repro_live_child_race.py.
 WAITS_ON_CHILD = ("import subprocess,sys\n"
-                  "subprocess.run([sys.executable,'-c','import time; time.sleep(5)'])\n")
+                  "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(5)'])\n"
+                  "print('waiting on child', child.pid, flush=True)\n"
+                  "child.wait()\n")
 
 
 def test_an_engine_waiting_on_a_live_child_is_not_idle(tmp_path: Path):
@@ -151,7 +160,6 @@ def test_an_engine_waiting_on_a_live_child_is_not_idle(tmp_path: Path):
     code = proc.run_bounded([sys.executable, "-c", WAITS_ON_CHILD], env=dict(os.environ), cwd=tmp_path,
                             timeout=1, stdout_to=out, hard_timeout=20, idle_gap=2.5)
     assert code == 0
-    # idle_gap leaves room for a slow interpreter start before the child exists at the first check
     assert time.monotonic() - started >= 5.0, "the engine waiting on its child was cut as idle"
 
 
