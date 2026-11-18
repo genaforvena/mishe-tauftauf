@@ -1071,10 +1071,10 @@ def web_sample(row):
 
 SECURE_HOSTS = ("gstatic", "cloudflare")
 NIGHT_HOURS = range(0, 6)      # the household is asleep; the quiet baseline for a handshake
-# The busy evening, 18:00-20:59 clock time: the only hours where the handshake median is elevated in
-# BOTH the 8-day file and the 3.4-day window the view loads (18/19/20 = 462/526/408 ms and 469/459/423 ms;
-# 17:00 and 21:00 sit near the daytime baseline in both). The household asks "why are pages slow at 7pm?",
-# so these hours get named; the cause (household traffic or the ISP's evening peak) is not asserted.
+# The busy evening, 18:00-20:59 clock time, where the disjoint handshake median is elevated in the
+# loaded window (18/19/20 = 330/252/306 ms, against ~210 ms overnight on 1440 recent probes).
+# The household asks "why are pages slow at 7pm?", so these hours get named; the cause (household
+# traffic or the ISP's evening peak) is not asserted.
 EVENING_HOURS = range(18, 21)
 PHASE_BASELINE_MIN = 60        # rows needed before a night/evening median means anything
 PHASE_SPLIT_RATIO = 2.0      # when one host's handshake is this many times the other's ...
@@ -1082,14 +1082,40 @@ PHASE_SPLIT_MS = 200         # ... and at least this far apart, the mean hides w
 
 
 def phase_ms(row, name, field):
-    """One phase (connect_ms or tls_ms) of a secure web check, or None when it did not load or was not measured."""
+    """One cumulative checkpoint of a secure web check in ms, or None when it was not measured.
+
+    curl's `%{time_connect}`, `%{time_appconnect}` and `%{time_total}` are measured from the start
+    of the request: appconnect includes connect, total includes appconnect. They are checkpoints,
+    not durations; calling appconnect "the handshake" double counts the connect and makes the
+    printed phases fail to add up to the page total.
+    """
     check = ((row or {}).get("internet") or {}).get(name)
     return check.get(field) if isinstance(check, dict) and check.get("ok") else None
 
 
+def phase_value(row, name, field):
+    """One disjoint phase in ms: the increment between two of curl's cumulative checkpoints.
+
+    Reaching the site is time_connect, the secure handshake is appconnect minus connect, and the
+    rest of the page is total minus appconnect. A missing or reversed pair is UNKNOWN, never a
+    negative number or one borrowed from another checkpoint.
+    """
+    if field == "connect_ms":
+        return phase_ms(row, name, "connect_ms")
+    if field == "handshake_ms":
+        later, earlier = phase_ms(row, name, "tls_ms"), phase_ms(row, name, "connect_ms")
+    elif field == "body_ms":
+        later, earlier = phase_ms(row, name, "total_ms"), phase_ms(row, name, "tls_ms")
+    else:
+        return None
+    if later is None or earlier is None or later < earlier:
+        return None
+    return later - earlier
+
+
 def _sample_mean(row, field):
-    """Mean of one check phase across the secure hosts in a row, or None when none measured it."""
-    vals = [phase_ms(row, name, field) for name in SECURE_HOSTS]
+    """Mean of one disjoint phase across the secure hosts in a row, or None when none measured it."""
+    vals = [phase_value(row, name, field) for name in SECURE_HOSTS]
     vals = [v for v in vals if v is not None]
     return sum(vals) / len(vals) if vals else None
 
@@ -1097,12 +1123,12 @@ def _sample_mean(row, field):
 def _handshake_split(row):
     """An indented second line naming both hosts' handshakes when their mean would mislead.
 
-    `phase_line` prints the mean of the two hosts. On an ordinary probe they track each other, but
-    one can stall alone (2026-11-18 11:40Z: gstatic 299 ms, cloudflare 1262 ms), and the mean then
-    reads as a general secure-setup problem. Only a clear divergence gets the breakdown, so the
-    window stays dense; one host failing to answer is not a divergence and gets no second line.
+    `phase_line` prints the mean of the two disjoint handshake durations. On an ordinary probe they
+    track each other, but one can stall alone while the other stays fast, and the mean then reads as
+    a general secure-setup problem. Only a clear divergence gets the breakdown, so the window stays
+    dense; one host failing to answer is not a divergence and gets no second line.
     """
-    vals = [phase_ms(row, name, "tls_ms") for name in SECURE_HOSTS]
+    vals = [phase_value(row, name, "handshake_ms") for name in SECURE_HOSTS]
     if any(v is None or v < 0 for v in vals):
         return ""
     lo, hi = min(vals), max(vals)
@@ -1133,12 +1159,14 @@ def _hour_median(data, field, hours):
 
 
 def phase_line(data, now=None):
-    """Where a page load's time goes: reaching the site vs the secure handshake, with the age of the reading.
+    """Where a page load's time goes: three disjoint phases whose sum is the page's total time.
 
     The INTERNET lines above show the whole page load and already flag "slower than usual"; this says
-    which half moved. The two phases fail differently: a slow connect points at the path (router, WAN,
-    ISP), a slow handshake at the encrypted setup. Stating both lets a household tell "the line is bad"
-    from "the secure setup is slow tonight" without reading raw probes.
+    which part moved. The probe's curl timings are cumulative checkpoints, so the phases here are
+    their differences: reaching the site, the secure handshake, and the rest of the page. A slow
+    connect points at the path (router, WAN, ISP), a slow handshake at the encrypted setup, and a
+    slow remainder at the page itself. Printing the raw checkpoints as phases would double count the
+    connect and leave the three numbers short of the total the INTERNET lines show.
     """
     now = time.time() if now is None else now
     last = data[-1] if data else None
@@ -1149,13 +1177,16 @@ def phase_line(data, now=None):
         return "UNKNOWN (last probe has no readable time)"
     if a > STALE_S:
         return f"UNKNOWN (last probe {a / 60:.0f} min old)"
-    conn, tls = _sample_mean(last, "connect_ms"), _sample_mean(last, "tls_ms")
-    if conn is None or tls is None:
-        return f"UNKNOWN (the probe {a:.0f} s ago did not measure both phases)"
-    usual = _hour_median(data, "tls_ms", range(24))
-    night = _hour_median(data, "tls_ms", NIGHT_HOURS)
-    evening = _hour_median(data, "tls_ms", EVENING_HOURS)
-    sent = f"reaching the site {conn:.0f} ms, secure handshake {tls:.0f} ms"
+    conn = _sample_mean(last, "connect_ms")
+    hs = _sample_mean(last, "handshake_ms")
+    body = _sample_mean(last, "body_ms")
+    if None in (conn, hs, body):
+        return f"UNKNOWN (the probe {a:.0f} s ago did not measure all three phases)"
+    usual = _hour_median(data, "handshake_ms", range(24))
+    night = _hour_median(data, "handshake_ms", NIGHT_HOURS)
+    evening = _hour_median(data, "handshake_ms", EVENING_HOURS)
+    sent = (f"reaching the site {conn:.0f} ms, secure handshake {hs:.0f} ms, "
+            f"rest of page {body:.0f} ms")
     split = _handshake_split(last)
     if usual is None:
         return f"{sent}; handshake usually UNKNOWN (too few probes for a baseline); last probe {a:.0f} s ago{split}"

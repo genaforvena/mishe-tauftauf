@@ -138,22 +138,25 @@ is not mistaken for a quiet mind.
   lookup of another name. A cached answer can make that part of a connect far quicker, so
   "reaching the site 41 ms" under "DNS lookup 102 ms" is not a contradiction. UNKNOWN when the
   newest probe carries no lookup time.
-- `WHERE TIME GOES`: of the page-load time just above, how much went into reaching the site
-  (`connect_ms`) and how much into the secure handshake (`tls_ms`), for the newest probe only.
+- `WHERE TIME GOES`: of the page-load time just above, three disjoint phases that add up to it for
+  the newest probe only: reaching the site (`time_connect`), the secure handshake
+  (`time_appconnect` minus `time_connect`), and the rest of the page (`time_total` minus
+  `time_appconnect`). curl reports all three as cumulative checkpoints from the start of the
+  request, so printing them raw would double count the connect and leave the figures short of the
+  page total.
   It also gives the handshake's usual median over the loaded rows and, when both have at least
   `PHASE_BASELINE_MIN` rows, the medians for overnight (00:00–05:59) and the busy evening
-  (18:00–20:59). Those two hours were chosen because the handshake median is elevated there in
-  both the eight-day log and the shorter window the view loads; 17:00 and 21:00 sit near the
-  daytime baseline in both. The line says where the time went, not why: household traffic and the
-  ISP's evening peak look the same from here. Probe cadence does not vary by time of day: the thin
-  evening counts in the eight-day log come from a partial first day and the host reboot of
-  2026-11-10 (boot ended 18:15Z, next probe 19:54Z), not evening load, and at the current 180 s
-  timer period every clock hour carries 17–19 probes. UNKNOWN when the newest probe is stale or
-  did not carry both phases.
+  (18:00–20:59). Those hours are named because the handshake median is elevated there in the
+  loaded window; 21:00 sits near the daytime baseline. The line says where the time went, not why:
+  household traffic and the ISP's evening peak look the same from here. Probe cadence does not
+  vary by time of day: the thin evening counts in the eight-day log come from a partial first day
+  and the host reboot of 2026-11-10 (boot ended 18:15Z, next probe 19:54Z), not evening load, and
+  at the current 180 s timer period every clock hour carries 17–19 probes. UNKNOWN when the newest
+  probe is stale or did not carry all three checkpoints.
   When one host's handshake is at least `PHASE_SPLIT_RATIO` (2x) the other's and at least
   `PHASE_SPLIT_MS` (200 ms) apart, a second indented line names both hosts and the slower one.
-  The printed figure is still the mean of the two, so a 781 ms handshake built from gstatic 299 ms
-  and cloudflare 1262 ms is explained instead of looking like a general secure-setup problem.
+  The printed figure is still the mean of the two, so a 710 ms handshake built from gstatic 229 ms
+  and cloudflare 1192 ms is explained instead of looking like a general secure-setup problem.
   One host failing to answer is not a divergence: it leaves one sample, with no second line.
 - `USUAL`: is the web slower than usual? The recent figure is the **median of the last ten web
   samples**, and the line names that window — `last 10 probes (31 min)` — because at the current

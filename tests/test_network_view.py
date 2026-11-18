@@ -522,15 +522,17 @@ def test_probe_cadence_unknown_without_usable_timestamps():
 
 
 def _phase_rows(count, connect, tls, hour, day=10):
-    """Probes at a fixed UTC clock hour carrying both phases; the baseline reads the hour from `at` alone."""
+    """Probes at a fixed UTC clock hour carrying all three phases; baselines read the hour from `at`."""
     at = f"2026-11-{day:02d}T{hour:02d}:00:00Z"
-    return [{"at": at, "internet": {name: {"ok": True, "connect_ms": connect, "tls_ms": tls}
+    return [{"at": at, "internet": {name: {"ok": True, "connect_ms": connect, "tls_ms": tls,
+                                            "total_ms": tls + 72.0}
                                     for name in ("gstatic", "cloudflare")}} for _ in range(count)]
 
 
 def _fresh_phase_row(connect, tls):
     at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    return {"at": at, "internet": {name: {"ok": True, "connect_ms": connect, "tls_ms": tls}
+    return {"at": at, "internet": {name: {"ok": True, "connect_ms": connect, "tls_ms": tls,
+                                          "total_ms": tls + 72.0}
                                    for name in ("gstatic", "cloudflare")}}
 
 
@@ -549,23 +551,28 @@ def test_dns_line_is_unknown_when_the_probe_did_not_measure_lookup_time():
 
 def test_phase_line_splits_reaching_the_site_from_the_handshake():
     line = view.phase_line([_fresh_phase_row(70.0, 900.0)])
-    assert "reaching the site 70 ms" in line and "secure handshake 900 ms" in line
+    assert "reaching the site 70 ms" in line and "secure handshake 830 ms" in line
+    assert "rest of page 72 ms" in line
     assert "last probe" in line
 
 
 def test_phase_line_names_both_hosts_when_one_handshake_stalls():
     row = _fresh_phase_row(70.0, 900.0)
     row["internet"]["gstatic"]["tls_ms"] = 299.0
+    row["internet"]["gstatic"]["total_ms"] = 371.0
     row["internet"]["cloudflare"]["tls_ms"] = 1262.0
+    row["internet"]["cloudflare"]["total_ms"] = 1334.0
     line = view.phase_line([row])
-    assert "secure handshake 780 ms" in line  # keep the mean; the split explains it
-    assert "\n                handshakes: gstatic 299 ms, cloudflare 1262 ms (cloudflare slower)" in line
+    assert "secure handshake 710 ms" in line  # keep the mean; the split explains it
+    assert "\n                handshakes: gstatic 229 ms, cloudflare 1192 ms (cloudflare slower)" in line
 
 
 def test_phase_line_names_the_slow_host_in_either_direction():
     row = _fresh_phase_row(70.0, 900.0)
     row["internet"]["gstatic"]["tls_ms"] = 1262.0
+    row["internet"]["gstatic"]["total_ms"] = 1334.0
     row["internet"]["cloudflare"]["tls_ms"] = 299.0
+    row["internet"]["cloudflare"]["total_ms"] = 371.0
     assert "(gstatic slower)" in view.phase_line([row])
 
 
@@ -583,11 +590,15 @@ def test_phase_line_has_no_split_when_one_host_did_not_answer():
 def test_phase_line_split_needs_both_a_ratio_and_a_gap():
     row = _fresh_phase_row(70.0, 300.0)
     row["internet"]["gstatic"]["tls_ms"] = 190.0
+    row["internet"]["gstatic"]["total_ms"] = 262.0
     row["internet"]["cloudflare"]["tls_ms"] = 210.0  # 1.1x, 20 ms apart
+    row["internet"]["cloudflare"]["total_ms"] = 282.0
     assert "handshakes:" not in view.phase_line([row])
     row["internet"]["cloudflare"]["tls_ms"] = 385.0  # 2.03x but only 195 ms apart
+    row["internet"]["cloudflare"]["total_ms"] = 457.0
     assert "handshakes:" not in view.phase_line([row])
     row["internet"]["cloudflare"]["tls_ms"] = 400.0  # 2.1x and 210 ms apart
+    row["internet"]["cloudflare"]["total_ms"] = 472.0
     assert "handshakes:" in view.phase_line([row])
 
 
@@ -602,7 +613,7 @@ def test_phase_line_is_unknown_when_the_probe_did_not_measure_the_phases():
     row = {"at": at, "internet": {name: {"ok": True, "total_ms": 300.0}
                                   for name in ("gstatic", "cloudflare")}}
     line = view.phase_line([row])
-    assert line.startswith("UNKNOWN") and "did not measure both phases" in line
+    assert line.startswith("UNKNOWN") and "did not measure all three phases" in line
 
 
 def test_phase_line_is_unknown_when_both_checks_failed():
@@ -620,8 +631,21 @@ def test_phase_line_reports_the_night_and_evening_handshake_baselines():
     rows = _phase_rows(80, 70.0, 270.0, hour=2) + _phase_rows(80, 70.0, 460.0, hour=19)
     rows.append(_fresh_phase_row(70.0, 300.0))
     line = view.phase_line(rows)
-    assert "nights ~270" in line and "evenings ~460" in line
+    assert "nights ~200" in line and "evenings ~390" in line
     assert not line.startswith("UNKNOWN")
+
+
+def test_phase_line_phases_sum_to_the_page_total():
+    line = view.phase_line([_fresh_phase_row(70.0, 900.0)])
+    assert "reaching the site 70 ms, secure handshake 830 ms, rest of page 72 ms" in line
+    assert "secure handshake 900 ms" not in line  # curl's cumulative appconnect is not a phase
+
+
+def test_phase_line_is_unknown_when_a_checkpoint_is_reversed():
+    row = _fresh_phase_row(70.0, 900.0)
+    row["internet"]["gstatic"]["total_ms"] = 800.0  # before the handshake finished
+    row["internet"]["cloudflare"]["total_ms"] = 800.0
+    assert view.phase_line([row]).startswith("UNKNOWN")
 
 
 def test_phase_line_drops_a_baseline_it_cannot_support():
