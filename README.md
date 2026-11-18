@@ -123,7 +123,7 @@ developed in, the roles are:
 
 | Role | Owns |
 | --- | --- |
-| `genome` | The runtime and reusable core, release snapshots, pushes to `main`, and CI checks. |
+| `genome` | The runtime and reusable core, release snapshots, and CI and live-consumer checks. |
 | `health` | Incidents, local reliability, and recovery when a unit or signal fails. |
 | `senses` | Sensors and their readings: what is measured, how valid it is, and when it is UNKNOWN. |
 | `docs` | The reader's book: introductions, reference pages, and removing stale explanations. |
