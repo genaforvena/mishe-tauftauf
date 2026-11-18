@@ -120,3 +120,31 @@ def test_session_without_reset_is_rejected_unless_zero_percent():
     bad = RESET_INSTANT_TEXT.replace("Current session: 0% used", "Current session: 20% used")
     with pytest.raises(ValueError):
         read_usage(json.dumps(reset_instant_report(bad)), now=RESET_INSTANT_NOW)
+
+
+def test_reset_at_precision_boundary_is_not_false_unknown():
+    from mishe_tauftauf.claude_quota_text import read_usage
+    # Native /usage at 2026-11-18 07:59:01Z rounded the live 5h reset down to
+    # "7:59am" — one second before `now`. The strict lower bound discarded the
+    # whole sample, including a healthy 7d window. Evidence is preserved at
+    # operator/budget/native-evidence/1794988741330126579-42da3ed4....json.
+    now = datetime(2026, 11, 18, 7, 59, 1, tzinfo=timezone.utc).timestamp()
+    r = report()
+    r["result"] = ("Current session: 100% used · resets Nov 18, 7:59am (UTC)\n"
+                   "Current week (all models): 9% used · resets Nov 25, 2:59am (UTC)\n")
+    row = read_usage(json.dumps(r), now=now)
+    assert row["state"] == "FRESH"
+    assert row["five_hour"]["resets_at"] == datetime(2026, 11, 18, 7, 59, tzinfo=timezone.utc).timestamp()
+    assert row["seven_day"]["resets_at"] == datetime(2026, 11, 25, 2, 59, tzinfo=timezone.utc).timestamp()
+
+
+def test_reset_beyond_precision_in_the_past_is_still_rejected():
+    from mishe_tauftauf.claude_quota_text import read_usage
+    # Keep the tolerance bounded: a display more than one precision unit stale
+    # (61 s here) must stay UNKNOWN, never become a fresh-looking window.
+    now = datetime(2026, 11, 18, 8, 0, 1, tzinfo=timezone.utc).timestamp()
+    r = report()
+    r["result"] = ("Current session: 100% used · resets Nov 18, 7:59am (UTC)\n"
+                   "Current week (all models): 9% used · resets Nov 25, 2:59am (UTC)\n")
+    with pytest.raises(ValueError):
+        read_usage(json.dumps(r), now=now)

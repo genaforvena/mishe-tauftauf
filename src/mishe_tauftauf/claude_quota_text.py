@@ -18,6 +18,7 @@ LINE = re.compile(r"(?P<label>Current session|Current week \(all models\)): "
                   r"(?: · resets (?P<month>[A-Z][a-z]{2}) "
                   r"(?P<day>\d{1,2}), (?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?"
                   r"(?P<period>am|pm) \(UTC\))?")
+RESET_PRECISION_S = 60  # native /usage reports reset times rounded to the minute
 
 
 def read_usage(raw, *, now):
@@ -36,7 +37,7 @@ def read_usage(raw, *, now):
     if not isinstance(row.get("result"), str):
         raise ValueError("native usage text missing")
     result = dict(state="FRESH", source="claude-native-usage", observed_at=now,
-                  reset_precision_seconds=60, usage_precision_percentage_points=1)
+                  reset_precision_seconds=RESET_PRECISION_S, usage_precision_percentage_points=1)
     year = datetime.fromtimestamp(now, timezone.utc).year
     pending = set()
     for line in row["result"].splitlines():
@@ -69,7 +70,10 @@ def read_usage(raw, *, now):
                                  tzinfo=timezone.utc).timestamp()
             except ValueError:
                 continue
-            if now < reset <= now + duration + 60:
+            # The display rounds the reset down to the minute, so a live window can show a
+            # reset up to RESET_PRECISION_S seconds in the past. Tolerate that on the lower
+            # bound; a genuinely stale sample (reset minutes old) still finds no candidate.
+            if now - RESET_PRECISION_S < reset <= now + duration + RESET_PRECISION_S:
                 candidates.append(reset)
         if len(candidates) != 1:
             raise ValueError("quota reset is expired or outside its window")
