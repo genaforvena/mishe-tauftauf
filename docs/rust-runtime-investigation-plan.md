@@ -276,3 +276,18 @@ The index is 441 KB for 2,139 receipts (183 bytes/line), written in one
 parent's high-water mark: a bare `python3` already reports 463,772 KB, so no RSS
 delta from these runs means anything. The live producer's own `MemoryPeak` after
 delivery is the observation that settles it.
+
+**Delivery, first attempt (2026-11-18).** The request for `8c568a59` failed its
+check on one test unrelated to this change:
+`tests/test_engine_progress_deadline.py::test_an_engine_waiting_on_a_live_child_is_not_idle`,
+cut at "exceeded 1s (no output for 2.5s)" with 5,398 tests passing. Both
+live-child fixtures in that file started the engine silent and expected the fork
+to be visible inside `idle_gap`, so their verdict rode on interpreter-start
+latency; the fork is visible in 0.04–0.10 s on an idle host and the file passed
+12/12 three times at that checkout. `90d0f135` forks the child before the first
+output line in both fixtures (assertions and engine behaviour unchanged), after
+a deterministic reproduction: delaying the fork past `idle_gap` gives the gate's
+exact message at 2.53 s, forking first exits 0 at 5.11 s. Delivery was then
+re-requested for `90d0f135`, previous pin `76c4256b`, and the live observation of
+the index append is still owed.
+
