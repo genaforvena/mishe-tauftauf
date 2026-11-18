@@ -1056,7 +1056,7 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
             publish_outcome(home, record); save()
             raise
         moved = pin_revision(home)
-        if moved and not moved.startswith(previous):
+        if moved and moved != previous:
             # Two promotions can run their check stages at once: the check deliberately runs
             # without the delivery lock (a request consumed by a wake and the cadence promotion can
             # overlap), so the pin may have moved before this one reaches activation. Activating
