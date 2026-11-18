@@ -74,7 +74,9 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
         print(f"mishe: {name}: ran start={_utc(started)} end={_utc(time.time())} "
               f"elapsed={time.monotonic() - clock:.1f}s limit={timeout:g}s outcome={outcome}", file=sys.stderr)
 
-    _restore_memory_floor(home, name)
+    floor = _restore_memory_floor(home, name)
+    guard = (wake_memory.MemoryFloorGuard(floor["unit"]).start()
+             if floor.get("unit") else None)
     try:
         code = run_bounded(command, env=dict(os.environ), cwd=Path(home), timeout=timeout, stdout_to=scratch)
     except (EngineNotStarted, EngineTimeout) as exc:
@@ -85,6 +87,10 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
         signal_store.observe_unknown(home, name, now=now, source=f"run:{command[0]}",
                                      reason=f"not run: {type(exc).__name__}")
         return 2
+    finally:
+        if guard is not None:
+            guard.stop()
+            wake_memory.record_guard(Path(home) / "signals" / f"{name}.memory.json", guard)
     ran(f"exit={code}")
     os.replace(scratch, detail)
     if code in unknown_codes or (code != 0 and code not in red_codes):

@@ -317,6 +317,20 @@ def _restore_memory_floor(home, role, key) -> dict:
     return record
 
 
+def _start_memory_guard(record) -> wake_memory.MemoryFloorGuard | None:
+    """Keep re-asserting the floor of the unit ``record`` names, or None when it has none."""
+    unit = record.get("unit")
+    if not unit:
+        return None
+    return wake_memory.MemoryFloorGuard(unit).start()
+
+
+def _finish_memory_guard(home, key, guard) -> None:
+    """Stop the guard and add its revert counters to the wake's memory evidence."""
+    guard.stop()
+    wake_memory.record_guard(Path(home) / "wakes" / f"{key}.memory.json", guard)
+
+
 def _execute(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, timeout, on_start=None):
     """Write the wake's files, run the engine, report whether it yielded.
 
@@ -367,7 +381,8 @@ def _execute_engine(home, role, key, *, engine, now, snap, mail, reconcile_of, r
     snap.tape_seq = max([owed.tape_cursor(home, role)] + [seq for seq, _ in mail])
     yielding.wakes_dir(home).mkdir(parents=True, exist_ok=True)
     write_json(yielding.snapshot_path(home, key), {"role": role, "snapshot": snap.to_json()})
-    _restore_memory_floor(home, role, key)
+    floor = _restore_memory_floor(home, role, key)
+    guard = _start_memory_guard(floor)
     write_json(yielding.wakes_dir(home) / f"{key}.work-start.json",
                work_receipts.begin(repo, role=role, key=key, now=now, home=home))
     prompt = yielding.wakes_dir(home) / f"{key}.prompt.md"
@@ -384,6 +399,8 @@ def _execute_engine(home, role, key, *, engine, now, snap, mail, reconcile_of, r
         return "unknown", f"engine timed out: {exc}"
     finally:
         work_receipts.complete(home, key, now=time.time(), engine_seconds=time.monotonic() - engine_started)
+        if guard is not None:
+            _finish_memory_guard(home, key, guard)
     if yielding.receipt_path(home, key).exists():
         return "yielded", f"engine exit {code}"
     detail = f"engine exit {code} without a yield"

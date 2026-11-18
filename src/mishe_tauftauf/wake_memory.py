@@ -21,8 +21,14 @@ at its throttle cannot finish either, so it restores its own floor too.
 The floor is set on the *running* unit at start, from inside the unit itself, by
 writing the unit's own cgroup ``memory.high`` directly, so it does not edit the
 protected host drop-in and needs no systemd reload. A later ``daemon-reload``
-reverts it, because the reload re-reads the protected drop-in; the next start
-restores it again.
+reverts it, because the reload re-reads the protected drop-in and writes the
+host's 1G back onto every running unit's cgroup (measured 2026-11-18 03:35Z on a
+running wake: one ``systemctl --user daemon-reload`` moved ``memory.high``
+1610612736 -> 1073741824). Delivery reloads on every pin move, so a start-only
+restore lasts only until the next one: the 03:09:56 reload left system1's engine
+throttled at 1G for the rest of its run (host memory ``full`` PSI 39-61 %).
+:class:`MemoryFloorGuard` therefore keeps re-asserting the floor for as long as
+the unit runs, and records every revert it repaired.
 
 It must not go through ``systemctl --user set-property --runtime``: that writes a
 runtime drop-in under ``/run/user/<uid>/systemd/user.control/`` and, for a unit
@@ -41,10 +47,17 @@ silently worked around.
 """
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 from . import work_boundary
 from .units import WAKE_MEMORY_HIGH_BYTES
+
+# How often a running unit re-reads its own ``memory.high``. A reload rewrites the file within
+# its ~1 s, so a two-second tick bounds the throttled window to about one engine allocation
+# burst, and the read costs a single sysfs open.
+FLOOR_POLL_SECONDS = 2.0
 
 
 def running_unit_name() -> str | None:
@@ -143,3 +156,88 @@ def memory_high_path(unit: str) -> Path | None:
     if not pid.isdigit() or pid == "0":
         return None
     return cgroup_dir(pid)
+
+
+class MemoryFloorGuard:
+    """Keeps a running unit's memory floor applied when a reload lowers it again.
+
+    Only ownership of the running unit's cgroup makes this possible: the write is the same
+    ``memory.high`` write the start-time restore performs, repeated. Counters belong in the
+    caller's evidence so a recurrence is visible instead of silent — ``reverts`` counts reads
+    below the floor, ``repaired`` the writes that put it back, ``failed`` those that did not.
+    """
+
+    def __init__(self, unit: str, *, floor: int = WAKE_MEMORY_HIGH_BYTES,
+                 interval: float = FLOOR_POLL_SECONDS):
+        self.unit, self.floor, self.interval = unit, floor, interval
+        self.reverts = 0
+        self.repaired = 0
+        self.failed = 0
+        self.last_revert_at: float | None = None
+        self._path: Path | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> "MemoryFloorGuard":
+        """Resolve the cgroup once and begin re-checking it until :meth:`stop`."""
+        self._path = memory_high_path(self.unit)
+        self._thread = threading.Thread(target=self._run, name=f"memory-floor:{self.unit}",
+                                        daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        """Stop the re-check and wait briefly for it so its counters are stable."""
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(5.0, self.interval * 2))
+
+    def record(self) -> dict:
+        return {"unit": self.unit, "floor": self.floor, "reverts": self.reverts,
+                "repaired": self.repaired, "failed": self.failed,
+                "last_revert_at": self.last_revert_at}
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval):
+            self.check()
+
+    def check(self) -> None:
+        """Re-apply the floor once when the unit's own ``memory.high`` sits below it."""
+        path = self._path or memory_high_path(self.unit)
+        if path is None:
+            return
+        self._path = path
+        before = _memory_bytes(path / "memory.high")
+        if before is None or before >= self.floor:
+            return
+        self.reverts += 1
+        self.last_revert_at = time.time()
+        if _write_memory_high(path / "memory.high", self.floor):
+            after = _memory_bytes(path / "memory.high")
+            if after is not None and after >= self.floor:
+                self.repaired += 1
+                return
+        self.failed += 1
+
+
+def record_guard(path: Path, guard: MemoryFloorGuard) -> None:
+    """Add a guard's counters to an existing evidence record. Never raises.
+
+    Called as the unit's work ends, so an unreadable record or a full disk cannot turn a
+    finished run into a failed one.
+    """
+    from .state_files import read_json, write_json
+    path = Path(path)
+    try:
+        record = read_json(path)
+    except ValueError:
+        record = None
+    except OSError:
+        return
+    if not isinstance(record, dict):
+        record = {}
+    record["guard"] = guard.record()
+    try:
+        write_json(path, record)
+    except OSError:
+        return
