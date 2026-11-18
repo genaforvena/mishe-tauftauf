@@ -3760,3 +3760,12 @@ fault names the candidate after the last served decision — but a candidate tha
 receives `S` is not a gap: it is an entry with no record reference, whose
 payload comes from inline decoding. Only `N`/`V` fill the sink; only a missing
 decision for a candidate that carried a reference is an `incomplete` row.
+
+**Cost of the replacement, measured.** On 5,159 entries carrying one record
+reference (the census's reserved-header count, sampled every 38th
+record-bearing entry), per-entry `records.envelope` costs 0.267–0.311 CPU-s and
+one `--payloads` child pass over the same entries costs 0.174–0.175 CPU-s —
+about 0.1–0.14 CPU-s saved per publication-path run. That is a real but small saving; rank 2's
+justification is the single authoritative verifier, not throughput, and the
+plan should not claim otherwise. The tape read shared by both arms costs
+1.92 CPU-s for 302,682 entries.
