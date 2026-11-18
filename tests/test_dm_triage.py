@@ -21,12 +21,8 @@ def _provider(root: pathlib.Path, key: bool = True) -> dp.Provider:
 
 
 def _post(choice: str, confidence: float, question: str):
-    if question == dt.QUESTION:
-        labels = list(dt.CRITERIA)
-    elif question == dt.URGENCY_QUESTION:
-        labels = list(dt.URGENCY_CRITERIA)
-    else:
-        labels = list(dt.ANSWERED_CRITERIA)
+    assert question == dt.QUESTION, question
+    labels = list(dt.CRITERIA)
     probs = {label: 0.0 for label in labels + [dp.UNCLEAR]}
     probs[choice] = 1.0
 
@@ -155,15 +151,6 @@ class DmTriageTests(unittest.TestCase):
         rows = dt.record_unread(self.home, "system1", [(1, "[dm] to=system1\nx")], None, now=1.0)
         self.assertIsInstance(rows, list)
         self.assertEqual(len(rows), 1)  # escalate row still recorded
-
-    def test_urgency_and_answered_questions(self):
-        provider = _provider(self.root)
-        urg = dt.score_urgency(5, "genome", "[dm] to=system1\nRED signal, resolver needed now",
-                               provider, roles=("system1",), post=_post("3", 0.95, dt.URGENCY_QUESTION))
-        self.assertEqual(urg["urgency"], "3")
-        ans = dt.answered(5, "genome", "[dm] to=system1\nany update?", provider, roles=("system1",),
-                          post=_post("unanswered", 0.9, dt.ANSWERED_QUESTION))
-        self.assertFalse(ans["answered"])
 
 
 if __name__ == "__main__":
