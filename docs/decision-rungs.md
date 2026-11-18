@@ -21,7 +21,7 @@ System 0 pass over machine-addressed mail: a bracketed record tag and the fixed 
 sentence `failure.report` writes decide `fyi` and `action`; prose is left to the mind. The two
 templates live in `wall_text`, shared by reporter and matcher so a wording change cannot
 silently stop classifying notices. Its log stays at `.mishe-tauftauf/decision-log/dm-triage.jsonl`,
-written at the wake mail seam (`wake.py` `_execute`), never raising, and read by nobody for dispatch.
+written at the wake mail seam (`wake.py` `_execute`), never raising, and with no consumer in dispatch.
 
 Its System 1 question `dm-triage-class` (criteria `action`/`fyi`/`duplicate` plus escape,
 threshold 0.7) was removed on 2026-11-18. The reasons are measured, not stylistic:
