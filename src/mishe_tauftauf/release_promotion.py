@@ -1170,12 +1170,14 @@ def _described_paths(source, paths, included):
     """Repo files a changed page names, which the reviewer would otherwise never see.
 
     A review supplies the bytes of ``record["paths"]`` and bounded caller/import
-    excerpts from the reviewed tree (``wall_patch.symbol_context``), but a changed
-    documentation page that describes a source file it does not change still
-    arrives without that implementation, so the documented rules cannot be
-    traced to code: measured on the docs releases 19fb7646 and c87cd884, where
+    excerpts from the reviewed tree (``wall_patch.symbol_context``). A changed page
+    that names a source file it does not change used to reach the reviewer without
+    that implementation, so the documented rules could not be traced to code:
+    measured on the docs releases 19fb7646 and c87cd884, where
     ``docs/network-view.md`` describes ``checks/network-care.py``'s RED/UNKNOWN
-    arms and the reviewer answered "unknown" for want of that file.
+    arms and the reviewer answered "unknown" for want of that file. This helper is
+    the fix: it returns those files as unchanged review entries so the rules can
+    be traced to their source.
 
     ``page_paths_text`` decodes the path tokens a page spells; here they are
     resolved against the release tree and returned as unchanged review entries;
