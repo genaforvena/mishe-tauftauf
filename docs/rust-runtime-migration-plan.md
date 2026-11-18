@@ -3857,7 +3857,7 @@ role with `role_entries(_force_full=True)`. That is a rebuild of the whole tape,
 and it is not what a wake pays. Measured in-process on the current pin, a live
 role read answers from `feed.role-cache/<role>.json` plus a tail extend:
 
-| role | rows | cold reader CPU | warm reader CPU | child CPU |
+| role | view rows | cold reader CPU | warm reader CPU | child CPU |
 |---|---|---|---|---|
 | rust-plan | 2,156 | 0.008 s | 0.002 s | 0.000 |
 | senses | 36,386 | 0.123 s | 0.004 s | 0.000 |
@@ -3894,14 +3894,22 @@ The plant's Python coordinate work is a few percent of one core; the audio
 listener's cost is inference in a C++ child, where a Rust rewrite of the Python
 would save nothing.
 
-**Decision: no CPU-motivated slice is left at the current tape size.** At 36 k
-entries the tape-derived block of the readings scan is ~9.7 of its 22.4 CPU-s,
-i.e. ~1.6 % of one core every ten minutes; a Rust census could halve it, which
-does not justify a protocol-adjacent cutover. The same block cost 23.6 CPU-s
-when the tape held ~300 k entries (the `fold-profile-20261118.txt` profile shows
-302,589 per-entry calls), where the prize was real. **Trigger to revisit:** a
-tape whose `role_entries(_force_full=True)` reading exceeds 10 CPU-s again, which
-`mishe-producer-rust-measurement` already publishes every ten minutes.
+**Correction to the framing above: the tape did not shrink.** The 36,386 in the
+first table is the role *view* row count; `feed.index.json` reports
+`sequence 302755` over a 232 MB tape, so the forced fold still walks ~302 k
+entries and its 4.1 reader CPU-s + 3.7 child CPU-s is a *live* ten-minute cost,
+paid by `mishe-producer-readings`. That makes the readings scan, not the wake
+path, the authoritative live consumer of the fold.
+
+**Decision: the next slice candidate is the readings scan's tape block, and it
+needs a fresh A/B before any code.** The stage table puts ~9.7 of 22.4 self+child
+CPU-s in the snapshot and the three whole-tape readings; the remaining self CPU
+is spread over the patch and local readings. A single Rust census pass that
+emits the per-entry facts those three readings want, so Python consumes
+aggregates instead of re-walking 302 k entries three times, is the shape that
+fits the one-authoritative-implementation rule. It is protocol-adjacent
+(record digests, disposition windows), so the pre-gate A/B decides on measured
+CPU-s, not on a predicted win, and the delivery path is the ordinary one.
 
 **Measurement trap.** `systemctl --user show` does not print properties in the
 requested order — it emits `CPUUsageNSec` before `Id`. Pairing them line by line
