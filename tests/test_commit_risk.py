@@ -49,12 +49,18 @@ class CommitRiskTests(unittest.TestCase):
                                      "tests/test_engine_process.py"]), "dispatch-path")
         self.assertEqual(cr.system0(["docs/decision-rungs.md",
                                      "src/mishe_tauftauf/release_promotion.py"]), "delivery-path")
+        self.assertEqual(cr.system0(["tools/network_view.py"]), "ordinary")
 
-    def test_ordinary_is_a_model_only_label(self):
+    def test_ordinary_is_model_only_except_the_view_lookup(self):
         self.assertIn("ordinary", cr.CRITERIA)
         self.assertNotIn(dp.UNCLEAR, cr.CRITERIA)
         self.assertIsNone(cr.system0(["src/mishe_tauftauf/budget_producer.py"]))
         self.assertIsNone(cr.system0(["src/mishe_tauftauf/decision_provider.py"]))
+        # The rule is one file, not a family: a router/boundary tool can touch the host guard.
+        self.assertIsNone(cr.system0(["tools/network_router.py"]))
+        self.assertIsNone(cr.system0(["tools/network_boundary.py"]))
+        # If the view changes alongside dispatch code, the residual still goes to the model.
+        self.assertIsNone(cr.system0(["tools/network_view.py", "src/mishe_tauftauf/owed.py"]))
 
     def test_two_non_routine_rules_or_an_unmatched_path_are_the_residual(self):
         self.assertIsNone(cr.system0(["src/mishe_tauftauf/owed.py",
