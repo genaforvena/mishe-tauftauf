@@ -31,7 +31,15 @@ NOW = 1_800_000_000.0
 
 def test_decode_counts_and_temperature():
     assert boundary.decode_radio_stats(STAT_LINES) == {
-        "tx_ok": 64996413, "tx_fail": 11111324, "rx_ok": 94293192, "rx_crc": 17635455, "temp_c": 61}
+        "tx_ok": 64996413, "tx_fail": 11111324, "rx_ok": 94293192, "rx_crc": 17635455,
+        "temp_c": 61, "tx_per": 3.3}
+
+
+def test_decode_keeps_the_drivers_own_per_apart_from_the_counters():
+    stats = boundary.decode_radio_stats(["Tx fail count = 11221647, PER=0.1%"])
+    assert stats == {"tx_fail": 11221647, "tx_per": 0.1}
+    # an older read without the PER field decodes the counter and no invented rate
+    assert boundary.decode_radio_stats(["Tx fail count = 5"]) == {"tx_fail": 5}
 
 
 def test_decode_without_counters_is_none_not_zero():
@@ -55,9 +63,32 @@ def test_line_shows_since_boot_and_the_last_hour(tmp_path, monkeypatch):
     log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     monkeypatch.setattr(view, "ROUTER_LOG", log)
     line = view.wifi_quality_line(now=NOW)
-    assert "2.4 GHz 2.2% of transmit attempts failed since boot" in line, line
-    assert "1.0% over the last 49 min" in line, line
+    assert "2.4 GHz 2.2% of attempts failed since boot" in line, line
+    assert "1.0% last 49 min" in line, line
     assert "radio 61 C" in line and "read 60 s ago" in line, line
+
+
+def test_each_band_is_its_own_line_and_carries_the_drivers_frame_loss(tmp_path, monkeypatch):
+    log = tmp_path / "router.jsonl"
+    import json
+    rows = [router_row(NOW - 3000, 5000, {"tx_ok": 100000, "tx_fail": 3000, "tx_per": 3.3}),
+            router_row(NOW - 60, 7940, {"tx_ok": 160000, "tx_fail": 3600, "temp_c": 61,
+                                        "tx_per": 3.3},
+                       {"tx_ok": 5000, "tx_fail": 300, "tx_per": 0.1})]
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    monkeypatch.setattr(view, "ROUTER_LOG", log)
+    lines = view.wifi_quality_line(now=NOW).split("\n")
+    assert len(lines) == 2, lines
+    assert lines[0].startswith("2.4 GHz ") and "driver's frame loss 3.3%" in lines[0], lines
+    assert lines[1].startswith("5 GHz ") and "driver's frame loss 0.1%" in lines[1], lines
+    assert lines[1].endswith("read 60 s ago"), lines
+    # a read without the driver's PER keeps the attempts figure and invents no frame loss
+    rows[-1]["radios"][0]["stats"].pop("tx_per")
+    rows[-1]["radios"][1]["stats"].pop("tx_per")
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    line = view.wifi_quality_line(now=NOW)
+    assert "frame loss" not in line and "since boot" in line, line
+
 
 
 def test_line_is_unknown_when_the_counters_are_missing(tmp_path, monkeypatch):
@@ -91,7 +122,7 @@ def test_line_names_a_band_whose_counters_are_missing(tmp_path, monkeypatch):
     log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     monkeypatch.setattr(view, "ROUTER_LOG", log)
     line = view.wifi_quality_line(now=NOW)
-    assert "2.4 GHz 1.0% of transmit attempts failed since boot" in line, line
+    assert "2.4 GHz 1.0% of attempts failed since boot" in line, line
     assert "5 GHz transmission counters UNKNOWN (missing from the newest read)" in line, line
 
 
@@ -113,4 +144,4 @@ def test_a_reboot_leaves_the_last_hour_rate_unknown(tmp_path, monkeypatch):
     log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     monkeypatch.setattr(view, "ROUTER_LOG", log)
     line = view.wifi_quality_line(now=NOW)
-    assert "since boot" in line and "last-hour rate UNKNOWN" in line, line
+    assert "since boot" in line and "(last hour UNKNOWN)" in line, line

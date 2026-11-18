@@ -15,7 +15,7 @@ One JSON object per line, oldest first.
 | --- | --- |
 | `ts` | epoch seconds (float), when the read ran |
 | `ok` | `true` if the read worked, `false` if it failed or the pass was skipped |
-| `radios` | only when `ok` is true: one object per known radio, `{"band": str, "channel": int or null, "freq_ghz": float or null, "noise_dbm": int or null, "stats": object or null}`, from a read-only `iwinfo <radio> info` pass; `[]` when the router did not report channel/noise. `stats` is `{"tx_ok", "tx_fail", "rx_ok", "rx_crc", "temp_c"}` from a read-only `iwpriv <radio> stat` pass, cumulative since the router booted, `null` when the driver printed no counters. No SSID, MAC or signal is stored here |
+| `radios` | only when `ok` is true: one object per known radio, `{"band": str, "channel": int or null, "freq_ghz": float or null, "noise_dbm": int or null, "stats": object or null}`, from a read-only `iwinfo <radio> info` pass; `[]` when the router did not report channel/noise. `stats` is `{"tx_ok", "tx_fail", "rx_ok", "rx_crc", "temp_c"}` from a read-only `iwpriv <radio> stat` pass, cumulative since the router booted, `null` when the driver printed no counters; `tx_per` (float percent) is the driver's own frame-error rate printed after `Tx fail count`, absent on rows written before 2026-11-18. No SSID, MAC or signal is stored here |
 | `clients` | only when `ok` is true: list of Wi-Fi clients |
 | `uptime_s` | only when `ok` is true: router uptime in seconds |
 | `wan` | only when `ok` is true: `{"up": bool, "uptime_s": int}` |
@@ -139,17 +139,21 @@ is not mistaken for a quiet mind.
   MAC the router prints is mapped to the same short hash the router row stores and never shown.
 - `WI-FI RADIO`: each known radio's channel, frequency and noise floor from the read-only router
   pass, with the age of the reading; UNKNOWN when the sub-reading is absent, STALE past 15 minutes.
-- `WI-FI QUALITY`: per radio, the share of transmit attempts that failed since the router booted,
-  and the share that failed over the last hour (the difference between two recorded counter reads,
-  at least 10 minutes apart), plus the highest radio temperature. Read from the driver's own
-  `iwpriv <radio> stat` counters. Attempts, not frames given up on: the driver counts each try, so
-  this is "how often the radio had to send again or gave up", not "how many packets the household
-  lost". UNKNOWN when the newest read carries no counters on any radio (a band whose counters are
-  missing from the newest read is named "UNKNOWN (missing from the newest read)" rather than
-  dropped, and `network-wifi` turns UNKNOWN too), or when a reboot has left fewer than two
-  counter reads (10 minutes apart) in the hour. A reboot restarts the counters from zero, so only
-  reads after it bracket a rate; with two post-reboot reads the line shows that shorter span
-  instead of UNKNOWN. STALE past 15 minutes.
+- `WI-FI QUALITY`: one line per radio — the share of transmit attempts that failed since the router
+  booted, the share that failed over the last hour (the difference between two recorded counter
+  reads, at least 10 minutes apart), and the driver's own frame-error rate (`driver's frame loss`,
+  the `PER` the driver prints after its fail counter), plus the highest radio temperature once, at
+  the end. Read from the driver's own `iwpriv <radio> stat` counters. Attempts, not frames given
+  up on: the driver counts each try, so the attempts share is "how often the radio had to send again
+  or gave up" (live: 14.5% attempts against 3.3% frame loss on 2.4 GHz), and the driver's own PER is
+  what the household actually lost. The frame-loss clause appears only when the newest read carries
+  `tx_per`; a read written before that field existed shows the attempts share alone rather than an
+  invented rate. UNKNOWN when the newest read carries no counters on any radio (a band whose
+  counters are missing from the newest read is named "UNKNOWN (missing from the newest read)" rather
+  than dropped, and `network-wifi` turns UNKNOWN too), or when a reboot has left fewer than two
+  counter reads (10 minutes apart) in the hour, which shows as `(last hour UNKNOWN)`. A reboot
+  restarts the counters from zero, so only reads after it bracket a rate; with two post-reboot reads
+  the line shows that shorter span instead of UNKNOWN. STALE past 15 minutes.
 - `UNKNOWN`: the log has no reading, or the last read failed.
 - `STALE`: the last good reading is older than 15 minutes.
 - Trends and weekday baselines are UNKNOWN until two days of comparable rows exist.

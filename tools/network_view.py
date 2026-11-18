@@ -755,11 +755,15 @@ def _radio_fail_window(reads, band, lo, hi):
 
 
 def wifi_quality_line(now=None):
-    """Share of Wi-Fi transmissions that failed, since the router booted and over the last hour.
+    """Share of Wi-Fi transmissions that failed, and the driver's own frame loss, from the recorded
+    per-radio ``iwpriv ... stat`` counters.
 
-    Read from the recorded per-radio ``iwpriv ... stat`` counters. A read without the counters, or a
-    stale newest read, is UNKNOWN; a band whose counters are missing from the newest read is named as
-    UNKNOWN rather than dropped; a rate is shown only when two reads an hour or less apart bracket it.
+    Read from the recorded per-radio counters, one line per band so each fits the window. A read
+    without the counters, or a stale newest read, is UNKNOWN; a band whose counters are missing from
+    the newest read is named as UNKNOWN rather than dropped; a rate is shown only when two reads an
+    hour or less apart bracket it. The driver's own PER is shown when the newest read carries it
+    (older rows do not): the attempts figure counts retries, so a person needs the driver's own
+    frame-loss number next to it to tell a retrying radio from a broken one.
     """
     now = time.time() if now is None else now
     reads = [r for r in router_rows() if r.get("ok") and isinstance(r.get("radios"), list)
@@ -782,20 +786,23 @@ def wifi_quality_line(now=None):
         if not total:
             parts.append(f"{band} GHz transmission counters UNKNOWN (missing from the newest read)")
             continue
-        text = f"{band} GHz {100.0 * stats['tx_fail'] / total:.1f}% of transmit attempts failed since boot"
+        text = f"{band} GHz {100.0 * stats['tx_fail'] / total:.1f}% of attempts failed since boot"
         got = _radio_fail_window(reads, band, now - 3600, now)
         if got is None:
-            text += " (last-hour rate UNKNOWN: fewer than two counter reads an hour or less apart)"
+            text += " (last hour UNKNOWN)"
         else:
             fails, sends, span = got
-            text += f", {100.0 * fails / sends:.1f}% over the last {span / 60:.0f} min"
+            text += f", {100.0 * fails / sends:.1f}% last {span / 60:.0f} min"
+        per = stats.get("tx_per")
+        if isinstance(per, (int, float)):
+            text += f"; driver's frame loss {per:.1f}%"
         parts.append(text)
     if not parts:
         return "UNKNOWN (the router read carried no transmission counters)"
     temps = [(r.get("stats") or {}).get("temp_c") for r in last["radios"] if isinstance(r, dict)]
     temps = [t for t in temps if isinstance(t, int)]
     tail = f"; radio {max(temps)} C" if temps else "; radio temperature UNKNOWN"
-    return f"{'; '.join(parts)}{tail}; read {ago:.0f} s ago"
+    return "\n".join(parts) + f"{tail}; read {ago:.0f} s ago"
 
 
 def _wan_drops(reads, lo, hi):
@@ -1154,7 +1161,10 @@ def draw():
     out.extend(outage_lines(data))
     out.append("  WI-FI         " + wifi_line() + "   (read-only, live read; name from the recorded read)")
     out.append("  WI-FI RADIO   " + wifi_radio_line() + "   (read-only iwinfo on the router)")
-    out.append("  WI-FI QUALITY " + wifi_quality_line() + "   (read-only iwpriv counters on the router)")
+    quality = wifi_quality_line().split("\n")
+    out.append("  WI-FI QUALITY " + quality[0])
+    out.extend(" " * 16 + extra for extra in quality[1:])
+    out[-1] += "   (read-only router counters)"
     out.append("  RECORDED 5-MIN " + recorded_clients_line())
     rf = router_facts()
     out.append("  ROUTER        " + (rf or "UNKNOWN (ssh read failed)") + "   (read-only)")

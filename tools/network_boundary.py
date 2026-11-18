@@ -238,6 +238,11 @@ RADIO_STAT_LINES = {
     "rx_crc": re.compile(r"^\s*Rx with CRC\s*=\s*(\d+)"),
     "temp_c": re.compile(r"^\s*CurrentTemperature\s*=\s*(-?\d+)"),
 }
+# The driver prints its own polling-error rate after the same fail counter: "Tx fail count = 11221647, PER=3.3%".
+# It counts lost frames, not failed attempts, so it is kept apart from the counter arithmetic.
+RADIO_PERCENT_LINES = {
+    "tx_per": re.compile(r"^\s*Tx fail count\s*=\s*\d+,\s*PER=([\d.]+)%"),
+}
 
 
 def decode_radio_stats(lines):
@@ -245,7 +250,8 @@ def decode_radio_stats(lines):
 
     All counters are cumulative since the router booted, so they are useful only as a difference
     between two reads. A counter the driver did not print stays out of the dict (None in the
-    window), and a radio that printed none of them yields None, never a clean radio.
+    window), and a radio that printed none of them yields None, never a clean radio. ``tx_per`` is
+    the driver's own frame-error rate in percent, kept as a float; older reads do not carry it.
     """
     stats = {}
     for line in lines:
@@ -253,6 +259,10 @@ def decode_radio_stats(lines):
             m = pattern.match(line)
             if m:
                 stats[key] = int(m.group(1))
+        for key, pattern in RADIO_PERCENT_LINES.items():
+            m = pattern.match(line)
+            if m:
+                stats[key] = float(m.group(1))
     return stats or None
 
 

@@ -35,7 +35,7 @@ shown), **MISSING** (not measured or not shown).
 | --- | --- | --- |
 | Number of clients | BUILT | `wifi_facts()`: total and per band (2.4 / 5 GHz) |
 | Who is weak, by a name the household knows | BUILT | the live `WI-FI` line names the weakest client from the recorded read's id-to-name map (`client_names()`, ids are the same short hash the router row stores), and the `RECORDED 5-MIN` line names the weakest device of the last 5-minute read; a client the recorded read has not seen yet shows its dBm only |
-| Noisy or channel trouble | BUILT | `WI-FI RADIO` shows each known radio's channel, frequency and noise floor from a read-only `iwinfo <radio> info` pass in the router read, with age and UNKNOWN/STALE guards. `WI-FI QUALITY` shows the share of transmit attempts that failed since boot and over the last hour, plus radio temperature, from the driver's read-only `iwpriv <radio> stat` counters. `network-wifi` is UNKNOWN when either sub-reading vanishes, including when one band's `iwpriv` counters alone go missing (the window names that band instead of dropping it). There is one access point per band, so there are no two APs to compare channels with (`apcli0`/`apclix0` are client-mode interfaces on the same radios) |
+| Noisy or channel trouble | BUILT | `WI-FI RADIO` shows each known radio's channel, frequency and noise floor from a read-only `iwinfo <radio> info` pass in the router read, with age and UNKNOWN/STALE guards. `WI-FI QUALITY` shows, one line per band, the share of transmit attempts that failed since boot and over the last hour, plus the driver's own frame-error rate (the `PER` it prints after the fail counter, `tx_per` in the router row) so the attempts figure can be read next to the frames actually lost, plus radio temperature, from the driver's read-only `iwpriv <radio> stat` counters. `network-wifi` is UNKNOWN when either sub-reading vanishes, including when one band's `iwpriv` counters alone go missing (the window names that band instead of dropping it). There is one access point per band, so there are no two APs to compare channels with (`apcli0`/`apclix0` are client-mode interfaces on the same radios) |
 | Weak-signal flag | BUILT | "WEAK SIGNAL" when the weakest client is below `WEAK_WIFI_DBM` |
 
 ## Router and uplink
@@ -67,10 +67,10 @@ shown), **MISSING** (not measured or not shown).
 ## Next gaps, in order of value
 
 1. What the radio fail counter means, and when it deserves a threshold. The counters exist now
-   (`iwpriv <radio> stat`, shown by `WI-FI QUALITY` with UNKNOWN/STALE guards), but the driver prints
-   its own PER (3.3% on 2.4 GHz, 0.1% on 5 GHz) while the success/fail counters imply 14.6% and 6.3%,
-   so "Tx fail" probably counts each retry attempt rather than a lost frame. Watch the last-hour rate
-   for a few days, compare it with the driver PER line, then decide whether a household-visible
-   threshold earns its place. The earlier "two APs on channel 13" question is closed: `ra0` is the
-   2.4 GHz access point, `rax0` the 5 GHz one, and `apcli0`/`apclix0` are client-mode interfaces on
-   the same radios.
+   (`iwpriv <radio> stat`), and since 2026-11-18 the window shows the driver's own PER next to the
+   attempts share, so a person can already see that 14.5% of attempts against 3.3% of frames lost is
+   a retrying radio, not a broken one. What is still open is the household-visible threshold: watch
+   the last-hour rate for a few days, compare it with the driver PER line, then decide whether
+   "much worse than usual" earns an alarm. The earlier "two APs on channel 13" question is closed:
+   `ra0` is the 2.4 GHz access point, `rax0` the 5 GHz one, and `apcli0`/`apclix0` are client-mode
+   interfaces on the same radios.
