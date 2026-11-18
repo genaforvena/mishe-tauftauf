@@ -3916,3 +3916,33 @@ requested order — it emits `CPUUsageNSec` before `Id`. Pairing them line by li
 shifts every reading by one unit and produced a bogus "`mishe-arm` burned
 111 CPU-s in 75 s" ranking; `mishe-arm` is a 0.30 s oneshot. Parse `show` output
 per blank-line block.
+
+### 10.68 One `sample()` profiled: the four measurable blocks (2026-11-18)
+
+`cProfile` over one `discovery.sample(home)` run (artifact
+`sample-20261118.prof`; 51.2 s, 43.1 M calls):
+
+| block | cum s | where |
+|---|---|---|
+| `_scan_snapshot` (whole-tape fold, uncached) | 11.90 | `discovery.py:7179`, two `feed.entries()` passes |
+| `_ledger_evidence_binding` | 10.07 | whole-tape reading |
+| `_disk_trend` → `read_scan_series` | 4.37 | `feed.py:1772`, 1,062 `json.loads` of 364 KB scan receipts |
+| `_patch_records` | 4.50 | reads the patch records twice |
+| `_repo_release_retention` → `_release_tree_bytes` | 4.41 | 417,421 `os.lstat` over the release worktrees |
+| `_head_rewinds` | 3.95 | re-reads scan receipts |
+| `feed._iter_streamed_feed` | 8.21 | 304,397 entries framed |
+| `_RecordsChild.write` | 4.85 | 196,962 entries written to the records child |
+
+All figures include profiler overhead on Python call-heavy code; the blocked
+`select.poll` 7.2 s is separators' wait on children, not CPU.
+
+The two scan-receipt readers (`_disk_trend`, `_head_rewinds`) together re-parse
+the 792 MB `discovery/` series — 2,176 receipts — to recover a handful of
+numbers per scan. That is the cheapest real prize: a compact one-line summary per
+scan, written by the producer that already emits the receipt, retires the large
+parse without changing any decision or boundary. The release-worktree byte walk
+is the next: `os.walk`+`lstat` over 323 worktrees is the shape POSIX `du -sb`
+already owns.
+
+Neither is a protocol or delivery change; both are ordinary slices with a
+measured pre-gate A/B.
