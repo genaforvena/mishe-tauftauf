@@ -5,9 +5,10 @@ the OAuth tokens into an omp store: two clients sharing one rotating refresh tok
 invalidate both (operator DM 15:20Z, 2026-11-15).
 
 Built defensively: nothing enables it by itself, so it runs only where a site's
-``engine/routes.json`` names ``codex`` (the live plant's does, on ``codex-a``). The sandbox
-mode is a security decision still open with the operator (minds commit, run systemctl and
-tmux and push), so :data:`SANDBOX` is a named default, not a settled policy.
+``engine/routes.json`` names ``codex`` (the live plant's does, on ``codex-a``). The operator
+decided on 2026-11-18 that codex minds run without the codex sandbox (they commit, run
+systemctl and tmux and push, as the claude and omp minds do); the host guard and the
+protected limits are the boundary, not ``-s``.
 """
 from __future__ import annotations
 
@@ -18,8 +19,8 @@ from .engine_omp import is_quota_error, is_rate_limit_error
 from .model_policy import refuse_banned_model
 from .wake import EngineExhausted, EngineRateLimited, EngineRejected
 
-SANDBOX = "workspace-write"
-"""Sandbox passed as ``-s``. Pending the operator's decision; workspace-write is too narrow for minds."""
+SANDBOX = "danger-full-access"
+"""Sandbox passed as ``-s``: the operator's decision (2026-11-18); workspace-write was too narrow for minds."""
 
 THINKING_LEVELS = ("minimal", "low", "medium", "high", "xhigh")
 EFFECT_ITEM_TYPES = frozenset({"command_execution", "file_change", "mcp_tool_call", "web_search"})

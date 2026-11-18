@@ -220,6 +220,6 @@ def test_a_failed_probe_still_starts_the_cooldown(tmp_path, monkeypatch):
 
 
 def test_workspace_write_does_not_make_tmp_writable(tmp_path):
-    cmd = engine_codex.command("gpt-6-luna", tmp_path)
+    cmd = engine_codex.command("gpt-6-luna", tmp_path, "workspace-write")
     assert "sandbox_workspace_write.exclude_slash_tmp=true" in cmd
     assert "sandbox_workspace_write.exclude_tmpdir_env_var=true" in cmd
