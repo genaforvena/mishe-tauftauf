@@ -280,6 +280,34 @@ def test_main_retries_failed_upload_within_window_while_download_fresh(tmp_path,
     assert "not due: measured recently" in capsys.readouterr().out
 
 
+def test_blocked_download_retry_does_not_cost_the_upload_attempt(tmp_path, capsys, monkeypatch):
+    # Review of 8c17fc8c: a failed first download sits out its 30 min retry with no good reading;
+    # that must fall through to the upload block, whose own retry can be due (it was an early
+    # return 3 there). The duty stays UNKNOWN because the download reading is.
+    import time
+    real_due = ns.due
+    monkeypatch.setattr(ns, "due", lambda now, last, hour: real_due(now, last, 3))
+    _write_rows(tmp_path, [{"ts": time.time() - 5 * 60, "ok": False, "error": "HTTPError: 403"}])
+    _write_up_rows(tmp_path, [{"ts": time.time() - 31 * 60, "ok": False, "error": "timeout"}])
+    ran = []
+
+    def no_download():
+        ran.append("down")
+        return {"ts": time.time(), "ok": True, "down_mbps": 90.0}
+
+    def do_upload():
+        ran.append("up")
+        return {"ts": time.time(), "ok": True, "up_mbps": 20.0}
+
+    monkeypatch.setattr(ns, "measure", no_download)
+    monkeypatch.setattr(ns, "measure_up", do_upload)
+    assert ns.main(["--home", str(tmp_path)]) == 3
+    assert ran == ["up"]
+    out = capsys.readouterr().out
+    assert "no good reading in the last 36 h, so UNKNOWN" in out
+    assert '"up_mbps": 20.0' in out
+
+
 def _write_up_rows(home, rows):
     import json
     path = home / "network" / ns.UP_LOG_NAME
