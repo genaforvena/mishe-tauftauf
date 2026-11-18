@@ -3609,3 +3609,87 @@ tools/check_parsing.py`; rank 2 is a protocol and durable-boundary change, so
 it keeps deterministic activation, revert and reapply checks and a fresh
 post-delivery reviewer.
 
+
+### 10.64 Rank 2 decision: the framer's payload sink is the only payload source (2026-11-18)
+
+§10.63 left one question open — what happens to a candidate entry the Rust pass
+does not cover — because the answer decides whether `records.envelope` can be
+deleted or only demoted. The brief forbids a second live verifier, so a demotion
+that keeps the Python read alive is not an option. Settled from bytes:
+
+- **The child already returns the payload object.** `rust/mishe-records/src/envelope.rs:23`
+  verifies `records/<digest>.json` through the records directory descriptor,
+  checks the file is a regular 1-byte..1-MiB file, checks its sha256 against the
+  reference, parses the JSON and enforces the same envelope schema as
+  `records.envelope`, then returns the record's `kind` and its `payload` object.
+  `main.rs:290,307` writes that payload after the `V`/`N` decision line when
+  `--payloads` is given, and `feed._RecordChild._drain` (`feed.py:643-661`)
+  already places it in a caller-supplied sink keyed by sequence. Every failure
+  keeps the Python `ValueError` text, so a gap's reason does not change.
+- **`classify_outcomes` needs `(kind, payload)` only.** It reads
+  `envelope['kind']` at `outcome_events.py:205,210` and `envelope['payload']` at
+  `:217`; the kind is also on the child's decision line, so both fields are what
+  the pass already produces. Nothing else in the record envelope is used.
+- **Nothing else reads it.** `records.payload` has no production caller
+  (`tests/test_wall.py:916` only), and `records.envelope`'s caller is
+  `outcome_events.py:204` alone. So rank 2 deletes `envelope` and `payload`
+  together. `records.KindIndex` (`records.py:203`) is constructed and used only
+  by `classify_outcomes` (`outcome_events.py:117,201`, closed at `:241`), but it
+  is a cached head-kind index rather than a verifier and it stays — see step 4
+  and the census below for the measurement that keeps it.
+
+The decision:
+
+1. **Payloads come only from the framer's `--payloads` sink.** No branch of
+   `classify_outcomes` reads a record *to verify it*, so there is exactly one
+   live verifier. `entries=` grows a `payloads=` companion; a supplied sink
+   without its entries (or the reverse) is a caller error, not a fallback.
+2. **Scan path.** The snapshot read asks for the sink in the same
+   `Feed.entries(facts=True, ...)` call it already makes. A cache hit currently
+   returns before `_verify_records` (`feed.py:1417` returns `list(span[1])`), so
+   the pass must run over the selected result when payloads are requested —
+   records-only, no tape re-read. That is the same batched pass whose keep/abandon
+   measurement closed S0b (14.6 to 7.3 CPU-s); with a sink it also replaces the
+   per-entry envelope read that costs the read today.
+3. **Publication path (`wall._publish_outcome` → `_bound_evidence_paths`).**
+   The tape cannot be held, so the stream splits: collect the candidates that
+   actually need a payload, run one child pass with `--payloads` over them, then
+   classify from the filled sink. This is only the reserved headers that reach
+   the envelope at all — a reserved entry without exactly one standalone final
+   reference is refused at `outcome_events.py:181`, before any record read. The
+   collected set is bounded by the clause time (`EVIDENCE_BINDING_CLAUSE_TIME`,
+   2026-10-06) and, measured below, by the reserved-header count, not by the
+   tape length; its bodies, sequences and timestamps are the only tape bytes
+   held, and the tape itself is never held.
+4. **`KindIndex` stays, as an index, not a verifier.** Head-kind resolution for
+   reference-bearing entries is not verification and is already cached; sending
+   those citations through the child instead would turn a 64-byte head read into
+   a full record read 191,578 times on this plant. The rule that matters is
+   narrower and exact: **no record *envelope* is verified outside the child.**
+   That is what `records.envelope` does, and that is what rank 2 deletes.
+5. **The uncovered entry is a gap, never a Python re-read.** The child answers
+   exactly one decision per entry it accepts; a fault therefore names the
+   candidate after the last served one (`len(kinds)`), so that candidate becomes
+   an `incomplete` row carrying the child's message, and the remainder continues
+   in a fresh pass. This keeps today's per-entry gap granularity on a path whose
+   damage behaviour is observable in the refusal audit log
+   (`logs/outcome-refusal-audit.jsonl`), where the scan snapshot already fails
+   whole on a damaged record. A candidate with no decision and no fault cannot
+   exist: the sink and the decision line are written together.
+
+The census that fixes step 3 was taken on the live tape on 2026-11-18
+(`artifacts/rust-plan-20261107/census_10_64.py`, 2.15 CPU-s): 302,671 entries,
+**196,737 candidates since the clause time**, of which **5,159 reserve a header**
+and **191,578 are reference-only citations** — 191,575 of kind `observation`,
+3 of kind `task-close`, **none unknown and none damaged**. So the payload pass
+covers the 5,159 reserved headers (fewer once the one-reference rule drops the
+rest), and a kind-only child pass over the other 191,578 would trade a cached
+64-byte head lookup for a full verified read: rejected on the numbers, not on
+taste.
+
+Checks this change owes: differential tests on the malformed and indented
+reference fixtures (the child refuses the whole pass where the Python path
+raised per entry), `python3 tools/check_parsing.py` (`feed.py`, `records.py` and
+`outcome_events.py` are `parsing-policy.json` boundaries), and the strong gate —
+deterministic activation, revert and reapply checks plus a fresh post-delivery
+reviewer, because this is protocol and durable-boundary work.
