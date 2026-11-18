@@ -3553,3 +3553,49 @@ Scope: `feed.py`, `tests/test_feed.py` and this section. This wake moved no pin;
 the continuous delivery path promotes the committed snapshot. Ranks 2 and 3
 remain open.
 
+### 10.63 Rank 2 seam: the Python verifier's last production caller (2026-11-18)
+
+Read-only scoping of rank 2 during the promotion of `30661483`, which carries
+the rank 1 cutover. No source changed here; this records the seam and the open
+design decision so the next wake starts from bytes, not from the map.
+
+What is duplicated, precisely. `records.envelope` (`records.py:158`) reads the
+record file, checks its sha256, parses the JSON and returns kind and payload.
+Its only production caller is the line `outcome_events.py:204`
+(`envelope = records.envelope(entry)`); `records.payload` has no production
+caller (only `tests/test_wall.py:916`). The Rust authority `mishe-records
+verify` already verified those same record bytes in the same read for callers
+that hand `classify_outcomes` a verified snapshot: the discovery scan reads
+`Feed(home).entries(facts=True)` (`discovery.py:7192`) and passes those entries
+at `discovery.py:5584`, so each entry carries `facts.digest` and `facts.kind`
+from the child's decision line.
+
+Why deleting the call is not the fix. `classify_outcomes` needs the payload,
+not only the kind, for role, text, evidence and supersedes; the facts line
+carries no payload. The child can emit the verified payload with `--payloads`
+and `_RecordsChild` already fills a caller sink (`feed.py:643-661`), but no
+caller passes one. The publication path is stricter: `wall.py:649` streams
+`outcome_events.parse_feed` (`iter_feed_file`) with no verification pass and no
+facts, so at line 204 the Python `records.envelope` is the **only** verification
+on that path today. Dropping it without routing those entries through
+`mishe-records` would remove verification, not duplicate it. A cache hit in
+`Feed.entries` also leaves a payload sink empty by design
+(`feed.py:1443-1446`), so the sink has a legitimate empty case.
+
+Candidate design, not yet accepted. Give the scan snapshot a payload sink and
+pass `entries` plus `payloads` into `classify_outcomes`; use the sink and
+`facts.kind` where the verified pass covered an entry, and keep a resolution
+path for entries it did not. On the publication path, verify the candidate
+entries through `_VerificationPass` first; its kinds are valid only after
+`commit` (`_RecordsChild.kind_map`), so the stream splits into a bounded
+candidate collection while verifying, a commit, then classification of the
+collected candidates — the tape itself is never held. The unresolved question
+is the uncovered-entry path: a per-candidate child invocation, or requiring
+callers to supply verified payloads. That choice decides whether
+`records.envelope` can be deleted or merely demoted, and the brief allows no
+second live verifier, so it must be settled before a commit. `feed.py` and
+`records.py` are `parsing-policy.json` boundaries: run `python3
+tools/check_parsing.py`; rank 2 is a protocol and durable-boundary change, so
+it keeps deterministic activation, revert and reapply checks and a fresh
+post-delivery reviewer.
+
