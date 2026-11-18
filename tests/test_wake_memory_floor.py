@@ -156,6 +156,25 @@ def test_a_below_floor_oneshot_that_finishes_is_not_a_fault(check, monkeypatch, 
     assert "GREEN" in captured.out
 
 
+def test_confirmation_enumeration_failure_keeps_the_unknown_contract(check, monkeypatch, capsys, tmp_path):
+    """Undecidable at the confirmation re-read must still be UNKNOWN (exit 3),
+    not an uncaught traceback (exit 1). Review finding on 9c22272d."""
+    unit = "mishe-wake@health.service"
+    directory = leaf(tmp_path, "w", 1073741824)
+
+    def leaves_fail_on_confirmation(root=check.PROC):
+        if leaves_fail_on_confirmation.calls == 0:
+            leaves_fail_on_confirmation.calls += 1
+            return {unit: directory}
+        raise check.Undecidable("cannot enumerate /proc: simulated")
+
+    leaves_fail_on_confirmation.calls = 0
+    monkeypatch.setattr(check, "guarded_leaves", leaves_fail_on_confirmation)
+    code = check.main(["--floor", str(FLOOR), "--persist", "3"])
+    captured = capsys.readouterr()
+    assert code == 3
+    assert "cannot enumerate /proc: simulated" in captured.err
+
 def test_a_non_numeric_memory_high_is_unknown(check, monkeypatch, capsys, tmp_path):
     code, text = run(check, monkeypatch,
                      {"mishe-producer-ci.service": leaf(tmp_path, "p", None)}, capsys)

@@ -211,7 +211,11 @@ def main(argv=None) -> int:
         # stale first snapshot and was mis-reported as "unreadable while it has
         # processes" (17:26Z RED). A unit still present here is genuinely running, so
         # an unreadable confirmation on it stays UNKNOWN (8ad00645, 2f79198e).
-        live = guarded_leaves()
+        try:
+            live = guarded_leaves()
+        except Undecidable as exc:
+            print(f"wake-memory-floor: {exc}", file=sys.stderr)
+            return 3
         again = {row["unit"]: row for row in inspect(live, floor) if not row["gone"]}
         still_below = []
         for row in suspects:
