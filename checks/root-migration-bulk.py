@@ -18,8 +18,9 @@ pass happens when the copy is actually done, not when someone guesses.
 
 Exit status:
   0  every tree finished and the pass ended with rc=0
-  2  a tree failed (rc != 0) or the log stopped advancing mid-pass: the copy was
-     abandoned, which a partial tree must never be mistaken for completion
+  2  a tree ended rc != 0 — even if the final "all done" line reports 0 — or the
+     log stopped advancing mid-pass: the copy was abandoned, which a partial
+     tree must never be mistaken for completion
   3  undecidable or still running: no log yet, or a tree is in progress with a
      log that is still being written
 """
@@ -41,6 +42,7 @@ STALL_S = 1800
 def parse(lines: list[str]) -> tuple[str, list[str], float]:
     """Return (verdict, detail lines, last marker time). last is 0.0 when unparsed."""
     done: dict[str, int] = {}
+    failed: dict[str, int] = {}
     started: dict[str, str] = {}
     terminal: tuple[int, str] | None = None
     last = 0.0
@@ -50,8 +52,13 @@ def parse(lines: list[str]) -> tuple[str, list[str], float]:
             terminal = (int(m.group(1)), m.group(2))
             last = _stamp(m.group(2))
         elif m := TREE_END.match(line):
-            done[m.group(1)] = int(m.group(4))
-            started.pop(m.group(1), None)
+            tree, rc = m.group(1), int(m.group(2))
+            done[tree] = int(m.group(4))
+            if rc:
+                failed[tree] = rc
+            else:
+                failed.pop(tree, None)
+            started.pop(tree, None)
             last = _stamp(m.group(3))
         elif m := TREE_START.match(line):
             started[m.group(1)] = m.group(2)
@@ -61,8 +68,11 @@ def parse(lines: list[str]) -> tuple[str, list[str], float]:
         summary = f"all trees done, {len(done)} recorded"
         if done:
             summary += " (" + ", ".join(f"{k} {v} B" for k, v in done.items()) + ")"
-        if rc == 0:
+        if rc == 0 and not failed:
             return "ok", [summary], last
+        if failed:
+            trees = ", ".join(f"{k} rc={v}" for k, v in failed.items())
+            return "fail", [f"tree(s) failed: {trees}; pass ended rc={rc}: {summary}"], last
         return "fail", [f"pass ended rc={rc}: {summary}"], last
     running = ", ".join(f"{k} since {v}" for k, v in started.items()) or "none"
     return "pending", [f"in progress ({len(done)} tree(s) done; {running}); no 'all done' marker yet"], last
