@@ -1218,13 +1218,29 @@ PHASE_LABELS = (("connect_ms", "reaching the site"),
                 ("body_ms", "rest of page"))
 
 
+def _phase_complete(row):
+    """One row's three disjoint phase means, or None unless one host measured all three.
+
+    Dropping unknown phases silently can turn a single measured probe into a claim about a
+    ten-probe window, so attribution is built only from hosts whose three phases are all known.
+    Taking whole hosts also keeps the three figures additive: their sum is that row's page total.
+    """
+    triples = [tuple(phase_value(row, name, field) for field, _ in PHASE_LABELS)
+               for name in SECURE_HOSTS]
+    triples = [t for t in triples if all(v is not None for v in t)]
+    if not triples:
+        return None
+    return tuple(sum(t[i] for t in triples) / len(triples) for i in range(3))
+
+
 def _phase_medians(rows):
-    """Median of each disjoint page phase over `rows`; None for a phase no row measured."""
-    out = {}
-    for field, _ in PHASE_LABELS:
-        vals = [v for v in (_sample_mean(row, field) for row in rows) if v is not None]
-        out[field] = statistics.median(vals) if vals else None
-    return out
+    """Phase medians, their total's median and support, over rows with all three phases measured."""
+    complete = [v for v in (_phase_complete(row) for row in rows) if v is not None]
+    if not complete:
+        return ({field: None for field, _ in PHASE_LABELS}, 0, None)
+    medians = {field: statistics.median(t[i] for t in complete)
+               for i, (field, _) in enumerate(PHASE_LABELS)}
+    return medians, len(complete), statistics.median(sum(t) for t in complete)
 
 
 def _slowdown_note(facts):
@@ -1233,13 +1249,22 @@ def _slowdown_note(facts):
     The newest probe can look ordinary while the ten-probe median stays slow, so WHERE TIME GOES
     alone cannot say which phase moved. This uses the same samples and baseline as USUAL, and
     speaks only when one phase accounts for at least half the extra time (and at least 20 ms).
+    A median built from too few measured rows is not a ten-probe median: say UNKNOWN with the
+    support counts instead of turning one measured probe into a claim about the whole window.
     """
     if facts is None or facts.get("compare") in (None, "about usual") or facts.get("stale"):
         return ""
+    recent_n = facts.get("phase_support", 0)
+    base_n = facts.get("phase_base_support", 0)
+    window_n = facts.get("window_count", 0)
+    if recent_n < (window_n + 1) // 2 or base_n < PHASE_BASELINE_MIN:
+        return (f"\n                slowdown phase UNKNOWN (phases measured on {recent_n} of "
+                f"{window_n} recent probes, {base_n} baseline rows)")
     cur, base = facts.get("phase_cur"), facts.get("phase_base")
-    if not cur or not base:
+    cur_total, base_total = facts.get("phase_total_cur"), facts.get("phase_total_base")
+    if not cur or not base or cur_total is None or base_total is None:
         return ""
-    extra = facts["cur"] - facts["base"]
+    extra = cur_total - base_total
     if extra <= 0:
         return ""
     deltas = {f: cur[f] - base[f] for f, _ in PHASE_LABELS
@@ -1250,7 +1275,8 @@ def _slowdown_note(facts):
     if deltas[field] < max(20.0, 0.5 * extra):
         return ""
     label = dict(PHASE_LABELS)[field]
-    return (f"\n                slowdown is in the {label}: {facts['window']} "
+    source = facts["window"] if recent_n == window_n else f"{recent_n} of {facts['window']} measured"
+    return (f"\n                slowdown is in the {label}: {source} "
             f"{cur[field]:.0f} ms vs typical {base[field]:.0f} ms")
 
 
@@ -1291,8 +1317,8 @@ def usuality_facts(data, now=None):
     base_rows = good_rows[:-USUAL_EXCLUDE] if len(good) >= USUAL_EXCLUDE + USUAL_RECENT else good_rows
     base = statistics.median(base_pool)
     ratio = cur / base if base else 1.0
-    phase_cur = _phase_medians(good_rows[-USUAL_RECENT:])
-    phase_base = _phase_medians(base_rows)
+    phase_cur, phase_support, phase_total_cur = _phase_medians(good_rows[-USUAL_RECENT:])
+    phase_base, phase_base_support, phase_total_base = _phase_medians(base_rows)
     if ratio < 1.25:
         compare = "about usual"
     elif ratio < 2:
@@ -1309,7 +1335,9 @@ def usuality_facts(data, now=None):
             stale = f" (STALE: last probe {a:.0f}s ago)"
     return {"cur": cur, "base": base, "compare": compare, "window": window,
             "samples": samples, "span": span, "stale": stale, "recent_phrase": recent_phrase,
-            "phase_cur": phase_cur, "phase_base": phase_base}
+            "window_count": len(cur_stamps), "phase_cur": phase_cur, "phase_base": phase_base,
+            "phase_support": phase_support, "phase_base_support": phase_base_support,
+            "phase_total_cur": phase_total_cur, "phase_total_base": phase_total_base}
 
 
 def usuality_line(data, now=None, facts=None):

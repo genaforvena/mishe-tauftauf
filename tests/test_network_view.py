@@ -743,6 +743,71 @@ def test_phase_line_has_no_slowdown_note_without_measured_phases():
     assert line.startswith("UNKNOWN") and "slowdown is in" not in line
 
 
+def _total_only_row(row, total_ms):
+    """Keep a web sample but remove every phase checkpoint from a probe row."""
+    for check in row["internet"].values():
+        check.pop("connect_ms", None)
+        check.pop("tls_ms", None)
+        check["total_ms"] = total_ms
+
+
+def test_phase_line_reports_unknown_support_when_one_recent_probe_has_phases():
+    # A field review reproduced a claim of a ten-probe handshake median from one measured probe.
+    # USUAL can still flag the slowdown; the attribution must not pretend to ten observations.
+    now = time.time()
+    rows = _timed_phase_rows(200, now, 204, 70.0, 290.0)
+    for row in rows[-10:-1]:
+        _total_only_row(row, 700.0)
+    for check in rows[-1]["internet"].values():
+        check["tls_ms"] = 600.0
+        check["total_ms"] = 700.0
+    facts = view.usuality_facts(rows, now=now)
+    assert facts["phase_support"] == 1
+    assert "slower than usual" in view.usuality_line(rows, now=now, facts=facts)
+    line = view.phase_line(rows, now=now, facts=facts)
+    assert "slowdown is in" not in line
+    assert ("slowdown phase UNKNOWN (phases measured on 1 of 10 recent probes, "
+            "140 baseline rows)") in line
+    assert all(len(part) <= 172 for part in line.split("\n"))
+
+
+def test_phase_line_reports_unknown_support_when_the_baseline_has_no_phases():
+    now = time.time()
+    rows = _timed_phase_rows(200, now, 204, 70.0, 290.0)
+    for row in rows[:-10]:
+        _total_only_row(row, 360.0)
+    for row in rows[-10:]:
+        for check in row["internet"].values():
+            check["tls_ms"] = 600.0
+            check["total_ms"] = 700.0
+    facts = view.usuality_facts(rows, now=now)
+    assert facts["phase_support"] == 10 and facts["phase_base_support"] == 0
+    line = view.phase_line(rows, now=now, facts=facts)
+    assert "slowdown is in" not in line
+    assert "slowdown phase UNKNOWN (phases measured on 10 of 10 recent probes, 0 baseline rows)" in line
+
+
+def test_phase_line_names_partial_support_and_compares_the_measured_rows_only():
+    # Half the window has phases; the others only have a web total. The attribution's extra time
+    # must come from the measured rows, not a median mixed with the total-only ones.
+    now = time.time()
+    rows = _timed_phase_rows(200, now, 204, 70.0, 290.0)
+    sparse = set(id(row) for row in rows[-10::2])
+    for row in rows[-10:]:
+        if id(row) in sparse:
+            _total_only_row(row, 1000.0)
+        else:
+            for check in row["internet"].values():
+                check["tls_ms"] = 445.0
+                check["total_ms"] = 515.0
+    assert view.usuality_facts(rows, now=now)["phase_support"] == 5
+    assert "median 758 ms vs typical 360 ms" in view.usuality_line(rows, now=now)
+    line = view.phase_line(rows, now=now)
+    assert ("slowdown is in the secure handshake: 5 of last 10 probes (31 min) measured "
+            "375 ms vs typical 220 ms") in line
+    assert "758 ms" not in line
+
+
 def test_render_frame_shows_the_window_when_a_line_is_fine(monkeypatch):
     monkeypatch.setattr(view, "draw", lambda: "the window")
     assert view.render_frame() == "the window"
