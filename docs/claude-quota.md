@@ -29,7 +29,11 @@ that signal with no subscribers, so a site that wants the verdict routed registe
 resolver.
 
 The native report has display precision: whole percentage points and minute
-reset times. The result records that precision explicitly. It is not an exact
+reset times. The result records that precision explicitly. The tolerance is one
+display unit at each bound: a reset stamped up to a minute before the read still
+parses (the display rounds down to the minute), and a reset up to a minute
+beyond the window's own length is still inside it. A reset further in the past
+is expired, and the attempt becomes UNKNOWN. It is not an exact
 token allowance or a replacement forecast. The existing LOW and burn-rate rules
 remain in effect. A fresh report can still hold spontaneous work RED.
 
