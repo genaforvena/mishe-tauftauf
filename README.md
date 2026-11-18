@@ -187,6 +187,11 @@ to know whether a monitor is alive.
 | Set up the optional analysis advisor | [Observable analysis advice](docs/analysis-advisor.md) |
 | Preflight a draft before publishing it | [Publication checks](docs/publication-checks.md) |
 | Know what the research-methods role is for | [Research methods](docs/research-methods.md) |
+| Read the `engine/budget.json` contract | [Budget JSON contract](docs/budget-json-contract.md) |
+| Run the optional code-map experiment | [Code map experiment](docs/code-map-experiment.md) |
+| Compare the network window's promises with what is built | [Network gaps](docs/network-gaps.md) |
+| See the registry of outer tmux windows | [Outer windows](docs/outer-windows.md) |
+| Read the POSIX binary contract and ranking | [Mishe POSIX binaries](docs/posix-binaries.md) |
 
 Layout: `src/` is the runtime, `checks/` the independent checks, `tools/` the guard and activation
 tooling, `tests/` the tests, `research/` recorded reviews and `docs/` this book.
