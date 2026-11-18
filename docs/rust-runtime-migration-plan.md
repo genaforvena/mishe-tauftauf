@@ -3398,3 +3398,32 @@ process makes 300 MB resident, then runs the module's own `CHILD` and requires
 code the child reports ~100 MB under a 341 MB launcher; with the `VmHWM` branch
 deleted the identical child reports **340,752 KB**. So the test fails on the old
 behaviour and passes on the fixed one. `tests/test_rust_measurement.py` 22 passed.
+
+### 10.59 Where the fold's remaining cost sits, and why it is not the next slice (2026-11-18)
+
+A forced full role read streams **302,589 records** of the shared tape to project
+36,388 (`senses`) or 30,341 (`genome`) entries. Profiled on the live home
+(`artifacts/rust-plan-20261107/fold-profile-20261118.txt`, cProfile so the totals
+are ~8 s against the duty's measured 3.1 s — the *shape* is the evidence, not the
+total):
+
+| share | what it is |
+|---|---|
+| 7.86 s waiting in `threading.join` | the main thread waits for the `mishe-records` verifier thread: the fold is gated by the Rust child, not by Python |
+| 2.27 s `wall_text.addressed` per record | the projection's address test, 302k calls |
+| 2.12 s `feed.verified` / 2.06 s `_iter_streamed_feed` | per-record decode and stream bookkeeping around the verifier |
+| 0.76 s `_role_fold` | the actual projection of kept entries |
+
+So the verification half is already Rust (`children_cpu_s` 2.8 of the 5.9-6.2
+total), and the remainder is a ~10 µs-per-record Python loop whose whole cost is
+**~12 CPU-s per hour** for both roles. Two micro-flaws are real and recorded rather
+than fixed: `addressed` computes `entry.body.splitlines()[0]` for every record but
+uses it only on the `operator/permissions` branch, and `dm_recipient`/`names_sender`
+rebuild a `re` pattern string per call (`547k` `re._compile` calls per fold). They
+are worth roughly 0.2-0.4 s of a 3.1 s read — under noise for a duty that runs
+hourly.
+
+Decision: no Rust slice on this path now. The threshold that would change it is a
+fold on a wake or render path (where 3 s of latency is paid per invocation) or a
+duty cost above a few minutes per hour; a rewrite of a 10 µs loop that is 1% of one
+CPU-minute per hour is exactly the "keep Python where it is simpler" case.
