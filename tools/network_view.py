@@ -84,6 +84,11 @@ def code_version():
 VERSION = code_version()
 VERSION_AT = time.time()
 STAMP = own_stamp()
+# The digest of the code this process really imported, taken once and never recomputed.  An edit the
+# reload gate refuses leaves the old copy running (REFUSED) while the disk holds bytes this process is
+# not running; re-reading the files in report_window_state() would then record the refused file's own
+# digest, and the window check would compare it with that same file and call a stale pane current.
+LOADED_FINGERPRINT = code_fingerprint()
 
 
 def report_window_state():
@@ -93,10 +98,10 @@ def report_window_state():
         tmp = WINDOW_STATE.with_name("window.json.tmp")
         # "started" is the kernel start time of this pid: an os.execv reload keeps it, so the window check
         # still matches the live process.  "loaded" is when this copy of the code was imported, which is
-        # what a reader needs to age a fingerprint mismatch.
+        # what a reader needs to age a fingerprint mismatch; the fingerprint is that imported code.
         tmp.write_text(json.dumps({"pid": os.getpid(), "started": nb.process_start(os.getpid()),
                                    "loaded": STARTED, "code": VERSION[0],
-                                   "fingerprint": code_fingerprint()}))
+                                   "fingerprint": LOADED_FINGERPRINT}))
         tmp.replace(WINDOW_STATE)
     except OSError:
         pass
@@ -1221,7 +1226,9 @@ if __name__ == "__main__":
         state_at = time.time()
         while True:
             STAMP = maybe_reexec(STAMP)
-            if time.time() - VERSION_AT > 60:  # commits and edits show in the header within a minute
+            # While an edit is refused the disk holds code this copy is not running; keep the header's
+            # code label on the loaded copy, or it would name a commit/edits that never took effect.
+            if not REFUSED and time.time() - VERSION_AT > 60:  # commits and edits show within a minute
                 VERSION, VERSION_AT = code_version(), time.time()
             # Re-record once a minute: a stray loop run (not --once) overwrites window.json with its own pid,
             # and the window check would then call the live pane's copy stale until this copy writes again.

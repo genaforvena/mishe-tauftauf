@@ -109,7 +109,35 @@ def test_window_state_is_written_by_the_view(tmp_path, monkeypatch):
     state = json.loads((tmp_path / "network" / "window.json").read_text())
     assert state["pid"] > 0 and state["started"] <= time.time()
     assert state["loaded"] == pytest.approx(view.STARTED)
-    assert state["fingerprint"] == view.code_fingerprint()
+    assert state["fingerprint"] == view.LOADED_FINGERPRINT
+
+
+def test_a_refused_edit_is_not_recorded_as_the_running_copy(tmp_path, monkeypatch, capsys):
+    # 2026-11-18 review finding: after the minute re-record, the view wrote the fingerprint of the file
+    # on disk.  When an edit compiles but fails to start, the pane keeps the old copy; that re-record
+    # made the check compare the refused file with itself and call the stale pane current.
+    repo = tmp_path / "repo"
+    a, b = repo / "tools" / "network_view.py", repo / "tools" / "network_boundary.py"
+    a.parent.mkdir(parents=True)
+    a.write_text("print('the running copy')\n")
+    b.write_text("VALUE = 1\n")
+    monkeypatch.setattr(view, "OWN_FILES", (a, b))
+    monkeypatch.setattr(view, "WINDOW_STATE", tmp_path / "network" / "window.json")
+    monkeypatch.setattr(view, "LOADED_FINGERPRINT", view.code_fingerprint((a, b)))
+    view.report_window_state()
+    recorded = json.loads((tmp_path / "network" / "window.json").read_text())["fingerprint"]
+    # the refused edit: disk bytes change, the running copy does not; the files are older than the grace
+    a.write_text("raise SystemExit('this copy was refused')\n")
+    stamp = time.time() - care.RELOAD_GRACE_S - 60
+    os.utime(a, (stamp, stamp))
+    os.utime(b, (stamp, stamp))
+    view.report_window_state()
+    state = json.loads((tmp_path / "network" / "window.json").read_text())
+    assert state["fingerprint"] == recorded
+    assert recorded != view.code_fingerprint((a, b))
+    assert care.window_copy_stale(tmp_path, repo) == 2
+    assert "differs from the files on disk" in capsys.readouterr().err
+
 
 
 def test_unchanged_own_files_do_not_reexec(monkeypatch):

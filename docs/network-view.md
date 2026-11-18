@@ -183,7 +183,10 @@ is not mistaken for a quiet mind.
   inside the redraw loop stays up without drawing: both are refused ("the copy exits at once …",
   "the copy draws one frame and exits", "the copy spins without drawing …"). When the refused copy
   has exited, the refusal appends its own last error line (or its exit status), so a save that dies
-  before its first frame still says why rather than only how.
+  before its first frame still says why rather than only how. The window state records the
+  fingerprint of the code the pane actually imported, not the bytes on disk, so a refused edit
+  cannot make the five-minute `network-window` check compare the refused file with itself and call
+  the old pane current: past the 30 s reload grace that duty is RED with the respawn command.
 - Channel, noise floor and the driver's transmit counters are measured once per 5 minutes; a single
   reading is not evidence of channel trouble. There is one access point per band (2.4 GHz and 5 GHz),
   so there is no second AP to compare channels with: `iwinfo` also lists `apcli0`/`apclix0`, which
