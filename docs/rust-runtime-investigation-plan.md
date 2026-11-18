@@ -299,8 +299,21 @@ At 11:39Z the live host had 2,144 receipts and 2,144 index lines (2,139 lines
 against 2,143 receipts at 11:14Z), so the producer rebuilt and keeps the index
 current. The stale prediction that `attempt.json` would gain a `scan_index`
 field was wrong: it records only created/scan_id/stage/status; row parity with
-the receipts is the live check. Peak RSS stays UNKNOWN: no producer
-`MemoryPeak` sample was available from the journal in this wake.
+the receipts is the live check.
+
+**Peak RSS, observed after delivery (2026-11-18 12:13Z).** The live
+`mishe-producer-readings.service` journal now carries the systemd peak the
+earlier wake lacked. Before pin `90d0f135` (08:04–11:25Z), 18 samples ran
+881.1–882.1 MB with one 956.5 MB outlier at 10:07Z; after it (11:35–12:08Z),
+four samples ran 882.1–882.4 MB. The slice retired scan-read CPU, not producer
+peak memory; the earlier in-process `ru_maxrss` gap stays unusable, but the
+producer-level RSS UNKNOWN is closed. A fresh pinned-bytes observation at
+12:11Z (`PYTHONPATH=runtime/current/src`) had `discovery._disk_trend` return
+`state=verified samples=2148 span_h=708.14` in 0.0212 CPU-s, with
+`read_scan_series` at 2,148 rows / 0.0187 CPU-s and 2,148 receipts against
+2,148 index lines. The newest receipt names producer
+`releases/90d0f135…/src/mishe_tauftauf@90d0f135…`, so the running consumer uses
+the delivered bytes.
 
 The further test-only fix `b18af2ac` passed its own check (`code 0`, 11:28Z) but
 is stranded in `delivery-busy`: its recorded previous pin `76c4256b` was
