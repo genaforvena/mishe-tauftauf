@@ -154,12 +154,16 @@ is not mistaken for a quiet mind.
 - `WI-FI QUALITY`: one line per radio — the share of transmit attempts that failed since the router
   booted, the share that failed over the last hour (the difference between two recorded counter
   reads, at least 10 minutes apart), and the driver's own frame-error rate (`driver's frame loss N%
-  since boot`, the `PER` the driver prints after its fail counter, cumulative since the router
-  booted like the counters), plus the highest radio temperature once, at the end. Read from the
-  driver's own `iwpriv <radio> stat` counters. Attempts, not frames given up on: the driver counts
-  each try, so the attempts share is "how often the radio had to send again or gave up" (the
-  2026-11-18 `iwpriv` experiment read 14.5% attempts against 3.3% frame loss on 2.4 GHz), and the
-  driver's own PER is what the household actually lost. The frame-loss clause is a number when the
+  (the driver's own figure; window not measured)`, the `PER` the driver prints after its fail
+  counter), plus the highest radio temperature once, at the end. Read from the driver's own
+  `iwpriv <radio> stat` counters. Attempts, not frames given up on: the driver counts each try, so
+  the attempts share is "how often the radio had to send again or gave up" (the 2026-11-18 `iwpriv`
+  experiment read 14.5% attempts against 3.3% frame loss on 2.4 GHz). The driver's PER is shown as
+  the driver's own number because it cannot be reproduced from the counters printed beside it —
+  14.5% failed attempts against PER 3.4% on 2.4 GHz, 6.2% against 0.1% on 5 GHz, and on the receive
+  side 15.7% CRC errors against PER 0.7% — so its averaging window is the driver's, not a period this
+  line measured; the clause says so instead of inventing one (the `since boot` wording of
+  2026-11-18 was withdrawn the same day for that reason). The frame-loss clause is a number when the
   newest read carries `tx_per` (recorded since the 2026-11-18 05:17Z router read), and `driver's
   frame loss UNKNOWN` when the newest read has no `tx_per` — a read written before that field
   existed, or a driver that stopped printing it, is never shown as a quiet radio. UNKNOWN when the

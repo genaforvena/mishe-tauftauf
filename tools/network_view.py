@@ -854,11 +854,12 @@ def wifi_quality_line(now=None):
     the newest read is named as UNKNOWN rather than dropped; a rate is shown only when two reads an
     hour or less apart bracket it. The driver's own PER is shown when the newest read carries it
     (older rows do not): the attempts figure counts retries, so a person needs the driver's own
-    frame-loss number next to it to tell a retrying radio from a broken one. That PER is cumulative
-    since the driver's counters reset (the router's boot), like the attempts figure, so the clause
-    says "since boot" — a since-boot average must not read as the last hour's loss. When the newest
-    read carries no PER the clause says UNKNOWN instead of vanishing: an absent number must not read
-    as a quiet radio.
+    frame-loss number next to it to tell a retrying radio from a broken one. That PER cannot be
+    reproduced from the counters printed beside it (2.4 GHz: 14.5% failed attempts against PER 3.4%;
+    receive side 15.7% CRC against PER 0.7%), so its population and averaging window are the driver's
+    own and are not measured here: the clause names it as the driver's own figure instead of claiming
+    a period. When the newest read carries no PER the clause says UNKNOWN instead of vanishing: an
+    absent number must not read as a quiet radio.
     """
     now = time.time() if now is None else now
     reads = [r for r in router_rows() if r.get("ok") and isinstance(r.get("radios"), list)
@@ -892,7 +893,7 @@ def wifi_quality_line(now=None):
             text += wifi_usuality(rate, _hour_attempt_rates(reads, band, now))
         per = stats.get("tx_per")
         if isinstance(per, (int, float)):
-            text += f"; driver's frame loss {per:.1f}% since boot"
+            text += f"; driver's frame loss {per:.1f}% (the driver's own figure; window not measured)"
         else:
             text += "; driver's frame loss UNKNOWN"
         parts.append(text)
