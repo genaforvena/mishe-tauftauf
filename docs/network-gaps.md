@@ -3,7 +3,8 @@
 One line per promised slot in the network charter. Checked against `tools/network_view.py`
 (`draw()` and its helpers) and `tools/network_router.py` and `rust/mishe-network-probe`, on 2026-11-13.
 Speed, day-trend, baseline and Wi-Fi channel/noise/counter rows rechecked 2026-11-17; the upload
-duty's verdict and the live Wi-Fi line's device naming rechecked 2026-11-18.
+duty's verdict, the live Wi-Fi line's device naming and the driver's error-rate wording rechecked
+2026-11-18.
 
 Status words: **BUILT** (the window shows it with an age or UNKNOWN), **PARTLY** (some of it is
 shown), **MISSING** (not measured or not shown).
@@ -35,7 +36,7 @@ shown), **MISSING** (not measured or not shown).
 | --- | --- | --- |
 | Number of clients | BUILT | `wifi_facts()`: total and per band (2.4 / 5 GHz) |
 | Who is weak, by a name the household knows | BUILT | the live `WI-FI` line names the weakest client from the recorded read's id-to-name map (`client_names()`, ids are the same short hash the router row stores), and the `RECORDED 5-MIN` line names the weakest device of the last 5-minute read; a client the recorded read has not seen yet shows its dBm only |
-| Noisy or channel trouble | BUILT | `WI-FI RADIO` shows each known radio's channel, frequency and noise floor from a read-only `iwinfo <radio> info` pass in the router read, with age and UNKNOWN/STALE guards. `WI-FI QUALITY` shows, one line per band, the share of transmit attempts that failed since boot and over the last hour, plus the driver's own frame-error rate (the `PER` it prints after the fail counter, `tx_per` in the router row, shown as "N% since boot") so the attempts figure can be read next to the frames actually lost, plus radio temperature, from the driver's read-only `iwpriv <radio> stat` counters. `network-wifi` is UNKNOWN when either sub-reading vanishes, including when one band's `iwpriv` counters alone go missing (the window names that band instead of dropping it) and when the counters are there but the driver's `PER` is not. There is one access point per band, so there are no two APs to compare channels with (`apcli0`/`apclix0` are client-mode interfaces on the same radios) |
+| Noisy or channel trouble | BUILT | `WI-FI RADIO` shows each known radio's channel, frequency and noise floor from a read-only `iwinfo <radio> info` pass in the router read, with age and UNKNOWN/STALE guards. `WI-FI QUALITY` shows, one line per band, the share of transmit attempts that failed since boot and over the last hour, plus the driver's own frame-error rate (the `PER` it prints after the fail counter, `tx_per` in the router row, shown as "driver's error rate N%", with the trailing line saying the driver's averaging window is not measured) so the attempts figure can be read next to the frames actually lost, plus radio temperature, from the driver's read-only `iwpriv <radio> stat` counters. `network-wifi` is UNKNOWN when either sub-reading vanishes, including when one band's `iwpriv` counters alone go missing (the window names that band instead of dropping it) and when the counters are there but the driver's `PER` is not. There is one access point per band, so there are no two APs to compare channels with (`apcli0`/`apclix0` are client-mode interfaces on the same radios) |
 | Weak-signal flag | BUILT | "WEAK SIGNAL" when the weakest client is below `WEAK_WIFI_DBM` |
 
 ## Router and uplink
@@ -68,19 +69,29 @@ shown), **MISSING** (not measured or not shown).
 
 1. What the radio fail counter means, and when it deserves a threshold. The counters exist now
    (`iwpriv <radio> stat`), and since 2026-11-18 the window shows the driver's own frame-error rate
-   next to the attempts share as `driver's frame loss N% since boot`, from `tx_per` on the newest
-   recorded read (the first such read is 2026-11-18 05:17Z; it is UNKNOWN before that field
-   existed). The 14.5% of attempts against 3.3% of frames lost was read directly from `iwpriv` in
-   the 2026-11-18 experiment, not from a window reading. The window now also says how the last hour
-   compares with the median of the last 24 completed clock hours in the retained log (`much worse
-   than usual (usual N%)` at 2× and ten points above). **Decision 2026-11-18:** that comparison is
-   shown, but it is not yet an alarm duty. Reason: the attempts share counts retries, the retained
-   log is two days, and the paired frame-loss history is hours old (19 reads over 102 minutes by
-   07:00Z that day, flat at 3.4% on 2.4 GHz and 0.1% on 5 GHz), so it cannot yet tell a busy radio
-   from a failing one. **Precondition for an alarm:** at least a day of reads with `tx_per` on both
-   bands, and at least one "much worse" hour in that history whose PER stayed flat (then the alarm
-   is not warranted) or rose with it (then the threshold earns a duty). Limit of the
+   next to the attempts share as `driver's error rate N%`, from `tx_per` on the newest recorded
+   read (the first such read is 2026-11-18 05:17Z; it is UNKNOWN before that field existed). The
+   number is the driver's, and its averaging window is not measured: it cannot be reproduced from
+   the counters printed beside it, so no single denominator or factor explains it (2026-11-18:
+   2.4 GHz read 14.5% failed attempts against PER 3.4%, 5 GHz 6.2% against 0.1%, receive-side CRC
+   15.7% against 0.7%). The trailing line therefore says `driver's error rate window not measured`;
+   the "since boot" wording of 2026-11-18 was an inference and was withdrawn the same day. The
+   attempts percentages were read directly from `iwpriv` in that experiment, not from a window
+   reading. The window now also says how the last hour compares with the median of the last 24
+   completed clock hours in the retained log (`much worse than usual (usual N%)` at 2× and ten
+   points above). **Decision 2026-11-18:** that comparison is shown, but it is not yet an alarm
+   duty. Reason: the attempts share counts retries, the retained log is two days, and the paired
+   error-rate history is hours old (20 reads over 1.8 hours by 07:05Z that day, flat at 3.4% on
+   2.4 GHz and 0.1% on 5 GHz), so it cannot yet tell a busy radio from a failing one.
+   **Precondition for an alarm:** at least a day of reads with `tx_per` on both bands, and at least
+   one "much worse" hour in that history. The driver's rate cannot discriminate in that test even
+   then: if it is cumulative, as the counters beside it are, one hour's failures are about 0.3% of
+   the 11.26 million failed transmits accumulated over 12.66 days of router uptime, so an hour with
+   twice the usual failures moves the printed rate by about 0.01 points — below the 0.1% it prints
+   — and an hour would have to fail about five times as often as usual before the printed number
+   moved at all. A flat reading beside a worse hour is the expected result in every case, not
+   evidence of a healthy radio; the hour comparison is the detector to watch. Limit of the
    comparison: it catches a change against those 24 hours, so a slow sustained shift becomes the new
-   usual; the since-boot share and the driver's PER stay the absolute readings. The earlier "two APs
-   on channel 13" question is closed: `ra0` is the 2.4 GHz access point, `rax0` the 5 GHz one, and
-   `apcli0`/`apclix0` are client-mode interfaces on the same radios.
+   usual; the since-boot attempts share and the driver's rate stay the absolute readings. The
+   earlier "two APs on channel 13" question is closed: `ra0` is the 2.4 GHz access point, `rax0` the
+   5 GHz one, and `apcli0`/`apclix0` are client-mode interfaces on the same radios.
