@@ -130,6 +130,32 @@ def test_a_vanished_oneshot_does_not_hide_a_real_low_floor(check, monkeypatch, c
     assert "mishe-producer-ci.service" not in text
 
 
+def test_a_below_floor_oneshot_that_finishes_is_not_a_fault(check, monkeypatch, capsys, tmp_path):
+    """A producer sampled below floor whose process exits during the confirmation
+    window must not page health: its cgroup is gone, so no floor was violated. A
+    still-running low unit keeps UNKNOWN/RED (7e87b07f, 8ad00645)."""
+    directory = leaf(tmp_path, "w", 1073741824)
+
+    def leaves_shrink(root=check.PROC):
+        if leaves_shrink.calls == 0:
+            leaves_shrink.calls += 1
+            return {"mishe-producer-ci.service": directory}
+        return {}  # the oneshot's last process exited during the window
+
+    leaves_shrink.calls = 0
+
+    def remove_cgroup(seconds):
+        (directory / "memory.high").unlink()
+        directory.rmdir()
+
+    monkeypatch.setattr(check.time, "sleep", remove_cgroup)
+    monkeypatch.setattr(check, "guarded_leaves", leaves_shrink)
+    code = check.main(["--floor", str(FLOOR), "--persist", "3"])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "GREEN" in captured.out
+
+
 def test_a_non_numeric_memory_high_is_unknown(check, monkeypatch, capsys, tmp_path):
     code, text = run(check, monkeypatch,
                      {"mishe-producer-ci.service": leaf(tmp_path, "p", None)}, capsys)

@@ -206,13 +206,21 @@ def main(argv=None) -> int:
     unreadable = [row for row in first if row["unreadable"]]
     if suspects:
         time.sleep(max(0.0, args.persist))
-        again = {row["unit"]: row for row in inspect(leaves, floor) if not row["gone"]}
+        # Re-enumerate /proc: a short-lived producer sampled below floor can finish
+        # during the confirmation window. Its removed cgroup reads as GONE from the
+        # stale first snapshot and was mis-reported as "unreadable while it has
+        # processes" (17:26Z RED). A unit still present here is genuinely running, so
+        # an unreadable confirmation on it stays UNKNOWN (8ad00645, 2f79198e).
+        live = guarded_leaves()
+        again = {row["unit"]: row for row in inspect(live, floor) if not row["gone"]}
         still_below = []
         for row in suspects:
+            if row["unit"] not in live:
+                continue  # the unit's last process exited: a finished oneshot, no floor to violate
             reread = again.get(row["unit"])
             if reread is None or reread["unreadable"]:
-                # A below-floor reading that vanishes or turns unreadable on
-                # confirmation stays UNKNOWN; it must not become a pass (8ad00645).
+                # A below-floor reading that stays but turns unreadable on
+                # confirmation remains UNKNOWN; it must not become a pass (8ad00645).
                 unreadable.append(reread or row)
             elif reread["below"]:
                 still_below.append(reread)
