@@ -178,11 +178,13 @@ def main(argv=None) -> int:
         return 3
     first = inspect(leaves, floor)
     suspects = [row for row in first if row["below"]]
+    unreadable = [row for row in first if row["high"] is None]
     if suspects:
         time.sleep(max(0.0, args.persist))
         again = {row["unit"]: row for row in inspect(leaves, floor)}
+        unreadable.extend(again[row["unit"]] for row in suspects
+                          if again[row["unit"]]["high"] is None)
         suspects = [row for row in suspects if again.get(row["unit"], row)["below"]]
-    unreadable = [row for row in first if row["high"] is None]
     if suspects:
         for row in suspects:
             print(f"wake-memory-floor: RED {row['unit']} memory.high={row['high']} below the "

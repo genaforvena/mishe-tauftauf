@@ -69,6 +69,17 @@ def test_a_low_reading_that_recovers_is_a_repair_not_a_fault(check, monkeypatch,
     assert "GREEN" in text
 
 
+def test_a_low_reading_that_becomes_unreadable_is_unknown(check, monkeypatch, capsys, tmp_path):
+    directory = leaf(tmp_path, "w", 1073741824)
+    monkeypatch.setattr(check.time, "sleep", lambda seconds: (directory / "memory.high").unlink())
+    monkeypatch.setattr(check, "guarded_leaves",
+                        lambda root=check.PROC: {"mishe-producer-ci.service": directory})
+    code = check.main(["--floor", str(FLOOR), "--persist", "3"])
+    captured = capsys.readouterr()
+    assert code == 3
+    assert "unreadable" in captured.err
+
+
 def test_an_unreadable_floor_is_unknown_not_green(check, monkeypatch, capsys, tmp_path):
     directory = tmp_path / "gone"  # enumerated, then gone before the read
     directory.mkdir()
