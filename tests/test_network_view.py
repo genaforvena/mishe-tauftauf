@@ -70,6 +70,44 @@ def test_wifi_decode_rejects_empty_listing():
         view.nb.decode_wifi("")
 
 
+def test_wifi_decode_ids_carry_the_recorded_client_id_not_the_mac():
+    # The live listing is the only place a MAC appears; it is mapped through the same short hash the
+    # router row stores, so the window can name a client from the recorded read.
+    import network_router as nr
+    mac, other = "7C:C3:A1:A5:20:D7", "3A:2D:71:4B:CC:FC"
+    text = (f"BAND 2.472\n{mac}  -28 dBm / unknown (SNR -28)  0 ms ago\n"
+            f"{other}  -80 dBm / unknown  0 ms ago\nBAND 5.200\n")
+    bands = view.nb.decode_wifi_ids(text, nr.client_id)
+    assert bands == {"2.4": [(nr.client_id(mac), -28), (nr.client_id(other), -80)], "5": []}
+    assert "7C:C3" not in repr(bands)
+
+
+def _wifi_read(monkeypatch, stdout):
+    monkeypatch.setattr(view.subprocess, "run",
+                        lambda *args, **kwargs: view.subprocess.CompletedProcess(args, 0, stdout, ""))
+    monkeypatch.setitem(view._wifi, "at", 0.0)
+
+
+def test_live_wifi_line_names_the_weakest_device_the_recorded_read_knows(tmp_path, monkeypatch):
+    import network_router as nr
+    mac = "7C:C3:A1:A5:20:D7"
+    _router_log(tmp_path, monkeypatch,
+                {"ts": time.time(), "ok": True,
+                 "clients": [{"id": nr.client_id(mac), "name": "iMac-Rozalia", "band": "2.4", "dbm": -81}]})
+    _wifi_read(monkeypatch, f"BAND 2.472\n{mac}  -81 dBm / unknown (SNR -81)  0 ms ago\nBAND 5.200\n")
+    text, weak = view.wifi_facts()
+    assert "weakest iMac-Rozalia -81 dBm on 2.4 GHz" in text
+    assert weak is True
+
+
+def test_live_wifi_line_keeps_the_bare_dbm_when_no_recorded_name_matches(tmp_path, monkeypatch):
+    _router_log(tmp_path, monkeypatch, {"ts": time.time(), "ok": True, "clients": []})
+    _wifi_read(monkeypatch, "BAND 2.472\n7C:C3:A1:A5:20:D7  -81 dBm / unknown  0 ms ago\nBAND 5.200\n")
+    text, weak = view.wifi_facts()
+    assert "weakest -81 dBm on 2.4 GHz" in text
+    assert weak is True
+
+
 def _probe(at, down):
     internet = {"gstatic": {"ok": not down, "total_ms": None if down else 300.0},
                 "cloudflare": {"ok": not down, "total_ms": None if down else 280.0}}

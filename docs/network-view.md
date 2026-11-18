@@ -103,7 +103,9 @@ is not mistaken for a quiet mind.
   line at a word boundary, for at most three clients, so an UNKNOWN or RED client says why it is
   not GREEN (for example "the client could not be reached: …"). UNKNOWN when the file is missing,
   unreadable or over 15 minutes old.
-- `RECORDED`: client count by band, weakest device by name and dBm, the age of the last read.
+- `RECORDED 5-MIN`: the recorded router read (one per 5 minutes): client count by band, weakest
+  device by name and dBm, the age of that read and the client count over the last hour. It is the
+  read that supplies the device names the live `WI-FI` line shows.
 - `OUTAGES`: each run of DOWN probes with its start and end, plus a trailing span line saying how many
   probe rows were read and how much time they cover (`none over the last 1440 probes in 3.4 days
   (11-14 16:57Z to 11-18 02:06Z)`). Timestamps on different days carry the month and day, so a
@@ -130,6 +132,11 @@ is not mistaken for a quiet mind.
   2026-11-10 (boot ended 18:15Z, next probe 19:54Z), not evening load, and at the current 180 s
   timer period every clock hour carries 17–19 probes. UNKNOWN when the newest probe is stale or
   did not carry both phases.
+- `WI-FI`: the live listing, one read a minute: client count per band and the weakest client with
+  its dBm, its band and the name the household knows it by when the recorded read has that client;
+  a device that only just joined shows as its dBm until the next recorded read names it. WEAK SIGNAL
+  when the weakest client is below -75 dBm. The listing is read over ssh and nothing is written; the
+  MAC the router prints is mapped to the same short hash the router row stores and never shown.
 - `WI-FI RADIO`: each known radio's channel, frequency and noise floor from the read-only router
   pass, with the age of the reading; UNKNOWN when the sub-reading is absent, STALE past 15 minutes.
 - `WI-FI QUALITY`: per radio, the share of transmit attempts that failed since the router booted,

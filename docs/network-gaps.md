@@ -3,7 +3,7 @@
 One line per promised slot in the network charter. Checked against `tools/network_view.py`
 (`draw()` and its helpers) and `tools/network_router.py` and `rust/mishe-network-probe`, on 2026-11-13.
 Speed, day-trend, baseline and Wi-Fi channel/noise/counter rows rechecked 2026-11-17; the upload
-duty's verdict rechecked 2026-11-18.
+duty's verdict and the live Wi-Fi line's device naming rechecked 2026-11-18.
 
 Status words: **BUILT** (the window shows it with an age or UNKNOWN), **PARTLY** (some of it is
 shown), **MISSING** (not measured or not shown).
@@ -34,7 +34,7 @@ shown), **MISSING** (not measured or not shown).
 | slot | status | evidence |
 | --- | --- | --- |
 | Number of clients | BUILT | `wifi_facts()`: total and per band (2.4 / 5 GHz) |
-| Who is weak, by a name the household knows | PARTLY | the RECORDED line names the weakest device and its dBm; the live WI-FI line does not name devices ("no devices named") |
+| Who is weak, by a name the household knows | BUILT | the live `WI-FI` line names the weakest client from the recorded read's id-to-name map (`client_names()`, ids are the same short hash the router row stores), and the `RECORDED 5-MIN` line names the weakest device of the last 5-minute read; a client the recorded read has not seen yet shows its dBm only |
 | Noisy or channel trouble | BUILT | `WI-FI RADIO` shows each known radio's channel, frequency and noise floor from a read-only `iwinfo <radio> info` pass in the router read, with age and UNKNOWN/STALE guards. `WI-FI QUALITY` shows the share of transmit attempts that failed since boot and over the last hour, plus radio temperature, from the driver's read-only `iwpriv <radio> stat` counters. `network-wifi` is UNKNOWN when either sub-reading vanishes, including when one band's `iwpriv` counters alone go missing (the window names that band instead of dropping it). There is one access point per band, so there are no two APs to compare channels with (`apcli0`/`apclix0` are client-mode interfaces on the same radios) |
 | Weak-signal flag | BUILT | "WEAK SIGNAL" when the weakest client is below `WEAK_WIFI_DBM` |
 
@@ -60,8 +60,8 @@ shown), **MISSING** (not measured or not shown).
 
 ## Count
 
-- BUILT: 19
-- PARTLY: 4
+- BUILT: 20
+- PARTLY: 3
 - MISSING: 2
 
 ## Next gaps, in order of value

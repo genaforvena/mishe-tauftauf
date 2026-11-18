@@ -89,12 +89,14 @@ def band_name(freq):
     return freq
 
 
-def decode_wifi(stdout):
-    """Client signal strengths per band from the router's read-only Wi-Fi listing.
+def decode_wifi_ids(stdout, client_id):
+    """Client ids and signal strengths per band from the router's read-only Wi-Fi listing.
 
     Input: one "BAND <ghz>" line per radio, then one line per associated client
-    ("<MAC> <dBm> dBm ..."). Returns {band: [dBm, ...]}; MAC addresses are dropped here,
-    so no device identity leaves this function. ValueError when no radio was listed.
+    ("<MAC> <dBm> dBm ..."). Returns {band: [(id, dBm), ...]}. Each MAC is mapped through
+    `client_id`, the same short non-reversible hash the router row stores, so a caller can
+    look the device's name up in a recorded row without holding an address. ValueError when
+    no radio was listed.
     """
     bands, band = {}, None
     for line in stdout.splitlines():
@@ -104,12 +106,22 @@ def decode_wifi(stdout):
             bands.setdefault(band, [])
         elif band is not None and len(parts) >= 3 and parts[2] == "dBm":
             try:
-                bands[band].append(int(parts[1]))
-            except ValueError:
+                bands[band].append((client_id(parts[0]), int(parts[1])))
+            except (ValueError, TypeError):
                 continue
     if not bands:
         raise ValueError("no radio in router output")
     return bands
+
+
+def decode_wifi(stdout):
+    """Client signal strengths per band from the router's read-only Wi-Fi listing.
+
+    Counts and dBm only, keyed by band; the ids decode_wifi_ids would build are dropped here, so
+    no device identity leaves this function. ValueError when no radio was listed.
+    """
+    return {band: [dbm for _id, dbm in clients]
+            for band, clients in decode_wifi_ids(stdout, lambda mac: mac).items()}
 
 
 def decode_wifi_radio(lines):

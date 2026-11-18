@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import network_boundary as nb
+import network_router  # client_id(), so a live client can be named from the recorded read
 
 SITE = Path(os.environ.get("MISHE_TAUFTAUF_HOME") or os.environ.get("MISHE_SEED_HOME") or ".mishe-tauftauf")
 PROBE = SITE / "network" / "probe.jsonl"
@@ -389,6 +390,17 @@ def router_facts():
     return _router["text"]
 
 
+def client_names():
+    """id -> the name the household knows, from the recorded router reads (newest read wins)."""
+    names = {}
+    for row in reversed(router_rows()):
+        for client in row.get("clients") or []:
+            cid, name = client.get("id"), client.get("name")
+            if cid and name and cid not in names:
+                names[cid] = name
+    return names
+
+
 def wifi_facts():
     """(text, weak) for the home Wi-Fi from a read-only router listing; (None, False) when it cannot be read."""
     if time.time() - _wifi["at"] < ROUTER_EVERY_S:
@@ -401,18 +413,22 @@ def wifi_facts():
     try:
         r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "router", cmd],
                            capture_output=True, text=True, timeout=12)
-        bands = nb.decode_wifi(r.stdout)
+        bands = nb.decode_wifi_ids(r.stdout, network_router.client_id)
     except (OSError, ValueError, subprocess.SubprocessError):
         return None, False
-    parts, weakest, weakest_band = [], None, None
+    names = client_names()
+    parts, weakest, weakest_band, weakest_name = [], None, None, None
     for band in sorted(bands):
-        sig = bands[band]
-        parts.append(f"{band} GHz {len(sig)}")
-        if sig and (weakest is None or min(sig) < weakest):
-            weakest, weakest_band = min(sig), band
+        clients = bands[band]
+        parts.append(f"{band} GHz {len(clients)}")
+        if clients:
+            cid, dbm = min(clients, key=lambda client: client[1])
+            if weakest is None or dbm < weakest:
+                weakest, weakest_band, weakest_name = dbm, band, names.get(cid)
     total = sum(len(v) for v in bands.values())
     weak = weakest is not None and weakest < WEAK_WIFI_DBM
-    tail = f", weakest {weakest} dBm on {weakest_band} GHz" if weakest is not None else ""
+    who = f"{weakest_name} " if weakest_name else ""
+    tail = f", weakest {who}{weakest} dBm on {weakest_band} GHz" if weakest is not None else ""
     _wifi["text"] = f"{total} clients ({'; '.join(parts)}){tail}" + ("  WEAK SIGNAL" if weak else "")
     _wifi["weak"] = weak
     return _wifi["text"], weak
@@ -1136,10 +1152,10 @@ def draw():
     out.append("")
     out.append("  OUTAGES (home internet DOWN, from the probes)")
     out.extend(outage_lines(data))
-    out.append("  WI-FI         " + wifi_line() + "   (read-only, clients counted, no devices named)")
+    out.append("  WI-FI         " + wifi_line() + "   (read-only, live read; name from the recorded read)")
     out.append("  WI-FI RADIO   " + wifi_radio_line() + "   (read-only iwinfo on the router)")
     out.append("  WI-FI QUALITY " + wifi_quality_line() + "   (read-only iwpriv counters on the router)")
-    out.append("  RECORDED      " + recorded_clients_line())
+    out.append("  RECORDED 5-MIN " + recorded_clients_line())
     rf = router_facts()
     out.append("  ROUTER        " + (rf or "UNKNOWN (ssh read failed)") + "   (read-only)")
     out.append("  UPLINK        " + uplink_line() + "   (read-only)")
