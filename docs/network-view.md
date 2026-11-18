@@ -153,16 +153,17 @@ is not mistaken for a quiet mind.
   pass, with the age of the reading; UNKNOWN when the sub-reading is absent, STALE past 15 minutes.
 - `WI-FI QUALITY`: one line per radio — the share of transmit attempts that failed since the router
   booted, the share that failed over the last hour (the difference between two recorded counter
-  reads, at least 10 minutes apart), and the driver's own frame-error rate (`driver's frame loss`,
-  the `PER` the driver prints after its fail counter), plus the highest radio temperature once, at
-  the end. Read from the driver's own `iwpriv <radio> stat` counters. Attempts, not frames given
-  up on: the driver counts each try, so the attempts share is "how often the radio had to send again
-  or gave up" (the 2026-11-18 `iwpriv` experiment read 14.5% attempts against 3.3% frame loss on
-  2.4 GHz; no recorded router read carries the PER yet, so the window shows `UNKNOWN` today), and the
+  reads, at least 10 minutes apart), and the driver's own frame-error rate (`driver's frame loss N%
+  since boot`, the `PER` the driver prints after its fail counter, cumulative since the router
+  booted like the counters), plus the highest radio temperature once, at the end. Read from the
+  driver's own `iwpriv <radio> stat` counters. Attempts, not frames given up on: the driver counts
+  each try, so the attempts share is "how often the radio had to send again or gave up" (the
+  2026-11-18 `iwpriv` experiment read 14.5% attempts against 3.3% frame loss on 2.4 GHz), and the
   driver's own PER is what the household actually lost. The frame-loss clause is a number when the
-  newest read carries `tx_per`, and `driver's frame loss UNKNOWN` when the newest read has no
-  `tx_per` — a read written before that field existed, or a driver that stopped printing it, is
-  never shown as a quiet radio. UNKNOWN when the newest read carries no counters on any radio (a
+  newest read carries `tx_per` (recorded since the 2026-11-18 05:17Z router read), and `driver's
+  frame loss UNKNOWN` when the newest read has no `tx_per` — a read written before that field
+  existed, or a driver that stopped printing it, is never shown as a quiet radio. UNKNOWN when the
+  newest read carries no counters on any radio (a
   band whose counters are missing from the newest read is named "UNKNOWN (missing from the newest
   read)" rather than dropped, and `network-wifi` turns UNKNOWN too), or when a reboot has left fewer
   than two counter reads (10 minutes apart) in the hour, which shows as `(last hour UNKNOWN)`. A reboot
