@@ -132,6 +132,12 @@ is not mistaken for a quiet mind.
   `wan_link`, or the kernel reports no speed; a step backwards in the last hour (a reboot
   or driver reset) still counts the drops since it and reads "at least N in the last hour
   (counters reset by a reboot)", never "none". STALE past 15 minutes.
+- `DNS lookup`: the home resolver's time for a fresh lookup in the newest probe, with a sparkline.
+  The note on the line matters: the probe's curl `%{time_connect}` (the `connect_ms` that "WHERE
+  TIME GOES" prints below) counts name lookup as well as the TCP connect, while this is one separate
+  lookup of another name. A cached answer can make that part of a connect far quicker, so
+  "reaching the site 41 ms" under "DNS lookup 102 ms" is not a contradiction. UNKNOWN when the
+  newest probe carries no lookup time.
 - `WHERE TIME GOES`: of the page-load time just above, how much went into reaching the site
   (`connect_ms`) and how much into the secure handshake (`tls_ms`), for the newest probe only.
   It also gives the handshake's usual median over the loaded rows and, when both have at least

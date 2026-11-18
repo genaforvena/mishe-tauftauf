@@ -534,6 +534,19 @@ def _fresh_phase_row(connect, tls):
                                    for name in ("gstatic", "cloudflare")}}
 
 
+def test_dns_line_explains_why_the_connect_time_below_can_be_smaller():
+    line = view.dns_line([{"dns_ms": 73.3}])
+    assert "73 ms" in line
+    assert "the connect time below includes a lookup; cached answers are faster" in line
+    assert len(line) <= 172  # the pane is 172 columns; a wrapped explanation is unreadable
+
+
+def test_dns_line_is_unknown_when_the_probe_did_not_measure_lookup_time():
+    line = view.dns_line([{"dns_ms": None}])
+    assert "UNKNOWN" in line
+    assert "cached answers are faster" in line
+
+
 def test_phase_line_splits_reaching_the_site_from_the_handshake():
     line = view.phase_line([_fresh_phase_row(70.0, 900.0)])
     assert "reaching the site 70 ms" in line and "secure handshake 900 ms" in line

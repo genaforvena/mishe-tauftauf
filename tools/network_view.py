@@ -1050,6 +1050,19 @@ def web_line(label, name, data):
     return f"  {label:<22}{now:>10}  {spark(vals)}  failed in last {min(len(vals), 40)}: {failed}"
 
 
+def dns_line(data):
+    """The home resolver's lookup time, with why the connect time below can be smaller.
+
+    The probe's curl `%{time_connect}` (the source of "reaching the site" in `phase_line`) counts name
+    lookup as well as the TCP connect, while this is one separate, freshly measured lookup. A cached
+    answer makes the connect's lookup far quicker, so the smaller number below is not a contradiction.
+    """
+    vals = [r.get("dns_ms") for r in data]
+    now = f"{vals[-1]:.0f} ms" if vals and vals[-1] is not None else "UNKNOWN"
+    return (f"  {'DNS lookup':<22}{now:>10}  {spark(vals)}"
+            "  (the connect time below includes a lookup; cached answers are faster)")
+
+
 def web_sample(row):
     """Mean total time of the secure web checks in one row, or None when none answered."""
     vals = [v for v in (web_ms(row, name) for name in ("gstatic", "cloudflare")) if v is not None]
@@ -1351,8 +1364,7 @@ def draw():
     out.append("  INTERNET (secure web pages, full time to finish)")
     out.append(web_line("gstatic.com", "gstatic", data))
     out.append(web_line("cloudflare.com", "cloudflare", data))
-    dns = [r.get("dns_ms") for r in data]
-    out.append(f"  DNS lookup            {('%.0f ms' % dns[-1]) if dns and dns[-1] is not None else 'UNKNOWN':>10}  {spark(dns)}")
+    out.append(dns_line(data))
     out.append("  WHERE TIME GOES  " + phase_line(data))
     out.append(usuality_line(data))
     out.append("")
