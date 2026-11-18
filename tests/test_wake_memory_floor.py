@@ -139,3 +139,31 @@ def test_a_nested_process_alone_still_maps_to_its_leaf(tmp_path, monkeypatch):
     leaves = module.guarded_leaves(proc)
     assert leaves == {"mishe-wake@health.service":
                       mount / "user.slice/x.service/mishe-plants.slice/mishe-wake@health.service"}
+
+
+def test_unreadable_process_cgroup_makes_monitor_unknown(tmp_path, monkeypatch, capsys):
+    module = load()
+    proc = tmp_path / "proc"
+    (proc / "123").mkdir(parents=True)
+    target = proc / "123" / "cgroup"
+    original = Path.read_text
+
+    def denied(path, *args, **kwargs):
+        if path == target:
+            raise PermissionError(13, "Permission denied", str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    monkeypatch.setattr(module, "cgroup_root", lambda: tmp_path / "cgroup")
+    original_leaves = module.guarded_leaves
+    monkeypatch.setattr(module, "guarded_leaves", lambda: original_leaves(proc))
+    assert module.main(["--floor", str(FLOOR), "--persist", "0"]) == 3
+    assert "123" in capsys.readouterr().err
+
+
+def test_process_disappearing_during_enumeration_is_ignored(tmp_path, monkeypatch):
+    module = load()
+    proc = tmp_path / "proc"
+    (proc / "123").mkdir(parents=True)
+    monkeypatch.setattr(module, "cgroup_root", lambda: tmp_path / "cgroup")
+    assert module.guarded_leaves(proc) == {}

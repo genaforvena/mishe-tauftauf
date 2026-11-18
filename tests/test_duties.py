@@ -96,6 +96,17 @@ def test_budget_consistency_missing_input_does_not_leave_green(tmp_path):
     assert "signal:budget-consistency" in owed.check(tmp_path, "senses", now=NOW + 1).reasons
 
 
+def test_wake_memory_floor_failed_observation_reaches_health_immediately(tmp_path):
+    item = next(i for i in declared(tmp_path) if i["name"] == "wake-memory-floor")
+    store.observe(tmp_path, item["name"], "GREEN", now=NOW, source="previous")
+    owed.advance(tmp_path, "health", owed.check(tmp_path, "health", now=NOW))
+    assert producers.run(tmp_path, item["name"], [PY, "-c", "raise SystemExit(3)"],
+                         now=NOW + 1, timeout=10, red_codes=tuple(item["red_codes"]),
+                         unknown_codes=tuple(item["unknown_codes"])) == 2
+    assert store.read(tmp_path, item["name"], now=NOW + 1).state == "UNKNOWN"
+    assert "signal:wake-memory-floor" in owed.check(tmp_path, "health", now=NOW + 1).reasons
+
+
 def test_budget_view_mapping_duty_is_scheduled_with_its_own_exit_contract(tmp_path):
     """The window-vs-engine detector had no caller, so its FAIL and CANNOT-DECIDE could never surface.
 

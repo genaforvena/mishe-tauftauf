@@ -121,8 +121,10 @@ def guarded_leaves(root: pathlib.Path = PROC) -> dict[str, pathlib.Path]:
             continue
         try:
             lines = (proc / "cgroup").read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
+        except (FileNotFoundError, ProcessLookupError):
             continue  # the process exited between the listing and the read
+        except OSError as exc:
+            raise Undecidable(f"cannot read {proc / 'cgroup'}: {exc}") from exc
         for line in lines:
             fields = line.split(":", 2)
             if len(fields) != 3 or not fields[0].startswith("0"):

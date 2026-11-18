@@ -1198,9 +1198,7 @@
       "red_codes": [
         2
       ],
-      "unknown_codes": [
-        3
-      ],
+      "unknown_codes": [],
       "resolver": "health",
       "covers": "the declared memory floor of every running wake and producer: a daemon-reload re-writes the protected drop-in's 1G onto running units, throttling the engine at the mark until its timeout throws the work away; RED names the unit still below the floor after a persistence window, so recurrence is visible within two minutes instead of waiting for host memory PSI to move",
       "replaces": []
