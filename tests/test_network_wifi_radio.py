@@ -98,7 +98,7 @@ NOW = 1_800_000_000.0
 
 
 def wifi_row(ts, radios=None, ok=True):
-    stats = {"tx_ok": 5000, "tx_fail": 50, "temp_c": 60}
+    stats = {"tx_ok": 5000, "tx_fail": 50, "temp_c": 60, "tx_per": 3.3}
     radios = [{"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -55, "stats": stats},
               {"band": "5", "channel": 40, "freq_ghz": 5.2, "noise_dbm": -55, "stats": stats}] \
         if radios is None else radios
@@ -119,6 +119,16 @@ def test_detector_unknown_when_the_counters_are_missing():
     code, message = care.wifi_state([wifi_row(NOW - 60, radios=no_stats)], NOW)
     assert code == 3, message
     assert "counters missing" in message
+
+
+def test_detector_unknown_when_the_drivers_frame_loss_is_missing():
+    stats = {"tx_ok": 5000, "tx_fail": 50, "temp_c": 60}  # the driver printed no PER after its counter
+    radios = [{"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -55, "stats": stats},
+              {"band": "5", "channel": 40, "freq_ghz": 5.2, "noise_dbm": -55,
+               "stats": dict(stats, tx_per=0.1)}]
+    code, message = care.wifi_state([wifi_row(NOW - 60, radios=radios)], NOW)
+    assert code == 3, message
+    assert "frame-loss rate missing on 2.4 GHz" in message and "no PER" in message
 
 
 def test_detector_is_green_on_a_fresh_reading():

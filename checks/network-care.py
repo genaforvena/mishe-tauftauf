@@ -5,7 +5,7 @@
   progress  the network mind's wall is fresh and network files were committed recently
   uplink    the WAN receive-drop rate (eth0 rx_dropped) from router readings stays under the bound
   vpn       sing-box is running and tun0 is up in the newest router reading
-  wifi      the read-only iwinfo channel/noise sub-reading is present and plausible
+  wifi      the read-only iwinfo channel/noise and frame-loss sub-readings are present and plausible
   load      the router's own load/free-RAM self-limit is not breached for long
 
 Exit: 0 GREEN, 2 RED (the window is missing/wrong, or the mind has gone quiet), 3 UNKNOWN
@@ -389,6 +389,7 @@ def wifi_state(rows, now):
         return 3, f"network-care: newest Wi-Fi radio reading is {ago / 60:.0f} min old"
     parts = []
     missing = []
+    missing_per = []
     for radio in radios:
         if not isinstance(radio, dict):
             return 3, "network-care: Wi-Fi radio reading unreadable"
@@ -402,11 +403,17 @@ def wifi_state(rows, now):
         if not (isinstance(stats, dict) and isinstance(stats.get("tx_ok"), int)
                 and isinstance(stats.get("tx_fail"), int)):
             missing.append(band)
+        elif not isinstance(stats.get("tx_per"), (int, float)):
+            missing_per.append(band)
     if len(missing) == len(radios):
         return 3, "network-care: Wi-Fi transmission counters missing from the newest router read"
     if missing:
         return 3, ("network-care: Wi-Fi transmission counters missing on "
                    + ", ".join(f"{band} GHz" for band in missing) + " in the newest router read")
+    if missing_per:
+        return 3, ("network-care: Wi-Fi frame-loss rate missing on "
+                   + ", ".join(f"{band} GHz" for band in missing_per)
+                   + " in the newest router read (no PER in the driver's own line)")
     return 0, "network-care: Wi-Fi radio GREEN (" + "; ".join(parts) + ")"
 
 

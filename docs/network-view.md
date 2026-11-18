@@ -61,7 +61,10 @@ The `network-wifi` duty (same checker, subcommand `wifi`, every 300 s, `max_age`
 resolver `network`) watches that sub-reading separately: the router read can succeed while
 `iwinfo` silently yields no channel/noise lines. It is UNKNOWN when no fresh reading carries
 them or a field is missing, RED only on impossible values (channel outside 1–196 or noise
-outside -120…0 dBm), GREEN when both known radios report plausible numbers.
+outside -120…0 dBm), GREEN when both known radios report plausible numbers. It is also UNKNOWN
+when a band's transmission counters are there but the driver's own `PER` is not: the frame-loss
+reading is part of what the window promises, and a driver that stops printing it must not leave
+a GREEN on the strength of the attempts share alone.
 
 The `network-router-load` duty (same checker, subcommand `load`, every 300 s, `max_age` 900 s,
 resolver `network`) watches the router's own self-limit — the same 5-minute load above 1.0 or
