@@ -566,13 +566,14 @@ def symbol_context(home, record):
     tree = record.get("tree")
     if tree is None:
         root = home.parent
-        origin = "shared checkout at review time; patch files use their after bytes"
+        caller_source = "shared checkout at review time"
+        origin = f"{caller_source}; patch files use their after bytes"
     else:
         root = Path(tree)
         if not root.is_dir():
             raise ValueError(f"reviewed tree is missing: {root}")
-        origin = (f"reviewed tree {record.get('sha', 'unknown sha')}; "
-                  "patch files use their after bytes")
+        caller_source = f"reviewed tree {record.get('sha', 'unknown sha')}"
+        origin = f"{caller_source}; patch files use their after bytes"
     src = root / "src"
     patched = set(record["files"])
     unresolved, truncated, omitted = [], [], []
@@ -643,13 +644,13 @@ def symbol_context(home, record):
                     low, high = max(0, line - CALLER_RADIUS), line + CALLER_RADIUS + 1
                     windows.append(f"{rel}:{line + 1}\n" + "\n".join(lines[low:high]))
         if windows:
-            callers.append((f"callers:{symbol}", "shared checkout", "\n---\n".join(windows)))
+            callers.append((f"callers:{symbol}", caller_source, "\n---\n".join(windows)))
             if sites > CALLER_SITES:
                 truncated.append(f"callers:{symbol}")
         elif symbol in removed:
             # A removed name with no surviving reference is evidence, not silence:
             # say the search ran so the reviewer does not assume unseen callers.
-            callers.append((f"callers:{symbol}", "shared checkout",
+            callers.append((f"callers:{symbol}", caller_source,
                             "no imported reference found in src/, checks/, tests/ or tools/"))
 
     cut_bytes, reduced = {}, []

@@ -1020,10 +1020,13 @@ def test_review_context_uses_the_reviewed_tree_not_head(tmp_path):
                   "before": {"bytes": base64.b64encode(old.encode()).decode(), "mode": 0o644},
                   "after": {"bytes": base64.b64encode(new.encode()).decode(), "mode": 0o644}}}}
     context = wall_patch.symbol_context(home, record)
-    text = context["modules"]["callers:helper"]["text"]
+    caller = context["modules"]["callers:helper"]
+    text = caller["text"]
     assert "HEAD only" not in text
     assert "print(helper('x'))" in text
     assert "reviewed tree 0c56b9b4" in context["source"]
+    assert "reviewed tree 0c56b9b4" in caller["path"]
+    assert "shared checkout" not in caller["path"]
 
 
 def test_missing_reviewed_tree_is_not_served_from_head(tmp_path):
