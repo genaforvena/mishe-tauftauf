@@ -128,11 +128,16 @@ def guarded_leaves(root: pathlib.Path = PROC) -> dict[str, pathlib.Path]:
             if len(fields) != 3 or not fields[0].startswith("0"):
                 continue  # only the cgroup v2 (unified) entry names the cgroup path
             path = fields[2].strip()
-            if SLICE not in path:
-                continue
-            leaf = path.rsplit(SLICE, 1)[1].split("/", 1)[0]
+            prefix, slice_sep, rest = path.rpartition(SLICE)
+            if not slice_sep:
+                continue  # not inside the plant slice
+            leaf = rest.split("/", 1)[0]
             if leaf and leaf.endswith(GUARDED[0][1]) and leaf.startswith(tuple(p for p, _ in GUARDED)):
-                leaves[leaf] = mount / path.lstrip("/")
+                # The leaf's own cgroup, never a child's. A process nested under the unit
+                # (``.../mishe-wake@health.service/sub``) is judged by its leaf, so the entry
+                # must stop at the leaf name; ``/sub`` carries a different ``memory.high``,
+                # and storing its path would also make the answer depend on /proc order.
+                leaves[leaf] = mount / (prefix + SLICE + leaf).lstrip("/")
     return leaves
 
 

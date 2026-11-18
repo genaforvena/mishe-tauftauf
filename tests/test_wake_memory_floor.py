@@ -108,3 +108,23 @@ def test_only_guarded_leaves_of_the_plant_slice_are_collected(tmp_path, monkeypa
     leaves = module.guarded_leaves(proc)
     assert sorted(leaves) == ["mishe-producer-ci.service", "mishe-wake@health.service"]
     assert leaves["mishe-wake@health.service"] == mount / "user.slice/x.service/mishe-plants.slice/mishe-wake@health.service"
+
+
+def test_a_nested_process_alone_still_maps_to_its_leaf(tmp_path, monkeypatch):
+    """The nested row must not become the entry, in any /proc enumeration order.
+
+    With only the nested process present there is no later leaf row to overwrite it,
+    so a reader that stores the process's own path fails regardless of directory order
+    (the promotion of a4a6e517 failed exactly that way under a different temp filesystem).
+    """
+    module = load()
+    proc = tmp_path / "proc"
+    (proc / "45").mkdir(parents=True)
+    (proc / "45" / "cgroup").write_text(
+        "0::/user.slice/x.service/mishe-plants.slice/mishe-wake@health.service/sub\n", encoding="utf-8")
+    mount = tmp_path / "cgroup"
+    monkeypatch.setattr(module, "cgroup_root", lambda: mount)
+
+    leaves = module.guarded_leaves(proc)
+    assert leaves == {"mishe-wake@health.service":
+                      mount / "user.slice/x.service/mishe-plants.slice/mishe-wake@health.service"}
