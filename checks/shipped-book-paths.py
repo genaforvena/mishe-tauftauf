@@ -37,12 +37,8 @@ The finding therefore needs three conditions, all of them checkable:
 2. the surrounding sentence **directs the reader to it** ("read", "use",
    "see", "consult", "follow", "open", "load") -- a bare mention of a path is
    not a broken instruction;
-3. the path is **absent from the shipped tree**, **excluded by the
-   repository's ignore rules**, and **once tracked by this repository** -- the
-   ignore rule alone is not enough, because it also covers the planted site
-   home (``.mishe-tauftauf/``) and other runtime state that no clone is
-   supposed to hold.  Naming those is correct prose; naming a file the
-   repository once shipped and then dropped is not.
+3. the path is **absent from the shipped tree** and **excluded by the
+   repository's ignore rules**.
 
 The check reads the **committed** bytes through ``git archive``, exactly like
 ``checks/shipped-book-links.py``, so an untracked working-tree file can never
@@ -56,11 +52,6 @@ Scope and limits:
 * The rule is about the **shipped book**.  Historical records under
   ``research/`` are evidence of past reviews, not procedures a reader
   follows, so they are not scanned.
-* The history test is ``git rev-list --all -- <path>``.  A path the
-  repository never tracked and that an ignore rule covers is treated as
-  runtime state, so a book that directs the reader to a *typo* for a file
-  that never shipped is out of scope: the same limit as a missing file no
-  ignore rule covers.
 * This is a shipped-tree property check, not a prose check.  It does not judge
   whether a reference is the *best* destination, and it cannot see a missing
   file that no ignore rule covers.
@@ -135,29 +126,6 @@ def _excluded(repo: Path, candidates: list[str]) -> set[str]:
             if line.strip()}
 
 
-def _ever_tracked(repo: Path, candidates: set[str]) -> set[str]:
-    """Which excluded paths this repository once tracked and then dropped.
-
-    The ignore rules cover more than deliberately dropped documents: they also
-    cover the planted site home (``.mishe-tauftauf/``), runtime snapshots and
-    build output, and a book that describes those files is correct.  What a
-    reader's clone cannot open is a path the repository *shipped* and later
-    removed from the public tree, so the finding needs history, not just an
-    ignore match.
-    """
-    tracked: set[str] = set()
-    for path in sorted(candidates):
-        result = subprocess.run(
-            [GIT, "-C", str(repo), "rev-list", "--all", "--max-count=1", "--",
-             path], capture_output=True)
-        if result.returncode:
-            raise ValueError("git rev-list failed: "
-                             + result.stderr.decode("utf-8", "replace").strip())
-        if result.stdout.strip():
-            tracked.add(path)
-    return tracked
-
-
 def audit(tree: Path, repo: Path) -> dict:
     """Find directives in the shipped book that name a file the clone lacks."""
     findings: list[dict] = []
@@ -191,13 +159,11 @@ def audit(tree: Path, repo: Path) -> dict:
                 findings.append({"file": source, "target": target,
                                  "sentence": " ".join(sentence.split())})
     excluded = _excluded(repo, candidates)
-    tracked = _ever_tracked(repo, excluded)
-    broken = [item for item in findings if item["target"] in tracked]
+    broken = [item for item in findings if item["target"] in excluded]
     return {
         "book_pages": len(_book_pages(tree)),
         "references": len(findings),
         "excluded_candidates": len(excluded),
-        "dropped_candidates": len(tracked),
         "broken": broken,
     }
 
@@ -231,11 +197,10 @@ def main(argv: list[str]) -> int:
         print(f"tree={tree}")
         print(f"book pages={result['book_pages']} "
               f"path references={result['references']} "
-              f"excluded candidates={result['excluded_candidates']} "
-              f"dropped candidates={result['dropped_candidates']}")
+              f"excluded candidates={result['excluded_candidates']}")
         for item in result["broken"]:
             print(f"  MISSING FILE  {item['file']} -> {item['target']} "
-                  f"(the repository once tracked and now excludes it)")
+                  f"(excluded by the repository's ignore rules)")
             print(f"    {item['sentence']}")
         if not result["broken"]:
             print("OK the shipped book sends the reader only to files the clone contains")
