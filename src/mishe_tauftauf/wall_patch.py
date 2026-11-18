@@ -553,12 +553,26 @@ def _attribute_uses(sources, alias):
 
 def symbol_context(home, record):
     """Read-only excerpts a reviewer needs: definitions the patch imports and
-    bounded call-site windows for each changed definition in the shared checkout.
+    bounded call-site windows for each changed definition in the reviewed tree.
 
     Anything omitted, cut or unresolved is named, so the reviewer can see the
     context is incomplete instead of assuming it is whole.
     """
-    root = home.parent
+    # An asynchronous review of a delivered release reads a snapshot that can
+    # lag HEAD. Caller windows and imported definitions must come from that
+    # same tree as the patch's after bytes: a HEAD-era caller can reference a
+    # symbol added after the snapshot, producing a concrete-looking finding
+    # about an impossible state (0c56b9b4, 2026-11-18).
+    tree = record.get("tree")
+    if tree is None:
+        root = home.parent
+        origin = "shared checkout at review time; patch files use their after bytes"
+    else:
+        root = Path(tree)
+        if not root.is_dir():
+            raise ValueError(f"reviewed tree is missing: {root}")
+        origin = (f"reviewed tree {record.get('sha', 'unknown sha')}; "
+                  "patch files use their after bytes")
     src = root / "src"
     patched = set(record["files"])
     unresolved, truncated, omitted = [], [], []
@@ -669,8 +683,7 @@ def symbol_context(home, record):
         budget[label] = {"kept_bytes": len(text.encode()), "cut_bytes": cut_bytes.get(label, 0)}
     return {"modules": modules, "truncated": sorted(set(truncated)),
             "omitted_over_limit": sorted(set(omitted)), "unresolved": sorted(set(unresolved)),
-            "budget": budget,
-            "source": "shared checkout at review time; patch files use their after bytes"}
+            "budget": budget, "source": origin}
 
 
 _PRE_ACTIVATION_QUESTION = (

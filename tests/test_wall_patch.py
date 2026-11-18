@@ -999,6 +999,46 @@ def test_changed_definition_callers_reach_the_reviewer(tmp_path):
     assert context["omitted_over_limit"] == [] and context["unresolved"] == []
 
 
+def test_review_context_uses_the_reviewed_tree_not_head(tmp_path):
+    # A post-delivery review can lag HEAD. A caller added after the snapshot
+    # must not appear as evidence against that release's older patch bytes.
+    import base64
+    home, source, deployed = layout(tmp_path)
+    release = tmp_path / "release"
+    (release / "src/mishe_tauftauf").mkdir(parents=True)
+    old = "def helper(text):\n    return text\n"
+    new = "def helper(text):\n    return text.strip()\n"
+    (release / "src/mishe_tauftauf/example.py").write_text(new)
+    (release / "src/mishe_tauftauf/other.py").write_text(
+        "from mishe_tauftauf.example import helper\nprint(helper('x'))\n")
+    # The shared checkout at HEAD has a caller the snapshot never had.
+    (tmp_path / "src/mishe_tauftauf/other.py").write_text(
+        "from mishe_tauftauf.example import helper\nprint(helper('HEAD only'))\n")
+    record = {"runtime": str(tmp_path / "runtime"), "sha": "0c56b9b4",
+              "tree": str(release),
+              "files": {"src/mishe_tauftauf/example.py": {
+                  "before": {"bytes": base64.b64encode(old.encode()).decode(), "mode": 0o644},
+                  "after": {"bytes": base64.b64encode(new.encode()).decode(), "mode": 0o644}}}}
+    context = wall_patch.symbol_context(home, record)
+    text = context["modules"]["callers:helper"]["text"]
+    assert "HEAD only" not in text
+    assert "print(helper('x'))" in text
+    assert "reviewed tree 0c56b9b4" in context["source"]
+
+
+def test_missing_reviewed_tree_is_not_served_from_head(tmp_path):
+    import base64
+    home, source, deployed = layout(tmp_path)
+    (tmp_path / "src/mishe_tauftauf/other.py").write_text(
+        "from mishe_tauftauf.example import helper\nprint(helper('HEAD only'))\n")
+    record = {"runtime": str(tmp_path / "runtime"), "sha": "0c56b9b4",
+              "tree": str(tmp_path / "gone"),
+              "files": {"src/mishe_tauftauf/example.py": {
+                  "before": {"bytes": base64.b64encode(b"def helper(x):\n    return x\n").decode(), "mode": 0o644},
+                  "after": {"bytes": base64.b64encode(b"def helper(x):\n    return x.strip()\n").decode(), "mode": 0o644}}}}
+    with pytest.raises(ValueError, match="reviewed tree is missing"):
+        wall_patch.symbol_context(home, record)
+
 def test_removed_symbol_callers_reach_the_reviewer(tmp_path):
     # A patch that deletes a definition still in use elsewhere must show the
     # surviving caller: removal is a change, not an absence to skip.

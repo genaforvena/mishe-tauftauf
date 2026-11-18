@@ -1233,7 +1233,7 @@ def review(home, identity):
             current = read_json(path)
             return dict(phase="reviewed" if current.get("review_pending") is False else "review-pending", id=identity)
     source=Path(record["source"]); old=Path(home)/"releases"/record["previous"]
-    patch=dict(runtime=str(old),phase="ordinary-delivered-awaiting-review",test=record["check"],files={})
+    patch=dict(runtime=str(old),sha=record["sha"],tree=str(source),phase="ordinary-delivered-awaiting-review",test=record["check"],files={})
     log=Path(home)/"work/reviews"/f"{record['sha']}.test.txt"; log.parent.mkdir(parents=True,exist_ok=True)
     log.write_text(record["check"]["output"]); patch["test"]=dict(record["check"],log=str(log))
     for name in record["paths"]:
