@@ -269,11 +269,37 @@ def test_unparseable_listing_falls_back_to_replacement(monkeypatch):
     assert any(c[0] == "systemd-run" for c in fake.calls)
 
 
-def test_future_target_is_never_held_back(monkeypatch):
+def test_a_future_target_keeps_a_pending_timer_that_fires_sooner(monkeypatch):
+    # Every producer signal write arms; replacing the pending timer each time restarted it every few
+    # seconds with the same NEXT (measured 2026-11-18 09:09Z: the unit name changed at every 5 s
+    # sample, NEXT still 30-45 s out). A timer that fires at or before the target already covers it:
+    # it fires once, and the due handler re-arms to whatever is then earliest.
     import time
     fake = TimerListing(_listing(_row(30, "mishe-next-due-aaaa1111.timer")))
     monkeypatch.setattr(arm.subprocess, "run", fake)
     arm.systemd_scheduler(time.time() + 600, command=["python", "due"])
+    assert not any(c[0] == "systemd-run" for c in fake.calls)
+    assert not any(c[:3] == ["systemctl", "--user", "stop"] for c in fake.calls)
+
+
+def test_a_pending_timer_later_than_the_target_is_replaced(monkeypatch):
+    import time
+    fake = TimerListing(_listing(_row(600, "mishe-next-due-aaaa1111.timer")))
+    monkeypatch.setattr(arm.subprocess, "run", fake)
+    arm.systemd_scheduler(time.time() + 30, command=["python", "due"])
+    assert ["systemctl", "--user", "stop", "mishe-next-due-aaaa1111.timer"] in fake.calls
+    assert any(c[0] == "systemd-run" for c in fake.calls)
+
+
+def test_a_pending_timer_armed_by_an_older_release_is_replaced_for_a_future_target(monkeypatch):
+    # The c14bac1f guard applied to every keep, not only the overdue retry: an old-pin timer kept
+    # across a pin move would run old code at the new target.
+    import time
+    fake = TimerListing(_listing(_row(30, "mishe-next-due-9bb6d573d265.timer")),
+                        env="PYTHONPATH=/home/x/releases/422912216/src MISHE_WORKLOAD_SLICE=mishe-plants.slice")
+    monkeypatch.setattr(arm.subprocess, "run", fake)
+    arm.systemd_scheduler(time.time() + 600, command=["python", "due"])
+    assert ["systemctl", "--user", "stop", "mishe-next-due-9bb6d573d265.timer"] in fake.calls
     assert any(c[0] == "systemd-run" for c in fake.calls)
 
 

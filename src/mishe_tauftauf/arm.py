@@ -56,16 +56,16 @@ def _replacement_lock(lock: Path | None):
         yield
 
 
-def _retry_due_within_window(now: float) -> bool:
-    """True when a pending next-due timer already fires within the overdue retry window.
+def _pending_next_instant() -> float | None:
+    """The instant the earliest pending next-due timer fires, or ``None`` when none does.
 
     Parsed from ``systemctl list-timers`` NEXT column (``Sat 2026-11-14 05:10:58 UTC``).
     An unparseable line is skipped, so the caller falls back to replacing the timer.
     """
     listed = subprocess.run(["systemctl", "--user", "list-timers", "--all", "--plain", "--no-legend",
                              TIMER_GLOB], check=False, capture_output=True, text=True).stdout
-    return any(nxt.timestamp() <= now + OVERDUE_RETRY_SECONDS
-               for nxt in decode_listed_next_instants(listed))
+    instants = [nxt.timestamp() for nxt in decode_listed_next_instants(listed)]
+    return min(instants) if instants else None
 
 
 def _source_root() -> str:
@@ -107,20 +107,27 @@ def systemd_scheduler(epoch: float | None, *, command: list[str],
     from an old-release process still names the pin. It defaults to this process's release."""
     root = str(Path(source).resolve()) if source else _source_root()
     with _replacement_lock(lock):
-        # An overdue target already has a retry pending inside the backoff window: keep it.
-        # Replacing it on every arm pushed the retry out again and it never fired (2026-11-14 churn).
-        # Only when that retry was armed by this release: an old-pin timer must be replaced (c14bac1f move observe failure).
-        if (epoch is not None and epoch <= time.time() and _retry_due_within_window(time.time())
-                and _armed_by_this_release(_pending_timers(), root)):
-            return
-        for timer in _pending_timers():
-            subprocess.run(["systemctl", "--user", "stop", timer],
-                           check=False, capture_output=True)
-        if epoch is None:
-            return
         now = time.time()
         # A genuinely upcoming time keeps its precision (at least a second out); one that is already overdue backs off.
-        when = max(epoch, now + 1) if epoch > now else now + OVERDUE_RETRY_SECONDS
+        when = None if epoch is None else (max(epoch, now + 1) if epoch > now
+                                          else now + OVERDUE_RETRY_SECONDS)
+        pending = _pending_timers()
+        # A pending timer that already fires no later than the target stays. Every producer signal write
+        # arms, and replacing the timer each time restarted it every few seconds with the same or a later
+        # NEXT (measured 2026-11-18: unit name changed every 5 s sample, ~17 replacements/min), so the
+        # journal and systemd only saw churn. Only a timer armed by this release is kept: an old-pin
+        # timer must be replaced (c14bac1f move observe failure). The same rule keeps an overdue retry
+        # inside the backoff window instead of pushing it out again (2026-11-14 churn).
+        if when is not None and pending:
+            earliest = _pending_next_instant()
+            if (earliest is not None and earliest <= when + 1.0
+                    and _armed_by_this_release(pending, root)):
+                return
+        for timer in pending:
+            subprocess.run(["systemctl", "--user", "stop", timer],
+                           check=False, capture_output=True)
+        if when is None:
+            return
         moment = datetime.fromtimestamp(when, timezone.utc)
         unit = f"{TIMER_UNIT}-{uuid.uuid4().hex[:12]}"
         # oneshot, not systemd-run's default simple: the consumer fence fails closed on any
