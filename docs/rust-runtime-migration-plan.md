@@ -3693,3 +3693,70 @@ raised per entry), `python3 tools/check_parsing.py` (`feed.py`, `records.py` and
 `outcome_events.py` are `parsing-policy.json` boundaries), and the strong gate —
 deterministic activation, revert and reapply checks plus a fresh post-delivery
 reviewer, because this is protocol and durable-boundary work.
+
+### 10.65 Rank 2 differential and scope correction: the payload resolver has four callers (2026-11-18)
+
+§10.64's design holds, but two of its supporting claims are wrong in bytes, and
+the differential it promised is now measured. Raw scripts and output:
+`artifacts/rust-plan-20261107/diff_payload_10_65.py`,
+`artifacts/rust-plan-20261107/diff_malformed_10_65.py` (read-only, live tape,
+2026-11-18T05:10Z).
+
+**Payload equivalence, measured.** 406 record-bearing entries sampled from the
+live tape (302,680 entries; 196,770 carry a `[record]` reference) were sent
+through one `mishe-records verify --home … --payloads` pass and compared with
+`records.envelope` on the same entries: **406 identical kind and payload JSON,
+0 mismatches, 0 Python refusals, 0 child-silent entries**. The sink is a
+faithful replacement on well-formed input.
+
+**Refusal differential.** Correct reference syntax
+(`[record] records/<digest>.json sha256=<digest>`):
+
+| case | `records.envelope` | child |
+|---|---|---|
+| exact reference | accepts, kind `observation` | `V 1 observation` |
+| indented / tab-indented reference | `missing or invalid immutable record reference` | same text, rc 2 |
+| two references | `missing or invalid immutable record reference` | same text, rc 2 |
+| `sha256=` disagrees with the path | `record digest mismatch or missing site context` | same text |
+| referenced file absent | `record unavailable: [Errno 2] …` | same text |
+| no reference at all | `missing or invalid immutable record reference` | `S 1` (skip, no payload) |
+
+So the refusal *texts* agree branch for branch; the one behavioural difference is
+the no-reference case, where the Python envelope refuses and the child answers
+`S`. That is not a verification difference — `S` is the caller's "nothing to
+verify, use inline content" branch — but it means the inline half of
+`records.payload` must survive rank 2: an entry whose second line is legacy JSON
+and carries no reference returns `json.loads(lines[1])` today
+(`records.py:146-151`), and under §10.64's decision the child will never supply
+it. Rank 2 therefore *splits* the resolver: inline JSON decoding stays in
+Python (it verifies nothing), and only the record-reference path moves to the
+child's sink.
+
+**Scope correction — `records.payload` is not caller-free.** §10.64 says
+"`records.payload` has no production caller (`tests/test_wall.py:916` only)".
+Four call sites exist:
+
+- `coordination_checks.py:56` (`_data`) — production: `cli.py:376` (publication
+  check) and `task_state.py:506` reach it through `_full_payloads`
+  (`coordination_checks.py:40`), which resolves the recent-event and
+  waiting-task sequences of `episode`/`project`/`anomalies`.
+- `landing.py:38` (`registrations`) — production: `cli.py:403`
+  (`landing-status`/`production-check`) and `task_state.py:97` (`validate`).
+- `trial_metrics.py:443` and `witness_analysis.py:87` — call it, but neither
+  module is imported by production code; only `tests/test_trial_metrics.py` and
+  `tests/test_witness_analysis.py` reach them (checked across `src`, `bin`,
+  `tools`, `checks`, `scripts`).
+
+Deleting `records.envelope` and the record branch of `records.payload`
+therefore requires moving coordination_checks and landing onto the sink in the
+same change; the two test-only modules die with the function. The cost is
+bounded by what those two paths actually resolve: coordination_checks reads the
+displays' recent window (bounded recent-events and waiting sets), landing reads
+`[landing] ` registrations. Neither is a tape-length scan, so both can share one
+`--payloads` pass per run rather than a per-entry child call.
+
+**Step 5 restated with `S` explicit.** §10.64's fault attribution stands — a
+fault names the candidate after the last served decision — but a candidate that
+receives `S` is not a gap: it is an entry with no record reference, whose
+payload comes from inline decoding. Only `N`/`V` fill the sink; only a missing
+decision for a candidate that carried a reference is an `incomplete` row.
