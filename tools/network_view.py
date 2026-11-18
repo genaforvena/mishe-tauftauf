@@ -1144,10 +1144,18 @@ def day_spark(samples, buckets=USUAL_BUCKETS):
 
 
 def usuality_line(data, now=None):
-    """'Was it worse than usual?': web latency now vs the last day's typical, with a trend sparkline.
-    Built only from probe rows already loaded for the window; UNKNOWN when too few samples or stale."""
+    """'Was it worse than usual?': the recent web latency vs the last day's typical, with a trend sparkline.
+
+    The recent figure is the median of the last `USUAL_RECENT` samples, not the newest probe: at the
+    current ~204 s cadence that is about half an hour, and the INTERNET lines above already show the
+    newest probe. Calling this median "now" made the pane contradict itself (a fast newest probe beside
+    a slower half-hour median, both labelled as the present), so the line names the sample count and the
+    span those samples actually cover. The typical excludes the last `USUAL_EXCLUDE` samples so a spike
+    cannot inflate its own baseline. Built only from rows already loaded for the window; UNKNOWN when
+    too few samples; STALE past `STALE_S`.
+    """
     now = time.time() if now is None else now
-    recent = []
+    recent = []  # (epoch, web sample) oldest first; sample is None when the row's checks failed
     for row in data:
         stamp = row.get("at") if isinstance(row, dict) else None
         if not isinstance(stamp, str):
@@ -1157,12 +1165,18 @@ def usuality_line(data, now=None):
         except (ValueError, TypeError):
             continue
         if now - t <= 86400:
-            recent.append(row)
-    samples = [web_sample(r) for r in recent]
+            recent.append((t, web_sample(row)))
+    samples = [v for _, v in recent]
     good = [v for v in samples if v is not None]
     if len(good) < USUAL_MIN_SAMPLES:
         return f"UNKNOWN (only {len(good)} web samples in the last day; need {USUAL_MIN_SAMPLES})"
+    cur_stamps = [t for t, v in recent if v is not None][-USUAL_RECENT:]
     cur = statistics.median(good[-USUAL_RECENT:])
+    window = f"last {len(cur_stamps)} probes"
+    if len(cur_stamps) > 1:
+        mins = (cur_stamps[-1] - cur_stamps[0]) / 60
+        if mins >= 1:
+            window += f" ({mins:.0f} min)"
     base_pool = good[:-USUAL_EXCLUDE] if len(good) >= USUAL_EXCLUDE + USUAL_RECENT else good
     base = statistics.median(base_pool)
     ratio = cur / base if base else 1.0
@@ -1172,7 +1186,7 @@ def usuality_line(data, now=None):
         compare = "slower than usual"
     else:
         compare = "much slower than usual"
-    stamps = [nb.utc_epoch(r["at"]) for r in recent]
+    stamps = [t for t, _ in recent]
     span_h = (max(stamps) - min(stamps)) / 3600
     span = f"{span_h:.0f} h" if span_h < 48 else f"{span_h / 24:.1f} d"
     stale = ""
@@ -1180,8 +1194,8 @@ def usuality_line(data, now=None):
         a = age(data[-1])
         if a is not None and a > STALE_S:
             stale = f" (STALE: last probe {a:.0f}s ago)"
-    return (f"  {'USUAL':<22}now {cur:.0f} ms vs typical {base:.0f} ms ({compare}, over {span})"
-            f"  trend: {day_spark(samples)}{stale}")
+    return (f"  {'USUAL':<22}{window:<24}median {cur:.0f} ms vs typical {base:.0f} ms"
+            f" ({compare}, over {span})  trend: {day_spark(samples)}{stale}")
 
 
 def night_values(rows, key):

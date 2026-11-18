@@ -420,7 +420,34 @@ def test_usuality_unknown_with_too_few_samples():
 
 def test_usuality_flat_day_is_about_usual():
     line = view.usuality_line(_web_rows(200, 300))
-    assert "about usual" in line and "now 300 ms vs typical 300 ms" in line
+    assert "about usual" in line and "median 300 ms vs typical 300 ms" in line
+
+
+def test_usuality_names_the_window_it_measured_instead_of_saying_now():
+    # The INTERNET lines show the newest probe; USUAL is the median of the last ten probes, which at
+    # the probe cadence is about half an hour. A second "now" made the pane look self-contradictory.
+    now = time.time()
+    rows = []
+    for i in range(200):
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - (199 - i) * 204))  # ~3.4 min apart
+        rows.append({"at": at, "internet": {name: {"ok": True, "total_ms": 300.0}
+                                            for name in ("gstatic", "cloudflare")}})
+    line = view.usuality_line(rows, now=now)
+    assert "last 10 probes (31 min)" in line and " now " not in line
+
+
+def test_usuality_window_span_is_the_samples_own_not_the_cadence():
+    # Two failed probes inside the last ten good ones push the median's window out; the line must say so
+    # rather than claim the ten probes covered the usual half hour.
+    now = time.time()
+    rows = []
+    for i in range(200):
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - (199 - i) * 204))
+        ok = not (195 <= i <= 196)
+        rows.append({"at": at, "internet": {name: {"ok": ok, "total_ms": 300.0 if ok else None}
+                                            for name in ("gstatic", "cloudflare")}})
+    line = view.usuality_line(rows, now=now)
+    assert "last 10 probes (37 min)" in line
 
 
 def test_usuality_uses_only_the_last_day_not_all_loaded_rows():

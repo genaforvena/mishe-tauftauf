@@ -144,6 +144,16 @@ is not mistaken for a quiet mind.
   2026-11-10 (boot ended 18:15Z, next probe 19:54Z), not evening load, and at the current 180 s
   timer period every clock hour carries 17–19 probes. UNKNOWN when the newest probe is stale or
   did not carry both phases.
+- `USUAL`: is the web slower than usual? The recent figure is the **median of the last ten web
+  samples**, and the line names that window — `last 10 probes (31 min)` — because at the current
+  cadence it covers about half an hour, not the instant: the `gstatic.com` and `cloudflare.com`
+  lines above show the newest probe only, and two different numbers both labelled as "now" made
+  the pane look self-contradictory (on 2026-11-18 09:36Z the newest probe read 371 ms while the
+  half-hour median read 664 ms). The typical is the median of the last day's samples with the
+  last `USUAL_EXCLUDE` (60) samples left out, so a spike cannot inflate its own baseline; fewer
+  than `USUAL_MIN_SAMPLES` (120) samples is UNKNOWN. `about usual` below 1.25×, `slower than
+  usual` below 2×, `much slower than usual` at 2× or more; `STALE` past 15 minutes. The trend
+  sparkline buckets the whole loaded day into `USUAL_BUCKETS` (40) means.
 - `WI-FI`: the live listing, one read a minute: client count per band and the weakest client with
   its dBm, its band and the name the household knows it by when the recorded read has that client;
   a device that only just joined shows as its dBm until the next recorded read names it. WEAK SIGNAL
