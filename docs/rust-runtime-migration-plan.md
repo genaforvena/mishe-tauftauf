@@ -3483,7 +3483,7 @@ caller still make a decision a Rust binary also makes? The map covered all nine
 crates under `rust/` and their Python adapters and callers, read-only, on HEAD
 `0348785f` (24 GB available, pressure avg10 0.00, load 2.94; no build run).
 
-Five responsibilities are already single-authority cutovers and are not slices:
+Seven responsibilities are already single-authority cutovers and are not slices:
 signal freshness in `expire`, unit paths apart from its declared DEFER arm,
 systemd-show's own adapter, tape framing in the feed reader, record verification
 in the feed path, signal samples and network probe. Two more paths are deliberate,
