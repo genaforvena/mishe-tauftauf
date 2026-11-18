@@ -95,6 +95,23 @@ def test_the_gate_ignores_a_site_relative_path(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_the_gate_ignores_the_plant_local_namespace(tmp_path):
+    """A path under `.mishe-*/` is runtime state, not a page a clone dropped.
+
+    The repository's own `.gitignore` marks the whole `.mishe-*` namespace as
+    plant-local. Naming a runtime log in a procedure is correct prose even when
+    the sentence also carries a word the directive test matches, such as
+    "never raising, and read by nobody".
+    """
+    make_tree(tmp_path, {
+        "docs/decision-rungs.md":
+            "Its log stays at `.mishe-tauftauf/decision-log/dm-triage.jsonl`,\n"
+            "written at the wake mail seam and read by nobody for dispatch.\n",
+    })
+    result = run_check(tmp_path, repo=REPO)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_the_gate_ignores_a_path_that_is_not_excluded(tmp_path):
     """Only a path the repository's own ignore rules exclude is a finding.
 

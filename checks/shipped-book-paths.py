@@ -40,6 +40,15 @@ The finding therefore needs three conditions, all of them checkable:
 3. the path is **absent from the shipped tree** and **excluded by the
    repository's ignore rules**.
 
+One family of ignored paths is carved out first: the **plant-local
+namespace** ``.mishe-*/``.  The repository's own ``.gitignore`` says the whole
+namespace is plant-local -- chat, plans, drafts, evidence and services of a
+planted site -- so a page that names ``.mishe-tauftauf/decision-log/…`` is
+describing the running plant, not promising a file in the clone.  Without the
+carve-out the gate failed a true sentence in ``docs/decision-rungs.md``
+("its log stays at … and read by nobody for dispatch"), because the word
+"read" there is not a directive at all (CI run 44231575915).
+
 The check reads the **committed** bytes through ``git archive``, exactly like
 ``checks/shipped-book-links.py``, so an untracked working-tree file can never
 satisfy a reference.  The ignore rules are read with ``git check-ignore``, the
@@ -52,6 +61,9 @@ Scope and limits:
 * The rule is about the **shipped book**.  Historical records under
   ``research/`` are evidence of past reviews, not procedures a reader
   follows, so they are not scanned.
+* The plant-local carve-out is a name rule (``.mishe-*/``), not a reading of
+  every ignore line: a page that sends the reader to a *different* ignored
+  path that never shipped (``build/…``, ``.venv/…``) is still a finding.
 * This is a shipped-tree property check, not a prose check.  It does not judge
   whether a reference is the *best* destination, and it cannot see a missing
   file that no ignore rule covers.
@@ -73,6 +85,11 @@ from pathlib import Path
 
 GIT = "/usr/bin/git"
 
+# The plant-local namespace: `.gitignore` excludes `.mishe-*` because it holds
+# the planted site's runtime state and local drafts, so a book that names a
+# path under it is describing the running plant, never a file a clone should
+# contain.
+SITE_NAMESPACE = re.compile(r"^\.mishe-[A-Za-z0-9_.-]+/")
 # A path-shaped span: a relative path ending in a known file extension.
 PATH = re.compile(r"^([A-Za-z0-9_.\-/]+\.(?:md|py|json|yml|yaml|txt|ts|toml|sh|sqlite3|jsonl))$")
 # The verbs that turn a mention into a directive.
@@ -149,6 +166,8 @@ def audit(tree: Path, repo: Path) -> dict:
                     continue
                 target = match.group(1)
                 if target.startswith("/") or ".." in target or " " in target:
+                    continue
+                if SITE_NAMESPACE.match(target):
                     continue
                 if (path.parent / target).exists() or (tree / target).exists():
                     continue
