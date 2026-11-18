@@ -3553,6 +3553,16 @@ Scope: `feed.py`, `tests/test_feed.py` and this section. This wake moved no pin;
 the continuous delivery path promotes the committed snapshot. Ranks 2 and 3
 remain open.
 
+Fallout found by the delivery check of `30661483` (exit 3, one failed test):
+`tests/test_discovery_shared_snapshot.py` counted every `feed._spawn_frames`
+call as "one physical tape read", and a checkpoint rebuild now makes two — the
+entry-stream pass and the `--offsets` pass over a memfd of the same captured
+bytes. The guard's intent ("a reader must not read the tape again while it has
+a snapshot") is unchanged and still asserted at two points; the counter now
+excludes `--offsets` passes, because that pass never touches the tape. The file
+plus `tests/test_feed.py` pass (58 passed, 13 subtests). Test instrumentation
+only: no production path changed.
+
 ### 10.63 Rank 2 seam: the Python verifier's last production caller (2026-11-18)
 
 Read-only scoping of rank 2 during the promotion of `30661483`, which carries

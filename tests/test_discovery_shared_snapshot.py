@@ -51,12 +51,19 @@ def _site(tmp_path: Path, entries) -> Path:
 
 
 def _counting_reads(monkeypatch):
-    """Count the framer spawns: one spawn is one physical tape read."""
+    """Count the framer spawns that read the snapshot: one spawn is one tape pass.
+
+    A checkpoint rebuild also frames the same captured bytes through a memfd for
+    its frame offsets (``feed._frame_offsets_for_data``, the rank-1 cutover).
+    That is a second framing pass over bytes already in hand, not a second read
+    of the tape, so only an entry-stream spawn counts as the snapshot's read.
+    """
     calls = []
     original = feedmod._spawn_frames
 
     def counting(handle, *, start_sequence, offset, size, extra=()):
-        calls.append({"size": size, "offset": offset})
+        if "--offsets" not in extra:
+            calls.append({"size": size, "offset": offset})
         return original(handle, start_sequence=start_sequence, offset=offset,
                         size=size, extra=extra)
 
