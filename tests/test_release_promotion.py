@@ -124,10 +124,15 @@ def test_release_mutation_during_check_cannot_promote(tree):
 
 def test_running_wake_retains_pin(tree):
     repo,home,old,sha=tree
+    before=time.time()
     with p.delivery_lock(home):
         with pytest.raises(ValueError,match="dispatch lock"):
             p.promote(home,repo,sha,check=[sys.executable,"-c","pass"],observe=["probe"],previous=old,
                       activate=lambda *a:None,closure=lambda *a:None)
+    # checks/pin-delivery.py ages "waiting-for-wakes" from this stamp, not from created_at:
+    # a healthy wait (patience 600s + wait_s 2400s) plus the check stage outlives --stuck-min.
+    records=[read_json(path) for path in (home/"work/releases").glob("*.json")]
+    assert before <= records[0]["waiting_since"] <= time.time()
 
 
 def test_a_refused_delivery_admission_is_recorded_as_a_dead_run(tree):

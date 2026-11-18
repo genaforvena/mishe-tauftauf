@@ -1026,7 +1026,11 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
             publish_outcome(home, record); save(); raise ValueError(record["failure"])
         record["tests_passed"]=True
         # Only now the dispatch lock: the check above ran the whole suite without holding wakes back.
-        record["phase"]="waiting-for-wakes"; save()
+        # waiting_since lets checks/pin-delivery.py age this phase from its own start: a healthy
+        # wait spans patience_s=600 plus wait_s (2400s from the runtime CLI), and the check stage
+        # before it may take CHECK_TIMEOUT_S=1500s, so created_at exceeds --stuck-min 60 for a
+        # promotion doing exactly what it was told.
+        record["phase"]="waiting-for-wakes"; record["waiting_since"]=time.time(); save()
         from .delivery_requests import DeliveryOwned
         try:
             stack.enter_context(held_delivery_lock(home, wait_s))

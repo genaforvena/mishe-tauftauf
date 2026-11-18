@@ -156,6 +156,35 @@ def test_running_is_green_until_stuck_then_unknown(tmp_path, capsys):
     assert _run(_site(stuck, [_rec("checking", created_at=NOW - 7200)]), capsys)[0] == 3
 
 
+def test_a_long_check_does_not_age_the_wait_that_follows_it(tmp_path, capsys):
+    """The check stage can take 25 min and a healthy wait for the dispatch lock 50 more.
+
+    Measured from ``created_at`` a live promotion passed --stuck-min 60 and read UNKNOWN for
+    waiting on wakes that had to finish first (2026-11-18, the 632f743e cadence promotion).
+    """
+    rec = _rec("waiting-for-wakes", created_at=NOW - 5400, waiting_since=NOW - 300)
+    code, out = _run(_site(tmp_path, [rec]), capsys)
+    assert code == 0 and "waiting-for-wakes (5 min)" in out.out
+
+
+def test_a_wait_that_overran_its_own_start_is_unknown(tmp_path, capsys):
+    rec = _rec("waiting-for-wakes", created_at=NOW - 9000, waiting_since=NOW - 5400)
+    code, out = _run(_site(tmp_path, [rec]), capsys)
+    assert code == 3 and "has been waiting-for-wakes for 90 min" in out.err
+
+
+def test_activation_is_aged_from_its_own_start(tmp_path, capsys):
+    rec = _rec("activating", created_at=NOW - 9000, activation_started_at=NOW - 120)
+    code, out = _run(_site(tmp_path, [rec]), capsys)
+    assert code == 0 and "activating (2 min)" in out.out
+
+
+def test_a_legacy_running_record_without_a_stamp_keeps_the_old_reading(tmp_path, capsys):
+    rec = _rec("waiting-for-wakes", created_at=NOW - 5400)
+    code, out = _run(_site(tmp_path, [rec]), capsys)
+    assert code == 3 and "has been waiting-for-wakes for 90 min" in out.err
+
+
 def test_no_record_is_unknown(tmp_path, capsys):
     (tmp_path / "work" / "releases").mkdir(parents=True)
     assert _run(tmp_path, capsys)[0] == 3

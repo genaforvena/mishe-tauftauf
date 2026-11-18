@@ -8,7 +8,9 @@ Reads the newest record under SITE/work/releases (written by release_promotion.p
            phase, the failure and the last failing line of the check, so the resolver fixes a cause, not a symptom
   UNKNOWN  no promotion record, an UNREADABLE record (a corrupt or torn record is not skipped in silence:
            the newest promotion is then unknown, not the newest record that happened to parse), a pointer that
-           disagrees with a delivered record, or a promotion that has run longer than --stuck-min
+           disagrees with a delivered record, or a promotion that has run longer than --stuck-min. A RUNNING
+           phase is aged from its own start (``waiting_since``, ``activation_started_at``) when the record
+           carries it, so a healthy wait for wakes that had to yield first is not UNKNOWN.
 
 A GREEN reading is also this check's own observation of the ``moving-pin-delivery`` latch: that
 signal is published only when a promotion runs, so a pin equal to HEAD leaves it ``VERIFIED`` and
@@ -123,6 +125,13 @@ def main(argv=None):
         return 3
     phase, sha = record.get("phase"), str(record.get("sha", ""))[:8]
     age_min = (now - record["created_at"]) / 60
+    # A RUNNING phase is aged from its own start when the record stamps one: the check stage can
+    # take 25 min and a healthy wait for the dispatch lock spans patience_s=600 plus wait_s=2400s,
+    # so created_at reached --stuck-min 60 while a live promotion was still waiting for wakes that
+    # had to yield first (2026-11-18). Legacy records without the stamp keep the old reading.
+    since = record.get({"waiting-for-wakes": "waiting_since",
+                        "activating": "activation_started_at"}.get(phase))
+    phase_min = (now - since) / 60 if isinstance(since, (int, float)) else age_min
     if phase == "delivered":
         if pointer_sha(a.home) != record.get("sha"):
             print(f"pin-delivery: {sha} is recorded delivered but runtime/current names {str(pointer_sha(a.home))[:8]}", file=sys.stderr)
@@ -136,10 +145,10 @@ def main(argv=None):
         keep_outcome_current(a.home, record, now)
         return 0
     if phase in RUNNING:
-        if age_min > a.stuck_min:
-            print(f"pin-delivery: promotion of {sha} has been {phase} for {age_min:.0f} min", file=sys.stderr)
+        if phase_min > a.stuck_min:
+            print(f"pin-delivery: promotion of {sha} has been {phase} for {phase_min:.0f} min", file=sys.stderr)
             return 3
-        print(f"pin-delivery: GREEN promotion of {sha} is {phase} ({age_min:.0f} min)")
+        print(f"pin-delivery: GREEN promotion of {sha} is {phase} ({phase_min:.0f} min)")
         return 0
     if phase in FAILED:
         print(f"pin-delivery: {sha} {phase} {age_min:.0f} min ago: {record.get('failure') or last_failing_line(record) or 'no reason recorded'}",
