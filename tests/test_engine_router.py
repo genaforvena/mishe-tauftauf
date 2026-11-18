@@ -341,6 +341,31 @@ def test_publish_observes_engine_routing_signal(routed):
     assert router.SIGNAL in signal_store.registry(routed)
 
 
+def test_observed_signal_uses_current_budget_not_the_selection_snapshot(tmp_path, monkeypatch):
+    # A producer can refresh windows while a wake runs. Selection keeps its launch-time evidence;
+    # publishing that snapshot at the outcome would report stale windows as UNKNOWN after recovery.
+    budget_file(tmp_path, {"go-a": {"provider": "opencode-go", "state": "STALE",
+                                    "windows": {"5h": dict(budget_window(), state="STALE")}}})
+    monkeypatch.setattr(router.time, "time", lambda: NOW_MS / 1000)
+
+    class RefreshingEngine(FakeEngine):
+        def run(self, prompt_file, **kw):
+            budget_file(tmp_path, {"go-a": {"provider": "opencode-go", "state": "FRESH",
+                                            "windows": {"5h": budget_window()}}})
+            return super().run(prompt_file, **kw)
+
+    monkeypatch.setattr(router.RoutedEngine, "_build", lambda self, cand: RefreshingEngine(cand["model"]))
+    FakeEngine.script = {HAIKU["model"]: "yield"}
+    routes_file(tmp_path, {"health": [GO, HAIKU]})
+    router.for_role(tmp_path, "health").run(tmp_path / "p.md", env=_env(tmp_path, "k-signal"),
+                                            cwd=tmp_path, timeout=5)
+
+    ledger = [json.loads(line) for line in (tmp_path / "engine" / router.LEDGER).read_text().splitlines()]
+    assert ledger[0]["key"] == router.candidate_key(HAIKU)   # the choice still used the stale snapshot
+    row = signal_store.recorded(tmp_path, router.SIGNAL)
+    assert row["state"] == "OK" and row["value"] == "GREEN"  # the signal reads the refreshed file
+
+
 def test_live_status_reads_the_budget_file_into_policy_rows(tmp_path):
     budget_file(tmp_path, {"go-a": {"provider": "opencode-go", "state": "FRESH",
                                     "windows": {"5h": budget_window(), "7d": budget_window(0.5)}},

@@ -587,8 +587,13 @@ class RoutedEngine:
         _save_state(self.home, state)
         return off
 
-    def _observe(self, status, now_ms: float) -> None:
-        """Re-assess the signal from the status read at selection, with the cool-offs as they now stand."""
+    def _observe(self, now_ms: float) -> None:
+        """Re-assess the signal against current evidence, not the snapshot that chose the candidate.
+
+        Selection legitimately uses the status read at launch; publishing that snapshot minutes
+        later would report stale windows as UNKNOWN even after the producer refreshed them.
+        """
+        status = live_status(self.home)
         running = running_candidates(self.home, now_ms=now_ms,
                                      horizon_s=self.routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S))
         result = assess(self.routes, status, _load_state(self.home)["cooling"], now_ms, running=running,
@@ -623,7 +628,7 @@ class RoutedEngine:
             if choice["candidate"] is None:
                 record(self.home, {"role": self.role, "event": "none", "wake": key_wake, "trail": choice["trail"]},
                        now_ms=now_ms)
-                self._observe(status, now_ms)
+                self._observe(now_ms)
                 raise EngineNotStarted(f"no working engine candidate for {self.role}")
             cand, key = choice["candidate"], choice["key"]
             record(self.home, {"role": self.role, "event": "select", "wake": key_wake, "key": key,
@@ -679,7 +684,7 @@ class RoutedEngine:
                 record(self.home, {"role": self.role, "event": "outcome", "wake": key_wake, "key": key,
                                    "outcome": "timeout", "scope": "role", "reason": str(exc)}, now_ms=time.time() * 1000)
                 self._cool(cand, time.time() * 1000, role_only=True)
-                self._observe(status, time.time() * 1000)
+                self._observe(time.time() * 1000)
                 raise
             yielded = bool(key_wake) and yielding.receipt_path(self.home, key_wake).exists()
             # Quota spent after the run acted: the effect is unknown (no yield), so the wake stays unknown and does
@@ -698,7 +703,7 @@ class RoutedEngine:
                 self._cool(cand, now, off_ms=self.quota_cool_off_ms(engine, now), force=_is_safety_net(cand))
             else:
                 self._cool(cand, time.time() * 1000)
-            self._observe(status, time.time() * 1000)
+            self._observe(time.time() * 1000)
             return code
 
 
