@@ -210,22 +210,28 @@ cancel_queued_wakes() {
 
 disarm_triggers() {
     local rc=0 u
-    # Stop by explicit name, not by glob, and record each name in $UNITS before
-    # stopping it. A glob stop is not filtered by target_units(), so it can catch
-    # a unit whose file does not name the moved checkout (an inactive debounce
-    # oneshot, a transient next-due timer, another plant's path unit), and every
-    # restore path restarts only $UNITS -- such a unit stayed stopped after a
-    # rollback and after a successful cutover (review finding, release f556cae1).
-    # Recording before the stop means a kill between the two only replays a start
-    # of a unit that was never stopped, which systemd treats as a no-op.
+    # Stop by explicit name, not by glob, and record each stopped name in $UNITS
+    # before the stop. A glob stop is not filtered by target_units(), so it can
+    # catch a unit whose file does not name the moved checkout, and every restore
+    # path (on_exit, the symlink-failure branch, cutover, the watchdog body)
+    # restarts only $UNITS -- such a unit stayed stopped after a rollback and
+    # after a successful cutover (review finding, release f556cae1). Recording
+    # before the stop means a kill between the two only replays a start of a unit
+    # that was never stopped, which systemd treats as a no-op.
+    # The debounce oneshot is the one exception, and it is stopped without being
+    # recorded: it runs per trigger and would normally be inactive, so starting
+    # it on restore fabricates a wake that was never owed (twelve roles at once
+    # after every flip). Its trigger is not lost -- the role stays owed, and the
+    # arm oneshot below re-arms the due timer that retries it.
     while read -r u; do
         [ -n "$u" ] || continue
         case "$u" in
-            mishe-wake-*.path|mishe-wake-debounce-*.service|mishe-producer-dispatch.timer|\
-            mishe-next-due-*.timer|mishe-next-due-*.service|mishe-arm.service) ;;
+            mishe-wake-debounce-*.service) ;;
+            mishe-wake-*.path|mishe-producer-dispatch.timer|\
+            mishe-next-due-*.timer|mishe-next-due-*.service|mishe-arm.service)
+                grep -qxF "$u" "$UNITS" 2>/dev/null || echo "$u" >>"$UNITS" ;;
             *) continue ;;
         esac
-        grep -qxF "$u" "$UNITS" 2>/dev/null || echo "$u" >>"$UNITS"
         systemctl --user stop "$u" 2>/dev/null || rc=$?
     done < <(systemctl --user list-units --all --no-legend --plain 2>/dev/null | awk '{print $1}')
     # The caller logs a nonzero return: a trigger that refused to stop must stay

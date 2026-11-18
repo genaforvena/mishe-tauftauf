@@ -383,11 +383,12 @@ def test_disarm_stops_debounce_services_that_would_start_an_engine(tmp_path):
 def test_every_disarmed_trigger_is_also_restarted(tmp_path):
     """Regression (fresh review, release f556cae1): disarm stopped the wake
     triggers by glob, while every restore path restarted only the units named by
-    target_units(). A unit stopped by the glob whose file does not name the
-    checkout -- the inactive debounce oneshot above, a transient next-due timer --
-    therefore stayed down after the restore, and `other-plant.path` was stopped
-    without ever having been a target. The stop set and the restart set must be
-    the same set, and a non-mishe unit must not be stopped."""
+    target_units(). A persistent unit stopped by the glob whose file does not name
+    the checkout therefore stayed stopped after the restore, and `other-plant.path`
+    was stopped without ever having been a target. The stop set and the restart set
+    must be the same set for persistent units; the debounce oneshot is stopped but
+    deliberately not restarted, because starting it fabricates a wake that was
+    never owed."""
     root = sandbox(tmp_path)
     install_helper(root, 2, "  VERIFIED mishe-tauftauf\ncannot write evidence file for .omp")
 
@@ -395,10 +396,11 @@ def test_every_disarmed_trigger_is_also_restarted(tmp_path):
 
     assert done.returncode == 1, done.stdout + done.stderr
     logged = calls(root)
-    for unit in ("mishe-wake-fake.path", "mishe-wake-debounce-fake.service",
-                 "mishe-producer-dispatch.timer"):
+    for unit in ("mishe-wake-fake.path", "mishe-producer-dispatch.timer"):
         assert any(f" stop {unit}" in line for line in logged), (unit, logged)
         assert any(f" start {unit}" in line for line in logged), (unit, logged)
+    assert any("stop mishe-wake-debounce-fake.service" in line for line in logged), logged
+    assert not any("start mishe-wake-debounce-fake.service" in line for line in logged), logged
     assert not any("other-plant.path" in line for line in logged), logged
 
 
