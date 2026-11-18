@@ -84,12 +84,23 @@ def test_outage_episodes_list_start_and_end_and_still_down():
                                           ("2026-11-10T10:06:00Z", None)]
     lines = view.outage_lines(data)
     assert lines[0] == "  DOWN 10:01Z to 10:05Z (4 min)"
-    assert lines[1] == "  DOWN since 10:06Z, still down at the last probe"
+    assert lines[1] == "  DOWN since 11-10 10:06Z, still down at the last probe"
+
+
+def test_outage_episode_across_midnight_carries_both_dates():
+    data = [_probe("2026-11-10T23:50:00Z", False), _probe("2026-11-10T23:58:00Z", True),
+            _probe("2026-11-11T00:06:00Z", False)]
+    assert view.outage_lines(data)[0] == "  DOWN 11-10 23:58Z to 11-11 00:06Z (8 min)"
+
+
+def test_outage_span_names_its_dates_and_length_not_just_times():
+    data = [_probe("2026-11-14T16:54:05Z", False), _probe("2026-11-18T02:02:55Z", False)]
+    assert view.outage_lines(data) == ["  none over the last 2 probes in 3.4 days (11-14 16:54Z to 11-18 02:02Z)"]
 
 
 def test_outage_lines_say_none_when_all_probes_answer_and_unknown_without_rows():
     data = [_probe("2026-11-10T10:00:00Z", False), _probe("2026-11-10T10:01:00Z", False)]
-    assert view.outage_lines(data)[0].startswith("  none over 2 probes")
+    assert view.outage_lines(data)[0].startswith("  none over the last 2 probes")
     assert view.outage_lines([])[0].startswith("  UNKNOWN")
 
 

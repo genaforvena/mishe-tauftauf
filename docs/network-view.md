@@ -104,6 +104,12 @@ is not mistaken for a quiet mind.
   not GREEN (for example "the client could not be reached: …"). UNKNOWN when the file is missing,
   unreadable or over 15 minutes old.
 - `RECORDED`: client count by band, weakest device by name and dBm, the age of the last read.
+- `OUTAGES`: each run of DOWN probes with its start and end, plus a trailing span line saying how many
+  probe rows were read and how much time they cover (`none over the last 1440 probes in 3.4 days
+  (11-14 16:57Z to 11-18 02:06Z)`). Timestamps on different days carry the month and day, so a
+  multi-day span or an outage across midnight cannot read as a few hours; an outage still in progress
+  says "still down at the last probe" instead of inventing an end. The view reads the last 1440 probe
+  rows (`rows()`), which at the current cadence is a few days, and the span line states that length.
 - `WAN LINK`: the WAN device's negotiated speed and duplex from the router's own
   `/sys/class/net` files, plus how many times the cable's carrier dropped since the router booted
   and how many of those were in the last hour. The last-hour count compares the newest read with

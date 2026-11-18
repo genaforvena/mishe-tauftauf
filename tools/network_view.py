@@ -330,22 +330,46 @@ def outage_episodes(data):
     return episodes
 
 
+def at_short(at):
+    """`11-14 16:54Z`: month, day and time in UTC, so a row days old is not read as hours old."""
+    text = str(at or "")
+    if len(text) >= 16 and text[4] == "-" and text[10] == "T":
+        return f"{text[5:10]} {text[11:16]}Z"
+    return text
+
+
+def covered(seconds):
+    """A span in the unit a reader would use for it: `45 min`, `9.1 h`, `3.4 days`."""
+    if seconds < 3600:
+        return f"{seconds / 60:.0f} min"
+    if seconds < 86400:
+        return f"{seconds / 3600:.1f} h"
+    return f"{seconds / 86400:.1f} days"
+
+
 def outage_lines(data):
     """The outage list for the window: when the home internet was DOWN in the probes we hold."""
     seen = [r for r in data if "internet" in r and r.get("at")]
     if not seen:
         return ["  UNKNOWN (no secure-web probes to read outages from)"]
-    span = f"over {len(seen)} probes from {seen[0]['at'][11:16]}Z to {seen[-1]['at'][11:16]}Z"
+    first, last = seen[0]["at"], seen[-1]["at"]
+    begin, finish = nb.utc_epoch(first), nb.utc_epoch(last)
+    stretch = (f" in {covered(finish - begin)}"
+               if begin is not None and finish is not None and finish >= begin else "")
+    span = f"over the last {len(seen)} probes{stretch} ({at_short(first)} to {at_short(last)})"
     episodes = outage_episodes(data)
     if not episodes:
         return [f"  none {span}"]
     out = []
     for start, end in episodes:
         if end is None:
-            out.append(f"  DOWN since {start[11:16]}Z, still down at the last probe")
+            out.append(f"  DOWN since {at_short(start)}, still down at the last probe")
         else:
+            same_day = at_short(start)[:5] == at_short(end)[:5]
+            when = (f"{start[11:16]}Z to {end[11:16]}Z" if same_day
+                    else f"{at_short(start)} to {at_short(end)}")
             mins = (nb.utc_epoch(end) - nb.utc_epoch(start)) / 60
-            out.append(f"  DOWN {start[11:16]}Z to {end[11:16]}Z ({mins:.0f} min)")
+            out.append(f"  DOWN {when} ({mins:.0f} min)")
     return out + [f"  ({span})"]
 
 
