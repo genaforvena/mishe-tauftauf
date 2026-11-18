@@ -1293,11 +1293,18 @@ def merge_review(home, queued, *, sleep=time.sleep, clock=time.monotonic,
                         review_state = merged_review_state(result["review"])
                         current["review_state"] = review_state
                         if review_state == "action-needed" and current["phase"] == "delivered":
-                            from . import intentions
-                            from .failure import default_notify
-                            intentions.add(home, current["owner"], "review-" + current["sha"][:12],
-                                           note="Decide a concrete fix or revert for independent release finding", due=time.time()+21600)
-                            default_notify(home, current["owner"], f"Release {outcome['id']}: review finding; decide fix/revert within six hours. Evidence: {path}")
+                            # Telling the owner must not be able to lose the finding: a broken
+                            # intentions directory or an unavailable chat tape raised here, before
+                            # the record write below, so the verdict stayed unwritten with
+                            # review_pending true and every later poll re-raised (2026-11-18).
+                            try:
+                                from . import intentions
+                                from .failure import default_notify
+                                intentions.add(home, current["owner"], "review-" + current["sha"][:12],
+                                               note="Decide a concrete fix or revert for independent release finding", due=time.time()+21600)
+                                default_notify(home, current["owner"], f"Release {outcome['id']}: review finding; decide fix/revert within six hours. Evidence: {path}")
+                            except (OSError, RuntimeError, ValueError) as exc:
+                                current["review_notice_error"] = str(exc)
                     elif "review_error" in result:
                         current["review_error"] = result["review_error"]
                         schedule_review_retry_if_needed(home, current)

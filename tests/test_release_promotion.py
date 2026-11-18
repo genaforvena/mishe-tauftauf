@@ -449,6 +449,32 @@ def test_suspicious_review_raises_the_fix_revert_obligation(tree,monkeypatch):
     assert len(sent)==1 and identity in sent[0][1]
 
 
+def test_a_failed_notice_cannot_lose_a_suspicious_finding(tree,monkeypatch):
+    # Telling the owner ran before the record write, so a broken intentions
+    # directory or an unavailable chat tape raised out of merge_reviews with the
+    # verdict unwritten and review_pending still true (2026-11-18). The finding
+    # is the durable fact; the notice is the secondary effect that may fail.
+    from mishe_tauftauf import failure, intentions
+    from mishe_tauftauf.feed import TapeUnknown
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha)
+    identity="notice-failed"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",
+        owner="docs",source=str(source),paths=["docs/page.md"],check=dict(output="pass"),review_pending=True))
+    queued=home/"work/reviews"/f"{identity}.result.json"
+    write_json(queued,dict(id=identity,merged=False,result=dict(
+        review=dict(clear=False,response=dict(results=[dict(id="PATCH",verdict="suspicious",
+            reason="the probe reads the old pin",evidence=[])])))))
+    def unavailable(home,role,text): raise TapeUnknown("mishe-tape unavailable: no site home and no MISHE_TAPE_BIN")
+    monkeypatch.setattr(failure,"default_notify",unavailable)
+    p.merge_reviews(home)
+    record=read_json(p.record_path(home,identity))
+    assert record["review_state"]=="action-needed" and record["review_pending"] is False
+    assert "mishe-tape unavailable" in record["review_notice_error"]
+    assert [e["id"] for e in intentions.list_(home,"docs")]==["review-"+sha[:12]]
+    assert read_json(queued)["merged"] is True
+
+
 def test_spent_retry_ladder_raises_one_owner_obligation(tree,monkeypatch):
     # The eighth failed attempt spends the ladder: "exhausted" makes
     # _review_retry_lost answer False forever, so before this the record kept
