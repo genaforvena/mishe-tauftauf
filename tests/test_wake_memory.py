@@ -156,3 +156,36 @@ def test_the_guard_record_is_added_to_the_evidence_not_replacing_it(tmp_path):
     assert record["applied"] is True
     assert record["guard"]["unit"] == "mishe-wake@health.service"
     assert record["guard"]["reverts"] == 0
+
+
+def test_a_failed_dossier_write_still_stops_the_guard(tmp_path, monkeypatch):
+    """The guard is started before the engine; a failure after it must still stop the thread.
+
+    A dossier build or prompt write can raise before the engine runs. Started outside the
+    try, the guard would keep re-writing the unit's ``memory.high`` until the process exits.
+    """
+    import pytest
+
+    from mishe_tauftauf import wake
+    from mishe_tauftauf.owed import Snapshot
+
+    stopped: list[bool] = []
+
+    class Guard:
+        def stop(self):
+            stopped.append(True)
+
+        def record(self):
+            return {"unit": "mishe-wake@genome.service", "reverts": 0, "repaired": 0, "failed": 0}
+
+    monkeypatch.setattr(wake, "_restore_memory_floor",
+                        lambda home, role, key: {"unit": "mishe-wake@genome.service"})
+    monkeypatch.setattr(wake, "_start_memory_guard", lambda record: Guard())
+    monkeypatch.setattr(wake.dossier, "build", lambda *args, **kwargs: (_ for _ in ()).throw(
+        RuntimeError("dossier build failed")))
+
+    with pytest.raises(RuntimeError, match="dossier build failed"):
+        wake._execute_engine(tmp_path, "genome", "wake-genome-fail", engine=None, now=1000.0,
+                             snap=Snapshot(reasons=["inbox"], signal_revs={}), mail=[],
+                             reconcile_of=None, repo=tmp_path, timeout=1)
+    assert stopped == [True]

@@ -37,10 +37,10 @@ floor it cannot learn, is UNKNOWN (exit 3), never a pass.
 
 Exit status:
   0  GREEN   every guarded leaf that has a process reads at least the floor
-  2  RED     a leaf with a process reads below the floor for --persist seconds,
-             or a guarded leaf's memory.high cannot be read while it has processes
-  3  UNKNOWN the declared floor cannot be learned, or the process tree cannot be
-             enumerated
+  2  RED     a leaf with a process reads below the floor for --persist seconds
+  3  UNKNOWN the declared floor cannot be learned, the process tree cannot be
+             enumerated, or a guarded leaf's memory.high cannot be read while it
+             has processes
 
 ``--floor`` overrides the declared floor (bytes); without it the floor comes from
 the running release's ``mishe_tauftauf.units.WAKE_MEMORY_HIGH_BYTES``.

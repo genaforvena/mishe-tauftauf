@@ -377,31 +377,38 @@ def _execute_engine(home, role, key, *, engine, now, snap, mail, reconcile_of, r
     write_json(yielding.snapshot_path(home, key), {"role": role, "snapshot": snap.to_json()})
     floor = _restore_memory_floor(home, role, key)
     guard = _start_memory_guard(floor)
-    write_json(yielding.wakes_dir(home) / f"{key}.work-start.json",
-               work_receipts.begin(repo, role=role, key=key, now=now, home=home))
-    prompt = yielding.wakes_dir(home) / f"{key}.prompt.md"
-    prompt.write_text(dossier.build(home, role, snap, key=key, now=now, mail=mail,
-                                    reconcile_of=reconcile_of, repo=repo, timeout=timeout), encoding="utf-8")
-    env = dict(os.environ, MISHE_SEED_HOME=str(home), MISHE_ROLE=role, MISHE_WAKE_KEY=key,
-               RIPGREP_CONFIG_PATH=str(_ripgrep_guard(home)))
-    engine_started = time.monotonic()
+    # Everything after the guard starts is inside the try: a dossier build or prompt write that
+    # fails before the engine runs must still stop the guard thread, or it keeps re-writing the
+    # unit's memory.high until the process exits.
+    engine_started: float | None = None
     try:
-        code = engine.run(prompt, env=env, cwd=repo or Path(home), timeout=timeout, on_start=on_start)
-    except EngineNotStarted as exc:
-        return "failed", f"engine did not start: {exc}"
-    except EngineTimeout as exc:
-        return "unknown", f"engine timed out: {exc}"
+        write_json(yielding.wakes_dir(home) / f"{key}.work-start.json",
+                   work_receipts.begin(repo, role=role, key=key, now=now, home=home))
+        prompt = yielding.wakes_dir(home) / f"{key}.prompt.md"
+        prompt.write_text(dossier.build(home, role, snap, key=key, now=now, mail=mail,
+                                        reconcile_of=reconcile_of, repo=repo, timeout=timeout), encoding="utf-8")
+        env = dict(os.environ, MISHE_SEED_HOME=str(home), MISHE_ROLE=role, MISHE_WAKE_KEY=key,
+                   RIPGREP_CONFIG_PATH=str(_ripgrep_guard(home)))
+        engine_started = time.monotonic()
+        try:
+            code = engine.run(prompt, env=env, cwd=repo or Path(home), timeout=timeout, on_start=on_start)
+        except EngineNotStarted as exc:
+            return "failed", f"engine did not start: {exc}"
+        except EngineTimeout as exc:
+            return "unknown", f"engine timed out: {exc}"
+        if yielding.receipt_path(home, key).exists():
+            return "yielded", f"engine exit {code}"
+        detail = f"engine exit {code} without a yield"
+        left = engine_boundary.background_left_running(yielding.wakes_dir(home) / f"{key}.prompt.out.jsonl")
+        if left:
+            detail += f" (background job {left} left running)"
+        return "unknown", detail
     finally:
-        work_receipts.complete(home, key, now=time.time(), engine_seconds=time.monotonic() - engine_started)
+        if engine_started is not None:
+            work_receipts.complete(home, key, now=time.time(),
+                                   engine_seconds=time.monotonic() - engine_started)
         if guard is not None:
             _finish_memory_guard(home, key, guard)
-    if yielding.receipt_path(home, key).exists():
-        return "yielded", f"engine exit {code}"
-    detail = f"engine exit {code} without a yield"
-    left = engine_boundary.background_left_running(yielding.wakes_dir(home) / f"{key}.prompt.out.jsonl")
-    if left:
-        detail += f" (background job {left} left running)"
-    return "unknown", detail
 
 
 class _Worker:
