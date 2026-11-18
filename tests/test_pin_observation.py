@@ -155,3 +155,46 @@ def test_after_a_reload_a_wrong_loaded_pin_is_still_a_failure(tmp_path, monkeypa
 
     with pytest.raises(ValueError, match="loaded pin differs"):
         po.check_units(home, stable, show=show, sleep=lambda s: None, reload=lambda: None)
+
+
+def test_observe_rearms_after_the_drain_and_before_judging_future_consumers(tmp_path, monkeypatch):
+    """A due handler that started before the move re-arms the timer at exit, with its own release.
+
+    The activation's arm therefore has to be repeated after the drain: otherwise the stale timer is
+    the last writer and verify_future fails a correct pin move (2026-11-18 08:06Z f8004457 rollback).
+    """
+    home, release = _site(tmp_path)
+    calls = []
+    monkeypatch.setattr(po, "check_pointer", lambda h, r: calls.append("pointer") or home / "runtime" / "current")
+    monkeypatch.setattr(po, "check_units", lambda h, s: calls.append("units") or [])
+    monkeypatch.setattr(po, "check_wrappers", lambda h, s, sha: calls.append("wrappers"))
+    monkeypatch.setattr(po.rp, "probe_problems", lambda h: calls.append("probe") or [])
+    monkeypatch.setattr(po, "drain_old", lambda h, cutoff: calls.append(("drain", cutoff)) or 0)
+    from mishe_tauftauf import work_boundary
+    monkeypatch.setattr(work_boundary, "invoke_arm_consumer",
+                        lambda expected: calls.append(("arm", expected)) or {})
+    monkeypatch.setattr(po.fence, "verify_future",
+                        lambda h, expected, previous: calls.append(("verify", list(calls))) or [])
+
+    result = po.observe(home, release, cutoff_us=17)
+
+    assert [c if isinstance(c, str) else c[0] for c in calls] == ["pointer", "units", "wrappers", "probe", "drain", "arm", "verify"]
+    assert calls[4] == ("drain", 17)
+    assert calls[5] == ("arm", home / "runtime" / "current" / "src")
+    assert result == {"release": release.name, "units": [], "rearm": {}, "future_consumers": []}
+
+
+def test_observe_without_a_cutoff_does_not_arm(tmp_path, monkeypatch):
+    home, release = _site(tmp_path)
+    calls = []
+    monkeypatch.setattr(po, "check_pointer", lambda h, r: home / "runtime" / "current")
+    monkeypatch.setattr(po, "check_units", lambda h, s: [])
+    monkeypatch.setattr(po, "check_wrappers", lambda h, s, sha: None)
+    monkeypatch.setattr(po.rp, "probe_problems", lambda h: [])
+    from mishe_tauftauf import work_boundary
+    monkeypatch.setattr(work_boundary, "invoke_arm_consumer", lambda expected: calls.append(expected) or {})
+    monkeypatch.setattr(po.fence, "verify_future", lambda h, expected, previous: [])
+
+    po.observe(home, release, cutoff_us=None)
+
+    assert calls == []

@@ -15,7 +15,10 @@ The probe fails closed: any missing or contradictory observation is an error, ne
   4. the root-fs dual probe is installed and fresh;
   5. no consumer invocation that started before the pin moved is still running (a bounded drain of
      in-memory consumers, using the cutoff ``promote`` passes in MISHE_PIN_CUTOFF_US);
-  6. every active or queued pinned consumer names the new pin.
+  6. the next-due timer is armed once more from the new pin after that drain, because a due handler
+     that started before the move re-arms it with its own (old) release when it exits — the last
+     writer wins, and the arm before the drain can be overwritten;
+  7. every active or queued pinned consumer names the new pin.
 """
 from __future__ import annotations
 
@@ -130,10 +133,19 @@ def observe(home: Path, release: Path, *, cutoff_us: int | None) -> dict:
     problems = rp.probe_problems(home)
     if problems:
         raise ValueError("dual probe problems: " + "; ".join(map(str, problems)))
+    rearm = None
     if cutoff_us is not None:
         drain_old(home, cutoff_us)
+        # ``arm.due`` re-arms the next-due timer when its handler exits, with the release that handler
+        # runs. An old invocation that outlived the activation's own arm is therefore the last writer:
+        # it left a pending timer whose PYTHONPATH names the previous release, and the future check
+        # rolled the promotion back (2026-11-18 08:06Z, f8004457: "active or queued consumer has wrong
+        # pin: mishe-next-due-c2a8ebf66195.service"). Drain first, then arm once more from this pin so
+        # no old invocation remains to overwrite the timer, then judge the consumers.
+        from .work_boundary import invoke_arm_consumer
+        rearm = invoke_arm_consumer(stable / "src")
     future = fence.verify_future(home, stable / "src", {})
-    return {"release": sha, "units": units, "future_consumers": [row["unit"] for row in future]}
+    return {"release": sha, "units": units, "rearm": rearm, "future_consumers": [row["unit"] for row in future]}
 
 
 def main() -> int:
