@@ -46,14 +46,15 @@ RUNNING_UNITS = ("moving-pin-delivery-*", "genome-deliver-*")
 RUNNING_PROCESSES = (
     r"^(/bin/)?bash [^ ]*delivery/(deliver|heal).sh",
     r"^[^ ]*python[0-9.]* -m mishe_tauftauf.wall_patch",
-    # A delivery request consumed by another role's wake runs the same promotion as a
-    # child command, so it holds no ``moving-pin-delivery-*`` unit of its own. On
-    # 2026-11-18 06:14Z that gap let the cadence start a second promotion 54 s into a
-    # rust-plan request: both ran the whole suite for ~18 min side by side, and the
-    # cadence's copy then waited for wakes while the request delivered the older sha.
+    # ``mishe-promote``'s ``promote-head.sh`` execs ``release advance``, so a promotion
+    # started outside its unit (a hand-run ``mishe-deliver``) is still seen. A delivery
+    # request consumed by another role's wake does NOT look like this: it runs the
+    # promotion in-process in the consumer's own CLI (measured 2026-11-18: record
+    # 56262f54-1794982435362421925 was created by ``mishe-wake@genome.service``, whose
+    # argv is ``wake``), which is what ``_admission_held`` covers.
     r"^[^ ]*python[0-9.]* -m mishe_tauftauf release advance",
 )
-"""Legacy delivery/heal scripts and the patch gate, matched by argv like the retired ``cadence.sh``."""
+"""Legacy delivery/heal scripts, the patch gate and ``release advance``, matched by argv like the retired ``cadence.sh``."""
 
 
 def _log(message: str) -> None:
@@ -87,8 +88,26 @@ def _units_running() -> bool:
     return units.returncode == 0 and bool(units.stdout)
 
 
-def gate_running() -> bool:
-    """True when a promotion, heal or patch gate is already running, so the cadence must skip."""
+def _admission_held(home: Path) -> bool:
+    """True while a consumed delivery request holds delivery admission.
+
+    ``delivery_requests.consume`` writes ``work/delivery-admission.json`` before it
+    starts validating and promoting and removes it when the attempt ends, so the
+    marker exists for a request-consumed promotion's whole check stage -- the stage
+    that runs before any dispatch lock. Measured 2026-11-18 06:13:55Z: the record
+    ``56262f54-1794982435362421925`` (request 8948d803…) was started by
+    ``mishe-wake@genome.service`` and its suite ran beside the cadence's 632f743e
+    promotion, which started 54 s later. A marker whose owner died is released by
+    the next consume pass (``ADMISSION_MAX_AGE_SECONDS``), so this can only make the
+    cadence skip, never wedge it.
+    """
+    return (Path(home) / "work" / "delivery-admission.json").exists()
+
+
+def gate_running(home) -> bool:
+    """True when a delivery, request promotion or patch gate is already running, so the cadence must skip."""
+    if _admission_held(Path(home)):
+        return True
     for pattern in RUNNING_PROCESSES:
         if _running(["pgrep", "-f", pattern]):
             return True
@@ -140,8 +159,8 @@ def run(home: Path, repo: Path, *, now: float | None = None) -> int:
     if os.environ.get("MISHE_WAKE_KEY"):
         _log("inside a wake: skip")
         return 0
-    if gate_running():
-        _log("a delivery or gate is running: skip")
+    if gate_running(home):
+        _log("a delivery, request promotion or gate is running (admission held): skip")
         return 0
     pin = pin_sha(home)
     head = _git(repo, "rev-parse", "HEAD").stdout.strip()

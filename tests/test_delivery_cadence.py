@@ -43,7 +43,7 @@ def test_does_not_retry_an_attempted_head_before_the_retry_bound():
 def test_run_skips_inside_a_wake_without_anything(monkeypatch):
     called = []
     monkeypatch.setenv("MISHE_WAKE_KEY", "wake-1")
-    monkeypatch.setattr(cadence, "gate_running", lambda: called.append("gate") or False)
+    monkeypatch.setattr(cadence, "gate_running", lambda home: called.append("gate") or False)
     monkeypatch.setattr(cadence.subprocess, "run", lambda *a, **k: called.append("run"))
     assert cadence.run(Path("."), Path("."), now=0.0) == 0
     assert called == [], "nothing is inspected or started from inside a wake"
@@ -55,7 +55,7 @@ def test_run_does_not_start_a_promotion_when_the_pin_is_head(monkeypatch):
         return subprocess.CompletedProcess(args, 0, out, "")
 
     monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
-    monkeypatch.setattr(cadence, "gate_running", lambda: False)
+    monkeypatch.setattr(cadence, "gate_running", lambda home: False)
     monkeypatch.setattr(cadence, "pin_sha", lambda home: HEAD)
     monkeypatch.setattr(cadence, "_git", fake_git)
     started = []
@@ -66,7 +66,7 @@ def test_run_does_not_start_a_promotion_when_the_pin_is_head(monkeypatch):
 
 def test_missing_delivery_launcher_reports_unknown_and_does_not_suppress_retry(monkeypatch, tmp_path):
     monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
-    monkeypatch.setattr(cadence, "gate_running", lambda: False)
+    monkeypatch.setattr(cadence, "gate_running", lambda home: False)
     monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
     monkeypatch.setattr(cadence, "_remote_ci", lambda *args: "unknown")
     def fake_git(repo, *args):
@@ -79,7 +79,7 @@ def test_missing_delivery_launcher_reports_unknown_and_does_not_suppress_retry(m
 
 def test_failed_delivery_launcher_reports_unknown(monkeypatch, tmp_path):
     monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
-    monkeypatch.setattr(cadence, "gate_running", lambda: False)
+    monkeypatch.setattr(cadence, "gate_running", lambda home: False)
     monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
     monkeypatch.setattr(cadence, "_remote_ci", lambda *args: "unknown")
     def fake_git(repo, *args):
@@ -92,7 +92,7 @@ def test_failed_delivery_launcher_reports_unknown(monkeypatch, tmp_path):
 
 def test_uncertain_launch_remains_unknown_during_retry_bound(monkeypatch, tmp_path):
     monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
-    monkeypatch.setattr(cadence, "gate_running", lambda: False)
+    monkeypatch.setattr(cadence, "gate_running", lambda home: False)
     monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
     monkeypatch.setattr(cadence, "_remote_ci", lambda *args: "unknown")
     def fake_git(repo, *args):
@@ -106,7 +106,7 @@ def test_uncertain_launch_remains_unknown_during_retry_bound(monkeypatch, tmp_pa
 
 def test_timed_out_launcher_preserves_uncertain_attempt(monkeypatch, tmp_path):
     monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
-    monkeypatch.setattr(cadence, "gate_running", lambda: False)
+    monkeypatch.setattr(cadence, "gate_running", lambda home: False)
     monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
     monkeypatch.setattr(cadence, "_remote_ci", lambda *args: "unknown")
     def fake_git(repo, *args):
@@ -123,7 +123,7 @@ def test_timed_out_launcher_preserves_uncertain_attempt(monkeypatch, tmp_path):
 
 def test_successful_launcher_records_started_attempt(monkeypatch, tmp_path):
     monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
-    monkeypatch.setattr(cadence, "gate_running", lambda: False)
+    monkeypatch.setattr(cadence, "gate_running", lambda home: False)
     monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
     monkeypatch.setattr(cadence, "_remote_ci", lambda *args: "unknown")
     def fake_git(repo, *args):
@@ -135,18 +135,33 @@ def test_successful_launcher_records_started_attempt(monkeypatch, tmp_path):
     assert cadence._read_state(tmp_path) == (HEAD, 10000, "started")
 
 
-def test_gate_sees_a_promotion_started_by_another_roles_delivery_request(monkeypatch):
-    """A request consumer's promotion is a child command with no moving-pin-delivery unit of its own."""
+def test_gate_sees_a_delivery_request_holding_admission(monkeypatch, tmp_path):
+    """A consumed request runs its suite in the consumer's own process with admission held.
+
+    The 2026-11-18 06:13:55Z promotion (record 56262f54-1794982435362421925) was started
+    by mishe-wake@genome.service, so no argv or moving-pin-delivery unit named it; only
+    work/delivery-admission.json existed for its whole check stage.
+    """
+    monkeypatch.setattr(cadence, "_units_running", lambda: False)
+    monkeypatch.setattr(cadence, "_running", lambda cmd: False)
+    assert not cadence.gate_running(tmp_path), "no admission and no unit: the cadence may start"
+    (tmp_path / "work").mkdir()
+    (tmp_path / "work" / "delivery-admission.json").write_text("{}")
+    assert cadence.gate_running(tmp_path), "the cadence would start a second promotion beside a live one"
+
+
+def test_gate_sees_a_release_advance_started_outside_its_unit(monkeypatch, tmp_path):
+    """`mishe-promote`'s promote-head.sh execs release advance, so a hand-run one is seen."""
     monkeypatch.setattr(cadence, "_units_running", lambda: False)
     proc = subprocess.Popen(
         ["bash", "-c", 'exec -a "python -m mishe_tauftauf release advance" sleep 30'],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(50):
-            if cadence.gate_running():
+            if cadence.gate_running(tmp_path):
                 break
             time.sleep(0.05)
-        assert cadence.gate_running(), "the cadence would start a second promotion beside a live one"
+        assert cadence.gate_running(tmp_path), "the cadence would start a second promotion beside a live one"
     finally:
         proc.kill()
         proc.wait()
