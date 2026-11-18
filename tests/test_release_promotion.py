@@ -405,6 +405,50 @@ def test_deferred_review_error_merge_schedules_the_retry(tree,monkeypatch):
     assert record["review_retry_state"]=="scheduled in 1800s"
 
 
+def test_inconclusive_review_records_the_gap_without_a_fix_obligation(tree,monkeypatch):
+    # Three delivered releases (4290a757, 2e2d080d, e232e4f0) merged a review whose
+    # only row was `unknown` — "insufficient context", no defect named — and each
+    # still raised a six-hour fix/revert obligation. Missing evidence is not a
+    # finding: record it as inconclusive and ask nobody to repair what the reviewer
+    # never alleged.
+    from mishe_tauftauf import failure, intentions
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha)
+    identity="inconclusive"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",
+        owner="docs",source=str(source),paths=["docs/page.md"],check=dict(output="pass"),review_pending=True))
+    write_json(home/"work/reviews"/f"{identity}.result.json",dict(id=identity,merged=False,result=dict(
+        review=dict(clear=False,response=dict(results=[dict(id="PATCH",verdict="unknown",
+            reason="insufficient context to assess deeper defects",evidence=[])])))))
+    sent=[]
+    monkeypatch.setattr(failure,"default_notify",lambda home,role,text:sent.append((role,text)))
+    p.merge_reviews(home)
+    record=read_json(p.record_path(home,identity))
+    assert record["review_state"]=="inconclusive" and record["review_pending"] is False
+    assert intentions.list_(home,"docs")==[] and sent==[]
+
+
+def test_suspicious_review_raises_the_fix_revert_obligation(tree,monkeypatch):
+    from mishe_tauftauf import failure, intentions
+    repo,home,old,sha=tree
+    source=p.materialize(home,repo,sha)
+    identity="suspicious"
+    write_json(p.record_path(home,identity),dict(id=identity,sha=sha,previous=old,phase="delivered",
+        owner="docs",source=str(source),paths=["docs/page.md"],check=dict(output="pass"),review_pending=True))
+    write_json(home/"work/reviews"/f"{identity}.result.json",dict(id=identity,merged=False,result=dict(
+        review=dict(clear=False,response=dict(results=[dict(id="PATCH",verdict="suspicious",
+            reason="the probe reads the old pin",evidence=[])])))))
+    sent=[]
+    monkeypatch.setattr(failure,"default_notify",lambda home,role,text:sent.append((role,text)))
+    p.merge_reviews(home)
+    record=read_json(p.record_path(home,identity))
+    assert record["review_state"]=="action-needed"
+    entries=intentions.list_(home,"docs")
+    assert [e["id"] for e in entries]==["review-"+sha[:12]]
+    assert entries[0]["due"]>time.time()
+    assert len(sent)==1 and identity in sent[0][1]
+
+
 def test_spent_retry_ladder_raises_one_owner_obligation(tree,monkeypatch):
     # The eighth failed attempt spends the ladder: "exhausted" makes
     # _review_retry_lost answer False forever, so before this the record kept

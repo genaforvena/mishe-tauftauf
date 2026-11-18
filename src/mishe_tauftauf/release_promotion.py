@@ -1250,6 +1250,27 @@ merge still retries within it, and pending results are retried on the next poll.
 """
 
 
+def merged_review_state(review):
+    """``clear``, ``action-needed`` or ``inconclusive`` for one merged review result.
+
+    The reviewer protocol answers each question ``clear`` (no concrete defect),
+    ``suspicious`` (a concrete defect) or ``unknown`` (essential evidence was
+    missing), and ``wall_patch.review`` collapses that to one boolean. Treating
+    every non-clear answer as ``action-needed`` therefore asked owners for a
+    fix or a revert when the reviewer had alleged nothing — three times by
+    2026-11-18 (``4290a757``, ``2e2d080d``, ``e232e4f0``), each answered by
+    reading the record and finding no defect to repair. An inconclusive review
+    is missing evidence, which stays visible as its own state; only a
+    ``suspicious`` row raises the fix/revert obligation.
+    """
+    rows = (review.get("response") or {}).get("results") or []
+    if review.get("clear"):
+        return "clear"
+    if any(isinstance(row, dict) and row.get("verdict") == "suspicious" for row in rows):
+        return "action-needed"
+    return "inconclusive"
+
+
 def merge_review(home, queued, *, sleep=time.sleep, clock=time.monotonic,
                  retry_s=REVIEW_MERGE_RETRY_S, deadline=None):
     outcome = read_json(queued)
@@ -1269,8 +1290,9 @@ def merge_review(home, queued, *, sleep=time.sleep, clock=time.monotonic,
                     if "review" in result and current.get("review_pending") is not False:
                         current.update(result, review_pending=False)
                         current["reviewed_at"] = time.time()
-                        current["review_state"] = "clear" if result["review"]["clear"] else "action-needed"
-                        if not result["review"]["clear"] and current["phase"] == "delivered":
+                        review_state = merged_review_state(result["review"])
+                        current["review_state"] = review_state
+                        if review_state == "action-needed" and current["phase"] == "delivered":
                             from . import intentions
                             from .failure import default_notify
                             intentions.add(home, current["owner"], "review-" + current["sha"][:12],

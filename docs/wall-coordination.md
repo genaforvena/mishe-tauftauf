@@ -213,9 +213,12 @@ An ordinary delivery enqueues that review itself. Once the pin has moved, the
 ordinary path starts a transient unit that runs `mishe release review --id
 RELEASE_ID`, and the periodic `mishe work poll` merges the verdict into the
 delivery record (`merge_reviews`). The record then reads `review_pending: false`
-with a `review_state` of `clear` or `action-needed`, and a non-clear finding on a
-delivered release raises an intention due within six hours for the owner to decide
-a concrete fix or a revert. The review reads the scoped release diff for concrete
+with a `review_state` of `clear` (no concrete defect), `action-needed` (the
+reviewer named a concrete defect; a delivered release then raises an intention due
+within six hours for the owner to decide a concrete fix or a revert) or
+`inconclusive` (the reviewer answered `unknown` because essential evidence was
+missing — that gap is recorded, and it asks nobody to repair what the reviewer
+never alleged). The review reads the scoped release diff for concrete
 source defects; it is evidence after the pin has moved, never a gate that holds it.
 An already-delivered ordinary release is reviewed against its retained recovery
 evidence (the previous release, the observation argv and the explicit revert
