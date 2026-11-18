@@ -3427,3 +3427,39 @@ Decision: no Rust slice on this path now. The threshold that would change it is 
 fold on a wake or render path (where 3 s of latency is paid per invocation) or a
 duty cost above a few minutes per hour; a rewrite of a 10 µs loop that is 1% of one
 CPU-minute per hour is exactly the "keep Python where it is simpler" case.
+
+### 10.60 The Python duty population measured: nothing CPU-bound is worth Rust yet (2026-11-18)
+
+Before choosing another slice, the highest-cadence local Python duties were timed
+directly (median of 3, warm, quiet host; the commands are the units' own
+`ExecStart`s):
+
+| duty | cadence | wall | note |
+|---|---|---|---|
+| `root-fs-stall` | 120 s | 0.405 s | reads the journal/PSI |
+| `root-migration-bulk` | 120 s | 0.023 s | |
+| `budget-consistency` | 300 s | 0.065 s | |
+| `host-capacity` (shell) | 120 s | 0.072 s | |
+| `view-readability` | 600 s | — | needs `MISHE_SEED_HOME`; the timer supplies it |
+| `budget` (shell, 5 stages) | 600 s | 12.4 s | see split below |
+
+The only large one is `budget`, and its cost is mostly not CPU:
+
+| stage | wall | CPU |
+|---|---|---|
+| `claude_quota_text` | 5.24 s | 1.11 s |
+| `budget/collector.py --once` | 6.71 s | 1.94 s |
+| `mishe budget-produce` | 0.52 s | 0.46 s |
+| `budget_snapshot.py` | 0.03 s | ~0.03 s |
+
+So ~3.5 CPU-s and ~9 s of network wait per 10 minutes — about 21 CPU-s/hour for
+the whole budget path, and the waits are the Claude usage HTTP calls, which a Rust
+rewrite would not remove. Every other local Python duty is under half a second of
+wall per tick.
+
+Decision: the migration's next slice cannot be chosen on CPU grounds; no Python
+duty is CPU-bound enough to pay for a rewrite. What remains worth Rust is latency
+on an interactive path (a wake or render) or a *contract* gain (one authoritative
+implementation of a framing/verification rule). The budget duty's 9 s of network
+wait is a timeout/retry question, not a language question, and is left to its
+steward with these numbers.
