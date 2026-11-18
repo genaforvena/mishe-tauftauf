@@ -212,8 +212,10 @@ def uplink_state(rows, now):
     'uplink' and 'wan_link').
 
     Returns (code, message): 0 GREEN, 2 RED, 3 UNKNOWN.  A dead or stale probe is UNKNOWN, never GREEN.
-    A counter that went backwards (router reboot or driver reset) is UNKNOWN for this window and
-    suppresses the flap count, so a reboot cannot look like a flapping cable."""
+    Both counters are cumulative since the router booted and restart with it (or a driver reset), so
+    each is summed step by step and any step backwards is a restart: the values seen on either side
+    still count as a lower bound, three or more link drops stay RED, and a restarted window below
+    that is UNKNOWN — a reboot can neither look like a flapping cable nor hide one."""
     fresh = []
     for row in rows:
         try:
@@ -229,7 +231,7 @@ def uplink_state(rows, now):
     if not fresh:
         return 3, "network-care: no router uplink reading in the last two hours"
     fresh.sort()
-    last_ts, last_drop, last_err, last_link = fresh[-1]
+    last_ts, _, last_err, last_link = fresh[-1]
     if now - last_ts > UPLINK_MAX_AGE_S:
         return 3, f"network-care: newest router uplink reading is {(now - last_ts) / 60:.0f} min old"
     if last_err > 0:
@@ -238,27 +240,31 @@ def uplink_state(rows, now):
         return 3, "network-care: the newest router read has no physical WAN link state (speed/drops)"
     if len(fresh) < 2:
         return 3, "network-care: only one router uplink reading; no rate yet"
-    first_ts, first_drop, _, _ = fresh[0]
+    first_ts = fresh[0][0]
     span = last_ts - first_ts
-    if last_drop < first_drop:
-        return 3, "network-care: rx_dropped counter went backwards in this window (reset); no rate"
     if span <= 0:
         return 3, "network-care: router uplink readings do not span a time; no rate"
     duplex = last_link.get("duplex")
     link_txt = f"{last_link['device']} {last_link['speed_mbps']} Mb/s" + (
         f" {duplex} duplex" if duplex in ("full", "half") else "")
+    dropped, drops_restarted = nb.counter_steps([drop for _, drop, _, _ in fresh])
+    per_hour = dropped * 3600.0 / span
+    text = f"rx_dropped {per_hour:.0f}/h over {span / 3600:.1f} h"
     carriers = [(ts, link["carrier_down"]) for ts, _, _, link in fresh
                 if link and isinstance(link.get("carrier_down"), int)]
     flaps = None
-    if len(carriers) >= 2 and carriers[-1][1] >= carriers[0][1]:
-        flaps = carriers[-1][1] - carriers[0][1]
-    per_hour = (last_drop - first_drop) * 3600.0 / span
-    text = f"rx_dropped {per_hour:.0f}/h over {span / 3600:.1f} h"
+    carrier_restarted = False
+    if len(carriers) >= 2:
+        flaps, carrier_restarted = nb.counter_steps([count for _, count in carriers])
     if flaps is not None and flaps >= WAN_FLAP_RED:
         return 2, (f"network-care: the WAN link went down {flaps} times over {span / 3600:.1f} h "
                    f"({link_txt}; a cable or port fault)")
     if per_hour > UPLINK_RED_PER_HOUR and span >= UPLINK_MIN_SPAN_S:
         return 2, f"network-care: {text}, above {UPLINK_RED_PER_HOUR}/h for the full span"
+    if drops_restarted or carrier_restarted:
+        since = text + (f", {flaps} link drops" if flaps else "")
+        return 3, ("network-care: a WAN counter restarted inside the window (router reboot or driver "
+                   f"reset); counted since the restart: {since}; earlier window unknown")
     flap_txt = f", link down {flaps} times in the window" if flaps else ""
     return 0, f"network-care: uplink GREEN ({text}; {link_txt}{flap_txt})"
 

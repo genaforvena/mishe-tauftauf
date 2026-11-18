@@ -79,10 +79,37 @@ class UplinkStateTests(unittest.TestCase):
         self.assertEqual(code, 0, msg)
         self.assertIn("link down 2 times in the window", msg)
 
+    def test_a_reset_inside_the_window_keeps_the_drops_seen_before_it(self):
+        # 1 -> 5 (4 drops), reboot, then 2 -> 4 (4 counted since the reboot): 8, not the endpoints' 3.
+        rows = [row(NOW - 1800 + i * 300, 100, carrier_down=c)
+                for i, c in enumerate([1, 5, 2, 4])]
+        code, msg = care.uplink_state(rows, NOW)
+        self.assertEqual(code, 2, msg)
+        self.assertIn("went down 8 times", msg)
+
+    def test_a_reset_no_longer_hides_a_flapping_cable(self):
+        # Endpoints 1 -> 2 read as one drop; the steps are 3 then 2 after a reboot, so 5.
+        rows = [row(NOW - 1200 + i * 600, 100, carrier_down=c) for i, c in enumerate([1, 4, 2])]
+        code, msg = care.uplink_state(rows, NOW)
+        self.assertEqual(code, 2, msg)
+        self.assertIn("went down 5 times", msg)
+
+    def test_a_receive_drop_reset_counts_the_drops_seen_before_it(self):
+        # 1000 -> 3000 (2000 drops), reset, 10 since: 2010 over 2 h is still above the bound.
+        rows = [row(NOW - 7200, 1000), row(NOW - 3600, 3000), row(NOW - 60, 10)]
+        self.assertEqual(care.uplink_state(rows, NOW)[0], 2)
+
+    def test_a_receive_drop_reset_below_the_bound_is_unknown(self):
+        rows = [row(NOW - 7200, 1000), row(NOW - 3600, 1010), row(NOW - 60, 5)]
+        code, msg = care.uplink_state(rows, NOW)
+        self.assertEqual(code, 3, msg)
+        self.assertIn("restarted", msg)
+
     def test_carrier_counter_reset_is_not_a_flapping_cable(self):
         rows = [row(NOW - 1200, 100, carrier_down=7), row(NOW - 60, 130, carrier_down=1)]
         code, msg = care.uplink_state(rows, NOW)
-        self.assertEqual(code, 0, msg)
+        self.assertEqual(code, 3, msg)
+        self.assertIn("restarted", msg)
         self.assertNotIn("went down", msg)
 
 

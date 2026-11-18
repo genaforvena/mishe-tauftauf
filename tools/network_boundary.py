@@ -431,6 +431,29 @@ def decode_link_counters(lines, device):
     return {"device": device, **counters}
 
 
+def counter_steps(values):
+    """(total, restarted): what a cumulative counter went *up by* across these readings, and whether it
+    ever went backwards.
+
+    A kernel counter restarts at a router reboot or a driver reset.  Comparing only the endpoints
+    misses a restart that sits inside the window: 1, 5, 2, 4 reads as 3 instead of 8.  A step
+    backwards is therefore a restart: the value seen since it counts, and ``restarted`` says the
+    total is a lower bound (whatever happened between the last read before the restart and the
+    restart itself was never observed)."""
+    total = 0
+    restarted = False
+    prev = None
+    for value in values:
+        if prev is not None:
+            if value >= prev:
+                total += value - prev
+            else:
+                total += value
+                restarted = True
+        prev = value
+    return total, restarted
+
+
 def decode_router_rows(text):
     """Router log rows that carry a numeric ``ts``, oldest first. Malformed lines are skipped."""
     return [row for row in decode_json_lines(text) if isinstance(row.get("ts"), (int, float))]

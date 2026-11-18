@@ -45,13 +45,17 @@ above zero), or when `rx_dropped` grew by more than 400 per hour across a span o
 at least 1.8 h, or when the physical link went down (`carrier_down`) three or more
 times inside the window — a cable or port fault, not ISP maintenance. It is UNKNOWN
 when no row is newer than 15 minutes, when fewer than two rows fall in the window,
-when the `rx_dropped` counter went backwards (a router reboot or driver reset),
-when the newest row carries no `wan_link` or no negotiated speed, or when the log is
-unreadable — an alarm that cannot read the log is UNKNOWN, never a quiet pass. A
+when the newest row carries no `wan_link` or no negotiated speed, when a counter
+restarted inside the window and the drops counted since stayed below those bounds,
+or when the log is unreadable — an alarm that cannot read the log is UNKNOWN, never a quiet pass. A
 row whose `uplink` object is missing or `null` is skipped, so a reading that does not
-carry the counters can neither raise nor clear the alarm; a `carrier_down` counter
-that went backwards inside the window suppresses the flap count, so a reboot cannot
-look like a flapping cable.
+carry the counters can neither raise nor clear the alarm. Both counters are cumulative
+since the router booted, so the duty sums the steps between readings instead of
+subtracting the endpoints: a step backwards is a reboot or driver reset, the drops
+seen on either side still count (a lower bound, since what happened between the last
+reading before the restart and the restart itself was never observed), three or more
+observed link drops are still RED, and a restarted window below that is UNKNOWN — a
+reboot can neither look like a flapping cable nor hide one.
 
 The `network-wifi` duty (same checker, subcommand `wifi`, every 300 s, `max_age` 900 s,
 resolver `network`) watches that sub-reading separately: the router read can succeed while
@@ -114,12 +118,13 @@ is not mistaken for a quiet mind.
   rows (`rows()`), which at the current cadence is a few days, and the span line states that length.
 - `WAN LINK`: the WAN device's negotiated speed and duplex from the router's own
   `/sys/class/net` files, plus how many times the cable's carrier dropped since the router booted
-  and how many of those were in the last hour. The last-hour count compares the newest read with
-  the oldest read inside that hour, so an old boot does not hide a fresh drop. A downgraded
-  negotiation (for example 100 Mb/s) or repeated drops is the physical cause the page-load lines
-  cannot name. UNKNOWN when the newest read failed, carries no `wan_link`, or the kernel reports no
-  speed; a counter that went backwards in the last hour reads "counters reset in the last hour
-  (router reboot)", never "none". STALE past 15 minutes.
+  and how many of those were in the last hour. The last-hour count sums the counter's
+  steps between the readings inside that hour, so an old boot does not hide a fresh drop.
+  A downgraded negotiation (for example 100 Mb/s) or repeated drops is the physical cause
+  the page-load lines cannot name. UNKNOWN when the newest read failed, carries no
+  `wan_link`, or the kernel reports no speed; a step backwards in the last hour (a reboot
+  or driver reset) still counts the drops since it and reads "at least N in the last hour
+  (counters reset by a reboot)", never "none". STALE past 15 minutes.
 - `WHERE TIME GOES`: of the page-load time just above, how much went into reaching the site
   (`connect_ms`) and how much into the secure handshake (`tls_ms`), for the newest probe only.
   It also gives the handshake's usual median over the loaded rows and, when both have at least

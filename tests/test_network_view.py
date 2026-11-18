@@ -249,8 +249,16 @@ def test_wan_link_line_marks_a_reset_after_a_router_reboot(tmp_path, monkeypatch
     now = 1_000_000.0
     _router_log(tmp_path, monkeypatch, [_wan_read(now - 1800, 7), _wan_read(now, 1, uptime=900)])
     line = view.wan_link_line(now)
-    assert "counters reset in the last hour (router reboot)" in line
+    assert "at least 1 in the last hour (counters reset by a reboot)" in line
     assert "in the last hour," not in line
+
+
+def test_wan_link_line_counts_across_a_reset_inside_the_hour(tmp_path, monkeypatch):
+    # 3 -> 4 (1 drop), reboot, 2 since: 3 in the hour, not the endpoint difference of -1.
+    now = 1_000_000.0
+    _router_log(tmp_path, monkeypatch, [_wan_read(now - 2400, 3), _wan_read(now - 1200, 4),
+                                        _wan_read(now, 2, uptime=900)])
+    assert ", at least 3 in the last hour (counters reset by a reboot)" in view.wan_link_line(now)
 
 
 def test_wan_link_line_unknown_without_physical_state(tmp_path, monkeypatch):

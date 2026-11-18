@@ -501,9 +501,10 @@ def uplink_line(now=None):
 def wan_link_line(now=None):
     """Physical WAN link from the last recorded router read: negotiated speed/duplex and carrier drops.
 
-    The drop counter is the kernel's own since the router booted. The last-hour clause compares this read
-    with the oldest read inside the hour, so a cable that dropped is visible even when the boot is old;
-    a counter that went backwards means the router rebooted, not a calm link.
+    The drop counter is the kernel's own since the router booted. The last-hour clause sums the counter's
+    steps between the readings inside the hour, so a cable that dropped is visible even when the boot
+    is old; a step backwards means the router rebooted (or the driver reset), and the drops since it
+    are counted as a lower bound, never as "none".
     """
     now = time.time() if now is None else now
     rows_ = router_rows()
@@ -533,13 +534,16 @@ def wan_link_line(now=None):
     hour = [r for r in rows_ if now - r["ts"] <= 3600 and r.get("ok")
             and isinstance((r.get("wan_link") or {}).get("carrier_down"), int)]
     if len(hour) >= 2:
-        before = hour[0]["wan_link"]["carrier_down"]
-        if down < before:
+        counts = [r["wan_link"]["carrier_down"] for r in hour]
+        in_hour, restarted = nb.counter_steps(counts)
+        if restarted and in_hour:
+            hour_txt = f", at least {in_hour} in the last hour (counters reset by a reboot)"
+        elif restarted:
             hour_txt = ", counters reset in the last hour (router reboot)"
-        elif down == before:
-            hour_txt = ", none in the last hour"
+        elif in_hour:
+            hour_txt = f", {in_hour} in the last hour"
         else:
-            hour_txt = f", {down - before} in the last hour"
+            hour_txt = ", none in the last hour"
     else:
         hour_txt = ", last-hour drops UNKNOWN"
     return f"{device}: {link_txt}; {since_boot}{hour_txt}; read {ago:.0f} s ago{stale}"
