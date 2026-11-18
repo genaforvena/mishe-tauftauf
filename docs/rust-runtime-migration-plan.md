@@ -3947,3 +3947,10 @@ byte walk is the next: `os.walk`+`lstat` over 323 worktrees is the shape POSIX
 
 Neither is a protocol or delivery change; both are ordinary slices with a
 measured pre-gate A/B.
+
+**The profiler inflates the JSON block 2.3×; the real cost is 1.9 CPU-s.** Timed
+unprofiled in a fresh process, `read_scan_series(home, "sense.disk.free")` costs
+1.983 / 1.925 / 1.915 CPU-s (2,138 rows from 2,176 receipts; artifact
+`scan-series-baseline-20261118.txt`). So the summary-line slice is worth ~1.9 of
+the run's 22.4 CPU-s, ~0.3 % of one core — the cheapest *clean* slice on the
+list, not a large one, and it retires a cost that grows with the corpus.
