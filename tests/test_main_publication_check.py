@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -155,8 +156,10 @@ def test_the_rendered_duty_unit_also_leaves_the_check_room_to_report(tmp_path):
     """The manifest number is not the one that kills the check: ``producers.load`` passes it as the
     wrapper's ``--timeout`` and ``units.render`` writes it plus its own slack as ``TimeoutStartSec``.
     Both must stay above the check's self-enforced budget, or a change here silently re-creates the
-    kill-before-the-reason failure that the manifest test above would still pass."""
-    from mishe_tauftauf import duties, producers
+    kill-before-the-reason failure that the manifest test above would still pass. The rendered line is
+    read too: a unit that loses ``TimeoutStartSec`` falls back to systemd's 90 s default, which would
+    kill the check before its own 240 s bound even though ``prod.timeout`` stayed correct."""
+    from mishe_tauftauf import duties, producers, units
 
     declared = duties.declared(REPO, tmp_path)
     entry = next(d for d in declared if d['name'] == 'main-publication')
@@ -167,6 +170,14 @@ def test_the_rendered_duty_unit_also_leaves_the_check_room_to_report(tmp_path):
     assert timeout == str(entry['timeout'])
     assert prod.timeout > entry['timeout'] > pub.BUDGET          # TimeoutStartSec = --timeout + 30
     assert prod.command[-3:] == [str(REPO / 'checks' / 'main-publication.py'), '--repo', str(REPO)]
+
+    cfg = units.Config(home=tmp_path / 'site', repo=REPO, python='/usr/bin/python3',
+                       pythonpath=str(REPO / 'src'), unit_dir=tmp_path / 'units')
+    rendered = units.render(cfg, [], producers=[prod])['mishe-producer-main-publication.service']
+    kill = re.search(r'^TimeoutStartSec=(\d+)$', rendered, re.M)
+
+    assert kill, 'the duty unit must name the deadline systemd kills the check at'
+    assert int(kill.group(1)) == prod.timeout > entry['timeout'] > pub.BUDGET
 
 
 def test_an_unreadable_remote_ref_is_unknown_with_its_own_cause(tmp_path, monkeypatch):
