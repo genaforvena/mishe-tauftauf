@@ -8,6 +8,7 @@ empty site home so they stay fast and do not load the live tape.
 """
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -147,6 +148,38 @@ def test_artifact_records_the_reading(tmp_path):
     # The reading is only auditable if the guard facts it was taken under are kept.
     assert data["guard"]["online_cpus"] >= 1
     assert "cpu_pressure_some_avg10" in data["guard"]
+
+
+def test_fold_reports_its_own_peak_not_the_launchers(tmp_path):
+    # Plan 10.57: across fork+exec Linux carries the launcher's resident set into
+    # the child's ru_maxrss. A caller that had loaded the tape in-process (a wake
+    # engine at ~350 MB) made the same fold read 3x larger and would have tripped
+    # the RSS bar on a fold that never grew. The reading must be the child's own
+    # VmHWM, so a 300 MB launcher cannot move it.
+    mod = check_module()
+    home = tmp_path / "site"
+    home.mkdir()
+    ballast = bytearray(300 * 1024 * 1024)
+    for offset in range(0, len(ballast), 4096):  # touch every page: real RSS, not reserved
+        ballast[offset] = 1
+    launcher_kb = _vmhwm_kb()
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO / "src")
+    proc = subprocess.run(
+        [sys.executable, "-c", mod.CHILD, str(home), "senses"],
+        capture_output=True, text=True, timeout=120, env=env)
+    del ballast
+    assert proc.returncode == 0, proc.stderr
+    assert launcher_kb > 250_000, "ballast did not become resident; the test would be vacuous"
+    reading = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert reading["maxrss_kb"] < 200_000, reading
+
+
+def _vmhwm_kb() -> int:
+    for line in Path("/proc/self/status").read_text().splitlines():
+        if line.startswith("VmHWM:"):
+            return int(line.split()[1])
+    raise AssertionError("/proc/self/status has no VmHWM")
 
 
 def test_duty_declares_host_busy_exit_as_unknown():

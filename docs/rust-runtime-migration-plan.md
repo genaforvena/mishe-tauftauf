@@ -3371,3 +3371,30 @@ is reset at exec and therefore this process's own peak, falling back to
 the child now reports 100,312 KB; a full run is GREEN (`senses 116 MB`,
 `genome 98 MB`) and `tests/test_rust_measurement.py` passes (21 tests). The 110-120
 MB band in history is unchanged and stays comparable.
+
+### 10.58 The RSS fix is live, and the regression now has a test that fails without it (2026-11-18)
+
+`caf4259d` reached the pin at 00:38Z (`runtime/current` →
+`releases/c65de545…`, `git merge-base --is-ancestor caf4259d c65de545` true) and
+the release copy of `checks/rust-measurement.py` has the checkout's sha256
+(`78e4af40…`). The next hourly run, 00:51:20Z, is the first admitted fold under
+those bytes:
+
+| role | reader CPU-s | children CPU-s | total CPU-s | peak RSS | entries |
+|---|---|---|---|---|---|
+| senses | 3.153 | 2.824 | 5.977 | 120,300 KB | 36,388 |
+| genome | 3.116 | 2.781 | 5.897 | 100,908 KB | 30,341 |
+
+`binaries 9 checked, drift []`, no `over`, verdict `green`, `load1 1.22`. Same
+100-120 MB band as before the fix, so the VmHWM reading is comparable and the
+launcher's already-small resident set was not contributing — the fix removes the
+floor a larger caller would have added.
+
+The fix had no test: `peak_rss_kb` lives inside the child script and nothing
+exercised it. Added `test_fold_reports_its_own_peak_not_the_launchers`: the test
+process makes 300 MB resident, then runs the module's own `CHILD` and requires
+`maxrss_kb < 200_000`, with an assertion that the launcher really did exceed
+250,000 KB so the test cannot go vacuous. Measured both sides: with the current
+code the child reports ~100 MB under a 341 MB launcher; with the `VmHWM` branch
+deleted the identical child reports **340,752 KB**. So the test fails on the old
+behaviour and passes on the fixed one. `tests/test_rust_measurement.py` 22 passed.
