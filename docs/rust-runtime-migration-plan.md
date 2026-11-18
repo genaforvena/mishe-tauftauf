@@ -3463,3 +3463,14 @@ on an interactive path (a wake or render) or a *contract* gain (one authoritativ
 implementation of a framing/verification rule). The budget duty's 9 s of network
 wait is a timeout/retry question, not a language question, and is left to its
 steward with these numbers.
+
+The latency hypothesis was then tested on the interactive path itself, because a
+wake or render that paid a 3 s fold would be a real seam: `mishe pain read
+rust-plan --launcher dashboard` is **0.15 s / 0.15 CPU-s**, the bare `mishe pain
+read rust-plan` is 0.32-0.40 s wall at 0.18 CPU-s, and neither runs the tape
+projection (875 bytes of signal state, not `role_entries`). So the interactive
+dossier does not read the fold either, and the fold's cost stays confined to the
+hourly duty. Both candidate rationales — CPU and interactive latency — are now
+measured negative on this plant; a future slice needs a different reason (a broken
+contract, a responsibility with two live implementations, or a new workload), not
+another optimisation of an existing one.
