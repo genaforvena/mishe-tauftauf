@@ -586,10 +586,43 @@ EGRESS_STATE = SITE / "health" / "egress.json"
 EGRESS_STALE_S = 900  # the egress duty runs every 5 minutes; 15 minutes without a write is stale
 
 
-def exit_line(now=None, path=EGRESS_STATE):
+def plain_name(name):
+    """A name with case, spaces and punctuation removed, for matching a duty's id to a router's name."""
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+def wifi_presence(now=None, path=ROUTER_LOG):
+    """plain_name -> dBm for each client in the newest recorded router read; {} when there is none.
+
+    Only a fresh, successful read counts: a stale listing must not be used to explain why a client
+    does not answer. A MAC is never involved; the router's own hostname is matched to the egress
+    duty's client id, so `imac-rozalia` finds `iMac-Rozalia`.
+    """
+    now = time.time() if now is None else now
+    try:
+        rows_ = nb.decode_router_rows(path.read_text())
+    except OSError:
+        return {}
+    if not rows_:
+        return {}
+    last = rows_[-1]
+    if not last.get("ok") or not 0 <= now - last["ts"] <= STALE_ROUTER_S:
+        return {}
+    out = {}
+    for client in last.get("clients") or []:
+        name, dbm = client.get("name"), client.get("dbm")
+        if isinstance(name, str) and isinstance(dbm, int):
+            out.setdefault(plain_name(name), dbm)
+    return out
+
+
+def exit_line(now=None, path=EGRESS_STATE, presence=None):
     """EXIT NODE in plain words: each client's tailscale exit-node state from the egress duty's file.
 
-    Read-only. A missing, unreadable or stale file is UNKNOWN, never a calm all-GREEN.
+    Read-only. A missing, unreadable or stale file is UNKNOWN, never a calm all-GREEN. A client that
+    is still in the Wi-Fi listing while it does not answer is explained that way: the duty's ssh
+    detail (`No route to host`) reads like a fault, but an associated client that is simply asleep
+    looks the same, and the household sees its name in the Wi-Fi line right above.
     """
     now = time.time() if now is None else now
     try:
@@ -617,10 +650,17 @@ def exit_line(now=None, path=EGRESS_STATE):
     bad = [r for r in results if r.get("state") != "GREEN"]
     head = "all GREEN" if not bad else f"{len(bad)} of {len(results)} not GREEN"
     lines = [f"{head}: " + ", ".join(states) + f"; read {age_min:.0f} min ago"]
+    wifi = (wifi_presence(now) if presence is None else presence) if bad else {}
     for r in bad[:REASON_CLIENTS]:
+        name = str(r.get("client", "?"))[:24]
+        dbm = wifi.get(plain_name(name))
+        if dbm is not None:
+            lines.append(" " * 17 + f"{name} {normalized[id(r)]}: still on Wi-Fi at {dbm} dBm; "
+                                    "not answering ssh (it may be asleep)")
+            continue
         why = first_reason(r)
         if why:
-            lines.append(" " * 17 + f"{str(r.get('client', '?'))[:24]} {normalized[id(r)]}: {why}")
+            lines.append(" " * 17 + f"{name} {normalized[id(r)]}: {why}")
     return "\n".join(lines)
 
 

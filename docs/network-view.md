@@ -108,8 +108,12 @@ is not mistaken for a quiet mind.
 - `EXIT NODE`: each client's exit-node state from the `egress` duty's file with the file's age. A
   client that is not GREEN gets an indented line with that duty's own first reason, cut to one
   line at a word boundary, for at most three clients, so an UNKNOWN or RED client says why it is
-  not GREEN (for example "the client could not be reached: …"). UNKNOWN when the file is missing,
-  unreadable or over 15 minutes old.
+  not GREEN (for example "the client could not be reached: …"). When that client is still in the
+  newest recorded router read, the line instead names the fact a household can see for itself —
+  `still on Wi-Fi at -29 dBm; not answering ssh (it may be asleep)` — because an associated device
+  that has gone to sleep and a real connectivity fault produce the same `No route to host`. An
+  older read (over 15 minutes) is not used for that, so a stale listing cannot explain a live
+  fault. UNKNOWN when the file is missing, unreadable or over 15 minutes old.
 - `RECORDED 5-MIN`: the recorded router read (one per 5 minutes): client count by band, weakest
   device by name and dBm, the age of that read and the client count over the last hour. It is the
   read that supplies the device names the live `WI-FI` line shows.

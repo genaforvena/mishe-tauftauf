@@ -74,12 +74,43 @@ def test_non_green_client_names_its_cause(tmp_path):
         {"client": "imac-rozalia", "state": "UNKNOWN",
          "reasons": ["the client could not be reached: ssh: connect to host 192.168.8.214 port 22: No route to host"]},
     ])
-    line = view.exit_line(now=now, path=path)
+    line = view.exit_line(now=now, path=path, presence={})
     head, detail = line.split("\n")
     assert head.startswith("1 of 2 not GREEN")
     assert "mesh-home GREEN" in head and "imac-rozalia UNKNOWN" in head
     assert "imac-rozalia UNKNOWN: the client could not be reached" in detail
     assert "No route to host" not in detail or len(detail) <= 17 + 24 + 2 + view.REASON_CHARS
+
+
+def test_a_client_still_on_wifi_is_explained_that_way(tmp_path):
+    path, now = write(tmp_path, [
+        {"client": "mesh-home", "state": "GREEN"},
+        {"client": "imac-rozalia", "state": "UNKNOWN",
+         "reasons": ["the client could not be reached: ssh: connect to host 192.168.8.214 port 22: No route to host"]},
+    ])
+    detail = view.exit_line(now=now, path=path, presence={"imacrozalia": -29}).split("\n")[1]
+    assert "imac-rozalia UNKNOWN: still on Wi-Fi at -29 dBm" in detail
+    assert "asleep" in detail
+    assert "No route to host" not in detail
+    assert len(detail) <= 17 + 24 + 2 + view.REASON_CHARS
+
+
+def test_a_client_not_on_wifi_keeps_its_cause(tmp_path):
+    path, now = write(tmp_path, [{"client": "note3", "state": "RED",
+                                  "reasons": ["tailscale reports the exit node unreachable"]}])
+    detail = view.exit_line(now=now, path=path, presence={"imacrozalia": -29}).split("\n")[1]
+    assert "tailscale reports the exit node unreachable" in detail
+    assert "still on Wi-Fi" not in detail
+
+
+def test_wifi_presence_matches_the_router_name_and_ignores_a_stale_read(tmp_path):
+    log = tmp_path / "router.jsonl"
+    log.write_text(json.dumps({"ts": 1000.0, "ok": True,
+                               "clients": [{"name": "iMac-Rozalia", "dbm": -29, "band": "2.4"}]}) + "\n",
+                   encoding="utf-8")
+    assert view.wifi_presence(now=1060.0, path=log) == {"imacrozalia": -29}
+    assert view.wifi_presence(now=1000.0 + view.STALE_ROUTER_S + 60, path=log) == {}
+    assert view.wifi_presence(now=1000.0, path=tmp_path / "absent.jsonl") == {}
 
 
 def test_cause_line_stays_one_window_width(tmp_path):
