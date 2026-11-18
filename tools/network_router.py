@@ -27,10 +27,11 @@ LOG_NAME = "router.jsonl"
 KEEP_S = 2 * 86400
 TIMEOUT_S = 20
 COOLDOWN_S = 900  # after a read over the router self-limit, do not ssh the router again for this long
-BANDS = {"ra0": "2.4", "rax0": "5"}  # radio name -> GHz; ra0 is the 2.4 GHz radio, rax0 the 5 GHz one
+BANDS = dict(nb.RADIO_BANDS)  # radio name -> GHz; ra0 is the 2.4 GHz radio, rax0 the 5 GHz one
 REMOTE = (
     'echo "UPTIME $(cut -d" " -f1 /proc/uptime)"; '
-    "for d in ra0 rax0; do echo \"RADIO $d\"; iwinfo $d info 2>/dev/null | grep -E 'Channel:|Noise:'; "
+    f"for d in {' '.join(name for name, _band in nb.RADIO_BANDS)}; do echo \"RADIO $d\"; "
+    "iwinfo $d info 2>/dev/null | grep -E 'Channel:|Noise:'; "
     "iwinfo $d assoclist 2>/dev/null; "
     "iwpriv $d stat 2>/dev/null | grep -E 'Tx success|Tx fail count|Rx success|Rx with CRC|CurrentTemperature'; done; "
     'echo LEASES; cat /tmp/dhcp.leases 2>/dev/null; echo WAN; '

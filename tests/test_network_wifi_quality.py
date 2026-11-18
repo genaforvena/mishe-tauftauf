@@ -129,6 +129,16 @@ def test_line_names_a_band_whose_counters_are_missing(tmp_path, monkeypatch):
     assert "5 GHz transmission counters UNKNOWN (missing from the newest read)" in line, line
 
 
+def test_line_names_a_band_that_vanished_from_the_newest_read(tmp_path, monkeypatch):
+    # a row from before a silent radio was kept: the band is simply not there, and must not be silent
+    rows = [{"ts": NOW - 60, "ok": True, "uptime_s": 900,
+             "radios": [radio("2.4", {"tx_ok": 1000, "tx_fail": 10, "tx_per": 1.0})]}]
+    write_rows(tmp_path, monkeypatch, rows)
+    line = view.wifi_quality_line(now=NOW)
+    assert "2.4 GHz 1.0% of attempts failed since boot" in line, line
+    assert "5 GHz transmission counters UNKNOWN (radio missing from the newest read)" in line, line
+
+
 def test_line_is_unknown_and_stale_for_an_old_read(tmp_path, monkeypatch):
     log = tmp_path / "router.jsonl"
     import json

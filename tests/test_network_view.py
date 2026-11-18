@@ -108,6 +108,14 @@ def test_live_wifi_line_keeps_the_bare_dbm_when_no_recorded_name_matches(tmp_pat
     assert weak is True
 
 
+def test_live_wifi_line_names_a_band_its_listing_did_not_show(tmp_path, monkeypatch):
+    # the router has one access point per band; a listing that showed only one is a gap, not "0 clients"
+    _router_log(tmp_path, monkeypatch, {"ts": time.time(), "ok": True, "clients": []})
+    _wifi_read(monkeypatch, "BAND 2.472\n7C:C3:A1:A5:20:D7  -81 dBm / unknown  0 ms ago\n")
+    text, _weak = view.wifi_facts()
+    assert "2.4 GHz 1" in text and "5 GHz UNKNOWN" in text, text
+
+
 def _probe(at, down):
     internet = {"gstatic": {"ok": not down, "total_ms": None if down else 300.0},
                 "cloudflare": {"ok": not down, "total_ms": None if down else 280.0}}

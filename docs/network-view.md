@@ -148,9 +148,14 @@ is not mistaken for a quiet mind.
   its dBm, its band and the name the household knows it by when the recorded read has that client;
   a device that only just joined shows as its dBm until the next recorded read names it. WEAK SIGNAL
   when the weakest client is below -75 dBm. The listing is read over ssh and nothing is written; the
-  MAC the router prints is mapped to the same short hash the router row stores and never shown.
+  MAC the router prints is mapped to the same short hash the router row stores and never shown. A band
+  the listing did not show (its radio gave nothing) is named `UNKNOWN` there, so a silent 5 GHz radio
+  is not read as "0 clients on 5 GHz".
 - `WI-FI RADIO`: each known radio's channel, frequency and noise floor from the read-only router
   pass, with the age of the reading; UNKNOWN when the sub-reading is absent, STALE past 15 minutes.
+  The router has one access point per band (`ra0` on 2.4 GHz, `rax0` on 5 GHz), so a band the newest
+  read does not carry is named `UNKNOWN (missing from the newest read)` instead of quietly leaving a
+  one-band line; the same gap turns `network-wifi` UNKNOWN.
 - `WI-FI QUALITY`: one line per radio — the share of transmit attempts that failed since the router
   booted, the share that failed over the last hour (the difference between two recorded counter
   reads, at least 10 minutes apart), and the driver's own error rate (`driver's error rate N%`, the
@@ -170,7 +175,8 @@ is not mistaken for a quiet mind.
   existed, or a driver that stopped printing it, is never shown as a quiet radio. UNKNOWN when the
   newest read carries no counters on any radio (a
   band whose counters are missing from the newest read is named "UNKNOWN (missing from the newest
-  read)" rather than dropped, and `network-wifi` turns UNKNOWN too), or when a reboot has left fewer
+  read)" rather than dropped, and `network-wifi` turns UNKNOWN too; a band absent from the newest read
+  altogether says `radio missing from the newest read`), or when a reboot has left fewer
   than two counter reads (10 minutes apart) in the hour, which shows as `(last hour UNKNOWN)`. A reboot
   restarts the counters from zero, so only reads after it bracket a rate; with two post-reboot reads
   the line shows that shorter span instead of UNKNOWN. After the last-hour share the line says how that

@@ -423,8 +423,11 @@ def wifi_facts():
         return None, False
     names = client_names()
     parts, weakest, weakest_band, weakest_name = [], None, None, None
-    for band in sorted(bands):
-        clients = bands[band]
+    for band in sorted(set(bands) | set(nb.EXPECTED_BANDS)):
+        clients = bands.get(band)
+        if clients is None:  # the router has this band, the live listing did not show its radio
+            parts.append(f"{band} GHz UNKNOWN")
+            continue
         parts.append(f"{band} GHz {len(clients)}")
         if clients:
             cid, dbm = min(clients, key=lambda client: client[1])
@@ -741,7 +744,9 @@ def vpn_line(now=None):
 def wifi_radio_line(now=None):
     """Wi-Fi channel and noise floor from the newest recorded router read.
 
-    A read with no radio info is UNKNOWN, never a quiet channel; an old read is STALE.
+    A read with no radio info is UNKNOWN, never a quiet channel; an old read is STALE. A band the
+    router has (``nb.EXPECTED_BANDS``) but the newest read does not carry is named UNKNOWN, so a
+    silent radio never looks like a house with one band.
     """
     now = time.time() if now is None else now
     rows_ = router_rows()
@@ -765,6 +770,10 @@ def wifi_radio_line(now=None):
         text = f"{band} GHz ch {ch} ({freq:g} GHz)"
         text += f", noise {noise} dBm" if noise is not None else ", noise UNKNOWN"
         parts.append(text)
+    named = {radio.get("band") for radio in last["radios"] if isinstance(radio, dict)}
+    for band in nb.EXPECTED_BANDS:
+        if band not in named:  # the row was written before a silent radio was kept; name the gap anyway
+            parts.append(f"{band} GHz UNKNOWN (missing from the newest read)")
     stale = "  STALE" if ago > STALE_ROUTER_S else ""
     return f"{'; '.join(parts)}; read {ago:.0f} s ago{stale}"
 
@@ -859,7 +868,9 @@ def wifi_quality_line(now=None):
     receive side 15.7% CRC against PER 0.7%), so its population and averaging window are the driver's
     own and are not measured here: the trailing clause says the window is not measured instead of
     claiming a period. When the newest read carries no PER the clause says UNKNOWN instead of
-    vanishing: an absent number must not read as a quiet radio.
+    vanishing: an absent number must not read as a quiet radio. A band the router has
+    (``nb.EXPECTED_BANDS``) but the newest read does not carry is named UNKNOWN for the same reason:
+    a silent radio must not leave a calm one-band line behind.
     """
     now = time.time() if now is None else now
     reads = [r for r in router_rows() if r.get("ok") and isinstance(r.get("radios"), list)
@@ -899,6 +910,10 @@ def wifi_quality_line(now=None):
         else:
             text += "; driver's error rate UNKNOWN"
         parts.append(text)
+    named = {radio.get("band") for radio in last["radios"] if isinstance(radio, dict)}
+    for band in nb.EXPECTED_BANDS:
+        if band not in named:  # a row from before a silent radio was kept: name the gap, never hide it
+            parts.append(f"{band} GHz transmission counters UNKNOWN (radio missing from the newest read)")
     if not parts:
         return "UNKNOWN (the router read carried no transmission counters)"
     temps = [(r.get("stats") or {}).get("temp_c") for r in last["radios"] if isinstance(r, dict)]

@@ -53,6 +53,22 @@ def test_router_row_carries_both_radios_without_changing_clients():
     assert len(body["clients"]) == 2 and body["clients"][0]["rx"] == 39.0
 
 
+def test_router_row_keeps_a_radio_that_returned_nothing():
+    # iwinfo printed no channel or noise for rax0 (radio down, or its iwinfo pass failing): the band
+    # must stay in the row with empty fields, never vanish and leave a calm one-band row behind.
+    stdout = "\n".join([
+        "UPTIME 958323.10",
+        "RADIO ra0", *INFO_24,
+        "RADIO rax0",
+        "LEASES", "WAN", "LINKS",
+    ])
+    body = boundary.decode_router_output(stdout, dict(boundary.RADIO_BANDS), lambda mac: "x")
+    assert body["radios"] == [
+        {"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -56, "stats": None},
+        {"band": "5", "channel": None, "freq_ghz": None, "noise_dbm": None, "stats": None},
+    ]
+
+
 def test_view_line_names_both_bands_with_age(tmp_path, monkeypatch):
     log = tmp_path / "router.jsonl"
     row = {"ts": 1000.0, "ok": True, "radios": [
@@ -90,6 +106,16 @@ def test_view_line_does_not_invent_a_missing_channel(tmp_path, monkeypatch):
     assert "5 GHz channel UNKNOWN" in view.wifi_radio_line(now=1060.0)
 
 
+def test_view_line_names_a_band_absent_from_the_newest_read(tmp_path, monkeypatch):
+    # a row written before a silent radio was kept carries one band only; the line must name the gap
+    log = tmp_path / "router.jsonl"
+    log.write_text('{"ts": 1000.0, "ok": true, "radios": '
+                   '[{"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -56}]}\n')
+    monkeypatch.setattr(view, "ROUTER_LOG", log)
+    line = view.wifi_radio_line(now=1060.0)
+    assert "5 GHz UNKNOWN (missing from the newest read)" in line, line
+
+
 care_spec = importlib.util.spec_from_file_location("network_care_wifi_under_test", REPO / "checks" / "network-care.py")
 care = importlib.util.module_from_spec(care_spec)
 care_spec.loader.exec_module(care)
@@ -115,10 +141,29 @@ def test_detector_unknown_when_one_bands_counters_are_missing():
 
 
 def test_detector_unknown_when_the_counters_are_missing():
-    no_stats = [{"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -55}]
+    no_stats = [{"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -55},
+                {"band": "5", "channel": 40, "freq_ghz": 5.2, "noise_dbm": -55}]
     code, message = care.wifi_state([wifi_row(NOW - 60, radios=no_stats)], NOW)
     assert code == 3, message
     assert "counters missing" in message
+
+
+def test_detector_unknown_when_a_band_vanished_from_the_read():
+    # a row from before a silent radio was kept: 5 GHz is simply absent, which must not read as GREEN
+    only_24 = [{"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -55,
+                "stats": {"tx_ok": 5000, "tx_fail": 50, "tx_per": 1.0}}]
+    code, message = care.wifi_state([wifi_row(NOW - 60, radios=only_24)], NOW)
+    assert code == 3, message
+    assert "no radio reading for 5 GHz" in message
+
+
+def test_detector_unknown_when_a_radio_returned_nothing():
+    silent = [{"band": "2.4", "channel": 13, "freq_ghz": 2.472, "noise_dbm": -55,
+               "stats": {"tx_ok": 5000, "tx_fail": 50, "tx_per": 1.0}},
+              {"band": "5", "channel": None, "freq_ghz": None, "noise_dbm": None, "stats": None}]
+    code, message = care.wifi_state([wifi_row(NOW - 60, radios=silent)], NOW)
+    assert code == 3, message
+    assert "5 GHz radio returned no channel or noise" in message
 
 
 def test_detector_unknown_when_the_drivers_frame_loss_is_missing():

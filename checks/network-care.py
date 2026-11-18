@@ -365,7 +365,10 @@ def wifi_state(rows, now):
     Row shape: {"ts", "ok", "radios": [{"band", "channel", "freq_ghz", "noise_dbm", "stats"}, ...]}.
     Returns (code, message): 0 GREEN, 2 RED, 3 UNKNOWN. A missing, stale or incomplete reading
     is UNKNOWN; impossible channel or noise values are RED. This detects a dead sub-probe —
-    the whole router read can still succeed while iwinfo or iwpriv silently yields nothing.
+    the whole router read can still succeed while iwinfo or iwpriv silently yields nothing. A band
+    that is absent from the newest read, or present with no channel and noise, is UNKNOWN naming the
+    band: the router has one access point per band (``nb.EXPECTED_BANDS``), so a one-band row is a
+    silent radio, never a quiet house.
     """
     fresh = []
     for row in rows:
@@ -395,7 +398,8 @@ def wifi_state(rows, now):
             return 3, "network-care: Wi-Fi radio reading unreadable"
         band, ch, noise = radio.get("band"), radio.get("channel"), radio.get("noise_dbm")
         if not band or not isinstance(ch, int) or not isinstance(noise, int):
-            return 3, "network-care: Wi-Fi radio reading incomplete (channel or noise missing)"
+            return 3, (f"network-care: {band or 'a'} GHz radio returned no channel or noise"
+                       " in the newest router read")
         if ch < 1 or ch > 196 or noise >= 0 or noise < -120:
             return 2, f"network-care: impossible Wi-Fi channel {ch} or noise {noise} dBm on {band} GHz"
         parts.append(f"{band} GHz ch {ch}, noise {noise} dBm")
@@ -405,6 +409,12 @@ def wifi_state(rows, now):
             missing.append(band)
         elif not isinstance(stats.get("tx_per"), (int, float)):
             missing_per.append(band)
+    gone = [band for band in nb.EXPECTED_BANDS
+            if band not in {radio.get("band") for radio in radios if isinstance(radio, dict)}]
+    if gone:
+        return 3, ("network-care: no radio reading for "
+                   + ", ".join(f"{band} GHz" for band in gone)
+                   + " in the newest router read (that radio or its iwinfo pass returned nothing)")
     if len(missing) == len(radios):
         return 3, "network-care: Wi-Fi transmission counters missing from the newest router read"
     if missing:

@@ -243,6 +243,12 @@ RADIO_STAT_LINES = {
 RADIO_PERCENT_LINES = {
     "tx_per": re.compile(r"^\s*Tx fail count\s*=\s*\d+,\s*PER=([\d.]+)%"),
 }
+# The home router has one access point per band: ra0 on 2.4 GHz, rax0 on 5 GHz. The probe's remote read
+# asks for exactly these, and a good row carries both; a row that carries only one band means that radio
+# (or its iwinfo/iwpriv pass) went silent, not that the house has one band. The probe builds its radio
+# map and its remote loop from this, so a request and an expectation cannot drift apart.
+RADIO_BANDS = (("ra0", "2.4"), ("rax0", "5"))
+EXPECTED_BANDS = tuple(band for _name, band in RADIO_BANDS)
 
 
 def decode_radio_stats(lines):
@@ -297,20 +303,23 @@ def decode_router_output(stdout, bands, client_id):
 
     radios = []
     clients = []
-    for key in [k for k in sections if k.startswith("RADIO ")]:
-        radio = key.split()[1]
-        if radio not in bands:
-            continue
-        info = decode_wifi_radio(sections[key])
-        if info is not None:
-            radios.append({"band": bands[radio], **info, "stats": decode_radio_stats(sections[key])})
+    for radio, band in bands.items():
+        key = "RADIO " + radio
+        lines = sections.get(key, [])
+        info = decode_wifi_radio(lines)
+        if info is None:
+            # iwinfo printed no channel or noise (or the remote read never reached this radio): keep the
+            # band in the row with every field None, so a silent radio is evidence a reader can see, never
+            # a band that quietly vanished from the read and left a calm one-band row behind.
+            info = {"channel": None, "freq_ghz": None, "noise_dbm": None}
+        radios.append({"band": band, **info, "stats": decode_radio_stats(lines)})
         current_station = None
-        for line in sections[key]:
+        for line in lines:
             m = STATION_LINE.match(line.strip())
             if m:
                 mac = m.group(1)
                 current_station = {"id": client_id(mac), "name": names.get(mac.lower(), "unnamed device"),
-                                   "band": bands[radio], "dbm": int(m.group(2)), "rx": None, "tx": None}
+                                   "band": band, "dbm": int(m.group(2)), "rx": None, "tx": None}
                 clients.append(current_station)
                 continue
             r = RATE_LINE.match(line)
