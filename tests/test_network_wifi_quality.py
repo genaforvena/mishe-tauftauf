@@ -145,3 +145,67 @@ def test_a_reboot_leaves_the_last_hour_rate_unknown(tmp_path, monkeypatch):
     monkeypatch.setattr(view, "ROUTER_LOG", log)
     line = view.wifi_quality_line(now=NOW)
     assert "since boot" in line and "(last hour UNKNOWN)" in line, line
+
+
+USUAL_NOW = NOW + 1200.0  # twenty minutes past the clock hour, so "last hour" and the completed hours differ
+
+
+def counter_history(now, hours, share, step=300, gap=None):
+    """Router reads with cumulative counters at `step`, each band failing `share(t, now)` of its sends.
+
+    `gap` is an optional (lo, hi) span with no reads at all, the shape of a producer that stopped.
+    """
+    rows, c24, c5 = [], {"tx_ok": 0, "tx_fail": 0}, {"tx_ok": 0, "tx_fail": 0}
+    t, uptime = now - hours * 3600, 100000.0
+    while t <= now:
+        if gap is None or not (gap[0] <= t <= gap[1]):
+            for counters in (c24, c5):
+                sends = 1000
+                failed = int(sends * share(t, now))
+                counters["tx_ok"] += sends - failed
+                counters["tx_fail"] += failed
+            rows.append(router_row(t, uptime, dict(c24, temp_c=59), dict(c5)))
+        t += step
+        uptime += step
+    return rows
+
+
+def write_rows(tmp_path, monkeypatch, rows):
+    import json
+    log = tmp_path / "router.jsonl"
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    monkeypatch.setattr(view, "ROUTER_LOG", log)
+
+
+def test_a_bad_hour_is_named_much_worse_than_its_own_usual(tmp_path, monkeypatch):
+    # ten hours at 5% (one of them a hole, so a gap is not read as a calm 0%), the last 65 min at 25%
+    rows = counter_history(USUAL_NOW, 12,
+                           lambda t, now: 0.25 if t >= now - 3900 else 0.05,
+                           gap=(USUAL_NOW - 6 * 3600, USUAL_NOW - 4 * 3600))
+    write_rows(tmp_path, monkeypatch, rows)
+    line = view.wifi_quality_line(now=USUAL_NOW).split("\n")[0]
+    assert "25.0% last" in line, line
+    assert ", much worse than usual (usual 5.0%)" in line, line
+
+
+def test_a_typical_hour_says_about_usual(tmp_path, monkeypatch):
+    rows = counter_history(USUAL_NOW, 12, lambda t, now: 0.14)
+    write_rows(tmp_path, monkeypatch, rows)
+    line = view.wifi_quality_line(now=USUAL_NOW).split("\n")[0]
+    assert ", about usual" in line, line
+    assert "usual" not in line.split(", about usual")[1], line
+
+
+def test_without_completed_hours_there_is_no_usual_yet(tmp_path, monkeypatch):
+    rows = counter_history(USUAL_NOW, 0.25, lambda t, now: 0.30)
+    write_rows(tmp_path, monkeypatch, rows)
+    line = view.wifi_quality_line(now=USUAL_NOW).split("\n")[0]
+    assert ", no usual yet" in line, line
+    assert "worse than usual" not in line, line
+
+
+def test_a_quiet_band_needs_the_points_above_and_not_only_the_ratio():
+    # 5 GHz is usually around 1.5%; triple that is 4.5%, still noise on a quiet band
+    assert view.wifi_usuality(4.5, [1.5, 1.6, 1.4]) == ", about usual"
+    # but a share far above it is named, with the usual it is compared against
+    assert view.wifi_usuality(16.0, [1.5, 1.6, 1.4]) == ", much worse than usual (usual 1.5%)"

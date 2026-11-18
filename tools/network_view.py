@@ -449,6 +449,15 @@ def wifi_line():
 
 ROUTER_LOG = SITE / "network" / "router.jsonl"
 STALE_ROUTER_S = 15 * 60  # the producer runs every 5 min; three missed runs is stale
+# "Is the radio worse than usual?" — the last hour's share of failed transmit attempts against the
+# median of the completed clock hours in the retained router reads (two days).  A ratio alone would
+# call noise on the quiet 5 GHz band an emergency, so a level must also clear a points-above floor.
+WIFI_USUAL_HOURS = 24       # completed hours the usual share is taken from
+WIFI_USUAL_MIN_HOURS = 3    # fewer complete hours than this and there is no usual yet
+WIFI_WORSE_RATIO = 1.5      # 50% above the usual share ...
+WIFI_WORSE_PP = 5.0         # ... and at least five points above it
+WIFI_MUCH_RATIO = 2.0       # twice the usual share ...
+WIFI_MUCH_PP = 10.0         # ... and at least ten points above it
 
 
 def router_rows():
@@ -763,6 +772,39 @@ def _radio_fail_window(reads, band, lo, hi):
     return delta_fail, delta_tot, span
 
 
+def _hour_attempt_rates(reads, band, now, hours=WIFI_USUAL_HOURS):
+    """Share of failed transmit attempts in each completed clock hour, newest first; partial hours skipped.
+
+    A hole (the producer was not running) or an hour too short to bracket is left out, never filled
+    with an invented rate: the caller needs enough real hours before it may call anything "usual".
+    """
+    base = int(now // 3600) * 3600
+    rates = []
+    for hour in range(1, hours + 1):
+        hi = base - (hour - 1) * 3600
+        got = _radio_fail_window(reads, band, hi - 3600, hi)
+        if got is not None:
+            fails, sends, _span = got
+            rates.append(100.0 * fails / sends)
+    return rates
+
+
+def wifi_usuality(rate, earlier):
+    """Plain words for a band's last-hour failed-attempt share against its own completed hours.
+
+    The rate counts retries, so this is a symptom, not a diagnosis: it says the radio is working
+    harder than it usually does, which is what a person notices as a slow connection.
+    """
+    if len(earlier) < WIFI_USUAL_MIN_HOURS:
+        return ", no usual yet"
+    usual = statistics.median(earlier)
+    if rate >= usual * WIFI_MUCH_RATIO and rate - usual >= WIFI_MUCH_PP:
+        return f", much worse than usual (usual {usual:.1f}%)"
+    if rate >= usual * WIFI_WORSE_RATIO and rate - usual >= WIFI_WORSE_PP:
+        return f", worse than usual (usual {usual:.1f}%)"
+    return ", about usual"
+
+
 def wifi_quality_line(now=None):
     """Share of Wi-Fi transmissions that failed, and the driver's own frame loss, from the recorded
     per-radio ``iwpriv ... stat`` counters.
@@ -801,7 +843,9 @@ def wifi_quality_line(now=None):
             text += " (last hour UNKNOWN)"
         else:
             fails, sends, span = got
-            text += f", {100.0 * fails / sends:.1f}% last {span / 60:.0f} min"
+            rate = 100.0 * fails / sends
+            text += f", {rate:.1f}% last {span / 60:.0f} min"
+            text += wifi_usuality(rate, _hour_attempt_rates(reads, band, now))
         per = stats.get("tx_per")
         if isinstance(per, (int, float)):
             text += f"; driver's frame loss {per:.1f}%"

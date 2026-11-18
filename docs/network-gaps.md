@@ -69,8 +69,15 @@ shown), **MISSING** (not measured or not shown).
 1. What the radio fail counter means, and when it deserves a threshold. The counters exist now
    (`iwpriv <radio> stat`), and since 2026-11-18 the window shows the driver's own PER next to the
    attempts share, so a person can already see that 14.5% of attempts against 3.3% of frames lost is
-   a retrying radio, not a broken one. What is still open is the household-visible threshold: watch
-   the last-hour rate for a few days, compare it with the driver PER line, then decide whether
-   "much worse than usual" earns an alarm. The earlier "two APs on channel 13" question is closed:
-   `ra0` is the 2.4 GHz access point, `rax0` the 5 GHz one, and `apcli0`/`apclix0` are client-mode
-   interfaces on the same radios.
+   a retrying radio, not a broken one. The window now also says how the last hour compares with the
+   median of the completed hours in the retained log (`much worse than usual (usual N%)` at 2× and
+   ten points above). **Decision 2026-11-18:** that comparison is shown, but it is not yet an alarm
+   duty. Reason: the attempts share counts retries, the retained log is two days, and no recorded
+   read carries `tx_per` yet, so there is no paired frame-loss history to tell a busy radio from a
+   failing one. **Precondition for an alarm:** at least a day of reads with `tx_per` on both bands,
+   and at least one "much worse" hour in that history whose PER stayed flat (then the alarm is not
+   warranted) or rose with it (then the threshold earns a duty). Limit of the comparison: it catches a
+   change against the retained hours, so a slow sustained shift becomes the new usual; the since-boot
+   share and the driver's PER stay the absolute readings. The earlier "two APs on channel 13"
+   question is closed: `ra0` is the 2.4 GHz access point, `rax0` the 5 GHz one, and
+   `apcli0`/`apclix0` are client-mode interfaces on the same radios.

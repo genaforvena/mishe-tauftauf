@@ -158,7 +158,12 @@ is not mistaken for a quiet mind.
   than dropped, and `network-wifi` turns UNKNOWN too), or when a reboot has left fewer than two
   counter reads (10 minutes apart) in the hour, which shows as `(last hour UNKNOWN)`. A reboot
   restarts the counters from zero, so only reads after it bracket a rate; with two post-reboot reads
-  the line shows that shorter span instead of UNKNOWN. STALE past 15 minutes.
+  the line shows that shorter span instead of UNKNOWN. After the last-hour share the line says how that
+  hour compares with the median of the completed clock hours held in the two-day router log
+  (`about usual`; `worse than usual (usual N%)` at 1.5× and at least five points above it; `much worse
+  than usual (usual N%)` at 2× and at least ten points above; `no usual yet` with fewer than three
+  completed hours). It is a symptom, not a diagnosis: the attempts figure counts retries, and a radio
+  can work harder at a busy hour without losing frames. STALE past 15 minutes.
 - `UNKNOWN`: the log has no reading, or the last read failed.
 - `STALE`: the last good reading is older than 15 minutes.
 - Trends and weekday baselines are UNKNOWN until two days of comparable rows exist.
