@@ -33,10 +33,15 @@ RESPAWN = ("tmux respawn-pane -k -c {repo} -t {session}:network "
 WINDOW_FILES = ("tools/network_view.py", "tools/network_boundary.py")
 
 
+RELOAD_GRACE_S = 30        # the view checks its own files every 10 s; a younger edit has not had a redraw
+
+
 def window_copy_stale(home, repo):
     """0 when the view's running copy is the code on disk now, 2 when it differs (a copy from before the
     last change, which the view itself should have reloaded) or it never reported its copy, 3 when the
-    files cannot be read.  Compared by content, so a commit of unchanged code is not a false RED."""
+    files cannot be read.  Compared by content, so a commit of unchanged code is not a false RED.  A
+    difference within RELOAD_GRACE_S of the newest file write is GREEN: the view reloads on its next
+    redraw, and an edit that races the five-minute check is not a stale window yet."""
     try:
         state = json.loads((home / "network" / "window.json").read_text())
         running = str(state["fingerprint"])
@@ -46,14 +51,23 @@ def window_copy_stale(home, repo):
         return 2
     try:
         disk = hashlib.sha256()
+        written = 0.0
         for rel in WINDOW_FILES:
-            disk.update((repo / rel).read_bytes())
+            path = repo / rel
+            written = max(written, path.stat().st_mtime)
+            disk.update(path.read_bytes())
     except OSError as exc:
         print(f"network-care: view files unreadable: {exc}", file=sys.stderr)
         return 3
     if running != disk.hexdigest():
+        since_write = time.time() - written
+        if 0 <= since_write < RELOAD_GRACE_S:
+            return 0
+        # the running copy's own load time, not the process start time: an os.execv reload keeps the pid
+        loaded = float(state.get("loaded", state.get("started", 0)))
         print("network-care: the window runs a copy of the view that differs from the files on disk "
-              f"(running since {time.strftime('%H:%M:%SZ', time.gmtime(float(state.get('started', 0))))})",
+              f"(copy loaded {time.strftime('%H:%M:%SZ', time.gmtime(loaded))}, "
+              f"code changed {since_write:.0f}s ago)",
               file=sys.stderr)
         return 2
     return 0
