@@ -220,6 +220,9 @@ within six hours for the owner to decide a concrete fix or a revert) or
 missing — that gap is recorded, and it asks nobody to repair what the reviewer
 never alleged). The review reads the scoped release diff for concrete
 source defects; it is evidence after the pin has moved, never a gate that holds it.
+Telling the owner is a secondary effect: when the intention or the chat tape
+fails, the record still keeps the verdict and carries `review_notice_error`, so
+an unavailable tape cannot turn a named defect into silence.
 An already-delivered ordinary release is reviewed against its retained recovery
 evidence (the previous release, the observation argv and the explicit revert
 command), not the pre-activation delivery plan it does not carry. The request also
