@@ -49,6 +49,17 @@ def test_delivered_but_pointer_elsewhere_is_unknown(tmp_path, capsys):
     assert code == 3 and "runtime/current names" in out.err
 
 
+def test_delivered_age_counts_from_delivery_not_promotion_start(tmp_path, capsys):
+    """A slow promotion must not make the pin look older than it is (2026-11-18 05:52Z).
+
+    The 2b5c27f5 promotion started 05:20Z and the pin moved at 05:51:56Z; the check still read
+    "delivered 32 min ago" for a pin that had named the release for one minute.
+    """
+    rec = _rec("delivered", created_at=NOW - 600, delivered_at=NOW - 60)
+    code, out = _run(_site(tmp_path, [rec]), capsys)
+    assert code == 0 and "delivered 1 min ago" in out.out
+
+
 def test_failed_check_is_red_and_names_the_failing_test(tmp_path, capsys):
     rec = _rec("check-failed", check={"output": "..\nFAILED tests/test_x.py::test_y - boom\n1 failed"})
     code, out = _run(_site(tmp_path, [rec]), capsys)

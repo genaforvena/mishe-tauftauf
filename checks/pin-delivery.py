@@ -127,7 +127,12 @@ def main(argv=None):
         if pointer_sha(a.home) != record.get("sha"):
             print(f"pin-delivery: {sha} is recorded delivered but runtime/current names {str(pointer_sha(a.home))[:8]}", file=sys.stderr)
             return 3
-        print(f"pin-delivery: GREEN {sha} delivered {age_min:.0f} min ago ({len(record.get('paths', []))} paths)")
+        # The pin moved when the record was marked delivered, not when its promotion
+        # started: the promotion's own age read "delivered 32 min ago" for a pin that had
+        # named the release for one minute (2026-11-18 05:52Z).
+        done = record.get("delivered_at")
+        live_min = (now - done) / 60 if isinstance(done, (int, float)) else age_min
+        print(f"pin-delivery: GREEN {sha} delivered {live_min:.0f} min ago ({len(record.get('paths', []))} paths)")
         keep_outcome_current(a.home, record, now)
         return 0
     if phase in RUNNING:
