@@ -1769,30 +1769,145 @@ def read_scan_acquisitions(home: Path, *, window: int = 100) -> list[tuple[datet
     return pairs
 
 
-def read_scan_series(home: Path, sense_id: str) -> list[tuple[datetime, int]]:
-    """Read a sense's verified samples from the retained discovery scan corpus.
+SCAN_INDEX_NAME = "scan-index.jsonl"
+"""One line per published scan beside the receipts: its receipt stem, ``created`` and verified samples.
 
-    Returns (timestamp, sample) tuples sorted by time. This is a boundary
-    function: scan files are JSON and parsed here, not in the caller.
+The receipts stay the record; this file is a derived cache so a reader that wants
+one sense's series does not parse the whole corpus (2,138 receipts / 818 MB and
+growing, 2.0 CPU-s per reading on 2026-11-18) on every scan.
+"""
+
+
+def _verified_samples(observations) -> dict[str, int]:
+    """Every verified observation whose sample coerces to an int, the rule the receipt reader applies."""
+    samples: dict[str, int] = {}
+    for obs in observations:
+        try:
+            if obs.get("state") != "verified" or not isinstance(obs.get("id"), str):
+                continue
+            samples[obs["id"]] = int(obs["sample"])
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+    return samples
+
+
+def _scan_index_line(stem: str, created: str, samples: dict[str, int]) -> str:
+    return json.dumps({"id": stem, "created": created, "samples": samples},
+                      sort_keys=True, separators=(",", ":")) + "\n"
+
+
+def append_scan_index(home: Path, receipt: Path, snapshot: dict) -> None:
+    """Append one scan receipt's index line.
+
+    ``id`` is the receipt's own filename stem, so the line joins back to a receipt
+    without trusting any field inside it. One append, so a concurrent reader sees
+    the whole line or none of it. A failure is raised for the caller to record:
+    the receipt is already published, and a reader still rebuilds from receipts.
     """
-    discovery = home / "discovery"
-    if not discovery.is_dir():
-        return []
+    path = home / "discovery" / SCAN_INDEX_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = _scan_index_line(receipt.stem, snapshot["created"],
+                            _verified_samples(snapshot.get("observations", []))).encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        while line:
+            line = line[os.write(fd, line):]
+    finally:
+        os.close(fd)
+
+
+def _scan_receipts(discovery: Path) -> dict[str, Path]:
+    """Receipt filename stem -> path, from the directory listing alone; no receipt is opened."""
+    return {name.stem: name for name in sorted(discovery.glob("scan-*.json"))}
+
+
+def _scan_index_rows(discovery: Path, receipts: dict[str, Path], sense_id: str):
+    """Rows from the derived index, or None when it does not account for every receipt.
+
+    A malformed or duplicate line counts as a gap, so a torn append or a partial
+    index rebuilds instead of silently dropping a scan. A line with no receipt is
+    ignored: the receipt is the record.
+    """
+    try:
+        text = (discovery / SCAN_INDEX_NAME).read_text(encoding="utf-8")
+    except OSError:
+        return None
     rows: list[tuple[datetime, int]] = []
-    for name in sorted(discovery.glob("scan-*.json")):
+    seen: set[str] = set()
+    for line in text.splitlines():
+        try:
+            doc = json.loads(line)
+            stem = doc["id"]
+            when = datetime.fromisoformat(str(doc["created"]).replace("Z", "+00:00"))
+            samples = doc["samples"]
+        except (ValueError, TypeError, KeyError):
+            continue
+        if not isinstance(stem, str) or stem in seen or stem not in receipts:
+            continue
+        seen.add(stem)
+        sample = samples.get(sense_id) if isinstance(samples, dict) else None
+        if isinstance(sample, int):
+            rows.append((when, sample))
+    if seen != set(receipts):
+        return None
+    return rows
+
+
+def _scan_receipt_rows(receipts: dict[str, Path], sense_id: str):
+    """Parse every receipt once: ``(rows for sense_id, one index line per readable receipt)``.
+
+    Both answers come from the same verified-sample map, so the index and the
+    receipt reading cannot drift apart.
+    """
+    rows: list[tuple[datetime, int]] = []
+    index: list[str] = []
+    for stem, name in receipts.items():
         try:
             doc = json.loads(name.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        created = doc.get("created")
         try:
-            when = datetime.fromisoformat(doc["created"].replace("Z", "+00:00"))
-        except (KeyError, ValueError, TypeError):
+            when = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        except (KeyError, ValueError, TypeError, AttributeError):
             continue
-        for obs in doc.get("observations", []):
-            if obs.get("id") == sense_id and obs.get("state") == "verified":
-                try:
-                    rows.append((when, int(obs["sample"])))
-                except (KeyError, TypeError, ValueError):
-                    pass
+        samples = _verified_samples(doc.get("observations", []))
+        index.append(_scan_index_line(stem, created, samples))
+        if sense_id in samples:
+            rows.append((when, samples[sense_id]))
+    return rows, index
+
+
+def _write_scan_index(discovery: Path, index: list[str]) -> None:
+    """Replace the index with rebuilt lines. A failed write still leaves the receipt answer standing."""
+    temporary = discovery / f".{SCAN_INDEX_NAME}-{os.getpid()}.tmp"
+    try:
+        temporary.write_text("".join(index), encoding="utf-8")
+        os.replace(temporary, discovery / SCAN_INDEX_NAME)
+    except OSError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def read_scan_series(home: Path, sense_id: str) -> list[tuple[datetime, int]]:
+    """Read a sense's verified samples from the retained discovery scan corpus.
+
+    Returns (timestamp, sample) tuples sorted by time. This is a boundary
+    function: scan files are JSON and parsed here, not in the caller. The
+    per-scan index answers when it accounts for every receipt; otherwise the
+    receipts are parsed once and the index rebuilt from them.
+    """
+    discovery = home / "discovery"
+    if not discovery.is_dir():
+        return []
+    receipts = _scan_receipts(discovery)
+    if not receipts:
+        return []
+    rows = _scan_index_rows(discovery, receipts, sense_id)
+    if rows is None:
+        rows, index = _scan_receipt_rows(receipts, sense_id)
+        _write_scan_index(discovery, index)
     rows.sort(key=lambda row: row[0])
     return rows

@@ -57,7 +57,8 @@ from .units import unit_file_service_names
 from .unit_cpu import read_unit_cpu
 from .unit_psi_reading import read_unit_psi
 from .roles import declared as seated_roles
-from .feed import (Feed, FeedEntry, RecordsUnknown, TapeUnknown, entry_timestamp as _feed_entry_timestamp,
+from .feed import (Feed, FeedEntry, RecordsUnknown, TapeUnknown, append_scan_index,
+                  entry_timestamp as _feed_entry_timestamp,
                   iter_feed_file, publication_lock, read_scan_acquisitions, read_scan_series,
                   read_text_tail)
 from .chat_protocol import decode_lifecycle, ProtocolError
@@ -7664,6 +7665,14 @@ def scan(home: Path) -> Path:
         artifact = root / f"scan-{stamp}-{scan_id}.json"
         payload = json.dumps(snapshot, sort_keys=True, ensure_ascii=False, indent=2) + "\n"
         artifact.write_text(payload, encoding="utf-8")
+        # The receipt is the record; the one-line index beside it is a cache the
+        # series reader uses instead of parsing the whole corpus. Its failure is
+        # recorded, never fatal: the reader rebuilds from the receipt.
+        try:
+            append_scan_index(home, artifact, snapshot)
+            attempt["scan_index"] = "appended"
+        except Exception as error:
+            attempt["scan_index"] = f"failed: {type(error).__name__}: {error}"
         latest_path = root / "latest.json"
         temporary = root / f".latest-{os.getpid()}.tmp"
         temporary.write_text(payload, encoding="utf-8")
