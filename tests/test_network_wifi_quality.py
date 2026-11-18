@@ -78,10 +78,11 @@ def test_each_band_is_its_own_line_and_carries_the_drivers_frame_loss(tmp_path, 
     log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     monkeypatch.setattr(view, "ROUTER_LOG", log)
     lines = view.wifi_quality_line(now=NOW).split("\n")
-    assert len(lines) == 2, lines
-    assert lines[0].startswith("2.4 GHz ") and "driver's frame loss 3.3% since boot" in lines[0], lines
-    assert lines[1].startswith("5 GHz ") and "driver's frame loss 0.1% since boot" in lines[1], lines
-    assert lines[1].endswith("read 60 s ago"), lines
+    assert len(lines) == 3, lines
+    assert lines[0].startswith("2.4 GHz ") and "driver's error rate 3.3%" in lines[0], lines
+    assert lines[1].startswith("5 GHz ") and "driver's error rate 0.1%" in lines[1], lines
+    # the caveat and the age sit on their own trailing line so no band line overflows the pane
+    assert lines[2] == "radio 61 C; driver's error rate window not measured; read 60 s ago", lines
     # a read without the driver's PER keeps the attempts figure, invents no rate, and says UNKNOWN
     # rather than dropping the clause: an absent number must not read as a quiet radio
     rows[-1]["radios"][0]["stats"].pop("tx_per")
@@ -89,7 +90,7 @@ def test_each_band_is_its_own_line_and_carries_the_drivers_frame_loss(tmp_path, 
     log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     line = view.wifi_quality_line(now=NOW)
     assert "since boot" in line, line
-    assert line.count("driver's frame loss UNKNOWN") == 2, line
+    assert line.count("driver's error rate UNKNOWN") == 2, line
 
 
 

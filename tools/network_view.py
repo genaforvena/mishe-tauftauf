@@ -846,7 +846,7 @@ def wifi_usuality(rate, earlier):
 
 
 def wifi_quality_line(now=None):
-    """Share of Wi-Fi transmissions that failed, and the driver's own frame loss, from the recorded
+    """Share of Wi-Fi transmissions that failed, and the driver's own error rate, from the recorded
     per-radio ``iwpriv ... stat`` counters.
 
     Read from the recorded per-radio counters, one line per band so each fits the window. A read
@@ -854,11 +854,12 @@ def wifi_quality_line(now=None):
     the newest read is named as UNKNOWN rather than dropped; a rate is shown only when two reads an
     hour or less apart bracket it. The driver's own PER is shown when the newest read carries it
     (older rows do not): the attempts figure counts retries, so a person needs the driver's own
-    frame-loss number next to it to tell a retrying radio from a broken one. That PER is cumulative
-    since the driver's counters reset (the router's boot), like the attempts figure, so the clause
-    says "since boot" — a since-boot average must not read as the last hour's loss. When the newest
-    read carries no PER the clause says UNKNOWN instead of vanishing: an absent number must not read
-    as a quiet radio.
+    frame-error number next to it to tell a retrying radio from a broken one. That PER cannot be
+    reproduced from the counters printed beside it (2.4 GHz: 14.5% failed attempts against PER 3.4%;
+    receive side 15.7% CRC against PER 0.7%), so its population and averaging window are the driver's
+    own and are not measured here: the trailing clause says the window is not measured instead of
+    claiming a period. When the newest read carries no PER the clause says UNKNOWN instead of
+    vanishing: an absent number must not read as a quiet radio.
     """
     now = time.time() if now is None else now
     reads = [r for r in router_rows() if r.get("ok") and isinstance(r.get("radios"), list)
@@ -872,6 +873,7 @@ def wifi_quality_line(now=None):
     if ago > STALE_ROUTER_S:
         return f"UNKNOWN (newest Wi-Fi transmission counters are {ago / 60:.0f} min old)  STALE"
     parts = []
+    per_seen = False
     for radio in last["radios"]:
         if not isinstance(radio, dict):
             continue
@@ -892,16 +894,20 @@ def wifi_quality_line(now=None):
             text += wifi_usuality(rate, _hour_attempt_rates(reads, band, now))
         per = stats.get("tx_per")
         if isinstance(per, (int, float)):
-            text += f"; driver's frame loss {per:.1f}% since boot"
+            text += f"; driver's error rate {per:.1f}%"
+            per_seen = True
         else:
-            text += "; driver's frame loss UNKNOWN"
+            text += "; driver's error rate UNKNOWN"
         parts.append(text)
     if not parts:
         return "UNKNOWN (the router read carried no transmission counters)"
     temps = [(r.get("stats") or {}).get("temp_c") for r in last["radios"] if isinstance(r, dict)]
     temps = [t for t in temps if isinstance(t, int)]
-    tail = f"; radio {max(temps)} C" if temps else "; radio temperature UNKNOWN"
-    return "\n".join(parts) + f"{tail}; read {ago:.0f} s ago"
+    tail = [f"radio {max(temps)} C" if temps else "radio temperature UNKNOWN"]
+    if per_seen:
+        tail.append("driver's error rate window not measured")
+    tail.append(f"read {ago:.0f} s ago")
+    return "\n".join(parts + ["; ".join(tail)])
 
 
 def _wan_drops(reads, lo, hi):
