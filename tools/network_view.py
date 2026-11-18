@@ -1088,13 +1088,25 @@ def uplink_rate_line(now=None):
 def gateway_line(data):
     cur = (data[-1].get("gateway") if data else None) or {}
     vals = [((r.get("gateway") or {}).get("avg_ms")) for r in data]
-    loss = [((r.get("gateway") or {}).get("loss_pct")) for r in data]
+    loss_rows = [(r.get("at"), (r.get("gateway") or {}).get("loss_pct")) for r in data]
+    loss = [v for _, v in loss_rows]
     now = f"{cur['avg_ms']:.1f} ms" if "avg_ms" in cur else "UNKNOWN"
     lossnow = f"{cur['loss_pct']:.0f}% loss" if "loss_pct" in cur else ""
     jitnow = f"jitter {cur['jitter_ms']:.2f} ms" if "jitter_ms" in cur else "jitter UNKNOWN"
     worst = max([v for v in loss if v is not None], default=None)
+    # The worst is over every loaded probe, not just the 40 in the sparkline beside it; name
+    # that window so an old blip cannot read as a problem in the recent, calm sparkline.
+    seen_at = [at for at, v in loss_rows if v is not None and at]
+    span = ""
+    if len(seen_at) >= 2:
+        try:
+            begin, finish = nb.utc_epoch(seen_at[0]), nb.utc_epoch(seen_at[-1])
+        except (ValueError, TypeError):
+            begin = finish = None
+        if begin is not None and finish is not None and finish >= begin:
+            span = f" (over {covered(finish - begin)})"
     return (f"  {'router (LAN)':<22}{now:>10}  {lossnow:<9} {jitnow:<17} {spark(vals)}  "
-            f"worst loss {('%.0f%%' % worst) if worst is not None else 'UNKNOWN'}")
+            f"worst loss {('%.0f%%' % worst) if worst is not None else 'UNKNOWN'}{span}")
 
 
 def web_line(label, name, data):

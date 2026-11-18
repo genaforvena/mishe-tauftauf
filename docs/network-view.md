@@ -139,6 +139,11 @@ is not mistaken for a quiet mind.
   `wan_link`, or the kernel reports no speed; a step backwards in the last hour (a reboot
   or driver reset) still counts the drops since it and reads "at least N in the last hour
   (counters reset by a reboot)", never "none". STALE past 15 minutes.
+- `router (LAN)` (in the reachability table): the newest probe's latency, loss and jitter beside a
+  sparkline, then the worst packet loss across all loaded probe rows. That worst spans the whole
+  loaded window, not the 40 probes in the sparkline next to it, so the line names its span
+  (`worst loss 0% (over 3.4 days)`); a loss blip outside the sparkline stays visible and is dated
+  by that span instead of reading as a fresh problem. UNKNOWN when no loaded row measured loss.
 - `DNS lookup`: the home resolver's time for a fresh lookup in the newest probe, with a sparkline.
   The note on the line matters: the probe's curl `%{time_connect}` (the `connect_ms` that "WHERE
   TIME GOES" prints below) counts name lookup as well as the TCP connect, while this is one separate

@@ -197,6 +197,35 @@ def test_gateway_line_shows_jitter_and_unknown_when_missing():
     assert "jitter UNKNOWN" in view.gateway_line([])
 
 
+def test_gateway_worst_loss_names_loaded_span_not_the_sparkline():
+    rows = [{"at": f"2026-11-18T{h:02d}:00:00Z", "gateway": {"avg_ms": 0.5, "loss_pct": 0.0}}
+            for h in range(24)]
+    line = view.gateway_line(rows)
+    assert "worst loss 0% (over 23.0 h)" in line
+
+
+def test_gateway_worst_loss_keeps_blip_outside_sparkline_and_labels_it():
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 11, 17, tzinfo=timezone.utc)
+    rows = [{"at": "2026-11-16T00:00:00Z", "gateway": {"avg_ms": 0.5, "loss_pct": 12.0}}]
+    rows += [{"at": (base + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "gateway": {"avg_ms": 0.5, "loss_pct": 0.0}} for h in range(48)]
+    line = view.gateway_line(rows)
+    assert "worst loss 12% (over 3.0 days)" in line
+
+
+def test_gateway_worst_loss_without_timestamps_invents_no_span():
+    line = view.gateway_line([{"gateway": {"avg_ms": 0.5, "loss_pct": 3.0}}])
+    assert "worst loss 3%" in line and "(over" not in line
+
+
+def test_gateway_worst_loss_survives_a_malformed_timestamp_without_a_span():
+    rows = [{"at": "not-a-time", "gateway": {"avg_ms": 0.5, "loss_pct": 3.0}},
+            {"at": "2026-11-18T01:00:00Z", "gateway": {"avg_ms": 0.5, "loss_pct": 0.0}}]
+    line = view.gateway_line(rows)
+    assert "worst loss 3%" in line and "(over" not in line
+
+
 def _router_log(tmp_path, monkeypatch, row):
     import json
     log = tmp_path / "router.jsonl"
