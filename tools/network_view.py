@@ -871,17 +871,23 @@ def _radio_fail_window(reads, band, lo, hi):
 def _hour_attempt_rates(reads, band, now, hours=WIFI_USUAL_HOURS):
     """Share of failed transmit attempts in each completed clock hour, newest first; partial hours skipped.
 
-    A hole (the producer was not running) or an hour too short to bracket is left out, never filled
-    with an invented rate: the caller needs enough real hours before it may call anything "usual".
+    Preserve holes as None so an unknown hour cannot join two separate runs. Require coverage
+    across most of each hour and no 15-minute hole between reads (the producer runs every five).
     """
     base = int(now // 3600) * 3600
     rates = []
     for hour in range(1, hours + 1):
         hi = base - (hour - 1) * 3600
         got = _radio_fail_window(reads, band, hi - 3600, hi)
-        if got is not None:
+        samples = [r for r in reads if hi - 3600 <= r["ts"] <= hi
+                   and _radio_stats(r, band) is not None]
+        covered = (got is not None and got[2] >= 3000
+                   and all(b["ts"] - a["ts"] <= 900 for a, b in zip(samples, samples[1:])))
+        if covered:
             fails, sends, _span = got
             rates.append(100.0 * fails / sends)
+        else:
+            rates.append(None)
     return rates
 
 
@@ -905,15 +911,20 @@ def _wifi_run_baseline(earlier, lifetime):
     history cannot be captured by one bad day. Returns (baseline, run length); a run length
     equal to len(earlier) means the lifetime figure was used.
     """
-    n = len(earlier)
-    if n < WIFI_USUAL_MIN_HOURS:
+    known = [hour for hour in earlier if hour is not None]
+    if len(known) < WIFI_USUAL_MIN_HOURS:
         return None, 0
+    # Known hours still inform the baseline; only the duration requires continuity.
+    earlier = known
+    n = len(earlier)
     for split in range(n, WIFI_BASELINE_RUN_MIN - 1, -1):
-        before = lifetime if split == n else statistics.median(earlier[split:])
-        if before is None or not all(_wifi_severity(h, before) for h in earlier[:split]):
+        older = [hour for hour in earlier[split:] if hour is not None]
+        before = lifetime if split == n else statistics.median(older) if older else None
+        if before is None or not all(h is not None and _wifi_severity(h, before)
+                                     for h in earlier[:split]):
             continue
         return before, split
-    return statistics.median(earlier), 0
+    return statistics.median(known), 0
 
 
 def wifi_usuality(rate, earlier, lifetime=None):
@@ -928,16 +939,16 @@ def wifi_usuality(rate, earlier, lifetime=None):
     blip. A hole or a quiet hour stops the count; the rolling hour is never counted as a completed
     one.
     """
-    if len(earlier) < WIFI_USUAL_MIN_HOURS:
+    usual, run = _wifi_run_baseline(earlier, lifetime if all(h is not None for h in earlier) else None)
+    if usual is None:
         return ", no usual yet"
-    usual, run = _wifi_run_baseline(earlier, lifetime)
     since_boot = " since boot" if run == len(earlier) else ""
     severity = _wifi_severity(rate, usual)
     if not severity:
         return ", about usual"
     hours = 0
     for past in earlier:  # newest completed hour first
-        if not _wifi_severity(past, usual):  # any 'worse' hour extends the age
+        if past is None or not _wifi_severity(past, usual):  # a hole or calm hour stops the run
             break
         hours += 1
     span = f" for at least {hours} h" if hours else ""

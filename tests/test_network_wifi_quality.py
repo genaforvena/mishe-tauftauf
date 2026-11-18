@@ -282,3 +282,20 @@ def test_a_whole_window_bad_names_the_lifetime_baseline(tmp_path, monkeypatch):
     write_rows(tmp_path, monkeypatch, rows)
     line = view.wifi_quality_line(now=USUAL_NOW).split("\n")[0]
     assert "for at least 24 h" in line and "since boot" in line, line
+
+
+def test_streak_stops_at_a_missing_clock_hour(tmp_path, monkeypatch):
+    rows = counter_history(USUAL_NOW, 16,
+                           lambda t, now: 0.25 if t >= now - 10 * 3600 else 0.05,
+                           gap=(USUAL_NOW - 6 * 3600, USUAL_NOW - 4 * 3600))
+    write_rows(tmp_path, monkeypatch, rows)
+    line = view.wifi_quality_line(now=USUAL_NOW).splitlines()[0]
+    assert "for at least 3 h" in line, line
+    assert "for at least 9 h" not in line, line
+
+
+def test_sparse_hours_do_not_invent_a_usual(tmp_path, monkeypatch):
+    rows = counter_history(USUAL_NOW, 8, lambda t, now: 0.25, step=1200)
+    write_rows(tmp_path, monkeypatch, rows)
+    line = view.wifi_quality_line(now=USUAL_NOW).splitlines()[0]
+    assert "no usual yet" in line, line
