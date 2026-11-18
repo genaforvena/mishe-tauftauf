@@ -151,7 +151,7 @@ def test_copy_that_compiles_but_fails_at_import_is_not_run(tmp_path, monkeypatch
 def test_copy_that_starts_is_run(tmp_path, monkeypatch):
     calls = []
     fake = tmp_path / "network_view.py"
-    fake.write_text("VALUE = 1\n\n\nif __name__ == '__main__':\n    print(VALUE)\n")
+    fake.write_text("import time\n\n\nif __name__ == '__main__':\n    while True:\n        time.sleep(0.05)\n")
     (tmp_path / "boundary.py").write_text("")
     monkeypatch.setattr(view, "OWN_FILES", (fake, tmp_path / "boundary.py"))
     monkeypatch.setattr(view.os, "execv", lambda *a: calls.append(a))
@@ -159,6 +159,23 @@ def test_copy_that_starts_is_run(tmp_path, monkeypatch):
     view.maybe_reexec((0, 0))  # a copy that starts is exec'd, so this call does not return here
     assert len(calls) == 1
     assert view.REFUSED is None
+
+
+def test_a_copy_cut_inside_its_main_guard_is_not_run(tmp_path, monkeypatch):
+    # 2026-11-18, the shape the main-block check cannot see: the save stopped inside the guard, after
+    # a complete statement, so the guard is present and the top level imports.  Run as the window runs
+    # it (no --once) the copy prints one frame and exits; the pane would vanish the same way.
+    calls = []
+    fake = tmp_path / "network_view.py"
+    fake.write_text("VALUE = 1\n\n\nif __name__ == '__main__':\n    print(VALUE)\n")
+    (tmp_path / "boundary.py").write_text("")
+    monkeypatch.setattr(view, "OWN_FILES", (fake, tmp_path / "boundary.py"))
+    monkeypatch.setattr(view.os, "execv", lambda *a: calls.append(a))
+    monkeypatch.setattr(view, "REFUSED", None)
+    old = (0, 0)
+    assert view.maybe_reexec(old) == old
+    assert calls == []
+    assert "exits at once" in view.REFUSED[0]
 
 
 def test_a_copy_truncated_before_its_main_block_is_not_run(tmp_path, monkeypatch):

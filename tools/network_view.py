@@ -12,6 +12,7 @@ import os
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -42,6 +43,7 @@ OWN_GIT_PATHS = ("tools/network_view.py", "tools/network_boundary.py")
 WINDOW_STATE = SITE / "network" / "window.json"
 STARTED = time.time()
 COPY_CHECK_TIMEOUT_S = 20   # a new copy that hangs at import must not freeze the redraw for long
+LIVENESS_S = 1.0            # how long a launched copy must stay up before it may replace the pane
 REFUSED_CHARS = 120         # the reason a newer copy was not run, one line in the window
 REFUSED = None              # (reason, when): the file changed but the new copy would not start
 
@@ -118,6 +120,36 @@ def copy_starts(path=None):
     return False, " ".join((lines[-1] if lines else f"exit {r.returncode}").split())
 
 
+def copy_survives(path=None):
+    """Whether the copy, launched as the window launches it, is still drawing after LIVENESS_S.
+
+    The main-block check above cannot see a save cut *inside* the guard after a complete statement:
+    that copy still has the guard, imports cleanly, prints its frame and exits, so the re-exec would
+    leave no window (2026-11-18, the same class).  The copy is started the way os.execv starts it —
+    no arguments, so it enters its redraw loop — with a throwaway site home so the probe's window
+    state cannot overwrite the live pane's, and killed once it has survived the grace.  A copy that
+    has already exited is refused with its own last error line.  Returns (ok, reason)."""
+    path = Path(path or OWN_FILES[0])
+    with tempfile.TemporaryDirectory(prefix="mishe-reload-check-") as home:
+        env = dict(os.environ, MISHE_TAUFTAUF_HOME=home)
+        env.pop("MISHE_SEED_HOME", None)  # the site home comes from one variable, not a stale other one
+        try:
+            proc = subprocess.Popen([sys.executable, str(path)], cwd=str(path.parent),
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE, text=True, env=env)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, f"{type(exc).__name__}: {exc}"
+        try:
+            _, err = proc.communicate(timeout=LIVENESS_S)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            return True, ""
+    lines = [line.strip() for line in (err or "").splitlines() if line.strip()]
+    reason = "the copy exits at once when it is run instead of drawing"
+    return False, f"{reason}: {lines[-1]}" if lines else f"{reason} (exit {proc.returncode})"
+
+
 def main_block_present(tree):
     """Whether the module still ends in an `if __name__ == "__main__":` guard with a body.
 
@@ -156,6 +188,10 @@ def maybe_reexec(stamp):
         return stamp
     if not main_block_present(tree):
         REFUSED = ("the file stops before its main block, so the copy would exit instead of drawing", time.time())
+        return stamp
+    ok, why = copy_survives()
+    if not ok:
+        REFUSED = (why, time.time())
         return stamp
     REFUSED = None
     sys.stdout.flush()

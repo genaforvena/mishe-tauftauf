@@ -154,7 +154,11 @@ is not mistaken for a quiet mind.
   old pane and the window prints `EDIT REFUSED` with the error, because re-execing into that copy
   is what killed the window on 2026-11-18. A copy with no `if __name__ == "__main__":` block — an
   emptied file, or a save cut at a line before that block, which compiles and imports as a plain
-  module — is refused for the same reason: it would exit instead of drawing.
+  module — is refused for the same reason: it would exit instead of drawing. A copy that has a main
+  block is then launched the way the window launches it (no `--once`) for one second in a throwaway
+  site home, and kept only if it is still drawing when that grace ends; a copy cut inside the guard
+  after a complete statement prints one frame and exits, and is refused with "the copy exits at once
+  when it is run instead of drawing".
 - Channel, noise floor and the driver's transmit counters are measured once per 5 minutes; a single
   reading is not evidence of channel trouble. There is one access point per band (2.4 GHz and 5 GHz),
   so there is no second AP to compare channels with: `iwinfo` also lists `apcli0`/`apclix0`, which
