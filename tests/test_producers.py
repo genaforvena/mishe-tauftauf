@@ -223,6 +223,29 @@ def test_ci_pending_binds_the_real_reader_when_none_is_injected(tmp_path, monkey
     assert store.read(tmp_path, "ci", now=NOW).value == "GREEN"
 
 
+def test_ci_red_names_the_run_so_the_woken_resolver_exports_no_second_lookup(tmp_path):
+    # 2026-11-18: the ci RED that woke genome stored only "RED"; finding which commit failed took
+    # `gh run list` and `gh run view --log-failed`. The reader already knew the run.
+    store.register(tmp_path, "ci", max_age=900, subscribers=["genome"])
+    sha = "a" * 40
+    failing = {"state": "fail", "sha": sha, "run": "44219315321", "url": "https://example/run/1"}
+    assert producers.produce(tmp_path, "ci", now=NOW, read=lambda h: failing) == "RED"
+    reason = store.read(tmp_path, "ci", now=NOW).reason
+    assert store.read(tmp_path, "ci", now=NOW).value == "RED"
+    assert "run 44219315321 fail" in reason and sha in reason and "https://example/run/1" in reason
+
+
+def test_ci_green_carries_no_cause_and_a_pending_red_names_the_finished_run(tmp_path):
+    store.register(tmp_path, "ci", max_age=900, subscribers=["genome"])
+    passing = {"state": "pass", "sha": "b" * 40, "run": "1", "url": "https://example/run/2"}
+    assert producers.produce(tmp_path, "ci", now=NOW, read=lambda h: passing) == "GREEN"
+    assert store.read(tmp_path, "ci", now=NOW).reason == ""
+    finished = {"state": "fail", "sha": "c" * 40, "run": "2", "url": "none"}
+    assert producers.produce(tmp_path, "ci", now=NOW + 10, read=lambda h: {"state": "pending"},
+                             completed=lambda h: finished) == "RED"
+    assert "run 2 fail" in store.read(tmp_path, "ci", now=NOW + 10).reason
+
+
 def test_ci_unknown_failure_carries_the_reader_detail(tmp_path):
     store.register(tmp_path, "ci", max_age=900, subscribers=["genome"])
     with pytest.raises(producers.ObservationFailed, match="CI state 'unknown': gh: rate limited"):

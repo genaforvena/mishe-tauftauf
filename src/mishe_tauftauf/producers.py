@@ -145,8 +145,22 @@ class ObservationFailed(RuntimeError):
     """The source could not tell; the signal is left to age to UNKNOWN."""
 
 
-def ci(home, *, now: float, read=None, completed=None) -> str | None:
-    """GitHub Actions for the current remote commit: pass GREEN, fail RED, pending falls back to the newest finished run, unknown fails."""
+def _ci_cause(reading: dict) -> str:
+    """Name the Actions run behind a ci reading, so a woken resolver need not re-query GitHub.
+
+    The reader already carries the run's id, commit, url and detail; the signal used to store only
+    "RED", so every wake spent calls on ``gh run list`` to learn which commit failed and why. The
+    formatting (and the collapse of raw error text to one line) lives in the ci boundary.
+    """
+    from .ci_watch import cause_line
+    return cause_line(reading)
+
+
+def ci(home, *, now: float, read=None, completed=None) -> "str | tuple[str, str] | None":
+    """GitHub Actions for the current remote commit: pass GREEN, fail RED, pending falls back to the newest finished run, unknown fails.
+
+    A RED is returned with its cause (``(value, reason)``); GREEN carries none, like every other producer.
+    """
     if read is None:
         from .ci_watch import read
     if completed is None:
@@ -162,7 +176,7 @@ def ci(home, *, now: float, read=None, completed=None) -> str | None:
         if finished["state"] == "pass":
             return "GREEN"
         if finished["state"] == "fail":
-            return "RED"
+            return "RED", _ci_cause(finished)
         # Nothing on the branch has finished (a young branch), or GitHub could not be read: keep the
         # standing result fresh instead of aging to a false UNKNOWN.
         signal_store.refresh(home, "ci", now=now)
@@ -170,7 +184,7 @@ def ci(home, *, now: float, read=None, completed=None) -> str | None:
     if state not in ("pass", "fail"):
         # The reader's detail (gh/git error text, or the missing/unfinished run) is the only cause on record.
         raise ObservationFailed(f"CI state {state!r}: {reading.get('detail', 'no detail')}")
-    return "GREEN" if state == "pass" else "RED"
+    return "GREEN" if state == "pass" else ("RED", _ci_cause(reading))
 
 
 def tape_lock(home, *, now: float, attempts: int = 5, pause: float = 1.0) -> str:
@@ -255,9 +269,15 @@ BUILTIN = {"dispatch": dispatch, "ci": ci, "tape-lock": tape_lock, "delivery-req
 
 
 def produce(home, name: str, *, now: float, **kw) -> str | None:
-    value = BUILTIN[name](home, now=now, **kw)
+    """Run one builtin and store its reading; return the value.
+
+    A builtin may return ``(value, reason)`` so that a not-OK reading carries its cause: the signal
+    stores it, the dossier prints it, and a resolver woken by the edge reads why without re-deriving it.
+    """
+    result = BUILTIN[name](home, now=now, **kw)
+    value, reason = result if isinstance(result, tuple) else (result, "")
     if value is not None:
-        signal_store.observe(home, name, value, now=now, source=f"builtin:{name}")
+        signal_store.observe(home, name, value, now=now, source=f"builtin:{name}", reason=reason)
     return value
 
 

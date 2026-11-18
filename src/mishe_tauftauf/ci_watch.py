@@ -366,6 +366,30 @@ def _state_for(matches: list[dict], sha: str) -> dict[str, str]:
             "url": str(row["url"]), "detail": f"{status}/{conclusion or 'none'}"}
 
 
+CAUSE_MAX = 300
+
+
+def cause_line(reading: dict[str, str]) -> str:
+    """One bounded line naming the run behind a reading, so a woken resolver need not re-query GitHub.
+
+    The reading is this module's own decoded value, but ``detail`` carries the reader's raw error text
+    for an unknown state, so collapsing it to one line is text interpretation and belongs here at the
+    boundary rather than in a consumer. It is the cause a RED signal stores (2026-11-18: the ci RED
+    that woke genome stored only "RED", and finding the failed commit took ``gh run list``/``run view``).
+    """
+    state = reading.get("state") or "unknown"
+    sha = reading.get("sha") or "unknown"
+    run = reading.get("run") or "none"
+    text = f"run {run} {state} for {sha}" if run != "none" else f"no run: {state} for {sha}"
+    url = reading.get("url") or ""
+    if url and url != "none":
+        text += f" {url}"
+    detail = reading.get("detail") or ""
+    if detail:
+        text += f": {detail}"
+    return " ".join(text.split())[:CAUSE_MAX]
+
+
 def _command(*argv: str, cwd: Path | None = None) -> str:
     # A nonzero exit is how ``gh`` reports a transport failure (the EOF/TLS text
     # lands in stderr), so both it and an OS-level spawn/timeout error are
