@@ -144,6 +144,11 @@ is not mistaken for a quiet mind.
   2026-11-10 (boot ended 18:15Z, next probe 19:54Z), not evening load, and at the current 180 s
   timer period every clock hour carries 17–19 probes. UNKNOWN when the newest probe is stale or
   did not carry both phases.
+  When one host's handshake is at least `PHASE_SPLIT_RATIO` (2x) the other's and at least
+  `PHASE_SPLIT_MS` (200 ms) apart, a second indented line names both hosts and the slower one.
+  The printed figure is still the mean of the two, so a 781 ms handshake built from gstatic 299 ms
+  and cloudflare 1262 ms is explained instead of looking like a general secure-setup problem.
+  One host failing to answer is not a divergence: it leaves one sample, with no second line.
 - `USUAL`: is the web slower than usual? The recent figure is the **median of the last ten web
   samples**, and the line names that window — `last 10 probes (31 min)` — because at the current
   cadence it covers about half an hour, not the instant: the `gstatic.com` and `cloudflare.com`

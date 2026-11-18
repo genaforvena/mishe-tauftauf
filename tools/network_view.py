@@ -1064,6 +1064,8 @@ NIGHT_HOURS = range(0, 6)      # the household is asleep; the quiet baseline for
 # so these hours get named; the cause (household traffic or the ISP's evening peak) is not asserted.
 EVENING_HOURS = range(18, 21)
 PHASE_BASELINE_MIN = 60        # rows needed before a night/evening median means anything
+PHASE_SPLIT_RATIO = 2.0      # when one host's handshake is this many times the other's ...
+PHASE_SPLIT_MS = 200         # ... and at least this far apart, the mean hides which host was slow
 
 
 def phase_ms(row, name, field):
@@ -1077,6 +1079,25 @@ def _sample_mean(row, field):
     vals = [phase_ms(row, name, field) for name in SECURE_HOSTS]
     vals = [v for v in vals if v is not None]
     return sum(vals) / len(vals) if vals else None
+
+
+def _handshake_split(row):
+    """An indented second line naming both hosts' handshakes when their mean would mislead.
+
+    `phase_line` prints the mean of the two hosts. On an ordinary probe they track each other, but
+    one can stall alone (2026-11-18 11:40Z: gstatic 299 ms, cloudflare 1262 ms), and the mean then
+    reads as a general secure-setup problem. Only a clear divergence gets the breakdown, so the
+    window stays dense; one host failing to answer is not a divergence and gets no second line.
+    """
+    vals = [phase_ms(row, name, "tls_ms") for name in SECURE_HOSTS]
+    if any(v is None or v < 0 for v in vals):
+        return ""
+    lo, hi = min(vals), max(vals)
+    if lo <= 0 or hi < PHASE_SPLIT_RATIO * lo or hi - lo < PHASE_SPLIT_MS:
+        return ""
+    parts = ", ".join(f"{name} {v:.0f} ms" for name, v in zip(SECURE_HOSTS, vals))
+    slower = " and ".join(name for name, v in zip(SECURE_HOSTS, vals) if v == hi)
+    return f"\n                handshakes: {parts} ({slower} slower)"
 
 
 def _hour_median(data, field, hours):
@@ -1122,12 +1143,13 @@ def phase_line(data, now=None):
     night = _hour_median(data, "tls_ms", NIGHT_HOURS)
     evening = _hour_median(data, "tls_ms", EVENING_HOURS)
     sent = f"reaching the site {conn:.0f} ms, secure handshake {tls:.0f} ms"
+    split = _handshake_split(last)
     if usual is None:
-        return f"{sent}; handshake usually UNKNOWN (too few probes for a baseline); last probe {a:.0f} s ago"
+        return f"{sent}; handshake usually UNKNOWN (too few probes for a baseline); last probe {a:.0f} s ago{split}"
     if night is None or evening is None:
-        return f"{sent}; handshake usually {usual:.0f} ms; last probe {a:.0f} s ago"
+        return f"{sent}; handshake usually {usual:.0f} ms; last probe {a:.0f} s ago{split}"
     return (f"{sent}; handshake usually {usual:.0f} ms"
-            f" (nights ~{night:.0f}, evenings ~{evening:.0f}); last probe {a:.0f} s ago")
+            f" (nights ~{night:.0f}, evenings ~{evening:.0f}); last probe {a:.0f} s ago{split}")
 
 
 def day_spark(samples, buckets=USUAL_BUCKETS):

@@ -540,6 +540,44 @@ def test_phase_line_splits_reaching_the_site_from_the_handshake():
     assert "last probe" in line
 
 
+def test_phase_line_names_both_hosts_when_one_handshake_stalls():
+    row = _fresh_phase_row(70.0, 900.0)
+    row["internet"]["gstatic"]["tls_ms"] = 299.0
+    row["internet"]["cloudflare"]["tls_ms"] = 1262.0
+    line = view.phase_line([row])
+    assert "secure handshake 780 ms" in line  # keep the mean; the split explains it
+    assert "\n                handshakes: gstatic 299 ms, cloudflare 1262 ms (cloudflare slower)" in line
+
+
+def test_phase_line_names_the_slow_host_in_either_direction():
+    row = _fresh_phase_row(70.0, 900.0)
+    row["internet"]["gstatic"]["tls_ms"] = 1262.0
+    row["internet"]["cloudflare"]["tls_ms"] = 299.0
+    assert "(gstatic slower)" in view.phase_line([row])
+
+
+def test_phase_line_has_no_split_when_hosts_track_each_other():
+    assert "handshakes:" not in view.phase_line([_fresh_phase_row(70.0, 300.0)])
+
+
+def test_phase_line_has_no_split_when_one_host_did_not_answer():
+    row = _fresh_phase_row(70.0, 300.0)
+    row["internet"]["gstatic"] = {"ok": False, "tls_ms": None}
+    line = view.phase_line([row])
+    assert not line.startswith("UNKNOWN") and "handshakes:" not in line
+
+
+def test_phase_line_split_needs_both_a_ratio_and_a_gap():
+    row = _fresh_phase_row(70.0, 300.0)
+    row["internet"]["gstatic"]["tls_ms"] = 190.0
+    row["internet"]["cloudflare"]["tls_ms"] = 210.0  # 1.1x, 20 ms apart
+    assert "handshakes:" not in view.phase_line([row])
+    row["internet"]["cloudflare"]["tls_ms"] = 385.0  # 2.03x but only 195 ms apart
+    assert "handshakes:" not in view.phase_line([row])
+    row["internet"]["cloudflare"]["tls_ms"] = 400.0  # 2.1x and 210 ms apart
+    assert "handshakes:" in view.phase_line([row])
+
+
 def test_phase_line_is_unknown_for_a_stale_probe():
     row = _fresh_phase_row(70.0, 900.0)
     row["at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600))
