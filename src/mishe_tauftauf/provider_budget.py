@@ -41,8 +41,14 @@ def evaluate(rows, account, *, now):
             return "UNKNOWN", "provider quota is missing, stale or malformed"
         if row.get("verdict") not in ("ok", "LOW", "RUNS OUT BEFORE RESET"):
             return "UNKNOWN", "provider forecast is unavailable"
-    if any(r["verdict"] != "ok" for r in selected):
-        return "RED", "provider's existing quota or burn rule holds spontaneous work"
+    holding = [f"{r['window']} {r['verdict']} ({r['used']:.0%} used)"
+               for r in selected if r["verdict"] != "ok"]
+    if holding:
+        # Name the window and rule: a subscriber woken by RED must see that a forward-looking
+        # burn forecast on a lightly used window can hold work, not only a spent account
+        # (2026-11-19: 5h 9%, 7d 24%, RED solely on "7d RUNS OUT BEFORE RESET").
+        return "RED", ("provider's existing quota or burn rule holds spontaneous work: "
+                       + ", ".join(holding))
     return "GREEN", "both provider windows satisfy the existing budget policy"
 
 

@@ -29,7 +29,10 @@ def test_missing_or_broken_provider_evidence_stays_unknown(change):
 @pytest.mark.parametrize("verdict", ["LOW", "RUNS OUT BEFORE RESET"])
 def test_existing_provider_policy_still_holds_work(verdict):
     evidence = rows(); evidence[0]["verdict"] = verdict
-    assert budget.evaluate(evidence, "claude", now=100)[0] == "RED"
+    state, reason = budget.evaluate(evidence, "claude", now=100)
+    assert state == "RED"
+    assert f"5h {verdict} (20% used)" in reason
+
 
 
 def test_provider_signal_missing_stale_and_recovery(tmp_path):
@@ -50,7 +53,8 @@ def test_red_and_green_readings_carry_their_cause(tmp_path):
     assert budget.publish(tmp_path, burning, now=100)["state"] == "RED"
     red = signal_store.read(tmp_path, "budget-claude", now=101)
     assert red.value == "RED"
-    assert red.reason == "provider's existing quota or burn rule holds spontaneous work"
+    assert red.reason == ("provider's existing quota or burn rule holds spontaneous work: "
+                          "7d RUNS OUT BEFORE RESET (20% used)")
     assert budget.publish(tmp_path, rows(), now=110)["state"] == "GREEN"
     green = signal_store.read(tmp_path, "budget-claude", now=111)
     assert green.value == "GREEN"
