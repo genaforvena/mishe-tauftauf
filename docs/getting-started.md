@@ -48,10 +48,11 @@ By default a role wakes on `claude` with `claude-haiku-5-5`. To change one, writ
 
 `codex` runs the `codex` CLI (`codex exec`) with the login that CLI already holds; Mishe
 copies no credential into an engine store. A plant runs it only where its own
-`engine/routes.json` names `codex` — this plant's does, on the `codex-a` account — and that
-choice also settles its sandbox mode, which is still an open decision for the owner (the
-code's default, `workspace-write`, is narrower than a mind's work needs). Its account
-window is read from the codex CLI's own rollout files,
+`engine/routes.json` names `codex` — this plant's does, on the `codex-a` account — but
+that route does not settle a sandbox mode. Codex wakes run with `-s danger-full-access`:
+the operator decided on 2026-11-18 that codex minds work without the codex sandbox, as
+claude and omp minds do; the host guard and the protected limits are the boundary. Its
+account window is read from the codex CLI's own rollout files,
 so an account that has not run lately reads STALE and the router skips it.
 
 `qwen` runs the Qwen Code CLI (`qwen -p`) with the login that CLI already holds, reading
