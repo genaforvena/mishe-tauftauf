@@ -435,6 +435,7 @@ def activate(home, repo, source, sha):
     previous_paths = set(config_paths(home))
     marker = wall_patch.snapshot(Path(home) / "units-installed")
     point(home, source)                      # consumers resolve the stable path; the pin is the pointer
+    flip_us = time.monotonic_ns() // 1000    # the pin boundary the observer's cutoff must name (promote)
     stable = current_link(home)
     # no_enable=True: the sync installs unit files and reloads systemd but enables NO existing trigger, so a
     # trigger that was disabled before activation stays disabled here and in revert. Only triggers newly
@@ -462,6 +463,7 @@ def activate(home, repo, source, sha):
     # Something else (a sync by another mind, a trigger enabled above) can touch a unit file after the sync's own reload:
     # end the activation with one more reload so the loaded configuration matches the files the observation will compare.
     reload_units()
+    return flip_us
 
 
 OUTCOME_SIGNAL = "moving-pin-delivery"
@@ -1078,9 +1080,14 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
         switch = activate or (lambda root, target: globals()["activate"](home,repo,root,target))
         try:
             record["activation_started_at"] = time.time(); save()
-            switch(source,sha); record["activated"]=True; record["events"].append("activated"); save()
-            # the probe drains consumer invocations that started before this instant (pin_observation)
-            env = dict(env, MISHE_PIN_CUTOFF_US=str(time.monotonic_ns() // 1000))
+            flip_us = switch(source,sha); record["activated"]=True; record["events"].append("activated"); save()
+            # the probe drains consumer invocations that started before the pin flipped (pin_observation).
+            # activate() returns that flip instant. A stamp taken here, after the activation's unit sync
+            # and reloads, would also classify every consumer started inside the activation window as
+            # old, and a wake that starts while the sync runs already resolves the new pin and may run
+            # 35 minutes by design - the bounded 420 s drain then times out on a healthy promotion
+            # (2026-11-19 6c0c9c7f: mishe-wake@steward started 7.6 s after the flip and rolled it back).
+            env = dict(env, MISHE_PIN_CUTOFF_US=str(flip_us or time.monotonic_ns() // 1000))
             if activate is None:
                 record["consumer_invocation"] = boundary.invoke_arm_consumer(source/"src")
             record["observe"] = probe(observe,cwd=source,env=env,timeout=OBSERVE_TIMEOUT_S)

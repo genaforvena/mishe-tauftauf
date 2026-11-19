@@ -48,6 +48,23 @@ def test_rollback_probe_imports_the_new_probe_not_the_old_release(tree):
     assert envs==[str(Path(r["source"])/"src"), str(Path(r["source"])/"src")]
 
 
+def test_observe_drains_from_the_flip_activate_returns_not_a_post_sync_stamp(tree):
+    """2026-11-19 6c0c9c7f: mishe-wake@steward started 7.6 s after the pin flipped, while the
+    activation's unit sync still ran, so it already resolved the new pin; the cutoff stamped
+    after that sync classified the invocation as old, and the bounded 420 s drain timed out
+    on a wake that may legally run 35 minutes, rolling a healthy promotion back. The observer
+    cutoff must be the flip instant activate() returns, never a later post-sync stamp."""
+    repo,home,old,sha=tree; envs=[]
+    flip_us=int(time.monotonic_ns() // 1000) - 8_000_000   # the flip, stamped 8 s before any post-sync read
+    def activate(source, target): return flip_us
+    def probe(argv, **kw):
+        envs.append(kw["env"]["MISHE_PIN_CUTOFF_US"]); return dict(code=0, output="ok")
+    r=p.promote(home,repo,sha,check=[sys.executable,"-c","assert True"],observe=["probe"],
+                previous=old,activate=activate,probe=probe,reviewer=lambda *a:None,closure=lambda *a:None)
+    assert r["phase"]=="delivered"
+    assert envs==[str(flip_us)]
+
+
 def test_failed_restore_is_unknown(tree):
     repo,home,old,sha=tree
     r=p.promote(home,repo,sha,check=[sys.executable,"-c","assert True"],observe=["probe"],
