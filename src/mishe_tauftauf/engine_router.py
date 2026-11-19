@@ -24,9 +24,11 @@ safety net or qwen) reads no window, so a missing file does not stop it.
 Outcomes are judged from the wake's own yield receipt, not from the engine exit
 code alone. A candidate that does not start falls through to the next one within
 the same wake (no effect happened). A candidate whose wake times out, exits
-without a yield, or leaves no receipt cools off for ``cool_off_s``; the next wake
-of the role then starts on the next candidate, and the cooled candidate is probed
-again once its cool-off ends. A provider rate limit (HTTP 429) before any tool
+without a yield, or leaves no receipt cools off for ``cool_off_s``; the first
+cool-off is role-scoped, but a repeat on the same candidate doubles the wait (up
+to four windows) and cools it for every role, so a peer cannot reuse a model
+that just burned a whole wake. A yield clears the repeat count. A provider rate
+limit (HTTP 429) before any tool
 call is refusal-class: the wake falls through at once and the candidate cools off
 for that role only, for ``rate_limit_cool_off_s`` (doubling on repeats), because
 a rate limit is a transient provider condition and not a quota window. Every
@@ -189,12 +191,14 @@ def load_routes(home) -> dict | None:
 def _load_state(home) -> dict:
     path = _dir(home) / STATE
     if not path.is_file():
-        return {"cooling": {}}
+        return {"cooling": {}, "rate_limits": {}, "timeouts": {}}
     value = load_json(path)
     cooling = value.get("cooling") if isinstance(value, dict) else None
     rate_limits = value.get("rate_limits") if isinstance(value, dict) else None
+    timeouts = value.get("timeouts") if isinstance(value, dict) else None
     return {"cooling": cooling if isinstance(cooling, dict) else {},
-            "rate_limits": rate_limits if isinstance(rate_limits, dict) else {}}
+            "rate_limits": rate_limits if isinstance(rate_limits, dict) else {},
+            "timeouts": timeouts if isinstance(timeouts, dict) else {}}
 
 
 def _save_state(home, state: dict) -> None:
@@ -518,6 +522,9 @@ class RoutedEngine:
         self.candidates = routes["roles"][role]
         self.routes = routes
         self.cool_off_ms = routes["cool_off_s"] * 1000
+        # A candidate that burns two wakes without yielding is a candidate fault, not a role
+        # fault: the repeat cool-off widens to every role and doubles up to four windows.
+        self.max_timeout_cool_off_ms = self.cool_off_ms * 4
         self.account_cool_off_ms = routes["account_cool_off_s"] * 1000
         self.rate_limit_cool_off_ms_base = routes.get("rate_limit_cool_off_s", DEFAULT_RATE_LIMIT_COOL_OFF_S) * 1000
         self.rate_limit_cool_off_ms_max = routes.get("max_rate_limit_cool_off_s", MAX_RATE_LIMIT_COOL_OFF_S) * 1000
@@ -566,10 +573,11 @@ class RoutedEngine:
     def _clear(self, key: str) -> None:
         state = _load_state(self.home)
         hit = [state["cooling"].pop(k, None) for k in (key, role_key(self.role, key))]
-        # A candidate that worked resets the role's rate-limit backoff: the next refusal starts
-        # from the short cool-off again.
+        # A candidate that worked resets both backoffs: the timeout/no-yield repeat count and the
+        # role's rate-limit ladder both start fresh.
         count = state.get("rate_limits", {}).pop(role_key(self.role, key), None)
-        if any(v is not None for v in hit) or count is not None:
+        timeout_count = state.get("timeouts", {}).pop(key, None)
+        if any(v is not None for v in hit) or count is not None or timeout_count is not None:
             _save_state(self.home, state)
 
     def rate_limit_cool_off_ms(self, role: str, key: str) -> float:
@@ -586,6 +594,22 @@ class RoutedEngine:
         counts[role_key(role, key)] = past + 1
         _save_state(self.home, state)
         return off
+
+    def timeout_cool_off_ms(self, key: str) -> tuple[float, int]:
+        """Cool-off after a timeout/no-yield, counted per candidate across roles.
+
+        A single bad wake may be a role's task, so the first cool-off stays role-scoped and keeps
+        the site's base window. A second on the same candidate is evidence about the candidate
+        itself: the repeat cools it for every role and doubles the wait, so a peer role cannot
+        reuse a model that just burned a whole wake. A yield clears the count through ``_clear``.
+        """
+        state = _load_state(self.home)
+        past = state.get("timeouts", {}).get(key, 0)
+        off = min(self.cool_off_ms * (2 ** past), self.max_timeout_cool_off_ms)
+        counts = state.setdefault("timeouts", {})
+        counts[key] = past + 1
+        _save_state(self.home, state)
+        return off, past + 1
 
     def _observe(self, now_ms: float) -> None:
         """Re-assess the signal against current evidence, not the snapshot that chose the candidate.
@@ -681,10 +705,16 @@ class RoutedEngine:
                 tried.add(key)
                 continue
             except EngineTimeout as exc:
+                now = time.time() * 1000
+                off, repeats = self.timeout_cool_off_ms(key)
+                # The first timeout stays role-scoped (its task failed); a repeat is a candidate
+                # fault, so cool it for every role and hold it longer.
+                scope = "all" if repeats >= 2 else "role"
                 record(self.home, {"role": self.role, "event": "outcome", "wake": key_wake, "key": key,
-                                   "outcome": "timeout", "scope": "role", "reason": str(exc)}, now_ms=time.time() * 1000)
-                self._cool(cand, time.time() * 1000, role_only=True)
-                self._observe(time.time() * 1000)
+                                   "outcome": "timeout", "scope": scope, "repeats": repeats,
+                                   "cool_off_s": off / 1000, "reason": str(exc)}, now_ms=now)
+                self._cool(cand, now, role_only=(repeats < 2), off_ms=off)
+                self._observe(now)
                 raise
             yielded = bool(key_wake) and yielding.receipt_path(self.home, key_wake).exists()
             # Quota spent after the run acted: the effect is unknown (no yield), so the wake stays unknown and does
@@ -702,7 +732,9 @@ class RoutedEngine:
                 now = time.time() * 1000
                 self._cool(cand, now, off_ms=self.quota_cool_off_ms(engine, now), force=_is_safety_net(cand))
             else:
-                self._cool(cand, time.time() * 1000)
+                off, _repeats = self.timeout_cool_off_ms(key)
+                # A no-yield already cooled the candidate globally; a repeat only doubles the wait.
+                self._cool(cand, time.time() * 1000, off_ms=off)
             self._observe(time.time() * 1000)
             return code
 

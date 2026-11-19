@@ -291,6 +291,70 @@ def test_timeout_cools_only_that_role(routed):
     assert rows[0]["role"] == "health" and rows[0]["candidate"] == router.candidate_key(GO)
 
 
+def test_repeat_timeout_cools_candidate_globally_with_a_doubled_window(routed):
+    """A second no-yield on one candidate must not let a peer role reuse it.
+
+    The 2026-11-19 wake-waste recurrence: docs timed out, cooled 30 min role-scoped, then
+    network reused the same free model and burned a second 35-min wake. The repeat has to
+    widen the cool-off to every role and double the window.
+    """
+    routes_file(routed, {"health": [GO], "senses": [GO], "docs": [GO]})
+    FakeEngine.script = {GO["model"]: "timeout"}
+    key = router.candidate_key(GO)
+    with pytest.raises(EngineTimeout):
+        router.for_role(routed, "health").run(routed / "p.md", env=_env(routed, "kwt1"), cwd=routed, timeout=5)
+    state = json.loads((routed / "engine" / router.STATE).read_text())
+    # first timeout stays role-scoped at the base window: one bad wake is the role's task
+    assert state["cooling"][router.role_key("health", key)] == NOW_MS + 1_800_000
+    assert key not in state["cooling"]
+    assert state["timeouts"][key] == 1
+
+    with pytest.raises(EngineTimeout):
+        router.for_role(routed, "senses").run(routed / "p.md", env=_env(routed, "kwt2"), cwd=routed, timeout=5)
+    state = json.loads((routed / "engine" / router.STATE).read_text())
+    assert state["cooling"][key] == NOW_MS + 3_600_000
+    assert state["timeouts"][key] == 2
+    # a third role cannot select the candidate at all while the repeat cool-off is live
+    st = router.live_status(routed)
+    assert router.choose("docs", [GO], st, state["cooling"], NOW_MS)["decision"] == "none"
+    timeouts = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()
+                if json.loads(x).get("outcome") == "timeout"]
+    assert (timeouts[-1]["scope"], timeouts[-1]["repeats"]) == ("all", 2)
+
+
+def test_no_yield_repeat_doubles_the_global_cool_off(routed):
+    routes_file(routed, {"health": [GO]})
+    FakeEngine.script = {GO["model"]: "exit-no-yield"}
+    key = router.candidate_key(GO)
+    path = routed / "engine" / router.STATE
+    router.for_role(routed, "health").run(routed / "p.md", env=_env(routed, "kwn1"), cwd=routed, timeout=5)
+    assert json.loads(path.read_text())["cooling"][key] == NOW_MS + 1_800_000
+    # Simulate the cool-off elapsing without moving the frozen test clock: keep the repeat
+    # count, clear only the cooling so the same candidate is selectable for the second wake.
+    state = json.loads(path.read_text())
+    state["cooling"].clear()
+    path.write_text(json.dumps(state))
+    router.for_role(routed, "health").run(routed / "p.md", env=_env(routed, "kwn2"), cwd=routed, timeout=5)
+    state = json.loads(path.read_text())
+    assert state["cooling"][key] == NOW_MS + 3_600_000
+    assert state["timeouts"][key] == 2
+
+
+def test_a_yield_clears_the_timeout_repeat_count(routed):
+    eng = router.for_role(routed, "health")
+    key = router.candidate_key(GO)
+    first, _ = eng.timeout_cool_off_ms(key)
+    assert eng.timeout_cool_off_ms(key)[0] == 2 * first
+    eng._clear(key)
+    assert eng.timeout_cool_off_ms(key)[0] == first
+
+
+def test_timeout_cool_off_escalation_is_capped_at_four_windows(routed):
+    eng = router.for_role(routed, "health")
+    offs = [eng.timeout_cool_off_ms(router.candidate_key(GO))[0] for _ in range(6)]
+    assert offs == [1_800_000, 3_600_000, 7_200_000, 7_200_000, 7_200_000, 7_200_000]
+
+
 def test_candidate_timeout_s_caps_the_engine_timeout(routed):
     seen = []
     class Spy(FakeEngine):
