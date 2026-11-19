@@ -77,7 +77,7 @@ def main(argv=None) -> int:
     except (OSError, ImportError, ValueError) as exc:
         print(f"UNKNOWN — the field-review contract cannot be read: {exc}")
         return 3
-    for name in ("head_bytes", "head_paths", "landed_review_names", "validate_review_text",
+    for name in ("head_bytes", "landed_review_bytes", "landed_review_names", "validate_review_text",
                  "unlanded_reviews", "edited_landed_reviews", "head_has_file", "load_registry"):
         if not hasattr(tool, name):
             print(f"UNKNOWN — the reviewed field-review tool does not provide {name}; "
@@ -104,10 +104,7 @@ def main(argv=None) -> int:
     historical = []
     try:
         for name in tool.landed_review_names(repo):
-            blob = tool.head_bytes(repo, name)
-            if blob is None:
-                problems.append(f"{name}: the branch lists the review but cannot read its bytes")
-                continue
+            blob = tool.landed_review_bytes(repo, name)
             landed += 1
             text = blob.decode("utf-8", "replace")
             for problem in tool.validate_review_text(

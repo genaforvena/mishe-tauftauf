@@ -94,21 +94,25 @@ class Hit:
     text: str
 
 
-def _git(repo: Path, args: list[str]) -> bytes:
-    """Run a git command in the repository and return its stdout.
-
-    The caller decides what an empty answer means; a git failure is an empty
-    answer, never an exception, so a broken repository reads as "nothing
-    landed" rather than as a crash.
-    """
+def _git_output(repo: Path, args: list[str], operation: str) -> bytes:
+    """Read required Git output, preserving the distinction between empty and failed."""
     try:
         result = subprocess.run(["git", "-C", str(repo), *args],
                                 capture_output=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return b""
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise OSError(f"{operation}: {exc}") from exc
     if result.returncode:
-        return b""
+        detail = result.stderr.decode("utf-8", "replace").strip() or f"Git exited {result.returncode}"
+        raise OSError(f"{operation}: {detail}")
     return result.stdout
+
+
+def _git(repo: Path, args: list[str]) -> bytes:
+    """Read optional Git evidence, using an empty result when it is unavailable."""
+    try:
+        return _git_output(repo, args, "cannot read Git evidence")
+    except OSError:
+        return b""
 
 
 def head_paths(repo: Path, relative: str) -> set[str]:
@@ -117,15 +121,9 @@ def head_paths(repo: Path, relative: str) -> set[str]:
     ``git ls-tree`` reads the branch. ``git ls-files`` would read the index,
     where a staged review that was never committed would already look landed.
     """
-    try:
-        result = subprocess.run(["git", "-C", str(repo), "ls-tree", "-r", "--name-only",
-                                 "HEAD", "--", relative], capture_output=True, timeout=60)
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise OSError(f"cannot list reviewed paths: {exc}") from exc
-    if result.returncode:
-        detail = result.stderr.decode("utf-8", "replace").strip() or "git ls-tree failed"
-        raise OSError(f"cannot list reviewed paths: {detail}")
-    return {line for line in result.stdout.decode("utf-8", "replace").splitlines() if line}
+    output = _git_output(repo, ["ls-tree", "-r", "--name-only", "HEAD", "--", relative],
+                         "cannot list reviewed paths")
+    return {line for line in output.decode("utf-8", "replace").splitlines() if line}
 
 
 def head_bytes(repo: Path, relative: str) -> bytes | None:
@@ -213,6 +211,12 @@ def landed_review_names(repo: Path) -> list[str]:
     return sorted(p for p in head_paths(repo, prefix) if p.endswith(".md"))
 
 
+def landed_review_bytes(repo: Path, relative: str) -> bytes:
+    """Read a listed review; an empty blob is still available for validation."""
+    return _git_output(repo, ["cat-file", "blob", f"HEAD:{relative}"],
+                       f"cannot read landed review {relative}")
+
+
 def landed_status_counts(repo: Path) -> dict[str, int]:
     """How many landed reviews are applied and how many discarded.
 
@@ -222,9 +226,7 @@ def landed_status_counts(repo: Path) -> dict[str, int]:
     """
     counts = {"applied": 0, "discarded": 0}
     for name in landed_review_names(repo):
-        blob = head_bytes(repo, name)
-        if blob is None:
-            continue
+        blob = landed_review_bytes(repo, name)
         status = front_matter(blob.decode("utf-8", "replace")).get("status", "")
         if status in counts:
             counts[status] += 1
@@ -240,9 +242,7 @@ def covered_cells(repo: Path) -> dict[str, str]:
     """
     covered: dict[str, str] = {}
     for name in landed_review_names(repo):
-        blob = head_bytes(repo, name)
-        if blob is None:
-            continue
+        blob = landed_review_bytes(repo, name)
         matter = front_matter(blob.decode("utf-8", "replace"))
         field = matter.get("field")
         angle = matter.get("angle")
@@ -263,9 +263,7 @@ def newest_review_dates(repo: Path) -> dict[str, str]:
     """Cell key -> the newest landed review date (ISO text) covering that cell."""
     newest: dict[str, str] = {}
     for name in landed_review_names(repo):
-        blob = head_bytes(repo, name)
-        if blob is None:
-            continue
+        blob = landed_review_bytes(repo, name)
         matter = front_matter(blob.decode("utf-8", "replace"))
         field, angle = matter.get("field"), matter.get("angle")
         if not (field and angle):
@@ -493,9 +491,9 @@ def edited_landed_reviews(repo: Path) -> list[str]:
     """Landed reviews whose working-tree bytes differ from the branch's."""
     edited: list[str] = []
     for name in landed_review_names(repo):
-        blob = head_bytes(repo, name)
+        blob = landed_review_bytes(repo, name)
         path = repo / name
-        if blob is None or not path.is_file():
+        if not path.is_file():
             continue
         try:
             current = path.read_bytes()
@@ -599,9 +597,7 @@ def applied_target_states(repo: Path) -> list[dict[str, str]]:
     """
     rows: list[dict[str, str]] = []
     for name in landed_review_names(repo):
-        blob = head_bytes(repo, name)
-        if blob is None:
-            continue
+        blob = landed_review_bytes(repo, name)
         text = blob.decode("utf-8", "replace")
         matter = front_matter(text)
         if matter.get("status") != "applied":
@@ -693,9 +689,7 @@ def open_applications(repo: Path) -> list[dict[str, str]]:
     """
     rows: list[dict[str, str]] = []
     for name in landed_review_names(repo):
-        blob = head_bytes(repo, name)
-        if blob is None:
-            continue
+        blob = landed_review_bytes(repo, name)
         text = blob.decode("utf-8", "replace")
         matter = front_matter(text)
         if matter.get("status") != "applied":
@@ -899,5 +893,5 @@ if __name__ == "__main__":
             pass
         raise SystemExit(0)
     except OSError as exc:
-        print(f"UNKNOWN reviewed paths unavailable: {exc}", file=sys.stderr)
+        print(f"UNKNOWN reviewed tree unavailable: {exc}", file=sys.stderr)
         raise SystemExit(2)

@@ -113,8 +113,10 @@ python3 research/field-review/field_review.py coverage  # which cells are covere
 python3 research/field-review/field_review.py check     # the landing contract
 ```
 
-`check` exits 0 when every landed review satisfies the contract, 2 when one
-does not, and 2 with an UNKNOWN line when the grid itself cannot be read.
+`check` exits 0 when the current contract holds and 2 for a contract failure.
+If the grid, review listing, or a listed review's committed bytes cannot be
+read, the command exits 2 with an UNKNOWN line. The scheduled contract check
+uses exit 3 for UNKNOWN. A readable empty review fails content validation.
 
 ## Completeness
 

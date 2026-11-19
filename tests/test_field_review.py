@@ -666,6 +666,48 @@ class ScheduledCheckTest(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn("cites no source URL", result.stdout)
 
+    def test_unreadable_landed_review_is_unknown_until_the_blob_returns(self):
+        name = "alpha--recent--2026-10-21.md"
+        relative = f"research/field-review/reviews/{name}"
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo_with_tool(Path(tmp), {name: GOOD_REVIEW})
+            oid = subprocess.check_output(
+                ["git", "-C", str(repo), "rev-parse", f"HEAD:{relative}"], text=True).strip()
+            blob = repo / ".git" / "objects" / oid[:2] / oid[2:]
+            withheld = Path(tmp) / "withheld-review"
+            blob.rename(withheld)
+            try:
+                self.assertIn(relative, field_review.landed_review_names(repo))
+                for command in ("next", "coverage", "check", "applied"):
+                    with self.subTest(command=command):
+                        result = subprocess.run(
+                            [sys.executable, str(TOOL), "--repo", str(repo), command],
+                            capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn("UNKNOWN", result.stderr)
+                        self.assertIn(name, result.stderr)
+                result = self._run(repo)
+                self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+                self.assertIn("UNKNOWN", result.stdout)
+                self.assertIn(name, result.stdout)
+            finally:
+                withheld.rename(blob)
+            result = self._run(repo)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("1 landed review", result.stdout)
+            result = subprocess.run([sys.executable, str(TOOL), "--repo", str(repo), "check"],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("PASS", result.stdout)
+
+    def test_empty_landed_review_fails_content_validation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = self._repo_with_tool(Path(tmp), {"alpha--recent--2026-10-21.md": ""})
+            result = self._run(repo)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("front matter missing field", result.stdout)
+
     def test_a_review_that_never_landed_fails_after_the_grace_period(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._repo_with_tool(Path(tmp))
@@ -716,14 +758,14 @@ class ScheduledCheckTest(unittest.TestCase):
             "reviews/c--x--2026-10-31.md": "---\nstatus: discarded\n---\n",
         }
         original_names = field_review.landed_review_names
-        original_bytes = field_review.head_bytes
+        original_bytes = field_review.landed_review_bytes
         try:
             field_review.landed_review_names = lambda repo: sorted(texts)
-            field_review.head_bytes = lambda repo, rel: texts[rel].encode()
+            field_review.landed_review_bytes = lambda repo, rel: texts[rel].encode()
             counts = field_review.landed_status_counts(Path("."))
         finally:
             field_review.landed_review_names = original_names
-            field_review.head_bytes = original_bytes
+            field_review.landed_review_bytes = original_bytes
         self.assertEqual(counts, {"applied": 1, "discarded": 2})
 
 
