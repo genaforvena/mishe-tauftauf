@@ -1277,7 +1277,13 @@ def day_spark(samples, buckets=USUAL_BUCKETS):
         chunk = samples[i * n // buckets:(i + 1) * n // buckets]
         vals = [v for v in chunk if v is not None]
         means.append(sum(vals) / len(vals) if vals else None)
-    return spark(means)
+    known = [m for m in means if m is not None]
+    if not known:
+        return "(no data)"
+    # A bucket with no answered check is drawn as a gap, not skipped: skipping it would make a
+    # dead stretch of the day look like continuous data.
+    hi = max(known) or 1
+    return "".join("·" if m is None else SPARK[min(7, int(m / hi * 7.999))] for m in means)
 
 
 PHASE_LABELS = (("connect_ms", "reaching the site"),

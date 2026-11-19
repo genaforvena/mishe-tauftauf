@@ -625,6 +625,14 @@ def test_day_spark_buckets_the_day_and_handles_empty():
     assert view.day_spark([]) == "(no data)"
 
 
+def test_day_spark_draws_a_dead_stretch_as_a_gap_not_skipped():
+    # A middle stretch of failed checks must keep its place on the trend, not close up.
+    line = view.day_spark([300.0] * 100 + [None] * 100 + [600.0] * 200)
+    assert len(line) == view.USUAL_BUCKETS
+    assert "·" in line and line.index("·") > 0 and line.rindex("·") < len(line) - 1
+    assert view.day_spark([None] * 50) == "(no data)"
+
+
 def test_probe_cadence_is_measured_not_a_fixed_minute_claim():
     rows = [{"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(i * 180))} for i in range(5)]
     line = view.probe_age_line(rows, 220, 40)
