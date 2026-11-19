@@ -3315,6 +3315,56 @@ def test_sensor_names_reports_an_unparseable_release_instead_of_importing_it() -
     assert names == set()
     assert failure.startswith("module unparseable: invalid syntax")
 
+def test_sensor_names_parses_each_content_once_and_edited_bytes_reparse(
+        tmp_path: Path, monkeypatch) -> None:
+    import ast
+
+    from mishe_tauftauf import discovery
+
+    class _CountingAst:
+        """The ``ast`` module with a counting ``parse``; only ``discovery`` sees it."""
+
+        def __init__(self) -> None:
+            self.parse_calls = 0
+
+        def __getattr__(self, name):
+            return getattr(ast, name)
+
+        def parse(self, source):
+            self.parse_calls += 1
+            return ast.parse(source)
+
+    shim = _CountingAst()
+    monkeypatch.setattr(discovery, "ast", shim)
+    root = _root_with_sensors(tmp_path / "sensor-cache", ["sense.a.one"])
+    first = discovery._sensor_names(str(root))
+    second = discovery._sensor_names(str(root))
+    assert first == ({"sense.a.one"}, None)
+    assert second == first
+    assert shim.parse_calls == 1
+
+    # Edited bytes re-parse: the rewrite changes both content and size, so the
+    # cache key cannot collide even on a coarse-mtime filesystem.
+    _root_with_sensors(root, ["sense.aa.two-two"])
+    third = discovery._sensor_names(str(root))
+    assert third == ({"sense.aa.two-two"}, None)
+    assert shim.parse_calls == 2
+
+    # An unparseable root reports its failure and the failure itself is cached
+    # only until the bytes change again.
+    (root / "src" / "mishe_tauftauf" / "discovery.py").write_text(
+        "def broken(:\n", encoding="utf-8")
+    fourth = discovery._sensor_names(str(root))
+    fifth = discovery._sensor_names(str(root))
+    assert fourth[0] == set()
+    assert fourth[1] is not None and fourth[1].startswith("module unparseable")
+    assert fifth == fourth
+    assert shim.parse_calls == 3
+
+    _root_with_sensors(root, ["sense.aaa.three-three"])
+    assert discovery._sensor_names(str(root)) == ({"sense.aaa.three-three"}, None)
+    assert shim.parse_calls == 4
+
 
 def test_sensor_coverage_names_a_sensor_the_pin_emits_but_a_service_dropped() -> None:
     from mishe_tauftauf import discovery

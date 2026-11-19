@@ -106,6 +106,9 @@ COMMANDS = ("rg", "git", "tmux", "python3", "systemctl", "journalctl", "ps", "df
 
 SENSOR_ID = re.compile(r"^sense\.[a-z0-9]+(?:\.[a-z0-9-]+)+$")
 
+_SENSOR_NAMES_CACHE: dict[tuple[str, int, int], tuple[set[str], str | None]] = {}
+"""Parsed sensor ids per (module path, mtime_ns, size); see ``_sensor_names``."""
+
 # RFC 2308 — Negative caching; typed absence vs present-but-empty
 # https://www.rfc-editor.org/rfc/rfc2308.txt §1, §3–6
 NEGATIVE_TTL_HINT_SECONDS = 3600  # §5 default 1–3 h, tunable, < positive TTL
@@ -2307,8 +2310,24 @@ def _sensor_names(root: str) -> tuple[set[str], str | None]:
     imported: a release with a syntax error reports the failure instead of
     poisoning this process's own namespace. A root names its package under
     ``src/``, the layout a release and a checkout share.
+
+    Parsed bytes are cached per (path, mtime_ns, size): one scan reads the
+    same root several times (service roots, the pin, the declared checkout),
+    and the ~0.1 s parse of this 8k-line module was measured 97 times in one
+    34-scan test run (profiled 2026-11-19). The cache is keyed by content
+    identity, so edited bytes parse again; the returned set is shared and
+    must be treated as immutable by callers (``_sensor_coverage`` only reads
+    it).
     """
     module = Path(root) / "src" / "mishe_tauftauf" / "discovery.py"
+    try:
+        stat = module.stat()
+    except OSError:
+        return set(), "module unreadable"
+    key = (str(module), stat.st_mtime_ns, stat.st_size)
+    cached = _SENSOR_NAMES_CACHE.get(key)
+    if cached is not None:
+        return cached
     try:
         source = module.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -2316,14 +2335,18 @@ def _sensor_names(root: str) -> tuple[set[str], str | None]:
     try:
         tree = ast.parse(source)
     except SyntaxError as exc:
-        return set(), f"module unparseable: {exc}"
+        result = (set(), f"module unparseable: {exc}")
+        _SENSOR_NAMES_CACHE[key] = result
+        return result
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             match = SENSOR_ID.match(node.value)
             if match:
                 names.add(match.group(0))
-    return names, None
+    result = (names, None)
+    _SENSOR_NAMES_CACHE[key] = result
+    return result
 
 
 def _sensor_coverage(home: Path, roots: list[str]) -> dict[str, object]:
