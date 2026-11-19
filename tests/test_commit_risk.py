@@ -50,6 +50,8 @@ class CommitRiskTests(unittest.TestCase):
         self.assertEqual(cr.system0(["docs/decision-rungs.md",
                                      "src/mishe_tauftauf/release_promotion.py"]), "delivery-path")
         self.assertEqual(cr.system0(["tools/network_view.py"]), "ordinary")
+        self.assertEqual(cr.system0(["tools/delivery_check.py",
+                                     "tests/test_delivery_check_script.py"]), "delivery-path")
 
     def test_ordinary_is_model_only_except_the_view_lookup(self):
         self.assertIn("ordinary", cr.CRITERIA)
@@ -61,6 +63,8 @@ class CommitRiskTests(unittest.TestCase):
         self.assertIsNone(cr.system0(["tools/network_boundary.py"]))
         # If the view changes alongside dispatch code, the residual still goes to the model.
         self.assertIsNone(cr.system0(["tools/network_view.py", "src/mishe_tauftauf/owed.py"]))
+        # The delivery check alone is a rule; with dispatch code the residual still goes to the model.
+        self.assertIsNone(cr.system0(["tools/delivery_check.py", "src/mishe_tauftauf/owed.py"]))
 
     def test_two_non_routine_rules_or_an_unmatched_path_are_the_residual(self):
         self.assertIsNone(cr.system0(["src/mishe_tauftauf/owed.py",
