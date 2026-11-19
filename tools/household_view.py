@@ -22,6 +22,8 @@ LOG = SITE / "spatial/work/household/signatures.jsonl"
 LATEST = SITE / "discovery/latest.json"
 AUDIO = SITE / "spatial/work/household/audio.jsonl"
 NOTE3_GLOB = "spatial/work/household/note3_samples_run*.jsonl"
+PHONES_FILE = SITE / "spatial/work/household/phones.jsonl"
+STABILITY_WINDOW_S = 7 * 24 * 3600
 XTTS_DIR = Path.home() / ".local/share/tts/tts_models--multilingual--multi-dataset--xtts_v2"
 XTTS_SIZE = 1867929118
 TRANSCRIPT_WINDOW_S = 600
@@ -206,6 +208,32 @@ def redmi10_battery():
             if isinstance(bat, dict) and isinstance(bat.get("epoch"), (int, float)):
                 return bat, bat["epoch"], current
     return None
+
+
+def redmi10_stability(now, window_s=None):
+    """Drop onsets and fresh-row fraction from our own phone-collector rows.
+
+    Reads the household-phones duty's phones.jsonl. A drop onset is an ok row
+    followed by unknown or stale; the fraction is ok rows over all rows in the
+    trailing window. These are the collector's rows, not the phone's body log
+    or android-body's class-C detector, so this is a different population from
+    `sense.body.redmi10.delivery-gaps` — do not read one as the other.
+    Missing, unreadable or malformed history is UNKNOWN (None), never a zero.
+    """
+    window_s = STABILITY_WINDOW_S if window_s is None else window_s
+    try:
+        rows = [json.loads(line) for line in PHONES_FILE.read_text().splitlines() if line.strip()]
+    except (OSError, ValueError):
+        return None
+    window = [r for r in rows
+              if isinstance(r.get("t"), (int, float)) and r["t"] >= now - window_s]
+    if not window:
+        return None
+    statuses = [(r.get("redmi10") or {}).get("status") for r in window]
+    drops = sum(1 for prev, cur in zip(statuses, statuses[1:])
+                if prev == "ok" and cur in ("unknown", "stale"))
+    fresh = sum(1 for s in statuses if s == "ok")
+    return drops, fresh, len(statuses)
 
 
 def read_rows(path, limit=400):
@@ -412,6 +440,13 @@ def draw():
         else:
             out.append(f"  redmi10  last known battery={pct}  charging={charging}  "
                        f"({age/3600:.1f}h ago, no current row; history only, not current)")
+    stability = redmi10_stability(time.time())
+    if stability is None:
+        out.append("  redmi10  history: UNKNOWN (no collector rows in 7d window)")
+    else:
+        drops, fresh, total = stability
+        out.append(f"  redmi10  history: {drops} drop onsets in 7d, "
+                   f"fresh in {100 * fresh // total}% of {total} samples")
     out.append("  position of phones: only as the household states it")
     out.append("")
     out.append("")

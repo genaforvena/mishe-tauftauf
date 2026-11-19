@@ -101,6 +101,10 @@ def test_phones_render_note3_sampler_and_redmi10_battery(tmp_path, monkeypatch):
 
     latest = tmp_path / "latest.json"
     monkeypatch.setattr(hv, "LATEST", latest)
+    phones_log = tmp_path / "phones.jsonl"
+    phones_log.write_text("\n".join(json.dumps(
+        {"t": now - 60, "redmi10": {"status": "ok"}}) for _ in range(3)) + "\n")
+    monkeypatch.setattr(hv, "PHONES_FILE", phones_log)
 
     def stream_row(**body):
         latest.write_text(json.dumps({"observations": [
@@ -134,4 +138,30 @@ def test_phones_render_note3_sampler_and_redmi10_battery(tmp_path, monkeypatch):
     stream_row(values={"battery": {"level": 0.92, "charging": True, "epoch": now - 5}})
     lines = hv.draw().splitlines()
     phones = [l for l in lines if l.startswith("  redmi10")]
-    assert phones == ["  redmi10  battery=92%  charging=yes  (row 5s old)"], phones
+    assert phones == [
+        "  redmi10  battery=92%  charging=yes  (row 5s old)",
+        "  redmi10  history: 0 drop onsets in 7d, fresh in 100% of 3 samples",
+    ], phones
+
+
+def test_redmi10_stability_counts_onsets_and_fails_closed(tmp_path, monkeypatch):
+    import json
+    now = 1795126500.0
+    path = tmp_path / "phones.jsonl"
+    rows = [
+        {"t": now - 900, "redmi10": {"status": "ok"}},       # outside window
+        {"t": now - 500, "redmi10": {"status": "ok"}},
+        {"t": now - 400, "redmi10": {"status": "unknown"}},  # onset
+        {"t": now - 300, "redmi10": {"status": "stale"}},
+        {"t": now - 200, "redmi10": {"status": "ok"}},       # recovery
+        {"t": now - 100, "redmi10": {"status": "ok"}},
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    monkeypatch.setattr(hv, "PHONES_FILE", path)
+    # 1 ok->unknown onset, 3/5 fresh rows inside the 600 s window
+    assert hv.redmi10_stability(now, window_s=600) == (1, 3, 5)
+    assert hv.redmi10_stability(now, window_s=50) is None      # empty window
+    path.write_text("{broken json\n")
+    assert hv.redmi10_stability(now, window_s=600) is None     # malformed
+    monkeypatch.setattr(hv, "PHONES_FILE", tmp_path / "absent.jsonl")
+    assert hv.redmi10_stability(now, window_s=600) is None     # missing
