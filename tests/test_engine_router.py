@@ -1,6 +1,9 @@
+import fcntl
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier, Event, local
 
 import pytest
 
@@ -322,6 +325,84 @@ def test_repeat_timeout_cools_candidate_globally_with_a_doubled_window(routed):
     assert (timeouts[-1]["scope"], timeouts[-1]["repeats"]) == ("all", 2)
 
 
+def test_overlapping_timeouts_count_both_roles_and_cool_globally(routed, monkeypatch):
+    routes_file(routed, {role: [GO, HAIKU] for role in ("health", "senses", "docs")})
+    FakeEngine.script = {GO["model"]: "timeout"}
+    started = Barrier(2, timeout=5)
+    first_read = Event()
+    second_attempt = Event()
+    first_done = Event()
+    worker = local()
+    load_state = router._load_state
+    flock = fcntl.flock
+
+    class OverlappingEngine(FakeEngine):
+        def run(self, *args, **kwargs):
+            started.wait()
+            worker.finishing = True
+            if worker.role == "senses":
+                assert first_read.wait(5)
+            return super().run(*args, **kwargs)
+
+    def ordered_load(home):
+        state = load_state(home)
+        if getattr(worker, "finishing", False):
+            worker.finishing = False
+            if worker.role == "health":
+                first_read.set()
+                assert second_attempt.wait(5)
+            else:
+                # An unlocked reader captures the stale counter before the first write.
+                second_attempt.set()
+                assert first_done.wait(5)
+        return state
+
+    def observe_lock(fd, mode):
+        if getattr(worker, "finishing", False) and worker.role == "senses":
+            # A locked reader can signal its attempt before it waits for the first writer.
+            second_attempt.set()
+        return flock(fd, mode)
+
+    def run(role):
+        worker.role = role
+        with pytest.raises(EngineTimeout):
+            router.for_role(routed, role).run(routed / "p.md", env=_env(routed, role), cwd=routed, timeout=5)
+        if role == "health":
+            first_done.set()
+
+    monkeypatch.setattr(router.RoutedEngine, "_build", lambda self, cand: OverlappingEngine(cand["model"]))
+    monkeypatch.setattr(router, "_load_state", ordered_load)
+    monkeypatch.setattr(fcntl, "flock", observe_lock)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(run, role) for role in ("health", "senses")]
+        for future in futures:
+            future.result(timeout=10)
+
+    key = router.candidate_key(GO)
+    state = load_state(routed)
+    assert state["timeouts"][key] == 2
+    assert state["cooling"][router.role_key("health", key)] == NOW_MS + 1_800_000
+    assert state["cooling"][key] == NOW_MS + 3_600_000
+    assert router.choose("docs", [GO, HAIKU], router.live_status(routed), state["cooling"], NOW_MS)["key"] == (
+        router.candidate_key(HAIKU)
+    )
+
+
+def test_timeout_is_recorded_when_routing_state_cannot_be_saved(routed, monkeypatch):
+    FakeEngine.script = {GO["model"]: "timeout"}
+
+    def fail_save(home, state):
+        raise OSError("routing state write failed")
+
+    monkeypatch.setattr(router, "_save_state", fail_save)
+    engine = router.for_role(routed, "health")
+    with pytest.raises(OSError, match="routing state write failed"):
+        engine.run(routed / "p.md", env=_env(routed, "failed-save"), cwd=routed, timeout=5)
+
+    rows = (routed / "engine" / router.LEDGER).read_text().splitlines()
+    assert json.loads(rows[-1])["outcome"] == "timeout"
+
+
 def test_no_yield_repeat_doubles_the_global_cool_off(routed):
     routes_file(routed, {"health": [GO]})
     FakeEngine.script = {GO["model"]: "exit-no-yield"}
@@ -343,15 +424,15 @@ def test_no_yield_repeat_doubles_the_global_cool_off(routed):
 def test_a_yield_clears_the_timeout_repeat_count(routed):
     eng = router.for_role(routed, "health")
     key = router.candidate_key(GO)
-    first, _ = eng.timeout_cool_off_ms(key)
-    assert eng.timeout_cool_off_ms(key)[0] == 2 * first
+    first, _ = eng._cool_after_failure(GO, NOW_MS, timed_out=True)
+    assert eng._cool_after_failure(GO, NOW_MS, timed_out=True)[0] == 2 * first
     eng._clear(key)
-    assert eng.timeout_cool_off_ms(key)[0] == first
+    assert eng._cool_after_failure(GO, NOW_MS, timed_out=True)[0] == first
 
 
 def test_timeout_cool_off_escalation_is_capped_at_four_windows(routed):
     eng = router.for_role(routed, "health")
-    offs = [eng.timeout_cool_off_ms(router.candidate_key(GO))[0] for _ in range(6)]
+    offs = [eng._cool_after_failure(GO, NOW_MS, timed_out=True)[0] for _ in range(6)]
     assert offs == [1_800_000, 3_600_000, 7_200_000, 7_200_000, 7_200_000, 7_200_000]
 
 

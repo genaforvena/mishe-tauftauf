@@ -66,10 +66,11 @@ cooling off on failure like any other candidate.
 A site can instead list ordered candidates per role in
 `SITE_HOME/engine/routes.json`; each wake then picks the first eligible
 candidate and cools off one that times out or ends without a yield. The first
-timeout or no-yield cools the candidate for that role only; a second one on the
-same candidate doubles the wait and cools it for every role until a wake yields
-again (bounded at four windows), so a peer role cannot reuse a model that just
-burned a whole wake. Roles absent from that file keep using `engines/ROLE.json`.
+timeout cools the candidate for that role only. An exit without a yield cools
+it for every role from the first occurrence. A repeat of either failure doubles
+the wait and cools the candidate for every role, up to four base windows. A
+yield resets the repeat count. Roles absent from that file keep using
+`engines/ROLE.json`.
 `mishe engine router choose ROLE` dry-runs the choice and `mishe engine router
 ledger` shows recent selections.
 

@@ -24,11 +24,11 @@ safety net or qwen) reads no window, so a missing file does not stop it.
 Outcomes are judged from the wake's own yield receipt, not from the engine exit
 code alone. A candidate that does not start falls through to the next one within
 the same wake (no effect happened). A candidate whose wake times out, exits
-without a yield, or leaves no receipt cools off for ``cool_off_s``; the first
-cool-off is role-scoped, but a repeat on the same candidate doubles the wait (up
-to four windows) and cools it for every role, so a peer cannot reuse a model
-that just burned a whole wake. A yield clears the repeat count. A provider rate
-limit (HTTP 429) before any tool
+without a yield, or leaves no receipt cools off for ``cool_off_s``. The first
+timeout is role-scoped. An exit without a yield cools the candidate globally
+from the first occurrence. A repeat of either on the same candidate doubles the
+wait (up to four windows) and cools it globally. A yield clears the repeat
+count. A provider rate limit (HTTP 429) before any tool
 call is refusal-class: the wake falls through at once and the candidate cools off
 for that role only, for ``rate_limit_cool_off_s`` (doubling on repeats), because
 a rate limit is a transient provider condition and not a quota window. Every
@@ -39,9 +39,11 @@ RED when some role has no working candidate.
 """
 
 import argparse
+import fcntl
 import json
 import os
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -207,6 +209,16 @@ def _save_state(home, state: dict) -> None:
     tmp = directory / (STATE + ".tmp")
     tmp.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
     os.replace(tmp, directory / STATE)
+
+
+@contextmanager
+def _state_lock(home):
+    """Serialize routing state read-modify-write operations across wakes."""
+    directory = _dir(home)
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / ".routing-state.lock").open("a") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        yield
 
 
 def record(home, event: dict, *, now_ms: float) -> None:
@@ -524,7 +536,6 @@ class RoutedEngine:
         self.cool_off_ms = routes["cool_off_s"] * 1000
         # A candidate that burns two wakes without yielding is a candidate fault, not a role
         # fault: the repeat cool-off widens to every role and doubles up to four windows.
-        self.max_timeout_cool_off_ms = self.cool_off_ms * 4
         self.account_cool_off_ms = routes["account_cool_off_s"] * 1000
         self.rate_limit_cool_off_ms_base = routes.get("rate_limit_cool_off_s", DEFAULT_RATE_LIMIT_COOL_OFF_S) * 1000
         self.rate_limit_cool_off_ms_max = routes.get("max_rate_limit_cool_off_s", MAX_RATE_LIMIT_COOL_OFF_S) * 1000
@@ -551,10 +562,11 @@ class RoutedEngine:
         # The cool-off is bounded, so the net returns when the provider says the window resets.
         if _is_safety_net(cand) and not force:
             return
-        state = _load_state(self.home)
         key = candidate_key(cand)
-        state["cooling"][role_key(self.role, key) if role_only else key] = now_ms + (off_ms or self.cool_off_ms)
-        _save_state(self.home, state)
+        with _state_lock(self.home):
+            state = _load_state(self.home)
+            state["cooling"][role_key(self.role, key) if role_only else key] = now_ms + (off_ms or self.cool_off_ms)
+            _save_state(self.home, state)
 
     def quota_cool_off_ms(self, engine, now_ms: float) -> float:
         """How long a spent account stays out, from the reset the provider named when it named one.
@@ -571,14 +583,14 @@ class RoutedEngine:
         return self.account_cool_off_ms
 
     def _clear(self, key: str) -> None:
-        state = _load_state(self.home)
-        hit = [state["cooling"].pop(k, None) for k in (key, role_key(self.role, key))]
-        # A candidate that worked resets both backoffs: the timeout/no-yield repeat count and the
-        # role's rate-limit ladder both start fresh.
-        count = state.get("rate_limits", {}).pop(role_key(self.role, key), None)
-        timeout_count = state.get("timeouts", {}).pop(key, None)
-        if any(v is not None for v in hit) or count is not None or timeout_count is not None:
-            _save_state(self.home, state)
+        with _state_lock(self.home):
+            state = _load_state(self.home)
+            hit = [state["cooling"].pop(k, None) for k in (key, role_key(self.role, key))]
+            # A candidate that worked resets both its timeout and the role's rate-limit backoff.
+            count = state["rate_limits"].pop(role_key(self.role, key), None)
+            timeout_count = state["timeouts"].pop(key, None)
+            if any(v is not None for v in hit) or count is not None or timeout_count is not None:
+                _save_state(self.home, state)
 
     def rate_limit_cool_off_ms(self, role: str, key: str) -> float:
         """The cool-off a rate-limited candidate gets for this role, doubling with each repeat.
@@ -587,28 +599,27 @@ class RoutedEngine:
         keeps answering 429 for the same role is backing off, and a role that waits longer than
         the site-wide window would idle for half an hour over one refusal.
         """
-        state = _load_state(self.home)
-        past = state.get("rate_limits", {}).get(role_key(role, key), 0)
-        off = min(self.rate_limit_cool_off_ms_base * (2 ** past), self.rate_limit_cool_off_ms_max)
-        counts = state.setdefault("rate_limits", {})
-        counts[role_key(role, key)] = past + 1
-        _save_state(self.home, state)
+        with _state_lock(self.home):
+            state = _load_state(self.home)
+            pair = role_key(role, key)
+            past = state["rate_limits"].get(pair, 0)
+            off = min(self.rate_limit_cool_off_ms_base * (2 ** past), self.rate_limit_cool_off_ms_max)
+            state["rate_limits"][pair] = past + 1
+            _save_state(self.home, state)
         return off
 
-    def timeout_cool_off_ms(self, key: str) -> tuple[float, int]:
-        """Cool-off after a timeout/no-yield, counted per candidate across roles.
-
-        A single bad wake may be a role's task, so the first cool-off stays role-scoped and keeps
-        the site's base window. A second on the same candidate is evidence about the candidate
-        itself: the repeat cools it for every role and doubles the wait, so a peer role cannot
-        reuse a model that just burned a whole wake. A yield clears the count through ``_clear``.
-        """
-        state = _load_state(self.home)
-        past = state.get("timeouts", {}).get(key, 0)
-        off = min(self.cool_off_ms * (2 ** past), self.max_timeout_cool_off_ms)
-        counts = state.setdefault("timeouts", {})
-        counts[key] = past + 1
-        _save_state(self.home, state)
+    def _cool_after_failure(self, cand: dict, now_ms: float, *, timed_out: bool) -> tuple[float, int]:
+        """Persist the repeat count and corresponding timeout/no-yield cool-off together."""
+        key = candidate_key(cand)
+        with _state_lock(self.home):
+            state = _load_state(self.home)
+            past = state["timeouts"].get(key, 0)
+            off = self.cool_off_ms * (2 ** min(past, 2))
+            state["timeouts"][key] = past + 1
+            if not _is_safety_net(cand):
+                cooling_key = role_key(self.role, key) if timed_out and past == 0 else key
+                state["cooling"][cooling_key] = now_ms + off
+            _save_state(self.home, state)
         return off, past + 1
 
     def _observe(self, now_ms: float) -> None:
@@ -706,14 +717,14 @@ class RoutedEngine:
                 continue
             except EngineTimeout as exc:
                 now = time.time() * 1000
-                off, repeats = self.timeout_cool_off_ms(key)
-                # The first timeout stays role-scoped (its task failed); a repeat is a candidate
-                # fault, so cool it for every role and hold it longer.
-                scope = "all" if repeats >= 2 else "role"
-                record(self.home, {"role": self.role, "event": "outcome", "wake": key_wake, "key": key,
-                                   "outcome": "timeout", "scope": scope, "repeats": repeats,
-                                   "cool_off_s": off / 1000, "reason": str(exc)}, now_ms=now)
-                self._cool(cand, now, role_only=(repeats < 2), off_ms=off)
+                event = {"role": self.role, "event": "outcome", "wake": key_wake, "key": key,
+                         "outcome": "timeout", "reason": str(exc)}
+                try:
+                    off, repeats = self._cool_after_failure(cand, now, timed_out=True)
+                    event.update(scope="all" if repeats >= 2 else "role", repeats=repeats, cool_off_s=off / 1000)
+                finally:
+                    # The wake-waste detector needs the outcome even if routing state cannot be updated.
+                    record(self.home, event, now_ms=now)
                 self._observe(now)
                 raise
             yielded = bool(key_wake) and yielding.receipt_path(self.home, key_wake).exists()
@@ -732,9 +743,7 @@ class RoutedEngine:
                 now = time.time() * 1000
                 self._cool(cand, now, off_ms=self.quota_cool_off_ms(engine, now), force=_is_safety_net(cand))
             else:
-                off, _repeats = self.timeout_cool_off_ms(key)
-                # A no-yield already cooled the candidate globally; a repeat only doubles the wait.
-                self._cool(cand, time.time() * 1000, off_ms=off)
+                self._cool_after_failure(cand, time.time() * 1000, timed_out=False)
             self._observe(time.time() * 1000)
             return code
 
