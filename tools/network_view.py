@@ -1346,7 +1346,17 @@ def _slowdown_note(facts):
     label = dict(PHASE_LABELS)[field]
     source = facts["window"] if recent_n == window_n else f"{recent_n} of {facts['window']} measured"
     return (f"\n                slowdown is in the {label}: {source} "
-            f"{cur[field]:.0f} ms vs typical {base[field]:.0f} ms ({facts['span']} of samples)")
+            f"{cur[field]:.0f} ms vs typical {base[field]:.0f} ms ({facts['base_span']} of samples)")
+
+
+def _sample_span(stamps):
+    """Label the time a set of samples covers; UNKNOWN below two rows."""
+    if len(stamps) < 2:
+        return "UNKNOWN"
+    span_h = (max(stamps) - min(stamps)) / 3600
+    if span_h < 1:
+        return f"{span_h * 60:.0f} min"
+    return f"{span_h:.0f} h" if span_h < 48 else f"{span_h / 24:.1f} d"
 
 
 def usuality_facts(data, now=None):
@@ -1355,6 +1365,9 @@ def usuality_facts(data, now=None):
     One computation so both say the same thing about the same samples: a headline that said OK while
     USUAL said "much slower than usual" left a reader unsure which to believe. `compare` is None when
     there are too few samples; `stale` is set when the newest probe is older than STALE_S.
+    `span` covers every loaded row and labels the trend; `base_span` covers only the rows that supply
+    the typical, which drop the newest `USUAL_EXCLUDE` samples so a spike cannot inflate its own
+    baseline. Labelling the typical with `span` claimed 24 h where the baseline spanned about 21 h.
     """
     now = time.time() if now is None else now
     recent = []  # (epoch, web sample, row) oldest first; sample is None when the row's checks failed
@@ -1372,7 +1385,8 @@ def usuality_facts(data, now=None):
     good = [v for v in samples if v is not None]
     if len(good) < USUAL_MIN_SAMPLES:
         return {"compare": None, "good_count": len(good)}
-    cur_stamps = [t for t, v, _ in recent if v is not None][-USUAL_RECENT:]
+    good_stamps = [t for t, v, _ in recent if v is not None]
+    cur_stamps = good_stamps[-USUAL_RECENT:]
     cur = statistics.median(good[-USUAL_RECENT:])
     window = f"last {len(cur_stamps)} probes"
     recent_phrase = window
@@ -1382,8 +1396,10 @@ def usuality_facts(data, now=None):
             window += f" ({mins:.0f} min)"
             recent_phrase = f"last {mins:.0f} min"
     good_rows = [row for _, v, row in recent if v is not None]
-    base_pool = good[:-USUAL_EXCLUDE] if len(good) >= USUAL_EXCLUDE + USUAL_RECENT else good
-    base_rows = good_rows[:-USUAL_EXCLUDE] if len(good) >= USUAL_EXCLUDE + USUAL_RECENT else good_rows
+    exclude = len(good) >= USUAL_EXCLUDE + USUAL_RECENT
+    base_pool = good[:-USUAL_EXCLUDE] if exclude else good
+    base_rows = good_rows[:-USUAL_EXCLUDE] if exclude else good_rows
+    base_stamps = good_stamps[:-USUAL_EXCLUDE] if exclude else good_stamps
     base = statistics.median(base_pool)
     ratio = cur / base if base else 1.0
     phase_cur, phase_support, phase_total_cur = _phase_medians(good_rows[-USUAL_RECENT:])
@@ -1394,19 +1410,19 @@ def usuality_facts(data, now=None):
         compare = "slower than usual"
     else:
         compare = "much slower than usual"
-    stamps = [t for t, _, _ in recent]
-    span_h = (max(stamps) - min(stamps)) / 3600
-    span = f"{span_h:.0f} h" if span_h < 48 else f"{span_h / 24:.1f} d"
+    span = _sample_span([t for t, _, _ in recent])
+    base_span = _sample_span(base_stamps)
     stale = ""
     if data:
         a = age(data[-1])
         if a is not None and a > STALE_S:
             stale = f" (STALE: last probe {a:.0f}s ago)"
     return {"cur": cur, "base": base, "compare": compare, "window": window,
-            "samples": samples, "span": span, "stale": stale, "recent_phrase": recent_phrase,
-            "window_count": len(cur_stamps), "phase_cur": phase_cur, "phase_base": phase_base,
-            "phase_support": phase_support, "phase_base_support": phase_base_support,
-            "phase_total_cur": phase_total_cur, "phase_total_base": phase_total_base}
+            "samples": samples, "span": span, "base_span": base_span, "stale": stale,
+            "recent_phrase": recent_phrase, "window_count": len(cur_stamps),
+            "phase_cur": phase_cur, "phase_base": phase_base, "phase_support": phase_support,
+            "phase_base_support": phase_base_support, "phase_total_cur": phase_total_cur,
+            "phase_total_base": phase_total_base}
 
 
 def usuality_line(data, now=None, facts=None):
@@ -1417,10 +1433,10 @@ def usuality_line(data, now=None, facts=None):
     newest probe. Calling this median "now" made the pane contradict itself (a fast newest probe beside
     a slower half-hour median, both labelled as the present), so the line names the sample count and the
     span those samples actually cover. The typical excludes the last `USUAL_EXCLUDE` samples so a spike
-    cannot inflate its own baseline. Built only from rows already loaded for the window; UNKNOWN when
-    too few samples; STALE past `STALE_S`.
-    The trailing span labels the loaded sample window, not the slowdown's duration: the headline
-    above already names how long the slowdown lasted, and a bare "over 24 h" here read as a
+    cannot inflate its own baseline; its label names that baseline's own span, not the loaded window.
+    Built only from rows already loaded for the window; UNKNOWN when too few samples; STALE past `STALE_S`.
+    The span after the comparison names the loaded sample window, not the slowdown's duration: the
+    headline above already names how long the slowdown lasted, and a bare "over 24 h" here read as a
     day-long slowdown that contradicted it.
     """
     facts = facts if facts is not None else usuality_facts(data, now)
@@ -1428,7 +1444,7 @@ def usuality_line(data, now=None, facts=None):
         return (f"UNKNOWN (only {facts['good_count']} web samples in the last day; "
                 f"need {USUAL_MIN_SAMPLES})")
     return (f"  {'USUAL':<22}{facts['window']:<24}median {facts['cur']:.0f} ms"
-            f" vs typical {facts['base']:.0f} ms ({facts['compare']}; {facts['span']} of samples)"
+            f" vs typical {facts['base']:.0f} ms ({facts['compare']}; {facts['base_span']} of samples)"
             f"  trend {facts['span']}: {day_spark(facts['samples'])}{facts['stale']}")
 
 

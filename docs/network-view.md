@@ -172,8 +172,9 @@ is not mistaken for a quiet mind.
   One host failing to answer is not a divergence: it leaves one sample, with no second line.
   When the headline flags a sustained slowdown, a second indented line names the phase that accounts
   for it, using the same ten-probe window and day baseline as `USUAL` (for example `slowdown is in
-  the secure handshake: last 10 probes (31 min) 375 ms vs typical 222 ms (24 h of samples)`). The span
-  after the typical names the baseline's rows, not the recent window. This matters because the
+  the secure handshake: last 10 probes (31 min) 375 ms vs typical 222 ms (21 h of samples)`). The span
+  after the typical names the baseline's rows, which leave out the newest 60 good samples, not the
+  recent window or the whole loaded day. This matters because the
   three figures above are the newest probe only: it can be back to normal while the median stays
   slow, and the two lines would otherwise disagree. A phase is named only when it adds at least half
   the extra time and at least 20 ms; when the increase is spread across phases, no line is printed
@@ -199,9 +200,10 @@ is not mistaken for a quiet mind.
   sparkline buckets the whole loaded day into `USUAL_BUCKETS` (40) means and is labelled `trend 24 h`
   at the line: the header's "last 40 probes" is only a default, and says wider windows are labelled.
   Without that label a day-long ramp read as a two-hour ramp.
-  The trailing span names the loaded sample window (`24 h of samples`), not the duration of the
-  slowdown — the headline above already says how long that lasted; a bare "over 24 h" read here as a
-  day-long slowdown that contradicted it.
+  The span after the comparison names the baseline's own sample window (about `21 h of samples` at
+  the current cadence), not the duration of the slowdown — the headline above already says how long
+  that lasted; a bare "over 24 h" read here as a day-long slowdown that contradicted it. The
+  `trend 24 h` label still names the whole loaded day, a wider window than the baseline.
 - `WI-FI`: the live listing, one read a minute: client count per band and the weakest client with
   its dBm, its band and the name the household knows it by when the recorded read has that client;
   a device that only just joined shows as its dBm until the next recorded read names it. WEAK SIGNAL

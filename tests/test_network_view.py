@@ -490,7 +490,8 @@ def test_usuality_uses_only_the_last_day_not_all_loaded_rows():
                                             for name in ("gstatic", "cloudflare")}})
     rows.reverse()  # probe.jsonl is oldest-first
     line = view.usuality_line(rows, now=now)
-    assert "about usual" in line and "24 h of samples" in line
+    assert "about usual" in line and "14 h of samples" in line
+    assert "trend 24 h:" in line
     assert "over 1.7 d" not in line and "much slower" not in line
 
 
@@ -505,10 +506,51 @@ def test_usuality_span_is_labeled_as_samples_not_the_slowdown_duration():
         rows.append({"at": at, "internet": {name: {"ok": True, "total_ms": ms}
                                             for name in ("gstatic", "cloudflare")}})
     line = view.usuality_line(rows, now=now)
-    assert f"{view.usuality_facts(rows, now)['span']} of samples" in line
+    assert f"{view.usuality_facts(rows, now)['base_span']} of samples" in line
     assert "slower than usual, over" not in line
     assert "much slower than usual over 24 h" not in line
     assert "over the last 31 min" in view.headline_state("OK", rows, now=now)
+
+
+def test_usuality_baseline_label_names_the_baselines_own_span_not_the_loaded_day():
+    # The typical drops the newest 60 good samples so a spike cannot inflate it. A 24 h day at the
+    # real 204 s cadence leaves a baseline of about 21 h; the old label claimed the whole day.
+    now = time.time()
+    rows = _timed_phase_rows(423, now, 204, 40.0, 70.0)
+    for row in rows[-10:]:
+        for check in row["internet"].values():
+            check["tls_ms"] = 200.0
+            check["total_ms"] = 270.0
+
+    facts = view.usuality_facts(rows, now=now)
+    assert facts["span"] == "24 h" and facts["base_span"] == "21 h"
+    usual = view.usuality_line(rows, now=now, facts=facts)
+    phase = view.phase_line(rows, now=now, facts=facts)
+    assert "21 h of samples" in usual and "24 h of samples" not in usual
+    assert "trend 24 h:" in usual
+    assert "21 h of samples" in phase and "24 h of samples" not in phase
+    assert all(len(part) <= 172 for part in usual.split("\n"))
+    assert all(len(part) <= 172 for part in phase.split("\n"))
+
+
+def test_usuality_baseline_label_follows_a_web_gap_not_the_loaded_day():
+    # Twelve hours of failed web checks leave the baseline covering only the good hours; its label
+    # must follow those rows rather than the loaded window.
+    now = time.time()
+    rows = []
+    for i in range(288):  # 300 s apart, a full day
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - (287 - i) * 300))
+        ok = i >= 144
+        slow = ok and i >= 278
+        chk = {"ok": ok, "connect_ms": 40.0, "tls_ms": 200.0 if slow else 70.0,
+               "total_ms": 270.0 if slow else 140.0}
+        rows.append({"at": at, "internet": {name: dict(chk) for name in ("gstatic", "cloudflare")}})
+    facts = view.usuality_facts(rows, now=now)
+    assert facts["span"] == "24 h" and facts["base_span"] == "7 h"
+    usual = view.usuality_line(rows, now=now, facts=facts)
+    phase = view.phase_line(rows, now=now, facts=facts)
+    assert "7 h of samples" in usual and "24 h of samples" not in usual
+    assert "7 h of samples" in phase and "24 h of samples" not in phase
 
 
 def test_usuality_recent_spike_is_slower_than_usual():
@@ -781,7 +823,7 @@ def test_phase_line_names_the_phase_behind_a_sustained_slowdown():
     assert "slowdown is in the secure handshake: last 10 probes (31 min) 375 ms" in line
     # The typical is the day's baseline, not the ten-probe recent window beside it; both lines must
     # say so, or a reader carries "31 min" onto the typical figures.
-    assert f"vs typical 220 ms ({facts['span']} of samples)" in line
+    assert f"vs typical 220 ms ({facts['base_span']} of samples)" in line
     assert "median 515 ms vs typical 360 ms" in view.usuality_line(rows, now=now, facts=facts)
     assert all(len(part) <= 172 for part in line.split("\n"))  # the pane is 172 columns
 
@@ -875,7 +917,7 @@ def test_phase_line_names_partial_support_and_compares_the_measured_rows_only():
     assert "median 758 ms vs typical 360 ms" in view.usuality_line(rows, now=now, facts=facts)
     line = view.phase_line(rows, now=now, facts=facts)
     assert ("slowdown is in the secure handshake: 5 of last 10 probes (31 min) measured "
-            f"375 ms vs typical 220 ms ({facts['span']} of samples)") in line
+            f"375 ms vs typical 220 ms ({facts['base_span']} of samples)") in line
     assert "758 ms" not in line
 
 
