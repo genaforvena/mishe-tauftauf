@@ -1,8 +1,12 @@
-# Router traffic monitoring: proposal (not installed)
+# Router traffic monitoring: approved proposal, no recorded install
 
-Status: proposal only. Nothing is installed or changed on the router. It waits for Rozalia's yes.
-Owner of the proposal: the network mind. The operator sends it to Rozalia once, from 09:00 local
-(06:00Z). This file is the text to send.
+Status: Rozalia approved router monitoring in her 2026-11-12 20:50Z answer. Her limit stands: no
+change that could affect connectivity without her permission. A package install needs a dry run
+that adds files and a service without changing network, firewall, dnsmasq or wireless config and
+without upgrading an existing package; do not ask her about the permission again. No install is
+recorded in the shipped repository, so this page does not claim the package is on the router.
+Owner: the network mind. The Russian and English blocks below are the proposal text kept for the
+record, not a pending request.
 
 ## Русский (для Розалии)
 

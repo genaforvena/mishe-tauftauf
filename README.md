@@ -190,6 +190,7 @@ to know whether a monitor is alive.
 | Read the `engine/budget.json` contract | [Budget JSON contract](docs/budget-json-contract.md) |
 | Run the optional code-map experiment | [Code map experiment](docs/code-map-experiment.md) |
 | Compare the network window's promises with what is built | [Network gaps](docs/network-gaps.md) |
+| Read the network window's readings and the router-monitoring decision | [Network view](docs/network-view.md), [Router traffic monitoring](docs/network-router-monitoring.md) |
 | See the registry of outer tmux windows | [Outer windows](docs/outer-windows.md) |
 | Read the POSIX binary contract and ranking | [Mishe POSIX binaries](docs/posix-binaries.md) |
 
