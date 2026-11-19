@@ -198,3 +198,50 @@ def test_observe_without_a_cutoff_does_not_arm(tmp_path, monkeypatch):
     po.observe(home, release, cutoff_us=None)
 
     assert calls == []
+
+
+def test_future_observation_waits_for_old_service_started_after_cutoff(tmp_path, monkeypatch):
+    stable = tmp_path / "current" / "src"
+    old = {"mishe-next-due-old.service": {"ActiveState": "active", "Environment": "PYTHONPATH=/old/src"}}
+    new = {"mishe-next-due-new.service": {"ActiveState": "inactive", "pending_timer": True,
+                                           "Environment": "PYTHONPATH=" + str(stable)}}
+    samples = iter([old, new])
+    monkeypatch.setattr(po.fence, "inventory", lambda home, previous: next(samples))
+    result = po.wait_future(tmp_path, stable, timeout=5, sleep=lambda _: None)
+    assert [row["unit"] for row in result] == ["mishe-next-due-new.service"]
+
+
+def test_future_observation_rejects_wrong_queued_timer_without_waiting(tmp_path, monkeypatch):
+    row = {"mishe-next-due-old.service": {"ActiveState": "inactive", "pending_timer": True,
+                                           "Environment": "PYTHONPATH=/old/src"}}
+    monkeypatch.setattr(po.fence, "inventory", lambda home, previous: row)
+    with pytest.raises(ValueError, match="wrong pin"):
+        po.wait_future(tmp_path, tmp_path / "new", timeout=5, sleep=lambda _: pytest.fail("must not wait"))
+
+
+def test_future_observation_rejects_stale_timer_after_stale_service_exits(tmp_path, monkeypatch):
+    samples = iter([
+        {"old.service": {"ActiveState": "active", "Environment": "PYTHONPATH=/old/src"}},
+        {"old.service": {"ActiveState": "inactive", "pending_timer": True,
+                         "Environment": "PYTHONPATH=/old/src"}},
+    ])
+    monkeypatch.setattr(po.fence, "inventory", lambda home, previous: next(samples))
+    with pytest.raises(ValueError, match="wrong pin"):
+        po.wait_future(tmp_path, tmp_path / "new", timeout=5, sleep=lambda _: None)
+
+
+def test_future_observation_does_not_hide_a_broken_inventory(tmp_path, monkeypatch):
+    def broken(home, previous):
+        raise ValueError("inventory UNKNOWN")
+
+    monkeypatch.setattr(po.fence, "inventory", broken)
+    with pytest.raises(ValueError, match="inventory UNKNOWN"):
+        po.wait_future(tmp_path, tmp_path / "new", timeout=5, sleep=lambda _: pytest.fail("must not wait"))
+
+
+@pytest.mark.parametrize("environment", ["PYTHONPATH=/old/src", ""])
+def test_future_observation_fails_closed_if_active_pin_stays_wrong_or_unknown(tmp_path, monkeypatch, environment):
+    row = {"mishe-next-due-old.service": {"ActiveState": "active", "Environment": environment}}
+    monkeypatch.setattr(po.fence, "inventory", lambda home, previous: row)
+    with pytest.raises(ValueError, match="wrong pin"):
+        po.wait_future(tmp_path, tmp_path / "new", timeout=0, sleep=lambda _: None)

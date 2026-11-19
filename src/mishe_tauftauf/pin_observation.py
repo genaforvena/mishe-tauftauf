@@ -124,6 +124,22 @@ def drain_old(home: Path, cutoff_us: int, *, timeout: float = DRAIN_TIMEOUT_S, s
         sleep(fence.RETRY_INTERVAL_S)
 
 
+def wait_future(home: Path, expected: Path, *, timeout: float = DRAIN_TIMEOUT_S, sleep=time.sleep) -> list:
+    """Wait for a stale active invocation; queued stale timers still fail immediately.
+
+    A timer armed before the move can start its old service after the cutoff and
+    therefore escape the timestamp drain. Never accept it while it is active.
+    """
+    until = time.monotonic() + timeout
+    while True:
+        try:
+            return fence.verify_future(home, expected, {})
+        except fence.ActiveWrongPin:
+            if time.monotonic() >= until:
+                raise
+            sleep(fence.RETRY_INTERVAL_S)
+
+
 def observe(home: Path, release: Path, *, cutoff_us: int | None) -> dict:
     home, release = Path(home), Path(release)
     stable = check_pointer(home, release)
@@ -144,7 +160,8 @@ def observe(home: Path, release: Path, *, cutoff_us: int | None) -> dict:
         # no old invocation remains to overwrite the timer, then judge the consumers.
         from .work_boundary import invoke_arm_consumer
         rearm = invoke_arm_consumer(stable / "src")
-    future = fence.verify_future(home, stable / "src", {})
+    future = (wait_future(home, stable / "src") if cutoff_us is not None
+              else fence.verify_future(home, stable / "src", {}))
     return {"release": sha, "units": units, "rearm": rearm, "future_consumers": [row["unit"] for row in future]}
 
 

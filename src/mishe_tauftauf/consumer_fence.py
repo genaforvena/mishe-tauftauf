@@ -168,6 +168,10 @@ def drain(home, directory, label, timeout=DRAIN_TIMEOUT_S, sleep=time.sleep):
         (directory / ('consumer-drain-' + label + '-' + str(time.time_ns()) + '.json')).write_text(json.dumps(dict(transition=pointer, samples=samples), sort_keys=True))
 
 
+class ActiveWrongPin(ValueError):
+    """An active, unqueued consumer has not yet finished on its earlier pin."""
+
+
 def verify_future(home, expected, previous):
     from mishe_tauftauf.work_boundary import pythonpath_entries
     rows = inventory(home, previous)
@@ -176,6 +180,9 @@ def verify_future(home, expected, previous):
         if not row.get('pending_timer') and row.get('ActiveState') not in ('activating', 'active', 'deactivating', 'reloading'): continue
         pins = pythonpath_entries(row.get('Environment', ''))
         if not pins or any(Path(pin).resolve() != Path(expected).resolve() for pin in pins):
-            raise ValueError('active or queued consumer has wrong pin: ' + name)
+            error = 'active or queued consumer has wrong pin: ' + name
+            if not row.get('pending_timer'):
+                raise ActiveWrongPin(error)
+            raise ValueError(error)
         checked.append(dict(unit=name, invocation=row.get('InvocationID'), pending_timer=row.get('pending_timer'), pins=pins))
     return checked
