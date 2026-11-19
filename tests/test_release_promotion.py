@@ -263,6 +263,29 @@ def test_probe_failure_names_the_probes_own_line_in_the_signal_detail(tree):
     assert (home/"signals/moving-pin-delivery.detail").read_text().strip() == p.outcome_detail(r)
 
 
+def test_observe_probes_cover_the_composed_drain_bound(tree):
+    """A compose-timeout kill in the delivery path records a correct pin as failed and rolls it back.
+
+    pin_observation.observe drains old invocations, arms once more then waits for stale ones; review
+    of fcde6977 found the subprocess kill below that whole composition. Every observe probe in the
+    delivery path, including the rollback probe, must carry the full bound.
+    """
+    from mishe_tauftauf import consumer_fence, wall_patch
+    composed = (2 * consumer_fence.DRAIN_TIMEOUT_S
+                + wall_patch.OBSERVE_ARM_S + wall_patch.OBSERVE_FIXED_MARGIN_S)
+    assert p.OBSERVE_TIMEOUT_S >= composed
+    repo,home,old,sha=tree
+    timeouts=[]
+    def probe(argv, **kw):
+        timeouts.append(kw.get("timeout"))
+        return dict(code=1 if len(timeouts)==1 else 0, output="probe\n")  # fail forward, pass rollback
+    r=p.promote(home,repo,sha,check=[sys.executable,"-c","assert True"],observe=["probe"],previous=old,
+                activate=lambda *a:None,probe=probe,reviewer=lambda *a:None,closure=lambda *a:None)
+    assert r["phase"]=="rolled-back"
+    assert len(timeouts)==2
+    assert all(t is not None and t >= composed for t in timeouts)
+
+
 def test_async_review_cannot_overwrite_completed_revert(tree,monkeypatch):
     repo,home,old,sha=tree
     source=p.materialize(home,repo,sha);p.materialize(home,repo,old)

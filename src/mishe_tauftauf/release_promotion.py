@@ -112,6 +112,9 @@ def bind_reviewed_source(source, record):
 
 CHECK_TIMEOUT_S = 1500
 """The delivery check is the whole suite on the release tree (about 8 minutes)."""
+OBSERVE_TIMEOUT_S = wall_patch.OBSERVE_TIMEOUT_S
+"""The observe probe composes two bounded drains, a re-arm and fixed checks (pin_observation.observe).
+The subprocess kill must cover that whole composition or a correct pin is rolled back (review of fcde6977)."""
 
 
 def run(argv, *, cwd, env, timeout=900):
@@ -1077,7 +1080,7 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
             env = dict(env, MISHE_PIN_CUTOFF_US=str(time.monotonic_ns() // 1000))
             if activate is None:
                 record["consumer_invocation"] = boundary.invoke_arm_consumer(source/"src")
-            record["observe"] = probe(observe,cwd=source,env=env)
+            record["observe"] = probe(observe,cwd=source,env=env,timeout=OBSERVE_TIMEOUT_S)
             if record["observe"]["code"] != 0:
                 # The probe's own line is the cause a subscriber needs (2026-11-17: the detail read
                 # only "functional probe failed" while the record held the unit that vanished).
@@ -1096,7 +1099,7 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
                     point(home, old)
                     record["restored_consumer_invocation"] = boundary.invoke_arm_consumer(old/"src")
                 # the probe code is the NEW source (an older release may not carry it); cwd names the release being observed
-                record["rollback_probe"] = probe(observe,cwd=old,env=dict(env,MISHE_PIN_CUTOFF_US=str(time.monotonic_ns() // 1000)))
+                record["rollback_probe"] = probe(observe,cwd=old,env=dict(env,MISHE_PIN_CUTOFF_US=str(time.monotonic_ns() // 1000)),timeout=OBSERVE_TIMEOUT_S)
                 record["phase"]="rolled-back" if record["rollback_probe"]["code"]==0 else "UNKNOWN"
                 record["rollback_completed_at" if record["phase"] == "rolled-back" else "rollback_failed_at"] = time.time()
             except (OSError,ValueError,subprocess.SubprocessError) as restore_error:
@@ -1133,7 +1136,7 @@ def revert(home, identity):
             point(home, old)
             record["restored_consumer_invocation"] = boundary.invoke_arm_consumer(old/"src")
             record["revert_probe"] = run(record["observe_argv"], cwd=old,
-                env=dict(os.environ, PYTHONPATH=str(old/"src"), MISHE_SEED_HOME=str(home)))
+                env=dict(os.environ, PYTHONPATH=str(old/"src"), MISHE_SEED_HOME=str(home)), timeout=OBSERVE_TIMEOUT_S)
             record["phase"] = "reverted" if record["revert_probe"]["code"] == 0 else "UNKNOWN"
             record["reverted_at" if record["phase"] == "reverted" else "revert_failed_at"] = time.time()
         except (OSError,ValueError,subprocess.SubprocessError) as exc:
