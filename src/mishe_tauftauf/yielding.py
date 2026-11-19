@@ -148,7 +148,7 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
         from . import wall
         wall_writer = wall.write
     wall_writer(Path(home), role, text)
-    owed.advance(home, role, snap)
+    owed.advance(home, role, snap, now=now)
     if continue_:
         intentions.add(home, role, "continue", note="continue the work started in the previous wake", due=now + CONTINUE_FLOOR_SECONDS)
     # A signal wait always carries a deadline (DM 300071 item 3): without --again the

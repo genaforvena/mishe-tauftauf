@@ -4,11 +4,15 @@ Owed means: an unread inbox touch, a subscribed signal whose revision moved
 past the role's cursor, or an intention that is due or whose condition holds.
 Nothing owed means no model call. A cursor moves only when a wake yields, and
 only to the snapshot taken when that wake began, so input that lands mid-wake
-stays owed.
+stays owed — except a subscribed signal whose live reading is the all-clear
+word by settle time: that recovery was published while the wake ran (the
+wake's own repair, or a concurrent observer confirming it), and replaying it
+would spend a wake that finds nothing owed.
 """
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -148,13 +152,40 @@ def check(home, role: str, *, now: float) -> Snapshot:
     return snap
 
 
-def advance(home, role: str, snap: Snapshot) -> None:
+def _settled_signal_revs(home, snap: Snapshot, *, now: float) -> dict:
+    """Cursor signal revs for settle: the wake-start snapshot, plus a mid-wake recovery.
+
+    A subscribed signal whose live reading is the all-clear word after the wake began was
+    recovered while the wake ran — by the wake's own repair, or by a concurrent observer
+    confirming it (the in-flight delivery's doctor probe, 2026-11-19 19:41Z). Recording the
+    wake-start rev anyway spent the next dispatch tick on a health wake that found nothing
+    owed (``signal:doctor`` at 19:49Z), so the cursor takes the live rev instead. Everything
+    else that moved mid-wake stays behind the cursor: a reading that is not OK, expired, or
+    not the all-clear word still wakes the subscriber on the next tick. A recovery the
+    subscriber never saw is a bounded loss — the next dossier prints the live value — a
+    swallowed failure would not be.
+    """
+    revs = dict(snap.signal_revs)
+    for name, snap_rev in revs.items():
+        try:
+            reading = signal_store.read(home, name, now=now)
+        except (OSError, ValueError, KeyError):
+            continue          # unregistered or unreadable by settle time: keep the snapshot rev
+        live_rev = signal_store.rev(home, name)
+        if reading.state == "OK" and reading.value == BUDGET_OK and snap_rev < live_rev:
+            revs[name] = live_rev
+    return revs
+
+
+def advance(home, role: str, snap: Snapshot, *, now: float | None = None) -> None:
     """Move the cursor to what the wake saw and drop the intentions it consumed.
 
     Intentions that share a ``pair`` with a consumed one answered the same
     yield, so they go too: a fallback timer does not fire after its signal did.
+    ``now`` defaults to the wall clock; settle passes its own clock.
     """
-    write_json(cursor_path(home, role), {"inbox_ns": snap.inbox_ns, "signals": snap.signal_revs,
+    now = time.time() if now is None else now
+    write_json(cursor_path(home, role), {"inbox_ns": snap.inbox_ns, "signals": _settled_signal_revs(home, snap, now=now),
                                          "tape_seq": snap.tape_seq})
     listed = intentions.list_(home, role)
     consumed = set(snap.consumed)

@@ -280,3 +280,52 @@ def test_configured_claude_signal_is_overridden_only_by_a_live_free_route(home):
     assert owed.check(home, "genome", now=100).held == ["intention:idle"]
     _free_budget(home, 100)
     assert owed.check(home, "genome", now=100).held == []
+
+
+def test_mid_wake_recovery_lands_in_the_cursor(tmp_path):
+    """A GREEN published while the wake runs is not a second wake (2026-11-19 19:49Z
+    ``signal:doctor``: the delivery path's doctor probe published the recovery mid-wake,
+    the cursor kept the wake-start RED rev, and the next tick spent a redundant health
+    wake). The cursor takes the live rev, and the next dispatch tick finds nothing owed."""
+    store.register(tmp_path, "doctor", max_age=60, subscribers=["health"])
+    store.observe(tmp_path, "doctor", "RED", now=100.0, source="t")
+    snap = owed.check(tmp_path, "health", now=100.0)          # the wake starts on the RED edge
+    assert snap.reasons == ["signal:doctor"]
+    store.observe(tmp_path, "doctor", "GREEN", now=101.0, source="delivery-doctor-probe")
+    owed.advance(tmp_path, "health", snap, now=102.0)         # settle after the mid-wake recovery
+    assert owed.check(tmp_path, "health", now=102.0).reasons == []
+
+
+def test_mid_wake_failure_stays_owed(tmp_path):
+    """The absorption is one-way: a value that is not the all-clear word, published
+    mid-wake, still wakes the subscriber on the next tick."""
+    store.register(tmp_path, "doctor", max_age=60, subscribers=["health"])
+    store.observe(tmp_path, "doctor", "GREEN", now=100.0, source="t")
+    owed.advance(tmp_path, "health", owed.check(tmp_path, "health", now=100.0), now=100.0)
+    store.observe(tmp_path, "doctor", "RED", now=101.0, source="t")
+    assert owed.check(tmp_path, "health", now=102.0).reasons == ["signal:doctor"]
+
+
+def test_mid_wake_expiry_stays_owed(tmp_path):
+    """A reading that ages out mid-wake is actionable: the cursor keeps the wake-start
+    rev, so the expiry edge still wakes the subscriber."""
+    store.register(tmp_path, "egress", max_age=60, subscribers=["health"])
+    store.observe(tmp_path, "egress", "GREEN", now=100.0, source="t")
+    snap = owed.check(tmp_path, "health", now=100.0)
+    store.expire(tmp_path, now=161.0)                         # ages out while the wake runs
+    owed.advance(tmp_path, "health", snap, now=161.0)
+    assert owed.check(tmp_path, "health", now=161.0).reasons == ["signal:egress"]
+
+
+def test_mid_wake_recovery_of_a_retired_signal_keeps_the_snapshot_rev(tmp_path):
+    """A signal retired mid-wake is unreadable by settle time: the cursor keeps the
+    snapshot rev rather than guessing at a live one."""
+    from mishe_tauftauf.state_files import read_json
+    store.register(tmp_path, "probe", max_age=60, subscribers=["health"])
+    store.observe(tmp_path, "probe", "RED", now=100.0, source="t")
+    snap = owed.check(tmp_path, "health", now=100.0)
+    store.observe(tmp_path, "probe", "GREEN", now=101.0, source="t")
+    store.retire(tmp_path, "probe", now=102.0, reason="experiment closed")
+    owed.advance(tmp_path, "health", snap, now=102.0)
+    cursor = read_json(tmp_path / "cursors" / "health.json")
+    assert cursor["signals"] == {"probe": 1}
