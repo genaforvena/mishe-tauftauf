@@ -101,3 +101,52 @@ def test_main_reports_the_verdict_on_stdout_and_its_code(tmp_path):
                           capture_output=True, text=True)
     assert proc.returncode == 2 and "without a refresh" in proc.stdout
     assert json.loads((tmp_path / "health" / "hold-state.json").read_text())["stale"] is True
+
+
+def _lock_free(monkeypatch, free=True):
+    import types
+    import mishe_tauftauf.release_promotion as rp
+    monkeypatch.setattr(rp, "_dispatch_lock_free", lambda home: free)
+
+
+def test_release_removes_a_stale_manual_hold_and_reports_red_once(tmp_path, monkeypatch):
+    _lock_free(monkeypatch)
+    hold = _hold(tmp_path, "operator maintenance", written_at=NOW - BOUND - 5)
+    code, lines = check.evaluate(tmp_path, NOW, BOUND, release=True, tripped=tmp_path / "tripped")
+    assert code == 2 and not hold.exists() and any("AUTO-RELEASED" in line for line in lines)
+    code, lines = check.evaluate(tmp_path, NOW + 1, BOUND, release=True, tripped=tmp_path / "tripped")
+    assert code == 0 and "no hold" in lines[0]
+
+
+def test_release_removes_a_dead_writer_hold(tmp_path, monkeypatch):
+    _lock_free(monkeypatch)
+    hold = _hold(tmp_path, "promotion: short activation hold; wakes resume automatically\npid=%d started=1" % _dead_pid())
+    code, lines = check.evaluate(tmp_path, NOW, BOUND, release=True, tripped=tmp_path / "tripped")
+    assert code == 2 and not hold.exists()
+
+
+def test_release_never_touches_a_fresh_manual_hold_or_a_live_writer(tmp_path, monkeypatch):
+    _lock_free(monkeypatch)
+    hold = _hold(tmp_path, "fresh manual", written_at=NOW - 60)
+    assert check.evaluate(tmp_path, NOW, BOUND, release=True, tripped=tmp_path / "tripped")[0] == 0
+    assert hold.exists()
+    hold.unlink()
+    hold = _hold(tmp_path, "promotion: short activation hold; wakes resume automatically\npid=%d started=1" % os.getpid(), written_at=NOW - BOUND - 500)
+    assert check.evaluate(tmp_path, NOW, BOUND, release=True, tripped=tmp_path / "tripped")[0] == 0
+    assert hold.exists()
+
+
+def test_release_waits_for_a_free_lock_and_never_when_the_guard_is_tripped(tmp_path, monkeypatch):
+    hold = _hold(tmp_path, "stale", written_at=NOW - BOUND - 5)
+    _lock_free(monkeypatch, free=False)
+    code, lines = check.evaluate(tmp_path, NOW, BOUND, release=True, tripped=tmp_path / "tripped")
+    assert code == 2 and hold.exists() and any("not released yet" in line and "dispatch lock" in line for line in lines)
+    _lock_free(monkeypatch, free=True)
+    (tmp_path / "tripped").write_text("x")
+    code, lines = check.evaluate(tmp_path, NOW + 5, BOUND, release=True, tripped=tmp_path / "tripped")
+    assert code == 2 and hold.exists() and any("guard is tripped" in line for line in lines)
+
+
+def test_without_release_flag_a_stale_hold_stays_red_as_before(tmp_path):
+    hold = _hold(tmp_path, "stale", written_at=NOW - BOUND - 5)
+    assert check.evaluate(tmp_path, NOW, BOUND)[0] == 2 and hold.exists()

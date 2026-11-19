@@ -85,7 +85,27 @@ def _write_state(path: Path, data: dict) -> None:
     os.replace(tmp, path)
 
 
-def evaluate(home: Path, now: float, max_age: float = MAX_AGE_S, state_path: Path | None = None):
+TRIPPED = Path("/var/lib/mishe-containment/tripped")
+"""The protected guard's trip marker: read-only here, never written or removed by this detector."""
+
+
+def _release_blockers(home: Path, tripped: Path) -> list[str]:
+    """Why a stale hold must stay for now; empty means it may be released (System 0, no wake needed)."""
+    why = []
+    if tripped.exists():
+        why.append("the host guard is tripped (its restore is the guard's, not this detector's)")
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+        from mishe_tauftauf import release_promotion
+        if not release_promotion._dispatch_lock_free(home):
+            why.append("the dispatch lock is held by a running wake or promotion")
+    except Exception as exc:                                  # noqa: BLE001 - an unreadable lock is not free
+        why.append(f"the dispatch lock cannot be read ({exc})")
+    return why
+
+
+def evaluate(home: Path, now: float, max_age: float = MAX_AGE_S, state_path: Path | None = None,
+             release: bool = False, tripped: Path = TRIPPED):
     home = Path(home)
     state_path = Path(state_path) if state_path else home / "health" / "hold-state.json"
     hold = home / "hold"
@@ -151,6 +171,23 @@ def evaluate(home: Path, now: float, max_age: float = MAX_AGE_S, state_path: Pat
             _write_state(state_path, state)
         except OSError as exc:
             return 3, [f"UNKNOWN: cannot record the stale hold in {state_path}: {exc}"]
+    if stale and release:
+        blockers = _release_blockers(home, Path(tripped))
+        if blockers:
+            lines.append("not released yet: " + "; ".join(blockers))
+        else:
+            try:
+                if hold.read_text(encoding="utf-8") != text:
+                    return verdict, lines + ["not released: the hold was rewritten while we looked"]
+                state.update({"released_reported": True, "released_at": now, "auto_released": True})
+                _write_state(state_path, state)
+                hold.unlink(missing_ok=True)
+            except OSError as exc:
+                return 3, lines + [f"UNKNOWN: release failed: {exc}"]
+            lines.append(f"AUTO-RELEASED at {_iso(now)} by hold-state (System 0): nobody else could, a hold "
+                         "suppresses wake starts. Operator: record the disposition (who wrote it, why it "
+                         "leaked) on your wall; re-run `mishe hold on --reason ...` to hold deliberately")
+            return 2, lines
     elif not stale and state:
         try:
             _write_state(state_path, {})
@@ -165,8 +202,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state", type=Path, help="where the last verdict is remembered (default: HOME/health/hold-state.json)")
     parser.add_argument("--max-age", type=float, default=MAX_AGE_S,
                         help="seconds an anonymous hold may stand without a refresh")
+    parser.add_argument("--release", action="store_true",
+                        help="release a stale hold (dead writer or anonymous past --max-age) when the dispatch "
+                             "lock is free and the host guard is not tripped")
     args = parser.parse_args(argv)
-    code, lines = evaluate(args.home, time.time(), args.max_age, args.state)
+    code, lines = evaluate(args.home, time.time(), args.max_age, args.state, args.release)
     print("\n".join(lines))
     return code
 

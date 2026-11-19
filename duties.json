@@ -1639,7 +1639,8 @@
         "--home",
         "{home}",
         "--state",
-        "{home}/health/hold-state.json"
+        "{home}/health/hold-state.json",
+        "--release"
       ],
       "every": 120,
       "timeout": 60,
@@ -1650,9 +1651,9 @@
       "unknown_codes": [
         3
       ],
-      "resolver": "health",
+      "resolver": "operator",
       "replaces": [],
-      "covers": "the site's hold file: no hold, a hold whose named writer (a promotion pid, a flip pid) is alive, RED when that writer is gone, RED when an anonymous manual or boot hold stands longer than its --max-age (3600 s, refreshed by re-running `mishe hold on`), and one RED after such a hold ends with no recorded disposition. A hold suppresses wake starts, so its own fault cannot wake anyone while it stands: this producer runs on a timer and its verdict is visible in the signals and after the wake resumes"
+      "covers": "the site's hold file: no hold, a hold whose named writer (a promotion pid, a flip pid) is alive, RED when that writer is gone, RED when an anonymous manual or boot hold stands longer than its --max-age (3600 s, refreshed by re-running `mishe hold on`), and one RED after such a hold ends with no recorded disposition. With --release this producer also removes a stale hold (dead writer, or anonymous past --max-age) when the dispatch lock is free and the host guard is not tripped, then reports one RED with the disposition to the operator (operator decision 2026-11-19: nobody else can, a hold suppresses wake starts). A hold suppresses wake starts, so its own fault cannot wake anyone while it stands: this producer runs on a timer and its verdict is visible in the signals and after the wake resumes"
     },
     {
       "name": "footprint",
