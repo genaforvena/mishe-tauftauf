@@ -4,7 +4,7 @@ One line per promised slot in the network charter. Checked against `tools/networ
 (`draw()` and its helpers) and `tools/network_router.py` and `rust/mishe-network-probe`, on 2026-11-13.
 Speed, day-trend, baseline and Wi-Fi channel/noise/counter rows rechecked 2026-11-17; the upload
 duty's verdict, the live Wi-Fi line's device naming and the driver's error-rate wording rechecked
-2026-11-18.
+2026-11-18; the day-trend label rechecked 2026-11-19.
 
 Status words: **BUILT** (the window shows it with an age or UNKNOWN), **PARTLY** (some of it is
 shown), **MISSING** (not measured or not shown).
@@ -55,7 +55,7 @@ shown), **MISSING** (not measured or not shown).
 | slot | status | evidence |
 | --- | --- | --- |
 | Sparkline (last hour) | BUILT | sparklines on gateway, web and DNS lines (last 40 probes, about 40 minutes) |
-| Last day sparkline | BUILT | `usuality_line()` / `day_spark()` show a 40-bucket trend of web latency over the last day's probe rows, labelled with the real span (not a flat "24 h"), alongside the 40-probe (~40 min) sparklines on the per-site lines |
+| Last day sparkline | BUILT | `usuality_line()` / `day_spark()` show a 40-bucket trend of web latency over the loaded day's rows, labelled `trend 24 h` at the line (the loaded span, not the 40-probe window); the header now says "sparklines = last 40 probes unless labelled", and the per-site lines keep their 40-probe (~40 min) sparklines |
 | "Worse than usual?" | BUILT | `usuality_line()` compares the median of the last 10 web samples with the median of the last-day samples excluding the most recent 60: "about usual" / "slower than usual" / "much slower than usual", with both numbers shown and UNKNOWN / STALE guards |
 | Outages with start and end | BUILT | `outage_lines()` from `outage_episodes()` |
 
