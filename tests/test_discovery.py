@@ -3859,7 +3859,7 @@ def test_release_retention_unread_bytes_are_unknown(tmp_path, monkeypatch):
     assert "bytes=unread" in reading["sample"]
 
 
-def test_release_tree_ignores_unreadable_descendants(tmp_path, monkeypatch):
+def test_release_tree_unreadable_descendant_is_unknown(tmp_path, monkeypatch):
     root = tmp_path / "releases"
     child = root / "child"
     child.mkdir(parents=True)
@@ -3872,7 +3872,46 @@ def test_release_tree_ignores_unreadable_descendants(tmp_path, monkeypatch):
         return original_scandir(path)
 
     monkeypatch.setattr(os, "scandir", fail_child)
-    assert discovery._release_tree_bytes(root) == 3
+    assert discovery._release_tree_bytes(root) is None
+
+
+def test_release_retention_unread_descendant_routes_unknown(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    releases = home / "releases"
+    child = releases / "hidden"
+    child.mkdir(parents=True)
+    (child / "large").write_bytes(b"hidden")
+    original_scandir = os.scandir
+
+    def fail_child(path):
+        if Path(path) == child:
+            raise PermissionError(13, "controlled child failure", str(path))
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", fail_child)
+    monkeypatch.setattr(discovery, "_referenced_release_names", lambda: set())
+    reading = discovery._repo_release_retention(home)
+    assert reading["state"] == "unknown"
+    assert reading["bytes"] is None
+    snapshot = {"created": "2026-11-19T10:00:00Z", "node": "test", "observations": [reading]}
+    discovery._notify_scan(home, snapshot, None, home / "discovery" / "sample.json")
+    assert "Unknown readings: sense.repo.release-retention" in Feed(home).entries()[-1].body
+
+
+def test_release_tree_unreadable_file_stat_is_unknown(tmp_path, monkeypatch):
+    root = tmp_path / "releases"
+    root.mkdir()
+    hidden = root / "hidden"
+    hidden.write_bytes(b"hidden")
+    original_lstat = os.lstat
+
+    def fail_file(path, *args, **kwargs):
+        if Path(path) == hidden:
+            raise PermissionError(13, "controlled stat failure", str(path))
+        return original_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "lstat", fail_file)
+    assert discovery._release_tree_bytes(root) is None
 
 
 def test_release_retention_keeps_known_drift_when_bytes_unread(tmp_path, monkeypatch):

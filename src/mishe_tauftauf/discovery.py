@@ -4023,22 +4023,18 @@ def _pointer_release_names(home: Path) -> set[str]:
 def _release_tree_bytes(root: Path) -> int | None:
     """Total apparent size of ``root`` in bytes, or None when it cannot be measured.
 
-    The walk is bounded by the filesystem: an unreadable entry contributes
-    nothing, and an unreadable root reads unmeasured rather than zero.
+    An unreadable directory or file makes the total unmeasured; a partial
+    count cannot establish that the complete tree is below the byte ceiling.
     """
     total = 0
 
     def onerror(error: OSError) -> None:
-        if error.filename == os.fspath(root):
-            raise error
+        raise error
 
     try:
         for dirpath, _dirnames, filenames in os.walk(root, onerror=onerror):
             for name in filenames:
-                try:
-                    total += os.lstat(os.path.join(dirpath, name)).st_size
-                except OSError:
-                    continue
+                total += os.lstat(os.path.join(dirpath, name)).st_size
     except OSError:
         return None
     return total
