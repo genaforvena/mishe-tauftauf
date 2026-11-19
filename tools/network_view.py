@@ -1070,7 +1070,12 @@ def uplink_trend_phrase(reads, now):
 
 
 def uplink_rate_line(now=None):
-    """Receive drops on the WAN link over the last hour, from recorded counters, with a trend clause."""
+    """Receive drops on the WAN link, from recorded counters, with a trend clause and the read's age.
+
+    The line stays computable for up to an hour after the router producer stops writing, so without
+    an age and a STALE mark a dead producer's last hour reads as a calm, current trend beside lines
+    that do name their age. The newest read in the window is the one that ages.
+    """
     now = time.time() if now is None else now
     reads = [r for r in router_rows() if r.get("ok") and r.get("uplink") and r.get("uptime_s") is not None]
     recent = [r for r in reads if now - r["ts"] <= 3600]
@@ -1081,8 +1086,11 @@ def uplink_rate_line(now=None):
         return ("UNKNOWN (no usable WAN counters in the last hour: under 10 min since the last router "
                 "boot, or the counter fell without a reboot)")
     drops, span = got
+    ago = now - recent[-1]["ts"]
+    stale = "  STALE" if ago > STALE_ROUTER_S else ""
     return (f"{drops} receive drops in the last {span / 60:.0f} min "
-            f"(about {drops * 3600 / span:.0f} per hour), {uplink_trend_phrase(reads, now)}")
+            f"(about {drops * 3600 / span:.0f} per hour), {uplink_trend_phrase(reads, now)}"
+            f"; read {ago:.0f} s ago{stale}")
 
 
 def gateway_line(data):

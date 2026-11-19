@@ -311,7 +311,9 @@ def test_uplink_rate_over_the_last_hour(tmp_path, monkeypatch):
     _router_log(tmp_path, monkeypatch, _uplink_read(now - 3000, 100000, 1000))
     log = tmp_path / "router.jsonl"
     log.write_text(log.read_text() + json.dumps(_uplink_read(now, 103000, 1300)) + "\n")
-    assert "300 receive drops in the last 50 min (about 360 per hour)" in view.uplink_rate_line(now)
+    line = view.uplink_rate_line(now)
+    assert "300 receive drops in the last 50 min (about 360 per hour)" in line
+    assert "read 0 s ago" in line and "STALE" not in line
 
 
 def test_uplink_rate_restarts_after_a_reboot(tmp_path, monkeypatch):
@@ -322,6 +324,17 @@ def test_uplink_rate_restarts_after_a_reboot(tmp_path, monkeypatch):
                    + json.dumps(_uplink_read(now, 3000, 40)) + "\n")
     # after the reboot the span is 2000 s with 30 drops: the pre-reboot counter is not subtracted
     assert "30 receive drops" in view.uplink_rate_line(now)
+
+
+def test_uplink_rate_marks_a_dead_producer_as_stale(tmp_path, monkeypatch):
+    # The two reads still bracket ten minutes of counters an hour later, but the newest is 20 min old:
+    # a dead producer must not leave a calm trend beside lines that say STALE.
+    now = 1_000_000.0
+    _router_log(tmp_path, monkeypatch, [_uplink_read(now - 1800, 100000, 1000),
+                                        _uplink_read(now - 1200, 100600, 1300)])
+    line = view.uplink_rate_line(now)
+    assert "300 receive drops in the last 10 min" in line
+    assert "read 1200 s ago  STALE" in line
 
 
 def _hourly_reads(now, per_hour_rates, uptime0=100000):
