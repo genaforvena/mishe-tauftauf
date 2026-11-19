@@ -99,11 +99,30 @@ rollover is worth holding the last good verdict for one tick; that is a
 budget-signal design decision in the steward's area, recorded here as
 UNKNOWN, not changed unilaterally.
 
+## Pattern 5 — a stale phone source is invisible behind the aggregate expiry verdict
+
+**Question.** A person reading the senses window sees only `Verdict: UNKNOWN — household-phones: expired after 300s without observation` and `Signals UNKNOWN (1): household-phones (3 d 15 h ago)`. Can they tell what is actually wrong? (Observed 2026-11-19 21:23Z via `mishe pain read senses --launcher dashboard`.)
+
+**Method.** Compare the line a person reads against the bytes we already retain: the signal JSON, the producer's raw output in the dossier, and `senses/map/rssi-history.jsonl`. Try the obvious readings and test each against those bytes.
+
+**Finding.** The aggregate verdict is true but not informative:
+- `household-phones.json` froze at `observed_at` 2026-11-16T06:04:19Z. `signal_store.read` computes the UNKNOWN reason on the fly, so it always says "expired after 300s", whichever input failed. The producer's per-source detail (note3 ok, redmi10 stale) never reaches the signal state: a declared UNKNOWN exit leaves the reading untouched (as commit `f17c5ca0` records).
+- The "(3 d 15 h ago)" age is time since the last *good* reading, not time since the last check. The producer still completes every 10 minutes — the `.ran` heartbeat and fresh `rssi-history.jsonl` rows prove it. A reader can reasonably take the age as "nobody checked for three days", the opposite of the truth.
+- The map agrees: redmi10's RSSI vantage is UNKNOWN/stale at ~314700 s while router-station is fresh; both rows are written on time. The map labels the dead source correctly; the verdict does not.
+
+**Counterexamples tried.**
+- *Is the whole phones sensor dead?* No: note3 is ok (age ~50 s) in the same producer output; only redmi10's stream is silent.
+- *Did the producer miss its cadence?* No: `f17c5ca0` made the completed run the cadence heartbeat; before it, signal-coverage misread the aged freshness stamp as a missed cadence. That fix is committed but not yet in the live pin (`d167da35`).
+- *Is the map at fault?* No: `rssi-history.jsonl` is written every few minutes and marks redmi10 UNKNOWN itself.
+
+**Change / UNKNOWN.** No senses code changed: the repair belongs to whoever restores the redmi10 device or its android-body agent, which is outside senses' grant (no other-device operations; Note3 is the only phone explicitly in Mishe's control, `standing-approvals.md` 2026-11-14 21:45Z). Recorded as an honest UNKNOWN with its resolver, not suppressed. The durable discriminator: when household-phones is UNKNOWN, read the producer's per-source detail and the rssi-history redmi10 vantage before believing the expiry line — a fresh `.ran`/RSSI row with an old per-source sample is a silent device, not a dead producer. This changes if an explicit grant covers the device or if the producer, not the device, is shown at fault.
+
 ## What changed because of this
 
-This wake: no code changed. The 21:03Z budget RED was a rollover hold; re-running
-the producer published GREEN and Pattern 4 records the discriminator. Earlier
-wakes added this file (commit `c094cea3`). The findings feed open senses items:
+Last changed in the 21:22Z wake with Pattern 5; the prior 21:06Z wake added
+Pattern 4 and recovered a budget rollover hold by re-running the producer.
+No senses code changed in either wake; the earlier wake that created the file
+committed `c094cea3`. The findings feed open senses items:
 
 - readings-timeout alternative (deadline 2026-11-24): Pattern 3 is the
   no-recurrence evidence the re-scope needs.
@@ -112,6 +131,10 @@ wakes added this file (commit `c094cea3`). The findings feed open senses items:
   profiles the scanner; the dates and medians above are the measured baseline.
 - budget rollover holds (Pattern 4): open question below; not changed here
   because it is a steward-area signal-design decision.
+
+- household-phones clarity (Pattern 5): the standing redmi10 UNKNOWN is a
+  device-side silence, not a producer failure; discriminator recorded, no code
+  change, resolver outside senses.
 
 ## Open questions
 
@@ -123,3 +146,6 @@ wakes added this file (commit `c094cea3`). The findings feed open senses items:
   across a quota rollover instead of waking a subscriber on a ~10 min
   validity hold (Pattern 4)? Disposer is the budget/steward steward; senses
   keeps the current fail-closed behaviour until that decision is made.
+- Should the senses verdict name the failed source when an aggregate signal is
+  UNKNOWN because one member is stale (Pattern 5)? That is a shared plant_view
+  change affecting every role; not taken unilaterally in a senses wake.
