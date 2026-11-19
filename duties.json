@@ -1185,6 +1185,27 @@
       "replaces": []
     },
     {
+      "name": "wake-wait-stall",
+      "command": [
+        "{python}",
+        "{repo}/checks/wake-wait-stall.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 600,
+      "timeout": 60,
+      "max_age": 1800,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "genome",
+      "covers": "a hard-cap wake in the last two hours whose last wait still held a running subagent job: RED names the wake, role, job id, type, model and duration, read from a bounded 4 MB tail of the retained stream so a recurrence is routed to the wait path without hand-reading a 44 MB stream; this only observes, it does not change any engine timeout or wait cap; UNKNOWN when the routing ledger cannot be read",
+      "replaces": []
+    },
+    {
       "name": "wake-memory-floor",
       "command": [
         "{python}",
