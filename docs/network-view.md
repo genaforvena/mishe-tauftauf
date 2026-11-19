@@ -203,6 +203,8 @@ is not mistaken for a quiet mind.
   sparkline buckets the whole loaded day into `USUAL_BUCKETS` (40) means and is labelled `trend 24 h`
   at the line: the header's "last 40 probes" is only a default, and says wider windows are labelled.
   Without that label a day-long ramp read as a two-hour ramp.
+  A bucket with no answered check draws as `·` rather than being skipped, so a dead
+  stretch keeps its place on the trend instead of closing up and looking continuous.
   The span after the comparison names the baseline's own sample window (about `21 h of samples` at
   the current cadence), not the duration of the slowdown — the headline above already says how long
   that lasted; a bare "over 24 h" read here as a day-long slowdown that contradicted it. The
