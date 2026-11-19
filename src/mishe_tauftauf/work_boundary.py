@@ -5,6 +5,26 @@ import subprocess
 import time
 from pathlib import Path
 
+
+class ObserverDeadlineExceeded(ValueError):
+    """The end-to-end pin-observation budget ran out: UNKNOWN, not a pass."""
+
+
+def check_deadline(deadline, stage):
+    """Fail closed when the shared monotonic budget is gone before this stage finishes."""
+    if deadline is not None and time.monotonic() >= deadline:
+        raise ObserverDeadlineExceeded("observer budget exhausted during " + stage)
+
+
+def deadline_left(deadline, default, stage):
+    """Timeout allowed for the next bounded call, or fail closed when the budget is gone."""
+    if deadline is None:
+        return default
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise ObserverDeadlineExceeded("observer budget exhausted during " + stage)
+    return min(default, left)
+
 #: The exact paths whose changes cannot reach a mechanism. Each one is
 #: admitted by evidence, recorded in the plan's classification inventory.
 #: ``README.md`` is the reader's front page: the runtime names it as a
@@ -320,11 +340,17 @@ def pythonpath_entries(environment_text):
     return [word[len("PYTHONPATH="):] for word in str(environment_text).split() if word.startswith("PYTHONPATH=")]
 
 
-def invoke_arm_consumer(expected):
-    """Exercise a future oneshot invocation; never restart an active worker."""
+def invoke_arm_consumer(expected, *, deadline=None):
+    """Exercise a future oneshot invocation; never restart an active worker.
+
+    With a shared observer deadline each systemctl call is capped at the budget remaining for it,
+    and a success that completes after the budget is gone is still an UNKNOWN, never a pass.
+    """
     unit = "mishe-arm.service"
     def prop(name):
-        return subprocess.check_output(["systemctl", "--user", "show", unit, "-p", name, "--value"], text=True, timeout=10).strip()
+        return subprocess.check_output(
+            ["systemctl", "--user", "show", unit, "-p", name, "--value"],
+            text=True, timeout=deadline_left(deadline, 10, "arm consumer properties")).strip()
     if prop("ActiveState") not in ("inactive", "failed"):
         raise ValueError("arm consumer already active; cannot prove a fresh invocation")
     # The unit names runtime/current (a symlink), the caller names the release: compare the real directories.
@@ -332,8 +358,10 @@ def invoke_arm_consumer(expected):
     if not any(Path(v).resolve() == wanted for v in pythonpath_entries(prop("Environment"))):
         raise ValueError("arm consumer does not use intended release")
     before = prop("ExecMainStartTimestampMonotonic")
-    subprocess.run(["systemctl", "--user", "start", unit], check=True, capture_output=True, timeout=60)
+    subprocess.run(["systemctl", "--user", "start", unit], check=True, capture_output=True,
+                   timeout=deadline_left(deadline, 60, "arm consumer start"))
     after = prop("ExecMainStartTimestampMonotonic")
     if not after.isdecimal() or int(after) <= int(before or "0") or prop("Result") != "success" or prop("ExecMainStatus") != "0":
         raise ValueError("fresh arm consumer invocation was not observed successful")
+    check_deadline(deadline, "arm consumer")
     return dict(unit=unit, started_monotonic=after, pythonpath=str(expected), result="success")

@@ -32,6 +32,7 @@ from . import consumer_fence as fence
 from . import release_promotion as rp
 from . import release_boundary as boundary
 from . import wall_patch
+from .work_boundary import ObserverDeadlineExceeded, check_deadline, deadline_left
 
 DRAIN_TIMEOUT_S = fence.DRAIN_TIMEOUT_S
 # The observer enforces this budget itself with one monotonic deadline; wall_patch's kill is a
@@ -39,22 +40,16 @@ DRAIN_TIMEOUT_S = fence.DRAIN_TIMEOUT_S
 OBSERVE_BUDGET_S = wall_patch.OBSERVE_BUDGET_S
 
 
-class ObserverDeadlineExceeded(ValueError):
-    """The end-to-end budget ran out before the pin could be confirmed: UNKNOWN, not a pass."""
+# The deadline helpers live in work_boundary so the arm consumer's systemctl calls are capped by
+# the same monotonic budget; re-export keeps ``po.ObserverDeadlineExceeded`` stable for callers.
+_check_deadline = check_deadline
 
 
-def _check_deadline(deadline, stage):
-    if deadline is not None and time.monotonic() >= deadline:
-        raise ObserverDeadlineExceeded("observer budget exhausted during " + stage)
-
-
-
-
-def _show(unit: str, *properties: str) -> dict:
+def _show(unit: str, *properties: str, timeout: float = 15) -> dict:
     args = ["systemctl", "--user", "show", unit]
     for name in properties:
         args += ["-p", name]
-    text = subprocess.check_output(args, text=True, timeout=15)
+    text = subprocess.check_output(args, text=True, timeout=timeout)
     return boundary.unit_properties(text)
 
 
@@ -71,8 +66,7 @@ def check_units(home: Path, stable: Path, show=_show, *, sleep=time.sleep, retri
     checked = []
 
     def guarded(*args):
-        _check_deadline(deadline, "unit inventory")
-        return show(*args)
+        return show(*args, timeout=deadline_left(deadline, 15, "unit inventory"))
     expected = "PYTHONPATH=" + str(stable / "src")
     for unit_path in rp.config_paths(home):
         if unit_path.suffix != ".service" or "@." in unit_path.name:
@@ -82,14 +76,18 @@ def check_units(home: Path, stable: Path, show=_show, *, sleep=time.sleep, retri
             # a concurrent sync may reload a moment later: look again before calling a pending reload a failure
             if fields.get("NeedDaemonReload") == "no":
                 break
-            sleep(2)
+            sleep(deadline_left(deadline, 2, "unit reload retry"))
             fields = guarded(unit_path.name, "Type", "Environment", "FragmentPath", "NeedDaemonReload", "LoadState")
         if fields.get("NeedDaemonReload") != "no":
             # Another sync (a mind repairing generated-unit drift) rewrote the file after the activation's reload. A reload only
             # makes the loaded configuration equal to the files; what this probe judges is that the loaded pins equal the files
             # and the stable path, which is checked right after.
+            # reload_units has its own 30 s timeout inside OBSERVE_FIXED_MARGIN_S; fail closed on both
+            # sides of it so a reload that finishes after the budget cannot still report a pass.
+            check_deadline(deadline, "unit reload")
             reload()
-            sleep(1)
+            check_deadline(deadline, "unit reload")
+            sleep(deadline_left(deadline, 1, "unit reload settle"))
             fields = guarded(unit_path.name, "Type", "Environment", "FragmentPath", "NeedDaemonReload", "LoadState")
         if fields.get("LoadState") != "loaded":
             raise ValueError(f"owned installed service is not loaded: {unit_path.name}")
@@ -188,9 +186,12 @@ def observe(home: Path, release: Path, *, cutoff_us: int | None,
         # pin: mishe-next-due-c2a8ebf66195.service"). Drain first, then arm once more from this pin so
         # no old invocation remains to overwrite the timer, then judge the consumers.
         from .work_boundary import invoke_arm_consumer
-        rearm = invoke_arm_consumer(stable / "src")
+        rearm = invoke_arm_consumer(stable / "src", deadline=deadline)
     future = (wait_future(home, stable / "src", deadline=deadline) if cutoff_us is not None
               else fence.verify_future(home, stable / "src", {}, deadline=deadline))
+    # A future check that returns after the shared budget is gone is not a pass (review #303029:
+    # virtual clock advanced 0->2 s with budget=1 still returned success before this check).
+    check_deadline(deadline, "future consumers")
     return {"release": sha, "units": units, "rearm": rearm, "future_consumers": [row["unit"] for row in future]}
 
 

@@ -1,5 +1,6 @@
 """Controlled-failure tests for the post-move observation of the live consumers (pin_observation)."""
 import time
+from pathlib import Path
 import pytest
 
 from mishe_tauftauf import pin_observation as po
@@ -101,7 +102,7 @@ def test_a_pending_reload_that_clears_a_moment_later_is_not_a_failure(tmp_path, 
     monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
     states = iter(["yes", "no"])
 
-    def show(name, *props):
+    def show(name, *props, **kw):
         return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot", "NeedDaemonReload": next(states),
                 "Environment": "PYTHONPATH=" + str(stable / "src")}
 
@@ -116,7 +117,7 @@ def test_a_reload_that_never_clears_is_a_failure(tmp_path, monkeypatch):
     unit.write_text("[Service]\nEnvironment=PYTHONPATH=" + str(stable / "src") + "\n")
     monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
 
-    def show(name, *props):
+    def show(name, *props, **kw):
         return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot", "NeedDaemonReload": "yes",
                 "Environment": "PYTHONPATH=" + str(stable / "src")}
 
@@ -133,7 +134,7 @@ def test_a_persistent_pending_reload_is_cleared_by_one_reload_then_judged_on_the
     monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
     reloaded = []
 
-    def show(name, *props):
+    def show(name, *props, **kw):
         return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot",
                 "NeedDaemonReload": "no" if reloaded else "yes", "Environment": "PYTHONPATH=" + str(stable / "src")}
 
@@ -149,7 +150,7 @@ def test_after_a_reload_a_wrong_loaded_pin_is_still_a_failure(tmp_path, monkeypa
     unit.write_text("[Service]\nEnvironment=PYTHONPATH=" + str(stable / "src") + "\n")
     monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
 
-    def show(name, *props):
+    def show(name, *props, **kw):
         return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot", "NeedDaemonReload": "no",
                 "Environment": "PYTHONPATH=/elsewhere/src"}
 
@@ -171,8 +172,14 @@ def test_observe_rearms_after_the_drain_and_before_judging_future_consumers(tmp_
     monkeypatch.setattr(po.rp, "probe_problems", lambda h: calls.append("probe") or [])
     monkeypatch.setattr(po, "drain_old", lambda h, cutoff, **kw: calls.append(("drain", cutoff)) or 0)
     from mishe_tauftauf import work_boundary
-    monkeypatch.setattr(work_boundary, "invoke_arm_consumer",
-                        lambda expected: calls.append(("arm", expected)) or {})
+    arm_kw = {}
+
+    def fake_arm(expected, **kw):
+        arm_kw.update(kw)
+        calls.append(("arm", expected))
+        return {}
+
+    monkeypatch.setattr(work_boundary, "invoke_arm_consumer", fake_arm)
     monkeypatch.setattr(po.fence, "verify_future",
                         lambda h, expected, previous, **kw: calls.append(("verify", list(calls))) or [])
 
@@ -181,6 +188,7 @@ def test_observe_rearms_after_the_drain_and_before_judging_future_consumers(tmp_
     assert [c if isinstance(c, str) else c[0] for c in calls] == ["pointer", "units", "wrappers", "probe", "drain", "arm", "verify"]
     assert calls[4] == ("drain", 17)
     assert calls[5] == ("arm", home / "runtime" / "current" / "src")
+    assert "deadline" in arm_kw  # the shared budget reaches the arm consumer
     assert result == {"release": release.name, "units": [], "rearm": {}, "future_consumers": []}
 
 
@@ -279,7 +287,7 @@ def test_check_units_fails_closed_when_the_shared_deadline_is_gone(tmp_path, mon
     monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
     called = []
 
-    def show(name, *props):
+    def show(name, *props, **kw):
         called.append(name)
         return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot",
                 "NeedDaemonReload": "no", "Environment": "PYTHONPATH=" + str(stable / "src")}
@@ -323,3 +331,107 @@ def test_arm_consumer_property_reads_carry_a_timeout(tmp_path, monkeypatch):
     monkeypatch.setattr(wb.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0})())
     wb.invoke_arm_consumer(expected)
     assert timeouts and all(t == 10 for t in timeouts)
+
+
+def test_arm_consumer_caps_each_call_to_the_remaining_budget(monkeypatch):
+    """Review #303028: a drain near the deadline cannot spend the full 10 s/60 s arm timeouts."""
+    from types import SimpleNamespace
+    from mishe_tauftauf import work_boundary as wb
+
+    expected = Path("/tmp/does-not-matter/src")
+    clock = [0.0]
+    prop_timeouts, start_timeouts = [], []
+    timestamps = iter(["1", "2"])
+
+    def fake_output(argv, **kw):
+        prop_timeouts.append(kw["timeout"])
+        clock[0] += 0.2
+        name = argv[argv.index("-p") + 1]
+        if name == "ExecMainStartTimestampMonotonic":
+            return next(timestamps) + "\n"
+        return {"ActiveState": "inactive", "Environment": "PYTHONPATH=" + str(expected),
+                "Result": "success", "ExecMainStatus": "0"}[name] + "\n"
+
+    def fake_run(argv, **kw):
+        start_timeouts.append(kw["timeout"])
+        clock[0] += 0.2
+        return type("R", (), {"returncode": 0})()
+
+    monkeypatch.setattr(wb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(wb.subprocess, "check_output", fake_output)
+    monkeypatch.setattr(wb.subprocess, "run", fake_run)
+    wb.invoke_arm_consumer(expected, deadline=2.0)
+    assert len(prop_timeouts) == 6 and len(start_timeouts) == 1
+    assert all(0 < t < 10 for t in prop_timeouts), prop_timeouts
+    assert 0 < start_timeouts[0] < 60, start_timeouts
+
+
+def test_arm_consumer_fails_closed_when_success_lands_after_the_budget(monkeypatch):
+    """A start that succeeds only after the shared budget is gone is UNKNOWN, not a rearm pass."""
+    from types import SimpleNamespace
+    from mishe_tauftauf import work_boundary as wb
+
+    expected = Path("/tmp/does-not-matter/src")
+    clock = [0.0]
+
+    timestamps = iter(["1", "2"])
+    def fake_output(argv, **kw):
+        clock[0] += 0.25
+        name = argv[argv.index("-p") + 1]
+        if name == "ExecMainStartTimestampMonotonic":
+            return next(timestamps) + "\n"
+        return {"ActiveState": "inactive", "Environment": "PYTHONPATH=" + str(expected),
+                "Result": "success", "ExecMainStatus": "0"}[name] + "\n"
+
+    def fake_run(argv, **kw):
+        clock[0] += 0.25
+        return type("R", (), {"returncode": 0})()
+
+    monkeypatch.setattr(wb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(wb.subprocess, "check_output", fake_output)
+    monkeypatch.setattr(wb.subprocess, "run", fake_run)
+    # 6 props + 1 start, 0.25 s each: the last call ends exactly at the 1.75 s budget.
+    with pytest.raises(po.ObserverDeadlineExceeded, match="arm consumer"):
+        wb.invoke_arm_consumer(expected, deadline=1.75)
+
+
+def test_observe_fails_closed_when_future_check_returns_after_the_budget(tmp_path, monkeypatch):
+    """Review #303029's controlled boundary: a late verify_future success is not a pass."""
+    home, release = _site(tmp_path)
+    monkeypatch.setattr(po, "check_pointer", lambda h, r: home / "runtime" / "current")
+    monkeypatch.setattr(po.rp, "probe_problems", lambda h: [])
+    monkeypatch.setattr(po, "check_wrappers", lambda h, s, sha: None)
+    monkeypatch.setattr(po, "check_units", lambda *a, **kw: [])
+
+    def late_verify(*a, **kw):
+        time.sleep(0.1)  # consumes the whole 0.05 s budget after the check was called
+        return []
+
+    monkeypatch.setattr(po.fence, "verify_future", late_verify)
+    with pytest.raises(po.ObserverDeadlineExceeded, match="future consumers"):
+        po.observe(home, release, cutoff_us=None, budget=0.05)
+
+
+def test_check_units_caps_show_timeout_to_the_remaining_budget(tmp_path, monkeypatch):
+    """Review #303028: the fixed 15 s unit show is capped to the budget left at that call."""
+    from types import SimpleNamespace
+    from mishe_tauftauf import work_boundary as wb
+
+    home, release = _site(tmp_path)
+    stable = home / "runtime" / "current"
+    unit = home / "u" / "mishe-x.service"
+    unit.parent.mkdir()
+    unit.write_text("[Service]\nEnvironment=PYTHONPATH=" + str(stable / "src") + "\n")
+    monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
+    clock = [0.0]
+    monkeypatch.setattr(wb, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    timeouts = []
+
+    def show(name, *props, **kw):
+        timeouts.append(kw["timeout"])
+        clock[0] += 4.0
+        return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot",
+                "NeedDaemonReload": "no", "Environment": "PYTHONPATH=" + str(stable / "src")}
+
+    po.check_units(home, stable, show=show, deadline=5.0)
+    assert timeouts == [5.0]  # min(15, remaining 5), not the fixed 15 s default
