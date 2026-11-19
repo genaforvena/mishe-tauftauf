@@ -67,7 +67,8 @@ def write_heal(path: Path, state: dict) -> None:
     tmp.replace(path)
 
 
-def evaluate(state: dict, heartbeat: dict | None, now: float) -> tuple[int, str]:
+def evaluate(state: dict, heartbeat: dict | None, now: float,
+             unit: str = UNIT) -> tuple[int, str]:
     """Pure verdict from a systemd snapshot and a heartbeat reading.
 
     Never raises on a malformed snapshot or heartbeat: an unreadable input is
@@ -76,7 +77,7 @@ def evaluate(state: dict, heartbeat: dict | None, now: float) -> tuple[int, str]
     """
     main_pid = str(state.get("MainPID", "0"))
     if state.get("ActiveState") != "active" or not main_pid.isdigit() or main_pid == "0":
-        return 2, f"unit {UNIT} is not active ({state.get('ActiveState', 'unknown')})"
+        return 2, f"unit {unit} is not active ({state.get('ActiveState', 'unknown')})"
     if heartbeat is None:
         return 3, "heartbeat missing or unreadable while the unit is active"
     try:
@@ -123,7 +124,7 @@ def main() -> int:
     except (OSError, ValueError, TypeError, KeyError):
         heartbeat = None
 
-    code, reason = evaluate(state, heartbeat, now)
+    code, reason = evaluate(state, heartbeat, now, args.unit)
     heal = read_heal(heal_path)
 
     if code == 2 and restart_budget(heal, now) > 0:
@@ -139,7 +140,7 @@ def main() -> int:
                 heartbeat = read_heartbeat(heartbeat_path)
             except (OSError, ValueError, TypeError, KeyError):
                 heartbeat = None
-            code, reason = evaluate(state, heartbeat, time.time())
+            code, reason = evaluate(state, heartbeat, time.time(), args.unit)
             reason = "after bounded restart: " + reason
         except (OSError, subprocess.SubprocessError) as exc:
             print(f"HEAL restart failed: {exc}")

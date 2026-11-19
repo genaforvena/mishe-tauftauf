@@ -131,6 +131,43 @@ def test_restart_budget_spent_leaves_red(monkeypatch, tmp_path):
     assert restarts == []
 
 
+def test_red_reason_names_the_unit_from_the_argument(monkeypatch, tmp_path, capsys):
+    # A detector invoked with --unit lzhezalia-bot.service must not report
+    # ilya's unit in its RED reason. This covers evaluate() and main() wiring:
+    # a hardcoded module default in either place fails this test.
+    heal_path = tmp_path / "health" / "lzhezalia-bot-heal.json"
+    heal_path.parent.mkdir(parents=True)
+    heal_path.write_text('{"restarts": [%s, %s]}' % (NOW, NOW - 10))
+    seen = []
+
+    def fake_unit_state(unit=check.UNIT):
+        seen.append(unit)
+        return dict(ACTIVE, ActiveState="failed", Result="exit-code")
+
+    monkeypatch.setattr(check, "unit_state", fake_unit_state)
+    monkeypatch.setattr(check, "read_heartbeat", lambda path: FRESH)
+    # Pin time so the two restarts at NOW/NOW-10 really spend the budget; without
+    # this the real epoch makes them look ancient and main() restarts the LIVE unit.
+    monkeypatch.setattr(check, "time", SimpleNamespace(
+        time=lambda: NOW, sleep=lambda seconds: None))
+    # Fail loudly if the restart branch is ever entered: no test may call systemd.
+    monkeypatch.setattr(check, "subprocess", SimpleNamespace(
+        run=lambda *a, **kw: (_ for _ in ()).throw(AssertionError("test must not restart a unit")),
+        SubprocessError=subprocess.SubprocessError))
+    monkeypatch.setattr(sys, "argv", [
+        "telegram-bot-alive.py", "--home", str(tmp_path),
+        "--unit", "lzhezalia-bot.service",
+        "--heartbeat", str(tmp_path / "health" / "lzhezalia-bot.json"),
+        "--state", str(heal_path),
+    ])
+
+    assert check.main() == 2
+    out = capsys.readouterr().out
+    assert "lzhezalia-bot.service" in out
+    assert "ilya-telegram-bot.service" not in out
+    assert seen == ["lzhezalia-bot.service"]
+
+
 def test_active_unit_with_no_mainpid_is_red_not_a_traceback():
     # Review finding 2026-11-16: `state['MainPID']` raised KeyError when the
     # property was absent, exiting 1 instead of the declared 2/3.
