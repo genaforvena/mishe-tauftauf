@@ -298,3 +298,15 @@ def test_unreadable_wake_evidence_is_a_note_not_an_accusation(tmp_path, monkeypa
     assert code == 0
     assert any("wake evidence unmeasured" in n for n in report["counts"]["notes"])
     assert not any(c.startswith("unattended-red") for c in report["causes"])
+
+
+def test_own_red_reading_is_not_ignored_by_itself(tmp_path, monkeypatch):
+    # The self reading is recomputed every run and judged by its own stamp (the self
+    # check). Judging its previous RED as "ignored" locks the verdict RED: nothing can
+    # clear it until the stale self reading does, and it never does.
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"signal-coverage": register_entry(max_age=3600)})
+    observed(sigdir, "signal-coverage", "RED", at=NOW - 5 * 3600, seen=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0
+    assert not any("signal-coverage reading" in c for c in report["causes"])

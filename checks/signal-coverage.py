@@ -199,6 +199,11 @@ def run(home: Path, now: float, *, repo: Path | None = None,
             causes.append(f"stale: {name} freshness stamp {(now - beat) / 60:.0f} min old "
                           f"(max_age {max_age / 60:.0f} min) — producer missed cadence")
             continue
+        if name == SELF:
+            # This run recomputes its own verdict; its previous RED is judged by the
+            # self stamp below, never answered as an ignored reading (that locked RED).
+            counts["ok"] += 1
+            continue
         value = reading.get("value") if isinstance(reading, dict) else None
         state = reading.get("state") if isinstance(reading, dict) else None
         observed_at = reading.get("observed_at") if isinstance(reading, dict) else None
