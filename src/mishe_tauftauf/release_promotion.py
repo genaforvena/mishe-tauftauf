@@ -333,16 +333,18 @@ def config_paths(home):
             *owned_runtime_units(home, unit_dir)]
 
 
-def reload_units():
-    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, capture_output=True, timeout=30)
+def reload_units(timeout=30):
+    """daemon-reload; the observer passes the budget left, so 30 s is only the standalone ceiling."""
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, capture_output=True, timeout=timeout)
 
 
 DUAL_PROBE = "mishe-dual-probe.service"
 
 
-def _probe_fields():
+def _probe_fields(timeout=30):
+    """Dual-probe show; the observer passes the budget left, so 30 s is only the standalone ceiling."""
     out = subprocess.check_output(["systemctl", "--user", "show", DUAL_PROBE, "-p", "FragmentPath", "-p", "ActiveState"],
-                                  text=True, timeout=30)
+                                  text=True, timeout=timeout)
     return release_boundary.unit_fields(out)
 
 
@@ -380,7 +382,7 @@ def ensure_dual_probe(home, unit_dir=None):
 PROBE_STALE_S = 300
 
 
-def probe_problems(home, unit_dir=None, *, now=None, fields=None):
+def probe_problems(home, unit_dir=None, *, now=None, fields=None, deadline=None):
     """Doctor reasons the root-fs probe is not live from its installed unit with fresh samples; [] when healthy."""
     unit_dir = Path(unit_dir) if unit_dir else Path.home() / ".config/systemd/user"
     durable = unit_dir / DUAL_PROBE
@@ -388,7 +390,7 @@ def probe_problems(home, unit_dir=None, *, now=None, fields=None):
     if not durable.is_file():
         problems.append(f"root-fs probe: installed unit {durable} missing")
     try:
-        fields = _probe_fields() if fields is None else fields
+        fields = _probe_fields(timeout=boundary.deadline_left(deadline, 30, "root-fs probe")) if fields is None else fields
     except (OSError, subprocess.SubprocessError) as exc:
         return problems + [f"root-fs probe: systemctl unreadable ({type(exc).__name__})"]
     if fields.get("ActiveState") != "active":

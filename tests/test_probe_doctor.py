@@ -61,7 +61,7 @@ def test_missing_installed_unit_is_red(tmp_path):
 def test_systemctl_failure_is_red_not_green(tmp_path):
     home, unit_dir = _site(tmp_path)
 
-    def broken():
+    def broken(**kw):
         raise FileNotFoundError("systemctl")
     original = rp._probe_fields
     rp._probe_fields = broken
@@ -69,4 +69,36 @@ def test_systemctl_failure_is_red_not_green(tmp_path):
         out = rp.probe_problems(home, unit_dir, now=NOW)
     finally:
         rp._probe_fields = original
+    assert any("systemctl unreadable" in p for p in out)
+
+
+def test_probe_show_timeout_is_capped_by_the_remaining_budget(tmp_path, monkeypatch):
+    """Review #303049: the fixed 30 s root-fs probe show cannot outlive the observer budget."""
+    from types import SimpleNamespace
+    from mishe_tauftauf import work_boundary as wb
+
+    home, unit_dir = _site(tmp_path)
+    monkeypatch.setattr(wb, "time", SimpleNamespace(monotonic=lambda: 0.0))
+    timeouts = []
+
+    def probe(**kw):
+        timeouts.append(kw["timeout"])
+        return _fields(unit_dir)
+
+    monkeypatch.setattr(rp, "_probe_fields", probe)
+    assert rp.probe_problems(home, unit_dir, now=NOW, deadline=5.0) == []
+    assert timeouts == [5.0]  # min(30, remaining 5), not the fixed 30 s default
+
+
+def test_probe_timeout_is_red_not_green(tmp_path, monkeypatch):
+    """A timed-out root-fs show is reported unreadable, never a healthy probe."""
+    import subprocess
+
+    home, unit_dir = _site(tmp_path)
+
+    def slow(**kw):
+        raise subprocess.TimeoutExpired(kw["timeout"], ["systemctl", "show"])
+
+    monkeypatch.setattr(rp, "_probe_fields", slow)
+    out = rp.probe_problems(home, unit_dir, now=NOW)
     assert any("systemctl unreadable" in p for p in out)

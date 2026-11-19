@@ -122,7 +122,7 @@ def test_a_reload_that_never_clears_is_a_failure(tmp_path, monkeypatch):
                 "Environment": "PYTHONPATH=" + str(stable / "src")}
 
     with pytest.raises(ValueError, match="pending daemon-reload"):
-        po.check_units(home, stable, show=show, sleep=lambda s: None, reload=lambda: None)
+        po.check_units(home, stable, show=show, sleep=lambda s: None, reload=lambda **kw: None)
 
 
 def test_a_persistent_pending_reload_is_cleared_by_one_reload_then_judged_on_the_pins(tmp_path, monkeypatch):
@@ -138,7 +138,7 @@ def test_a_persistent_pending_reload_is_cleared_by_one_reload_then_judged_on_the
         return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot",
                 "NeedDaemonReload": "no" if reloaded else "yes", "Environment": "PYTHONPATH=" + str(stable / "src")}
 
-    assert po.check_units(home, stable, show=show, sleep=lambda s: None, reload=lambda: reloaded.append(1)) == ["mishe-x.service"]
+    assert po.check_units(home, stable, show=show, sleep=lambda s: None, reload=lambda **kw: reloaded.append(1)) == ["mishe-x.service"]
     assert reloaded == [1]
 
 
@@ -155,7 +155,7 @@ def test_after_a_reload_a_wrong_loaded_pin_is_still_a_failure(tmp_path, monkeypa
                 "Environment": "PYTHONPATH=/elsewhere/src"}
 
     with pytest.raises(ValueError, match="loaded pin differs"):
-        po.check_units(home, stable, show=show, sleep=lambda s: None, reload=lambda: None)
+        po.check_units(home, stable, show=show, sleep=lambda s: None, reload=lambda **kw: None)
 
 
 def test_observe_rearms_after_the_drain_and_before_judging_future_consumers(tmp_path, monkeypatch):
@@ -169,7 +169,7 @@ def test_observe_rearms_after_the_drain_and_before_judging_future_consumers(tmp_
     monkeypatch.setattr(po, "check_pointer", lambda h, r: calls.append("pointer") or home / "runtime" / "current")
     monkeypatch.setattr(po, "check_units", lambda h, s, **kw: calls.append("units") or [])
     monkeypatch.setattr(po, "check_wrappers", lambda h, s, sha: calls.append("wrappers"))
-    monkeypatch.setattr(po.rp, "probe_problems", lambda h: calls.append("probe") or [])
+    monkeypatch.setattr(po.rp, "probe_problems", lambda h, **kw: calls.append("probe") or [])
     monkeypatch.setattr(po, "drain_old", lambda h, cutoff, **kw: calls.append(("drain", cutoff)) or 0)
     from mishe_tauftauf import work_boundary
     arm_kw = {}
@@ -198,7 +198,7 @@ def test_observe_without_a_cutoff_does_not_arm(tmp_path, monkeypatch):
     monkeypatch.setattr(po, "check_pointer", lambda h, r: home / "runtime" / "current")
     monkeypatch.setattr(po, "check_units", lambda h, s, **kw: [])
     monkeypatch.setattr(po, "check_wrappers", lambda h, s, sha: None)
-    monkeypatch.setattr(po.rp, "probe_problems", lambda h: [])
+    monkeypatch.setattr(po.rp, "probe_problems", lambda h, **kw: [])
     from mishe_tauftauf import work_boundary
     monkeypatch.setattr(work_boundary, "invoke_arm_consumer", lambda expected: calls.append(expected) or {})
     monkeypatch.setattr(po.fence, "verify_future", lambda h, expected, previous, **kw: [])
@@ -301,7 +301,7 @@ def test_observe_reports_budget_exhaustion_before_any_subprocess(tmp_path, monke
     """Controlled failure: an exhausted budget is a visible UNKNOWN, never a silent pass."""
     home, release = _site(tmp_path)
     monkeypatch.setattr(po, "check_pointer", lambda h, r: home / "runtime" / "current")
-    monkeypatch.setattr(po.rp, "probe_problems", lambda h: [])
+    monkeypatch.setattr(po.rp, "probe_problems", lambda h, **kw: [])
     monkeypatch.setattr(po, "check_wrappers", lambda h, s, sha: None)
     unit = home / "u" / "mishe-x.service"
     unit.parent.mkdir()
@@ -399,7 +399,7 @@ def test_observe_fails_closed_when_future_check_returns_after_the_budget(tmp_pat
     """Review #303029's controlled boundary: a late verify_future success is not a pass."""
     home, release = _site(tmp_path)
     monkeypatch.setattr(po, "check_pointer", lambda h, r: home / "runtime" / "current")
-    monkeypatch.setattr(po.rp, "probe_problems", lambda h: [])
+    monkeypatch.setattr(po.rp, "probe_problems", lambda h, **kw: [])
     monkeypatch.setattr(po, "check_wrappers", lambda h, s, sha: None)
     monkeypatch.setattr(po, "check_units", lambda *a, **kw: [])
 
@@ -435,3 +435,54 @@ def test_check_units_caps_show_timeout_to_the_remaining_budget(tmp_path, monkeyp
 
     po.check_units(home, stable, show=show, deadline=5.0)
     assert timeouts == [5.0]  # min(15, remaining 5), not the fixed 15 s default
+
+
+def test_check_units_caps_reload_timeout_to_the_remaining_budget(tmp_path, monkeypatch):
+    """Review #303049: the fixed 30 s daemon-reload cannot outlive the observer budget."""
+    from types import SimpleNamespace
+    from mishe_tauftauf import work_boundary as wb
+
+    home, release = _site(tmp_path)
+    stable = home / "runtime" / "current"
+    unit = home / "u" / "mishe-x.service"
+    unit.parent.mkdir()
+    unit.write_text("[Service]\nEnvironment=PYTHONPATH=" + str(stable / "src") + "\n")
+    monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
+    monkeypatch.setattr(wb, "time", SimpleNamespace(monotonic=lambda: 0.0))
+    timeouts = []
+    states = iter(["yes"] * 4 + ["no"])
+
+    def show(name, *props, **kw):
+        return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot",
+                "NeedDaemonReload": next(states), "Environment": "PYTHONPATH=" + str(stable / "src")}
+
+    def reload(**kw):
+        timeouts.append(kw["timeout"])
+
+    assert po.check_units(home, stable, show=show, sleep=lambda s: None, reload=reload, deadline=5.0) == ["mishe-x.service"]
+    assert timeouts == [5.0]  # min(30, remaining 5), not the fixed 30 s default
+
+
+def test_check_units_does_not_pass_a_reload_that_times_out(tmp_path, monkeypatch):
+    """Review #303049: a daemon-reload subprocess timeout is a failure, never a pass."""
+    import subprocess
+    from types import SimpleNamespace
+    from mishe_tauftauf import work_boundary as wb
+
+    home, release = _site(tmp_path)
+    stable = home / "runtime" / "current"
+    unit = home / "u" / "mishe-x.service"
+    unit.parent.mkdir()
+    unit.write_text("[Service]\nEnvironment=PYTHONPATH=" + str(stable / "src") + "\n")
+    monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
+    monkeypatch.setattr(wb, "time", SimpleNamespace(monotonic=lambda: 0.0))
+
+    def show(name, *props, **kw):
+        return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot",
+                "NeedDaemonReload": "yes", "Environment": "PYTHONPATH=" + str(stable / "src")}
+
+    def reload(**kw):
+        raise subprocess.TimeoutExpired(kw["timeout"], ["systemctl", "daemon-reload"])
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        po.check_units(home, stable, show=show, sleep=lambda s: None, reload=reload, deadline=5.0)

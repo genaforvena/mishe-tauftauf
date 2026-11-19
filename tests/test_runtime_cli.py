@@ -125,7 +125,7 @@ def _healthy_root_fs_probe(site, units_dir, monkeypatch):
     from mishe_tauftauf import release_promotion
     (site / "operator").mkdir(exist_ok=True)
     (site / "operator" / "dual-probe.jsonl").write_text(json.dumps({"at": time.time(), "event": "minute"}) + "\n")
-    monkeypatch.setattr(release_promotion, "_probe_fields", lambda: {
+    monkeypatch.setattr(release_promotion, "_probe_fields", lambda **kw: {
         "FragmentPath": str(units_dir / release_promotion.DUAL_PROBE), "ActiveState": "active"})
 
 

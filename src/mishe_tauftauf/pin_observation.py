@@ -82,10 +82,11 @@ def check_units(home: Path, stable: Path, show=_show, *, sleep=time.sleep, retri
             # Another sync (a mind repairing generated-unit drift) rewrote the file after the activation's reload. A reload only
             # makes the loaded configuration equal to the files; what this probe judges is that the loaded pins equal the files
             # and the stable path, which is checked right after.
-            # reload_units has its own 30 s timeout inside OBSERVE_FIXED_MARGIN_S; fail closed on both
-            # sides of it so a reload that finishes after the budget cannot still report a pass.
+            # reload_units has a 30 s subprocess timeout; cap it by the budget left here so a slow
+            # reload cannot outlive the shared deadline. Fail closed on both sides: a TimeoutExpired
+            # propagates, and a reload that finishes after the budget cannot still report a pass.
             check_deadline(deadline, "unit reload")
-            reload()
+            reload(timeout=deadline_left(deadline, 30, "unit reload"))
             check_deadline(deadline, "unit reload")
             sleep(deadline_left(deadline, 1, "unit reload settle"))
             fields = guarded(unit_path.name, "Type", "Environment", "FragmentPath", "NeedDaemonReload", "LoadState")
@@ -171,7 +172,7 @@ def observe(home: Path, release: Path, *, cutoff_us: int | None,
     sha = release.resolve().name
     units = check_units(home, stable, deadline=deadline)
     check_wrappers(home, stable, sha)
-    problems = rp.probe_problems(home)
+    problems = rp.probe_problems(home, deadline=deadline)
     if problems:
         raise ValueError("dual probe problems: " + "; ".join(map(str, problems)))
     _check_deadline(deadline, "fixed checks")
