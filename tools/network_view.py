@@ -1232,6 +1232,60 @@ def _hour_median(data, field, hours):
                 vals.append(v)
     return statistics.median(vals) if len(vals) >= PHASE_BASELINE_MIN else None
 
+CLOCK_PHASES = {"evening": EVENING_HOURS}
+
+
+def _window_clock_phase(stamps):
+    """The named clock phase most of `stamps` fall in, or None when they lie mostly outside it.
+
+    Only the evening is named: the retained rows' night median sits within a few percent of the
+    pooled day median, so matching it would add fragility for no honesty gain. The recent window
+    spans about half an hour, so it sits inside the phase or outside it; a straddling window
+    counts for the side holding the majority, and a tie counts as neither.
+    """
+    if not stamps:
+        return None
+    counts = {name: 0 for name in CLOCK_PHASES}
+    for t in stamps:
+        hour = time.gmtime(t).tm_hour
+        for name, hours in CLOCK_PHASES.items():
+            if hour in hours:
+                counts[name] += 1
+    name = max(counts, key=counts.get)
+    return name if counts[name] * 2 > len(stamps) else None
+
+
+def _clock_web_median(data, hours):
+    """Median web sample over retained probes taken in `hours` of the UTC clock, with its span.
+
+    The USUAL line's day baseline pools every hour, so during the evening's own clock hours it
+    would read "slower than usual" on an ordinary evening, every evening: the retained rows'
+    evening median runs about 1.3x the pooled one. This baseline draws on the same retained rows
+    `_hour_median` uses, because a single day holds only about three hours of evening samples; a
+    multi-day phase dip can pull it for as long as those rows are retained, which is the same
+    exposure the handshake hour medians already carry. The newest `USUAL_EXCLUDE` phase samples
+    are dropped, so tonight's own slowdown cannot calibrate itself: the pool is earlier evenings.
+    """
+    samples = []
+    for row in data:
+        stamp = row.get("at") if isinstance(row, dict) else None
+        if not isinstance(stamp, str):
+            continue
+        try:
+            t = nb.utc_epoch(stamp)
+            hour = time.gmtime(t).tm_hour
+        except (ValueError, TypeError, OverflowError):
+            continue
+        if hour in hours:
+            v = web_sample(row)
+            if v is not None:
+                samples.append((t, v))
+    samples.sort()
+    pool = samples[:-USUAL_EXCLUDE]
+    if len(pool) < PHASE_BASELINE_MIN:
+        return None, len(pool), None
+    return statistics.median([v for _, v in pool]), len(pool), _sample_span([t for t, _ in pool])
+
 
 def phase_line(data, now=None, facts=None):
     """Where a page load's time goes: three disjoint phases whose sum is the page's total time.
@@ -1400,6 +1454,12 @@ def usuality_facts(data, now=None):
     baseline. Labelling the typical with `span` claimed 24 h where the baseline spanned about 21 h.
     With sparse phase support the recent minutes also span only the phase-measured rows
     (`phase_window`), not every web-good probe that supplied the web median.
+    The typical is clock-phase matched: when the recent window sits inside the evening hours it
+    comes from earlier evenings' own retained samples (`clock_base`, `clock_span`), because the
+    pooled day median is biased low at the evening's elevated hours and would read "slower than
+    usual" on an ordinary evening, every evening. Too few evening samples leaves `clock_base`
+    None: the compare falls back to the pooled day median and the label keeps the day span
+    ("of samples"), so the line never claims an evening calibration it has no samples for.
     """
     now = time.time() if now is None else now
     recent = []  # (epoch, web sample, row) oldest first; sample is None when the row's checks failed
@@ -1429,7 +1489,11 @@ def usuality_facts(data, now=None):
     base_rows = good_rows[:-USUAL_EXCLUDE] if exclude else good_rows
     base_stamps = good_stamps[:-USUAL_EXCLUDE] if exclude else good_stamps
     base = statistics.median(base_pool)
-    ratio = cur / base if base else 1.0
+    clock_phase = _window_clock_phase(cur_stamps)
+    clock_base, clock_support, clock_span = (
+        _clock_web_median(data, CLOCK_PHASES[clock_phase]) if clock_phase else (None, 0, None))
+    compare_base = clock_base if clock_base is not None else base
+    ratio = cur / compare_base if compare_base else 1.0
     phase_cur, phase_support, phase_total_cur = _phase_medians(good_rows[-USUAL_RECENT:])
     phase_base, phase_base_support, phase_total_base = _phase_medians(base_rows)
     phase_base_stamps = [t for t, row in zip(base_stamps, base_rows) if _phase_complete(row) is not None]
@@ -1453,6 +1517,8 @@ def usuality_facts(data, now=None):
     return {"cur": cur, "base": base, "compare": compare, "window": window,
             "samples": samples, "span": span, "base_span": base_span, "stale": stale,
             "recent_phrase": recent_phrase, "window_count": len(cur_stamps),
+            "clock_phase": clock_phase, "clock_base": clock_base,
+            "clock_support": clock_support, "clock_span": clock_span,
             "phase_cur": phase_cur, "phase_base": phase_base, "phase_support": phase_support,
             "phase_base_support": phase_base_support, "phase_total_cur": phase_total_cur,
             "phase_total_base": phase_total_base, "phase_base_span": phase_base_span,
@@ -1466,9 +1532,15 @@ def usuality_line(data, now=None, facts=None):
     current ~204 s cadence that is about half an hour, and the INTERNET lines above already show the
     newest probe. Calling this median "now" made the pane contradict itself (a fast newest probe beside
     a slower half-hour median, both labelled as the present), so the line names the sample count and the
-    span those samples actually cover. The typical excludes the last `USUAL_EXCLUDE` samples so a spike
-    cannot inflate its own baseline; its label names that baseline's own span, not the loaded window.
-    Built only from rows already loaded for the window; UNKNOWN when too few samples; STALE past `STALE_S`.
+    span those samples actually cover. During the evening hours the typical is the evening's own
+    median, and the label's span says "of evenings", because the pooled day median is biased low
+    there and would read "slower than usual" on an ordinary evening, every evening. Without
+    enough evening samples the line keeps the whole day's typical, labelled "of samples" like
+    every other hour: it then claims only the day comparison it actually makes, never an
+    evening calibration it has no samples for.
+    The typical excludes the last `USUAL_EXCLUDE` samples so a spike cannot inflate its own
+    baseline; its label names that baseline's own span, not the loaded window. Built only from
+    rows already loaded for the window; UNKNOWN when too few samples; STALE past `STALE_S`.
     The span after the comparison names the loaded sample window, not the slowdown's duration: the
     headline above already names how long the slowdown lasted, and a bare "over 24 h" here read as a
     day-long slowdown that contradicted it.
@@ -1477,8 +1549,12 @@ def usuality_line(data, now=None, facts=None):
     if facts["compare"] is None:
         return (f"UNKNOWN (only {facts['good_count']} web samples in the last day; "
                 f"need {USUAL_MIN_SAMPLES})")
-    return (f"  {'USUAL':<22}{facts['window']:<24}median {facts['cur']:.0f} ms"
-            f" vs typical {facts['base']:.0f} ms ({facts['compare']}; {facts['base_span']} of samples)"
+    if facts.get("clock_base") is not None:
+        typical = (f"typical {facts['clock_base']:.0f} ms "
+                   f"({facts['compare']}; {facts['clock_span']} of evenings)")
+    else:
+        typical = f"typical {facts['base']:.0f} ms ({facts['compare']}; {facts['base_span']} of samples)"
+    return (f"  {'USUAL':<22}{facts['window']:<24}median {facts['cur']:.0f} ms vs {typical}"
             f"  trend {facts['span']}: {day_spark(facts['samples'])}{facts['stale']}")
 
 
@@ -1486,16 +1562,20 @@ def headline_state(state, data, now=None, facts=None):
     """Append a sustained relative slowdown to an otherwise-OK headline.
 
     `verdict` is about reachability and absolute slowness; its OK must not change, or the outage list
-    would misclassify probes. A ten-probe median more than 1.25x the day's typical is a different fact
-    and belongs in the same line. DOWN/DEGRADED/UNKNOWN and a stale or unmeasurable baseline are left
-    alone so the headline never claims a slowdown it has not measured.
+    would misclassify probes. A ten-probe median more than 1.25x the typical is a different fact
+    and belongs in the same line; during the evening hours the typical is the evening's own, and
+    the headline says "for the evening" so it cannot read as a claim against the whole day.
+    DOWN/DEGRADED/UNKNOWN and a stale or unmeasurable baseline are left alone so the headline
+    never claims a slowdown it has not measured.
     """
     if state != "OK":
         return state
     facts = facts if facts is not None else usuality_facts(data, now)
     if facts["compare"] in (None, "about usual") or facts["stale"]:
         return state
-    return f"{state}, but {facts['compare']} over the {facts['recent_phrase']}"
+    phase = facts.get("clock_phase") if facts.get("clock_base") is not None else None
+    qual = f" for the {phase}" if phase else ""
+    return f"{state}, but {facts['compare']}{qual} over the {facts['recent_phrase']}"
 
 
 def night_values(rows, key):

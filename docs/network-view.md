@@ -94,7 +94,8 @@ is not mistaken for a quiet mind.
   secure sites stop answering, DEGRADED on loss or absolute slowness, UNKNOWN when the probe is stale
   or older than the web checks. An otherwise OK headline also names a sustained relative slowdown
   measured by the same ten-probe median and baseline as `USUAL`: `OK, but much slower than usual
-  over the last 31 min`. The window is named so a fast newest probe below does not look like a
+  over the last 31 min`, with `for the evening` added during the evening hours, where the baseline
+  is the evenings' own. The window is named so a fast newest probe below does not look like a
   contradiction; a stale or unmeasurable baseline leaves the headline at plain OK. `verdict` itself
   is unchanged, so the outage list still counts only DOWN probes.
 - `SPEED` and `UPLOAD`: the last good download and upload with the method and age of each. One
@@ -196,10 +197,17 @@ is not mistaken for a quiet mind.
   cadence it covers about half an hour, not the instant: the `gstatic.com` and `cloudflare.com`
   lines above show the newest probe only, and two different numbers both labelled as "now" made
   the pane look self-contradictory (on 2026-11-18 09:36Z the newest probe read 371 ms while the
-  half-hour median read 664 ms). The typical is the median of the last day's samples with the
-  last `USUAL_EXCLUDE` (60) samples left out, so a spike cannot inflate its own baseline; fewer
-  than `USUAL_MIN_SAMPLES` (120) samples is UNKNOWN. `about usual` below 1.25×, `slower than
-  usual` below 2×, `much slower than usual` at 2× or more; `STALE` past 15 minutes. The trend
+  half-hour median read 664 ms). The
+  typical is phase matched: during the evening hours (18–20 UTC, where pages run structurally
+  elevated — the retained rows' evening median is about 1.3× the pooled day median) it is the
+  median of the retained evening samples with the newest 60 of them left out, labelled
+  `of evenings`, so an ordinary evening no longer reads `slower than usual` against a baseline
+  biased low by the quiet hours; the headline then says `for the evening`. Outside those hours,
+  or without enough evening samples, it is the median of the last day's samples with the last
+  `USUAL_EXCLUDE` (60) samples left out, labelled `of samples`, so a spike cannot inflate its own
+  baseline; fewer than `USUAL_MIN_SAMPLES` (120) samples is UNKNOWN. `about usual` below 1.25×,
+  `slower than usual` below 2×, `much slower than usual` at 2× or more; `STALE` past 15 minutes.
+  The trend
   sparkline buckets the whole loaded day into `USUAL_BUCKETS` (40) means and is labelled `trend 24 h`
   at the line: the header's "last 40 probes" is only a default, and says wider windows are labelled.
   Without that label a day-long ramp read as a two-hour ramp.

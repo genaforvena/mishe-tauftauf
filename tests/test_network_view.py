@@ -445,8 +445,8 @@ def test_router_health_forgets_a_breach_that_ended(tmp_path, monkeypatch):
     assert "within the self-limit" in line and "over the self-limit" not in line
 
 
-def _web_rows(n, ms, ok=True):
-    at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+def _web_rows(n, ms, ok=True, now=None):
+    at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now if now is not None else time.time()))
     return [{"at": at, "internet": {name: {"ok": ok, "total_ms": ms if ok else None}
                                     for name in ("gstatic", "cloudflare")}} for _ in range(n)]
 
@@ -583,6 +583,67 @@ def test_usuality_big_spike_is_much_slower_than_usual():
     assert "much slower than usual" in view.usuality_line(rows)
 
 
+def _evening_rows(now, evening_ms, tonight_ms, other_ms=300.0):
+    """Three days of rows at the real cadence ending inside the evening phase: earlier evenings at
+    `evening_ms`, tonight's evening at `tonight_ms`, every other hour at `other_ms`."""
+    rows = []
+    for i in range(3 * 424):
+        t = now - (3 * 424 - 1 - i) * 204
+        hour = time.gmtime(t).tm_hour
+        tonight = hour in range(18, 21) and (now - t) < 86400
+        ms = tonight_ms if tonight else (evening_ms if hour in range(18, 21) else other_ms)
+        rows.append({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t)),
+                     "internet": {name: {"ok": True, "total_ms": ms}
+                                  for name in ("gstatic", "cloudflare")}})
+    return rows
+
+
+def test_ordinary_evening_is_about_usual_for_the_evening(monkeypatch):
+    # Evenings run structurally elevated (the retained rows' evening median is about 1.3x the
+    # pooled day median), so the pooled baseline read "slower than usual" on every ordinary
+    # evening. The typical must come from the evenings' own samples. The clock is frozen to the
+    # rows' own moment, or `age` reads them a year stale.
+    now = 1_795_113_900  # 2025-11-19T19:30:00Z, inside the evening phase
+    monkeypatch.setattr(time, "time", lambda: now)
+    rows = _evening_rows(now, evening_ms=480.0, tonight_ms=500.0)
+    line = view.usuality_line(rows, now=now)
+    assert "typical 480 ms" in line and "of evenings" in line and "about usual" in line
+    assert "slower than usual" not in line
+    assert view.headline_state("OK", rows, now=now) == "OK"
+
+
+def test_slow_evening_flags_against_the_evenings_own_baseline(monkeypatch):
+    # A genuinely slow evening must still flag, and tonight's own slow samples must not calibrate
+    # the baseline they are judged against: the pool is earlier evenings.
+    now = 1_795_113_900  # 2025-11-19T19:30:00Z, inside the evening phase
+    monkeypatch.setattr(time, "time", lambda: now)
+    rows = _evening_rows(now, evening_ms=480.0, tonight_ms=1300.0)
+    line = view.usuality_line(rows, now=now)
+    assert "typical 480 ms" in line and "of evenings" in line and "much slower than usual" in line
+    assert "for the evening" in view.headline_state("OK", rows, now=now)
+
+
+def test_thin_evening_support_falls_back_to_the_day_comparison(monkeypatch):
+    # One day of rows holds only about three hours of evening samples; with no evening baseline
+    # the comparison falls back to the pooled day median, labelled "of samples", and the headline
+    # does not claim an evening it has no samples for.
+    now = 1_795_113_900  # 2025-11-19T19:30:00Z, inside the evening phase
+    monkeypatch.setattr(time, "time", lambda: now)
+    rows = _evening_rows(now, evening_ms=450.0, tonight_ms=450.0)[-424:]  # the last day only
+    facts = view.usuality_facts(rows, now=now)
+    line = view.usuality_line(rows, now=now, facts=facts)
+    assert facts["clock_base"] is None
+    assert "of samples" in line and "of evenings" not in line
+    assert "for the evening" not in view.headline_state("OK", rows, now=now, facts=facts)
+
+
+def test_non_evening_hours_keep_the_pooled_typical():
+    # Outside the evening phase the pooled wording stays as it was.
+    noon = 1_795_003_200  # 2025-11-18T12:00:00Z
+    line = view.usuality_line(_web_rows(200, 300, now=noon), now=noon)
+    assert "vs typical 300 ms" in line and "evening" not in line
+
+
 def test_usuality_excludes_failed_web_checks_from_the_baseline():
     rows = _web_rows(200, 300)
     for row in rows[:50]:
@@ -600,13 +661,18 @@ def test_usuality_marks_a_stale_last_probe():
     assert "STALE" in view.usuality_line(rows)
 
 
-def test_headline_names_a_sustained_slowdown_without_changing_the_verdict():
-    rows = _web_rows(200, 300)
+def test_headline_names_a_sustained_slowdown_without_changing_the_verdict(monkeypatch):
+    # Pinned outside the evening hours and with the clock frozen: during them the typical is the
+    # evening's own and the headline adds "for the evening" (its own test below). `age` reads the
+    # real clock, so it must be frozen to the same pinned moment or every row reads stale.
+    noon = 1_795_003_200  # 2025-11-18T12:00:00Z
+    monkeypatch.setattr(time, "time", lambda: noon)
+    rows = _web_rows(200, 300, now=noon)
     for row in rows[-10:]:
         for check in row["internet"].values():
             check["total_ms"] = 900.0  # 3x the day's typical, as the USUAL line would see it
-    assert view.headline_state("OK", rows) == "OK, but much slower than usual over the last 10 probes"
-    assert "much slower than usual" in view.usuality_line(rows)
+    assert view.headline_state("OK", rows, now=noon) == "OK, but much slower than usual over the last 10 probes"
+    assert "much slower than usual" in view.usuality_line(rows, now=noon)
 
 
 def test_headline_uses_the_probes_own_times_for_the_window():

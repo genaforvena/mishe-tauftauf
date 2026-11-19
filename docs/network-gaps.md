@@ -56,7 +56,7 @@ shown), **MISSING** (not measured or not shown).
 | --- | --- | --- |
 | Sparkline (last hour) | BUILT | sparklines on gateway, web and DNS lines (last 40 probes, about 40 minutes) |
 | Last day sparkline | BUILT | `usuality_line()` / `day_spark()` show a 40-bucket trend of web latency over the loaded day's rows, labelled `trend 24 h` at the line (the loaded span, not the 40-probe window); the header now says "sparklines = last 40 probes unless labelled", and the per-site lines keep their 40-probe (~40 min) sparklines. A bucket with no answered check draws as `·` (a gap), not skipped, so a dead stretch stays visible |
-| "Worse than usual?" | BUILT | `usuality_line()` compares the median of the last 10 web samples with the median of the last-day samples excluding the most recent 60: "about usual" / "slower than usual" / "much slower than usual", with both numbers shown and UNKNOWN / STALE guards |
+| "Worse than usual?" | BUILT | `usuality_line()` compares the median of the last 10 web samples with a typical and shows both numbers, with UNKNOWN / STALE guards. The typical is the evening's own median (retained evening samples excluding the newest 60, labelled "of evenings") during the 18-20 UTC evening hours, where the pooled day median is biased low and read "slower than usual" on every ordinary evening; outside them (or without enough evening samples) it is the last-day median excluding the most recent 60, labelled "of samples". The headline qualifies a flagged slowdown with "for the evening" so it cannot read as a whole-day claim |
 | Outages with start and end | BUILT | `outage_lines()` from `outage_episodes()` |
 
 ## Count
