@@ -440,53 +440,61 @@ def run_wake(home, role: str, *, roles, engine, now: float, mail_reader=default_
     instead of exiting 0 with the owed wake dropped.
     """
     home = Path(home)
+    unit = wake_memory.own_unit_name(role)
     # A fresh unit cgroup inherits the protected host drop-in's 1G memory.high. Dispatch can
     # wait ~50 s for a slot, and a wake-memory-floor sample inside that window is a real
-    # throttle (2026-11-18 rust-plan RED). Raise the floor before any lock wait; the later
-    # _restore_memory_floor re-asserts it if a delivery reload landed during the wait.
-    wake_memory.ensure_wake_memory_high(wake_memory.own_unit_name(role))
-    # Recorded before the held return: a start that only returns "held" still spends the host's
-    # start-limit budget, so resume_owed must see it (DM 300359).
-    record_wake_start(home, role, now=now)
-    if (home / "hold").exists() or delivery_requests.admission_path(home).exists():
-        return WakeResult("held", "hold or delivery admission present")
-    store = DispatchStore(home / "dispatch")
-    supervisor = Supervisor(store=store, registry=StaticRoleRegistry(roles),
-                            worker=_Worker(home, engine, now, mail_reader, repo, timeout),
-                            lock_timeout=lock_wait)
+    # throttle (2026-11-18 rust-plan RED). Raise before any lock wait, and keep a guard
+    # running until _execute's own guard takes over: a delivery reload can land after the
+    # early raise and before _execute's restore, and nothing else re-asserts the floor in
+    # that gap (2026-11-19 03:03:48Z senses RED).
+    wake_memory.ensure_wake_memory_high(unit)
+    guard = wake_memory.MemoryFloorGuard(unit).start()
     try:
-        with supervisor.running(role) as release_claim:      # wait for this role's own live wake and a free slot
-            release_claim()
-    except DispatchBusy:
-        return WakeResult("busy", "another wake is running")
-    # All contenders must choose the same head, including that head's own wake.
-    # Excluding oneself first makes two unknown records defer to each other forever.
-    # Only a record whose role is not running blocks: a running wake's open record is normal.
-    opened = store.stale_open_records()
-    if opened and opened[0].role != role:
-        _ledger_start(home, opened[0].role, starter)
-        return WakeResult("blocked", f"{opened[0].role} has an open dispatch to reconcile first")
-    mine = store.read(role)
-    try:
-        if mine is not None and mine.state in (UNKNOWN, STARTED):
-            result = _reconcile(home, role, mine, supervisor, engine, now, mail_reader, repo, timeout)
-        else:
-            record = supervisor.dispatch(role, _key(role, int(now * 1e9) + os.getpid()),
-                                         discard_skipped_poll=True)
-            result = WakeResult(record.state.name, record.detail)
-    except DispatchBusy:
-        return WakeResult("busy", "another wake is running")
-    except SupervisorError as exc:
-        return WakeResult("blocked", str(exc))
-    # The engine has exited and the supervisor has persisted settlement and
-    # released its lock. A delivery requested by this wake can now acquire it.
-    if result.outcome in ("completed", "reconciled"):
-        delivery_requests.consume(home)
-    if result.outcome != "skipped":
-        following = next_role(home, roles, now=now, exclude=role)
-        if following:
-            _ledger_start(home, following, starter)
-    return result
+        # Recorded before the held return: a start that only returns "held" still spends the host's
+        # start-limit budget, so resume_owed must see it (DM 300359).
+        record_wake_start(home, role, now=now)
+        if (home / "hold").exists() or delivery_requests.admission_path(home).exists():
+            return WakeResult("held", "hold or delivery admission present")
+        store = DispatchStore(home / "dispatch")
+        supervisor = Supervisor(store=store, registry=StaticRoleRegistry(roles),
+                                worker=_Worker(home, engine, now, mail_reader, repo, timeout),
+                                lock_timeout=lock_wait)
+        try:
+            with supervisor.running(role) as release_claim:      # wait for this role's own live wake and a free slot
+                release_claim()
+        except DispatchBusy:
+            return WakeResult("busy", "another wake is running")
+        # All contenders must choose the same head, including that head's own wake.
+        # Excluding oneself first makes two unknown records defer to each other forever.
+        # Only a record whose role is not running blocks: a running wake's open record is normal.
+        opened = store.stale_open_records()
+        if opened and opened[0].role != role:
+            _ledger_start(home, opened[0].role, starter)
+            return WakeResult("blocked", f"{opened[0].role} has an open dispatch to reconcile first")
+        mine = store.read(role)
+        try:
+            if mine is not None and mine.state in (UNKNOWN, STARTED):
+                result = _reconcile(home, role, mine, supervisor, engine, now, mail_reader, repo, timeout)
+            else:
+                record = supervisor.dispatch(role, _key(role, int(now * 1e9) + os.getpid()),
+                                             discard_skipped_poll=True)
+                result = WakeResult(record.state.name, record.detail)
+        except DispatchBusy:
+            return WakeResult("busy", "another wake is running")
+        except SupervisorError as exc:
+            return WakeResult("blocked", str(exc))
+        # The engine has exited and the supervisor has persisted settlement and
+        # released its lock. A delivery requested by this wake can now acquire it.
+        if result.outcome in ("completed", "reconciled"):
+            delivery_requests.consume(home)
+        if result.outcome != "skipped":
+            following = next_role(home, roles, now=now, exclude=role)
+            if following:
+                _ledger_start(home, following, starter)
+        return result
+    finally:
+        guard.stop()
+        wake_memory.record_guard(Path(home) / "wakes" / f"{role}.startup-memory.json", guard)
 
 
 def _reconcile(home, role, record, supervisor, engine, now, mail_reader, repo, timeout) -> WakeResult:

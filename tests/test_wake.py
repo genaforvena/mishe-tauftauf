@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -470,6 +471,45 @@ def test_wake_raises_the_floor_before_the_dispatch_lock_wait(home, monkeypatch):
     assert result.outcome == "completed"
     assert order[0] == "floor", order
     assert "lock" in order, order
+
+def test_wake_guard_reasserts_floor_when_reload_lands_before_engine(home, monkeypatch):
+    """A delivery reload after the early raise must not leave the unit throttled until engine start.
+
+    2026-11-19 03:03:48Z senses went RED: moving-pin-delivery reloaded the protected host
+    drop-in's 1G onto the running cgroup after run_wake's early raise but before _execute's
+    restore, and no guard existed yet for that gap.
+    """
+    from mishe_tauftauf import wake_memory
+    cgroup = home / "cgroup"
+    cgroup.mkdir()
+    high = cgroup / "memory.high"
+    high.write_text("1610612736", encoding="utf-8")
+    (cgroup / "memory.max").write_text("max", encoding="utf-8")
+    unit = "mishe-wake@genome.service"
+    monkeypatch.setattr(wake_memory, "own_unit_name", lambda role, prefix="mishe": unit)
+    monkeypatch.setattr(wake_memory, "memory_high_path", lambda u: cgroup)
+
+    def ensure(u, *, floor=None):
+        return {"unit": u, "before": 1073741824, "after": 1610612736, "applied": True}
+
+    monkeypatch.setattr(wake_memory, "ensure_wake_memory_high", ensure)
+    real_running = wake.Supervisor.running
+    seen = []
+
+    def running(self, role):
+        high.write_text("1073741824", encoding="utf-8")   # the reload lands after the early raise
+        deadline = time.monotonic() + 6.0
+        while high.read_text(encoding="utf-8").strip() != "1610612736" and time.monotonic() < deadline:
+            time.sleep(0.02)
+        seen.append(high.read_text(encoding="utf-8").strip())
+        return real_running(self, role)
+
+    monkeypatch.setattr(wake.Supervisor, "running", running)
+    owed.touch_inbox(home, "genome")
+    assert go(home, "genome", FakeEngine(do_yield)).outcome == "completed"
+    assert seen == ["1610612736"]
+    startup = json.loads((home / "wakes" / "genome.startup-memory.json").read_text())
+    assert startup["guard"]["reverts"] >= 1 and startup["guard"]["repaired"] >= 1
 
 def test_unprintable_engine_error_keeps_the_original_and_closes_the_dispatch(home):
     """Caller-level: the supervisor's UNKNOWN write must not format the error into a new exception."""
