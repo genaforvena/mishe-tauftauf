@@ -188,7 +188,9 @@ is not mistaken for a quiet mind.
   window, or fewer than `PHASE_BASELINE_MIN` baseline rows, have those checkpoints, the line says
   `slowdown phase UNKNOWN (phases measured on N of M recent probes, K baseline rows)` instead: a
   median from one probe must not be printed as a ten-probe median. With partial but adequate support
-  the line names the measured count, for example `5 of last 10 probes (31 min) measured`.
+  the line names the measured count and the span of those rows, for example `5 of last 10 probes
+  (14 min) measured`: the minutes come from the five phase-measured probes, not all ten web-good
+  probes that supplied the web median.
 - `USUAL`: is the web slower than usual? The recent figure is the **median of the last ten web
   samples**, and the line names that window — `last 10 probes (31 min)` — because at the current
   cadence it covers about half an hour, not the instant: the `gstatic.com` and `cloudflare.com`

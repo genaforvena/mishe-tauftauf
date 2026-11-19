@@ -916,9 +916,30 @@ def test_phase_line_names_partial_support_and_compares_the_measured_rows_only():
     assert facts["phase_support"] == 5
     assert "median 758 ms vs typical 360 ms" in view.usuality_line(rows, now=now, facts=facts)
     line = view.phase_line(rows, now=now, facts=facts)
-    assert ("slowdown is in the secure handshake: 5 of last 10 probes (31 min) measured "
+    assert ("slowdown is in the secure handshake: 5 of last 10 probes (27 min) measured "
             f"375 ms vs typical 220 ms ({facts['base_span']} of samples)") in line
     assert "758 ms" not in line
+
+
+def test_slowdown_phase_recent_span_names_only_the_measured_rows():
+    # Phase checkpoints on only part of the recent window: the parenthetical minutes must span the
+    # rows that supplied the median, not every web-good probe. Five newest probes span ~14 min;
+    # all ten web-good probes span ~31 min, which would overstate the measured support.
+    now = time.time()
+    rows = _timed_phase_rows(200, now, 204, 70.0, 290.0)
+    for row in rows[-10:-5]:
+        _total_only_row(row, 1000.0)
+    for row in rows[-5:]:
+        for check in row["internet"].values():
+            check["tls_ms"] = 445.0
+            check["total_ms"] = 515.0
+    facts = view.usuality_facts(rows, now=now)
+    assert facts["window_count"] == 10 and facts["phase_support"] == 5
+    assert facts["window"] == "last 10 probes (31 min)"
+    line = view.phase_line(rows, now=now, facts=facts)
+    assert "slowdown is in the secure handshake: 5 of last 10 probes (14 min) measured" in line
+    assert "(31 min)" not in line
+    assert all(len(part) <= 172 for part in line.split("\n"))
 
 
 def test_slowdown_phase_typical_names_its_own_rows_span_not_the_web_baseline():
