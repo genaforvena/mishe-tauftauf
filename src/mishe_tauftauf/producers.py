@@ -92,6 +92,10 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
             guard.stop()
             wake_memory.record_guard(Path(home) / "signals" / f"{name}.memory.json", guard)
     ran(f"exit={code}")
+    # Cadence heartbeat: the producer completed a run. A declared unknown exit leaves the
+    # reading untouched, so without this the freshness stamp ages and coverage reports a missed cadence
+    # for a producer that ran on time and said its input is stale.
+    (Path(home) / "signals" / f"{name}.ran").touch()
     os.replace(scratch, detail)
     if code in unknown_codes or (code != 0 and code not in red_codes):
         # The detail file is overwritten by the next run, so the journal carries the check's output for every

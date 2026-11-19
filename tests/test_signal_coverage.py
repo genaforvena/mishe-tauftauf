@@ -87,6 +87,31 @@ def test_stale_freshness_stamp_is_red(tmp_path, monkeypatch):
     assert any(c.startswith("stale: sleepy") for c in report["causes"])
 
 
+def test_producer_that_ran_on_time_with_stale_input_is_not_a_missed_cadence(tmp_path, monkeypatch):
+    """household-phones: the producer runs every 2 min and exits UNKNOWN (input stale). The reading is
+    untouched, so the freshness stamp ages; the cadence heartbeat keeps the producer judged on time, and
+    the stale input is judged as an ignored UNKNOWN instead of a missed cadence."""
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"phones": register_entry()})
+    observed(sigdir, "phones", value=None, state="UNKNOWN", at=NOW - 5 * MAX_AGE, seen=NOW - 5 * MAX_AGE)
+    (sigdir / "phones.ran").touch()
+    os.utime(sigdir / "phones.ran", (NOW - 60, NOW - 60))
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert not any(c.startswith("stale: phones") for c in report["causes"])
+    assert any(c.startswith("ignored") and "phones" in c for c in report["causes"])
+    assert code == 2
+
+
+def test_no_heartbeat_still_reports_missed_cadence(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"sleepy": register_entry()})
+    observed(sigdir, "sleepy", seen=NOW - 5 * MAX_AGE)
+    (sigdir / "sleepy.ran").touch()
+    os.utime(sigdir / "sleepy.ran", (NOW - 4 * MAX_AGE, NOW - 4 * MAX_AGE))
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert any(c.startswith("stale: sleepy") for c in report["causes"])
+
+
 def wake_file(home, role, start, *, yield_at=None, output_at=None):
     """One wake record: the name carries the start; yield/output mtimes carry the end."""
     d = home / "wakes"

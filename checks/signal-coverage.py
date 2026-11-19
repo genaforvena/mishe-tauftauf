@@ -68,6 +68,14 @@ def _seen_at(sigdir: Path, name: str) -> float | None:
         return None
 
 
+def _ran_at(sigdir: Path, name: str) -> float | None:
+    """Cadence heartbeat: the producer's last completed run (written by producers.run)."""
+    try:
+        return (sigdir / f"{name}.ran").stat().st_mtime
+    except OSError:
+        return None
+
+
 def _failing_units(now: float) -> tuple[list[str], str | None]:
     """Failed mishe-producer-* user units, or (names, note) when systemctl cannot answer."""
     binary = os.environ.get("MISHE_SYSTEMCTL_BIN", "systemctl")
@@ -183,9 +191,12 @@ def run(home: Path, now: float, *, repo: Path | None = None,
             else:
                 counts["notes"].append(f"{name}: never observed, inside grace")
             continue
-        if seen is not None and now - seen > max_age:
+        # Producer cadence: the last completed run or the last observation, whichever is later.
+        # An UNKNOWN-declared run is a producer that ran on time; its input is judged below.
+        beat = max((t for t in (seen, _ran_at(sigdir, name)) if t is not None), default=None)
+        if beat is not None and now - beat > max_age:
             counts["stale"] += 1
-            causes.append(f"stale: {name} freshness stamp {(now - seen) / 60:.0f} min old "
+            causes.append(f"stale: {name} freshness stamp {(now - beat) / 60:.0f} min old "
                           f"(max_age {max_age / 60:.0f} min) — producer missed cadence")
             continue
         value = reading.get("value") if isinstance(reading, dict) else None

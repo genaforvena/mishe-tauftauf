@@ -121,6 +121,7 @@ def recorded(home, name: str) -> dict | None:
     """The last stored reading as written (value, state, observed_at, source), or None. Never repaired."""
     return _load(home, name)
 
+
 def history(home, names) -> dict:
     """The stored edge rows for each name in ``names``, oldest first, in one pass over the log.
 
@@ -128,11 +129,11 @@ def history(home, names) -> dict:
     repaired here, and a row that is not an object cannot match a name.
     """
     from .state_files import read_json_lines
-    wanted = set(names)
-    found = {name: [] for name in wanted}
+    found = {name: [] for name in names}
     for edge in read_json_lines(_dir(home) / "edges.jsonl"):
-        if isinstance(edge, dict) and edge.get("name") in wanted:
-            found[edge["name"]].append(edge)
+        name = edge.get("name") if isinstance(edge, dict) else None
+        if isinstance(name, str) and name in found:
+            found[name].append(edge)
     return found
 
 
@@ -267,7 +268,7 @@ def retire(home, name: str, *, now: float, reason: str) -> list:
                         "event": None, "at": float(now), "source": "retire", "rev": rev(home, name) + 1})
     del reg[name]
     write_json(_dir(home) / "registry.json", reg)
-    for suffix in (".json", ".seen", ".detail", ".cause"):
+    for suffix in (".json", ".seen", ".ran", ".detail", ".cause"):
         (_dir(home) / f"{name}{suffix}").unlink(missing_ok=True)
     return subscribers
 
