@@ -42,6 +42,15 @@ checks, independent reading, observable activation and exercised recovery.
 These checks enable initiative without routine approval. Retire superseded
 implementations instead of keeping stale feature flags; Git preserves history.
 
+## Nothing dead: go ahead or retire
+
+The plant is alive and carries nothing dead. Every experiment, flag, optional extra, tool, doc and code
+path either goes ahead (wired to a consumer, a check or a signal, with its evidence stated) or is retired
+(deleted together with its tests, docs and registered boundaries) by a stated date. "Exploratory" is a
+status with an expiry, not a permanent home. The steward owns a signal that reports experiments past their
+decision date and unregistered experiment artifacts, and decides go-ahead or retire when the owner has not.
+Unreferenced code and stale docs are removed, not accumulated.
+
 ## Tracked rules and local state
 
 The tracked genome contains reusable code and general rules. The live plant's chat, customized charters, handoffs, plans, checks, evidence, and service files belong under gitignored `.mishe-tauftauf/`, following LTE's `.mesh/` boundary.
