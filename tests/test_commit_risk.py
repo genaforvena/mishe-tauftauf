@@ -79,6 +79,13 @@ class CommitRiskTests(unittest.TestCase):
         result = cr.classify("unknown file", paths, None)
         self.assertEqual((result["label"], result["source"]), (None, "escalate"))
 
+    def test_every_end_anchored_rule_rejects_a_trailing_newline(self):
+        for path in ("src/mishe_tauftauf/owed.py\n", "tools/network_view.py\n", "notes.md\n"):
+            with self.subTest(path=path):
+                self.assertIsNone(cr.path_label(path))
+                result = cr.classify("unknown file", [path], None)
+                self.assertEqual((result["label"], result["source"]), (None, "escalate"))
+
     def test_rule_hit_never_calls_the_provider(self):
         calls = []
 

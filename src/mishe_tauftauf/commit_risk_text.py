@@ -1,8 +1,10 @@
-"""Text boundary for the commit risk class: path-rule matching and git commit output.
+r"""Text boundary for the commit risk class: path-rule matching and git commit output.
 
 The path-rule table and the parsing of ``git show`` output live here, as a named
 parsing boundary, so ``commit_risk`` stays a decision module that works on plain
 values. Adding a rule means editing ``RULES`` here.
+End-anchored rules use `\Z`, not `$`: Python `$` also matches just before a
+final newline, and `changed_paths` preserves newline-containing Git filenames.
 """
 from __future__ import annotations
 
@@ -13,12 +15,12 @@ import subprocess
 
 RULES = (
     ("dispatch-path", re.compile(r"^src/mishe_tauftauf/(wake|engine_\w+|owed|access|"
-                                 r"delivery_requests|work_state|dispositions|failure|host_capacity)\w*\.py$")),
+                                 r"delivery_requests|work_state|dispositions|failure|host_capacity)\w*\.py\Z")),
     ("delivery-path", re.compile(r"^(src/mishe_tauftauf/(release|deliver|delivery|heal|promotion|pin)\w*\.py"
                                  r"|scripts/.*(deliver|heal|release)\S*)")),
     ("delivery-path", re.compile(r"^tools/delivery_check\.py\Z")),
-    ("ordinary", re.compile(r"^tools/network_view\.py$")),
-    ("routine", re.compile(r"^(docs/|tests/|checks/|.*\.md$)")),
+    ("ordinary", re.compile(r"^tools/network_view\.py\Z")),
+    ("routine", re.compile(r"^(docs/|tests/|checks/|.*\.md\Z)")),
 )
 
 
