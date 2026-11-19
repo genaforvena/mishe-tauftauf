@@ -118,6 +118,24 @@ class HumanTypedRelayedTests(unittest.TestCase):
         self.assertEqual(self.recorded_calls(), [])
         self.assertEqual(self.cursor()["a.jsonl"], f.stat().st_size)
 
+    def test_partial_tail_without_human_line_is_not_consumed(self):
+        # Review finding on d167da35: a human line caught mid-write, in a file
+        # whose new bytes hold no complete human line, must not be consumed.
+        f = self.sessions / "a.jsonl"
+        f.write_text(entry("old"))
+        self.run_main()
+        whole = entry("fresh human words", at=NOW)
+        head, tail = whole[:len(whole) // 2], whole[len(whole) // 2:]
+        with f.open("ab") as fh:
+            fh.write(assistant("work").encode() + head.encode())
+        self.run_main()
+        self.assertEqual(self.cursor()["a.jsonl"], f.stat().st_size - len(head.encode()))
+        with f.open("ab") as fh:
+            fh.write(tail.encode())
+        self.assertEqual(self.run_main(relay=True), 0)
+        self.assertEqual(len(self.recorded_calls()), 1)
+        self.assertIn("fresh human words", self.recorded_calls()[0][-1])
+
     def test_list_content_blocks_are_joined(self):
         f = self.sessions / "a.jsonl"
         f.write_text(entry("old"))

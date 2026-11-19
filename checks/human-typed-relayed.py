@@ -194,10 +194,12 @@ def main(argv=None, now=None, mishe_bin=None):
         for end, at, stamp, text in human_lines(data, 0):
             pending.append((f.name, off + end, at, stamp, sess, text))
         if not pending or pending[-1][0] != f.name:
-            # No human line in this file's new bytes: consume them so they are
-            # not rescanned every run.
-            if len(data):
-                cursors[f.name] = off + len(data)
+            # No human line in this file's new bytes: consume the complete
+            # lines so they are not rescanned every run. A partially written
+            # tail (no trailing newline) stays unconsumed for the next run.
+            nl = data.rfind(b"\n")
+            if nl >= 0:
+                cursors[f.name] = off + nl + 1
                 consumed = True
 
     note = ""
