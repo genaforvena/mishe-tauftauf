@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from mishe_tauftauf import system1_savings as s
 
 NOW = 1_800_000_000.0
@@ -97,15 +99,32 @@ def test_stale_or_missing_budget_is_unknown(tmp_path):
     assert s.duty(tmp_path, now=NOW)[0] == s.UNKNOWN
 
 
-def test_torn_wake_line_is_skipped_not_fatal(tmp_path):
-    # read_json_lines skips a torn line; the duty still measures the rows it can read and never reports RED.
+@pytest.mark.parametrize("ledger", [
+    "",
+    "{not json\n",
+    'null\n{"kind":"end","key":"orphan"}\n',
+    '{"kind":"start","key":"missing-timestamp"}\n',
+    '{"kind":"start","key":"nonfinite-timestamp","ts":"Infinity"}\n',
+])
+def test_ledger_without_readable_start_is_unknown(tmp_path, ledger):
     path = tmp_path / "decision-log" / "wake-gate.jsonl"
-    path.parent.mkdir(parents=True)
-    path.write_text("{not json\n", encoding="utf-8")
+    path.parent.mkdir()
+    path.write_text(ledger, encoding="utf-8")
+    _budget(tmp_path)
+    code, line = s.duty(tmp_path, now=NOW)
+    assert code == s.UNKNOWN
+    assert "wake-gate ledger has no readable start rows" in line
+
+
+def test_torn_wake_line_preserves_readable_history_outside_window(tmp_path):
+    _write_rows(tmp_path, _wake("old", NOW - 86401, "inbox", False, "changed"))
+    path = tmp_path / "decision-log" / "wake-gate.jsonl"
+    path.write_text("{torn\n" + path.read_text(encoding="utf-8"), encoding="utf-8")
     _budget(tmp_path)
     code, line = s.duty(tmp_path, now=NOW)
     assert code == s.GREEN
-    assert '"starts": 0' in line
+    numbers = json.loads(line.removeprefix("GREEN: "))
+    assert numbers["starts"] == numbers["ended"] == 0
 
 
 def test_main_prints_one_line_verdict(tmp_path, capsys):

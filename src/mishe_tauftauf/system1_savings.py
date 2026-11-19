@@ -12,14 +12,15 @@ provider, so a missing decision service cannot stop it:
 Over the trailing 24 h it reports wake starts per day by trigger class, wakes avoided by a
 live gate, the projected skip of same-dossier starts (what a gate would skip, not what it
 skipped), the changed-rate of those projected skips against the changed-rate of all wakes,
-and the decision calls and spend. Exit 0 measured (GREEN), 3 UNKNOWN when a ledger is
-corrupt or the budget is unreadable. A missing wake-gate ledger is UNKNOWN too: nothing
-has been measured, so the signal must not read GREEN.
+and the decision calls and spend. Exit 0 measured (GREEN), 3 UNKNOWN when a ledger or
+the budget is unusable. The wake-gate ledger needs a readable start row, even when
+none of its starts fall inside the window.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import time
 from collections import Counter
 from pathlib import Path
@@ -53,13 +54,30 @@ def measure(home, *, now: float) -> dict:
     since = now - WINDOW_S
     starts = {}
     ends = {}
+    saw_start = False
     for row in rows:
         if not isinstance(row, dict):
             continue
-        if row.get("kind") == "start" and float(row.get("ts", 0)) >= since:
-            starts[row.get("key")] = row
+        key = row.get("key")
+        if not isinstance(key, str) or not key:
+            continue
+        if row.get("kind") == "start":
+            timestamp = row.get("ts")
+            if isinstance(timestamp, bool):
+                continue
+            try:
+                started_at = float(timestamp)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if not math.isfinite(started_at):
+                continue
+            saw_start = True
+            if started_at >= since:
+                starts[key] = row
         elif row.get("kind") == "end":
-            ends[row.get("key")] = row
+            ends[key] = row
+    if not saw_start:
+        raise ValueError("wake-gate ledger has no readable start rows")
 
     by_trigger = Counter(_trigger_class(r.get("trigger")) for r in starts.values())
     ended = [(s, ends[k]) for k, s in starts.items() if k in ends]

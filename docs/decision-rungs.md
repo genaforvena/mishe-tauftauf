@@ -71,6 +71,8 @@ Its `ended` count covers wakes that started in that window and have a recorded
 end. Its changed rate uses those that settled as `yielded` with a recorded result,
 and is null when there are none. The top-level `changed_rate_all` keeps the whole
 `ended` population as its denominator, so it can differ from the per-trigger rates.
+A ledger with no readable start reports UNKNOWN. Readable starts before the
+window can support a measured zero even when a torn line was skipped.
 
 ### Revised gate spec (2026-11-19): no safe gate for signal wakes
 
