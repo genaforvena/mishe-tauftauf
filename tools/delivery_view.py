@@ -28,6 +28,11 @@ from pathlib import Path
 DEFAULT_HOME = Path(os.environ.get("MISHE_TAUFTAUF_HOME") or os.environ.get("MISHE_SEED_HOME")
                    or ".mishe-tauftauf")
 DEFAULT_WINDOW_S = 24 * 3600.0
+LIVE_MAX_AGE_S = 3 * 3600.0
+"""An unfinished record older than this is not trusted as live: a promote that died without
+finishing leaves its phase behind (2026-11-18 06:13Z dispatch race left 0148ab3e reading
+``waiting-for-wakes`` for good). Measured checked-to-live max is under 1 h, so 3 h bounds any
+legitimate run; pin-lag (checks/pin-lag.py) already uses the same red-age bound."""
 
 
 def git(repo: Path, *args: str, timeout: float = 30.0) -> tuple[int, str]:
@@ -192,10 +197,19 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
     in_flight = [r for r in records if r.get("phase") in ("checking", "waiting-for-wakes", "activating",
                                                           "review", "applying")]
     if in_flight:
-        newest = max(in_flight, key=lambda r: r["created_at"])
-        lines.append(f"in flight: {newest.get('sha', '?')[:8]} phase {newest['phase']}"
-                     f" since {fmt_ts(newest.get('created_at'))} for this promotion"
-                     f" (activation is held until wakes end)")
+        live = [r for r in in_flight if now - r["created_at"] <= LIVE_MAX_AGE_S]
+        if live:
+            newest = max(live, key=lambda r: r["created_at"])
+            lines.append(f"in flight: {newest.get('sha', '?')[:8]} phase {newest['phase']}"
+                         f" since {fmt_ts(newest.get('created_at'))} for this promotion"
+                         f" (activation is held until wakes end)")
+        else:
+            newest = max(in_flight, key=lambda r: r["created_at"])
+            lines.append("in flight: none")
+            lines.append(f"  abandoned: {newest.get('sha', '?')[:8]} phase {newest['phase']}"
+                         f" since {fmt_ts(newest.get('created_at'))}, older than"
+                         f" {int(LIVE_MAX_AGE_S // 60)} min — a promote that died without finishing"
+                         " is not trusted as live")
     return "\n".join(lines)
 
 

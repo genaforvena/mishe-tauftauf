@@ -107,6 +107,43 @@ def test_oldest_waiting_commit_and_the_in_flight_run(monkeypatch, tmp_path):
     assert "in flight: dddddddd phase waiting-for-wakes" in text
 
 
+
+def test_a_dead_unfinished_run_is_not_reported_as_in_flight(tmp_path):
+    stale_s = view.LIVE_MAX_AGE_S + 1.0
+    home = home_with(tmp_path, [record(phase="waiting-for-wakes", sha="d" * 40,
+                                       created_at=4000.0 - stale_s, delivered_at=None,
+                                       reviewed_at=None, activation_started_at=None,
+                                       waiting_since=None)])
+    text = view.render(home, Path("/nope"), 24 * 3600.0, 4000.0)
+    assert "in flight: none" in text
+    assert "abandoned: dddddddd phase waiting-for-wakes" in text
+    assert "is not trusted as live" in text
+    assert "activation is held until wakes end" not in text
+
+
+def test_an_unfinished_run_at_the_live_bound_is_still_in_flight(tmp_path):
+    at_bound = view.LIVE_MAX_AGE_S
+    home = home_with(tmp_path, [record(phase="waiting-for-wakes", sha="d" * 40,
+                                       created_at=4000.0 - at_bound, delivered_at=None,
+                                       reviewed_at=None, activation_started_at=None,
+                                       waiting_since=None)])
+    text = view.render(home, Path("/nope"), 24 * 3600.0, 4000.0)
+    assert "in flight: dddddddd phase waiting-for-wakes" in text
+    assert "abandoned" not in text
+
+
+def test_a_live_run_hides_stale_dead_ones_from_the_in_flight_line(tmp_path):
+    home = home_with(tmp_path, [
+        record(phase="waiting-for-wakes", sha="d" * 40, created_at=4000.0 - 4000.0,
+               delivered_at=None, reviewed_at=None, activation_started_at=None, waiting_since=None),
+        record(phase="activating", sha="e" * 40, created_at=3900.0,
+               delivered_at=None, reviewed_at=None, activation_started_at=None),
+    ])
+    text = view.render(home, Path("/nope"), 24 * 3600.0, 4000.0)
+    assert "in flight: eeeeeeee phase activating" in text
+    assert "abandoned" not in text
+
+
 def test_commit_waits_use_each_commits_own_time(monkeypatch, tmp_path):
     delivered = [record(created_at=5000.0, sha="d" * 40, previous="c" * 40)]
     monkeypatch.setattr(view, "git", lambda repo, *a, **k: (0, "e" * 40 + ";4000;first\n" + "f" * 40 + ";4600;second\n"))
