@@ -209,7 +209,7 @@ def redmi_summary(site: str, now: float, log_path: str | None = None) -> dict:
     judged at scan time, so a phone sample read from it is minutes old and usually
     valueless. The live reader gives the row's own age and its current values.
     """
-    from mishe_tauftauf.redmi10_stream import read_redmi10_stream
+    from mishe_tauftauf.redmi10_stream import MAX_ROW_AGE_S, read_redmi10_stream
     kwargs = {} if log_path is None else {"path": log_path}
     row = read_redmi10_stream(now=now, **kwargs)
     last = row.get("last_row_epoch")
@@ -222,7 +222,10 @@ def redmi_summary(site: str, now: float, log_path: str | None = None) -> dict:
            "battery_raw": (v.get("battery") or {}).get("level")}
     if age > REDMI_MAX_AGE_S or age < -REDMI_MAX_AGE_S:
         out["status"] = "stale"
-        out["reason"] = f"Redmi10 stream row {age:.0f}s old (limit {REDMI_MAX_AGE_S:.0f}s)"
+        # The reader's 120 s gate decides freshness first; 900 s only labels a long outage as stale.
+        # Naming both keeps phones.jsonl from implying that a 900 s old row was acceptable.
+        out["reason"] = (f"Redmi10 stream row {age:.0f}s old "
+                         f"(reader requires <={MAX_ROW_AGE_S:.0f}s; stale beyond {REDMI_MAX_AGE_S:.0f}s)")
     elif row.get("state") != "verified" or not v:
         # a fresh heartbeat (or a row older than the reader's own 120 s rule) is not a reading
         out["status"] = "unknown"

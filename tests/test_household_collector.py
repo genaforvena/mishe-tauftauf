@@ -152,6 +152,23 @@ def test_stale_redmi_stream_row_is_not_ok(tmp_path):
     assert out["status"] == "stale"
 
 
+def test_mid_age_redmi_row_is_unknown_not_green(tmp_path):
+    # 200 s sits between the reader's 120 s gate and the collector's 900 s stale bound:
+    # the printed 900 s limit must never be read as the freshness acceptance threshold
+    now = time.time()
+    log = _redmi_log(tmp_path, [(now - 200, "light lux=4.0 accuracy=3"),
+                                (now - 200, "battery level=0.84 charging=false")])
+    out = hc.redmi_summary(str(tmp_path), now, log_path=log)
+    assert out["status"] == "unknown" and "old" in out["reason"] and out["lux"] is None
+
+
+def test_stale_redmi_reason_names_the_effective_reader_limit(tmp_path):
+    now = time.time()
+    log = _redmi_log(tmp_path, [(now - 1032, "light lux=4.0 accuracy=3")])
+    out = hc.redmi_summary(str(tmp_path), now, log_path=log)
+    assert out["status"] == "stale" and "requires <=120s" in out["reason"]
+
+
 def test_fresh_redmi_stream_row_with_values_is_ok(tmp_path):
     now = time.time()
     log = _redmi_log(tmp_path, [(now - 4, "battery level=0.84 charging=false"),
