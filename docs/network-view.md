@@ -173,8 +173,9 @@ is not mistaken for a quiet mind.
   When the headline flags a sustained slowdown, a second indented line names the phase that accounts
   for it, using the same ten-probe window and day baseline as `USUAL` (for example `slowdown is in
   the secure handshake: last 10 probes (31 min) 375 ms vs typical 222 ms (21 h of samples)`). The span
-  after the typical names the baseline's rows, which leave out the newest 60 good samples, not the
-  recent window or the whole loaded day. This matters because the
+  after the typical names the phase-measured baseline rows, which leave out the newest 60 good samples,
+  not all baseline rows, the recent window or the whole loaded day: phase support can be sparse, so the
+  web baseline's span would overstate what the typical actually used. This matters because the
   three figures above are the newest probe only: it can be back to normal while the median stays
   slow, and the two lines would otherwise disagree. A phase is named only when it adds at least half
   the extra time and at least 20 ms; when the increase is spread across phases, no line is printed

@@ -1316,8 +1316,8 @@ def _slowdown_note(facts):
     The newest probe can look ordinary while the ten-probe median stays slow, so WHERE TIME GOES
     alone cannot say which phase moved. This uses the same samples and baseline as USUAL, and
     speaks only when one phase accounts for at least half the extra time (and at least 20 ms). The
-    typical comes from the day's samples before the recent window, so the line names that span beside
-    it; without the label a reader carries the recent window onto the baseline figure.
+    typical comes from the day's phase-measured rows before the recent window, so the line names
+    those rows' own span beside it; the web baseline spans more rows and would overstate coverage.
     A median built from too few measured rows is not a ten-probe median: say UNKNOWN with the
     support counts instead of turning one measured probe into a claim about the whole window.
     """
@@ -1346,7 +1346,7 @@ def _slowdown_note(facts):
     label = dict(PHASE_LABELS)[field]
     source = facts["window"] if recent_n == window_n else f"{recent_n} of {facts['window']} measured"
     return (f"\n                slowdown is in the {label}: {source} "
-            f"{cur[field]:.0f} ms vs typical {base[field]:.0f} ms ({facts['base_span']} of samples)")
+            f"{cur[field]:.0f} ms vs typical {base[field]:.0f} ms ({facts['phase_base_span']} of samples)")
 
 
 def _sample_span(stamps):
@@ -1404,6 +1404,8 @@ def usuality_facts(data, now=None):
     ratio = cur / base if base else 1.0
     phase_cur, phase_support, phase_total_cur = _phase_medians(good_rows[-USUAL_RECENT:])
     phase_base, phase_base_support, phase_total_base = _phase_medians(base_rows)
+    phase_base_stamps = [t for t, row in zip(base_stamps, base_rows) if _phase_complete(row) is not None]
+    phase_base_span = _sample_span(phase_base_stamps)
     if ratio < 1.25:
         compare = "about usual"
     elif ratio < 2:
@@ -1422,7 +1424,7 @@ def usuality_facts(data, now=None):
             "recent_phrase": recent_phrase, "window_count": len(cur_stamps),
             "phase_cur": phase_cur, "phase_base": phase_base, "phase_support": phase_support,
             "phase_base_support": phase_base_support, "phase_total_cur": phase_total_cur,
-            "phase_total_base": phase_total_base}
+            "phase_total_base": phase_total_base, "phase_base_span": phase_base_span}
 
 
 def usuality_line(data, now=None, facts=None):

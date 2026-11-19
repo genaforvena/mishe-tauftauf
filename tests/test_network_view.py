@@ -921,6 +921,34 @@ def test_phase_line_names_partial_support_and_compares_the_measured_rows_only():
     assert "758 ms" not in line
 
 
+def test_slowdown_phase_typical_names_its_own_rows_span_not_the_web_baseline():
+    # The phase typical is built only from rows where a host measured all three curl checkpoints.
+    # Labelling it with the web baseline's span claims hours the phase rows never covered.
+    now = time.time()
+    n, step = 423, 204
+    phase_baseline = set(range(263, 363))  # 100 rows ~ 5.6 h, not the web baseline's ~21 h
+    rows = []
+    for i in range(n):
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - (n - 1 - i) * step))
+        slow = i >= 413
+        full = i in phase_baseline or slow
+        chk = {"ok": True, "total_ms": 700.0 if slow else 340.0}
+        if full:
+            chk["connect_ms"] = 40.0
+            chk["tls_ms"] = 470.0 if slow else 270.0
+        rows.append({"at": at, "internet": {name: dict(chk) for name in ("gstatic", "cloudflare")}})
+    facts = view.usuality_facts(rows, now=now)
+    assert facts["base_span"] == "21 h" and facts["phase_base_span"] == "6 h"
+    assert facts["phase_base_support"] == 100
+    usual = view.usuality_line(rows, now=now, facts=facts)
+    line = view.phase_line(rows, now=now, facts=facts)
+    assert "slowdown is in the secure handshake" in line
+    assert "vs typical 230 ms (6 h of samples)" in line
+    assert "21 h of samples" not in line
+    assert "21 h of samples" in usual
+    assert all(len(part) <= 172 for part in line.split("\n"))
+
+
 def test_render_frame_shows_the_window_when_a_line_is_fine(monkeypatch):
     monkeypatch.setattr(view, "draw", lambda: "the window")
     assert view.render_frame() == "the window"
