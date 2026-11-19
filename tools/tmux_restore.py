@@ -5,6 +5,9 @@ Only restores windows whose registry entry has restore == true and that are
 missing; respawns dead panes (remain-on-exit) of those windows. Never types
 into a pane, never touches windows that are not restorable, never touches
 wake/hold/guard. Default is a dry run; pass --apply to act.
+
+Exit codes (for the ``tmux-restorer`` duty): 0 nothing failed, 2 a restore command failed,
+3 the registry or its sessions could not be read (UNKNOWN, never a quiet pass).
 """
 import os, subprocess, sys
 from pathlib import Path
@@ -62,6 +65,10 @@ def main():
     site = os.environ.get("MISHE_SEED_HOME") or os.environ.get("MISHE_TAUFTAUF_HOME")
     checkout = str(Path(__file__).resolve().parent.parent)
     reg = read_json(Path(a.registry or f"{site}/operator/window-registry.json"))
+    if not isinstance(reg, dict) or not isinstance(reg.get("sessions"), dict) or not isinstance(reg.get("windows"), list):
+        print("tmux_restore: window registry missing or malformed; cannot tell", file=sys.stderr)
+        return 3
+    failed = 0
     socks = {k: (v["socket"], v["session"]) for k, v in reg["sessions"].items()}
     state = {k: observe(*socks[k]) for k in socks}
     acts = plan(reg, checkout, site, state)
@@ -79,12 +86,14 @@ def main():
         else:
             r = tmux(sock, "respawn-pane", "-c", checkout, "-t", f"{sess}:{name}.{act[4]}", *argv)
         if r.returncode:
+            failed += 1
             print("  FAILED", r.stderr, file=sys.stderr)
         elif kind != "respawn-pane":
             tmux(sock, "set-option", "-w", "-t", f"{sess}:{name}", "remain-on-exit", "on")
     if not acts:
         print("nothing to restore")
+    return 2 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -1687,6 +1687,26 @@
       "resolver": "steward",
       "covers": "every tools/*_view.py has an entry in operator/window-registry.json and a live (not dead) outer plants window running it (docs/outer-windows.md rule: a view has a window); RED names each view without a registry entry or without a live window and the command that closes it; UNKNOWN when tmux is unreachable, its rows are malformed, the registry is missing or no view file is found",
       "replaces": []
+    },
+    {
+      "name": "tmux-restorer",
+      "command": [
+        "{python}",
+        "{repo}/tools/tmux_restore.py",
+        "--apply"
+      ],
+      "every": 300,
+      "timeout": 60,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "steward",
+      "covers": "runs tools/tmux_restore.py --apply so a missing or dead registered window (restore: true in operator/window-registry.json) comes back without a hand; it never types into a pane; RED when a restore command failed, UNKNOWN when the registry or its sessions cannot be read",
+      "replaces": []
     }
   ],
   "retired": [
