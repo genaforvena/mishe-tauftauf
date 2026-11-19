@@ -2,12 +2,10 @@
 
 Owed means: an unread inbox touch, a subscribed signal whose revision moved
 past the role's cursor, or an intention that is due or whose condition holds.
-Nothing owed means no model call. A cursor moves only when a wake yields, and
-only to the snapshot taken when that wake began, so input that lands mid-wake
-stays owed — except a subscribed signal whose live reading is the all-clear
-word by settle time: that recovery was published while the wake ran (the
-wake's own repair, or a concurrent observer confirming it), and replaying it
-would spend a wake that finds nothing owed.
+Nothing owed means no model call. When a wake yields, its cursor normally moves
+to the snapshot taken at wake start. Settlement can absorb a fresh all-clear
+reading when every intervening revision is accounted for by an all-clear edge.
+Replaying a verified recovery would spend a wake that finds nothing owed.
 """
 from __future__ import annotations
 
@@ -152,39 +150,48 @@ def check(home, role: str, *, now: float) -> Snapshot:
     return snap
 
 
-def _settled_signal_revs(home, snap: Snapshot, *, now: float) -> dict:
-    """Cursor signal revs for settle: the wake-start snapshot, plus a mid-wake recovery.
+def _green_history_covers(edges, *, after: int, through: int) -> bool:
+    last_rev = after
+    for edge in edges:
+        rev = edge.get("rev")
+        if type(rev) is not int:
+            return False
+        if not after < rev <= through:
+            continue
+        if rev != last_rev + 1 or edge.get("state") != "OK" or edge.get("value") != BUDGET_OK:
+            return False
+        last_rev = rev
+    return last_rev == through
 
-    A subscribed signal whose every stored edge after the wake-start rev is the all-clear word
-    was recovered by a concurrent observer while the wake ran (the in-flight delivery's doctor
-    probe, 2026-11-19 19:41Z). Recording the wake-start rev anyway spent the next dispatch
-    tick on a health wake that found nothing owed (``signal:doctor`` at 19:49Z), so the cursor
-    takes the live rev instead. Any other edge in that window keeps the wake-start rev: a
-    mid-wake RED that recovered before settle still wakes the subscriber on the next tick
-    (genome review DM #303268, 2026-11-19 — the flap is the failure, and absorbing it
-    contradicted this fix's own "a failure is never swallowed"), and so does an UNKNOWN, an
-    expiry or any value that is not the all-clear word. The live rev is taken before the
-    reading: a RED stored between the two loads stays ahead of the cursor either way. A
-    recovery the subscriber never saw is a bounded loss — the next dossier prints the live
-    value — a swallowed failure would not be.
+
+def _settled_signal_revs(home, snap: Snapshot, *, now: float) -> dict:
+    """Absorb a mid-wake recovery only when the edge log accounts for every revision.
+
+    The live revision is read before the reading, so a later failure stays ahead
+    of the cursor. A missing edge can hide a failure even when the latest reading
+    is fresh, since the store publishes each revision before it appends its edge.
     """
     revs = dict(snap.signal_revs)
-    live = {name: signal_store.rev(home, name) for name in revs}
-    moved = [name for name, snap_rev in revs.items() if snap_rev < live[name]]
-    histories = signal_store.history(home, moved)
+    recovered = {}
     for name, snap_rev in revs.items():
-        if snap_rev >= live[name]:
+        live_rev = signal_store.rev(home, name)
+        if snap_rev >= live_rev:
             continue
         try:
             reading = signal_store.read(home, name, now=now)
         except (OSError, ValueError, KeyError):
-            continue          # unregistered or unreadable by settle time: keep the snapshot rev
-        if reading.state != "OK" or reading.value != BUDGET_OK:
             continue
-        window = [edge for edge in histories.get(name, ())
-                  if snap_rev < edge.get("rev", 0) <= live[name]]
-        if all(edge.get("state") == "OK" and edge.get("value") == BUDGET_OK for edge in window):
-            revs[name] = live[name]
+        if reading.state == "OK" and reading.value == BUDGET_OK:
+            recovered[name] = live_rev
+    if not recovered:
+        return revs
+    try:
+        histories = signal_store.history(home, recovered)
+    except (OSError, UnicodeError):
+        return revs
+    for name, live_rev in recovered.items():
+        if _green_history_covers(histories[name], after=revs[name], through=live_rev):
+            revs[name] = live_rev
     return revs
 
 

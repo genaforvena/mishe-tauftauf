@@ -1,6 +1,7 @@
 import pytest
 
-from mishe_tauftauf import intentions, owed, signal_store as store
+from mishe_tauftauf import intentions, owed, signal_store as store, yielding
+from mishe_tauftauf.state_files import write_json
 
 
 @pytest.fixture
@@ -323,6 +324,35 @@ def test_a_mid_wake_red_flap_recovered_before_settle_stays_owed(tmp_path):
     store.observe(tmp_path, "doctor", "GREEN", now=102.0, source="t")  # recovers before settle
     owed.advance(tmp_path, "health", snap, now=103.0)
     assert owed.check(tmp_path, "health", now=104.0).reasons == ["signal:doctor"]
+
+
+@pytest.mark.parametrize("damage", ["missing", "torn", "unreadable", "duplicate", "invalid-revision", "invalid-name"])
+def test_mid_wake_recovery_with_incomplete_history_stays_owed(tmp_path, damage):
+    store.register(tmp_path, "doctor", max_age=60, subscribers=["health"])
+    store.observe(tmp_path, "doctor", "GREEN", now=100.0, source="t")
+    snap = owed.check(tmp_path, "health", now=100.0)
+    store.observe(tmp_path, "doctor", "RED", now=101.0, source="t")
+    store.observe(tmp_path, "doctor", "GREEN", now=102.0, source="t")
+
+    log = tmp_path / "signals" / "edges.jsonl"
+    baseline, red, green = log.read_bytes().splitlines(keepends=True)
+    damaged = {
+        "missing": b"",
+        "torn": red[:20] + b"\n",
+        "unreadable": b"\xff\n",
+        "duplicate": green,
+        "invalid-revision": red.replace(b'"rev": 2', b'"rev": "2"'),
+        "invalid-name": red.replace(b'"name": "doctor"', b'"name": ["doctor"]'),
+    }[damage]
+    log.write_bytes(baseline + damaged + green)
+
+    assert store.rev(tmp_path, "doctor") == 3
+    assert store.read(tmp_path, "doctor", now=103.0).value == "GREEN"
+    write_json(yielding.snapshot_path(tmp_path, "wake-h-1"), {"role": "health", "snapshot": snap.to_json()})
+    yielding.settle(tmp_path, "health", "wake-h-1", text="Reviewed doctor", result="verified",
+                    now=103.0, wall_writer=lambda *args: None)
+    assert owed.check(tmp_path, "health", now=104.0).reasons == ["signal:doctor"]
+    assert log.read_bytes() == baseline + damaged + green
 
 
 def test_mid_wake_expiry_stays_owed(tmp_path):
