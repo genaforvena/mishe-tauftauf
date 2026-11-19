@@ -29,8 +29,11 @@ def declared(repo, home, *, source=None) -> list:
     out = []
     for duty in load(source or repo):
         spec = duty.get("signal", {})
+        # The resolver is always subscribed; a duty may name extra subscribers beside it
+        # (e.g. steward listens to the budget signals while senses resolves them).
+        subscribers = sorted({duty["resolver"], *spec.get("subscribers", [])})
         item = {"name": duty["name"], "every": duty["every"], "timeout": duty["timeout"],
-                "signal": {"max_age": duty["max_age"], "subscribers": [duty["resolver"]],
+                "signal": {"max_age": duty["max_age"], "subscribers": subscribers,
                            "wake_on": spec.get("wake_on", "change")}}
         if duty.get("builtin"):
             item["builtin"] = True
