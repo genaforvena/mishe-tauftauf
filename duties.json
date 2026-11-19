@@ -1321,27 +1321,6 @@
       "replaces": []
     },
     {
-      "name": "sonnet-ban",
-      "command": [
-        "{python}",
-        "{repo}/checks/sonnet-ban.py",
-        "--home",
-        "{home}"
-      ],
-      "every": 600,
-      "timeout": 60,
-      "max_age": 1800,
-      "red_codes": [
-        2
-      ],
-      "unknown_codes": [
-        3
-      ],
-      "resolver": "steward",
-      "covers": "the human's Sonnet ban (re-imposed 2026-11-12 ~01:10Z by Ilya, open-ended until he lifts it): RED when a live engine config, a routes.json candidate or a recent (6 h) routing-ledger selection names a Sonnet model a wake could use or used, UNKNOWN when the configs or ledger cannot be read; retire the duty when Ilya lifts the ban",
-      "replaces": []
-    },
-    {
       "name": "initiatives-health",
       "command": [
         "{python}",
@@ -1664,6 +1643,12 @@
     }
   ],
   "retired": [
+    {
+      "units": [
+        "sonnet-ban"
+      ],
+      "why": "Ilya lifted the Sonnet ban (typed in his interactive session 2026-11-19T18:54:25Z: \"lets lift the sonnet ban btw. mishe is free to pick any engine that we have available (obviously with respect to budget)\"; commit a41ca5e8 emptied model_policy.BANNED_MODEL_MARKERS, keeping the ban mechanism). This duty's own covers said retire it when Ilya lifts the ban; kept around it would RED the moment steward routes a Sonnet model, which the human just allowed. Routing and spend stay covered by the budget duties and the routing ledger (the 11-11 retirement debc8d3d set the same precedent)"
+    },
     {
       "units": [
         "session-watch",
