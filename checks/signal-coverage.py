@@ -158,6 +158,20 @@ def _attended(intervals: dict[str, list[tuple[float, float]]] | None,
     return any(end >= turn for role in owners for _, end in intervals.get(role, ()))
 
 
+def _dispositioned(home: Path, repo: Path, name: str, now: float):
+    """The unexpired disposition record for signal ``name``, else None. An unreadable
+    store is None (the finding stays visible), never an implicit mute."""
+    try:
+        import sys
+        src = str(Path(repo) / "src")
+        if src not in sys.path:
+            sys.path.insert(0, src)
+        from mishe_tauftauf import dispositions
+        return dispositions.active(Path(home), name, now=now)
+    except Exception:  # noqa: BLE001 - a broken store must not hide a finding
+        return None
+
+
 def run(home: Path, now: float, *, repo: Path | None = None,
         sigdir: Path | None = None) -> tuple[int, dict]:
     repo = repo or Path(__file__).resolve().parent.parent
@@ -233,6 +247,13 @@ def run(home: Path, now: float, *, repo: Path | None = None,
                                   f"owner {named} since it turned — wake {named} now")
                     continue
             if now - observed_at > bound:
+                answer = _dispositioned(home, repo, name, now)
+                if answer is not None:
+                    # The resolver's unexpired answer (SITE/dispositions) is the read-back
+                    # the disposition store exists for; an expired one returns the finding.
+                    counts["notes"].append(f"{name}: {value or state} dispositioned "
+                                           f"{answer.get('kind')} by {answer.get('owner')}")
+                    continue
                 counts["ignored"] += 1
                 causes.append(f"ignored: {name} reading {value or state} unchanged "
                              f"{(now - observed_at) / 3600:.1f} h > bound {bound / 3600:.1f} h")

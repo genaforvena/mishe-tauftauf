@@ -136,6 +136,31 @@ def test_red_reading_unchanged_past_bound_is_ignored(tmp_path, monkeypatch):
     assert not any(c.startswith("unattended-red") for c in report["causes"])
 
 
+def test_unexpired_disposition_parks_an_ignored_reading(tmp_path, monkeypatch):
+    """The resolver's recorded answer is read back: a past-bound UNKNOWN with an unexpired
+    disposition is a note, not an ignored cause (household-phones was flagged despite one)."""
+    _clear_systemctl(monkeypatch)
+    from mishe_tauftauf import dispositions
+    home, sigdir = site(tmp_path, {"phones": register_entry()})
+    observed(sigdir, "phones", value=None, state="UNKNOWN", at=NOW - 3 * MAX_AGE, seen=NOW - 60)
+    dispositions.set_disposition(home, "phones", "known", "senses", "redmi10 stale",
+                                 ttl=3600, now=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert not any("phones" in c for c in report["causes"])
+    assert any("dispositioned known by senses" in n for n in report["counts"]["notes"])
+
+
+def test_expired_disposition_returns_the_ignored_finding(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    from mishe_tauftauf import dispositions
+    home, sigdir = site(tmp_path, {"phones": register_entry()})
+    observed(sigdir, "phones", value=None, state="UNKNOWN", at=NOW - 3 * MAX_AGE, seen=NOW - 60)
+    dispositions.set_disposition(home, "phones", "known", "senses", "redmi10 stale",
+                                 ttl=600, now=NOW - 3600)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert any(c.startswith("ignored") and "phones" in c for c in report["causes"])
+
+
 def test_fresh_red_reading_is_pending_not_ignored(tmp_path, monkeypatch):
     _clear_systemctl(monkeypatch)
     home, sigdir = site(tmp_path, {"just-moved": register_entry()})
