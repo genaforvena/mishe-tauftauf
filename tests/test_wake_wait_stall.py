@@ -111,10 +111,12 @@ def test_stale_hard_cap_is_ignored(tmp_path):
 
 def test_tail_bound_ignores_a_wait_outside_the_tail(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "TAIL_BYTES", 200)
-    stream(tmp_path, [update("old", [job()]),
-                      {"type": "message_update", "text": "x" * 400},
-                      update("last", [job(status="completed")]),
-                      end("last", "jobs completed", False)])
+    folder = stream(tmp_path, [update("old", [job()]),
+                               {"type": "message_update", "text": "x" * 400},
+                               {"type": "turn_start"}])
+    # The cut leaves only the final non-wait event; the earlier running wait is out of range.
+    # Without the cut the whole stream is read and that wait would make the wake RED.
+    assert mod._tail_bytes(folder / f"{WAKE}.prompt.out.jsonl") == b'{"type": "turn_start"}\n'
     assert mod.evaluate([ev()], tmp_path, NOW)[0] == 0
 
 
