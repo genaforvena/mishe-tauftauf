@@ -211,7 +211,15 @@ def redmi10_battery():
     return None
 
 
-def redmi10_stability(now, window_s=None):
+def _read_phone_rows():
+    """All parsed collector rows, or None if missing/unreadable/malformed (fail closed)."""
+    try:
+        rows = [json.loads(line) for line in PHONES_FILE.read_text().splitlines() if line.strip()]
+    except (OSError, ValueError):
+        return None
+    return [r for r in rows if isinstance(r, dict)]
+
+def redmi10_stability(now, window_s=None, rows=None):
     """Drop onsets and fresh-row fraction from our own phone-collector rows.
 
     Reads the household-phones duty's phones.jsonl. A drop onset is an ok row
@@ -220,11 +228,12 @@ def redmi10_stability(now, window_s=None):
     or android-body's class-C detector, so this is a different population from
     `sense.body.redmi10.delivery-gaps` — do not read one as the other.
     Missing, unreadable or malformed history is UNKNOWN (None), never a zero.
+    Pass `rows` to reuse an already-read history, so a draw reads the file once.
     """
     window_s = STABILITY_WINDOW_S if window_s is None else window_s
-    try:
-        rows = [json.loads(line) for line in PHONES_FILE.read_text().splitlines() if line.strip()]
-    except (OSError, ValueError):
+    if rows is None:
+        rows = _read_phone_rows()
+    if rows is None:
         return None
     window = [r for r in rows
               if isinstance(r.get("t"), (int, float)) and r["t"] >= now - window_s]
@@ -260,6 +269,51 @@ def signal_stability(name, now, window_s=None):
     flips = sum(1 for a, b in zip(values, values[1:]) if a != b)
     green = sum(1 for v in values if v == "GREEN")
     return flips, green, len(values)
+
+
+def redmi10_hourly(rows=None):
+    """Fresh-row fraction by UTC hour over all retained collector rows.
+
+    A daily rhythm needs the full history: the trailing 7d window is confounded
+    by multi-day outages and mislabels the busy hours. Each hour is ok rows over
+    all rows in that UTC hour, or None when the hour has no rows (a dot in the
+    spark, never a guessed level). Missing, unreadable or malformed history is
+    UNKNOWN (None), never a zero.
+    """
+    if rows is None:
+        rows = _read_phone_rows()
+    if not rows:
+        return None
+    counts = [[0, 0] for _ in range(24)]
+    for r in rows:
+        t = r.get("t")
+        if not isinstance(t, (int, float)):
+            continue
+        try:
+            hour = time.gmtime(t).tm_hour
+        except (ValueError, OverflowError, OSError):
+            continue
+        counts[hour][1] += 1
+        if (r.get("redmi10") or {}).get("status") == "ok":
+            counts[hour][0] += 1
+    return [(c[0] / c[1]) if c[1] else None for c in counts]
+
+
+def redmi10_daily_lines(now, rows=None):
+    """The redmi10 daily freshness rhythm, as drawn in the senses window."""
+    hourly = redmi10_hourly(rows=rows)
+    if hourly is None:
+        return ["  redmi10  daily shape: UNKNOWN (no collector rows)"]
+    valid = {h: v for h, v in enumerate(hourly) if v is not None}
+    if not valid:
+        return ["  redmi10  daily shape: UNKNOWN (no usable hours)"]
+    quiet = min(valid, key=valid.get)
+    busy = max(valid, key=valid.get)
+    return [
+        "  redmi10  daily shape by UTC hour (all retained rows): " + hour_spark(hourly, 1.0),
+        "           quietest %02dZ (%.0f%% fresh), busiest %02dZ (%.0f%%); now %02dZ" % (
+            quiet, 100 * valid[quiet], busy, 100 * valid[busy], time.gmtime(now).tm_hour),
+    ]
 
 
 def read_rows(path, limit=400):
@@ -466,13 +520,15 @@ def draw():
         else:
             out.append(f"  redmi10  last known battery={pct}  charging={charging}  "
                        f"({age/3600:.1f}h ago, no current row; history only, not current)")
-    stability = redmi10_stability(time.time())
+    phone_rows = _read_phone_rows()
+    stability = redmi10_stability(time.time(), rows=phone_rows)
     if stability is None:
         out.append("  redmi10  history: UNKNOWN (no collector rows in 7d window)")
     else:
         drops, fresh, total = stability
         out.append(f"  redmi10  history: {drops} drop onsets in 7d, "
                    f"fresh in {100 * fresh // total}% of {total} samples")
+    out += redmi10_daily_lines(time.time(), rows=phone_rows)
     out.append("  position of phones: only as the household states it")
     out.append("")
     out.append("SIGNAL VALIDITY (one verdict is a reading, not a stable state)")

@@ -138,10 +138,8 @@ def test_phones_render_note3_sampler_and_redmi10_battery(tmp_path, monkeypatch):
     stream_row(values={"battery": {"level": 0.92, "charging": True, "epoch": now - 5}})
     lines = hv.draw().splitlines()
     phones = [l for l in lines if l.startswith("  redmi10")]
-    assert phones == [
-        "  redmi10  battery=92%  charging=yes  (row 5s old)",
-        "  redmi10  history: 0 drop onsets in 7d, fresh in 100% of 3 samples",
-    ], phones
+    assert "  redmi10  battery=92%  charging=yes  (row 5s old)" in phones
+    assert "  redmi10  history: 0 drop onsets in 7d, fresh in 100% of 3 samples" in phones
 
 
 def test_redmi10_stability_counts_onsets_and_fails_closed(tmp_path, monkeypatch):
@@ -188,3 +186,44 @@ def test_signal_stability_counts_flips_and_fails_closed(tmp_path, monkeypatch):
     assert hv.signal_stability("budget-claude", now, window_s=600) is None    # malformed
     monkeypatch.setattr(hv, "SIGNALS_EDGES", tmp_path / "absent.jsonl")
     assert hv.signal_stability("budget-claude", now, window_s=600) is None    # missing
+
+
+def test_redmi10_daily_shape_shows_hourly_rhythm(tmp_path, monkeypatch):
+    import calendar, json
+    base = calendar.timegm((2026, 11, 19, 0, 0, 0, 0, 0, 0))  # 00Z
+    rows = []
+    # hour 2 all stale (quiet), hour 14 all ok (busy), hour 5 half fresh
+    for hour, statuses in ((2, ["stale", "stale"]), (14, ["ok", "ok"]), (5, ["ok", "stale"])):
+        for i, st in enumerate(statuses):
+            rows.append({"t": base + hour * 3600 + i * 60, "redmi10": {"status": st}})
+    path = tmp_path / "phones.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    monkeypatch.setattr(hv, "PHONES_FILE", path)
+
+    profile = hv.redmi10_hourly()
+    assert profile[2] == 0.0
+    assert profile[14] == 1.0
+    assert profile[5] == 0.5
+    assert profile[3] is None            # no rows that hour -> dot, never a guess
+
+    lines = hv.redmi10_daily_lines(base + 2 * 3600)
+    assert "quietest 02Z" in lines[1] and "busiest 14Z" in lines[1]
+    assert "now 02Z" in lines[1]
+    assert "▁" in lines[0] and "█" in lines[0]
+
+    # one read per draw: passing rows avoids a second file read, keeps the 7d stats
+    assert hv.redmi10_stability(base + 14 * 3600 + 120, window_s=600, rows=rows) == (0, 2, 2)
+
+
+def test_redmi10_daily_shape_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setattr(hv, "PHONES_FILE", tmp_path / "absent.jsonl")
+    assert hv.redmi10_hourly() is None
+    assert hv.redmi10_daily_lines(0)[0].endswith("UNKNOWN (no collector rows)")
+    bad = tmp_path / "bad.jsonl"
+    bad.write_text("{broken json\n")
+    monkeypatch.setattr(hv, "PHONES_FILE", bad)
+    assert hv.redmi10_hourly() is None
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("\n")
+    monkeypatch.setattr(hv, "PHONES_FILE", empty)
+    assert hv.redmi10_hourly() is None
