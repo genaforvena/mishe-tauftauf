@@ -3790,6 +3790,103 @@ def test_release_retention_absent_releases_reads_unknown(tmp_path, monkeypatch):
     assert reading["sample"] == "releases directory absent"
 
 
+def test_release_retention_root_scan_failure_is_unknown(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    releases = home / "releases"
+    releases.mkdir(parents=True)
+    original_scandir = os.scandir
+
+    def fail_root(path):
+        if Path(path) == releases:
+            raise PermissionError(13, "controlled root failure", str(path))
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", fail_root)
+    monkeypatch.setattr(discovery, "_referenced_release_names", lambda: set())
+    reading = discovery._repo_release_retention(home)
+    assert reading["state"] == "unknown"
+    assert reading["bytes"] is None
+    assert "bytes=unread" in reading["sample"]
+
+
+def test_release_retention_unreadable_root_listing_is_unknown(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    releases = home / "releases"
+    releases.mkdir(parents=True)
+    original_iterdir = Path.iterdir
+
+    def fail_listing(path):
+        if path == releases:
+            raise PermissionError(13, "controlled listing failure", str(path))
+        return original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", fail_listing)
+    monkeypatch.setattr(discovery, "_referenced_release_names", lambda: set())
+    reading = discovery._repo_release_retention(home)
+    assert reading["state"] == "unknown"
+    assert reading["sample"] == "releases directory unreadable"
+
+
+def test_release_retention_unread_root_is_routed_in_discovery_notice(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    releases = home / "releases"
+    releases.mkdir(parents=True)
+    original_scandir = os.scandir
+
+    def fail_root(path):
+        if Path(path) == releases:
+            raise PermissionError(13, "controlled root failure", str(path))
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", fail_root)
+    monkeypatch.setattr(discovery, "_referenced_release_names", lambda: set())
+    reading = discovery._repo_release_retention(home)
+    snapshot = {"created": "2026-11-19T10:00:00Z", "node": "test", "observations": [reading]}
+    discovery._notify_scan(home, snapshot, None, home / "discovery" / "sample.json")
+    body = Feed(home).entries()[-1].body
+    assert "Unknown readings: sense.repo.release-retention" in body
+    assert "bytes=unread" in body
+    assert "senses should verify" in body
+
+
+def test_release_retention_unread_bytes_are_unknown(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    (home / "releases").mkdir(parents=True)
+    monkeypatch.setattr(discovery, "_referenced_release_names", lambda: set())
+    monkeypatch.setattr(discovery, "_release_tree_bytes", lambda root: None)
+    reading = discovery._repo_release_retention(home)
+    assert reading["state"] == "unknown"
+    assert "bytes=unread" in reading["sample"]
+
+
+def test_release_tree_ignores_unreadable_descendants(tmp_path, monkeypatch):
+    root = tmp_path / "releases"
+    child = root / "child"
+    child.mkdir(parents=True)
+    (root / "visible").write_bytes(b"abc")
+    original_scandir = os.scandir
+
+    def fail_child(path):
+        if Path(path) == child:
+            raise PermissionError(13, "controlled child failure", str(path))
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", fail_child)
+    assert discovery._release_tree_bytes(root) == 3
+
+
+def test_release_retention_keeps_known_drift_when_bytes_unread(tmp_path, monkeypatch):
+    home = tmp_path / "site"
+    for i in range(discovery._RELEASE_RETENTION_KEEP + 1):
+        _release(home, f"{i + 1:040x}")
+    monkeypatch.setattr(discovery, "_referenced_release_names", lambda: set())
+    monkeypatch.setattr(discovery, "_release_tree_bytes", lambda root: None)
+    reading = discovery._repo_release_retention(home)
+    assert reading["state"] == "drift"
+    assert "bytes=unread" in reading["sample"]
+    assert "beyond keep" in reading["sample"]
+
+
 def test_release_retention_bounded_keeps_read_verified(tmp_path, monkeypatch):
     from mishe_tauftauf import discovery
 

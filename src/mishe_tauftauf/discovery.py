@@ -4027,8 +4027,13 @@ def _release_tree_bytes(root: Path) -> int | None:
     nothing, and an unreadable root reads unmeasured rather than zero.
     """
     total = 0
+
+    def onerror(error: OSError) -> None:
+        if error.filename == os.fspath(root):
+            raise error
+
     try:
-        for dirpath, _dirnames, filenames in os.walk(root):
+        for dirpath, _dirnames, filenames in os.walk(root, onerror=onerror):
             for name in filenames:
                 try:
                     total += os.lstat(os.path.join(dirpath, name)).st_size
@@ -4068,7 +4073,10 @@ def _repo_release_retention(home: Path, now: datetime | None = None) -> dict[str
             return None
 
     referenced = _referenced_release_names() | _pointer_release_names(home)
-    entries = sorted(p for p in releases.iterdir() if p.is_dir())
+    try:
+        entries = sorted(p for p in releases.iterdir() if p.is_dir())
+    except OSError:
+        return {**unknown, "sample": "releases directory unreadable"}
     worktrees = [p for p in entries if (p / ".git").exists()]
     live = [p for p in worktrees if p.name in referenced]
     reclaimable = [p for p in worktrees if p.name not in referenced]
@@ -4093,7 +4101,7 @@ def _repo_release_retention(home: Path, now: datetime | None = None) -> dict[str
     if total_bytes is not None and total_bytes > _RELEASE_RETENTION_MAX_BYTES:
         reasons.append(f"{total_bytes / 2**30:.1f} GiB exceeds "
                        f"{_RELEASE_RETENTION_MAX_BYTES / 2**30:.0f} GiB")
-    state = "drift" if reasons else "verified"
+    state = "drift" if reasons else "unknown" if total_bytes is None else "verified"
     oldest_text = "none" if oldest is None else f"{oldest:.1f}d"
     bytes_text = "unread" if total_bytes is None else f"{total_bytes / 2**30:.2f}GiB"
     sample = (f"worktrees={len(worktrees)} live={len(live)} reclaimable={len(reclaimable)} "
