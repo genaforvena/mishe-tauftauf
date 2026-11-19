@@ -65,6 +65,77 @@ def test_observe_drains_from_the_flip_activate_returns_not_a_post_sync_stamp(tre
     assert envs==[str(flip_us)]
 
 
+@pytest.mark.parametrize("wrong_queued_pin", [False, True])
+def test_default_promotion_uses_the_rename_cutoff_before_the_pin_mirror(tree, monkeypatch, wrong_queued_pin):
+    from mishe_tauftauf import consumer_fence, pin_observation, runtime_cli, signal_store
+
+    repo, home, old, sha = tree
+    old_source = p.materialize(home, repo, old)
+    p.point(home, old_source)
+    (home / "bin").mkdir()
+    signal_store.register(home, "moving-pin-delivery", max_age=120, subscribers=["field-review"])
+    monkeypatch.setattr(runtime_cli, "default_pythonpath", lambda: str(p.current_link(home) / "src"))
+    monkeypatch.setattr(runtime_cli, "run_units", lambda *args: None)
+    monkeypatch.setattr(p, "config_paths", lambda home: [])
+    monkeypatch.setattr(p, "reload_units", lambda: None)
+    monkeypatch.setattr(p.boundary, "invoke_arm_consumer", lambda *args: {"result": "success"})
+
+    clock_us = 10_000_000
+    starts = {}
+    real_mirror = p._mirror_pin_record
+
+    def mirror(home, source):
+        nonlocal clock_us
+        assert p.current_link(home).resolve() == source
+        starts[source.name] = clock_us + 1_000_000
+        clock_us += 2_000_000
+        real_mirror(home, source)
+
+    monkeypatch.setattr(p, "_mirror_pin_record", mirror)
+    monkeypatch.setattr(p.time, "monotonic_ns", lambda: clock_us * 1000)
+    monkeypatch.setattr(consumer_fence, "cgroup_pids", lambda group: [123] if group else [])
+
+    def probe(argv, *, cwd, env, timeout):
+        pin = pin_observation.check_pointer(home, cwd) / "src"
+        rows = {
+            "mishe-wake@fixture.service": {
+                "ActiveState": "activating", "ControlGroup": "/", "Type": "oneshot",
+                "KillMode": "control-group", "InvocationID": "fixture",
+                "ExecMainStartTimestampMonotonic": str(starts[cwd.name]),
+                "Environment": f"PYTHONPATH={pin}",
+            },
+        }
+        if wrong_queued_pin and cwd.name == sha:
+            rows["mishe-next-due-fixture.service"] = {
+                "pending_timer": True, "Environment": f"PYTHONPATH={old_source / 'src'}",
+            }
+        monkeypatch.setattr(consumer_fence, "inventory", lambda *args: rows)
+        try:
+            pin_observation.drain_old(home, int(env["MISHE_PIN_CUTOFF_US"]), timeout=0, inventory=lambda h: rows)
+            consumer_fence.verify_future(home, pin, {})
+        except ValueError as exc:
+            return {"code": 1, "output": str(exc)}
+        return {"code": 0, "output": "new invocation accepted"}
+
+    result = p.promote(
+        home, repo, sha, check=[sys.executable, "-c", "assert True"], observe=["probe"],
+        previous=old, probe=probe, reviewer=lambda *args: None, closure=lambda *args: None,
+    )
+
+    reading = signal_store.recorded(home, "moving-pin-delivery")
+    if wrong_queued_pin:
+        cause = "active or queued consumer has wrong pin: mishe-next-due-fixture.service"
+        assert result["observe"] == {"code": 1, "output": cause}
+        assert result["phase"] == "rolled-back", result["rollback_probe"]
+        assert p.pin_revision(home) == old
+        assert reading["value"] == "FAILED"
+        assert cause in (home / "signals/moving-pin-delivery.detail").read_text()
+    else:
+        assert result["phase"] == "delivered", result["observe"]
+        assert p.pin_revision(home) == sha
+        assert reading["value"] == "VERIFIED"
+
+
 def test_failed_restore_is_unknown(tree):
     repo,home,old,sha=tree
     r=p.promote(home,repo,sha,check=[sys.executable,"-c","assert True"],observe=["probe"],

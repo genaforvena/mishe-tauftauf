@@ -58,7 +58,7 @@ def pin_revision(home):
 
 
 def point(home, source):
-    """Atomically make runtime/current name ``source`` (a rename over the old link).
+    """Rename runtime/current to point at ``source`` and return its monotonic cutoff in microseconds.
 
     Advancing and rolling back a release are this one operation, so nothing generated embeds a sha and
     nothing drifts: units are rewritten only when the unit set itself changes.
@@ -68,9 +68,12 @@ def point(home, source):
     tmp = link.with_name(f".{link.name}.{os.getpid()}.tmp")
     if tmp.is_symlink() or tmp.exists():
         tmp.unlink()
-    os.symlink(Path(source).resolve(), tmp)
+    source = Path(source).resolve()
+    os.symlink(source, tmp)
     os.replace(tmp, link)
-    _mirror_pin_record(home, Path(source).resolve())
+    flip_us = time.monotonic_ns() // 1000
+    _mirror_pin_record(home, source)
+    return flip_us
 
 
 def _mirror_pin_record(home, source):
@@ -434,8 +437,7 @@ def activate(home, repo, source, sha):
     # actually start. Recovery removes it and stops it if activation fails.
     previous_paths = set(config_paths(home))
     marker = wall_patch.snapshot(Path(home) / "units-installed")
-    point(home, source)                      # consumers resolve the stable path; the pin is the pointer
-    flip_us = time.monotonic_ns() // 1000    # the pin boundary the observer's cutoff must name (promote)
+    flip_us = point(home, source)
     stable = current_link(home)
     # no_enable=True: the sync installs unit files and reloads systemd but enables NO existing trigger, so a
     # trigger that was disabled before activation stays disabled here and in revert. Only triggers newly
@@ -1082,11 +1084,8 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
             record["activation_started_at"] = time.time(); save()
             flip_us = switch(source,sha); record["activated"]=True; record["events"].append("activated"); save()
             # the probe drains consumer invocations that started before the pin flipped (pin_observation).
-            # activate() returns that flip instant. A stamp taken here, after the activation's unit sync
-            # and reloads, would also classify every consumer started inside the activation window as
-            # old, and a wake that starts while the sync runs already resolves the new pin and may run
-            # 35 minutes by design - the bounded 420 s drain then times out on a healthy promotion
-            # (2026-11-19 6c0c9c7f: mishe-wake@steward started 7.6 s after the flip and rolled it back).
+            # A consumer starting during the pin mirror write or unit sync already resolves the new pin.
+            # A later cutoff would put it in the 420 s drain even if it can legitimately run 35 minutes.
             env = dict(env, MISHE_PIN_CUTOFF_US=str(flip_us or time.monotonic_ns() // 1000))
             if activate is None:
                 record["consumer_invocation"] = boundary.invoke_arm_consumer(source/"src")
@@ -1103,13 +1102,15 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
             record["rollback_at"] = time.time()
             try:
                 old = materialize(home,repo,previous)
-                if activate is not None: switch(old,previous)
+                if activate is not None:
+                    rollback_flip_us = switch(old, previous)
                 else:
                     restore_configuration(home, configs)
-                    point(home, old)
+                    rollback_flip_us = point(home, old)
                     record["restored_consumer_invocation"] = boundary.invoke_arm_consumer(old/"src")
                 # the probe code is the NEW source (an older release may not carry it); cwd names the release being observed
-                record["rollback_probe"] = probe(observe,cwd=old,env=dict(env,MISHE_PIN_CUTOFF_US=str(time.monotonic_ns() // 1000)),timeout=OBSERVE_TIMEOUT_S)
+                rollback_env = dict(env, MISHE_PIN_CUTOFF_US=str(rollback_flip_us or time.monotonic_ns() // 1000))
+                record["rollback_probe"] = probe(observe,cwd=old,env=rollback_env,timeout=OBSERVE_TIMEOUT_S)
                 record["phase"]="rolled-back" if record["rollback_probe"]["code"]==0 else "UNKNOWN"
                 record["rollback_completed_at" if record["phase"] == "rolled-back" else "rollback_failed_at"] = time.time()
             except (OSError,ValueError,subprocess.SubprocessError) as restore_error:

@@ -296,6 +296,11 @@ process exits: a group gone on re-read holds nothing to drain, while a group sti
 present without `cgroup.procs` remains a real enumeration failure (that race rolled
 back a correct `0c567f9d` promotion on 2026-11-17 20:34Z naming
 `mishe-producer-initiatives-rust-plan.service`).
+The drain cutoff is sampled immediately after renaming `runtime/current`, before
+writing the pin mirror or syncing units. Automatic rollback uses the same rule
+for its restored pin. An invocation starting during those later steps is judged
+by the future-pin check.
+
 An old transient timer may also launch its service during the pin move. The
 final observation waits a bounded time for an active wrong-pin service to exit,
 then checks the inventory again; a wrong-pin queued timer or a failed inventory
