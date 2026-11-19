@@ -590,6 +590,26 @@ def test_probe_cadence_is_measured_not_a_fixed_minute_claim():
     assert "one probe a minute" not in line
 
 
+def test_usual_trend_names_its_day_window_not_the_default_40_probes():
+    # The header's default is "last 40 probes"; day_spark buckets a whole day of samples into 40
+    # means. Without its own label a day-long latency ramp reads as a two-hour ramp.
+    now = time.time()
+    rows = []
+    for i in range(200):
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - (199 - i) * 204))
+        rows.append({"at": at, "internet": {name: {"ok": True, "total_ms": 300.0}
+                                            for name in ("gstatic", "cloudflare")}})
+    line = view.usuality_line(rows, now=now)
+    assert f"trend {view.usuality_facts(rows, now)['span']}:" in line
+    assert "trend: " not in line
+
+
+def test_header_says_a_wider_sparkline_window_is_labelled():
+    rows = [{"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(i * 180))} for i in range(5)]
+    line = view.probe_age_line(rows, 220, 40)
+    assert "sparklines = last 40 probes unless labelled" in line
+
+
 def test_probe_cadence_follows_a_slow_producer():
     rows = [{"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(i * 600))} for i in range(5)]
     assert "probes about 10.0 min apart" in view.probe_age_line(rows, 700, 40)

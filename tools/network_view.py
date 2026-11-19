@@ -1427,7 +1427,7 @@ def usuality_line(data, now=None, facts=None):
                 f"need {USUAL_MIN_SAMPLES})")
     return (f"  {'USUAL':<22}{facts['window']:<24}median {facts['cur']:.0f} ms"
             f" vs typical {facts['base']:.0f} ms ({facts['compare']}; {facts['span']} of samples)"
-            f"  trend: {day_spark(facts['samples'])}{facts['stale']}")
+            f"  trend {facts['span']}: {day_spark(facts['samples'])}{facts['stale']}")
 
 
 def headline_state(state, data, now=None, facts=None):
@@ -1554,7 +1554,7 @@ def probe_age_line(data, a=None, n=40):
     if a is None and data:
         a = age(data[-1])
     return (f"  last probe: {'%ds ago' % a if a is not None else 'never'}   "
-            f"({probe_cadence_phrase(data)}; sparklines = last {n} probes)")
+            f"({probe_cadence_phrase(data)}; sparklines = last {n} probes unless labelled)")
 
 
 def draw():

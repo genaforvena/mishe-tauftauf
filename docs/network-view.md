@@ -195,7 +195,9 @@ is not mistaken for a quiet mind.
   last `USUAL_EXCLUDE` (60) samples left out, so a spike cannot inflate its own baseline; fewer
   than `USUAL_MIN_SAMPLES` (120) samples is UNKNOWN. `about usual` below 1.25×, `slower than
   usual` below 2×, `much slower than usual` at 2× or more; `STALE` past 15 minutes. The trend
-  sparkline buckets the whole loaded day into `USUAL_BUCKETS` (40) means.
+  sparkline buckets the whole loaded day into `USUAL_BUCKETS` (40) means and is labelled `trend 24 h`
+  at the line: the header's "last 40 probes" is only a default, and says wider windows are labelled.
+  Without that label a day-long ramp read as a two-hour ramp.
   The trailing span names the loaded sample window (`24 h of samples`), not the duration of the
   slowdown — the headline above already says how long that lasted; a bare "over 24 h" read here as a
   day-long slowdown that contradicted it.
