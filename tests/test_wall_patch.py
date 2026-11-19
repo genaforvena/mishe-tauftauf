@@ -1253,6 +1253,15 @@ def test_observe_timeout_outlasts_consumer_drain(tmp_path, monkeypatch):
     assert seen["timeout"] == wall_patch.RUN_TIMEOUT_S == 300
 
 
+def test_observe_kill_is_only_a_hang_net_above_the_enforced_budget():
+    from mishe_tauftauf import consumer_fence
+    composed = (2 * consumer_fence.DRAIN_TIMEOUT_S
+                + wall_patch.OBSERVE_ARM_S + wall_patch.OBSERVE_FIXED_MARGIN_S)
+    assert wall_patch.OBSERVE_BUDGET_S == composed
+    assert wall_patch.OBSERVE_TIMEOUT_S == composed + wall_patch.OBSERVE_KILL_MARGIN_S
+    assert wall_patch.OBSERVE_TIMEOUT_S > wall_patch.OBSERVE_BUDGET_S
+
+
 def test_review_context_includes_a_submodule_imported_from_the_package(tmp_path):
     # `from . import consumer_fence` names a submodule, not an export; its bytes
     # must reach the reviewer rather than being dropped without a mark.

@@ -27,12 +27,22 @@ def is_transient(error):
     return str(error).split(':')[0] in TRANSIENT_UNKNOWN
 
 
-def command(argv, timeout=10):
+def command(argv, timeout=10, deadline=None):
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("consumer inventory budget exhausted")
+        timeout = min(timeout, remaining)
     return subprocess.check_output(argv, text=True, timeout=timeout)
 
 
-def properties(unit):
-    text = command(['systemctl', '--user', 'show', unit, '-p', PROPERTIES])
+def _cmd(argv, deadline=None):
+    """Call the command adapter without a new keyword when there is no budget to enforce."""
+    return command(argv, deadline=deadline) if deadline is not None else command(argv)
+
+
+def properties(unit, deadline=None):
+    text = _cmd(['systemctl', '--user', 'show', unit, '-p', PROPERTIES], deadline=deadline)
     result = dict(line.split('=', 1) for line in text.splitlines() if '=' in line)
     if result.get('Id') != unit: raise ValueError('unit identity missing: ' + unit)
     return result
@@ -57,19 +67,19 @@ def pin_independent(row):
     return all(word in argv for word in RELEASE_SCOPED_ARGV)
 
 
-def inventory(home, previous=None):
+def inventory(home, previous=None, deadline=None):
     from mishe_tauftauf import release_promotion as rp
     previous = previous or {}
     owned = {str(p) for p in rp.config_paths(home) if p.suffix == '.service'}
-    rows = json.loads(command(['systemctl', '--user', 'list-units', 'mishe-*.service', '--all', '--output=json', '--no-pager']))
-    timers = json.loads(command(['systemctl', '--user', 'list-units', 'mishe-*.timer', '--state=active', '--output=json', '--no-pager']))
+    rows = json.loads(_cmd(['systemctl', '--user', 'list-units', 'mishe-*.service', '--all', '--output=json', '--no-pager'], deadline=deadline))
+    timers = json.loads(_cmd(['systemctl', '--user', 'list-units', 'mishe-*.timer', '--state=active', '--output=json', '--no-pager'], deadline=deadline))
     pending = set()
     for timer in timers:
-        pending.update(command(['systemctl', '--user', 'show', timer['unit'], '-p', 'Triggers', '--value']).split())
+        pending.update(_cmd(['systemctl', '--user', 'show', timer['unit'], '-p', 'Triggers', '--value'], deadline=deadline).split())
     names = {row['unit'] for row in rows} | pending | set(previous)
     result = {}
     for name in sorted(names):
-        row = properties(name)
+        row = properties(name, deadline=deadline) if deadline is not None else properties(name)
         if pin_independent(row): continue
         exec_start = row.get('ExecStart', '')
         explicit_site = '--home ' + str(home) + ' ' in exec_start
@@ -181,9 +191,9 @@ class ActiveWrongPin(ValueError):
     """An active, unqueued consumer has not yet finished on its earlier pin."""
 
 
-def verify_future(home, expected, previous):
+def verify_future(home, expected, previous, deadline=None):
     from mishe_tauftauf.work_boundary import pythonpath_entries
-    rows = inventory(home, previous)
+    rows = inventory(home, previous, deadline=deadline) if deadline is not None else inventory(home, previous)
     checked = []
     wrong_active = None
     for name, row in rows.items():

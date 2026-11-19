@@ -324,7 +324,7 @@ def invoke_arm_consumer(expected):
     """Exercise a future oneshot invocation; never restart an active worker."""
     unit = "mishe-arm.service"
     def prop(name):
-        return subprocess.check_output(["systemctl", "--user", "show", unit, "-p", name, "--value"], text=True).strip()
+        return subprocess.check_output(["systemctl", "--user", "show", unit, "-p", name, "--value"], text=True, timeout=10).strip()
     if prop("ActiveState") not in ("inactive", "failed"):
         raise ValueError("arm consumer already active; cannot prove a fresh invocation")
     # The unit names runtime/current (a symlink), the caller names the release: compare the real directories.

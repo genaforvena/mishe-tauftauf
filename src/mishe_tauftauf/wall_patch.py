@@ -123,13 +123,16 @@ RUN_TIMEOUT_S = 300
 TEST_TIMEOUT_S = 1500
 """The deterministic check is the whole suite on the exact bytes (about 8 minutes), not a sample."""
 # Observe drains old in-memory consumers, arms the next-due timer once more, then waits for stale
-# active invocations on the earlier pin (pin_observation.observe): TWO bounded drains plus the arm's
-# systemctl start. A 300 s kill once reverted a correct delivery (review of moving-pin-5d3c6729), and
-# review of fcde6977 found the second wait added without updating this bound — a drain >~120 s followed
-# by a stale active unit could exceed the kill and roll back a correct pin. Bound the whole composition.
+# active invocations on the earlier pin (pin_observation.observe). Review of fcde6977 found a 600 s
+# kill reverted a correct delivery whose two bounded drains plus re-arm exceed it. pin_observation
+# now enforces OBSERVE_BUDGET_S with ONE monotonic deadline shared by check_units, both bounded waits,
+# the inventory and the re-arm; it fails closed with diagnostics when that budget is gone. This kill
+# is only a hang net, set strictly above the enforced budget so it never kills a slow-but-correct pin.
 OBSERVE_ARM_S = 60              # work_boundary.invoke_arm_consumer's systemctl start timeout
-OBSERVE_FIXED_MARGIN_S = 120    # unit shows with reload retries, dual-probe and wrapper checks
-OBSERVE_TIMEOUT_S = 2 * consumer_fence.DRAIN_TIMEOUT_S + OBSERVE_ARM_S + OBSERVE_FIXED_MARGIN_S
+OBSERVE_FIXED_MARGIN_S = 120    # unit shows with reload retries, arm prop shows, dual-probe and wrapper checks
+OBSERVE_BUDGET_S = 2 * consumer_fence.DRAIN_TIMEOUT_S + OBSERVE_ARM_S + OBSERVE_FIXED_MARGIN_S
+OBSERVE_KILL_MARGIN_S = 60      # hang net above the enforced budget: only an uninterruptible hang reaches it
+OBSERVE_TIMEOUT_S = OBSERVE_BUDGET_S + OBSERVE_KILL_MARGIN_S
 
 
 def run(home, identity, label, command, timeout=RUN_TIMEOUT_S):

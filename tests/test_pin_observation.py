@@ -166,15 +166,15 @@ def test_observe_rearms_after_the_drain_and_before_judging_future_consumers(tmp_
     home, release = _site(tmp_path)
     calls = []
     monkeypatch.setattr(po, "check_pointer", lambda h, r: calls.append("pointer") or home / "runtime" / "current")
-    monkeypatch.setattr(po, "check_units", lambda h, s: calls.append("units") or [])
+    monkeypatch.setattr(po, "check_units", lambda h, s, **kw: calls.append("units") or [])
     monkeypatch.setattr(po, "check_wrappers", lambda h, s, sha: calls.append("wrappers"))
     monkeypatch.setattr(po.rp, "probe_problems", lambda h: calls.append("probe") or [])
-    monkeypatch.setattr(po, "drain_old", lambda h, cutoff: calls.append(("drain", cutoff)) or 0)
+    monkeypatch.setattr(po, "drain_old", lambda h, cutoff, **kw: calls.append(("drain", cutoff)) or 0)
     from mishe_tauftauf import work_boundary
     monkeypatch.setattr(work_boundary, "invoke_arm_consumer",
                         lambda expected: calls.append(("arm", expected)) or {})
     monkeypatch.setattr(po.fence, "verify_future",
-                        lambda h, expected, previous: calls.append(("verify", list(calls))) or [])
+                        lambda h, expected, previous, **kw: calls.append(("verify", list(calls))) or [])
 
     result = po.observe(home, release, cutoff_us=17)
 
@@ -188,12 +188,12 @@ def test_observe_without_a_cutoff_does_not_arm(tmp_path, monkeypatch):
     home, release = _site(tmp_path)
     calls = []
     monkeypatch.setattr(po, "check_pointer", lambda h, r: home / "runtime" / "current")
-    monkeypatch.setattr(po, "check_units", lambda h, s: [])
+    monkeypatch.setattr(po, "check_units", lambda h, s, **kw: [])
     monkeypatch.setattr(po, "check_wrappers", lambda h, s, sha: None)
     monkeypatch.setattr(po.rp, "probe_problems", lambda h: [])
     from mishe_tauftauf import work_boundary
     monkeypatch.setattr(work_boundary, "invoke_arm_consumer", lambda expected: calls.append(expected) or {})
-    monkeypatch.setattr(po.fence, "verify_future", lambda h, expected, previous: [])
+    monkeypatch.setattr(po.fence, "verify_future", lambda h, expected, previous, **kw: [])
 
     po.observe(home, release, cutoff_us=None)
 
@@ -259,3 +259,67 @@ def test_future_observation_rejects_a_queued_timer_masked_by_an_active_row(tmp_p
     with pytest.raises(ValueError, match="z-queued.service") as caught:
         po.wait_future(tmp_path, tmp_path / "new", timeout=5, sleep=lambda _: pytest.fail("must not wait"))
     assert "wrong pin" in str(caught.value)
+
+
+def test_observer_budget_is_the_enforced_composed_bound():
+    """The internal budget equals the composed wait; the outer kill is a separate hang net above it."""
+    from mishe_tauftauf import consumer_fence, wall_patch
+    assert po.OBSERVE_BUDGET_S == wall_patch.OBSERVE_BUDGET_S
+    assert po.OBSERVE_BUDGET_S == (2 * consumer_fence.DRAIN_TIMEOUT_S
+                                    + wall_patch.OBSERVE_ARM_S + wall_patch.OBSERVE_FIXED_MARGIN_S)
+
+
+def test_check_units_fails_closed_when_the_shared_deadline_is_gone(tmp_path, monkeypatch):
+    """A slow inventory cannot run past the end-to-end budget and still report a pass."""
+    home, release = _site(tmp_path)
+    stable = home / "runtime" / "current"
+    unit = home / "u" / "mishe-x.service"
+    unit.parent.mkdir()
+    unit.write_text("[Service]\nEnvironment=PYTHONPATH=" + str(stable / "src") + "\n")
+    monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
+    called = []
+
+    def show(name, *props):
+        called.append(name)
+        return {"LoadState": "loaded", "FragmentPath": str(unit), "Type": "oneshot",
+                "NeedDaemonReload": "no", "Environment": "PYTHONPATH=" + str(stable / "src")}
+
+    with pytest.raises(po.ObserverDeadlineExceeded, match="unit inventory"):
+        po.check_units(home, stable, show=show, deadline=time.monotonic() - 1)
+    assert called == []  # no systemctl call starts once the budget is gone
+
+
+def test_observe_reports_budget_exhaustion_before_any_subprocess(tmp_path, monkeypatch):
+    """Controlled failure: an exhausted budget is a visible UNKNOWN, never a silent pass."""
+    home, release = _site(tmp_path)
+    monkeypatch.setattr(po, "check_pointer", lambda h, r: home / "runtime" / "current")
+    monkeypatch.setattr(po.rp, "probe_problems", lambda h: [])
+    monkeypatch.setattr(po, "check_wrappers", lambda h, s, sha: None)
+    unit = home / "u" / "mishe-x.service"
+    unit.parent.mkdir()
+    unit.write_text("[Service]\nEnvironment=PYTHONPATH=x\n")
+    monkeypatch.setattr(po.rp, "config_paths", lambda h: [unit])
+    monkeypatch.setattr(po, "_show", lambda *a, **kw: pytest.fail("no systemctl call after budget gone"))
+    with pytest.raises(po.ObserverDeadlineExceeded, match="unit inventory"):
+        po.observe(home, release, cutoff_us=None, budget=0)
+
+
+def test_arm_consumer_property_reads_carry_a_timeout(tmp_path, monkeypatch):
+    """Every arm prop systemctl show is bounded; only its start was bounded previously."""
+    from mishe_tauftauf import work_boundary as wb
+    expected = tmp_path / "src"
+    timeouts = []
+    starts = iter(["1", "2"])
+
+    def fake_output(argv, **kw):
+        timeouts.append(kw.get("timeout"))
+        name = argv[argv.index("-p") + 1]
+        if name == "ExecMainStartTimestampMonotonic":
+            return next(starts) + "\n"
+        return {"ActiveState": "inactive", "Environment": "PYTHONPATH=" + str(expected),
+                "Result": "success", "ExecMainStatus": "0"}[name] + "\n"
+
+    monkeypatch.setattr(wb.subprocess, "check_output", fake_output)
+    monkeypatch.setattr(wb.subprocess, "run", lambda *a, **kw: type("R", (), {"returncode": 0})())
+    wb.invoke_arm_consumer(expected)
+    assert timeouts and all(t == 10 for t in timeouts)

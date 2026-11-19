@@ -274,6 +274,7 @@ def test_observe_probes_cover_the_composed_drain_bound(tree):
     composed = (2 * consumer_fence.DRAIN_TIMEOUT_S
                 + wall_patch.OBSERVE_ARM_S + wall_patch.OBSERVE_FIXED_MARGIN_S)
     assert p.OBSERVE_TIMEOUT_S >= composed
+    assert p.OBSERVE_TIMEOUT_S > wall_patch.OBSERVE_BUDGET_S  # kill is a hang net, not the enforced bound
     repo,home,old,sha=tree
     timeouts=[]
     def probe(argv, **kw):

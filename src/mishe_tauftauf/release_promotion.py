@@ -114,7 +114,8 @@ CHECK_TIMEOUT_S = 1500
 """The delivery check is the whole suite on the release tree (about 8 minutes)."""
 OBSERVE_TIMEOUT_S = wall_patch.OBSERVE_TIMEOUT_S
 """The observe probe composes two bounded drains, a re-arm and fixed checks (pin_observation.observe).
-The subprocess kill must cover that whole composition or a correct pin is rolled back (review of fcde6977)."""
+The observer now enforces wall_patch.OBSERVE_BUDGET_S with one end-to-end deadline; this kill is only
+a hang net above that budget, so it never records a slow-but-correct pin as failed (review #303025)."""
 
 
 def run(argv, *, cwd, env, timeout=900):

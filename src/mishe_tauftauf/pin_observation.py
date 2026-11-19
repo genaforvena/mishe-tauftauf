@@ -31,8 +31,23 @@ from pathlib import Path
 from . import consumer_fence as fence
 from . import release_promotion as rp
 from . import release_boundary as boundary
+from . import wall_patch
 
 DRAIN_TIMEOUT_S = fence.DRAIN_TIMEOUT_S
+# The observer enforces this budget itself with one monotonic deadline; wall_patch's kill is a
+# hang net strictly above it. Reusing wall_patch's constant keeps the two from drifting apart.
+OBSERVE_BUDGET_S = wall_patch.OBSERVE_BUDGET_S
+
+
+class ObserverDeadlineExceeded(ValueError):
+    """The end-to-end budget ran out before the pin could be confirmed: UNKNOWN, not a pass."""
+
+
+def _check_deadline(deadline, stage):
+    if deadline is not None and time.monotonic() >= deadline:
+        raise ObserverDeadlineExceeded("observer budget exhausted during " + stage)
+
+
 
 
 def _show(unit: str, *properties: str) -> dict:
@@ -51,27 +66,31 @@ def check_pointer(home: Path, release: Path) -> Path:
 
 
 def check_units(home: Path, stable: Path, show=_show, *, sleep=time.sleep, retries: int = 3,
-                reload=rp.reload_units) -> list[str]:
+                reload=rp.reload_units, deadline=None) -> list[str]:
     """Every owned installed service is loaded as its file says; pinned ones are oneshot on the stable path."""
     checked = []
+
+    def guarded(*args):
+        _check_deadline(deadline, "unit inventory")
+        return show(*args)
     expected = "PYTHONPATH=" + str(stable / "src")
     for unit_path in rp.config_paths(home):
         if unit_path.suffix != ".service" or "@." in unit_path.name:
             continue
-        fields = show(unit_path.name, "Type", "Environment", "FragmentPath", "NeedDaemonReload", "LoadState")
+        fields = guarded(unit_path.name, "Type", "Environment", "FragmentPath", "NeedDaemonReload", "LoadState")
         for _ in range(retries):
             # a concurrent sync may reload a moment later: look again before calling a pending reload a failure
             if fields.get("NeedDaemonReload") == "no":
                 break
             sleep(2)
-            fields = show(unit_path.name, "Type", "Environment", "FragmentPath", "NeedDaemonReload", "LoadState")
+            fields = guarded(unit_path.name, "Type", "Environment", "FragmentPath", "NeedDaemonReload", "LoadState")
         if fields.get("NeedDaemonReload") != "no":
             # Another sync (a mind repairing generated-unit drift) rewrote the file after the activation's reload. A reload only
             # makes the loaded configuration equal to the files; what this probe judges is that the loaded pins equal the files
             # and the stable path, which is checked right after.
             reload()
             sleep(1)
-            fields = show(unit_path.name, "Type", "Environment", "FragmentPath", "NeedDaemonReload", "LoadState")
+            fields = guarded(unit_path.name, "Type", "Environment", "FragmentPath", "NeedDaemonReload", "LoadState")
         if fields.get("LoadState") != "loaded":
             raise ValueError(f"owned installed service is not loaded: {unit_path.name}")
         if fields.get("FragmentPath") != str(unit_path):
@@ -98,10 +117,12 @@ def check_wrappers(home: Path, stable: Path, sha: str) -> None:
 
 
 def drain_old(home: Path, cutoff_us: int, *, timeout: float = DRAIN_TIMEOUT_S, sleep=time.sleep,
-              inventory=fence.inventory, pending_old=fence.pending_old) -> int:
+              inventory=fence.inventory, pending_old=fence.pending_old, deadline=None) -> int:
     """Wait until no pinned consumer invocation that started at or before the cutoff is still running."""
     record = {"cutoff_us": cutoff_us, "before": {}}
     until = time.monotonic() + timeout
+    if deadline is not None:
+        until = min(until, deadline)
     own = os.environ.get("INVOCATION_ID", "")
     last_transient = None
     last_rows = None  # the most recent successful read that still held old invocations
@@ -124,34 +145,42 @@ def drain_old(home: Path, cutoff_us: int, *, timeout: float = DRAIN_TIMEOUT_S, s
         sleep(fence.RETRY_INTERVAL_S)
 
 
-def wait_future(home: Path, expected: Path, *, timeout: float = DRAIN_TIMEOUT_S, sleep=time.sleep) -> list:
+def wait_future(home: Path, expected: Path, *, timeout: float = DRAIN_TIMEOUT_S, sleep=time.sleep,
+                deadline=None) -> list:
     """Wait for a stale active invocation; queued stale timers still fail immediately.
 
     A timer armed before the move can start its old service after the cutoff and
     therefore escape the timestamp drain. Never accept it while it is active.
     """
     until = time.monotonic() + timeout
+    if deadline is not None:
+        until = min(until, deadline)
     while True:
         try:
-            return fence.verify_future(home, expected, {})
+            return (fence.verify_future(home, expected, {}, deadline=deadline) if deadline is not None
+                    else fence.verify_future(home, expected, {}))
         except fence.ActiveWrongPin:
             if time.monotonic() >= until:
                 raise
             sleep(fence.RETRY_INTERVAL_S)
 
 
-def observe(home: Path, release: Path, *, cutoff_us: int | None) -> dict:
+def observe(home: Path, release: Path, *, cutoff_us: int | None,
+            budget: float = OBSERVE_BUDGET_S) -> dict:
     home, release = Path(home), Path(release)
+    deadline = time.monotonic() + budget
     stable = check_pointer(home, release)
     sha = release.resolve().name
-    units = check_units(home, stable)
+    units = check_units(home, stable, deadline=deadline)
     check_wrappers(home, stable, sha)
     problems = rp.probe_problems(home)
     if problems:
         raise ValueError("dual probe problems: " + "; ".join(map(str, problems)))
+    _check_deadline(deadline, "fixed checks")
     rearm = None
     if cutoff_us is not None:
-        drain_old(home, cutoff_us)
+        drain_old(home, cutoff_us, deadline=deadline,
+                  inventory=(lambda h: fence.inventory(h, deadline=deadline)))
         # ``arm.due`` re-arms the next-due timer when its handler exits, with the release that handler
         # runs. An old invocation that outlived the activation's own arm is therefore the last writer:
         # it left a pending timer whose PYTHONPATH names the previous release, and the future check
@@ -160,8 +189,8 @@ def observe(home: Path, release: Path, *, cutoff_us: int | None) -> dict:
         # no old invocation remains to overwrite the timer, then judge the consumers.
         from .work_boundary import invoke_arm_consumer
         rearm = invoke_arm_consumer(stable / "src")
-    future = (wait_future(home, stable / "src") if cutoff_us is not None
-              else fence.verify_future(home, stable / "src", {}))
+    future = (wait_future(home, stable / "src", deadline=deadline) if cutoff_us is not None
+              else fence.verify_future(home, stable / "src", {}, deadline=deadline))
     return {"release": sha, "units": units, "rearm": rearm, "future_consumers": [row["unit"] for row in future]}
 
 
