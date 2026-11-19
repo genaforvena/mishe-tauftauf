@@ -121,6 +121,20 @@ def recorded(home, name: str) -> dict | None:
     """The last stored reading as written (value, state, observed_at, source), or None. Never repaired."""
     return _load(home, name)
 
+def history(home, names) -> dict:
+    """The stored edge rows for each name in ``names``, oldest first, in one pass over the log.
+
+    Decoding goes through the ``state_files`` adapter: a torn line is skipped there, never
+    repaired here, and a row that is not an object cannot match a name.
+    """
+    from .state_files import read_json_lines
+    wanted = set(names)
+    found = {name: [] for name in wanted}
+    for edge in read_json_lines(_dir(home) / "edges.jsonl"):
+        if isinstance(edge, dict) and edge.get("name") in wanted:
+            found[edge["name"]].append(edge)
+    return found
+
 
 def _seen(home, name: str) -> float | None:
     try:

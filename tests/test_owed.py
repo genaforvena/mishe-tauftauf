@@ -297,13 +297,32 @@ def test_mid_wake_recovery_lands_in_the_cursor(tmp_path):
 
 
 def test_mid_wake_failure_stays_owed(tmp_path):
-    """The absorption is one-way: a value that is not the all-clear word, published
-    mid-wake, still wakes the subscriber on the next tick."""
+    """The absorption is one-way: a RED published after the wake's snapshot and still
+    standing at settle keeps the snapshot rev, so the next tick still wakes the subscriber
+    (genome review DM #303268: the earlier shape advanced before the RED existed, so it
+    never exercised advance with a live mid-wake RED and passed on any implementation)."""
     store.register(tmp_path, "doctor", max_age=60, subscribers=["health"])
     store.observe(tmp_path, "doctor", "GREEN", now=100.0, source="t")
     owed.advance(tmp_path, "health", owed.check(tmp_path, "health", now=100.0), now=100.0)
-    store.observe(tmp_path, "doctor", "RED", now=101.0, source="t")
-    assert owed.check(tmp_path, "health", now=102.0).reasons == ["signal:doctor"]
+    snap = owed.check(tmp_path, "health", now=101.0)          # the wake starts with nothing owed
+    store.observe(tmp_path, "doctor", "RED", now=102.0, source="t")   # fails mid-wake
+    owed.advance(tmp_path, "health", snap, now=103.0)
+    assert owed.check(tmp_path, "health", now=104.0).reasons == ["signal:doctor"]
+
+
+def test_a_mid_wake_red_flap_recovered_before_settle_stays_owed(tmp_path):
+    """The 2026-11-19 genome review defect: a RED published mid-wake and recovered before
+    settle must still wake the subscriber. The RED edge is the failure; taking the live GREEN
+    rev would swallow it and contradict the recovery absorption's own invariant."""
+    store.register(tmp_path, "doctor", max_age=60, subscribers=["health"])
+    store.observe(tmp_path, "doctor", "GREEN", now=100.0, source="t")
+    owed.advance(tmp_path, "health", owed.check(tmp_path, "health", now=100.0), now=100.0)  # baseline settled
+    snap = owed.check(tmp_path, "health", now=101.0)          # the wake starts all-clear
+    assert snap.reasons == []
+    store.observe(tmp_path, "doctor", "RED", now=101.0, source="t")    # fails mid-wake
+    store.observe(tmp_path, "doctor", "GREEN", now=102.0, source="t")  # recovers before settle
+    owed.advance(tmp_path, "health", snap, now=103.0)
+    assert owed.check(tmp_path, "health", now=104.0).reasons == ["signal:doctor"]
 
 
 def test_mid_wake_expiry_stays_owed(tmp_path):
