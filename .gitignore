@@ -65,3 +65,6 @@ research/field-review/__pycache__/
 
 # Cargo build output of the Rust components (tools/install-rust-binaries.sh).
 rust/*/target/
+
+# Analyses and findings live under SITE_HOME/analysis; the repo is public and they may hold household-derived numbers (operator decision 2026-11-19)
+/analysis/
