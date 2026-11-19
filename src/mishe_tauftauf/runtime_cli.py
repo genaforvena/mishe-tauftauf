@@ -115,6 +115,14 @@ def parse_when(text: str) -> dict:
 WAKE_TIMEOUT = 1800.0                      # equals wake.DEFAULT_TIMEOUT (pinned by a test)
 YIELD_RESULTS = ("changed", "verified", "blocked")   # equals yielding.RESULTS (pinned by a test)
 
+def _unit_flags(p) -> None:
+    """Unit-rendering flags shared by every command that writes or checks generated units."""
+    p.add_argument("--unit-dir", type=Path, default=Path.home() / ".config" / "systemd" / "user")
+    p.add_argument("--prefix", default="mishe")
+    p.add_argument("--no-slices", action="store_true", help="scratch namespaces: no host slices")
+    p.add_argument("--pythonpath", default=default_pythonpath())
+    p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO") or Path.cwd())
+
 
 def register(sub) -> None:
     """Add the runtime commands to the ``mishe`` parser. Heavy modules load only when a command runs."""
@@ -175,6 +183,9 @@ def register(sub) -> None:
     p.set_defaults(func=cmd_runtime); p.add_argument("name"); p.add_argument("--reason", default="no readable observation"); p.add_argument("--source", default="cli")
     p = sig.add_parser("retire", help="remove a closed experiment's signal (registration and files) with a recorded reason"); p.set_defaults(func=cmd_runtime)
     p.add_argument("name"); p.add_argument("--reason", required=True)
+    _unit_flags(p)   # retire regenerates units when the retired name was watched (see run())
+    p.add_argument("--no-systemctl", action="store_true",
+                   help="rewrite the generated unit files but do not talk to systemd (scratch renders, tests)")
     p = sig.add_parser("show"); p.set_defaults(func=cmd_runtime); p.add_argument("name")
     p = sig.add_parser("run", help="observe NAME by running CMD: exit 0 GREEN, non-zero RED, cannot-run leaves it to expire")
     p.add_argument("name"); p.add_argument("--timeout", type=float, default=120)
@@ -192,11 +203,7 @@ def register(sub) -> None:
     p = add("failed"); p.add_argument("unit")
     for name in ("sync", "doctor"):
         p = add(name)
-        p.add_argument("--unit-dir", type=Path, default=Path.home() / ".config" / "systemd" / "user")
-        p.add_argument("--prefix", default="mishe")
-        p.add_argument("--no-slices", action="store_true", help="scratch namespaces: no host slices")
-        p.add_argument("--pythonpath", default=default_pythonpath())
-        p.add_argument("--repo", type=Path, default=os.environ.get("MISHE_REPO") or Path.cwd())
+        _unit_flags(p)
         if name == "sync":
             p.add_argument("--no-systemctl", action="store_true")
             p.add_argument("--no-enable", action="store_true", help="install the units but enable and start no trigger")
@@ -340,8 +347,20 @@ def run(args) -> int:
             if subscribers:
                 # A subscribed name is a PathChanged watch in each subscriber's generated wake
                 # .path unit; retire removes it from the registry but not from the installed
-                # unit, so the unit drifts until a sync regenerates it (doctor RED mean-time).
-                print(f"  watched by: {', '.join(subscribers)} — run `mishe sync` to drop the stale watch line")
+                # unit, and printing the sync hint was not enough: the 19:32Z and 20:07Z retires
+                # each left the stale watch line installed and bought a doctor RED plus a health
+                # wake. This command is the caller with a sync, so it regenerates the units
+                # itself. Plain-sync semantics: enable stays on so the units-installed claim
+                # survives (a runner-backed no-enable sync deletes it, 2026-11-17 outage).
+                print(f"  watched by: {', '.join(subscribers)} — regenerating units to drop the stale watch line")
+                run_units(argparse.Namespace(command="sync", repo=args.repo, source_repo=None,
+                                            pythonpath=args.pythonpath, unit_dir=args.unit_dir,
+                                            prefix=args.prefix, no_slices=args.no_slices,
+                                            no_systemctl=args.no_systemctl, no_enable=False,
+                                            uninstall=False), home, now)
+                if args.name in signal_store.registry(home):
+                    raise ValueError(f"{args.name} was re-registered by the regeneration: a duty or "
+                                     "builtin still declares it — retire the duty first, then the signal")
         else:
             print(signal_store.read(home, args.name, now=now))
         return 0

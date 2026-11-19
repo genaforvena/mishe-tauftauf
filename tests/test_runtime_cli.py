@@ -152,6 +152,19 @@ def test_doctor_red_on_drift_exits_nonzero_and_records_red(site, tmp_path):
     assert "drift" in sig.reason
 
 
+def test_retiring_a_watched_signal_regenerates_units_so_doctor_stays_green(site, tmp_path, monkeypatch):
+    """The 19:32Z and 20:07Z retires left each subscriber's .path unit watching a deleted
+    signal until someone ran `mishe sync` by hand; retire now does that itself."""
+    units_dir = tmp_path / "units"
+    assert cli("signal", "register", "ci", "--max-age", "60", "--subscribers", "genome") == 0
+    assert cli("sync", "--unit-dir", str(units_dir), "--no-systemctl") == 0
+    assert "signals/ci.json" in (units_dir / "mishe-wake-genome.path").read_text()
+    _healthy_root_fs_probe(site, units_dir, monkeypatch)
+    assert cli("signal", "retire", "ci", "--reason", "experiment closed",
+               "--unit-dir", str(units_dir), "--no-systemctl") == 0
+    assert "signals/ci.json" not in (units_dir / "mishe-wake-genome.path").read_text()
+    assert cli("doctor", "--unit-dir", str(units_dir)) == 0
+
 def test_doctor_no_observe_reports_without_publishing_the_meta_signal(site, tmp_path, capsys):
     """Publishing the meta-signal is what wakes the health subscriber, so a diagnostic run must be
     able to check doctor without flapping it — while still reporting the fault to its own caller."""
