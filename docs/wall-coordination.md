@@ -300,6 +300,7 @@ An old transient timer may also launch its service during the pin move. The
 final observation waits a bounded time for an active wrong-pin service to exit,
 then checks the inventory again; a wrong-pin queued timer or a failed inventory
 still fails the observation, and a service that stays wrong fails at the deadline.
+A module consumer (`-m mishe_tauftauf`) resolves its code through `PYTHONPATH` and must carry its pin there: blank `Environment` evidence stays in the inventory and fails the future-pin check whether the unit is queued or active. Direct-script units (`python3 -I <script>`) are legitimately unpinned and stay out of that gate; so are release-scoped review runs.
 
 After every delivery, compare the units' `PYTHONPATH` with `runtime/current`: it
 should resolve to the release just delivered. A GREEN test or doctor does not prove
