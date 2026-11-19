@@ -65,10 +65,21 @@ moving-pin wakes; its "last wake verified" fallback would have skipped 63 of the
 5 of which changed, losing productive work. The first class has no deterministic
 pre-wake discriminator in the ledger: its 72 wakes are only field-review and
 genome, and changed and verified wakes share role, reasons and end detail.
-`wake-gate-live.jsonl` still has no producer. Revisit only with a pre-wake signal
-that separates changed from verified wakes, or a revised rule that does not depend
-on same-dossier for signal wakes. The `system1-savings` signal now reports
+`wake-gate-live.jsonl` still has no producer. The `system1-savings` signal reports
 `changed_by_trigger` so the changed-rate baseline per class stays observable.
+
+### Revised gate spec (2026-11-19): no safe gate for signal wakes
+
+Ilya's revised objective is to reduce wasted wakes without losing productive changed wakes, using a real pre-wake discriminator or an honest no-gate close. A full search over the clean yielded population of `decision-log/wake-gate.jsonl` — 1,611 of 1,733 joined starts; the other 122 are `state: unknown` engine failures and were excluded — found no such discriminator.
+
+- 562 clean signal wakes, 170 changed (30.2%); 263 `moving-pin-delivery` wakes, 59 changed (22.4%).
+- `same_dossier_as_last` is true on 0 signal wakes. A stronger variant — dossier hash seen in this role's previous 20 wakes — covers only 2 clean signal wakes, 1 changed: no separation and negligible coverage.
+- Reason count (1 / 2 / 3 or more), presence of an intention reason, and hour of day leave every meaningful subgroup in the 18–56% changed band. On `moving-pin-delivery`: one reason 49/224 (21.9%), two or more 10/39 (25.6%), intention reason 7/32 (21.9%), field-review 33/152 (21.7%), genome 26/111 (23.4%). The earlier apparent "hash seen before" saving was a data artifact: those rows were cancelled `initiatives-system1` wakes with no yield, not productive verified wakes.
+- No subgroup has both a near-zero changed rate and useful volume, so skipping any signal subgroup loses productive wakes. Inbox wakes always wake anyway: each carries a human DM or a RED signal, an escape below.
+
+Close: do not gate signal or inbox wakes. Intention wakes are the only class where a dossier-repeat signal discriminates (3/50 changed), but a blanket skip loses three productive rechecks, two of them event-first, so they stay ungated too. `wake-gate-live.jsonl` keeps no producer; the `system1-savings` duty stays the continuing detector.
+
+Any future live gate must carry three safety escapes: force a wake if a role has had none for more than 3 hours; a human DM or a RED signal always wakes, never skipped; self-off if the changed-rate drops — operationally, if the changed-rate among wakes still running falls below the ungated baseline, the gate is suppressing productive work and disables itself. Because wake dispatch is high-impact, a gate also needs a deterministic activation/revert/reapply drill and a fresh review by a mind who did not author it. Reopen only with a pre-wake field that leaves a skip-eligible subgroup with a near-zero changed rate and non-trivial volume, or a corrected rule that neither relies on same-dossier for signal wakes nor loses productive changed wakes.
 
 Commit-risk is the only live System 1 registry entry and it is advisory: it never gates
 delivery. A missing or failing decision service degrades to the mind path; the log keeps an
