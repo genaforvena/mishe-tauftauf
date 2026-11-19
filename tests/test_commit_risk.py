@@ -73,6 +73,12 @@ class CommitRiskTests(unittest.TestCase):
         self.assertIsNone(cr.system0(["src/mishe_tauftauf/feed.py"]))
         self.assertIsNone(cr.system0([]))
 
+    def test_delivery_check_lookup_requires_the_complete_filename(self):
+        paths = ["tools/delivery_check.py\n"]
+        self.assertIsNone(cr.system0(paths))
+        result = cr.classify("unknown file", paths, None)
+        self.assertEqual((result["label"], result["source"]), (None, "escalate"))
+
     def test_rule_hit_never_calls_the_provider(self):
         calls = []
 
