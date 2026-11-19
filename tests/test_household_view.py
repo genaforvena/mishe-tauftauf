@@ -231,3 +231,56 @@ def test_redmi10_daily_shape_fails_closed(tmp_path, monkeypatch):
     empty.write_text("\n")
     monkeypatch.setattr(hv, "PHONES_FILE", empty)
     assert hv.redmi10_hourly() is None
+
+
+def test_budget_forecast_line_names_the_margin(tmp_path, monkeypatch):
+    import json
+    now = 1795129932.0
+    row = {"state": "FRESH", "used": 0.25, "burn_h": 0.0067, "eta_s": 401265,
+           "reset_at": now + 445668, "observed_at": now - 10}
+    path = tmp_path / "budget.json"
+    path.write_text(json.dumps({"accounts": {"claude": {
+        "state": "FRESH", "windows": {"7d": row, "5h": {}}}}}))
+    monkeypatch.setattr(hv, "BUDGET_FILE", path)
+    line = hv.budget_forecast_line(now)
+    assert "25% used" in line and "12h short of reset" in line
+    assert "burn 0.67%/h" in line and "need <=0.61%/h" in line
+
+
+def test_budget_forecast_line_when_it_reaches_reset(tmp_path, monkeypatch):
+    import json
+    now = 1795129932.0
+    row = {"state": "FRESH", "used": 0.10, "burn_h": 0.004, "eta_s": 810000,
+           "reset_at": now + 300000, "observed_at": now - 5}
+    path = tmp_path / "budget.json"
+    path.write_text(json.dumps({"accounts": {"claude": {
+        "state": "FRESH", "windows": {"7d": row}}}}))
+    monkeypatch.setattr(hv, "BUDGET_FILE", path)
+    line = hv.budget_forecast_line(now)
+    assert "reaches reset" in line and "spare" in line and "short" not in line
+
+
+def test_budget_forecast_line_fails_closed(tmp_path, monkeypatch):
+    import json
+    now = 1795129932.0
+    path = tmp_path / "budget.json"
+    monkeypatch.setattr(hv, "BUDGET_FILE", path)
+    assert hv.budget_forecast_line(now) is None                     # missing
+    path.write_text("{broken\n")
+    assert hv.budget_forecast_line(now) is None                     # malformed
+    good = {"state": "FRESH", "used": 0.25, "burn_h": 0.0067, "eta_s": 401265,
+            "reset_at": now + 445668, "observed_at": now - 10}
+    def write(accounts):
+        path.write_text(json.dumps({"accounts": accounts}))
+    write({"claude": {"state": "FRESH", "windows": {"7d": good}}})
+    assert hv.budget_forecast_line(now) is not None
+    write({"claude": {"state": "FRESH", "windows": {"7d": dict(good, observed_at=now - 1000)}}})
+    assert hv.budget_forecast_line(now) is None                     # stale row
+    write({"claude": {"state": "FRESH", "windows": {"5h": good}}})
+    assert hv.budget_forecast_line(now) is None                     # no 7d
+    write({"claude": {"state": "STALE", "windows": {"7d": good}}})
+    assert hv.budget_forecast_line(now) is None                     # non-fresh account
+    write({"claude": {"state": "FRESH", "windows": {"7d": dict(good, burn_h="x")}}})
+    assert hv.budget_forecast_line(now) is None                     # malformed field
+    write(5)
+    assert hv.budget_forecast_line(now) is None                     # non-object accounts

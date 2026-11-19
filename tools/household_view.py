@@ -24,6 +24,7 @@ AUDIO = SITE / "spatial/work/household/audio.jsonl"
 NOTE3_GLOB = "spatial/work/household/note3_samples_run*.jsonl"
 PHONES_FILE = SITE / "spatial/work/household/phones.jsonl"
 SIGNALS_EDGES = SITE / "signals" / "edges.jsonl"
+BUDGET_FILE = SITE / "engine" / "budget.json"
 STABILITY_WINDOW_S = 7 * 24 * 3600
 XTTS_DIR = Path.home() / ".local/share/tts/tts_models--multilingual--multi-dataset--xtts_v2"
 XTTS_SIZE = 1867929118
@@ -271,6 +272,49 @@ def signal_stability(name, now, window_s=None):
     flips = sum(1 for a, b in zip(values, values[1:]) if a != b)
     green = sum(1 for v in values if v == "GREEN")
     return flips, green, len(values)
+
+
+def budget_forecast_line(now=None):
+    """Read the claude 7d burn forecast as a magnitude, or UNKNOWN (None).
+
+    ``RUNS OUT BEFORE RESET`` is a projection, not exhaustion: this reports how
+    far projected exhaustion lands from the window reset and the burn rate
+    needed to reach it, so a RED reads as a number a person can judge. Reads the
+    producer's engine/budget.json; missing, stale, malformed or burn-less data
+    is None (the caller prints UNKNOWN), never a guess.
+    """
+    now = time.time() if now is None else now
+    try:
+        data = json.loads(BUDGET_FILE.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    accounts = data.get("accounts")
+    claude = accounts.get("claude") if isinstance(accounts, dict) else None
+    if not isinstance(claude, dict) or claude.get("state") != "FRESH":
+        return None
+    windows = claude.get("windows")
+    row = windows.get("7d") if isinstance(windows, dict) else None
+    if not isinstance(row, dict) or row.get("state") != "FRESH":
+        return None
+    used, burn = row.get("used"), row.get("burn_h")
+    eta, reset, observed = row.get("eta_s"), row.get("reset_at"), row.get("observed_at")
+    if any(isinstance(v, bool) or not isinstance(v, (int, float))
+           for v in (used, burn, eta, reset, observed)):
+        return None
+    if not (0 <= used <= 1 and burn > 0 and eta >= 0 and reset > now
+            and now - 900 < observed <= now + 5):
+        return None
+    to_reset_h = (reset - now) / 3600.0
+    need_burn = (1.0 - used) / to_reset_h
+    gap_h = to_reset_h - eta / 3600.0
+    pct = 100 * used
+    if gap_h > 0:
+        return (f"  budget-claude 7d: {pct:.0f}% used, forecast {gap_h:.0f}h short of reset "
+                f"(burn {100*burn:.2f}%/h, need <={100*need_burn:.2f}%/h)")
+    return (f"  budget-claude 7d: {pct:.0f}% used, forecast reaches reset "
+            f"with {-gap_h:.0f}h spare (burn {100*burn:.2f}%/h)")
 
 
 def redmi10_hourly(rows=None):
@@ -541,6 +585,8 @@ def draw():
         flips, green, total = validity
         out.append(f"  budget-claude: {flips} verdict flips in 7d, "
                    f"GREEN in {100 * green // total}% of {total} verdicts")
+    out.append(budget_forecast_line(time.time()) or
+               "  budget-claude 7d forecast: UNKNOWN (no fresh 7d budget row)")
     out.append("")
     out.append("")
     out.append("SOUND, VOICE, SENSOR FEEDS")
