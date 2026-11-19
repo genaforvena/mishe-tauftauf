@@ -1360,14 +1360,19 @@ def _sample_span(stamps):
     return f"{span_h:.0f} h" if span_h < 48 else f"{span_h / 24:.1f} d"
 
 
+def _recent_minutes(stamps):
+    """Whole minutes spanned by the stamps behind a figure, or None when there is no minute to name."""
+    if len(stamps) < 2:
+        return None
+    mins = (stamps[-1] - stamps[0]) / 60
+    return f"{mins:.0f} min" if mins >= 1 else None
+
+
 def _recent_window(count, stamps, measured=None):
     """'last N probes (M min)' from the stamps behind a figure; a measured count names a subset's span."""
     text = f"last {count} probes" if measured is None else f"{measured} of last {count} probes"
-    if len(stamps) > 1:
-        mins = (stamps[-1] - stamps[0]) / 60
-        if mins >= 1:
-            text += f" ({mins:.0f} min)"
-    return text
+    mins = _recent_minutes(stamps)
+    return f"{text} ({mins})" if mins else text
 
 
 def usuality_facts(data, now=None):
@@ -1402,11 +1407,8 @@ def usuality_facts(data, now=None):
     cur_stamps = good_stamps[-USUAL_RECENT:]
     cur = statistics.median(good[-USUAL_RECENT:])
     window = _recent_window(len(cur_stamps), cur_stamps)
-    recent_phrase = window
-    if len(cur_stamps) > 1:
-        mins = (cur_stamps[-1] - cur_stamps[0]) / 60
-        if mins >= 1:
-            recent_phrase = f"last {mins:.0f} min"
+    mins = _recent_minutes(cur_stamps)
+    recent_phrase = f"last {mins}" if mins else window
     good_rows = [row for _, v, row in recent if v is not None]
     exclude = len(good) >= USUAL_EXCLUDE + USUAL_RECENT
     base_pool = good[:-USUAL_EXCLUDE] if exclude else good
