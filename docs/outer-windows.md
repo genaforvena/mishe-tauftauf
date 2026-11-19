@@ -43,7 +43,7 @@ committing unchanged code is not a false RED.
 **Rule: a view has a window.** Every `tools/*_view.py` renderer has a row in this table, an entry in the
 site window registry (`restore: true`) and a live window in the `plants` session running it. A view
 without a window is unfinished: the author adds the window and the row in the same change, and the
-steward's `view-window-coverage` signal (below) is RED for a view that has none. A report tool that only
+the `view-window-coverage` duty (`checks/view-window-coverage.py`, every 300 s, resolver steward) is RED for a view with no registry entry or no live window, and UNKNOWN when tmux or the registry cannot be read. A report tool that only
 prints once (such as `delivery_view.py`) runs in a looped window command, as `budget` does.
 
 Create a window: `tmux new-window -t plants -d -n NAME 'env MISHE_TAUFTAUF_HOME=... python3 tools/X_view.py'`.
