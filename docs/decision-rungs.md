@@ -66,7 +66,11 @@ moving-pin wakes; its "last wake verified" fallback would have skipped 63 of the
 pre-wake discriminator in the ledger: its 72 wakes are only field-review and
 genome, and changed and verified wakes share role, reasons and end detail.
 `wake-gate-live.jsonl` still has no producer. The `system1-savings` signal reports
-`changed_by_trigger` so the changed-rate baseline per class stays observable.
+`changed_by_trigger` for each trigger class that started in the trailing 24 hours.
+Its `ended` count includes every recorded end. Its changed rate uses wakes that
+settled as `yielded` with a recorded result, and is null when there are none.
+The top-level aggregate rates retain their denominators of all recorded ends in
+their respective populations.
 
 ### Revised gate spec (2026-11-19): no safe gate for signal wakes
 

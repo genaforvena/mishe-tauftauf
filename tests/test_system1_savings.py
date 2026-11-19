@@ -38,15 +38,39 @@ def test_measures_trigger_classes_and_projected_skip(tmp_path):
     assert out["starts"] == 3
     assert out["starts_by_trigger"] == {"signal": 1, "inbox": 1, "intention": 1}
     assert out["changed_by_trigger"] == {
-        "inbox": {"ended": 1, "changed": 0, "changed_rate": 0.0},
-        "intention": {"ended": 1, "changed": 1, "changed_rate": 1.0},
-        "signal": {"ended": 1, "changed": 1, "changed_rate": 1.0},
+        "inbox": {"ended": 1, "yielded": 1, "changed": 0, "changed_rate": 0.0},
+        "intention": {"ended": 1, "yielded": 1, "changed": 1, "changed_rate": 1.0},
+        "signal": {"ended": 1, "yielded": 1, "changed": 1, "changed_rate": 1.0},
     }
     assert out["gate"] == "off" and out["avoided"] == 0
     assert out["projected_skip"] == 2
     assert out["changed_rate_all"] == round(2 / 3, 4)
     assert out["changed_rate_projected_skip"] == 0.5
     assert out["decision"]["calls_today"] == 3
+
+
+def test_trigger_rates_use_clean_yields_and_retain_failed_end_counts(tmp_path):
+    rows = _wake("changed", NOW - 100, "signal:ci", False, "changed")
+    rows += _wake("blocked", NOW - 90, "signal:ci", False, "blocked")
+    rows += _wake("verified", NOW - 85, "signal:ci", False, "verified")
+    rows += _wake("failed", NOW - 80, "signal:ci", False, "changed")
+    rows[-1]["state"] = "unknown"  # the engine failed after writing the receipt
+    rows += _wake("no-result", NOW - 70, "signal:ci", False, None)
+    rows += _wake("failed-only", NOW - 60, "inbox", False, None)
+    rows[-1]["state"] = "unknown"
+    rows += _wake("running", NOW - 50, "intention:again", False, None)[:1]
+    _write_rows(tmp_path, rows)
+    _budget(tmp_path)
+
+    out = s.measure(tmp_path, now=NOW)
+
+    assert out["changed_by_trigger"] == {
+        "inbox": {"ended": 1, "yielded": 0, "changed": 0, "changed_rate": None},
+        "intention": {"ended": 0, "yielded": 0, "changed": 0, "changed_rate": None},
+        "signal": {"ended": 5, "yielded": 3, "changed": 1, "changed_rate": 0.3333},
+    }
+    assert out["ended"] == 6
+    assert out["results"] == {"blocked": 1, "changed": 2, "none": 2, "verified": 1}
 
 
 def test_live_gate_counts_skips_in_window(tmp_path):

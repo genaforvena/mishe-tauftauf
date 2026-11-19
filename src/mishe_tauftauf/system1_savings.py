@@ -24,7 +24,7 @@ import time
 from collections import Counter
 from pathlib import Path
 
-from . import state_files
+from . import state_files, yielding
 
 GREEN, UNKNOWN = 0, 3
 WINDOW_S = 24 * 3600
@@ -63,12 +63,25 @@ def measure(home, *, now: float) -> dict:
 
     by_trigger = Counter(_trigger_class(r.get("trigger")) for r in starts.values())
     ended = [(s, ends[k]) for k, s in starts.items() if k in ends]
-    ended_by_trigger = Counter(_trigger_class(s.get("trigger")) for s, _ in ended)
-    changed_by_trigger = Counter(_trigger_class(s.get("trigger")) for s, e in ended
-                                 if e.get("result") == "changed")
+    ended_by_trigger = Counter()
+    yielded_by_trigger = Counter()
+    changed_by_trigger = Counter()
+    for start, end in ended:
+        trigger = _trigger_class(start.get("trigger"))
+        ended_by_trigger[trigger] += 1
+        result = end.get("result")
+        if end.get("state") == "yielded" and result in yielding.RESULTS:
+            yielded_by_trigger[trigger] += 1
+            if result == "changed":
+                changed_by_trigger[trigger] += 1
     trigger_rates = {
-        t: {"ended": n, "changed": changed_by_trigger[t], "changed_rate": _rate(changed_by_trigger[t], n)}
-        for t, n in sorted(ended_by_trigger.items())
+        trigger: {
+            "ended": ended_by_trigger[trigger],
+            "yielded": yielded_by_trigger[trigger],
+            "changed": changed_by_trigger[trigger],
+            "changed_rate": _rate(changed_by_trigger[trigger], yielded_by_trigger[trigger]),
+        }
+        for trigger in sorted(by_trigger)
     }
     results = Counter(e.get("result") or "none" for _, e in ended)
     same = [(s, e) for s, e in ended if s.get("same_dossier_as_last") is True]
