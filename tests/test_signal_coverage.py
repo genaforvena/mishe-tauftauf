@@ -1,0 +1,184 @@
+"""signal-coverage: the signal of signals — every registered signal has a live producer,
+a subscriber and a response; UNKNOWN when coverage itself cannot be judged."""
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import stat
+from pathlib import Path
+
+SPEC = importlib.util.spec_from_file_location(
+    "signal_coverage", Path(__file__).parent.parent / "checks" / "signal-coverage.py")
+mod = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(mod)
+
+NOW = 10_000_000.0
+MAX_AGE = 1800.0
+
+
+def site(tmp_path, registry=None, *, with_registry=True):
+    sigdir = tmp_path / "signals"
+    sigdir.mkdir(parents=True, exist_ok=True)
+    if with_registry:
+        (sigdir / "registry.json").write_text(json.dumps(registry or {}))
+    return tmp_path, sigdir
+
+
+def register_entry(max_age=MAX_AGE, subscribers=("steward",), registered_at=NOW - 3600):
+    return {"max_age": max_age, "subscribers": list(subscribers),
+            "registered_at": registered_at, "wake_on": "change"}
+
+
+def observed(sigdir, name, value="GREEN", *, at=NOW - 60, state="OK", seen=None):
+    (sigdir / f"{name}.json").write_text(json.dumps(
+        {"event": None, "observed_at": at, "reason": "", "rev": 1, "source": "test",
+         "state": state, "value": value}))
+    (sigdir / f"{name}.seen").touch()
+    stamp = seen if seen is not None else at
+    os.utime(sigdir / f"{name}.seen", (stamp, stamp))
+
+
+def _clear_systemctl(monkeypatch):
+    monkeypatch.setenv("MISHE_SYSTEMCTL_BIN", "/nonexistent-systemctl")
+
+
+def test_registry_unreadable_is_unknown(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, with_registry=False)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 3 and report["verdict"] == "UNKNOWN"
+
+
+def test_green_when_every_registered_signal_is_fresh_and_answered(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"budget-opencode-go": register_entry(),
+                                   "signal-coverage": register_entry()})
+    observed(sigdir, "budget-opencode-go", seen=NOW - 60)
+    observed(sigdir, "signal-coverage", seen=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0 and report["verdict"] == "GREEN"
+    assert report["counts"]["ok"] == 2
+    assert "budget-window-care: budget-opencode-go=GREEN" in report["detail"]
+
+
+def test_never_observed_past_grace_is_unmeasured_red(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"orphan-duty": register_entry(registered_at=NOW - 10 * MAX_AGE)})
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 2
+    assert any(c.startswith("unmeasured: orphan-duty") for c in report["causes"])
+
+
+def test_never_observed_inside_grace_is_a_note_not_a_cause(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"fresh-duty": register_entry(registered_at=NOW - MAX_AGE / 2)})
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0
+    assert any("inside grace" in n for n in report["counts"]["notes"])
+
+
+def test_stale_freshness_stamp_is_red(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"sleepy": register_entry()})
+    observed(sigdir, "sleepy", seen=NOW - 5 * MAX_AGE)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 2
+    assert any(c.startswith("stale: sleepy") for c in report["causes"])
+
+
+def test_red_reading_unchanged_past_bound_is_ignored(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"parked": register_entry()})
+    observed(sigdir, "parked", "RED", at=NOW - 3 * MAX_AGE, seen=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 2
+    assert any(c.startswith("ignored: parked") for c in report["causes"])
+
+
+def test_fresh_red_reading_is_pending_not_ignored(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"just-moved": register_entry()})
+    observed(sigdir, "just-moved", "RED", at=NOW - 60, seen=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0
+    assert any("response pending" in n for n in report["counts"]["notes"])
+
+
+def test_self_stale_producer_is_named_red(tmp_path, monkeypatch):
+    """Ilya DM #303234: the exercised stale-producer case — this producer missed its
+    cadence, and the check must name itself RED instead of reporting coverage GREEN."""
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"signal-coverage": register_entry(),
+                                    "healthy": register_entry()})
+    observed(sigdir, "healthy", seen=NOW - 60)
+    observed(sigdir, "signal-coverage", "GREEN", at=NOW - 60, seen=NOW - 10 * MAX_AGE)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 2
+    assert any(c.startswith("self stale") for c in report["causes"])
+    assert report["self"].startswith("self stamp")
+
+
+def test_self_before_first_registration_is_not_a_cause(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"healthy": register_entry()})
+    observed(sigdir, "healthy", seen=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0 and "first run" in report["self"]
+
+
+def test_orphan_signal_files_are_unheard_detail_not_cause(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"healthy": register_entry()})
+    observed(sigdir, "healthy", seen=NOW - 60)
+    observed(sigdir, "legacy-orphan")           # on disk, not in registry
+    (sigdir / "units.memory.json").write_text("{}")   # unit memory, never a signal
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0
+    assert report["counts"]["unheard"] == 1
+    assert "legacy-orphan" in report["detail"]
+
+
+def test_failing_producer_unit_is_red(tmp_path, monkeypatch):
+    fake = tmp_path / "fake-systemctl"
+    fake.write_text("#!/bin/sh\nif [ \"$1\" = \"--user\" ]; then "
+                    "echo 'mishe-producer-x.service loaded failed failed'; exit 0; fi\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
+    monkeypatch.setenv("MISHE_SYSTEMCTL_BIN", str(fake))
+    home, sigdir = site(tmp_path, {"healthy": register_entry()})
+    observed(sigdir, "healthy", seen=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 2
+    assert any(c.startswith("failing-producer units") for c in report["causes"])
+
+
+def test_unreadable_systemctl_is_reported_not_assumed(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"healthy": register_entry()})
+    observed(sigdir, "healthy", seen=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0
+    assert any("unit state unmeasured" in n for n in report["counts"]["notes"])
+
+
+def test_unmeasured_budget_account_rides_in_the_report(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"healthy": register_entry()})
+    observed(sigdir, "healthy", seen=NOW - 60)
+    (home / "engine").mkdir()
+    (home / "engine" / "budget.json").write_text(
+        json.dumps({"accounts": {"go-a": {}, "mystery-b": {}}}))
+    code, report = mod.run(home, NOW, sigdir=sigdir,
+                           repo=Path(__file__).parent.parent)
+    assert code == 0   # go-a is covered by the manifest; mystery-b is report-only
+    assert report["unmeasured_accounts"] == ["mystery-b"]
+
+
+def test_missing_budget_file_is_a_note_not_a_verdict(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"healthy": register_entry()})
+    observed(sigdir, "healthy", seen=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir,
+                           repo=Path(__file__).parent.parent)
+    assert code == 0
+    assert any("budget.json unmeasured" in n for n in report["counts"]["notes"])

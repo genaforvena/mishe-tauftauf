@@ -381,6 +381,30 @@
       "covers": "the opencode-go weekly allowance window (go-a, glm-5.3 first in every role): remaining, burn per hour, projected end and ledger selections; UNKNOWN when unmeasured"
     },
     {
+      "name": "signal-coverage",
+      "command": [
+        "{python}",
+        "{repo}/checks/signal-coverage.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 900,
+      "timeout": 120,
+      "max_age": 3600,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "steward",
+      "replaces": [],
+      "signal": {
+        "wake_on": "state"
+      },
+      "covers": "the signal of signals (Ilya DM #303234): every registered signal has a live producer, a subscriber and a response — unmeasured (never observed past the store's grace), stale freshness stamp, RED or UNKNOWN reading unchanged past 2*max_age, unheard orphan files, failed mishe-producer units and budget accounts with no measuring duty; names itself RED when its own producer missed cadence, UNKNOWN when the registry is unreadable; wake_on state so only a RED/UNKNOWN verdict wakes a subscriber"
+    },
+    {
       "name": "budget-view-mapping",
       "command": [
         "{python}",
