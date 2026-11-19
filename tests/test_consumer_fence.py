@@ -254,12 +254,16 @@ def test_inventory_keeps_a_queued_consumer_with_blank_environment(monkeypatch):
         fence.verify_future(Path('/site'), Path('/site/releases/' + ('a' * 40) + '/src'), {})
 
 
-def test_inventory_still_skips_an_active_unpinned_row(monkeypatch):
-    """The new fail-closed gate is queued-only: an active row with blank Environment stays skipped."""
+def test_inventory_keeps_an_active_module_consumer_with_blank_environment(monkeypatch):
+    """field-review 2026-11-19: an active module row with blank Environment must fail closed too.
+
+    The queued-row case and the blank-properties retry tests stay; this is the active half of the
+    same evidence-loss boundary. Genuinely unpinned direct-script services are still skipped below.
+    """
     from mishe_tauftauf import release_promotion as rp
-    name = 'mishe-arm.service'
-    rows = {name: dict(FragmentPath='/site/units/mishe-arm.service',
-                       ExecStart=_exec("-m mishe_tauftauf --home /site produce arm"),
+    name = 'mishe-next-due-example.service'
+    rows = {name: dict(FragmentPath='/run/user/1000/systemd/transient/' + name,
+                       ExecStart=_exec("-m mishe_tauftauf --home /site due"),
                        Environment='', ActiveState='active')}
 
     def command(args):
@@ -269,8 +273,11 @@ def test_inventory_still_skips_an_active_unpinned_row(monkeypatch):
 
     monkeypatch.setattr(fence, 'command', command)
     monkeypatch.setattr(fence, 'properties', lambda n: dict(rows[n]))
-    monkeypatch.setattr(rp, 'config_paths', lambda home: [Path('/site/units/mishe-arm.service')])
-    assert fence.inventory(Path('/site')) == {}
+    monkeypatch.setattr(rp, 'config_paths', lambda home: [])
+    inv = fence.inventory(Path('/site'))
+    assert name in inv and inv[name]['pending_timer'] is False
+    with pytest.raises(fence.ActiveWrongPin, match='wrong pin: ' + name):
+        fence.verify_future(Path('/site'), Path('/site/runtime/current/src'), {})
 
 
 def test_inventory_skips_a_queued_direct_script_service_without_a_pin(monkeypatch):

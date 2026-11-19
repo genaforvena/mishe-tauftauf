@@ -85,14 +85,15 @@ def inventory(home, previous=None, deadline=None):
         explicit_site = '--home ' + str(home) + ' ' in exec_start
         if row.get('FragmentPath') not in owned and not explicit_site and name not in previous: continue
         pending_timer = name in pending
-        # A queued *module* consumer is expected to carry the pin: `-m mishe_tauftauf` is found through
-        # PYTHONPATH. Blank Environment evidence there must fail closed in verify_future (`not pins`)
-        # instead of silently dropping a wrong/unknown pin (field-review inventory-blank repro, 2026-11-19).
-        # Direct-script services (e.g. human-inbound-relay, run via `python3 -I <script>`) are legitimately
-        # unpinned and stay skipped; so are active non-pending and non-relevant rows.
+        # Any relevant *module* consumer, queued or active, is expected to carry the pin:
+        # `-m mishe_tauftauf` resolves its code through PYTHONPATH. Blank Environment evidence
+        # must fail closed in verify_future (`not pins`) instead of silently dropping a
+        # wrong/unknown pin (field-review inventory-blank and active-blank repros, 2026-11-19).
+        # Direct-script services (e.g. human-inbound-relay, run via `python3 -I <script>`) are
+        # legitimately unpinned and stay skipped; so are non-relevant rows.
         module_consumer = '-m mishe_tauftauf' in exec_start
         if ('PYTHONPATH=' not in row.get('Environment', '') and name not in previous
-                and not (pending_timer and module_consumer)): continue
+                and not module_consumer): continue
         row['pending_timer'] = pending_timer
         result[name] = row
     return result
