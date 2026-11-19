@@ -1302,6 +1302,29 @@
       "replaces": []
     },
     {
+      "name": "human-typed-relayed",
+      "command": [
+        "{python}",
+        "{repo}/checks/human-typed-relayed.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 120,
+      "timeout": 60,
+      "max_age": 600,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "operator",
+      "replaces": [],
+      "covers": "the human's typed lines in his interactive session transcripts (~/.claude/projects/<repo-slug>/*.jsonl) reach the operator chat: the relay timer advances per-file byte cursors and DMs each new human-typed line to operator; RED when an unrelayed human line is older than the limit (relay not installed or stopped), UNKNOWN when the transcripts or cursor cannot be read. The 2026-11-19 Sonnet-ban lift arrived only in this channel, invisible to every mind until traced by hand"
+    },
+    {
       "name": "rust-measurement",
       "command": [
         "{python}",
