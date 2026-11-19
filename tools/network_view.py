@@ -1315,7 +1315,9 @@ def _slowdown_note(facts):
 
     The newest probe can look ordinary while the ten-probe median stays slow, so WHERE TIME GOES
     alone cannot say which phase moved. This uses the same samples and baseline as USUAL, and
-    speaks only when one phase accounts for at least half the extra time (and at least 20 ms).
+    speaks only when one phase accounts for at least half the extra time (and at least 20 ms). The
+    typical comes from the day's samples before the recent window, so the line names that span beside
+    it; without the label a reader carries the recent window onto the baseline figure.
     A median built from too few measured rows is not a ten-probe median: say UNKNOWN with the
     support counts instead of turning one measured probe into a claim about the whole window.
     """
@@ -1344,7 +1346,7 @@ def _slowdown_note(facts):
     label = dict(PHASE_LABELS)[field]
     source = facts["window"] if recent_n == window_n else f"{recent_n} of {facts['window']} measured"
     return (f"\n                slowdown is in the {label}: {source} "
-            f"{cur[field]:.0f} ms vs typical {base[field]:.0f} ms")
+            f"{cur[field]:.0f} ms vs typical {base[field]:.0f} ms ({facts['span']} of samples)")
 
 
 def usuality_facts(data, now=None):

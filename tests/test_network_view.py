@@ -777,8 +777,12 @@ def test_phase_line_names_the_phase_behind_a_sustained_slowdown():
             check["tls_ms"] = 445.0  # handshake 375 ms instead of the usual 220 ms
             check["total_ms"] = 515.0
     line = view.phase_line(rows, now=now)
-    assert "slowdown is in the secure handshake: last 10 probes (31 min) 375 ms vs typical 220 ms" in line
-    assert "median 515 ms vs typical 360 ms" in view.usuality_line(rows, now=now)
+    facts = view.usuality_facts(rows, now=now)
+    assert "slowdown is in the secure handshake: last 10 probes (31 min) 375 ms" in line
+    # The typical is the day's baseline, not the ten-probe recent window beside it; both lines must
+    # say so, or a reader carries "31 min" onto the typical figures.
+    assert f"vs typical 220 ms ({facts['span']} of samples)" in line
+    assert "median 515 ms vs typical 360 ms" in view.usuality_line(rows, now=now, facts=facts)
     assert all(len(part) <= 172 for part in line.split("\n"))  # the pane is 172 columns
 
 
@@ -866,11 +870,12 @@ def test_phase_line_names_partial_support_and_compares_the_measured_rows_only():
             for check in row["internet"].values():
                 check["tls_ms"] = 445.0
                 check["total_ms"] = 515.0
-    assert view.usuality_facts(rows, now=now)["phase_support"] == 5
-    assert "median 758 ms vs typical 360 ms" in view.usuality_line(rows, now=now)
-    line = view.phase_line(rows, now=now)
+    facts = view.usuality_facts(rows, now=now)
+    assert facts["phase_support"] == 5
+    assert "median 758 ms vs typical 360 ms" in view.usuality_line(rows, now=now, facts=facts)
+    line = view.phase_line(rows, now=now, facts=facts)
     assert ("slowdown is in the secure handshake: 5 of last 10 probes (31 min) measured "
-            "375 ms vs typical 220 ms") in line
+            f"375 ms vs typical 220 ms ({facts['span']} of samples)") in line
     assert "758 ms" not in line
 
 

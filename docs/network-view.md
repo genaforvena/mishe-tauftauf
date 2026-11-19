@@ -172,7 +172,8 @@ is not mistaken for a quiet mind.
   One host failing to answer is not a divergence: it leaves one sample, with no second line.
   When the headline flags a sustained slowdown, a second indented line names the phase that accounts
   for it, using the same ten-probe window and day baseline as `USUAL` (for example `slowdown is in
-  the secure handshake: last 10 probes (31 min) 375 ms vs typical 222 ms`). This matters because the
+  the secure handshake: last 10 probes (31 min) 375 ms vs typical 222 ms (24 h of samples)`). The span
+  after the typical names the baseline's rows, not the recent window. This matters because the
   three figures above are the newest probe only: it can be back to normal while the median stays
   slow, and the two lines would otherwise disagree. A phase is named only when it adds at least half
   the extra time and at least 20 ms; when the increase is spread across phases, no line is printed
