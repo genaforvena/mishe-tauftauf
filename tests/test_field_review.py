@@ -692,6 +692,23 @@ class ScheduledCheckTest(unittest.TestCase):
             self.assertEqual(result.returncode, 3)
             self.assertIn("UNKNOWN", result.stdout)
 
+    def test_failed_git_review_listing_is_unknown(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self._repo_with_tool(root, {"alpha--recent--2026-10-21.md": GOOD_REVIEW})
+            real_git = shutil.which("git")
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            git = fake_bin / "git"
+            git.write_text(f'#!/bin/sh\nif [ "$3" = ls-tree ]; then echo "injected listing failure" >&2; exit 1; fi\nexec "{real_git}" "$@"\n')
+            git.chmod(0o755)
+            env = dict(os.environ, PATH=f"{fake_bin}:{os.environ['PATH']}")
+            result = subprocess.run([sys.executable, str(self.CHECK), "--home", str(repo),
+                                     "--repo", str(repo)], capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+            self.assertIn("UNKNOWN", result.stdout)
+
     def test_landed_status_split_counts_discards_beside_applications(self):
         texts = {
             "reviews/a--x--2026-10-31.md": "---\nstatus: applied\n---\n",

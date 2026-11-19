@@ -117,8 +117,15 @@ def head_paths(repo: Path, relative: str) -> set[str]:
     ``git ls-tree`` reads the branch. ``git ls-files`` would read the index,
     where a staged review that was never committed would already look landed.
     """
-    out = _git(repo, ["ls-tree", "-r", "--name-only", "HEAD", "--", relative])
-    return {line for line in out.decode("utf-8", "replace").splitlines() if line}
+    try:
+        result = subprocess.run(["git", "-C", str(repo), "ls-tree", "-r", "--name-only",
+                                 "HEAD", "--", relative], capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise OSError(f"cannot list reviewed paths: {exc}") from exc
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip() or "git ls-tree failed"
+        raise OSError(f"cannot list reviewed paths: {detail}")
+    return {line for line in result.stdout.decode("utf-8", "replace").splitlines() if line}
 
 
 def head_bytes(repo: Path, relative: str) -> bytes | None:
@@ -891,3 +898,6 @@ if __name__ == "__main__":
         except OSError:
             pass
         raise SystemExit(0)
+    except OSError as exc:
+        print(f"UNKNOWN reviewed paths unavailable: {exc}", file=sys.stderr)
+        raise SystemExit(2)
