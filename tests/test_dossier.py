@@ -227,6 +227,19 @@ def test_red_signal_carries_its_raw_failing_output_and_green_does_not(tmp_path):
     assert "should not appear" not in out
 
 
+def test_signals_section_counts_reds_and_their_ages(tmp_path):
+    """Ilya DM #303254: the count and the age of REDs in one line in the window."""
+    from mishe_tauftauf import owed, signal_store
+    signal_store.register(tmp_path, "window", max_age=900, subscribers=["genome"])
+    signal_store.observe(tmp_path, "window", "RED", now=10, source="fixture")
+    signal_store.register(tmp_path, "quiet", max_age=900, subscribers=["genome"])
+    signal_store.observe(tmp_path, "quiet", "GREEN", now=10, source="fixture")
+    snap = owed.Snapshot(signal_revs={"window": 1, "quiet": 1})
+    out = dossier.build(tmp_path, "genome", snap, key="k", now=20 + 240, mail=[])
+    assert "- reds: 1 — window 4 min" in out
+    assert "quiet" not in out[out.index("- reds:"):]
+
+
 def test_detail_is_bounded_to_its_tail(tmp_path):
     from mishe_tauftauf import owed, signal_store
     signal_store.register(tmp_path, "noisy", max_age=900, subscribers=["genome"])

@@ -12,6 +12,15 @@ bytes on disk:
 - stale: the freshness stamp (.seen) is older than max_age — a producer that missed
   its cadence (the store's expire sweep ages the reading to UNKNOWN; this is the
   coverage view of the same failure).
+- unattended-red: a RED reading (failed-* unit signals included: their RED value is
+  the reading) older than 15 min with no owner-role wake active since it turned
+  (Ilya DM #303254: doctor RED stood 19:28-20:27 with no mind awake). Attendance is
+  a wake-record fact, not a chat scan: an outcome is recorded by a role inside its
+  wake, so any owner wake active past the turn covers both. Unreadable wake
+  evidence is a reported note, never an accusation. The cause names the signal and
+  its owner so the subscriber this verdict wakes (the resolver, and health through
+  the duty's subscribers) can route it, and a RED a wake has seen since it turned
+  is attended: it parks on the ordinary ignored bound instead.
 - ignored: a RED or UNKNOWN reading unchanged for longer than ``max(2 * max_age,
   1800)`` — no wake, outcome or state change inside the bound.
 - unheard: a signal file on disk with no registry entry — nobody subscribes. Reported
@@ -39,6 +48,7 @@ GREEN, RED, UNKNOWN = 0, 2, 3
 SELF = "signal-coverage"
 RESPONSE_MULT = 2     # a RED/UNKNOWN reading unanswered past 2 * max_age is ignored
 RESPONSE_MIN = 1800   # ... but never judged quicker than half an hour
+UNATTENDED_S = 900    # a RED older than this with no owner wake since it turned is unattended
 UNIT_PREFIX = "mishe-producer-"
 RESERVED_FILES = ("registry.json",)   # non-signal json in signals/ besides *.memory.json
 
@@ -87,6 +97,58 @@ def _accounts_unmeasured(home: Path, repo: Path) -> tuple[list[str], str | None]
         return [], "engine/budget.json unmeasured (owner: budget duties)"
     return sorted(a for a in budget["accounts"] if a not in text), None
 
+def _wake_intervals(wakes: Path, owners) -> dict[str, list[tuple[float, float]]] | None:
+    """``[start, end]`` per owner-role wake in ``wakes/``, or None when unreadable.
+
+    The wake key in a file name carries the start (``wake-<role>-<ns>.``); the end is
+    the yield time, falling back to the last output of a wake still running or cut
+    without a yield. A wake silent for the whole window is indistinguishable from a
+    dead one from disk bytes, and the next observation clears the difference once
+    the live wake writes again.
+    """
+    if not wakes.is_dir():
+        return None
+    try:
+        entries = os.scandir(wakes)
+    except OSError:
+        return None
+    owners = set(owners)
+    out: dict[str, list[tuple[float, float]]] = {}
+    with entries:
+        for entry in entries:
+            name = entry.name
+            if not (name.startswith("wake-") and name.endswith(".prompt.md")):
+                continue
+            stem = name[len("wake-"):-len(".prompt.md")]
+            role, sep, digits = stem.rpartition("-")
+            if not sep or role not in owners or not digits.isdigit():
+                continue
+            start = float(digits)
+            if start > 4e10:
+                start /= 1e9
+            end = start
+            for suffix in (".yield.json", ".prompt.out.jsonl", ".prompt.out.json"):
+                try:
+                    end = (wakes / f"wake-{role}-{digits}{suffix}").stat().st_mtime
+                    break
+                except OSError:
+                    continue
+            out.setdefault(role, []).append((start, end))
+    return out
+
+
+def _attended(intervals: dict[str, list[tuple[float, float]]] | None,
+              owners, turn: float) -> bool | None:
+    """True when an owner wake was active at or after ``turn``; None when unmeasured.
+
+    A wake whose end reached the turn either started inside the window or ran across
+    its start, so one comparison decides it. Outcomes need no separate evidence: a role
+    records an outcome inside its wake, so wake activity covers both clauses at once.
+    """
+    if intervals is None:
+        return None
+    return any(end >= turn for role in owners for _, end in intervals.get(role, ()))
+
 
 def run(home: Path, now: float, *, repo: Path | None = None,
         sigdir: Path | None = None) -> tuple[int, dict]:
@@ -98,8 +160,10 @@ def run(home: Path, now: float, *, repo: Path | None = None,
                          "signals/registry.json unreadable: coverage cannot be judged"}
     causes: list[str] = []
     counts = {"registered": len(registry), "ok": 0, "unmeasured": 0, "stale": 0,
-              "ignored": 0, "unheard": 0, "failing_units": [], "notes": []}
+              "ignored": 0, "unattended": 0, "unheard": 0,
+              "failing_units": [], "notes": []}
     detail_lines: list[str] = []
+    wake_cache: dict[frozenset, dict | None] = {}
 
     for name, entry in sorted(registry.items()):
         if not isinstance(entry, dict):
@@ -133,6 +197,25 @@ def run(home: Path, now: float, *, repo: Path | None = None,
             # response; a drifting reading (footprint, VERIFIED, samples=…) is
             # healthy data, not an alert, whatever its text says.
             bound = max(RESPONSE_MULT * max_age, RESPONSE_MIN)
+            owners = [o for o in entry.get("subscribers", []) if isinstance(o, str)]
+            if value == "RED" and now - observed_at > UNATTENDED_S:
+                # Ilya DM #303254: a RED nobody's wake has crossed since it turned is
+                # unattended, whatever its age — the parked/ignored bound below is for
+                # REDs a subscriber has already had the chance to see.
+                key = frozenset(owners)
+                if key not in wake_cache:
+                    wake_cache[key] = _wake_intervals(Path(home) / "wakes", owners)
+                attended = _attended(wake_cache[key], owners, observed_at)
+                if attended is None:
+                    counts["notes"].append(f"{name}: wake evidence unmeasured, "
+                                           "attendance unknown")
+                elif not attended:
+                    counts["unattended"] += 1
+                    named = ", ".join(owners) or "health"
+                    causes.append(f"unattended-red: {name} RED "
+                                  f"{(now - observed_at) / 60:.0f} min with no wake of "
+                                  f"owner {named} since it turned — wake {named} now")
+                    continue
             if now - observed_at > bound:
                 counts["ignored"] += 1
                 causes.append(f"ignored: {name} reading {value or state} unchanged "

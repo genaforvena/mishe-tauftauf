@@ -87,13 +87,28 @@ def test_stale_freshness_stamp_is_red(tmp_path, monkeypatch):
     assert any(c.startswith("stale: sleepy") for c in report["causes"])
 
 
+def wake_file(home, role, start, *, yield_at=None, output_at=None):
+    """One wake record: the name carries the start; yield/output mtimes carry the end."""
+    d = home / "wakes"
+    d.mkdir(parents=True, exist_ok=True)
+    key = f"wake-{role}-{int(start * 1e9)}"
+    (d / f"{key}.prompt.md").write_text("dossier", encoding="utf-8")
+    for suffix, at in ((".yield.json", yield_at), (".prompt.out.jsonl", output_at)):
+        if at is not None:
+            path = d / f"{key}{suffix}"
+            path.write_text("{}", encoding="utf-8")
+            os.utime(path, (at, at))
+
+
 def test_red_reading_unchanged_past_bound_is_ignored(tmp_path, monkeypatch):
     _clear_systemctl(monkeypatch)
     home, sigdir = site(tmp_path, {"parked": register_entry()})
     observed(sigdir, "parked", "RED", at=NOW - 3 * MAX_AGE, seen=NOW - 60)
+    wake_file(home, "steward", NOW - 3 * MAX_AGE + 60, yield_at=NOW - 3 * MAX_AGE + 120)
     code, report = mod.run(home, NOW, sigdir=sigdir)
     assert code == 2
     assert any(c.startswith("ignored: parked") for c in report["causes"])
+    assert not any(c.startswith("unattended-red") for c in report["causes"])
 
 
 def test_fresh_red_reading_is_pending_not_ignored(tmp_path, monkeypatch):
@@ -182,3 +197,79 @@ def test_missing_budget_file_is_a_note_not_a_verdict(tmp_path, monkeypatch):
                            repo=Path(__file__).parent.parent)
     assert code == 0
     assert any("budget.json unmeasured" in n for n in report["counts"]["notes"])
+
+
+def test_unattended_red_is_a_cause_naming_signal_and_owner(tmp_path, monkeypatch):
+    """Ilya DM #303254: doctor RED stood with no owner wake — the class names both."""
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"doctor": register_entry(subscribers=("health",))})
+    observed(sigdir, "doctor", "RED", at=NOW - 1200, seen=NOW - 60)
+    (home / "wakes").mkdir()
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 2
+    assert any(c.startswith("unattended-red: doctor") and "health" in c
+               for c in report["causes"])
+    assert report["counts"]["unattended"] == 1
+
+
+def test_unattended_red_past_the_ignored_bound_stays_unattended(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"doctor": register_entry(subscribers=("health",))})
+    observed(sigdir, "doctor", "RED", at=NOW - 3 * MAX_AGE, seen=NOW - 60)
+    (home / "wakes").mkdir()
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 2
+    assert any(c.startswith("unattended-red: doctor") for c in report["causes"])
+    assert not any(c.startswith("ignored: doctor") for c in report["causes"])
+
+
+def test_owner_wake_since_the_turn_attends_the_red(tmp_path, monkeypatch):
+    """The clearing: once an owner wake crossed the turn, the accusation is gone."""
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"doctor": register_entry(subscribers=("health",))})
+    observed(sigdir, "doctor", "RED", at=NOW - 1200, seen=NOW - 60)
+    wake_file(home, "health", NOW - 600, yield_at=NOW - 540)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0
+    assert not any(c.startswith("unattended-red") for c in report["causes"])
+    assert any("response pending" in n for n in report["counts"]["notes"])
+
+
+def test_owner_wake_running_across_the_turn_attends(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"doctor": register_entry(subscribers=("health",))})
+    observed(sigdir, "doctor", "RED", at=NOW - 1200, seen=NOW - 60)
+    wake_file(home, "health", NOW - 1800, output_at=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0
+    assert not any(c.startswith("unattended-red") for c in report["causes"])
+
+
+def test_owner_wake_ended_before_the_turn_does_not_attend(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"doctor": register_entry(subscribers=("health",))})
+    observed(sigdir, "doctor", "RED", at=NOW - 1200, seen=NOW - 60)
+    wake_file(home, "health", NOW - 3000, yield_at=NOW - 2400)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 2
+    assert any(c.startswith("unattended-red: doctor") for c in report["causes"])
+
+
+def test_fresh_red_inside_15_min_is_pending_not_unattended(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"doctor": register_entry(subscribers=("health",))})
+    observed(sigdir, "doctor", "RED", at=NOW - 600, seen=NOW - 60)
+    (home / "wakes").mkdir()
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0
+    assert not any(c.startswith("unattended-red") for c in report["causes"])
+
+
+def test_unreadable_wake_evidence_is_a_note_not_an_accusation(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"doctor": register_entry(subscribers=("health",))})
+    observed(sigdir, "doctor", "RED", at=NOW - 1200, seen=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)   # no wakes/ directory at all
+    assert code == 0
+    assert any("wake evidence unmeasured" in n for n in report["counts"]["notes"])
+    assert not any(c.startswith("unattended-red") for c in report["causes"])

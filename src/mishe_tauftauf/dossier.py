@@ -177,10 +177,19 @@ def build(home, role: str, snap, *, key: str, now: float, mail: list, reconcile_
     out += ["## Unread messages", ""]
     out += [f"- #{seq}: {text}" for seq, text in mail] or ["(none)"]
     out += ["", "## Signals you subscribe to", ""]
+    reds = []
     for name in snap.signal_revs:
         sig = signal_store.read(home, name, now=now)
         out.append(f"- {name}: {sig.state} {sig.value!r} {sig.reason}")
+        if sig.value == "RED" and isinstance(sig.observed_at, (int, float)):
+            reds.append((name, sig.observed_at))
         out.extend(_detail_lines(home, name, sig))
+    if reds:
+        # Ilya DM #303254: the count and the age of REDs in one line, so a reader of
+        # any window sees at a glance how long a RED has stood without paging for it.
+        ages = ", ".join(f"{name} {max(0.0, now - at) / 60:.0f} min"
+                         for name, at in sorted(reds, key=lambda r: r[1]))
+        out.append(f"- reds: {len(reds)} — {ages}")
     if not snap.signal_revs:
         out.append("(none)")
     out += ["", "## Due intentions", ""]
