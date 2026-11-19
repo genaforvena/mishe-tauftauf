@@ -176,13 +176,20 @@ def verify_future(home, expected, previous):
     from mishe_tauftauf.work_boundary import pythonpath_entries
     rows = inventory(home, previous)
     checked = []
+    wrong_active = None
     for name, row in rows.items():
         if not row.get('pending_timer') and row.get('ActiveState') not in ('activating', 'active', 'deactivating', 'reloading'): continue
         pins = pythonpath_entries(row.get('Environment', ''))
         if not pins or any(Path(pin).resolve() != Path(expected).resolve() for pin in pins):
             error = 'active or queued consumer has wrong pin: ' + name
-            if not row.get('pending_timer'):
-                raise ActiveWrongPin(error)
-            raise ValueError(error)
+            # A queued wrong-pin timer can fire between polls while an active row masks it;
+            # reject it immediately, before deferring any active mismatch for a retry.
+            if row.get('pending_timer'):
+                raise ValueError(error)
+            if wrong_active is None:
+                wrong_active = error
+            continue
         checked.append(dict(unit=name, invocation=row.get('InvocationID'), pending_timer=row.get('pending_timer'), pins=pins))
+    if wrong_active is not None:
+        raise ActiveWrongPin(wrong_active)
     return checked

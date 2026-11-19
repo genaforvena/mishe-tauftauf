@@ -245,3 +245,17 @@ def test_future_observation_fails_closed_if_active_pin_stays_wrong_or_unknown(tm
     monkeypatch.setattr(po.fence, "inventory", lambda home, previous: row)
     with pytest.raises(ValueError, match="wrong pin"):
         po.wait_future(tmp_path, tmp_path / "new", timeout=0, sleep=lambda _: None)
+
+
+@pytest.mark.parametrize("active_first", [True, False])
+def test_future_observation_rejects_a_queued_timer_masked_by_an_active_row(tmp_path, monkeypatch, active_first):
+    """A queued wrong-pin row is fatal even when an active row precedes it and both vanish next poll."""
+    active = ("a-active.service", {"ActiveState": "active", "Environment": "PYTHONPATH=/old/src"})
+    queued = ("z-queued.service", {"ActiveState": "inactive", "pending_timer": True,
+                                   "Environment": "PYTHONPATH=/old/src"})
+    rows = dict([active, queued] if active_first else [queued, active])
+    samples = iter([rows, {}])  # both wrong-pin rows disappear before a second poll could happen
+    monkeypatch.setattr(po.fence, "inventory", lambda home, previous: next(samples))
+    with pytest.raises(ValueError, match="z-queued.service") as caught:
+        po.wait_future(tmp_path, tmp_path / "new", timeout=5, sleep=lambda _: pytest.fail("must not wait"))
+    assert "wrong pin" in str(caught.value)
