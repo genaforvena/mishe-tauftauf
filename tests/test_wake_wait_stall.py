@@ -5,6 +5,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 SPEC = importlib.util.spec_from_file_location(
     "wake_wait_stall", Path(__file__).parent.parent / "checks" / "wake-wait-stall.py")
 mod = importlib.util.module_from_spec(SPEC)
@@ -47,8 +49,27 @@ def test_empty_window_is_green(tmp_path):
     assert mod.evaluate([], tmp_path, NOW)[0] == 0
 
 
-def test_hard_cap_without_a_stream_is_green(tmp_path):
-    assert mod.evaluate([ev()], tmp_path, NOW)[0] == 0
+def test_hard_cap_without_a_stream_is_unknown(tmp_path):
+    code, msg = mod.evaluate([ev()], tmp_path, NOW)
+    assert code == 3
+    assert "UNKNOWN" in msg and WAKE in msg
+
+
+@pytest.mark.parametrize("data", ["", '{"type":'])
+def test_hard_cap_without_readable_stream_events_is_unknown(tmp_path, data):
+    folder = stream(tmp_path, [])
+    (folder / f"{WAKE}.prompt.out.jsonl").write_text(data)
+    code, msg = mod.evaluate([ev()], tmp_path, NOW)
+    assert code == 3
+    assert "UNKNOWN" in msg and WAKE in msg
+
+
+def test_confirmed_wait_stays_red_when_another_hard_cap_has_no_stream(tmp_path):
+    missing = "wake-health-missing"
+    stream(tmp_path, [update("wait-1", [job()])])
+    code, msg = mod.evaluate([ev(wake=missing, role="health"), ev()], tmp_path, NOW)
+    assert code == 2
+    assert WAKE in msg and missing in msg
 
 
 def test_hard_cap_without_a_wait_is_green(tmp_path):

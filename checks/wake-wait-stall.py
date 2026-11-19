@@ -13,7 +13,7 @@ its last 2 MB, and a producer must not have to page in a 44 MB stream to answer.
 observes; it does not change any engine timeout or wait cap.
 
 Exit: 0 GREEN, 2 RED (a hard-cap wake in the window was cut with a still-running subagent wait),
-3 UNKNOWN (the routing ledger cannot be read).
+3 UNKNOWN (the routing ledger or a required wake stream cannot be read).
 """
 import argparse
 import calendar
@@ -40,21 +40,18 @@ def decode(line):
 
 def _tail_bytes(path):
     """The last TAIL_BYTES of a stream, without reading the whole file."""
-    try:
-        size = path.stat().st_size
-        with path.open("rb") as fh:
-            if size > TAIL_BYTES:
-                fh.seek(size - TAIL_BYTES)
-                raw = fh.read()
-                first_newline = raw.find(b"\n")
-                return raw[first_newline + 1:] if first_newline >= 0 else b""
-            return fh.read()
-    except OSError:
-        return b""
+    size = path.stat().st_size
+    with path.open("rb") as fh:
+        if size > TAIL_BYTES:
+            fh.seek(size - TAIL_BYTES)
+            raw = fh.read(TAIL_BYTES)
+            first_newline = raw.find(b"\n")
+            return raw[first_newline + 1:] if first_newline >= 0 else b""
+        return fh.read(TAIL_BYTES)
 
 
 def last_wait_job(path):
-    """The job still running in the last wait of a stream's tail, or None.
+    """The running job in the last wait, or None after reading a usable tail.
 
     A wait that ended normally resolved its jobs; only an aborted wait or one with no end event
     can be the thing the hard cap cut.  Concurrent waits are disambiguated by tool call id and the
@@ -62,12 +59,16 @@ def last_wait_job(path):
     """
     calls = {}
     seq = 0
+    has_event = False
     for line in _tail_bytes(path).decode("utf-8", "replace").splitlines():
         try:
             ev = json.loads(line)
         except (ValueError, TypeError):
             continue
-        if not isinstance(ev, dict) or ev.get("type") not in ("tool_execution_update", "tool_execution_end"):
+        if not isinstance(ev, dict) or not isinstance(ev.get("type"), str):
+            continue
+        has_event = True
+        if ev["type"] not in ("tool_execution_update", "tool_execution_end"):
             continue
         if ev.get("toolName") != "wait":
             continue
@@ -83,6 +84,8 @@ def last_wait_job(path):
             content = (ev.get("result") or {}).get("content") or []
             text = " ".join(str(c.get("text", "")) for c in content if isinstance(c, dict))
             call["end"] = (bool(ev.get("isError")), text.lower())
+    if not has_event:
+        raise ValueError("wake stream tail has no readable events")
     if not calls:
         return None
     call = max(calls.values(), key=lambda c: c["seq"])
@@ -101,14 +104,25 @@ def last_wait_job(path):
 def evaluate(events, home, now):
     """Return (exit_code, message).  events are decoded hard-cap ledger events."""
     hits = []
+    unavailable = []
     for ev in events:
         if not ev or not ev["wake"] or not 0 <= now - ev["at"] <= WINDOW_S:
             continue
         path = Path(home) / "wakes" / f"{ev['wake']}.prompt.out.jsonl"
-        job = last_wait_job(path)
+        try:
+            job = last_wait_job(path)
+        except OSError as exc:
+            unavailable.append(f"{ev['role']} {ev['wake']}: wake stream unreadable ({exc.strerror})")
+            continue
+        except ValueError as exc:
+            unavailable.append(f"{ev['role']} {ev['wake']}: {exc}")
+            continue
         if job:
             hits.append((ev, job))
+    missing_detail = "; unclassified hard-cap wakes: " + "; ".join(unavailable) if unavailable else ""
     if not hits:
+        if unavailable:
+            return 3, "wake-wait-stall: UNKNOWN" + missing_detail
         return 0, "wake-wait-stall: GREEN no hard-cap wake in the last 2 h was cut with a still-running subagent wait"
     parts = []
     for ev, job in hits:
@@ -116,7 +130,7 @@ def evaluate(events, home, now):
         parts.append(f"{ev['role']} {ev['wake']}: wait on {job['label']} ({job['id']}, {job['type']}, "
                      f"{job['model']}) still running after {duration} when `{ev['reason']}`")
     return 2, (f"wake-wait-stall: {len(hits)} hard-cap wake(s) held by a still-running subagent wait -> "
-               + "; ".join(parts))
+               + "; ".join(parts) + missing_detail)
 
 
 def main(argv=None):
