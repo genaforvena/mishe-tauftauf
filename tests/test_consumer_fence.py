@@ -226,6 +226,78 @@ def test_inventory_skips_a_queued_release_review_retry(monkeypatch):
     assert set(fence.inventory(Path('/site'))) == {'mishe-arm.service'}
 
 
+def test_inventory_keeps_a_queued_consumer_with_blank_environment(monkeypatch):
+    """field-review 2026-11-19: a queued target with missing Environment evidence must fail closed, not vanish.
+
+    The real arming path always sets PYTHONPATH (arm.py --setenv), so this is a synthetic evidence-loss
+    case; verify_future already rejects a row with no pins once the row reaches it. The gap was that
+    inventory dropped the row first.
+    """
+    from mishe_tauftauf import release_promotion as rp
+    name = 'mishe-next-due-example.service'
+    timer = 'mishe-next-due-example.timer'
+    rows = {name: dict(FragmentPath='/run/user/1000/systemd/transient/' + name,
+                       ExecStart=_exec("-m mishe_tauftauf --home /site due"),
+                       Environment='', ActiveState='inactive')}
+
+    def command(args):
+        if 'mishe-*.service' in args: return json.dumps([{'unit': name}])
+        if 'mishe-*.timer' in args: return json.dumps([{'unit': timer}])
+        return name
+
+    monkeypatch.setattr(fence, 'command', command)
+    monkeypatch.setattr(fence, 'properties', lambda n: dict(rows[n]))
+    monkeypatch.setattr(rp, 'config_paths', lambda home: [])
+    inv = fence.inventory(Path('/site'))
+    assert name in inv and inv[name]['pending_timer'] is True
+    with pytest.raises(ValueError, match='wrong pin: ' + name):
+        fence.verify_future(Path('/site'), Path('/site/releases/' + ('a' * 40) + '/src'), {})
+
+
+def test_inventory_still_skips_an_active_unpinned_row(monkeypatch):
+    """The new fail-closed gate is queued-only: an active row with blank Environment stays skipped."""
+    from mishe_tauftauf import release_promotion as rp
+    name = 'mishe-arm.service'
+    rows = {name: dict(FragmentPath='/site/units/mishe-arm.service',
+                       ExecStart=_exec("-m mishe_tauftauf --home /site produce arm"),
+                       Environment='', ActiveState='active')}
+
+    def command(args):
+        if 'mishe-*.service' in args: return json.dumps([{'unit': name}])
+        if 'mishe-*.timer' in args: return json.dumps([])
+        return name
+
+    monkeypatch.setattr(fence, 'command', command)
+    monkeypatch.setattr(fence, 'properties', lambda n: dict(rows[n]))
+    monkeypatch.setattr(rp, 'config_paths', lambda home: [Path('/site/units/mishe-arm.service')])
+    assert fence.inventory(Path('/site')) == {}
+
+
+def test_inventory_skips_a_queued_direct_script_service_without_a_pin(monkeypatch):
+    """A timer-triggered direct-script check (human-inbound-relay) is legitimately unpinned (2026-11-19).
+
+    It uses `python3 -I <script> --home ...`, has no PYTHONPATH, and must not be rejected as a wrong pin.
+    """
+    from mishe_tauftauf import release_promotion as rp
+    name = 'mishe-human-inbound-relay.service'
+    timer = 'mishe-human-inbound-relay.timer'
+    raw_exec = ('{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -I '
+                '/home/mesh-home/checks/human-inbound-relayed.py --home /site --relay ; ignore_errors=no ; }')
+    rows = {name: dict(FragmentPath='/home/mesh-home/.config/systemd/user/' + name,
+                       ExecStart=raw_exec,
+                       Environment='PATH=/usr/bin MISHE_SEED_HOME=/site', ActiveState='inactive')}
+
+    def command(args):
+        if 'mishe-*.service' in args: return json.dumps([{'unit': name}])
+        if 'mishe-*.timer' in args: return json.dumps([{'unit': timer}])
+        return name
+
+    monkeypatch.setattr(fence, 'command', command)
+    monkeypatch.setattr(fence, 'properties', lambda n: dict(rows[n]))
+    monkeypatch.setattr(rp, 'config_paths', lambda home: [Path('/home/mesh-home/.config/systemd/user/' + name)])
+    assert fence.inventory(Path('/site')) == {}
+
+
 def test_verify_future_still_rejects_an_installed_consumer_on_old_bytes(tmp_path, monkeypatch):
     """The review exemption must not soften the check for a real site consumer."""
     home = tmp_path / 'site'
