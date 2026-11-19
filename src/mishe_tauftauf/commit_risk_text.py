@@ -14,8 +14,12 @@ import re
 import subprocess
 
 RULES = (
+    # delivery_requests.py is delivery work (enqueue/consume, patch/revert phases,
+    # release_promotion), not dispatch. Listing it in the dispatch pattern below used to
+    # shadow the delivery pattern's deliver\w*, which would otherwise claim it. Two confident
+    # model labels on that path (1.0, 0.89) agree it is delivery-path.
     ("dispatch-path", re.compile(r"^src/mishe_tauftauf/(wake|engine_\w+|owed|access|"
-                                 r"delivery_requests|work_state|dispositions|failure|host_capacity)\w*\.py\Z")),
+                                 r"work_state|dispositions|failure|host_capacity)\w*\.py\Z")),
     ("delivery-path", re.compile(r"^(src/mishe_tauftauf/(release|deliver|delivery|heal|promotion|pin)\w*\.py"
                                  r"|scripts/.*(deliver|heal|release)\S*)")),
     ("delivery-path", re.compile(r"^tools/delivery_check\.py\Z")),

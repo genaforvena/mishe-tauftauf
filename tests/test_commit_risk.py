@@ -53,6 +53,15 @@ class CommitRiskTests(unittest.TestCase):
         self.assertEqual(cr.system0(["tools/delivery_check.py",
                                      "tests/test_delivery_check_script.py"]), "delivery-path")
 
+    def test_delivery_requests_is_delivery_not_dispatch(self):
+        # delivery_requests.py is delivery work (enqueue/consume, patch/revert,
+        # release_promotion), not dispatch. Two confident model labels (1.0, 0.89) on
+        # that path say delivery-path; listing it in the dispatch pattern used to shadow
+        # the delivery deliver\w* match, so both paths decide together now.
+        self.assertEqual(cr.system0(["src/mishe_tauftauf/delivery_requests.py"]), "delivery-path")
+        self.assertEqual(cr.system0(["src/mishe_tauftauf/delivery_requests.py",
+                                      "src/mishe_tauftauf/release_promotion.py"]), "delivery-path")
+
     def test_ordinary_is_model_only_except_the_view_lookup(self):
         self.assertIn("ordinary", cr.CRITERIA)
         self.assertNotIn(dp.UNCLEAR, cr.CRITERIA)
