@@ -32,6 +32,24 @@ def path_label(path: str) -> str | None:
     """The label of the first rule that matches ``path``, or None when no rule does."""
     return next((label for label, rx in RULES if rx.search(path)), None)
 
+def subject_label(subject: str) -> str | None:
+    """The label for a commit whose subject names its area, or None when it does not.
+
+    Minds write subjects as ``area: imperative summary`` ("delivery: re-arm ...",
+    "release review: ...", "release_promotion: ..."). On the model's residual every
+    2026-11-14..19 ledger row whose area token starts with ``delivery`` or ``release``
+    was answered ``delivery-path`` (38 of 38 model answers), and that is the cautious
+    label, so the token settles the residual without a call. The colon is required:
+    free prose without an area token stays with the model. This runs only after the
+    path rules: three ledger rows with such subjects were settled ``routine`` by the
+    byte-exact path rules ("delivery-cadence: ...", "delivery: the pin-delivery
+    check ..."), so paths decide first.
+    """
+    head, sep, _ = subject.strip().partition(":")
+    if sep and head.startswith(("delivery", "release")):
+        return "delivery-path"
+    return None
+
 
 def changed_paths(repo, sha: str) -> tuple[str, list[str]]:
     """Return ``(subject, changed paths)`` for one commit."""

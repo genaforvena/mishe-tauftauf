@@ -1,4 +1,4 @@
-"""Commit risk class: a System 0 path rule first, a decision model only for the residual.
+"""Commit risk class: System 0 path and subject rules first, a decision model only for the residual.
 
 Labels: ``routine`` (docs, tests, observation code only), ``delivery-path`` (release,
 promotion, pin, delivery, heal, rollback), ``dispatch-path`` (wake admission, scheduling,
@@ -6,9 +6,10 @@ locking, authorization, dispatch, failure routing), and ``ordinary`` (product co
 such effect; a model-only label, never a path rule). Before ``ordinary`` existed, most
 ordinary code escaped to ``unclear`` (replay 2026-11-15: 21 of 27 answers). Docs, tests and
 checks are supporting paths: a commit whose remaining paths fall in one rule gets that label
-from code with source ``system0``. Two non-routine rules, or any unmatched path, is the
-residual: the decision provider picks one label from the criteria, or the escape option, and
-the answer is kept only if its confidence clears the threshold.
+from code with source ``system0``. A residual commit whose subject names its area with a
+``delivery``/``release`` token is settled from code too (the cautious label). Everything
+else is the residual: the decision provider picks one label from the criteria, or the escape
+option, and the answer is kept only if its confidence clears the threshold.
 
 The class is advisory. It is written to a ledger for later ground truth (``outcome`` is
 computed read-only from git history by ``commit_risk_outcomes.py``); it never gates
@@ -64,6 +65,9 @@ def classify(subject: str, paths: list[str], provider: dp.Provider | None, *, po
     label = system0(paths)
     if label is not None:
         return {"label": label, "source": "system0", "confidence": 1.0, "reason": "path rule"}
+    label = text.subject_label(subject)
+    if label is not None:
+        return {"label": label, "source": "system0", "confidence": 1.0, "reason": "subject rule"}
     if provider is None:
         return {"label": None, "source": "escalate", "confidence": None, "reason": "no decision provider"}
     state = f"commit subject: {subject}\nchanged paths:\n" + "\n".join(paths)
@@ -103,8 +107,6 @@ def record_new(repo: pathlib.Path, home: pathlib.Path, provider: dp.Provider | N
         if sha in done:
             continue
         subject, paths = changed_paths(repo, sha)
-        if provider is None and system0(paths) is None:
-            continue
         result = dict(classify(subject, paths, provider, post=post), subject=subject, n_paths=len(paths))
         if result["confidence"] is None:
             continue  # the service gave no answer (refused, failed or unconfigured): ask again on a later pass
@@ -114,14 +116,14 @@ def record_new(repo: pathlib.Path, home: pathlib.Path, provider: dp.Provider | N
 
 
 def unanswered(repo: pathlib.Path, home: pathlib.Path, provider: dp.Provider | None, *, count: int = 50) -> list[str]:
-    """Recent commits the ledger still lacks and that no path rule settles (the model's residual)."""
+    """Recent commits the ledger still lacks and that no rule settles (the model's residual)."""
     done = recorded_shas(home)
     pending = []
     for sha in text.recent_shas(repo, count):
         if sha in done:
             continue
-        _, paths = changed_paths(repo, sha)
-        if system0(paths) is None:
+        subject, paths = changed_paths(repo, sha)
+        if system0(paths) is None and text.subject_label(subject) is None:
             pending.append(sha)
     return pending
 

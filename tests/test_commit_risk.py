@@ -106,6 +106,39 @@ class CommitRiskTests(unittest.TestCase):
         self.assertEqual((result["label"], result["source"]), ("routine", "system0"))
         self.assertEqual(calls, [])
 
+    def test_subject_rule_settles_residual_delivery_without_a_model(self):
+        calls = []
+
+        def post(*args):
+            calls.append(args)
+            raise AssertionError("model must not run for a subject rule hit")
+
+        for subject in ("delivery: re-arm the promotion gate", "release review: fresh eyes",
+                        "release_promotion: retry the latch"):
+            with self.subTest(subject=subject):
+                result = cr.classify(subject, ["src/mishe_tauftauf/feed.py"], _provider(self.root), post=post)
+                self.assertEqual((result["label"], result["source"], result["reason"]),
+                                 ("delivery-path", "system0", "subject rule"))
+        self.assertEqual(calls, [])
+
+    def test_path_rule_beats_the_subject_rule(self):
+        # Ledger counterexample: "delivery: the pin-delivery check ..." landed on
+        # routine paths, and the byte-exact path rule settled it routine. Paths decide
+        # first; the subject token only settles the path rule's residual.
+        result = cr.classify("delivery: the pin-delivery check keeps the latch", ["docs/x.md"],
+                             _provider(self.root), post=_post("delivery-path", 0.9))
+        self.assertEqual((result["label"], result["source"], result["reason"]),
+                         ("routine", "system0", "path rule"))
+
+    def test_subject_rule_requires_an_area_token_with_a_colon(self):
+        provider = _provider(self.root)
+        no_colon = cr.classify("release notes for the week", ["src/mishe_tauftauf/feed.py"], provider,
+                               post=_post("ordinary", 0.9))
+        self.assertEqual((no_colon["label"], no_colon["source"]), ("ordinary", "system1"))
+        other_area = cr.classify("network: router load line", ["src/mishe_tauftauf/feed.py"], provider,
+                                 post=_post("ordinary", 0.9))
+        self.assertEqual((other_area["label"], other_area["source"]), ("ordinary", "system1"))
+
     def test_residual_takes_a_confident_model_label(self):
         result = cr.classify("feed refactor", ["src/mishe_tauftauf/feed.py"], _provider(self.root),
                              post=_post("dispatch-path", 0.9))
@@ -150,6 +183,8 @@ class RecordNewTest(unittest.TestCase):
         self._commit(["src/mishe_tauftauf/release_x.py"], "release: x")
         # Residual: feed.py matches no rule, so no System 0 answer. The space checks -z parsing.
         self._commit(["tests/t one.py", "src/mishe_tauftauf/feed.py"], "mixed: residual")
+        # Residual paths, but the subject names the area: the subject rule settles it.
+        self._commit(["src/mishe_tauftauf/feed.py", "docs/delivery.md"], "delivery: residual named")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -164,10 +199,16 @@ class RecordNewTest(unittest.TestCase):
 
     def test_no_provider_records_system0_only_then_idempotent(self):
         rows = cr.record_new(self.repo, self.home, None)
-        self.assertEqual([r["label"] for r in rows], ["routine", "delivery-path"])
+        self.assertEqual([r["label"] for r in rows], ["routine", "delivery-path", "delivery-path"])
         self.assertEqual({r["source"] for r in rows}, {"system0"})
         self.assertEqual(cr.record_new(self.repo, self.home, None), [])
-        self.assertEqual(len(cr.recorded_shas(self.home)), 2)
+        self.assertEqual(len(cr.recorded_shas(self.home)), 3)
+
+    def test_subject_rule_records_residual_without_a_provider_and_keeps_it_answered(self):
+        rows = cr.record_new(self.repo, self.home, None)
+        self.assertEqual([r["label"] for r in rows], ["routine", "delivery-path", "delivery-path"])
+        self.assertEqual(rows[2]["reason"], "subject rule")
+        self.assertEqual(cr.unanswered(self.repo, self.home, None), [self.git("rev-parse", "HEAD~1").strip()])
 
     def test_residual_is_answered_when_a_provider_exists(self):
         cr.record_new(self.repo, self.home, None)
@@ -186,7 +227,7 @@ class RecordNewTest(unittest.TestCase):
         self.assertEqual([r["label"] for r in rows], ["dispatch-path"])
         self.assertEqual(seen["subject"], "mixed: residual")
         self.assertIn("tests/t one.py", seen["paths"])
-        self.assertEqual(len(cr.recorded_shas(self.home)), 3)
+        self.assertEqual(len(cr.recorded_shas(self.home)), 4)
 
     def test_unanswered_commit_is_not_recorded_so_a_later_pass_asks_again(self):
         def refused(subject, paths, provider, *, post=None, threshold=cr.THRESHOLD):
