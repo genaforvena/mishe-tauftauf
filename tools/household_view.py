@@ -260,6 +260,8 @@ def signal_stability(name, now, window_s=None):
         rows = [json.loads(line) for line in SIGNALS_EDGES.read_text().splitlines() if line.strip()]
     except (OSError, ValueError):
         return None
+    if any(not isinstance(r, dict) for r in rows):
+        return None
     window = [r for r in rows
               if r.get("name") == name
               and isinstance(r.get("at"), (int, float)) and r["at"] >= now - window_s]

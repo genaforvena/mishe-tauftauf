@@ -161,6 +161,8 @@ def test_redmi10_stability_counts_onsets_and_fails_closed(tmp_path, monkeypatch)
     assert hv.redmi10_stability(now, window_s=50) is None      # empty window
     path.write_text("{broken json\n")
     assert hv.redmi10_stability(now, window_s=600) is None     # malformed
+    path.write_text("5\n[1]\n" + "\n".join(json.dumps(r) for r in rows) + "\n")
+    assert hv.redmi10_stability(now, window_s=600) == (1, 3, 5)  # non-object rows are skipped
     monkeypatch.setattr(hv, "PHONES_FILE", tmp_path / "absent.jsonl")
     assert hv.redmi10_stability(now, window_s=600) is None     # missing
 
@@ -184,6 +186,8 @@ def test_signal_stability_counts_flips_and_fails_closed(tmp_path, monkeypatch):
     assert hv.signal_stability("budget-claude", now, window_s=50) is None     # empty window
     path.write_text("{broken json\n")
     assert hv.signal_stability("budget-claude", now, window_s=600) is None    # malformed
+    path.write_text("5\n" + json.dumps(rows[1]) + "\n")
+    assert hv.signal_stability("budget-claude", now, window_s=600) is None    # non-object line: malformed history
     monkeypatch.setattr(hv, "SIGNALS_EDGES", tmp_path / "absent.jsonl")
     assert hv.signal_stability("budget-claude", now, window_s=600) is None    # missing
 
