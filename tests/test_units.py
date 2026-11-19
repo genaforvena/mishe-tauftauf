@@ -403,6 +403,34 @@ def test_doctor_red_when_operator_wrapper_pin_is_stale_but_units_match(cfg, tmp_
     assert report.state == "RED" and any("gone" in p for p in report.problems)
 
 
+def test_wrapper_pin_reuse_matches_the_same_directory_across_spellings(cfg, tmp_path):
+    pin = _pin(tmp_path, {"__init__.py": "", "a.py": "from .gone import g\n"})
+    link = tmp_path / "pin-link"
+    link.symlink_to(tmp_path / "pin", target_is_directory=True)   # the resolved-release spelling
+    _wrapper(cfg.home, str(link))
+    # doctor already scanned tmp_path/pin as the units pin: the same directory is
+    # reused, not rescanned, whatever spelling the wrapper exports.
+    reuse = units._wrapper_pin_problems(cfg.home, known={pin: ["pin a.py: imports missing module gone"]})
+    assert reuse == ["wrapper pin a.py: imports missing module gone"]
+    fresh = units._wrapper_pin_problems(cfg.home, known={str(tmp_path / "other-pin"): []})
+    assert fresh == ["wrapper pin a.py: imports missing module gone"]   # a different directory is still scanned
+
+
+def test_doctor_scans_the_pin_once_when_the_wrapper_names_the_same_directory(cfg, tmp_path, monkeypatch):
+    pin = _pin(tmp_path, {"__init__.py": "", "a.py": "from . import b\n", "b.py": ""})
+    link = tmp_path / "pin-link"
+    link.symlink_to(tmp_path / "pin", target_is_directory=True)
+    _wrapper(cfg.home, str(link))
+    cfg = units.Config(**{**cfg.__dict__, "pythonpath": pin})
+    units.sync(cfg, ROLES, runner=lambda c: None)
+    real, seen = units._pin_import_problems, []
+    monkeypatch.setattr(units, "_pin_import_problems",
+                        lambda p: (seen.append(p), real(p))[1])
+    report = units.doctor(cfg, ROLES)
+    assert report.state == "GREEN", report.problems
+    assert len(seen) == 1, seen      # units pin and wrapper pin are one scan, not two
+
+
 def test_pin_import_check_accepts_a_name_the_package_init_exports_but_still_flags_a_missing_one(tmp_path):
     # Independent review of moving-pin: `from . import NAME` may name something __init__.py defines or imports, not only a module.
     pin = _pin(tmp_path, {"__init__.py": "VERSION = '1'\nfrom .b import helper\ndef util():\n    return 1\n",

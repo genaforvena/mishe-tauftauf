@@ -574,15 +574,21 @@ def _pin_import_problems(pythonpath: str) -> list:
         base = base_dir.joinpath(*parts)
         return base.with_suffix(".py").is_file() or (base / "__init__.py").is_file()
 
+    # Parse each file once and reuse the trees: import-target _module_names lookups
+    # would otherwise reparse the same modules per import (measured 4x the package's
+    # file count in parses per call, ~2 s of every doctor run on the live pin).
+    texts, trees = {}, {}
     problems = []
     for src in sorted(pkg.rglob("*.py")):
         rel = src.relative_to(pkg)
         try:
-            tree = ast.parse(src.read_text(encoding="utf-8"), filename=str(src))
+            texts[src] = src.read_text(encoding="utf-8")
+            trees[src] = ast.parse(texts[src], filename=str(src))
         except (SyntaxError, UnicodeDecodeError, OSError) as exc:
             problems.append(f"pin {rel}: unreadable ({type(exc).__name__})")
+            texts[src] = trees[src] = None
             continue
-        for node in ast.walk(tree):
+        for node in ast.walk(trees[src]):
             if not (isinstance(node, ast.ImportFrom) and node.level >= 1):
                 continue
             # A relative import resolves from the file's own package, one directory up per extra dot.
@@ -599,28 +605,31 @@ def _pin_import_problems(pythonpath: str) -> list:
                     continue
                 target = anchor.joinpath(*parts)
                 target_file = target.with_suffix(".py") if target.with_suffix(".py").is_file() else target / "__init__.py"
-                known = _module_names(target_file)
+                known = _module_names(target_file, trees, texts)
                 for alias in node.names:
                     # A name is reported missing only when the target is fully static (no star import, no __getattr__) and the name
                     # is neither defined/imported there nor a submodule: a stale pin can lack a symbol as well as a module.
                     if alias.name != "*" and known is not None and alias.name not in known and not has_module(anchor.joinpath(*parts), [alias.name]):
                         problems.append(f"pin {rel}: {node.module} does not define {alias.name}")
             else:
-                exported = _module_names(anchor / "__init__.py")
+                exported = _module_names(anchor / "__init__.py", trees, texts)
                 for alias in node.names:
                     if alias.name != "*" and not has_module(anchor, [alias.name]) and (exported is None or alias.name not in exported):
                         problems.append(f"pin {rel}: imports missing module {alias.name}")
     return problems
 
 
-def _module_names(path: Path):
+def _module_names(path: Path, trees=None, texts=None):
     """Top-level names a module defines or imports (including inside top-level if/try/with/for blocks), or None when that cannot be
     decided statically (unreadable, a star import or a module ``__getattr__``): unknown is never reported as missing."""
-    try:
-        text = path.read_text(encoding="utf-8")
-        tree = ast.parse(text, filename=str(path))
-    except (SyntaxError, UnicodeDecodeError, OSError):
-        return None
+    tree = (trees or {}).get(path)
+    text = (texts or {}).get(path)
+    if tree is None or text is None:                    # outside the caller's parsed set: parse it here
+        try:
+            text = path.read_text(encoding="utf-8")
+            tree = ast.parse(text, filename=str(path))
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            return None
     if any(marker in text for marker in ("globals()", "__dict__", "sys.modules", "setattr(")):
         return None                                   # the namespace is built at run time: undecidable, so never reported as missing
     names, dynamic = set(), [False]
@@ -680,12 +689,14 @@ def _wrapper_pythonpath(wrapper: Path):
     return None
 
 
-def _wrapper_pin_problems(home: Path) -> list:
+def _wrapper_pin_problems(home: Path, known: dict | None = None) -> list:
     """The operator wrapper's PYTHONPATH pin must import every module it names.
 
     The 2026-11-05 renderer failure came through this wrapper: its stale runtime pin
     lacked revive_boundary while the units stayed GREEN. Unreadable or unpinned
-    wrappers are reported, never treated as clean.
+    wrappers are reported, never treated as clean. ``known`` maps a pythonpath to
+    problems computed moments earlier in the same doctor run (the units pin is
+    usually the very same release): pass it to skip reparsing the same pin.
     """
     wrapper = home / "bin" / "mishe-tauftauf"
     try:
@@ -694,6 +705,12 @@ def _wrapper_pin_problems(home: Path) -> list:
         return [f"wrapper {wrapper.name}: unreadable ({type(exc).__name__})"]
     if pin is None:
         return [f"wrapper {wrapper.name}: exports no PYTHONPATH pin"]
+    # The units pin is typically ``runtime/current/src`` while the wrapper exports the
+    # resolved release path: compare real directories, not spelling.
+    if known is not None:
+        for known_pin, known_problems in known.items():
+            if str(Path(known_pin).resolve()) == str(Path(pin).resolve()):
+                return [f"wrapper {p}" for p in known_problems]
     return [f"wrapper {p}" for p in _pin_import_problems(pin)]
 
 
@@ -703,7 +720,8 @@ def doctor(cfg: Config, roles, *, producers=(), resolvers=None) -> DoctorReport:
         installed = _installed(cfg)
     except OSError as exc:
         return DoctorReport("UNKNOWN", [f"cannot read installed units: {exc}"])
-    problems = _pin_import_problems(cfg.pythonpath) + _wrapper_pin_problems(cfg.home)
+    pin_problems = _pin_import_problems(cfg.pythonpath)
+    problems = pin_problems + _wrapper_pin_problems(cfg.home, known={cfg.pythonpath: pin_problems})
     for rel, text in expected.items():
         if rel not in installed:
             problems.append(f"{rel}: missing")
