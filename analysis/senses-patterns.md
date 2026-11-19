@@ -67,15 +67,51 @@ senses-timeout-cost-bound-20261116.md`) already bounds every named stage well
 under the cut; the month-long series adds that the bound also holds in
 practice across all phases.
 
+## Pattern 4 — budget goes RED on a quota-window rollover even when quota is healthy
+
+**Method.** For each budget RED wake, read the published signal reason, then
+`claude-native-quota.json` and the `native-evidence/` report behind it, and
+compare the native window `used_percentage` and reset clause against the RED.
+Three events: 2026-11-19 21:03Z 5h rollover (RED 21:06:32Z, recovered 21:11Z
+this wake), 2026-11-19 15:49Z 5h reset (recovered 16:26Z), 2026-11-18 02:59Z
+weekly reset (recovered 03:02Z, `SITE_HOME/operator/senses-budget-recovery-20261118.md`).
+
+**Finding.** Each RED was a transient validity hold, not exhaustion. At a
+rollover native `/usage` prints "0% used" with no reset clause;
+`read_usage` correctly marks it `pending` → UNKNOWN → the account is
+UNREADABLE → budget RED. The next native sample reports the new window (this
+wake: 5h 3% used, reset 02:00Z; 7d 23%), but `engine/budget.json` had been
+published before that sample, so the RED lingered about one 600 s producer
+tick. Re-running the producer published GREEN immediately.
+
+**Counterexamples tried.** *Is every budget RED a rollover hold?* No: the
+2026-11-17/18 7d window genuinely reached 100% used and the RED correctly
+flagged exhaustion (the recovery note records its true cause and retires the
+disposition once the reset passed). The discriminator is the native sample:
+a fresh window with a future reset and low `used_percentage` is stale
+propagation; 100% used is real. Never suppress a RED on the assumption it is
+a hold.
+
+**Change / UNKNOWN.** No code changed: the fail-closed UNKNOWN on a no-reset
+0% sample is correct — publishing that as a clean 0% would be worse. The
+remaining question is whether a ~10 min RED that wakes a subscriber on every
+rollover is worth holding the last good verdict for one tick; that is a
+budget-signal design decision in the steward's area, recorded here as
+UNKNOWN, not changed unilaterally.
+
 ## What changed because of this
 
-Nothing in code this wake. The findings feed two open senses items:
+This wake: no code changed. The 21:03Z budget RED was a rollover hold; re-running
+the producer published GREEN and Pattern 4 records the discriminator. Earlier
+wakes added this file (commit `c094cea3`). The findings feed open senses items:
 
 - readings-timeout alternative (deadline 2026-11-24): Pattern 3 is the
   no-recurrence evidence the re-scope needs.
 - rust-runtime migration S2 ("profile the readings scan cost driver"):
   Pattern 1's two steps are the natural before/after experiment for whoever
   profiles the scanner; the dates and medians above are the measured baseline.
+- budget rollover holds (Pattern 4): open question below; not changed here
+  because it is a steward-area signal-design decision.
 
 ## Open questions
 
@@ -83,3 +119,7 @@ Nothing in code this wake. The findings feed two open senses items:
   activation history, which this wake cannot read.
 - Does the evening effect (Pattern 2) correlate with host CPU/IO pressure,
   or with network's evening latency phase? Both stores exist; not yet joined.
+- Should the budget signal hold its last-good verdict for one producer tick
+  across a quota rollover instead of waking a subscriber on a ~10 min
+  validity hold (Pattern 4)? Disposer is the budget/steward steward; senses
+  keeps the current fail-closed behaviour until that decision is made.
