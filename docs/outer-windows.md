@@ -12,6 +12,7 @@ pane it draws in: 41 rows, and 170 columns for the health view, which is the wid
 | senses | tools/household_view.py | senses | the apartment map and what Mishe senses |
 | senses-map | tools/map_view.py | senses | terminal tile map of the apartment (rooms from floorplan.json, best-guess people from map-state.json), read-only; `--once` prints one frame; needs tools/map_render.py run first |
 | network | tools/network_view.py | network | home network and connection |
+| delivery | tools/delivery_view.py (looped each minute by the window command) | genome | checked-to-live time per promotion: check stage, wake fence, drain, review |
 | budget | operator/budget/budget_view.py (site-local) | budget | provider quota and spend |
 
 The `budget` window runs `operator/budget/budget_pane.sh` (site-local, under `SITE_HOME`), a loop that calls
@@ -38,6 +39,12 @@ differs by content from the files on disk (it then prints the exact
 reached, the pane process cannot be read, or the view files cannot be read — a check
 that cannot look is UNKNOWN, never a quiet pass. Comparing by content means
 committing unchanged code is not a false RED.
+
+**Rule: a view has a window.** Every `tools/*_view.py` renderer has a row in this table, an entry in the
+site window registry (`restore: true`) and a live window in the `plants` session running it. A view
+without a window is unfinished: the author adds the window and the row in the same change, and the
+steward's `view-window-coverage` signal (below) is RED for a view that has none. A report tool that only
+prints once (such as `delivery_view.py`) runs in a looped window command, as `budget` does.
 
 Create a window: `tmux new-window -t plants -d -n NAME 'env MISHE_TAUFTAUF_HOME=... python3 tools/X_view.py'`.
 Never type into another plant's panes. Keep this table current when a window is added or retired.
