@@ -23,6 +23,7 @@ LATEST = SITE / "discovery/latest.json"
 AUDIO = SITE / "spatial/work/household/audio.jsonl"
 NOTE3_GLOB = "spatial/work/household/note3_samples_run*.jsonl"
 PHONES_FILE = SITE / "spatial/work/household/phones.jsonl"
+SIGNALS_EDGES = SITE / "signals" / "edges.jsonl"
 STABILITY_WINDOW_S = 7 * 24 * 3600
 XTTS_DIR = Path.home() / ".local/share/tts/tts_models--multilingual--multi-dataset--xtts_v2"
 XTTS_SIZE = 1867929118
@@ -234,6 +235,31 @@ def redmi10_stability(now, window_s=None):
                 if prev == "ok" and cur in ("unknown", "stale"))
     fresh = sum(1 for s in statuses if s == "ok")
     return drops, fresh, len(statuses)
+
+
+def signal_stability(name, now, window_s=None):
+    """Verdict flips and GREEN fraction for one signal over a trailing window.
+
+    Reads the signal store's own edge log. A flip is a change of `value` between
+    consecutive edges for the named signal; an UNKNOWN verdict has value None and
+    is distinct from GREEN or RED. Edges are revisions, not time slices, so the
+    fraction is of verdicts published, not of wall-clock time. Missing, unreadable
+    or malformed history is UNKNOWN (None), never a zero.
+    """
+    window_s = STABILITY_WINDOW_S if window_s is None else window_s
+    try:
+        rows = [json.loads(line) for line in SIGNALS_EDGES.read_text().splitlines() if line.strip()]
+    except (OSError, ValueError):
+        return None
+    window = [r for r in rows
+              if r.get("name") == name
+              and isinstance(r.get("at"), (int, float)) and r["at"] >= now - window_s]
+    if not window:
+        return None
+    values = [r.get("value") for r in window]
+    flips = sum(1 for a, b in zip(values, values[1:]) if a != b)
+    green = sum(1 for v in values if v == "GREEN")
+    return flips, green, len(values)
 
 
 def read_rows(path, limit=400):
@@ -448,6 +474,15 @@ def draw():
         out.append(f"  redmi10  history: {drops} drop onsets in 7d, "
                    f"fresh in {100 * fresh // total}% of {total} samples")
     out.append("  position of phones: only as the household states it")
+    out.append("")
+    out.append("SIGNAL VALIDITY (one verdict is a reading, not a stable state)")
+    validity = signal_stability("budget-claude", time.time())
+    if validity is None:
+        out.append("  budget-claude UNKNOWN (no verdict history in 7d window)")
+    else:
+        flips, green, total = validity
+        out.append(f"  budget-claude: {flips} verdict flips in 7d, "
+                   f"GREEN in {100 * green // total}% of {total} verdicts")
     out.append("")
     out.append("")
     out.append("SOUND, VOICE, SENSOR FEEDS")

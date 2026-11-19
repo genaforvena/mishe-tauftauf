@@ -165,3 +165,26 @@ def test_redmi10_stability_counts_onsets_and_fails_closed(tmp_path, monkeypatch)
     assert hv.redmi10_stability(now, window_s=600) is None     # malformed
     monkeypatch.setattr(hv, "PHONES_FILE", tmp_path / "absent.jsonl")
     assert hv.redmi10_stability(now, window_s=600) is None     # missing
+
+
+def test_signal_stability_counts_flips_and_fails_closed(tmp_path, monkeypatch):
+    import json
+    now = 1795127354.0
+    path = tmp_path / "edges.jsonl"
+    rows = [
+        {"at": now - 900, "name": "budget-claude", "value": "RED"},      # outside window
+        {"at": now - 500, "name": "budget-claude", "value": "GREEN"},
+        {"at": now - 400, "name": "budget-claude", "value": None},       # UNKNOWN is a flip
+        {"at": now - 300, "name": "budget-claude", "value": None},       # no flip
+        {"at": now - 200, "name": "budget-claude", "value": "RED"},      # flip
+        {"at": now - 100, "name": "budget-claude", "value": "GREEN"},    # flip
+        {"at": now - 150, "name": "another-signal", "value": "RED"},     # ignored
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    monkeypatch.setattr(hv, "SIGNALS_EDGES", path)
+    assert hv.signal_stability("budget-claude", now, window_s=600) == (3, 2, 5)
+    assert hv.signal_stability("budget-claude", now, window_s=50) is None     # empty window
+    path.write_text("{broken json\n")
+    assert hv.signal_stability("budget-claude", now, window_s=600) is None    # malformed
+    monkeypatch.setattr(hv, "SIGNALS_EDGES", tmp_path / "absent.jsonl")
+    assert hv.signal_stability("budget-claude", now, window_s=600) is None    # missing
