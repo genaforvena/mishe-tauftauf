@@ -36,7 +36,7 @@ USUAL_MIN_SAMPLES = 120    # minimum web samples for a meaningful baseline
 USUAL_RECENT = 10          # "now" is the median of the last ten web samples
 USUAL_EXCLUDE = 60         # keep recent samples out of the baseline so a spike cannot inflate it
 USUAL_BUCKETS = 40         # width of the trend sparkline
-_router = {"at": 0.0, "text": None}
+_router = {"at": 0.0, "text": None, "read_at": 0.0}
 _wifi = {"at": 0.0, "text": None, "weak": False}
 WEAK_WIFI_DBM = -75
 REPO = Path(__file__).resolve().parent.parent
@@ -380,19 +380,27 @@ def outage_lines(data):
 
 
 def router_facts():
-    if time.time() - _router["at"] < ROUTER_EVERY_S:
-        return _router["text"]
-    _router["at"] = time.time()
-    try:
-        r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "router",
-                            "cut -d' ' -f1 /proc/uptime; cut -d' ' -f1-3 /proc/loadavg; "
-                            "ubus call network.interface.wan status | grep -E '\"up\"|\"uptime\"' | tr -d ' \\n'"],
-                           capture_output=True, text=True, timeout=12)
-        days, load, wan = nb.decode_router(r.stdout)
-        _router["text"] = f"router up {days:.1f} days, load {load}, WAN {'up' if wan else 'UNKNOWN/down'}"
-    except (OSError, ValueError, subprocess.SubprocessError):
-        _router["text"] = None
-    return _router["text"]
+    """The live router line with the read's age, or UNKNOWN with its age when the read failed.
+
+    Cached for ROUTER_EVERY_S, including a failed read so a dead SSH path is not retried every
+    redraw. The age is computed at call time, so a cached line does not freeze at "0 s ago".
+    """
+    now = time.time()
+    if now - _router["at"] >= ROUTER_EVERY_S:
+        _router["at"] = now
+        try:
+            r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "router",
+                                "cut -d' ' -f1 /proc/uptime; cut -d' ' -f1-3 /proc/loadavg; "
+                                "ubus call network.interface.wan status | grep -E '\"up\"|\"uptime\"' | tr -d ' \\n'"],
+                               capture_output=True, text=True, timeout=12)
+            days, load, wan = nb.decode_router(r.stdout)
+            _router["text"] = f"router up {days:.1f} days, load {load}, WAN {'up' if wan else 'UNKNOWN/down'}"
+        except (OSError, ValueError, subprocess.SubprocessError):
+            _router["text"] = None
+        _router["read_at"] = time.time()
+    text = _router["text"]
+    age_txt = f"read {time.time() - _router.get('read_at', 0.0):.0f} s ago"
+    return f"{text}; {age_txt}" if text else f"UNKNOWN (ssh read failed); {age_txt}"
 
 
 def client_names():
@@ -1726,8 +1734,7 @@ def draw():
     out.extend(" " * 16 + extra for extra in quality[1:])
     out[-1] += "   (read-only router counters)"
     out.append("  RECORDED 5-MIN " + recorded_clients_line())
-    rf = router_facts()
-    out.append("  ROUTER        " + (rf or "UNKNOWN (ssh read failed)") + "   (read-only)")
+    out.append("  ROUTER        " + router_facts() + "   (read-only)")
     out.append("  UPLINK        " + uplink_line() + "   (read-only)")
     out.append("  WAN LINK      " + wan_link_line() + "   (read-only, speed and carrier drops)")
     out.append("  UPLINK RATE   " + uplink_rate_line())

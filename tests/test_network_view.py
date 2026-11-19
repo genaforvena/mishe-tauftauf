@@ -187,6 +187,49 @@ def test_recorded_clients_line_marks_stale(tmp_path, monkeypatch):
     assert "STALE" in view.recorded_clients_line(1000000.0 + 3600)
 
 
+def test_router_facts_shows_the_read_age_and_does_not_freeze_it(monkeypatch):
+    # The ROUTER line was the only router-derived reading with no age. A cached read must show its
+    # real age, not a frozen "0 s ago" from the instant it was read.
+    now = [1_795_000_000.0]
+    monkeypatch.setattr(time, "time", lambda: now[0])
+    monkeypatch.setitem(view._router, "at", 0.0)
+    monkeypatch.setitem(view._router, "text", None)
+    monkeypatch.setitem(view._router, "read_at", 0.0)
+    stdout = "864000\n0.15 0.20 0.25 1/1 1234\n{\"up\":true,\"uptime\":100}\n"
+    monkeypatch.setattr(view.subprocess, "run",
+                        lambda *a, **k: view.subprocess.CompletedProcess(a, 0, stdout, ""))
+    line = view.router_facts()
+    assert "router up 10.0 days" in line and "WAN up" in line and "read 0 s ago" in line
+    now[0] += 10  # still inside the 60 s cache: the age must grow with the clock
+    line = view.router_facts()
+    assert "read 10 s ago" in line and "read 0 s ago" not in line
+
+
+def test_router_facts_failed_read_is_unknown_with_age_and_cached(monkeypatch):
+    # A dead SSH path must say UNKNOWN with its age (never a calm router line), and the 60 s cache
+    # must hold on failure so a dead path is not retried on every redraw.
+    now = [1_795_000_000.0]
+    monkeypatch.setattr(time, "time", lambda: now[0])
+    monkeypatch.setitem(view._router, "at", 0.0)
+    monkeypatch.setitem(view._router, "text", None)
+    monkeypatch.setitem(view._router, "read_at", 0.0)
+    calls = []
+
+    def boom(*a, **k):
+        calls.append(1)
+        raise OSError("ssh down")
+
+    monkeypatch.setattr(view.subprocess, "run", boom)
+    line = view.router_facts()
+    assert line.startswith("UNKNOWN (ssh read failed)") and "read 0 s ago" in line
+    now[0] += 10
+    assert view.router_facts().startswith("UNKNOWN")
+    assert len(calls) == 1  # cached on failure, not retried every redraw
+    now[0] += 55  # past the 60 s cache: one retry, still UNKNOWN
+    assert view.router_facts().startswith("UNKNOWN")
+    assert len(calls) == 2
+
+
 def test_gateway_line_shows_jitter_and_unknown_when_missing():
     rows = [{"gateway": {"loss_pct": 0.0, "avg_ms": 0.47, "jitter_ms": 0.027}}]
     line = view.gateway_line(rows)
