@@ -37,6 +37,11 @@ def test_measures_trigger_classes_and_projected_skip(tmp_path):
     out = s.measure(tmp_path, now=NOW)
     assert out["starts"] == 3
     assert out["starts_by_trigger"] == {"signal": 1, "inbox": 1, "intention": 1}
+    assert out["changed_by_trigger"] == {
+        "inbox": {"ended": 1, "changed": 0, "changed_rate": 0.0},
+        "intention": {"ended": 1, "changed": 1, "changed_rate": 1.0},
+        "signal": {"ended": 1, "changed": 1, "changed_rate": 1.0},
+    }
     assert out["gate"] == "off" and out["avoided"] == 0
     assert out["projected_skip"] == 2
     assert out["changed_rate_all"] == round(2 / 3, 4)

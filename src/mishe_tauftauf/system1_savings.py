@@ -63,6 +63,13 @@ def measure(home, *, now: float) -> dict:
 
     by_trigger = Counter(_trigger_class(r.get("trigger")) for r in starts.values())
     ended = [(s, ends[k]) for k, s in starts.items() if k in ends]
+    ended_by_trigger = Counter(_trigger_class(s.get("trigger")) for s, _ in ended)
+    changed_by_trigger = Counter(_trigger_class(s.get("trigger")) for s, e in ended
+                                 if e.get("result") == "changed")
+    trigger_rates = {
+        t: {"ended": n, "changed": changed_by_trigger[t], "changed_rate": _rate(changed_by_trigger[t], n)}
+        for t, n in sorted(ended_by_trigger.items())
+    }
     results = Counter(e.get("result") or "none" for _, e in ended)
     same = [(s, e) for s, e in ended if s.get("same_dossier_as_last") is True]
     changed_all = sum(1 for _, e in ended if e.get("result") == "changed")
@@ -79,6 +86,7 @@ def measure(home, *, now: float) -> dict:
         "starts": len(starts),
         "starts_by_trigger": dict(sorted(by_trigger.items())),
         "ended": len(ended),
+        "changed_by_trigger": trigger_rates,
         "results": dict(sorted(results.items())),
         "gate": "live" if live_path.exists() else "off",
         "avoided": skipped,

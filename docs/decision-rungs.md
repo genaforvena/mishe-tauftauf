@@ -56,6 +56,20 @@ schema; the System 0 `same_dossier_as_last` verdict is the only gate signal, and
 the live action log `wake-gate-live.jsonl` has no producer. Do not re-add the model
 without new evidence that beats the base rate.
 
+The 2026-11-19 request for a first-class `signal:moving-pin-delivery` wake gate was
+declined on measured evidence. The proposed System 0 rule skipped a wake when its
+dossier matched the role's last and that wake verified, but `same_dossier_as_last`
+is true on 0 of 605 signal starts and 0 of 618 inbox starts in the ledger — it
+occurs only on intention wakes (55/143). The rule would skip zero of the 72 daily
+moving-pin wakes; its "last wake verified" fallback would have skipped 63 of them,
+5 of which changed, losing productive work. The first class has no deterministic
+pre-wake discriminator in the ledger: its 72 wakes are only field-review and
+genome, and changed and verified wakes share role, reasons and end detail.
+`wake-gate-live.jsonl` still has no producer. Revisit only with a pre-wake signal
+that separates changed from verified wakes, or a revised rule that does not depend
+on same-dossier for signal wakes. The `system1-savings` signal now reports
+`changed_by_trigger` so the changed-rate baseline per class stays observable.
+
 Commit-risk is the only live System 1 registry entry and it is advisory: it never gates
 delivery. A missing or failing decision service degrades to the mind path; the log keeps an
 `escalate` row rather than stopping work. The retired DM class lane left prose to the mind
