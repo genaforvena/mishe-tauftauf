@@ -122,9 +122,14 @@ def target(root, name):
 RUN_TIMEOUT_S = 300
 TEST_TIMEOUT_S = 1500
 """The deterministic check is the whole suite on the exact bytes (about 8 minutes), not a sample."""
-# Observe commands drain old in-memory consumers (consumer_fence.drain waits up to DRAIN_TIMEOUT_S) and then start the
-# new one. A 300 s kill here reverted a correct delivery (review of moving-pin-5d3c6729): the bound must exceed the drain.
-OBSERVE_TIMEOUT_S = consumer_fence.DRAIN_TIMEOUT_S + 180
+# Observe drains old in-memory consumers, arms the next-due timer once more, then waits for stale
+# active invocations on the earlier pin (pin_observation.observe): TWO bounded drains plus the arm's
+# systemctl start. A 300 s kill once reverted a correct delivery (review of moving-pin-5d3c6729), and
+# review of fcde6977 found the second wait added without updating this bound — a drain >~120 s followed
+# by a stale active unit could exceed the kill and roll back a correct pin. Bound the whole composition.
+OBSERVE_ARM_S = 60              # work_boundary.invoke_arm_consumer's systemctl start timeout
+OBSERVE_FIXED_MARGIN_S = 120    # unit shows with reload retries, dual-probe and wrapper checks
+OBSERVE_TIMEOUT_S = 2 * consumer_fence.DRAIN_TIMEOUT_S + OBSERVE_ARM_S + OBSERVE_FIXED_MARGIN_S
 
 
 def run(home, identity, label, command, timeout=RUN_TIMEOUT_S):

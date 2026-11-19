@@ -1229,10 +1229,14 @@ def test_broken_dependency_module_is_named_unresolved_not_raised(tmp_path):
 
 
 def test_observe_timeout_outlasts_consumer_drain(tmp_path, monkeypatch):
-    # Regression: a 300 s observe kill (uncaught as TimeoutExpired) reverted a correct delivery whose
-    # old consumer legitimately drained for up to DRAIN_TIMEOUT_S. The observe bound must exceed that drain.
+    # Regression: a 300 s observe kill reverted a correct delivery whose old consumer legitimately
+    # drained for up to DRAIN_TIMEOUT_S (moving-pin-5d3c6729). pin_observation.observe then gained a
+    # SECOND bounded wait (wait_future) plus a re-arm; review of fcde6977 found the kill was never
+    # raised for that composition. The kill must exceed both drains plus the arm, not just one drain.
     from mishe_tauftauf import consumer_fence
-    assert wall_patch.OBSERVE_TIMEOUT_S > consumer_fence.DRAIN_TIMEOUT_S
+    composed = (2 * consumer_fence.DRAIN_TIMEOUT_S
+                + wall_patch.OBSERVE_ARM_S + wall_patch.OBSERVE_FIXED_MARGIN_S)
+    assert wall_patch.OBSERVE_TIMEOUT_S >= composed
     assert wall_patch.OBSERVE_TIMEOUT_S > wall_patch.RUN_TIMEOUT_S
     seen = {}
 
