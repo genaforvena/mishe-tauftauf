@@ -387,14 +387,41 @@ def _map_confidence(m, floor, state):
     return {"level": level, "why": why}
 
 
+def _label_parts(mk):
+    """(date, age_h) of the newest label, or (None, None) when neither is usable.
+
+    map_render publishes label_utc beside age_h. The date is validated before it
+    reaches the legend so a malformed timestamp cannot put a wrong day there.
+    """
+    age = mk.get("age_h")
+    age = age if _num(age) else None
+    date = None
+    lutc = mk.get("label_utc")
+    if isinstance(lutc, str):
+        try:
+            date = datetime.date.fromisoformat(lutc[:10]).isoformat()
+        except ValueError:
+            date = None
+    return date, age
+
+
 def _person_line(person, m):
     info = (m.get("person") or {}).get(person) or {}
     kind = info.get("kind")
     mk = info.get("marker") or {}
     g = mk.get("guess") or {}
     name = NAMES[person]
-    age = mk.get("age_h")
-    age_s = "" if age is None else " (label %s h old)" % age
+    date, age = _label_parts(mk)
+    if date is not None and age is not None:
+        dated = guess_when = "on %s, %.1fd ago" % (date, age / 24.0)
+    elif age is not None:
+        dated = "%s h old" % age
+        guess_when = "%.1fh ago" % age
+    elif date is not None:
+        dated = guess_when = "on %s" % date
+    else:
+        dated = guess_when = None
+
     if kind == "fresh":
         return "%s %s: fresh label, %s, %s" % (LETTER[person], name, ROOM_NAME.get(info["room"], info["room"]), mk.get("why", ""))
     if kind == "guess":
@@ -402,15 +429,16 @@ def _person_line(person, m):
         # weight is a heuristic, not a validated probability. age_h belongs to
         # the last label, which may be in a different room from the guess.
         label_room = ROOM_NAME.get(mk.get("room"), mk.get("room"))
-        if not _num(age) or not label_room:
+        if guess_when is None or not label_room:
             last = "; last label UNKNOWN"
         else:
-            last = "; last label %s %sh ago" % (label_room, age)
+            last = "; last label %s %s" % (label_room, guess_when)
         return "%s %s: guess %s (weight %d%%, not a probability)%s" % (
             LETTER[person], name, ROOM_NAME.get(info["room"], info["room"]),
             round(g.get("confidence", 0) * 100), last)
     if kind == "ghost":
-        return "? %s: UNKNOWN, last known %s%s" % (name, ROOM_NAME.get(info["room"], info["room"]), age_s)
+        when = "" if dated is None else " (label %s)" % dated
+        return "? %s: UNKNOWN, last known %s%s" % (name, ROOM_NAME.get(info["room"], info["room"]), when)
     return "%s: no place recorded (UNKNOWN)" % name
 
 

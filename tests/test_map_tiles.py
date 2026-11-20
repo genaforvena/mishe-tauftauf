@@ -132,6 +132,40 @@ def test_guess_line_fails_closed_on_missing_or_malformed_label():
         assert "last label bedroom" not in text
 
 
+def test_ghost_line_dates_the_last_label_instead_of_opaque_hours():
+    markers = {
+        "ilya": {"room": "bedroom", "confidence": "UNKNOWN", "age_h": 208.9,
+                 "label_utc": "2026-11-11T13:39Z",
+                 "guess": {"room": "bedroom", "confidence": 0.15}},
+    }
+    text = mt.frame(_model(_state(markers)), NOW)
+    assert "? Ilya: UNKNOWN, last known bedroom (label on 2026-11-11, 8.7d ago)" in text
+    assert "208.9 h old" not in text
+
+
+def test_guess_line_dates_the_last_label_beside_the_guess_room():
+    markers = {
+        "ilya": {"room": "bedroom", "confidence": "UNKNOWN", "age_h": 203.8,
+                 "label_utc": "2026-11-11T18:33Z",
+                 "guess": {"room": "bedroom", "confidence": 0.4}},
+    }
+    text = mt.frame(_model(_state(markers)), NOW)
+    assert "last label bedroom on 2026-11-11, 8.5d ago" in text
+    assert all(len(line) <= mt.MAX_WIDTH for line in text.splitlines())
+
+
+def test_legend_fails_closed_on_missing_or_malformed_label_date():
+    for lutc in (None, "garbage", "2026-99-99T13:39Z", 123):
+        marker = {"room": "bedroom", "confidence": "UNKNOWN", "age_h": 208.9,
+                  "guess": {"room": "bedroom", "confidence": 0.15}}
+        if lutc is not None:
+            marker["label_utc"] = lutc
+        text = mt.frame(_model(_state({"ilya": marker})), NOW)
+        ilya_line = [line for line in text.splitlines() if "Ilya:" in line][0]
+        assert "(label 208.9 h old)" in ilya_line
+        assert "2026-" not in ilya_line
+
+
 def test_missing_floorplan_is_unknown_and_draws_no_rooms():
     model = _model(_state(FRESH_ILYA), floor=None, reason="missing")
     text = mt.frame(model, NOW)
