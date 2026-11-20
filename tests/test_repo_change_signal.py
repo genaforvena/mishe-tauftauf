@@ -112,17 +112,43 @@ def test_resolver_ack_exits_cleanly_and_moves_no_cursor(tmp_path, repo):
     assert rcs.main(shlex.split(command)[5:]) == 0
     assert "system1" not in rcs.read_cursors(home)
 
-def test_produce_keeps_the_declared_resolver_subscriber(tmp_path, repo):
-    """sync declares the resolver as a subscriber; the ack refresh must not drop it."""
-    from mishe_tauftauf import signal_store
-    home = tmp_path / "home"
-    (home / "signals").mkdir(parents=True)
-    signal_store.register(home, rcs.SIGNAL, max_age=rcs.MAX_AGE_S,
-                          subscribers=["docs", "pub", "system1"], reoffer=rcs.REOFFER_S)
-    rcs.produce(home, repo, now=1_000_000.0)
-    entry = signal_store.registry(home)[rcs.SIGNAL]
-    assert entry["subscribers"] == ["docs", "pub", "system1"]  # cursor readers are not the whole set
-    assert entry["ack"]  # the refresh still happened
+
+def test_ack_registration_preserves_the_duty_policy(repo):
+    from mishe_tauftauf import arm, duties, owed, producers, signal_store
+
+    home = repo / ".site"
+    source = Path(__file__).resolve().parents[1]
+    duty = next(item for item in duties.declared(repo, home, source=source)
+                if item["name"] == rcs.SIGNAL)
+    producers.load(home, python="python3", declared=[duty])
+    declared = signal_store.registry(home)[rcs.SIGNAL]
+    now = 1_000_000.0
+    producers.repo_change(home, now=now)
+    registered = signal_store.registry(home)[rcs.SIGNAL]
+    assert registered["ack"]
+    assert registered == {**declared, "ack": registered["ack"]}
+
+    now += duty["every"]
+    producers.repo_change(home, now=now)
+    assert signal_store.registry(home)[rcs.SIGNAL] == registered
+    role = "system1"
+    owed.advance(home, role, owed.check(home, role, now=now))
+
+    deadline = now + declared["max_age"]
+    assert signal_store.read(home, rcs.SIGNAL, now=deadline).state == "OK"
+    assert signal_store.read(home, rcs.SIGNAL, now=deadline + 1).state == "UNKNOWN"
+    assert owed.check(home, role, now=deadline + 1).reasons == []
+    started = []
+
+    def start(role_name):
+        started.append(role_name)
+        return True
+
+    assert arm.due(home, now=deadline + 1, scheduler=lambda _: None, roles=[role],
+                   starter=start) == [rcs.SIGNAL]
+    assert signal_store.recorded(home, rcs.SIGNAL)["state"] == "UNKNOWN"
+    assert started == [role]
+    assert owed.check(home, role, now=deadline + 1).reasons == [f"signal:{rcs.SIGNAL}"]
 
 def test_unreadable_repo_raises_so_the_caller_can_observe_unknown(tmp_path):
     home = tmp_path / "home"

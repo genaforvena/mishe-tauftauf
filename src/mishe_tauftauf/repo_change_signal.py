@@ -1,16 +1,16 @@
 """System 0 producer for the repo-change signal (initiative repo-change-signal).
 
-One signal, two listeners (pub, docs). On a new main HEAD the producer reads the
-commits since each subscriber's cursor, classifies their area, drops internal-only
-noise, asks :mod:`mishe_tauftauf.repo_change_docs` which reader docs name each
+On a new main HEAD the producer reads the commits since each reader's cursor
+(pub, docs), classifies their area, drops internal-only noise, asks
+:mod:`mishe_tauftauf.repo_change_docs` which reader docs name each
 changed source path, writes the per-subscriber delta to ``signals/repo-change.detail``
 and publishes the signal (value = newest commit). It calls no model and wakes no one;
 the path unit on the signal file wakes the subscribers.
 
-A subscriber advances its own cursor by calling the producer with ``--wake NAME``
-after it has read the detail. Cursors are separate: a late pub sees commits a fresh
-docs subscriber already consumed. Missing or unreadable git/repo evidence leaves the
-signal UNKNOWN (``observe_unknown``), never GREEN.
+A reader advances its own cursor by calling the producer with ``--wake NAME``
+after it has read the detail. A resolver without a cursor can refresh the report.
+Missing or unreadable git/repo evidence leaves the signal UNKNOWN
+(``observe_unknown``), never GREEN.
 """
 from __future__ import annotations
 
@@ -221,17 +221,18 @@ def produce(home, repo, *, wake: str | None = None, window: int = DEFAULT_WINDOW
     detail = home / "signals" / f"{SIGNAL}.detail"
     detail.parent.mkdir(parents=True, exist_ok=True)
     detail.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-    # Refresh the registration so sites that predate the ack field get the command in their dossier.
-    # register() keeps the original registered_at, so this does not restart the signal's age.
-    # Keep the subscribers sync declared: duties.declared() adds the duty's resolver to the signal's
-    # extras, and overwriting that list here drops the resolver's wake watch from the generated path
-    # unit until the next sync (2026-11-20: a 15-minute doctor RED oscillator).
-    existing = signal_store.registry(home).get(SIGNAL) or {}
-    subscribers = existing.get("subscribers") or list(SUBSCRIBERS)
-    signal_store.register(home, SIGNAL, max_age=MAX_AGE_S, subscribers=subscribers,
-                          reoffer=REOFFER_S, wake_on="change", now=now,
-                          ack="env PYTHONPATH=src python3 -m mishe_tauftauf.repo_change_signal "
-                              "--home {home} --repo {repo} --wake {role}")
+    # Install the dossier command without changing the policy sync declared.
+    # Standalone producers still need a registration when there is no duty.
+    entry = signal_store.registry(home).get(SIGNAL, {
+        "max_age": MAX_AGE_S, "subscribers": SUBSCRIBERS, "reoffer": REOFFER_S,
+    })
+    ack = ("env PYTHONPATH=src python3 -m mishe_tauftauf.repo_change_signal "
+           "--home {home} --repo {repo} --wake {role}")
+    if entry.get("ack") != ack:
+        signal_store.register(home, SIGNAL, max_age=entry["max_age"],
+                              subscribers=entry.get("subscribers", ()),
+                              reoffer=entry.get("reoffer"), wake_on=entry.get("wake_on", "change"),
+                              now=now, ack=ack)
     signal_store.observe(home, SIGNAL, sha[:12], now=now, source="repo-change-producer",
                          event=sha, reason=report["summary"])
     return report
