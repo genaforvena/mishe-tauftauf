@@ -87,9 +87,7 @@
       "red_codes": [
         2
       ],
-      "unknown_codes": [
-        3
-      ],
+      "unknown_codes": [],
       "resolver": "health",
       "replaces": [],
       "covers": "Boot admission failure, containment latch and producer startup"

@@ -107,6 +107,21 @@ def test_wake_memory_floor_failed_observation_reaches_health_immediately(tmp_pat
     assert "signal:wake-memory-floor" in owed.check(tmp_path, "health", now=NOW + 1).reasons
 
 
+def test_boot_admission_undecided_fresh_report_is_unknown_at_once(tmp_path):
+    """Exit 3 from boot admission means the guard report is fresh but the admission is undecided.
+
+    Declaring 3 as an unknown code let the prior GREEN stand for the full max_age (900s) while the check
+    said undecided. Undeclared, the run reads UNKNOWN at once and the unit fails through its OnFailure hook.
+    """
+    item = next(i for i in declared(tmp_path) if i["name"] == "boot-admission")
+    assert item["unknown_codes"] == []
+    store.observe(tmp_path, item["name"], "GREEN", now=NOW, source="previous")
+    assert producers.run(tmp_path, item["name"], [PY, "-c", "raise SystemExit(3)"], now=NOW + 21,
+                         timeout=10, red_codes=tuple(item["red_codes"]),
+                         unknown_codes=tuple(item["unknown_codes"])) == 2
+    assert store.read(tmp_path, item["name"], now=NOW + 21).state == "UNKNOWN"
+
+
 def test_budget_view_mapping_duty_is_scheduled_with_its_own_exit_contract(tmp_path):
     """The window-vs-engine detector had no caller, so its FAIL and CANNOT-DECIDE could never surface.
 
