@@ -155,6 +155,9 @@ def main(argv=None) -> int:
             print(f"outer-pane-code: tmux unreadable for {name} ({exc}); cannot tell", file=sys.stderr)
             return 3
         if r.returncode != 0:
+            if "no server" in r.stderr or "error connecting" in r.stderr:
+                print("outer-pane-code: tmux server unreachable; cannot tell", file=sys.stderr)
+                return 3
             continue  # a missing window is view-window-coverage's finding
         try:
             rows = decode_genome_pane_table(r.stdout)
