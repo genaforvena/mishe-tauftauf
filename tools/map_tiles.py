@@ -38,6 +38,10 @@ NIGHT_CURVE_MAX_AGE_S = 1800  # the daylight and activity duties renew their cur
 NIGHT_MIN_SAMPLES = 30        # hours with fewer samples do not carry a median luma
 PHONE_FRESH_S = 900   # the household_phones limit (Redmi10 stream)
 PHONE_HISTORY_WINDOW_S = 7 * 24 * 3600   # the trailing window for the reliability line
+# The living-room audio hint is a sensor the map otherwise says nothing about.
+AUDIO_FRESH_S = 150        # the listener duty's max_age: an older row is not an observation
+AUDIO_TAIL_BYTES = 200000  # bounded tail of the append-only ~27 MB log, about 70 min at 7 s/hop
+AUDIO_SPEECH = frozenset(("HINT", "NO_HINT"))  # NO_HINT = speech heard, no hint word
 
 GHOST_BELOW = 0.3     # a guess under this number is shown as a ghost, not a letter
 PEOPLE = ["ilya", "rozalia", "bruno"]
@@ -809,6 +813,49 @@ def camera_room_bias_line(site, now):
         prefix, pct, len(shared), len(by_hour))
 
 
+def audio_room_line(site, now):
+    """Newest living-room speech and listener row as derived ages, or UNKNOWN; no transcript text."""
+    path = os.path.join(site, "spatial", "work", "household", "audio.jsonl")
+    try:
+        with open(path, "rb") as fh:
+            size = fh.seek(0, os.SEEK_END)
+            start = max(0, size - AUDIO_TAIL_BYTES)
+            fh.seek(start)
+            raw = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return "audio livingroom UNKNOWN (no audio log)"
+    lines = raw.splitlines()
+    if start and not raw.startswith("\n"):
+        lines = lines[1:]       # a partial first row is never a reading
+    newest = oldest = speech = None
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(row, dict) or row.get("room") != "livingroom":
+            continue
+        t = row.get("t")
+        if not _num(t):
+            continue
+        if newest is None or t > newest:
+            newest = t
+        if oldest is None or t < oldest:
+            oldest = t
+        if row.get("status") in AUDIO_SPEECH and (speech is None or t > speech):
+            speech = t
+    age = None if newest is None else now.timestamp() - newest
+    if age is None or age < -60 or age > AUDIO_FRESH_S:
+        return "audio livingroom UNKNOWN (no fresh listener row)"
+    if oldest is None:
+        return "audio livingroom UNKNOWN (no dated listener row)"
+    if speech is None:
+        return "audio livingroom: no speech in last %s; listener row %s old" % (
+            _age_text(max(0.0, now.timestamp() - oldest)), _age_text(age))
+    return "audio livingroom: speech %s ago; listener row %s old (not a person claim)" % (
+        _age_text(max(0.0, now.timestamp() - speech)), _age_text(age))
+
+
 def model_from_site(site, now, phone_path=None):
     """Load the derived files under SITE and build the model. Missing files are UNKNOWN."""
     mapdir = os.path.join(site, "senses", "map")
@@ -835,4 +882,5 @@ def model_from_site(site, now, phone_path=None):
     model = build_model(floor, floor_reason, state, state_reason, phone, now, stability)
     model["status"].append(night_prior_line(site, state, now))
     model["status"].append(camera_room_bias_line(site, now))
+    model["status"].append(audio_room_line(site, now))
     return model

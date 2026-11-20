@@ -464,3 +464,45 @@ def test_camera_bias_fails_closed(tmp_path):
     assert "UNKNOWN" in mt.camera_room_bias_line(str(tmp_path / "absent"), NOW)
     thin = _bias_activity([(10, 3)], [])
     assert "only 3 shared activity buckets" in mt.camera_room_bias_line(_bias_site(tmp_path, thin), NOW)
+
+
+def _audio_site(tmp_path, rows):
+    hh = tmp_path / "site" / "spatial" / "work" / "household"
+    hh.mkdir(parents=True, exist_ok=True)
+    (hh / "audio.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    return str(tmp_path / "site")
+
+
+def test_audio_line_reports_speech_age_and_freshness(tmp_path):
+    t = NOW.timestamp()
+    rows = [{"t": t - 600, "room": "livingroom", "status": "NO_SPEECH"},
+            {"t": t - 60, "room": "livingroom", "status": "HINT", "text": "never drawn"},
+            {"t": t - 5, "room": "livingroom", "status": "NO_SPEECH"}]
+    line = mt.audio_room_line(_audio_site(tmp_path, rows), NOW)
+    assert line == "audio livingroom: speech 60 s ago; listener row 5 s old (not a person claim)"
+    assert "never drawn" not in line
+
+
+def test_audio_line_ignores_other_rooms_and_unconfirmed_status(tmp_path):
+    t = NOW.timestamp()
+    rows = [{"t": t - 30, "room": "bedroom", "status": "NO_HINT"},
+            {"t": t - 20, "room": "livingroom", "status": "SPOT_UNCONFIRMED"},
+            {"t": t - 5, "room": "livingroom", "status": "NO_SPEECH"}]
+    line = mt.audio_room_line(_audio_site(tmp_path, rows), NOW)
+    assert line.startswith("audio livingroom: no speech in last")
+    assert "listener row 5 s old" in line
+
+
+def test_audio_line_fails_closed(tmp_path):
+    assert "UNKNOWN" in mt.audio_room_line(str(tmp_path / "absent"), NOW)
+    stale = [{"t": NOW.timestamp() - 900, "room": "livingroom", "status": "NO_SPEECH"}]
+    assert "no fresh listener row" in mt.audio_room_line(_audio_site(tmp_path, stale), NOW)
+    bad = [{"t": "yesterday", "room": "livingroom", "status": "NO_HINT"}]
+    assert "UNKNOWN" in mt.audio_room_line(_audio_site(tmp_path, bad), NOW)
+
+
+def test_model_from_site_adds_audio_line(tmp_path):
+    t = NOW.timestamp()
+    site = _audio_site(tmp_path, [{"t": t - 5, "room": "livingroom", "status": "NO_HINT"}])
+    model = mt.model_from_site(site, NOW)
+    assert any(s.startswith("audio livingroom: speech") for s in model["status"])
