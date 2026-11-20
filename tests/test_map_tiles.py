@@ -215,3 +215,58 @@ def test_phone_row_age_counts_from_collector_time(tmp_path):
     assert phone["age_s"] == 4.0 and phone["collector_t"] == NOW.timestamp() - 100
     model = _model(_state(FRESH_ILYA), phone=phone)
     assert any("phone Redmi10" in s and "104 s" in s for s in model["status"])
+
+
+def _night_curves():
+    daylight = {"rooms": {"living room": {"hours": {
+        "21": {"median_luma": 114.0, "samples": 477},
+        "03": {"median_luma": 16.0, "samples": 523},
+        "11": {"median_luma": 128.5, "samples": 402},
+    }}}}
+    activity = {"rooms": {"living room": {"buckets": [
+        {"utc": "21:00Z", "activity": 0.005},
+        {"utc": "03:00Z", "activity": 0.002},
+        {"utc": "11:00Z", "activity": 0.010},
+    ]}}}
+    return daylight, activity
+
+
+def _night_state(evidence="night prior 21-05 UTC (assumed local night); last label: ghost"):
+    markers = _state(FRESH_ILYA)["markers"]
+    markers["ilya"]["guess"]["evidence"] = evidence
+    return {"markers": markers}
+
+
+def test_night_prior_line_reports_measured_mismatch():
+    daylight, activity = _night_curves()
+    line = mt._night_prior_text(daylight, 60, activity, 60, _night_state())
+    assert "night prior 21-05Z is unvalidated" in line
+    assert "at 21Z living-room luma 114" in line
+    assert "darkest 03Z 16" in line
+    assert "camera activity 0.005 (quietest 03Z 0.002)" in line
+
+
+def test_night_prior_line_names_a_window_that_holds():
+    daylight, activity = _night_curves()
+    daylight["rooms"]["living room"]["hours"]["21"]["median_luma"] = 12.0
+    daylight["rooms"]["living room"]["hours"]["03"]["median_luma"] = 100.0
+    activity["rooms"]["living room"]["buckets"][0]["activity"] = 0.001
+    activity["rooms"]["living room"]["buckets"][1]["activity"] = 0.009
+    line = mt._night_prior_text(daylight, 60, activity, 60, None)
+    assert "night prior 21-05Z matches the darkest and quietest hour (21Z" in line
+
+
+def test_night_prior_line_fails_closed():
+    daylight, activity = _night_curves()
+    assert "timing UNKNOWN" in mt._night_prior_text(daylight, 3600, activity, 60, None)
+    assert "timing UNKNOWN" in mt._night_prior_text(None, 60, activity, 60, None)
+    assert "timing UNKNOWN" in mt._night_prior_text(daylight, 60, {}, 60, None)
+    assert "timing UNKNOWN" in mt._night_prior_text({"rooms": {}}, 60, activity, 60, None)
+    bad = _night_state("night prior 22-06 UTC (assumed local night)")
+    assert "different window" in mt._night_prior_text(daylight, 60, activity, 60, bad)
+
+
+def test_missing_site_adds_unknown_night_prior_line(tmp_path):
+    model = mt.model_from_site(str(tmp_path / "absent"), NOW)
+    assert any(s.startswith("night prior 21-05Z:") and "UNKNOWN" in s for s in model["status"])
+    assert "night prior 21-05Z:" in mt.frame(model, NOW)

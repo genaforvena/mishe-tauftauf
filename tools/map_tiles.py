@@ -23,14 +23,21 @@ Usage:
 import datetime
 import json
 import os
+import re
+import statistics
 import textwrap
+
 
 TILE_M = 0.5          # the floorplan tile size; one tile is two characters wide, one row high
 CHAR_PER_TILE = 2
 MAX_WIDTH = 100       # panes are about 170 columns; the map never exceeds this
 STALE_MAP_S = 30 * 60
 CAMERA_FRESH_S = {"living_room": 300, "bedroom": 900}   # living every 45 s, bedroom every 240 s
+ASSUMED_NIGHT_UTC = (21, 5)   # mirrors map_render.NIGHT_UTC; a published mismatch fails the check closed
+NIGHT_CURVE_MAX_AGE_S = 1800  # the daylight and activity duties renew their curves about every 10 min
+NIGHT_MIN_SAMPLES = 30        # hours with fewer samples do not carry a median luma
 PHONE_FRESH_S = 900   # the household_phones limit (Redmi10 stream)
+
 GHOST_BELOW = 0.3     # a guess under this number is shown as a ghost, not a letter
 PEOPLE = ["ilya", "rozalia", "bruno"]
 NAMES = {"ilya": "Ilya", "rozalia": "Rozalia", "bruno": "Bruno"}
@@ -526,6 +533,99 @@ def frame(model, now, color=False):
     return "\n".join(out).rstrip() + "\n"
 
 
+def _curve_at(site, name, now):
+    """Read a site-home curve and its file age; missing or malformed is UNKNOWN."""
+    path = os.path.join(site, "spatial", "work", "household", name)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data, max(0.0, now.timestamp() - os.path.getmtime(path))
+    except (OSError, ValueError):
+        return None, None
+
+
+def _luma_by_hour(daylight):
+    rooms = daylight.get("rooms") if isinstance(daylight, dict) else None
+    info = rooms.get("living room") if isinstance(rooms, dict) else None
+    hours = info.get("hours") if isinstance(info, dict) else None
+    if not isinstance(hours, dict):
+        return {}
+    out = {}
+    for key, entry in hours.items():
+        if not isinstance(key, str) or not key.isdigit() or not isinstance(entry, dict):
+            continue
+        hour, luma, samples = int(key), entry.get("median_luma"), entry.get("samples")
+        if (0 <= hour <= 23 and isinstance(luma, (int, float)) and isinstance(samples, (int, float))
+                and samples >= NIGHT_MIN_SAMPLES):
+            out[hour] = luma
+    return out
+
+
+def _activity_by_hour(activity):
+    rooms = activity.get("rooms") if isinstance(activity, dict) else None
+    info = rooms.get("living room") if isinstance(rooms, dict) else None
+    buckets = info.get("buckets") if isinstance(info, dict) else None
+    if not isinstance(buckets, list):
+        return {}
+    by_hour = {}
+    for b in buckets:
+        if not isinstance(b, dict):
+            continue
+        utc, value = b.get("utc"), b.get("activity")
+        if not isinstance(utc, str) or len(utc) < 2 or not isinstance(value, (int, float)):
+            continue
+        try:
+            hour = int(utc[:2])
+        except ValueError:
+            continue
+        if 0 <= hour <= 23:
+            by_hour.setdefault(hour, []).append(value)
+    return {h: statistics.median(vals) for h, vals in by_hour.items()}
+
+
+def _night_window_published(state):
+    """The window the renderer put in a marker's evidence, or None when none carries one."""
+    markers = state.get("markers") if isinstance(state, dict) else None
+    if not isinstance(markers, dict):
+        return None
+    for info in markers.values():
+        guess = info.get("guess") if isinstance(info, dict) else None
+        evidence = guess.get("evidence") if isinstance(guess, dict) else None
+        if isinstance(evidence, str):
+            found = re.search(r"night prior (\d{2})-(\d{2}) UTC", evidence)
+            if found:
+                return (int(found.group(1)), int(found.group(2)))
+    return None
+
+
+def _night_prior_text(daylight, daylight_age, activity, activity_age, state):
+    start, _end = ASSUMED_NIGHT_UTC
+    prefix = "night prior %02d-%02dZ" % (start, _end)
+    published = _night_window_published(state)
+    if published is not None and published != ASSUMED_NIGHT_UTC:
+        return prefix + ": UNKNOWN (renderer publishes a different window)"
+    if (not isinstance(daylight_age, (int, float)) or not isinstance(activity_age, (int, float))
+            or daylight_age > NIGHT_CURVE_MAX_AGE_S or activity_age > NIGHT_CURVE_MAX_AGE_S):
+        return prefix + ": timing UNKNOWN (no fresh daylight and activity curve)"
+    lumas = _luma_by_hour(daylight)
+    acts = _activity_by_hour(activity)
+    if not lumas or not acts or start not in lumas or start not in acts:
+        return prefix + ": timing UNKNOWN (a needed hour is missing from the curves)"
+    dark_h, quiet_h = min(lumas, key=lumas.get), min(acts, key=acts.get)
+    if dark_h == start and quiet_h == start:
+        return (prefix + " matches the darkest and quietest hour (%02dZ, luma %.0f, activity %.3f)"
+                % (start, lumas[start], acts[start]))
+    return (prefix + " is unvalidated: at %02dZ living-room luma %.0f (darkest %02dZ %.0f), camera activity %.3f (quietest %02dZ %.3f)"
+            % (start, lumas[start], dark_h, lumas[dark_h], acts[start], quiet_h, acts[quiet_h]))
+
+
+def night_prior_line(site, state, now):
+    """One derived status line; missing, stale or conflicting curves stay UNKNOWN."""
+    daylight, daylight_age = _curve_at(site, "daylight.json", now)
+    activity, activity_age = _curve_at(site, "activity.json", now)
+    return _night_prior_text(daylight, daylight_age, activity, activity_age, state)
+
+
 def model_from_site(site, now, phone_path=None):
     """Load the derived files under SITE and build the model. Missing files are UNKNOWN."""
     mapdir = os.path.join(site, "senses", "map")
@@ -548,4 +648,6 @@ def model_from_site(site, now, phone_path=None):
     except (OSError, ValueError):
         pass
     phone = read_phone_row(phone_path or os.path.join(site, "spatial", "work", "household", "phones.jsonl"))
-    return build_model(floor, floor_reason, state, state_reason, phone, now)
+    model = build_model(floor, floor_reason, state, state_reason, phone, now)
+    model["status"].append(night_prior_line(site, state, now))
+    return model
