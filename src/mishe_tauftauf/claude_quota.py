@@ -6,7 +6,7 @@ import subprocess
 import time
 import uuid
 
-from .claude_quota_text import append_history, read_usage
+from .claude_quota_text import CLAUDE_HISTORY, append_history, read_usage
 from .state_files import read_json, write_json
 
 
@@ -38,7 +38,7 @@ def collect(home, *, now=None, runner=subprocess.run):
             result = read_usage(completed.stdout, now=at)
             if result["state"] == "FRESH":
                 # An UNKNOWN sample (window just reset) has no five_hour value to log.
-                append_history(root / "claude-rate-history.jsonl", result)
+                append_history(root / CLAUDE_HISTORY, result)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             if isinstance(exc, subprocess.TimeoutExpired):
                 evidence["stdout"] = str(exc.output or "")

@@ -26,6 +26,10 @@ Roles whose candidates are all free models or the Claude safety net read no wind
 and are unaffected.
 Owner of the model/account mapping: `engine/routes.json`. Owner of this contract: steward.
 
+Claude burn uses `operator/budget/claude-native-rate-history.jsonl`, which contains
+complete native `/usage` samples. The older `claude-rate-history.jsonl` combines
+native observations and statusLine renders and is retained as historical evidence.
+
 ## Problem (state before the 2026-11-12 cutover)
 
 The budget window had three independent writers and a viewer that carried its own

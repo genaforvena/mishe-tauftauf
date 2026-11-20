@@ -81,6 +81,33 @@ def test_timeout_is_unknown(tmp_path):
     assert collect(tmp_path, now=NOW, runner=timeout)["state"] == "UNKNOWN"
 
 
+def test_burn_uses_native_samples_even_with_legacy_statusline_history(tmp_path):
+    from subprocess import CompletedProcess
+    from mishe_tauftauf.budget_producer import build_accounts, load_burn_history
+    from mishe_tauftauf.claude_quota import collect
+
+    budget = tmp_path / "operator" / "budget"
+    budget.mkdir(parents=True)
+    legacy = budget / "claude-rate-history.jsonl"
+    reset = datetime(2026, 11, 11, 3, tzinfo=timezone.utc).timestamp()
+    legacy_bytes = json.dumps({"at": NOW - 3600, "seven_day": [10, reset]}) + "\n"
+    legacy.write_text(legacy_bytes)
+
+    earlier = report()
+    earlier["result"] = earlier["result"].replace("43%", "38%")
+    collect(tmp_path, now=NOW - 1800,
+            runner=lambda command, **_: CompletedProcess(command, 0, json.dumps(earlier), ""))
+    current = collect(tmp_path, now=NOW,
+                      runner=lambda command, **_: CompletedProcess(command, 0, json.dumps(report()), ""))
+    burn_history = load_burn_history(tmp_path, NOW)
+    weekly = build_accounts(None, current, NOW, burn_history)["claude"]["windows"]["7d"]
+
+    assert weekly["burn_source"] == "history"
+    assert weekly["burn_h"] == pytest.approx(0.1)
+    assert weekly["eta_s"] == pytest.approx(5.7 * 3600)
+    assert legacy.read_text() == legacy_bytes
+
+
 # Fixture: the /usage text captured at the 5 h reset instant, 02:20Z 2026-11-11
 # (operator/budget/native-evidence/1794363599532186770-340232cf31e54e25bf0ce512b87f3c75.json).
 RESET_INSTANT_NOW = 1794363599.5321822
@@ -108,11 +135,12 @@ def test_reset_instant_without_session_reset_is_unknown_and_never_zero():
 
 def test_reset_instant_collect_is_unknown_and_writes_no_rate_history(tmp_path):
     from mishe_tauftauf.claude_quota import collect
+    from mishe_tauftauf.claude_quota_text import CLAUDE_HISTORY
     import subprocess
     def runner(*args, **kwargs):
         return subprocess.CompletedProcess(args[0], 0, json.dumps(reset_instant_report()), "")
     assert collect(tmp_path, now=RESET_INSTANT_NOW, runner=runner)["state"] == "UNKNOWN"
-    assert not (tmp_path / "operator/budget/claude-rate-history.jsonl").exists()
+    assert not (tmp_path / "operator" / "budget" / CLAUDE_HISTORY).exists()
 
 
 def test_session_without_reset_is_rejected_unless_zero_percent():

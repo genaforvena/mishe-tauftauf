@@ -22,6 +22,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from mishe_tauftauf.claude_quota_text import CLAUDE_HISTORY
 from mishe_tauftauf.quota_history_text import read_jsonl_rows, split_quota_label
 
 SCHEMA = 1
@@ -34,7 +35,6 @@ BURN_MIN_SPAN_S = 1500.0      # a burn needs at least this much observed span
 BURN_RESET_TOL_S = 120.0      # points from a previous window (different reset) are not the same window
 WINDOW_DURATION_S = {"5h": 5 * 3600.0, "7d": 7 * 24 * 3600.0}  # elapsed-window fallback needs the window length
 BURN_ELAPSED_MIN_H = 0.25     # the elapsed-window estimate needs this much elapsed window time (legacy budget_view rule)
-CLAUDE_HISTORY = "claude-rate-history.jsonl"   # rows: {at, five_hour: [pct, reset], seven_day: [pct, reset]}
 ENGINE_HISTORY = "quota-history.jsonl"         # rows: {at, q: {"acct/window": [remaining, reset]}}
 
 
@@ -139,7 +139,7 @@ def _history_rows(path: Path, now: float) -> list:
 
 
 def load_burn_history(home: Path, now: float) -> dict:
-    """{(account, window): [(at, used, reset), ...]} from the claude tap and engine quota histories.
+    """{(account, window): [(at, used, reset), ...]} from native Claude and engine quota histories.
     The claude windows are keyed as ("claude", "5h"|"7d"); engine windows as (account, window)."""
     points: dict = {}
     budget_dir = home / "operator" / "budget"

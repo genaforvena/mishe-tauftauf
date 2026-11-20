@@ -37,11 +37,12 @@ is expired, and the attempt becomes UNKNOWN. It is not an exact
 token allowance or a replacement forecast. The existing LOW and burn-rate rules
 remain in effect.
 
-The previous statusLine tap remains historical evidence. Its callback timestamp
-establishes a render, while `rate_limits` only appears after an API response in
-the session. Do not renew quota freshness merely by redrawing an idle terminal.
-The budget pane shows the producer's file, which reads the independent native
-report after its reviewed activation.
+The budget producer calculates Claude burn from `operator/budget/claude-native-rate-history.jsonl`.
+The native collector appends only complete `/usage` observations. The earlier
+`claude-rate-history.jsonl` contains both native samples and statusLine callbacks, whose
+timestamps can reflect a redraw of earlier API data. It remains available for historical
+investigation. During the cutover the producer labels any elapsed-window estimate
+`window-elapsed` until the native history spans at least 25 minutes for the same reset.
 
 References: [native commands](https://code.claude.com/docs/en/commands),
 [status line data](https://code.claude.com/docs/en/statusline). Observed native

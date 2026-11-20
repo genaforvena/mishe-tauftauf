@@ -19,6 +19,7 @@ LINE = re.compile(r"(?P<label>Current session|Current week \(all models\)): "
                   r"(?P<day>\d{1,2}), (?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?"
                   r"(?P<period>am|pm) \(UTC\))?")
 RESET_PRECISION_S = 60  # native /usage reports reset times rounded to the minute
+CLAUDE_HISTORY = "claude-native-rate-history.jsonl"
 
 
 def read_usage(raw, *, now):
