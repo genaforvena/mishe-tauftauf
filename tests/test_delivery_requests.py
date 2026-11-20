@@ -302,24 +302,90 @@ def test_known_promotion_preflight_rejection_does_not_park_all_minds(plant, monk
     assert not q.admission_path(home).exists()
 
 
-def test_stale_previous_is_rejected_before_admission(plant):
+@pytest.mark.parametrize("advance_at_lock", [False, True])
+def test_stale_previous_is_rejected_before_admission(plant, monkeypatch, advance_at_lock):
     """A request whose base pin has moved is dead; it must fail without taking admission.
 
     2026-11-20: requests f3cae9a3 and 8a7de0e8 were enqueued hours before consume,
     failed the installed-pin check inside promote, but briefly held admission on the
     way in. Each transient marker made a cadence promotion sitting at the dispatch
-    fence raise DeliveryOwned and burn its completed whole-suite check. Rejecting in
-    preflight keeps the marker out of the fence window entirely.
+    fence raise DeliveryOwned and burn its completed whole-suite check. Compare the
+    pin under the dispatch lock before writing the admission marker.
     """
     home, repo, old, sha = plant
-    row = request(plant); settle(home, row["key"])
-    runtime = home / "runtime"; runtime.mkdir()
-    (runtime / "current").symlink_to(home / "releases" / sha, target_is_directory=True)
+    row = request(plant)
+    settle(home, row["key"])
+    old_release = rp.materialize(home, repo, old)
+    new_release = rp.materialize(home, repo, sha)
+    if advance_at_lock:
+        rp.point(home, old_release)
+        delivery_lock = rp.delivery_lock
+
+        def advance_before_claim(site):
+            with delivery_lock(site):
+                rp.point(home, new_release)
+            return delivery_lock(site)
+
+        monkeypatch.setattr(rp, "delivery_lock", advance_before_claim)
+    else:
+        rp.point(home, new_release)
+
+    assert not owed.inbox_unread(home, "docs")
+
+    def reject_admission_write(path, value):
+        assert path != q.admission_path(home), "stale request wrote an admission marker"
+        write_json(path, value)
+
+    monkeypatch.setattr(q, "write_json", reject_admission_write)
     result = q.consume(home)[0]
     assert result["state"] == "failed"
     assert result["error"].startswith("preflight:"), result["error"]
     assert "previous SHA" in result["error"]
     assert not q.admission_path(home).exists()
+    assert owed.inbox_unread(home, "docs")
+
+
+def test_request_remains_queued_during_candidate_observation_and_survives_rollback(plant, monkeypatch):
+    from mishe_tauftauf import signal_store
+
+    home, repo, old, sha = plant
+    row = request(plant)
+    settle(home, row["key"])
+    rp.point(home, rp.materialize(home, repo, old))
+    signal_store.register(home, rp.OUTCOME_SIGNAL, max_age=7200, subscribers=["docs"])
+
+    def switch(source, target):
+        return rp.point(home, source)
+
+    def reject_candidate(argv, *, cwd, env, timeout):
+        if cwd.name == sha:
+            assert rp.pin_revision(home) == sha
+            assert q.consume(home) == []
+            assert read_json(q.location(home, row["id"]))["state"] == "queued"
+            assert not q.admission_path(home).exists()
+            return dict(code=1, output="controlled observation failure")
+        assert rp.pin_revision(home) == old
+        return dict(code=0, output="")
+
+    promote = rp.promote
+    failed = promote(home, repo, sha, previous=old, check=["true"], observe=["true"],
+                     activate=switch, closure=lambda *a: None, probe=reject_candidate)
+    assert failed["phase"] == "rolled-back"
+    assert failed["observe"]["code"] == 1
+    assert failed["rollback_probe"]["code"] == 0
+    assert rp.pin_revision(home) == old
+    assert signal_store.read(home, rp.OUTCOME_SIGNAL, now=time.time()).value == "FAILED"
+    assert "controlled observation failure" in (home / "signals" / f"{rp.OUTCOME_SIGNAL}.detail").read_text()
+
+    def reapply(*args, **kwargs):
+        return promote(*args, **kwargs, activate=switch, closure=lambda *a: None)
+
+    monkeypatch.setattr(rp, "promote", reapply)
+    result = q.consume(home)[0]
+    assert result["state"] == "delivered"
+    assert rp.pin_revision(home) == sha
+    assert not q.admission_path(home).exists()
+    assert signal_store.read(home, rp.OUTCOME_SIGNAL, now=time.time()).value == "VERIFIED"
 
 
 def test_strong_activation_timeout_observes_successful_recovery(plant, monkeypatch):

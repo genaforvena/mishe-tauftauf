@@ -80,27 +80,8 @@ def preflight(home, spec):
         wall_patch.preflight(Path(home), record.get("delivery_plan") or {})
 
 
-def previous_matches_pin(home, spec):
-    """A request whose base pin has moved is dead: refuse it before it takes admission.
-
-    ``promote`` rechecks the installed consumer pin and rejects a superseded
-    ``previous``, but only after ``consume`` has written the admission marker. A
-    cadence promotion waiting at the dispatch fence retries admission every second;
-    a dead request's transient marker raises ``DeliveryOwned`` there and burns that
-    promotion's completed whole-suite check (2026-11-20: f3cae9a3, 8a7de0e8). Refuse
-    in preflight instead: no effect, no admission, no fence collision. An absent
-    pointer (fresh site, isolated tests) cannot be judged here, so ``promote`` keeps
-    its own check as the final word.
-    """
-    link = Path(home) / "runtime" / "current"
-    if not link.is_symlink():
-        return
-    try:
-        current = Path(os.readlink(link)).name
-    except OSError:
-        return
-    if current != spec.get("previous"):
-        raise ValueError("previous SHA does not match installed wake consumer pin")
+class _StalePrevious(ValueError):
+    """The installed pin moved before the request could claim admission."""
 
 
 def _runtime_restored(record):
@@ -237,6 +218,14 @@ def resume(home):
     wake.resume_owed(home, declared(home), now=time.time())
 
 
+def _reject_preflight(home, row, error):
+    row.update(state="failed", error=f"preflight: {error}", ended_at=time.time())
+    write_json(location(home, row["id"]), row)
+    notify(home, row, row["state"] + ": " + row["error"])
+    resume(home)
+    return [row]
+
+
 @contextmanager
 def token_environment(token):
     previous = os.environ.get("MISHE_DELIVERY_TOKEN")
@@ -287,15 +276,8 @@ def consume(home):
             if not receipt or receipt.get("role") != row["role"] or receipt.get("key") != row["key"]: continue
             try:
                 preflight(home, row["spec"])
-                previous_matches_pin(home, row["spec"])
             except (OSError, ValueError, subprocess.SubprocessError) as exc:
-                # Before admission and before any effect: an unresolvable
-                # argv fails the request and never takes the admission.
-                row.update(state="failed", error=f"preflight: {exc}", ended_at=time.time())
-                write_json(location(home, row["id"]), row)
-                notify(home, row, row["state"] + ": " + row["error"])
-                resume(home)
-                return [row]
+                return _reject_preflight(home, row, exc)
             # Use the existing exclusion only to claim admission. Activation
             # children may independently acquire that same dispatch lock.
             try:
@@ -308,10 +290,19 @@ def consume(home):
                     with (home / ".wall-patch.lock").open("a+") as patch_lock:
                         try: fcntl.flock(patch_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                         except BlockingIOError: return []
+                        # A promotion holds this dispatch lock from the pin flip
+                        # through observation and any rollback. Compare the pin
+                        # here so a temporary candidate cannot fail the request,
+                        # and a superseded request cannot write an admission.
+                        pin = promotion.pin_revision(home)
+                        if pin and pin != row["spec"]["previous"]:
+                            raise _StalePrevious("previous SHA does not match installed wake consumer pin")
                         marker = dict(id=row["id"], token=uuid.uuid4().hex, pid=os.getpid(), at=time.time())
                         write_json(admission_path(home), marker)
             except promotion.DeliveryBusy:
                 return []
+            except _StalePrevious as exc:
+                return _reject_preflight(home, row, exc)
             terminal = False
             try:
                 validate_source(home, row["spec"])

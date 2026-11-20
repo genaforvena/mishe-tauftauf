@@ -262,8 +262,10 @@ processes, runtime pointer and actual consumers. Preserve original failure
 records. Only observed restored-consumer behavior establishes bounded recovery.
 
 A request refused with “previous SHA does not match installed wake consumer pin”
-stopped before activation. Read the installed pin and the matching delivery
-record. If the cadence already delivered the target or a descendant, verify the
+stopped before activation. The consumer checks the pin under the dispatch lock
+before writing admission, after any concurrent promotion finishes observation or
+rollback. Read the installed pin and the matching delivery record. If the
+cadence already delivered the target or a descendant, verify the
 intended change in the running release and retain the refusal as recorded. If
 the change is still owed, base any new request on the pin you just observed.
 
