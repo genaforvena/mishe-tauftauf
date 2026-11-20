@@ -7,6 +7,8 @@ provider, so a missing decision service cannot stop it:
   reasons, the System 0 ``same_dossier_as_last`` verdict) and one ``end`` row (yielded result).
 - ``decision-log/wake-gate-live.jsonl``: rows a live gate wrote (``action`` skip or wake).
   Absent means no gate is live, so avoided wakes are 0 and the gate reads ``off``.
+- ``decision-log/commit-risk.jsonl``: each commit's deciding source (``system0`` path or
+  subject rule, ``system1`` model, ``escalate`` to a mind), for the measured rule saving.
 - ``engine/budget.json`` under ``routerai.decision``: calls and spend of the decision budget.
 
 Over the trailing 24 h it reports wake starts per day by trigger class, wakes avoided by a
@@ -21,6 +23,10 @@ signals with at least ``MIN_SIGNAL_ENDED`` ended wakes and a changed rate below
 ``MAX_SIGNAL_CHANGED_RATE`` as ``retirement_candidates``. This is a detector only: the flag
 never skips a wake. The volume floor exempts rare-event detectors, whose low changed rate is
 their purpose, not waste.
+
+It also measures what the deterministic rung already took off the model and the mind: the
+trailing-window count of commit-risk rows decided by a path or subject rule, against model
+answers and escalations. A missing commit-risk ledger reports null counts, not a zero saving.
 """
 from __future__ import annotations
 
@@ -40,6 +46,7 @@ WAKE_LOG = "decision-log/wake-gate.jsonl"
 LIVE_LOG = "decision-log/wake-gate-live.jsonl"
 MIN_SIGNAL_ENDED = 20
 MAX_SIGNAL_CHANGED_RATE = 0.15
+COMMIT_LOG = "decision-log/commit-risk.jsonl"
 
 
 def _trigger_class(trigger) -> str:
@@ -218,7 +225,64 @@ def measure(home, *, now: float) -> dict:
         "projected_skip": len(same),
         "changed_rate_all": _rate(changed_all, len(ended)),
         "changed_rate_projected_skip": _rate(changed_same, len(same)),
+        "rules": _rules(home, now),
         "decision": budget,
+    }
+
+
+def _rules(home: Path, now: float) -> dict:
+    """Decisions the deterministic rung took in the trailing window, from the advisory ledger.
+
+    A missing ledger is UNKNOWN (null counts), never an empty success: a saving cannot be
+    claimed without its evidence. Torn or non-object rows are counted as malformed; a row
+    outside the window, or stamped in the future, is simply not counted. A commit a rule
+    answered is one the model and the mind did not take, so ``system0`` is the measured
+    saving and ``escalate`` is the residual a mind still reads.
+    """
+    path = home / COMMIT_LOG
+    if not path.exists():
+        return {"ledger": "missing", "system0": None, "path_rule": None,
+                "subject_rule": None, "system1": None, "escalate": None,
+                "rule_share": None, "malformed": None}
+    counts = Counter()
+    malformed = 0
+    since = now - WINDOW_S
+    for row in state_files.read_json_lines(path):
+        if not isinstance(row, dict):
+            malformed += 1
+            continue
+        at = row.get("at")
+        if isinstance(at, bool):
+            malformed += 1
+            continue
+        try:
+            at = float(at)
+        except (TypeError, ValueError, OverflowError):
+            malformed += 1
+            continue
+        if not math.isfinite(at) or at < since or at > now + 5:
+            continue
+        source = row.get("source")
+        if source not in ("system0", "system1", "escalate"):
+            malformed += 1
+            continue
+        counts[source] += 1
+        if source == "system0":
+            reason = row.get("reason")
+            if reason == "path rule":
+                counts["path_rule"] += 1
+            elif reason == "subject rule":
+                counts["subject_rule"] += 1
+    total = sum(counts[source] for source in ("system0", "system1", "escalate"))
+    return {
+        "ledger": "ok",
+        "system0": counts["system0"],
+        "path_rule": counts["path_rule"],
+        "subject_rule": counts["subject_rule"],
+        "system1": counts["system1"],
+        "escalate": counts["escalate"],
+        "rule_share": _rate(counts["system0"], total),
+        "malformed": malformed,
     }
 
 

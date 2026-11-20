@@ -254,3 +254,65 @@ def test_main_prints_one_line_verdict(tmp_path, capsys):
     out = capsys.readouterr().out
     assert code in (s.GREEN, s.UNKNOWN)
     assert out.startswith("mishe: system1-savings: ")
+
+
+def _commit_rows(tmp_path, rows):
+    path = tmp_path / "decision-log" / "commit-risk.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def _commit(at, source, reason=None):
+    return {"at": at, "source": source, "reason": reason, "sha": "x", "subject": "x"}
+
+
+def test_rules_measure_the_deterministic_share_in_window(tmp_path):
+    _write_rows(tmp_path, _wake("a", NOW - 10, "inbox", False, "changed"))
+    _budget(tmp_path)
+    rows = [_commit(NOW - 100, "system0", "path rule"),
+            _commit(NOW - 90, "system0", "path rule"),
+            _commit(NOW - 80, "system0", "subject rule"),
+            _commit(NOW - 70, "system1", "decided"),
+            _commit(NOW - 60, "system1", "decided"),
+            _commit(NOW - 50, "system1", "decided"),
+            _commit(NOW - 40, "escalate", "confidence below threshold"),
+            _commit(NOW - 30, "escalate", "model chose the escape option"),
+            _commit(NOW - 2 * 86400, "system0", "path rule"),
+            _commit(NOW - 20, "unknown-source")]
+    _commit_rows(tmp_path, rows)
+    numbers = s.measure(tmp_path, now=NOW)["rules"]
+    assert numbers == {"ledger": "ok", "system0": 3, "path_rule": 2, "subject_rule": 1,
+                       "system1": 3, "escalate": 2, "rule_share": 0.375, "malformed": 1}
+
+
+def test_missing_commit_ledger_is_unknown_block_without_unknowning_the_duty(tmp_path):
+    _write_rows(tmp_path, _wake("a", NOW - 10, "inbox", False, "changed"))
+    _budget(tmp_path)
+    code, line = s.duty(tmp_path, now=NOW)
+    rules = json.loads(line.removeprefix("GREEN: "))["rules"]
+    assert code == s.GREEN
+    assert rules == {"ledger": "missing", "system0": None, "path_rule": None,
+                     "subject_rule": None, "system1": None, "escalate": None,
+                     "rule_share": None, "malformed": None}
+
+
+def test_empty_commit_ledger_claims_no_share(tmp_path):
+    _write_rows(tmp_path, _wake("a", NOW - 10, "inbox", False, "changed"))
+    _budget(tmp_path)
+    _commit_rows(tmp_path, [])
+    rules = s.measure(tmp_path, now=NOW)["rules"]
+    assert rules["ledger"] == "ok" and rules["system0"] == 0
+    assert rules["rule_share"] is None and rules["malformed"] == 0
+
+
+@pytest.mark.parametrize("at", [True, "Infinity", "nan", None, NOW + 100])
+def test_rules_reject_bad_and_future_timestamps(tmp_path, at):
+    _write_rows(tmp_path, _wake("a", NOW - 10, "inbox", False, "changed"))
+    _budget(tmp_path)
+    _commit_rows(tmp_path, [_commit(at, "system0", "path rule")])
+    rules = s.measure(tmp_path, now=NOW)["rules"]
+    assert rules["system0"] == 0
+    if isinstance(at, bool) or at is None:
+        assert rules["malformed"] == 1
+    else:
+        assert rules["malformed"] == 0

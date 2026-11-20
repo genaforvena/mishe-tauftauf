@@ -127,3 +127,16 @@ The `commit-risk` duty (hourly, `duties.json`) runs the advisory pass over recen
 - UNKNOWN: the decision provider is not configured or unreadable, or residual commits stay unanswered while the daily cap has room (the service is failing).
 
 The signal is advisory. Nothing gates delivery on it, and a missing or failing decision service never stops work: the commit is read by a mind instead.
+
+## Measured saving
+
+Moves down a rung are only useful if the load they removed is visible. The `system1-savings`
+signal reports a `rules` block from `decision-log/commit-risk.jsonl` for the trailing 24 hours:
+`system0` (commits a path or subject rule settled), split into `path_rule` and `subject_rule`,
+against `system1` (model answers) and `escalate` (a mind read the commit). `rule_share` is the
+fraction settled without a model or a mind. This is the measured saving from the rules above,
+not a forecast: a row with `source: system0` is one the model and the mind did not take.
+Rows outside the window and rows with a torn or non-numeric timestamp are not counted; a
+missing ledger reports null counts (`ledger: missing`), never a zero saving. An empty ledger
+reports zero counts and no share. The block is advisory like the rest of the signal: a missing
+commit-risk ledger does not turn the duty UNKNOWN, because the wake numbers remain measured.
