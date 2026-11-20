@@ -142,9 +142,9 @@ def main(argv=None):
     phase, sha = record.get("phase"), str(record.get("sha", ""))[:8]
     age_min = (now - record["created_at"]) / 60
     # A RUNNING phase is aged from its own start when the record stamps one: the check stage can
-    # take 25 min and a healthy wait for the dispatch lock spans patience_s=600 plus wait_s=2400s,
-    # so created_at reached --stuck-min 60 while a live promotion was still waiting for wakes that
-    # had to yield first (2026-11-18). Legacy records without the stamp keep the old reading.
+    # take 25 min and a healthy wait for the dispatch lock spans its quiet poll (120 s now,
+    # 600 s in legacy records without quiet_poll_s) plus wait_s=2400s, so created_at reached
+    # --stuck-min 60 while a live promotion was still waiting for wakes that had to yield first.
     since = record.get({"waiting-for-wakes": "waiting_since",
                         "activating": "activation_started_at"}.get(phase))
     phase_min = (now - since) / 60 if isinstance(since, (int, float)) else age_min

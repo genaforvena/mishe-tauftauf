@@ -90,8 +90,8 @@ def test_fence_modes_split_quiet_polled_and_hold_waits(monkeypatch, tmp_path):
     monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
     text = view.render(home, Path("/nope"), 24 * 3600.0, 4000.0)
     # The unmeasured run is absent, never a zero-second fence, so it stays out of the count.
-    assert "fence modes: 2/4 quiet gaps (<1s), 1 polled (1-600s mean 0m20s)," in text
-    assert "1 hold-waits (>=600s mean 10m00s max 10m00s)" in text
+    assert "fence modes: 2/4 quiet gaps (<1s), 1 polled (gap inside quiet poll mean 0m20s)," in text
+    assert "1 hold-waits (hold written mean 10m00s max 10m00s)" in text
     assert "release the shared dispatch lock" in text
 
 
@@ -101,6 +101,15 @@ def test_fence_modes_boundary_at_patience():
         record(waiting_since=3000.0, activation_started_at=3600.0),  # exactly 600 s
     ])
     assert modes == {"quiet": [], "polled": [599.0], "hold": [600.0]}
+
+
+def test_fence_modes_use_each_records_patience_not_one_constant():
+    modes = view.fence_modes([
+        record(quiet_poll_s=120, waiting_since=2000.0, activation_started_at=2119.0),
+        record(quiet_poll_s=120, waiting_since=3000.0, activation_started_at=3120.0),
+        record(waiting_since=4000.0, activation_started_at=4590.0),  # legacy 600 s patience
+    ])
+    assert modes == {"quiet": [], "polled": [119.0, 590.0], "hold": [120.0]}
 
 
 def test_legacy_unknown_recovery_keeps_its_reason_and_stage_unknown(monkeypatch, tmp_path):
@@ -358,6 +367,14 @@ def test_poll_wake_starts_is_unknown_without_a_hold_wait():
     assert view.poll_wake_starts([quick], [2100.0]) is None
 
 
+def test_poll_wake_starts_uses_each_records_patience_window():
+    # New-era fence [2010, 2210): quiet poll [2010, 2130), hold [2130, 2210).
+    held = record(quiet_poll_s=120, waiting_since=2010.0, activation_started_at=2210.0)
+    out = view.poll_wake_starts([held], [2000.0, 2100.0, 2129.0, 2130.0, 2200.0])
+    assert out == {"holds": 1, "poll_mean": 2.0, "poll_max": 2,
+                   "after_mean": 2.0, "with_poll_start": 1}
+
+
 def test_report_prints_poll_starts_beside_the_hold_overlap(tmp_path, monkeypatch):
     held = record(waiting_since=2010.0, activation_started_at=3010.0)
     home = home_with(tmp_path, [held])
@@ -372,5 +389,5 @@ def test_report_prints_poll_starts_beside_the_hold_overlap(tmp_path, monkeypatch
     (tmp_path / "engine" / "routing-ledger.jsonl").write_text("\n".join(stamps) + "\n", encoding="utf-8")
     monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
     text = view.render(home, Path("/nope"), 86400.0, 4000.0)
-    assert ("wake starts in the 600 s poll: mean 1.00/hold-wait (max 1),"
+    assert ("wake starts in the quiet poll (600s): mean 1.00/hold-wait (max 1),"
             " 1/1 fences had >=1; after hold 1.00") in text

@@ -1726,6 +1726,34 @@ def test_with_no_gap_the_hold_starts_only_after_the_patience_window(tmp_path):
     assert not (tmp_path / "hold").exists()
 
 
+def test_default_quiet_poll_writes_the_hold_after_two_minutes_not_ten(tmp_path):
+    """A 600 s grace admitted a mean 2.90 wake starts that lengthened 30 fences (2026-11-20)."""
+    handle = _hold_dispatch_lock(tmp_path)
+    now = {"t": 0.0}
+    seen = {"hold_at": None}
+
+    def clock():
+        return now["t"]
+
+    def sleep(_):
+        now["t"] += 100.0
+        if (tmp_path / "hold").exists() and seen["hold_at"] is None:
+            seen["hold_at"] = now["t"]
+            handle.close()
+
+    from mishe_tauftauf import wake
+    mp = pytest.MonkeyPatch()
+    mp.setattr(wake, "resume_owed", lambda *a, **k: None)
+    mp.setattr("mishe_tauftauf.roles.declared", lambda home: [])
+    try:
+        with p.held_delivery_lock(tmp_path, 3000, sleep=sleep, clock=clock):
+            pass
+    finally:
+        mp.undo()
+    assert seen["hold_at"] == 300.0   # hold written at 200 s; observed at the next sleep
+    assert not (tmp_path / "hold").exists()
+
+
 
 def test_a_foreign_hold_is_left_alone_and_never_resumed(tmp_path):
     """Regression (2026-11-17 12:27-12:32Z): the delivery wrote its promotion hold

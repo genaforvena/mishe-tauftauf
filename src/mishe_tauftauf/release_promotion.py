@@ -121,6 +121,17 @@ The observer now enforces wall_patch.OBSERVE_BUDGET_S with one end-to-end deadli
 a hang net above that budget, so it never records a slow-but-correct pin as failed (review #303025)."""
 
 
+QUIET_POLL_S = 120
+"""Seconds to look for a dispatch-lock gap before holding new wakes (2026-11-20).
+
+At 600 s, 25/30 hold-wait fences had a wake start inside the poll (mean 2.90):
+each start took the shared lock and extended the fence the poll waited on. 120 s
+keeps the six shortest observed gaps free of a hold while suppressing 74/85 of
+those fence-extending starts. The value is recorded on each promotion so the
+delivery view can classify old and new fences by the rule in force at the time.
+"""
+
+
 def run(argv, *, cwd, env, timeout=900):
     try:
         result = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
@@ -256,16 +267,18 @@ def clear_stale_hold(home, *, pid_alive=_pid_alive, now=time.time, legacy_max_ag
 
 
 @contextmanager
-def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=600, clock=time.monotonic, holder_probe=None):
+def held_delivery_lock(home, wait_s, *, sleep=time.sleep, patience_s=QUIET_POLL_S, clock=time.monotonic, holder_probe=None):
     """The dispatch lock: first a quiet gap without holding anything, then (``wait_s`` > 0) under a short hold of new wakes.
 
-    Wakes are short (median under a minute, p90 about 7 min) and at most a few run at once, so the lock is usually free
-    for a moment. For ``patience_s`` seconds it is tried every second WITHOUT touching the hold, so a delivery that finds
-    a gap costs no wake any delay. Only when no gap appears does the site's ``hold`` file stop new wakes, the running ones
-    settle (the site hard cap bounds them), the lock is taken and the hold released (owed wakes resume) when the block
-    ends, whatever happened inside it. Only a hold this call wrote is released: a manual ``mishe hold on``, plant_boot's
-    boot-guard hold, or one rewritten while the delivery held, stays with its owner and fires no resume. ``wait_s`` 0
-    takes the lock at once or raises DeliveryBusy.
+    Wakes are short but a gap found after ``patience_s`` is not free: a wake that starts inside the
+    poll takes the shared lock and extends the fence waiting for it (25/30 hold-waits measured).
+    For ``patience_s`` seconds the lock is tried every second WITHOUT touching the hold, so a quick
+    gap costs no wake any delay. Only when no gap appears does the site's ``hold`` file stop new
+    wakes, the running ones settle, and the lock is taken; the hold is released (owed wakes resume)
+    when the block ends, whatever happened inside it. Only a hold this call wrote is released: a
+    manual ``mishe hold on``, plant_boot's boot-guard hold, or one rewritten while the delivery
+    held, stays with its owner and fires no resume. ``wait_s`` 0 takes the lock at once or raises
+    DeliveryBusy.
     """
     if not wait_s:
         with delivery_lock(home):
@@ -1046,10 +1059,12 @@ def _promote(home, repo, sha, *, check, observe, previous, activate=None, probe=
         record["tests_passed"]=True
         # Only now the dispatch lock: the check above ran the whole suite without holding wakes back.
         # waiting_since lets checks/pin-delivery.py age this phase from its own start: a healthy
-        # wait spans patience_s=600 plus wait_s (2400s from the runtime CLI), and the check stage
-        # before it may take CHECK_TIMEOUT_S=1500s, so created_at exceeds --stuck-min 60 for a
-        # promotion doing exactly what it was told.
-        record["phase"]="waiting-for-wakes"; record["waiting_since"]=time.time(); save()
+        # wait spans QUIET_POLL_S (120s) plus wait_s (2400s from the runtime CLI), and the check
+        # stage before it may take CHECK_TIMEOUT_S=1500s, so created_at exceeds --stuck-min 60
+        # for a promotion doing exactly what it was told.
+        record["phase"]="waiting-for-wakes"; record["waiting_since"]=time.time()
+        record["quiet_poll_s"]=QUIET_POLL_S
+        save()
         from .delivery_requests import DeliveryOwned
         try:
             stack.enter_context(held_delivery_lock(home, wait_s))

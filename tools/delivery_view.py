@@ -50,11 +50,17 @@ a first-try acquisition from even a single retry.
 """
 
 FENCE_HOLD_S = 600.0
-"""``held_delivery_lock``'s patience_s (release_promotion.py:259): seconds it polls for a quiet
-gap before writing the hold and waiting for running wakes. A fence at or beyond this is a hold-wait,
-not a wake-free acquisition. The caller passes only wait_s (line 1055), so patience stays 600 s;
-the promotion record does not store it, which is why the view names the constant here.
+"""Legacy patience for promotions written before ``quiet_poll_s`` (release_promotion.py).
+
+Promotions now record the patience they actually used (120 s since 2026-11-20). Records with no
+such field keep the old 600 s rule, so a regime change does not silently reclassify history.
 """
+
+
+def quiet_poll_s(record: dict) -> float:
+    """The quiet-poll patience in force when this promotion waited for the dispatch lock."""
+    value = record.get("quiet_poll_s")
+    return value if isinstance(value, (int, float)) and value > 0 else FENCE_HOLD_S
 
 RECENT_N = 10
 """How many newest delivered promotions get a stage mean beside the window's mean.
@@ -137,9 +143,11 @@ def stages(record: dict) -> dict:
 def fence_modes(delivered: list[dict]) -> dict[str, list[float]]:
     """Fence seconds split by how the dispatch lock was acquired, from record timestamps alone.
 
-    ``quiet`` (<1 s): the first poll found a gap. ``polled`` (1-600 s): a gap appeared within
-    patience. ``hold`` (>=600 s): no gap appeared, the hold was written, and the promotion waited
-    for running wakes to release the shared dispatch lock. Unmeasured runs are absent, never zero.
+    ``quiet`` (<1 s): the first poll found a gap. ``polled``: a gap appeared within that
+    promotion's quiet poll. ``hold``: no gap appeared, the hold was written, and the promotion
+    waited for running wakes to release the shared lock. The patience comes from each record
+    (``quiet_poll_s``; 600 s for legacy records), not one constant across regimes. Unmeasured
+    runs are absent, never zero.
     """
     out: dict[str, list[float]] = {"quiet": [], "polled": [], "hold": []}
     for record in delivered:
@@ -148,7 +156,7 @@ def fence_modes(delivered: list[dict]) -> dict[str, list[float]]:
             continue
         if seconds < FENCE_QUIET_S:
             out["quiet"].append(seconds)
-        elif seconds < FENCE_HOLD_S:
+        elif seconds < quiet_poll_s(record):
             out["polled"].append(seconds)
         else:
             out["hold"].append(seconds)
@@ -156,26 +164,29 @@ def fence_modes(delivered: list[dict]) -> dict[str, list[float]]:
 
 
 def poll_wake_starts(delivered: list[dict], starts: list[float]) -> dict | None:
-    """Wake starts inside each hold-wait fence's 600 s poll versus after the hold.
+    """Wake starts inside each hold-wait fence's quiet poll versus after the hold.
 
-    Only hold-wait fences (>= ``FENCE_HOLD_S``) are counted: a quiet or polled
-    fence never wrote a hold, so a start inside it is not a poll-start. ``starts``
-    are wake start epochs from the routing ledger. A start during the poll grabs
-    the shared dispatch lock and can extend the fence; the hold blocks new starts
-    only after the poll expires. Returns None when no hold-wait fence is measured
-    (never a fabricated zero).
+    Only fences at or beyond their own patience are counted: a quiet or polled fence never wrote
+    a hold, so a start inside it is not a poll-start. ``starts`` are wake start epochs from the
+    routing ledger. A start during the poll grabs the shared dispatch lock and can extend the
+    fence; the hold blocks new starts only after that promotion's poll expires. Returns None
+    when no hold-wait fence is measured (never a fabricated zero).
     """
     holds = []
     for record in delivered:
-        if stages(record)["wake_wait_s"] is None or stages(record)["wake_wait_s"] < FENCE_HOLD_S:
+        seconds = stages(record)["wake_wait_s"]
+        if seconds is None:
+            continue
+        patience = quiet_poll_s(record)
+        if seconds < patience:
             continue
         ws, ac = record.get("waiting_since"), record.get("activation_started_at")
         if isinstance(ws, (int, float)) and isinstance(ac, (int, float)):
-            holds.append((ws, ac))
+            holds.append((ws, ac, patience))
     if not holds:
         return None
-    poll = [sum(1 for s in starts if ws <= s < ws + FENCE_HOLD_S) for ws, _ in holds]
-    after = [sum(1 for s in starts if ws + FENCE_HOLD_S <= s < ac) for ws, ac in holds]
+    poll = [sum(1 for s in starts if ws <= s < ws + patience) for ws, _, patience in holds]
+    after = [sum(1 for s in starts if ws + patience <= s < ac) for ws, ac, patience in holds]
     return {
         "holds": len(holds),
         "poll_mean": sum(poll) / len(poll),
@@ -183,6 +194,7 @@ def poll_wake_starts(delivered: list[dict], starts: list[float]) -> dict | None:
         "after_mean": sum(after) / len(after),
         "with_poll_start": sum(1 for n in poll if n >= 1),
     }
+
 
 def _check_at(record: dict) -> float | None:
     check = record.get("check")
@@ -323,12 +335,15 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
         polled_mean = f" mean {fmt_s(sum(polled) / len(polled))}" if polled else ""
         hold_stats = (f" mean {fmt_s(sum(hold) / len(hold))} max {fmt_s(max(hold))}"
                       if hold else "")
+        patiences = sorted({quiet_poll_s(r) for r in delivered
+                            if stages(r)["wake_wait_s"] is not None})
+        patience_text = (f"{patiences[0]:g}s" if len(patiences) == 1
+                         else f"{patiences[0]:g}-{patiences[-1]:g}s")
         lines.append(f"  fence modes: {len(quiet)}/{measured} quiet gaps (<1s),"
-                     f" {len(polled)} polled (1-600s{polled_mean}),"
-                     f" {len(hold)} hold-waits (>=600s{hold_stats})")
-        if hold:
-            lines.append("  hold-waits exhaust the 600 s poll, then wait for a running wake to"
-                         " release the shared dispatch lock")
+                     f" {len(polled)} polled (gap inside quiet poll{polled_mean}),"
+                     f" {len(hold)} hold-waits (hold written{hold_stats})")
+        lines.append(f"  quiet poll patience {patience_text} from promotion records;"
+                     " hold-waits then wait for a running wake to release the shared dispatch lock")
         boundary = _wake_boundary()
         events = boundary.load_events(home)
         if events is None:
@@ -338,7 +353,7 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
             overlap = []
             for record in delivered:
                 fence = stages(record)["wake_wait_s"]
-                if fence is not None and fence >= FENCE_HOLD_S:
+                if fence is not None and fence >= quiet_poll_s(record):
                     value = boundary.interval_coverage(intervals, record["waiting_since"],
                                                        record["activation_started_at"])
                     if value is not None:
@@ -351,7 +366,7 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
                 lines.append("  hold-wait/wake overlap UNKNOWN (no paired wake intervals)")
             poll = poll_wake_starts(delivered, [a for a, _ in intervals])
             if poll is not None:
-                lines.append(f"  wake starts in the {int(FENCE_HOLD_S)} s poll:"
+                lines.append(f"  wake starts in the quiet poll ({patience_text}):"
                              f" mean {poll['poll_mean']:.2f}/hold-wait (max {poll['poll_max']}),"
                              f" {poll['with_poll_start']}/{poll['holds']} fences had >=1;"
                              f" after hold {poll['after_mean']:.2f}")
