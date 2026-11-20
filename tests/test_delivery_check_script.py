@@ -85,7 +85,7 @@ def test_suite_temp_prefers_a_separate_writable_scratch_mount(tmp_path, monkeypa
     monkeypatch.delenv("MISHE_TEST_TMPDIR", raising=False)
     monkeypatch.setattr(dc.os.path, "ismount", lambda p: p == dc.SCRATCH_MOUNT)
     monkeypatch.setattr(dc.os, "access", lambda p, mode: True)
-    assert dc.suite_temp() == dc.SCRATCH_MOUNT / "mishe-test-tmp"
+    assert dc.suite_temp() == dc.SCRATCH_MOUNT / "t"
 
 
 def test_suite_temp_keeps_the_default_without_a_writable_scratch_mount(monkeypatch):
@@ -154,11 +154,12 @@ def test_the_suite_gets_our_tmpdir_but_no_fixed_basetemp(tmp_path, monkeypatch):
     monkeypatch.setattr(dc.subprocess, "run", fake_run)
     monkeypatch.setattr(dc.Path, "cwd", staticmethod(lambda: tmp_path))
     monkeypatch.setattr(dc, "scratch_mount", lambda: scratch)
+    monkeypatch.setattr(dc, "MAX_WORKER_TMPDIR_LEN", 10000)  # this test mocks the suite, not path lengths
     monkeypatch.delenv("MISHE_TEST_TMPDIR", raising=False)
     monkeypatch.setenv("MISHE_BUILD_CACHE", str(tmp_path / "cache"))
     assert dc.main() == 0
-    assert seen["env"]["TMPDIR"] == str(scratch / "mishe-test-tmp")
-    assert (scratch / "mishe-test-tmp").is_dir()
+    assert seen["env"]["TMPDIR"] == str(scratch / "t")
+    assert (scratch / "t").is_dir()
     assert not any(str(a).startswith("--basetemp") for a in seen["argv"])
 
 
@@ -189,4 +190,29 @@ def test_the_suite_records_per_test_durations(tmp_path, monkeypatch):
     monkeypatch.setattr(dc, "scratch_mount", lambda: None)
     monkeypatch.setenv("MISHE_BUILD_CACHE", str(tmp_path / "cache"))
     assert dc.main() == 0
-    assert seen["argv"][seen["argv"].index("--durations") + 1] == str(dc.SUITE_DURATIONS)
+    assert seen["argv"][seen["argv"].index("-n") + 1] == "2"
+
+
+def test_a_too_long_suite_tmpdir_fails_closed(tmp_path, monkeypatch, capsys):
+    # A 30-byte scratch dir made 117-byte tmux sockets in the measured xdist run, past
+    # the 108-byte sun_path limit. An override that cannot fit must fail before the suite.
+    monkeypatch.setenv("MISHE_TEST_TMPDIR", str(tmp_path / ("d" * 120)))
+    monkeypatch.setattr(dc.Path, "cwd", staticmethod(lambda: tmp_path))
+    try:
+        dc.main()
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("a too-long suite TMPDIR was accepted")
+    assert "sun_path" in capsys.readouterr().err
+
+
+def test_worker_tmpdir_boundary_is_exact():
+    at_bound = Path("/" + "d" * (dc.MAX_WORKER_TMPDIR_LEN - 1))
+    dc.check_worker_tmpdir(at_bound)
+    try:
+        dc.check_worker_tmpdir(Path(str(at_bound) + "d"))
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("one byte over the bound was accepted")

@@ -11,11 +11,12 @@ Builds go to a shared target directory so an unchanged crate is reused between d
 release build is fsync-heavy and blocks root fsync for seconds while it runs
 (``checks/root-fs-stall.py``), so the target dir lives off the root filesystem when the scratch mount
 is a separate writable filesystem (the same convention as ``operator/dual_probe.py``): the scratch
-mount's ``mishe-cargo-target``, else ``MISHE_SEED_HOME/cache/cargo-target``, with ``MISHE_BUILD_CACHE``
 overriding both.  The suite's own temp follows the same rule (``suite_temp``): it is exported as
 ``TMPDIR``, so pytest's per-run numbered base temp (``pytest-of-<user>/pytest-N``, with its own
-retention) lands on the scratch mount's ``mishe-test-tmp``, else the environment default, with
-``MISHE_TEST_TMPDIR`` overriding.  Exit status is the suite's, or 2 when a build fails.
+retention) lands on the scratch mount's short ``t`` directory, else the environment default, with
+``MISHE_TEST_TMPDIR`` overriding.  The suite runs with two xdist workers; the temp must stay short
+enough for a worker's tmux socket (``check_worker_tmpdir``).  Exit status is the suite's, or 2
+when a build or the temp bound fails.
 """
 import os
 import shutil
@@ -27,6 +28,19 @@ sys.path.insert(0, str(Path.cwd() / "src"))
 from mishe_tauftauf import release_boundary  # noqa: E402
 
 SCRATCH_MOUNT = Path("/mnt/mishe-scratch")
+SUITE_WORKERS = 2
+"""Delivery-suite workers: three CPUs are shared with live wake engines, so not ``-n auto``.
+
+Measured on this host (2026-11-20): 991 s serial, 627 s with two workers, same suite green.
+"""
+MAX_WORKER_TMPDIR_LEN = 108 - 1 - 87
+"""Longest TMPDIR that fits an xdist worker's tmux socket in Linux ``sun_path``.
+
+The measured worker socket is 87 bytes longer than TMPDIR
+(``/pytest-of-<user>/pytest-NNN/popen-gwN/<test>/tmux-<uid>/default``); the limit is 108
+including the terminator, leaving 20 bytes. A longer override fails closed before a
+ten-minute suite starts instead of breaking two tmux tests late in a promotion.
+"""
 SUITE_DURATIONS = 25
 """Report the 25 slowest tests in the retained check output.
 
@@ -102,6 +116,9 @@ def suite_temp() -> Path | None:
     ``TMPDIR`` at the scratch mount, the same convention as the build cache; the
     default is kept when there is no separate writable scratch filesystem.
 
+    With xdist the temp path is part of every worker's tmux socket name, so the scratch
+    directory is deliberately one character (``t``): a 30-byte directory produced 117-byte
+    sockets and broke two tmux tests at the 108-byte ``sun_path`` limit.
     The caller must set ``TMPDIR`` only and must *not* pass ``--basetemp``: an
     explicit base temp is a single directory pytest empties at every session
     start (``_pytest.tmpdir`` ``rm_rf``), so concurrent delivery runs would
@@ -112,13 +129,27 @@ def suite_temp() -> Path | None:
     if override:
         return Path(override)
     scratch = scratch_mount()
-    return scratch / "mishe-test-tmp" if scratch is not None else None
+    return scratch / "t" if scratch is not None else None
+
+
+def check_worker_tmpdir(temp: Path | None) -> None:
+    """Refuse a TMPDIR too long for xdist worker tmux sockets before building or testing."""
+    if temp is not None and len(str(temp)) > MAX_WORKER_TMPDIR_LEN:
+        length = len(str(temp))
+        sys.stderr.write(
+            f"suite TMPDIR {temp} is {length} bytes; xdist worker tmux sockets need at most "
+            f"{MAX_WORKER_TMPDIR_LEN} bytes of TMPDIR (Linux sun_path is 108 bytes including "
+            "the terminator). Use a short path on the scratch mount or unset MISHE_TEST_TMPDIR.\n"
+        )
+        raise SystemExit(2)
 
 
 def main() -> int:
     root = Path.cwd()
     home = os.environ.get("MISHE_SEED_HOME")
     cache = build_cache(root, home)
+    temp = suite_temp()
+    check_worker_tmpdir(temp)
     cargo = os.environ.get("CARGO") or shutil.which("cargo") or str(Path.home() / ".cargo" / "bin" / "cargo")
     env = dict(os.environ, PYTHONPATH="src")
     for crate in sorted((root / "rust").glob("*/Cargo.toml")):
@@ -137,8 +168,7 @@ def main() -> int:
                 return 2
             env[env_name(binary)] = str(built)
     argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
-            "--durations", str(SUITE_DURATIONS)]
-    temp = suite_temp()
+            "-n", str(SUITE_WORKERS), "--durations", str(SUITE_DURATIONS)]
     if temp is not None:
         temp.mkdir(parents=True, exist_ok=True)
         env["TMPDIR"] = str(temp)
