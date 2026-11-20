@@ -325,7 +325,7 @@
       "every": 600,
       "timeout": 300,
       "max_age": 1800,
-      "resolver": "senses",
+      "resolver": "steward",
       "signal": {
         "subscribers": [
           "steward"
@@ -350,7 +350,7 @@
       "red_codes": [
         2
       ],
-      "resolver": "senses",
+      "resolver": "steward",
       "signal": {
         "subscribers": [
           "steward"

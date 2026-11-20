@@ -93,7 +93,7 @@ def test_budget_consistency_missing_input_does_not_leave_green(tmp_path):
                          timeout=item["timeout"], red_codes=tuple(item["red_codes"]),
                          unknown_codes=tuple(item["unknown_codes"])) == 2
     assert store.read(tmp_path, item["name"], now=NOW + 1).state == "UNKNOWN"
-    assert "signal:budget-consistency" in owed.check(tmp_path, "senses", now=NOW + 1).reasons
+    assert "signal:budget-consistency" in owed.check(tmp_path, "steward", now=NOW + 1).reasons
 
 
 def test_wake_memory_floor_failed_observation_reaches_health_immediately(tmp_path):
