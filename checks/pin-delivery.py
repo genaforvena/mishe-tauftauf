@@ -105,6 +105,22 @@ def last_failing_line(record):
     lines = [line for line in out.splitlines() if line.startswith("FAILED") or "Error" in line]
     return (lines[-1] if lines else out.splitlines()[-1] if out.strip() else "")[:240]
 
+def delivery_breakdown(record):
+    """Check/wait/activate minutes from a delivered record's own stamps, or "" for legacy records.
+
+    Promotion time is the standing runtime question. The record already stamps each stage;
+    showing them on the GREEN detail makes the breakdown readable from the signal every wake
+    instead of a JSON dig (2026-11-20, 8592c07c: 8.6 min check, 14.5 min waiting for a running
+    wake, 0.2 min activation).
+    """
+    parts = []
+    for label, start, stop in (("check", record.get("created_at"), record.get("waiting_since")),
+                               ("wait", record.get("waiting_since"), record.get("activation_started_at")),
+                               ("activate", record.get("activation_started_at"), record.get("delivered_at"))):
+        if isinstance(start, (int, float)) and isinstance(stop, (int, float)) and stop >= start:
+            parts.append(f"{label} {(stop - start) / 60:.0f}m")
+    return " (" + ", ".join(parts) + ")" if parts else ""
+
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
@@ -141,7 +157,8 @@ def main(argv=None):
         # named the release for one minute (2026-11-18 05:52Z).
         done = record.get("delivered_at")
         live_min = (now - done) / 60 if isinstance(done, (int, float)) else age_min
-        print(f"pin-delivery: GREEN {sha} delivered {live_min:.0f} min ago ({len(record.get('paths', []))} paths)")
+        print(f"pin-delivery: GREEN {sha} delivered {live_min:.0f} min ago ({len(record.get('paths', []))} paths)"
+              f"{delivery_breakdown(record)}")
         keep_outcome_current(a.home, record, now)
         return 0
     if phase in RUNNING:

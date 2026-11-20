@@ -60,6 +60,14 @@ def test_delivered_age_counts_from_delivery_not_promotion_start(tmp_path, capsys
     assert code == 0 and "delivered 1 min ago" in out.out
 
 
+def test_delivered_detail_shows_each_stage_duration(tmp_path, capsys):
+    """The standing runtime question is answerable from the signal, not a raw-record dig."""
+    rec = _rec("delivered", waiting_since=NOW - 540, activation_started_at=NOW - 120,
+               delivered_at=NOW - 60)
+    code, out = _run(_site(tmp_path, [rec]), capsys)
+    assert code == 0 and "check 1m, wait 7m, activate 1m" in out.out
+
+
 def test_failed_check_is_red_and_names_the_failing_test(tmp_path, capsys):
     rec = _rec("check-failed", check={"output": "..\nFAILED tests/test_x.py::test_y - boom\n1 failed"})
     code, out = _run(_site(tmp_path, [rec]), capsys)
