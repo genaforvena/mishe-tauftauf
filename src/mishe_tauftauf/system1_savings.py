@@ -61,6 +61,27 @@ def _signal_names(start) -> set[str]:
                     names.add(name)
     return names
 
+def _cofired(start, name) -> bool:
+    """True when a start carries another wake reason that would wake the role on its own.
+
+    An ``inbox`` (human DM), an ``intention:`` or a second named ``signal:`` reason each
+    wakes the role independently, so a changed wake carrying one would have happened
+    without this signal. Only the exact own token is excluded: a duplicate of it, a
+    malformed empty ``signal:`` token and non-string entries are not independent wake work.
+    """
+    own = f"signal:{name}"
+    reasons = start.get("reasons")
+    if not isinstance(reasons, list):
+        return False
+    for reason in reasons:
+        if not isinstance(reason, str) or reason == own:
+            continue
+        if reason == "inbox" or reason.startswith("intention:") or (
+            reason.startswith("signal:") and reason[len("signal:"):]
+        ):
+            return True
+    return False
+
 
 def _rate(num: int, den: int):
     return None if den == 0 else round(num / den, 4)
@@ -127,18 +148,22 @@ def measure(home, *, now: float) -> dict:
     signal_ended = Counter()
     signal_yielded = Counter()
     signal_changed = Counter()
+    signal_changed_cofired = Counter()
     for start, end in ended:
         names = _signal_names(start)
         if not names:
             continue
         result = end.get("result")
         clean = end.get("state") == "yielded" and result in yielding.RESULTS
+        changed = clean and result == "changed"
         for name in names:
             signal_ended[name] += 1
             if clean:
                 signal_yielded[name] += 1
-                if result == "changed":
+                if changed:
                     signal_changed[name] += 1
+                    if _cofired(start, name):
+                        signal_changed_cofired[name] += 1
     signal_rates = {
         name: {
             "ended": signal_ended[name],
@@ -155,6 +180,18 @@ def measure(home, *, now: float) -> dict:
         and stats["changed_rate"] is not None
         and stats["changed_rate"] < MAX_SIGNAL_CHANGED_RATE
     ]
+    # For each flagged signal, the co-firing evidence the retirement review needs:
+    # a changed wake that also carried a DM/intention/other-signal reason would have
+    # happened without this signal, so only such wakes count toward a safe retirement.
+    retirement_review = {
+        name: {
+            "changed": signal_changed[name],
+            "changed_cofired": signal_changed_cofired[name],
+            "changed_all_cofired": signal_changed[name] > 0
+            and signal_changed_cofired[name] == signal_changed[name],
+        }
+        for name in retirement_candidates
+    }
     results = Counter(e.get("result") or "none" for _, e in ended)
     same = [(s, e) for s, e in ended if s.get("same_dossier_as_last") is True]
     changed_all = sum(1 for _, e in ended if e.get("result") == "changed")
@@ -174,6 +211,7 @@ def measure(home, *, now: float) -> dict:
         "changed_by_trigger": trigger_rates,
         "changed_by_signal": signal_rates,
         "retirement_candidates": retirement_candidates,
+        "retirement_review": retirement_review,
         "results": dict(sorted(results.items())),
         "gate": "live" if live_path.exists() else "off",
         "avoided": skipped,

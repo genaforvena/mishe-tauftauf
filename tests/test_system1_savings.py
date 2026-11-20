@@ -125,6 +125,58 @@ def test_retirement_candidate_needs_volume_and_low_rate(tmp_path):
     assert out["retirement_candidates"] == ["wasteful"]
 
 
+
+def test_retirement_review_reports_cofiring_evidence(tmp_path):
+    rows = []
+    for i in range(20):
+        key = f"wasteful-{i}"
+        reasons, result = ["signal:wasteful"], "verified"
+        if i == 0:
+            result = "changed"
+            reasons = ["signal:wasteful", "inbox"]  # the DM would have woken this role anyway
+        rows += [
+            {"kind": "start", "key": key, "role": "x", "ts": NOW - 100 - i,
+             "trigger": "signal:wasteful", "reasons": reasons, "same_dossier_as_last": False},
+            {"kind": "end", "key": key, "role": "x", "ts": NOW - 95 - i,
+             "state": "yielded", "result": result},
+        ]
+    _write_rows(tmp_path, rows)
+    _budget(tmp_path)
+    out = s.measure(tmp_path, now=NOW)
+    assert out["retirement_candidates"] == ["wasteful"]
+    assert out["retirement_review"] == {
+        "wasteful": {"changed": 1, "changed_cofired": 1, "changed_all_cofired": True},
+    }
+
+
+def test_retirement_review_flags_a_non_cofired_changed_wake(tmp_path):
+    rows = []
+    for i in range(20):
+        key = f"wasteful-{i}"
+        result = "changed" if i == 0 else "verified"
+        rows += [
+            {"kind": "start", "key": key, "role": "x", "ts": NOW - 100 - i,
+             "trigger": "signal:wasteful", "reasons": ["signal:wasteful"],
+             "same_dossier_as_last": False},
+            {"kind": "end", "key": key, "role": "x", "ts": NOW - 95 - i,
+             "state": "yielded", "result": result},
+        ]
+    _write_rows(tmp_path, rows)
+    _budget(tmp_path)
+    out = s.measure(tmp_path, now=NOW)
+    assert out["retirement_review"]["wasteful"] == {
+        "changed": 1, "changed_cofired": 0, "changed_all_cofired": False,
+    }
+
+
+def test_cofired_ignores_own_duplicates_and_malformed_reasons():
+    noisy = {"reasons": ["signal:a", "signal:a", 42, None, "signal:", ""]}
+    assert s._cofired(noisy, "a") is False
+    assert s._cofired({"reasons": ["signal:a", "intention:again"]}, "a") is True
+    assert s._cofired({"reasons": ["signal:a", "signal:b"]}, "a") is True
+    assert s._cofired({"reasons": None}, "a") is False
+
+
 def test_retirement_candidate_excludes_signals_with_no_clean_yields(tmp_path):
     rows = []
     for i in range(20):

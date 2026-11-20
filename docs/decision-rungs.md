@@ -89,11 +89,17 @@ window can support a measured zero even when a torn line was skipped.
 Since 2026-11-20 the signal also reports `changed_by_signal`, computed from each started
 wake's `signal:` reasons (a wake co-firing on several signals counts once per name).
 `retirement_candidates` lists signals with at least 20 ended wakes in the 24 h window and a
-changed rate below 15% — a flag for trigger-retirement review, never an auto-skip. The
-volume floor exempts rare-event detectors such as `doctor`, whose low changed rate is their
-purpose; the values are screening thresholds, not fitted cutoffs. On the ledger that
-motivated the check no signal qualifies (`moving-pin-delivery` is 21/75, 28.0%), so the list
-was empty at introduction. The three escapes and the no-gate close above still stand.
+changed rate below 15% — a flag for trigger-retirement review, never an auto-skip. For each
+flagged name the signal also reports `retirement_review`: how many of its changed wakes
+carried another independent wake reason (`inbox`, an `intention:`, or a second named signal)
+that would have woken the role anyway, and whether that covers every changed wake. That is
+the co-firing escape below, computed by System 0 so a reviewer does not re-mine the ledger;
+`changed_all_cofired: true` means the signal added no changed wake on its own. A candidate with
+zero changed wakes needs the same judgment, not a vacuous pass. The volume floor exempts
+rare-event detectors such as `doctor`, whose low changed rate is their purpose; the values
+are screening thresholds, not fitted cutoffs. On the ledger that motivated the check no
+signal qualifies (`moving-pin-delivery` is 21/75, 28.0%), so the list and the review were
+empty at introduction. The three escapes and the no-gate close above still stand.
 
 ### Revised gate spec (2026-11-19): no safe gate for signal wakes
 
