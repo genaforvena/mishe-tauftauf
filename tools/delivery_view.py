@@ -112,14 +112,22 @@ def git(repo: Path, *args: str, timeout: float = 30.0) -> tuple[int, str]:
         return 1, ""
 
 
-def load_records(home: Path) -> list[dict]:
+def load_records(home: Path) -> tuple[list[dict], int]:
     records = []
+    unreadable = 0
     for path in sorted((home / "work" / "releases").glob("*.json")):
         try:
-            records.append(json.loads(path.read_text(encoding="utf-8")))
+            record = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            continue  # a torn record is unreadable evidence, not an empty series
-    return [r for r in records if isinstance(r.get("created_at"), (int, float))]
+            unreadable += 1
+            continue
+        created_at = record.get("created_at") if isinstance(record, dict) else None
+        if (type(created_at) not in (int, float)
+                or not -sys.float_info.max <= created_at <= sys.float_info.max):
+            unreadable += 1
+            continue
+        records.append(record)
+    return records, unreadable
 
 
 def stages(record: dict) -> dict:
@@ -447,7 +455,7 @@ def wrong_pin_failures(recoveries: list[dict]) -> dict[str, int] | None:
 
 
 def render(home: Path, repo: Path, window_s: float, now: float) -> str:
-    records = load_records(home)
+    records, unreadable = load_records(home)
     lines = [f"Checked-to-live report  {time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(now))}",
              f"window: last {int(window_s // 3600)} h of promotions; pin: {pin_sha(home) or 'UNKNOWN'}"]
     if not records:
@@ -624,8 +632,12 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
         else:
             lines.append("    rollback duration UNKNOWN (missing or invalid timestamps)")
     wrong = wrong_pin_failures(recoveries)
-    if wrong is not None:
-        lines.append(f"  wrong-pin consumer failures in window: {wrong['total']}"
+    if unreadable:
+        lines.append("  wrong-pin consumer failures in window: UNKNOWN"
+                     f" (unreadable promotion records: {unreadable})")
+    if wrong is not None and (not unreadable or wrong["total"]):
+        label = "    observed wrong-pin consumer failures" if unreadable else "  wrong-pin consumer failures in window"
+        lines.append(f"{label}: {wrong['total']}"
                      f" (rolled back {wrong['rolled-back']}, UNKNOWN phase {wrong['unknown-phase']})")
     for label, times in (("completed rollback", rollback_done),
                          ("failed-probe rollback", rollback_probe_failed)):
@@ -681,7 +693,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.fence_spans_json:
         now = time.time()
-        delivered = [r for r in windowed(load_records(args.home), args.window, now)
+        records, _ = load_records(args.home)
+        delivered = [r for r in windowed(records, args.window, now)
                      if r.get("phase") == "delivered"]
         spans = fence_wake_spans(_wake_boundary().load_events(args.home), delivered)
         print(json.dumps({"generated_at": now, "window_s": args.window,

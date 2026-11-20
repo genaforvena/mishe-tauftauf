@@ -248,6 +248,31 @@ def test_unreadable_records_report_unknown_not_a_series(tmp_path):
     assert "UNKNOWN: no readable promotion records" in text
 
 
+@pytest.mark.parametrize("unreadable", ["{not json", "[]", "{}"])
+def test_partial_promotion_records_make_the_wrong_pin_total_unknown(tmp_path, unreadable):
+    unrelated = record(phase="UNKNOWN", failure="functional probe failed: another cause")
+    home = home_with(tmp_path, [unrelated])
+    torn = home / "work" / "releases" / "torn.json"
+    torn.write_text(unreadable, encoding="utf-8")
+
+    text = view.render(home, Path("/nope"), 24 * 3600.0, 4000.0)
+
+    assert "wrong-pin consumer failures in window: UNKNOWN (unreadable promotion records: 1)" in text
+    assert "wrong-pin consumer failures in window: 0" not in text
+    assert torn.read_text(encoding="utf-8") == unreadable
+
+
+def test_partial_promotion_records_keep_observed_wrong_pin_failures(tmp_path):
+    wrong_pin = record(phase="rolled-back", failure="active or queued consumer has wrong pin: fixture.service")
+    home = home_with(tmp_path, [wrong_pin])
+    (home / "work" / "releases" / "torn.json").write_text("{", encoding="utf-8")
+
+    text = view.render(home, Path("/nope"), 24 * 3600.0, 4000.0)
+
+    assert "wrong-pin consumer failures in window: UNKNOWN" in text
+    assert "observed wrong-pin consumer failures: 1 (rolled back 1, UNKNOWN phase 0)" in text
+
+
 def test_oldest_waiting_commit_and_the_in_flight_run(monkeypatch, tmp_path):
     home = home_with(tmp_path, [record(phase="waiting-for-wakes", sha="d" * 40,
                                        created_at=3000.0, delivered_at=None, reviewed_at=None,

@@ -31,6 +31,11 @@ routing ledger cannot cover reads UNKNOWN and is left out of the mean — it is 
 overlap and not evidence of a failed attempt. For the measured cost and why the quiet poll
 is short, see [Wall coordination](wall-coordination.md).
 
+The wrong-pin count includes failed promotions whose cause was an active or queued
+consumer on the wrong pin, including cases where the rollback probe failed. An
+unreadable promotion record makes the total UNKNOWN. Any wrong-pin failures
+confirmed by readable records still appear below it.
+
 The `budget` window runs `operator/budget/budget_pane.sh` (site-local, under `SITE_HOME`), a loop that calls
 `budget_view.py` every 20 s and clears the screen between frames, so the registry's
 command and the table's tool name the same view.
