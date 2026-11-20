@@ -119,6 +119,10 @@ def walk(tokens: list[str], start: int, trie: dict) -> str | None:
             continue
         if PLACEHOLDER.fullmatch(token):
             return None
+        # A token ending in ":" is a label in quoted prose (a commit-subject area such as
+        # `release review: ...`), never a subcommand; the CLI has no colon-suffixed verb.
+        if token.endswith(":"):
+            return None
         if token in node:
             node = node[token]
             i += 1

@@ -171,3 +171,22 @@ def test_a_bound_report_path_still_yields_its_verdict(
     assert len(siblings) == 1
     assert json.loads(siblings[0].read_text(encoding="utf-8"))["undispositioned"] == []
 
+def test_a_colon_label_in_quoted_prose_is_not_a_subcommand(
+        monkeypatch, tmp_path: Path) -> None:
+    # decision-rungs quotes commit-subject areas as spans such as `release review: ...`;
+    # ``review:`` is a label, not an unknown leaf, so the span must not be flagged.
+    tool = _load_tool()
+    src = tmp_path / "served" / "src"
+    trie = {"release": {"promote": {}, "review": {}}}
+    corpus = {"docs/example.md": "Subjects open with `release review: ...`; a real leaf `release stage` is not.\n"}
+    checker = SimpleNamespace(
+        served_release_src=lambda home: (src.parent, "a" * 40, src),
+        reader_corpus=lambda root: corpus,
+    )
+    monkeypatch.setattr(tool, "load_leaf_checker", lambda: checker)
+    monkeypatch.setattr(tool, "leaf_trie", lambda served_src: (trie, set(trie)))
+    result = tool.audit(tmp_path / "site")
+    spans = [finding["span"] for finding in result["findings"]]
+    assert "release review: ..." not in spans
+    # A real unknown leaf without the colon is still flagged.
+    assert "release stage" in spans
