@@ -52,6 +52,9 @@ FURNITURE = [
     ("bed", "T", "bedroom", (-2, -2), "bedroom_bed"),
 ]
 ROOM_NAME = {"living_room": "living room", "bedroom": "bedroom"}
+# Rooms the renderer knows but the floorplan does not draw. Kept separate from
+# ROOM_NAME so changing an undrawn-room label cannot alter drawn-room lines.
+UNDRAWN_ROOM_NAME = {"kitchen_stall": "kitchen stall"}
 
 SGR = {
     "wall": "37", "dashed": "2;37", "floor": "2;90", "label": "36", "hatch": "2;31",
@@ -439,6 +442,15 @@ def _person_line(person, m):
     if kind == "ghost":
         when = "" if dated is None else " (label %s)" % dated
         return "? %s: UNKNOWN, last known %s%s" % (name, ROOM_NAME.get(info["room"], info["room"]), when)
+    # A marker can name a room the floorplan does not draw. It has no sprite,
+    # but a place is still recorded: say which one, never "no place recorded".
+    room = mk.get("room")
+    if isinstance(room, str) and room:
+        shown = UNDRAWN_ROOM_NAME.get(room, room)
+        if mk.get("confidence") in ("medium", "low"):
+            return "%s: fresh label in %s (not drawn on this map)" % (name, shown)
+        when = "" if dated is None else "; label %s" % dated
+        return "? %s: UNKNOWN, last known %s (not drawn on this map%s)" % (name, shown, when)
     return "%s: no place recorded (UNKNOWN)" % name
 
 

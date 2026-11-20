@@ -166,6 +166,45 @@ def test_legend_fails_closed_on_missing_or_malformed_label_date():
         assert "2026-" not in ilya_line
 
 
+def test_undrawn_room_names_the_recorded_place_instead_of_no_place():
+    markers = {
+        "rozalia": {"room": "kitchen_stall", "confidence": "UNKNOWN", "age_h": 208.8,
+                    "label_utc": "2026-11-05T07:02Z",
+                    "guess": {"room": None, "confidence": 0.0}},
+    }
+    model = _model(_state(markers))
+    text = mt.frame(model, NOW)
+    assert ("? Rozalia: UNKNOWN, last known kitchen stall "
+            "(not drawn on this map; label on 2026-11-05, 8.7d ago)") in text
+    assert "Rozalia: no place recorded" not in text
+    assert not any(p == "rozalia" for _, _, _, p in model["sprites"])
+    assert all(len(line) <= mt.MAX_WIDTH for line in text.splitlines())
+
+
+def test_undrawn_room_fresh_label_keeps_its_freshness():
+    marker = {"room": "kitchen_stall", "confidence": "medium", "age_h": 0.25,
+              "label_utc": "2026-11-13T23:35Z", "guess": {"room": None, "confidence": 0.0}}
+    line = [line for line in mt.frame(_model(_state({"rozalia": marker})), NOW).splitlines()
+            if "Rozalia:" in line][0]
+    assert line == "Rozalia: fresh label in kitchen stall (not drawn on this map)"
+
+
+def test_undrawn_room_fails_closed_on_missing_or_malformed_marker():
+    for marker in (
+        {"room": None, "confidence": "UNKNOWN", "age_h": 208.8},
+        {"room": 123, "confidence": "UNKNOWN", "age_h": 208.8},
+    ):
+        text = mt.frame(_model(_state({"rozalia": marker})), NOW)
+        assert "Rozalia: no place recorded (UNKNOWN)" in text
+
+    marker = {"room": "kitchen_stall", "confidence": "UNKNOWN", "age_h": 208.8,
+              "label_utc": "garbage"}
+    line = [line for line in mt.frame(_model(_state({"rozalia": marker})), NOW).splitlines()
+            if "Rozalia:" in line][0]
+    assert "not drawn on this map; label 208.8 h old" in line
+    assert "2026-" not in line
+
+
 def test_missing_floorplan_is_unknown_and_draws_no_rooms():
     model = _model(_state(FRESH_ILYA), floor=None, reason="missing")
     text = mt.frame(model, NOW)
