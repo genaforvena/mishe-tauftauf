@@ -50,6 +50,22 @@ def test_stall_line_renders_memory_pressure_alone_when_io_is_absent():
     assert code == 2 and "mem_psi 23.93" in lines[0] and "io_psi" not in lines[0]
 
 
+def test_burst_reports_peak_pressure_from_every_stall_not_only_the_worst():
+    stalls = [rec(event="slow", at=NOW - 400, total=23.6, fsync=23.58, psi_io=57.37, psi_mem=0.0),
+              rec(event="slow", at=NOW - 200, total=14.9, fsync=14.89, psi_io=93.23, psi_mem=0.22)]
+    code, lines = mod.evaluate([rec()] + stalls, NOW)
+    assert code == 2
+    assert "worst 23.6s" in lines[0] and "io_psi 57.37" in lines[0]   # longest stall's own reading
+    assert "peak io_psi 93.23" in lines[0]                            # higher pressure on a shorter stall
+    assert "peak mem_psi 0.22" in lines[0]                            # pressure hidden by a worst-only reading
+
+
+def test_single_stall_does_not_repeat_peak_pressure():
+    code, lines = mod.evaluate(
+        [rec(), rec(event="slow", at=NOW - 60, total=17.0, fsync=16.97, psi_io=84.66, psi_mem=23.93)], NOW)
+    assert code == 2 and "peak" not in lines[0]
+
+
 def test_one_cliff_seen_by_three_probes_is_one_episode():
     stalls = [rec(event="slow", at=NOW - 60 + i * 0.01, total=5.2 + i, fsync=5.2 + i)
               for i in range(3)]

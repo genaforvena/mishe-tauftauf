@@ -29,6 +29,11 @@ cache being charged and swept (2026-11-16: site-home reads charging the plants
 slice) — rather than a plain write storm, so the two pressures together narrow
 the cause that io_psi alone could not.
 
+With two or more stalls in the window the verdict also carries the peak io_psi
+and peak mem_psi across all of them, not just the longest stall's own readings.
+The worst-by-duration cliff need not be the most contended or the one carrying
+a reclaim signature; the peak keeps that distinction visible in the signal.
+
 Exit status:
   0  the probe is fresh and no root probe in the window reached STALL_S
   2  a root-filesystem probe took STALL_S or longer inside the window
@@ -96,6 +101,27 @@ def timing_suffix(stalls: list[dict], episode_count: int, now: float) -> str:
     return out
 
 
+def peak_psi_suffix(stalls: list[dict]) -> str:
+    """Highest pressure across every stall in the window, not only the longest one.
+
+    The worst-by-duration stall can understate contention: in the 2026-11-20
+    burst the 23.6 s cliff carried io_psi 57 while a 14.9 s cliff carried 93.
+    A reclaim spike on a shorter stall is hidden the same way, so the burst-wide
+    peak is what lets a reader separate device latency from reclaim in the
+    signal alone. A single stall already renders its own pressure in psi_suffix.
+    """
+    if len(stalls) < 2:
+        return ""
+    ios = [r["psi_io"] for r in stalls if isinstance(r.get("psi_io"), (int, float))]
+    mems = [r["psi_mem"] for r in stalls if isinstance(r.get("psi_mem"), (int, float))]
+    parts = []
+    if ios:
+        parts.append(f"peak io_psi {max(ios):.2f}")
+    if mems:
+        parts.append(f"peak mem_psi {max(mems):.2f}")
+    return "; " + ", ".join(parts) if parts else ""
+
+
 def episodes(stalls: list[dict]) -> list[list[dict]]:
     """Group stall records by time proximity; one cliff seen by N probes is one episode."""
     groups: list[list[dict]] = []
@@ -126,7 +152,7 @@ def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
             lead = (f"{len(stalls)} root-filesystem stall(s) >= {STALL_S:.0f}s in the last "
                     f"{WINDOW_S:.0f}s")
         return 2, [f"{lead}; worst {worst['total']:.1f}s (create {worst.get('create')}, fsync {worst.get('fsync')})"
-                   f"{psi_suffix(worst)}{timing_suffix(stalls, len(eps), now)}"]
+                   f"{psi_suffix(worst)}{timing_suffix(stalls, len(eps), now)}{peak_psi_suffix(stalls)}"]
     recurrence = [r for r in seen if r.get("event") == "slow" and now - r["at"] <= RECURRENCE_S
                   and (r.get("total") or 0) >= STALL_S]
     line = f"root probe fresh ({now - newest:.0f}s) with no stall >= {STALL_S:.0f}s in {WINDOW_S:.0f}s"
