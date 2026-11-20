@@ -13,6 +13,7 @@ pane it draws in: 41 rows, and 170 columns for the health view, which is the wid
 | senses-map | tools/map_view.py | senses | terminal tile map of the apartment (rooms from floorplan.json, best-guess people from map-state.json), read-only; `--once` prints one frame; needs tools/map_render.py run first |
 | network | tools/network_view.py | network | home network and connection |
 | delivery | tools/delivery_view.py (looped each minute by the window command) | genome | checked-to-live time per promotion: check stage, wake fence, drain, review |
+| wake-view | tools/wake_view.py (looped each 5 min by the window command) | steward | where engine wall time goes across retained wakes |
 | budget | operator/budget/budget_view.py (site-local) | budget | provider quota and spend |
 
 The delivery window summarizes how long commits waited for their promotion to start. The
