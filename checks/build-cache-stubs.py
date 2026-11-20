@@ -21,7 +21,7 @@ from pathlib import Path
 DEFAULT_CACHE = Path("/mnt/mishe-scratch/mishe-cargo-target")
 BINARY_NAMES = {
     "mishe-tape", "mishe-tape-facts", "mishe-records", "mishe-systemd-show",
-    "mishe-signal-freshness", "mishe-signal-sample",
+    "mishe-signal-sample",
     "mishe-unit-paths", "mishe-cgroup-counters",
 }
 ELF_MAGIC = b"\x7fELF"

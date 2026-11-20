@@ -232,28 +232,6 @@ that composes it:
   any of the three series has no recent `ok` sample, so the signal ages to UNKNOWN
   rather than showing a carried value. There is no Python fallback: a missing
   binary raises `SignalSampleUnknown`, which the caller must report as UNKNOWN.
-- `rust/mishe-signal-freshness` (`mishe-signal-freshness`, contract
-  `rust/mishe-signal-freshness/CONTRACT.md`) owns the freshness verdict of one
-  signal observation: `now - seen > max_age`, the comparison
-  `signal_store.read` makes. The verdict is the exit status — 0 FRESH, 1 EXPIRED,
-  2 for an argument count or number outside the contract — so the binary writes
-  nothing to stdout and the caller reads no output. `signal_freshness.verdict`
-  is the reader. It resolves its binary first — an explicit argument, then
-  `MISHE_SIGNAL_FRESHNESS_BIN`, then the site install `$SITE/bin/mishe-signal-freshness`
-  — and accepts the site install only when its sha256 matches the record beside it
-  (`mishe-signal-freshness.install.json`); that install-record read is itself a
-  named boundary in the policy. It maps every other outcome (a missing or
-  non-executable binary, a non-object install record, a sha256 mismatch, exit 2, a
-  timeout, a spawn failure) to
-  `FreshnessUnknown` and has no Python fallback, so a broken or replaced binary
-  cannot make a stale signal look fresh. Its four sibling sha256 install-record
-  readers — `feed._tape_binary`, `feed._records_binary`, `tape_facts.facts_binary`
-  and `unit_psi_text._systemd_show_binary` — reject a non-object record the same
-  way. Wired into the authoritative expiry sweep: `signal_store.expire` resolves the
-  binary once per sweep and calls `signal_freshness.verdict` for every OK signal; a
-  configured but broken binary turns those signals UNKNOWN with a reason.
-  `signal_store.read` keeps its display-level Python comparison. Tests:
-  `tests/test_signal_freshness.py` and `tests/test_signal_store_freshness.py`.
 - `rust/mishe-unit-paths` (`mishe-unit-paths`, contract
   `rust/mishe-unit-paths/CONTRACT.md`) decodes the absolute paths a unit's
   `systemctl show` text declares: it writes one ordered, deduplicated path per

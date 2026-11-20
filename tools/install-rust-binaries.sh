@@ -36,7 +36,6 @@ components="mishe-tape:mishe-tape
 mishe-tape-facts:mishe-tape-facts
 mishe-records:mishe-records
 mishe-systemd-show:mishe-systemd-show
-mishe-signal-freshness:mishe-signal-freshness
 mishe-unit-paths:mishe-unit-paths
 mishe-signal-samples:mishe-signal-sample
 mishe-cgroup-counters:mishe-cgroup-counters"

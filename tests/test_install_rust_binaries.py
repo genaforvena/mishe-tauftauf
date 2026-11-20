@@ -28,7 +28,7 @@ done
 [ -n "$target" ] || { echo "stub: no --target-dir" >&2; exit 2; }
 mkdir -p "$target/release"
 # every installed binary name (the bin name can differ from the crate dir, e.g. signal-samples)
-for bin in mishe-tape mishe-tape-facts mishe-records mishe-systemd-show mishe-signal-freshness mishe-unit-paths mishe-signal-sample mishe-cgroup-counters; do
+for bin in mishe-tape mishe-tape-facts mishe-records mishe-systemd-show mishe-unit-paths mishe-signal-sample mishe-cgroup-counters; do
   printf '#!/bin/sh\necho %s\n' "$bin" > "$target/release/$bin"
   chmod 0755 "$target/release/$bin"
 done
@@ -70,7 +70,7 @@ def test_builds_into_cache_from_crate_dir_and_installs(stub_env):
     result = run_script(env, site, cwd=REPO)
     assert result.returncode == 0, result.stderr
     lines = log.read_text().splitlines()
-    assert len(lines) == 8
+    assert len(lines) == 7
     for line in lines:
         cwd, argv = line.split(" argv=")
         crate = Path(cwd.removeprefix("cwd=")).name
@@ -92,5 +92,5 @@ def test_relative_cargo_resolves_from_caller_cwd(stub_env, tmp_path):
     env["MISHE_CARGO"] = "./cargo"
     result = run_script(env, site, cwd=rel_dir)
     assert result.returncode == 0, result.stderr
-    assert len(log.read_text().splitlines()) == 8
+    assert len(log.read_text().splitlines()) == 7
 

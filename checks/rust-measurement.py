@@ -81,7 +81,6 @@ CRATES = {
     "mishe-cgroup-counters": "mishe-cgroup-counters",
     "mishe-network-probe": "mishe-network-probe",
     "mishe-records": "mishe-records",
-    "mishe-signal-freshness": "mishe-signal-freshness",
     "mishe-signal-sample": "mishe-signal-samples",
     "mishe-systemd-show": "mishe-systemd-show",
     "mishe-tape": "mishe-tape",

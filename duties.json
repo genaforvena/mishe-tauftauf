@@ -713,6 +713,21 @@
       "covers": "due-time wakes are armed for this site: RED when there is a recorded due time and no timer in this site's next-due namespace, or the units-installed marker is missing; UNKNOWN when next-due.json or systemd cannot be read"
     },
     {
+      "name": "signal-expiry",
+      "command": [
+        "{python}",
+        "{repo}/checks/signal-expiry.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 300,
+      "timeout": 30,
+      "max_age": 900,
+      "resolver": "rust-plan",
+      "replaces": [],
+      "covers": "stored OK readings are retired after their freshness deadlines even when a next-due timer exists: RED when a stored OK is over five minutes past its deadline; UNKNOWN when registry, reading or freshness stamp evidence is missing or unreadable"
+    },
+    {
       "name": "next-due-churn",
       "command": [
         "{python}",

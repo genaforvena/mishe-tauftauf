@@ -36,7 +36,7 @@ To explore a supplied entry point, pass its exact printed file and definition
 line as a root (repeat `--root` for more roots):
 
 ```sh
-python3 tools/code_map_experiment.py --root rust/mishe-signal-freshness/src/main.rs:31 rust/mishe-signal-freshness/src
+python3 tools/code_map_experiment.py --root rust/mishe-cgroup-counters/src/main.rs:127 rust/mishe-cgroup-counters/src
 ```
 
 For each definition, the experiment follows identifiers inside it to every
@@ -53,7 +53,7 @@ can differ from the displayed commit. The command-line decoder is isolated in
 `tools/code_map_args.py`, the only newly registered parsing boundary; it reads
 only this experiment's options and paths and grants no runtime authority.
 
-On the 4b0c52dd checkout, the Rust example produced possible name paths from
+On the 4b0c52dd checkout, the now-retired freshness crate produced possible name paths from
 `main` to `parse_float` and `expired`; its two attribute-registered tests stayed
 UNKNOWN, as they should when only `main` is supplied. With
 `--root tools/check_dangling.py:74 tools/check_dangling.py src/mishe_tauftauf/wall_patch.py`,

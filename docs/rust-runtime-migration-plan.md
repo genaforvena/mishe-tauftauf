@@ -4060,3 +4060,29 @@ the grace period and reports UNKNOWN when its inputs are unreadable. Route a
 failed check to rust-plan while the freshness change is under observation.
 The site-local comparison output is
 `artifacts/rust-plan-20261107/freshness-path-comparison-20261120.out`.
+
+### 10.72 The expiry sweep shares the display comparison (2026-11-20)
+
+Both callers compare `now - seen > max_age` in-process. The sweep still emits
+the same UNKNOWN edge for expired and never-observed readings. It preserves
+unreadable observations, which display as UNKNOWN. The old verifier is removed
+from the installer, measurement roster and protocol boundary. Its installed
+binary and digest remain available to the previous release for rollback.
+
+A scratch pin switched from `8592c07c` to the candidate, back to `8592c07c`
+and forward again. Each step ran the package under the scratch pin, with 142
+fixture registrations and the installed scheduler closure. The stand-in
+systemd timer checked which source the next invocation would use. All four
+steps produced the same fingerprint for readings, history, stamp timestamps
+and timer receipts. Old runs used 0.263–0.287 CPU-s. Candidate runs used
+0.051–0.054 CPU-s with zero child CPU. Reapplying with a digest-valid executable
+that would fail and leave a marker produced no marker. These are isolated
+tests. The live savings still need a measurement.
+
+The `signal-expiry` duty runs every five minutes and routes to rust-plan. It
+reports RED for a stored OK reading still present more than five minutes
+after its deadline and UNKNOWN for unreadable inputs. Its own reading expires
+after 15 minutes without a successful run. A controlled missing expiry
+produced a RED edge owed to rust-plan. The sweep and another check recovered
+GREEN, while a corrupt reading and a silent monitor each yielded UNKNOWN.
+The existing `next-due-armed` duty still routes a missing timer to Genome.
