@@ -39,7 +39,7 @@ with nothing else open should be able to do exactly what the mind is doing.
 
 The mind stops at a meaningful boundary: a completed checked change, a
 decision-relevant experiment, a real dependency, or a safe execution boundary.
-It ends with `mishe yield --result changed|verified|blocked`. A yield is a
+It ends with `mishe yield --result changed|verified|blocked` (a yield hands the turn back to the runtime and records how it ended). A yield is a
 transport fact, not proof the work landed; the next wake starts by reconciling
 any unknown effect before it acts again.
 
