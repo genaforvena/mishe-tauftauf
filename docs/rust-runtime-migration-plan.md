@@ -3955,6 +3955,9 @@ unprofiled in a fresh process, `read_scan_series(home, "sense.disk.free")` costs
 the run's 22.4 CPU-s, ~0.3 % of one core — the cheapest *clean* slice on the
 list, not a large one, and it retires a cost that grows with the corpus.
 
+The [deployed scan index](rust-runtime-investigation-plan.md#1069-the-scan-index-replaces-the-corpus-parse-2026-11-18)
+replaced that parse. The pinned reader took 0.0187 CPU-s for 2,148 rows.
+
 ### 10.69 The one RED was contention, not a regression: same feed bytes, r=0.852 (2026-11-20)
 
 The retained `rust-measurement-history.jsonl` (71 samples, 2026-11-17T07:02Z to
@@ -4077,7 +4080,7 @@ steps produced the same fingerprint for readings, history, stamp timestamps
 and timer receipts. Old runs used 0.263–0.287 CPU-s. Candidate runs used
 0.051–0.054 CPU-s with zero child CPU. Reapplying with a digest-valid executable
 that would fail and leave a marker produced no marker. These are isolated
-tests. The live savings still need a measurement.
+tests.
 
 The `signal-expiry` duty runs every five minutes and routes to rust-plan. It
 reports RED for a stored OK reading still present more than five minutes
@@ -4086,6 +4089,16 @@ after 15 minutes without a successful run. A controlled missing expiry
 produced a RED edge owed to rust-plan. The sweep and another check recovered
 GREEN, while a corrupt reading and a silent monitor each yielded UNKNOWN.
 The existing `next-due-armed` duty still routes a missing timer to Genome.
+
+**Live observation at 08:02Z.** Release `4e35283e` delivered the retirement
+from `7f0c8de4`. The full check reported 5,788 passed and 23 skipped, the
+receipt recorded a successful `mishe-arm.service` invocation from the
+release, and the fresh review was clear. The live history recorded a
+`work-watch` expiry after 180 seconds without observation and a subsequent
+GREEN observation. The expiry monitor published GREEN on its first timer run.
+The first check took 21.8 seconds of the 30-second limit, with 0.30 CPU-s
+for the service. The 08:07Z timer run finished in 3.5 seconds and refreshed
+GREEN. A live before-and-after CPU comparison remains UNKNOWN.
 
 ### 10.73 The second RED was the same contention: quiet re-fold 3.48 CPU-s (2026-11-20)
 
