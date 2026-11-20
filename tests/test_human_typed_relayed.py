@@ -5,6 +5,7 @@ import os
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -193,6 +194,55 @@ class HumanTypedRelayedTests(unittest.TestCase):
         # no cursor write happened: both lines stay pending
         self.assertLess(self.cursor()["a.jsonl"], f.stat().st_size)
 
+    def test_stale_observer_write_cannot_replay_a_relayed_line(self):
+        # The 120 s dry run writes cursors too. If it read cursors before a
+        # typed line arrived and its stale map lands after the relay advanced,
+        # the line must not be DM'd twice.
+        f = self.sessions / "a.jsonl"
+        f.write_text(entry("old"))
+        self.run_main()
+        with f.open("ab") as fh:
+            fh.write(assistant("noise").encode())
+        real_write = htr.write_cursors
+        stale = {}
+
+        def capture(path, cursors, reset=()):
+            stale["map"] = json.loads(json.dumps(cursors))
+
+        htr.write_cursors = capture
+        try:
+            self.assertEqual(self.run_main(), 0)
+        finally:
+            htr.write_cursors = real_write
+        self.assertIn("map", stale)
+        with f.open("ab") as fh:
+            fh.write(entry("fresh human directive").encode())
+        self.assertEqual(self.run_main(relay=True), 0)
+        self.assertEqual(len(self.recorded_calls()), 1)
+        real_write(self.home / "human-typed" / "cursor.json", stale["map"])
+        self.assertEqual(self.run_main(relay=True), 0)
+        self.assertEqual(len(self.recorded_calls()), 1)
+
+
+    def run_main_with_timer(self, state, error=None):
+        argv = ["--home", str(self.home), "--repo", str(self.repo),
+                "--sessions", str(self.sessions),
+                "--require-timer", "mishe-human-typed-relay.timer"]
+        with mock.patch.object(htr, "relay_timer_state", return_value=(state, error)) as probe:
+            rc = htr.main(argv, now=self.now, mishe_bin=str(self.recorder))
+        return rc, probe
+
+    def test_active_relay_timer_stays_green(self):
+        rc, probe = self.run_main_with_timer("active")
+        self.assertEqual(rc, 0)
+        probe.assert_called_once_with("mishe-human-typed-relay.timer")
+
+    def test_inactive_relay_timer_is_red_with_no_pending_lines(self):
+        # The dark lane: no typed line has gone stale, but the relay is gone.
+        self.assertEqual(self.run_main_with_timer("inactive")[0], 2)
+
+    def test_unreadable_timer_state_is_unknown_not_red(self):
+        self.assertEqual(self.run_main_with_timer(None, "systemctl missing")[0], 3)
 
 if __name__ == "__main__":
     unittest.main()
