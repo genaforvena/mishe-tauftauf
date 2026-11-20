@@ -2,16 +2,16 @@
 """Report boot admission using the current guard and producer evidence.
 
 On 2026-11-20 the one-shot boot authorization expired. The revive service
-later cleared the containment latch, and producers recovered separately. The
-failed authorization remains visible in the result. Current latches and
-producer activity determine which action is needed.
+later cleared the containment latch, and producers recovered separately. A failed
+one-shot keeps admission RED after recovery with a next-boot decision. Current
+latches and producer activity take precedence for immediate action.
 
 The check writes only its own state file. See docs/recovery.md for authority
 over the root-owned request and latch.
 
 Exit status:
-  0  guard ready and producers ran this boot
-  2  containment still latched, or producers absent after admission failed
+  0  guard ready, producers ran this boot and no failed admission observed
+  2  containment still latched or admission failed with the guard ready
   3  evidence unavailable or admission still undecided
 """
 from __future__ import annotations
@@ -45,6 +45,7 @@ HUMAN_ACTION = (
     "NOT clear or renew /var/lib/mishe-containment/authorized-next-boot.json "
     "(docs/recovery.md)."
 )
+NEXT_BOOT_ACTION = "Human root decision pending for unattended boot (docs/recovery.md)."
 
 
 class Undecidable(Exception):
@@ -164,8 +165,11 @@ def assess(repo: pathlib.Path = REPO) -> dict:
     status = _read_json(GUARD_RUN / "status.json")
     latches = _latches()
 
-    if admit.get("LoadState", "") == "not-found":
-        raise Undecidable("unit %s is not installed" % ADMIT_UNIT)
+    load_state = admit.get("LoadState")
+    admit_active = admit.get("ActiveState")
+    if load_state != "loaded" or not admit_active:
+        raise Undecidable("unit %s load state %s, active state %s"
+                          % (ADMIT_UNIT, load_state or "missing", admit_active or "missing"))
 
     sampled_at = status.get("at")
     if type(sampled_at) not in (int, float):
@@ -177,7 +181,6 @@ def assess(repo: pathlib.Path = REPO) -> dict:
     sentinel_mode = status.get("mode")
     if not all(isinstance(value, str) and value for value in (sentinel_state, sentinel_mode)):
         raise Undecidable("sentinel state or mode missing or malformed")
-    admit_active = admit.get("ActiveState", "")
     admit_failed = admit_active == "failed"
     ready = sentinel_state == "READY" and sentinel_mode == "NORMAL" and not latches
 
@@ -210,10 +213,12 @@ def assess(repo: pathlib.Path = REPO) -> dict:
         return row
 
     if ready and producers > 0:
-        row["state"] = "green"
+        row["state"] = "red" if admit_failed else "green"
         row["detail"] = ("Sentinel READY/NORMAL with latch clear. "
-                         "%d producer(s) running or completed this boot.%s"
-                         % (producers, admission_failure))
+                         "%d producer(s) running or completed this boot." % producers)
+        if admit_failed:
+            row["human_action"] = NEXT_BOOT_ACTION
+            row["detail"] += " " + NEXT_BOOT_ACTION + admission_failure
         return row
 
     if ready and admit_failed:

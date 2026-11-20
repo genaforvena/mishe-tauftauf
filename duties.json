@@ -92,7 +92,7 @@
       ],
       "resolver": "health",
       "replaces": [],
-      "covers": "Mishe admitted after boot; containment latch clear and producers running"
+      "covers": "Boot admission failure, containment latch and producer startup"
     },
     {
       "name": "restore-readiness",

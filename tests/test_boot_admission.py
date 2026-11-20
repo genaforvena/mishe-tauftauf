@@ -21,13 +21,13 @@ def load_check():
 
 
 def stub_host(monkeypatch, check, *, admit_active="inactive", admit_result="",
-              admit_status="", latches=(), producers=0, sentinel="READY",
+              admit_status="", admit_load="loaded", latches=(), producers=0, sentinel="READY",
               mode="NORMAL", age=1800, sample_age=1):
     now = 1_795_188_000
     status = {"state": sentinel, "mode": mode}
     if sample_age is not None:
         status["at"] = now - sample_age
-    admit = {"LoadState": "loaded", "ActiveState": admit_active,
+    admit = {"LoadState": admit_load, "ActiveState": admit_active,
              "Result": admit_result, "ExecMainStatus": admit_status,
              "ConditionResult": "yes"}
     monkeypatch.setattr(check, "_boot_id", lambda: "test-boot-id")
@@ -131,14 +131,27 @@ def test_main_exit_codes(monkeypatch, kwargs, code):
     assert check.main([]) == code
 
 
-def test_green_still_notes_a_stale_failed_admit_unit(monkeypatch):
+def test_failed_admission_stays_red_after_producer_recovery(monkeypatch, capsys):
     check = load_check()
     stub_host(monkeypatch, check, producers=5, admit_active="failed",
               admit_result="exit-code", admit_status="3")
     row = check.assess()
-    assert row["state"] == "green"
+    assert row["state"] == "red"
+    assert "Sentinel READY/NORMAL with latch clear" in row["detail"]
+    assert "5 producer(s) running or completed this boot" in row["detail"]
     assert "still failed (result exit-code, status 3)" in row["detail"]
-    assert row["human_action"] is None
+    assert "Human root decision pending for unattended boot" in row["human_action"]
+    assert "rearm" not in row["detail"]
+    assert check.main([]) == 2
+    assert "Human root decision pending" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("fields", [dict(admit_load=""), dict(admit_active="")])
+def test_incomplete_admission_observation_stays_unknown(monkeypatch, capsys, fields):
+    check = load_check()
+    stub_host(monkeypatch, check, producers=5, **fields)
+    assert check.main([]) == 3
+    assert "UNKNOWN" in capsys.readouterr().out
 
 
 def test_state_file_written_json(monkeypatch, tmp_path):
