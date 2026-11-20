@@ -221,10 +221,12 @@ def produce(home, repo, *, wake: str | None = None, window: int = DEFAULT_WINDOW
     detail = home / "signals" / f"{SIGNAL}.detail"
     detail.parent.mkdir(parents=True, exist_ok=True)
     detail.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-    reg = signal_store.registry(home)
-    if SIGNAL not in reg:
-        signal_store.register(home, SIGNAL, max_age=MAX_AGE_S, subscribers=list(SUBSCRIBERS),
-                              reoffer=REOFFER_S, wake_on="change", now=now)
+    # Refresh the registration so sites that predate the ack field get the command in their dossier.
+    # register() keeps the original registered_at, so this does not restart the signal's age.
+    signal_store.register(home, SIGNAL, max_age=MAX_AGE_S, subscribers=list(SUBSCRIBERS),
+                          reoffer=REOFFER_S, wake_on="change", now=now,
+                          ack="env PYTHONPATH=src python3 -m mishe_tauftauf.repo_change_signal "
+                              "--home {home} --repo {repo} --wake {role}")
     signal_store.observe(home, SIGNAL, sha[:12], now=now, source="repo-change-producer",
                          event=sha, reason=report["summary"])
     return report

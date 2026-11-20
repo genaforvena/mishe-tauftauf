@@ -88,6 +88,19 @@ def test_produce_publishes_head_and_advances_only_the_named_cursor(tmp_path, rep
     assert (home / "signals" / "repo-change-cursors.json").exists()
 
 
+def test_registered_ack_command_advances_the_subscriber_cursor(tmp_path, repo):
+    import shlex
+    from mishe_tauftauf import signal_store
+    home = tmp_path / "home"
+    (home / "signals").mkdir(parents=True)
+    rcs.produce(home, repo, now=1_000_000.0)
+    ack = signal_store.registry(home)["repo-change"]["ack"]
+    command = (ack.replace("{home}", str(home)).replace("{repo}", str(repo)).replace("{role}", "docs"))
+    # Run exactly the command the dossier gives the subscriber: no separate hand-written call.
+    assert rcs.main(shlex.split(command)[5:]) == 0
+    assert rcs.read_cursors(home) == {"docs": rcs.head_sha(repo)}
+
+
 def test_unreadable_repo_raises_so_the_caller_can_observe_unknown(tmp_path):
     home = tmp_path / "home"
     (home / "signals").mkdir(parents=True)

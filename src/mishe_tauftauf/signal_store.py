@@ -60,13 +60,15 @@ def registry(home) -> dict:
 
 
 def register(home, name: str, *, max_age: float, subscribers=(), reoffer: float | None = None,
-             wake_on: str = "change", now: float | None = None) -> None:
+             wake_on: str = "change", ack: str | None = None, now: float | None = None) -> None:
     """Declare or refresh a signal's registration.
 
     ``wake_on`` decides when a subscriber is woken by an edge: ``"change"`` (the default) on any
     change to the stored value, the rule that fits a signal whose value is a state word; ``"state"``
     only when the reading is not OK (silence, expiry or a failed read), for a signal whose value is a
     drifting measurement (``footprint``) that must never wake its resolver on every sample.
+    ``ack`` is an optional command template a subscriber runs after reading the signal detail;
+    it is copied into the wake dossier so the step is not left to the mind's memory.
     """
     _check_name(name)
     if not max_age > 0:
@@ -78,6 +80,10 @@ def register(home, name: str, *, max_age: float, subscribers=(), reoffer: float 
     registered_at = previous.get("registered_at", time.time() if now is None else now)
     data[name] = {"max_age": float(max_age), "subscribers": sorted(set(subscribers)),
                   "registered_at": float(registered_at), "wake_on": wake_on}
+    if ack is not None:
+        data[name]["ack"] = ack
+    elif "ack" in previous:
+        data[name]["ack"] = previous["ack"]
     if reoffer is not None:
         data[name]["reoffer"] = float(reoffer)
     write_json(_dir(home) / "registry.json", data)

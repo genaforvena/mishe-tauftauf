@@ -179,3 +179,9 @@ def test_retire_needs_a_registered_name_and_a_reason(home):
     with pytest.raises(ValueError):
         store.retire(home, "ci", now=1.0, reason="  ")
     assert "ci" in store.registry(home)
+
+
+def test_registered_ack_survives_a_refresh_without_one(home):
+    store.register(home, "ci", max_age=60, subscribers=["genome"], ack="ack {role}")
+    store.register(home, "ci", max_age=60, subscribers=["genome"])
+    assert store.registry(home)["ci"]["ack"] == "ack {role}"

@@ -271,3 +271,15 @@ def test_dossier_carries_the_resolved_site_home_for_file_tools(tmp_path):
     out = dossier.build(tmp_path, "health", owed.Snapshot(), key="example", now=100, mail=[])
     assert f"Site home (absolute): `{tmp_path.resolve()}`" in out
     assert "do not expand" in out and "$MISHE_SEED_HOME" in out
+
+
+def test_wake_dossier_carries_the_registered_ack_command(tmp_path):
+    from mishe_tauftauf import signal_store
+    signal_store.register(tmp_path, "repo-change", max_age=60, subscribers=["docs"],
+                          ack="env PYTHONPATH=src python3 -m tool --home {home} --repo {repo} --wake {role}")
+    signal_store.register(tmp_path, "quiet", max_age=60, subscribers=["docs"])
+    snap = owed.Snapshot(reasons=["signal:quiet", "signal:repo-change"],
+                         signal_revs={"quiet": 1, "repo-change": 1})
+    out = dossier.build(tmp_path, "docs", snap, key="k", now=100, mail=[], repo=tmp_path / "repo")
+    assert f"--home {tmp_path} --repo {tmp_path / 'repo'} --wake docs" in out
+    assert out.count("acknowledge it:") == 1  # a signal without an ack adds no instruction

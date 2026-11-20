@@ -64,6 +64,26 @@ def _detail_lines(home, name: str, sig) -> list[str]:
     return ["  raw output:", *[f"    {line}" for line in lines]]
 
 
+def _ack_lines(home, role: str, snap, repo) -> list[str]:
+    """Deterministic follow-up for signals that declare an ack command in the registry.
+
+    A signal whose subscriber must record what it read puts the exact command in the dossier,
+    at the moment the wake decides what to do about the signal. Templates are plain string
+    substitutions, so a registry edit cannot turn them into format directives.
+    """
+    registry = signal_store.registry(home)
+    lines = []
+    for name in sorted(snap.signal_revs):
+        template = (registry.get(name) or {}).get("ack")
+        if not isinstance(template, str) or not template:
+            continue
+        command = (template.replace("{role}", role)
+                           .replace("{home}", str(home))
+                           .replace("{repo}", str(repo or home.parent)))
+        lines.append(f"- After reading {name}, acknowledge it: `{command}`")
+    return lines
+
+
 def _read(path: Path) -> str:
     try:
         return path.read_text(encoding="utf-8")
@@ -163,6 +183,9 @@ def build(home, role: str, snap, *, key: str, now: float, mail: list, reconcile_
                     "", salvaged, ""]
     out += ["## Doctrine", "", _read(Path(__file__).with_name("seed_doctrine.md")), ""]
     out += ["## Why you were woken", "", *[f"- {r}" for r in snap.reasons], ""]
+    acks = _ack_lines(home, role, snap, repo)
+    if acks:
+        out += acks + [""]
     if snap.held:
         out += ["Held (budget gate, not offered to you): " + ", ".join(snap.held), ""]
     out += ["## Charter", "", _read(home / "charters" / f"{role}.md"), "",
