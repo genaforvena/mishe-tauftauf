@@ -17,7 +17,11 @@ pane it draws in: 41 rows, and 170 columns for the health view, which is the wid
 
 The delivery window summarizes how long commits waited for their promotion to start. The
 interval between delivered promotions runs from the previous finish to the next
-start and can include time before new commits and time spent on failed attempts.
+start and can include time before new commits and time spent on failed attempts. A long
+gap alone is not slow dispatch: when no new commit landed in the interval it measures idle
+time, and a short gap can follow commits already waiting before the last delivery finished.
+Read the per-commit wait row for dispatch latency, and look for an UNKNOWN record inside
+the gap before blaming a failed attempt.
 
 The `budget` window runs `operator/budget/budget_pane.sh` (site-local, under `SITE_HOME`), a loop that calls
 `budget_view.py` every 20 s and clears the screen between frames, so the registry's
