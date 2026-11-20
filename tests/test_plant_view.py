@@ -961,3 +961,30 @@ def test_operator_top_pane_shows_both_conversations_and_how_to_write(tmp_path, m
     text = '\n'.join(lines)
     assert 'hello from ilya' in text
     assert 'mesh-tg-roz' in text and 'roz-in.log not readable' in text   # missing log is UNKNOWN
+
+
+# --- a producer's machine detail in a signal reason must not redden the pane ----------------
+
+def test_readable_detail_keeps_the_words_and_drops_the_dict():
+    from mishe_tauftauf.plant_view_boundary import readable_detail
+    detail = readable_detail('host-capacity exit=2 guard={"checked_at": 1795175639.5, "state": "FRESH"}', 90)
+    assert 'host-capacity exit=2' in detail and 'machine detail omitted' in detail
+    assert 'checked_at' not in detail
+    assert machine_syntax('Verdict: RED — host-capacity: ' + detail) == []
+    assert readable_detail('a plain human cause') == 'a plain human cause'
+    assert machine_syntax(readable_detail('{"only": "a dict"}')) == []
+
+
+def test_a_producer_dict_in_a_signal_reason_cannot_redden_the_pane(tmp_path):
+    # 2026-11-20 11:55Z: health's host-capacity reason carried guard={"checked_at": …}
+    # and the shared verdict line put it on every role's top and bottom line 1.
+    home = tmp_path
+    settled_wake(home)
+    (home / 'walls').mkdir(exist_ok=True)
+    (home / 'walls/genome.md').write_text('# genome\nplain prose\n')
+    signal_store.register(home, 'host-capacity', max_age=900, subscribers=['genome'])
+    signal_store.observe(home, 'host-capacity', 'RED', now=T0, source='fixture',
+                         reason='host-capacity exit=2 guard={"checked_at": 1795175639.5, "state": "FRESH"}')
+    top = view.render(home, 'genome', now=T0 + 60)
+    assert machine_syntax(top) == [], top
+    assert 'host-capacity exit=2' in top and 'machine detail omitted' in top

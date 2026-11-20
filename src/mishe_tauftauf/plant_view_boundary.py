@@ -409,6 +409,24 @@ _PROSE_CLOSES = ('Changes in git during this wake', 'Made no commits', 'Changes 
 _PROSE_RULES = ('a line that opens or closes a JSON structure', 'a control byte')
 
 
+def readable_detail(text: object, limit: int = 90) -> str:
+    """A signal cause fit for a human pane: the words before the first machine-syntax token.
+
+    Producers write signal reasons, and a reason can carry a dict repr, a raw
+    epoch or an interpreter path. The verdict line is renderer chrome, not
+    exempt prose, so it must never hand that syntax to the same linter that
+    guards the rest of the pane (2026-11-20 11:55Z: health's host-capacity
+    reason put ``guard={"checked_at": …}`` on every role's line 1).
+    """
+    value = brief(text, limit)
+    first = min((m.start() for pattern, _ in _MACHINE
+                 if (m := pattern.search(value))), default=None)
+    if first is None:
+        return value
+    head = value[:first].rstrip().rstrip('=:').rstrip()
+    return (head + ' … [machine detail omitted]') if head else '(cause is machine detail; see the signal)'
+
+
 def machine_syntax(text: str) -> list[str]:
     """Describe each non-exempt line of a rendered pane that is not human text."""
     found, raw, prose, tool = [], False, False, False

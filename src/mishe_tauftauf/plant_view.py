@@ -17,7 +17,7 @@ from . import intentions, owed, signal_store, yielding
 from .core.dispatch_record import read_record_fields, valid_role
 from .engines import DEFAULT_CLAUDE_MODEL, DEFAULT_QWEN_MODEL
 from .feed import Feed
-from .plant_view_boundary import (arguments, brief, cut, file_tail_lines, last_lines, output_view, routed_models, safe, uncommitted, wake_commits,
+from .plant_view_boundary import (arguments, brief, cut, file_tail_lines, last_lines, output_view, readable_detail, routed_models, safe, uncommitted, wake_commits,
                                   wake_key, wall_lines, would_cut)
 from .state_files import read_json, write_json
 from .wall import addressed
@@ -305,7 +305,7 @@ def _verdict(home, role, now) -> str:
         if not rows:
             return 'Verdict: GREEN — every subscribed signal is GREEN'
         _, name, value, reason = sorted(rows)[0]
-        why = brief(safe(reason), 90) if reason else 'no cause recorded in the signal'
+        why = readable_detail(reason, 90) if reason else 'no cause recorded in the signal'
         more = f'; {len(rows) - 1} more not GREEN' if len(rows) > 1 else ''
         return cut(f'Verdict: {safe(value)} — {safe(name)}: {why}{more}', 2 * LINE)
     except (OSError, ValueError, TypeError, KeyError) as exc:
