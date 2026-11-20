@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import signal_store
+from . import cross_plant, signal_store
 
 MARKER = "# mishe-generated: observation runtime (edit nothing here; run `mishe sync`)"
 WAKE_TIMEOUT = 1800
@@ -767,6 +767,7 @@ def doctor(cfg: Config, roles, *, producers=(), resolvers=None) -> DoctorReport:
         return DoctorReport("UNKNOWN", [f"cannot read installed units: {exc}"])
     pin_problems = _pin_import_problems(cfg.pythonpath)
     problems = pin_problems + _wrapper_pin_problems(cfg.home, known={cfg.pythonpath: pin_problems})
+    problems += cross_plant.release_problems(cfg.home, our_prefix=cfg.prefix, our_marker=MARKER)
     foreign = []                      # (rel, owner) for our paths rewritten by another plant
     for rel, text in expected.items():
         if rel not in installed:

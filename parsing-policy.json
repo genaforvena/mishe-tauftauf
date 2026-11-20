@@ -17,6 +17,7 @@
     "src/mishe_tauftauf/core/containment_config.py",
     "src/mishe_tauftauf/core/dispatch_record.py",
     "src/mishe_tauftauf/core/restore_request.py",
+    "src/mishe_tauftauf/cross_plant.py",
     "src/mishe_tauftauf/cpu_stat_text.py",
     "src/mishe_tauftauf/decision_provider.py",
     "src/mishe_tauftauf/declared_roots.py",

@@ -98,6 +98,10 @@ timers, `mishe-failed@`, the doctor) and enables the paths and timers.
 `moving-pin-delivery-HHMMSS.service`; its name carries no `mishe-` prefix, so pass that
 pattern too (`list-units 'mishe*' 'moving-pin-delivery-*'`) when you want to see whether
 the pin is being moved.
+On a host with more than one plant, `doctor` also reads sibling plants' pinned
+releases without writing to them. A fork that still promotes or starts units
+under this plant's prefix is RED before its next sync rewrites anything; the
+message names the sibling and the prefix to restore.
 
 ## 5. Start
 
