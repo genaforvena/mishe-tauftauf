@@ -390,8 +390,17 @@ def _person_line(person, m):
     if kind == "fresh":
         return "%s %s: fresh label, %s, %s" % (LETTER[person], name, ROOM_NAME.get(info["room"], info["room"]), mk.get("why", ""))
     if kind == "guess":
-        return "%s %s: best guess %s, %d%%%s" % (LETTER[person], name, ROOM_NAME.get(info["room"], info["room"]),
-                                               round(g.get("confidence", 0) * 100), age_s)
+        # A guess only appears without a fresh label (_draw_sprites), so its
+        # weight is a heuristic, not a validated probability. age_h belongs to
+        # the last label, which may be in a different room from the guess.
+        label_room = ROOM_NAME.get(mk.get("room"), mk.get("room"))
+        if not _num(age) or not label_room:
+            last = "; last label UNKNOWN"
+        else:
+            last = "; last label %s %sh ago" % (label_room, age)
+        return "%s %s: guess %s (weight %d%%, not a probability)%s" % (
+            LETTER[person], name, ROOM_NAME.get(info["room"], info["room"]),
+            round(g.get("confidence", 0) * 100), last)
     if kind == "ghost":
         return "? %s: UNKNOWN, last known %s%s" % (name, ROOM_NAME.get(info["room"], info["room"]), age_s)
     return "%s: no place recorded (UNKNOWN)" % name

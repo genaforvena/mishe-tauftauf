@@ -100,13 +100,36 @@ def test_fresh_person_is_bright_letter_and_ghost_is_dim_question_mark():
     assert "I Ilya: fresh label" in mt.frame(model, NOW)
 
 
-def test_best_guess_with_number_is_normal_and_numbered_in_legend():
-    model = _model(_state(FRESH_ILYA))
-    text = mt.frame(model, NOW)
-    assert "best guess bedroom, 80%" not in text  # fresh Ilya is a fresh label, not a guess
-    model2 = _model(_state({"ilya": {"room": None, "confidence": "UNKNOWN",
-                                     "guess": {"room": "bedroom", "confidence": 0.4}}}))
-    assert "best guess bedroom, 40%" in mt.frame(model2, NOW)
+def test_guess_line_names_label_room_and_calls_weight_unvalidated():
+    fresh = mt.frame(_model(_state(FRESH_ILYA)), NOW)
+    assert "guess bedroom" not in fresh  # fresh Ilya is a fresh label, not a guess
+
+    markers = {
+        "ilya": {"room": "bedroom", "confidence": "UNKNOWN", "age_h": 203.8,
+                 "guess": {"room": "bedroom", "confidence": 0.4}},
+        "rozalia": {"room": "kitchen_stall", "confidence": "UNKNOWN", "age_h": 203.7,
+                    "guess": {"room": "bedroom", "confidence": 0.4}},
+    }
+    text = mt.frame(_model(_state(markers)), NOW)
+    assert "I Ilya: guess bedroom (weight 40%, not a probability); last label bedroom 203.8h ago" in text
+    assert "R Rozalia: guess bedroom (weight 40%, not a probability); last label kitchen_stall 203.7h ago" in text
+    assert "(label 203.7 h old)" not in text  # the age no longer floats unlabelled
+    assert "best guess bedroom" not in text  # the old per-person wording is gone (map header may still say "best guess")
+
+
+def test_guess_line_fails_closed_on_missing_or_malformed_label():
+    markers = [
+        {"room": None, "confidence": "UNKNOWN", "age_h": 203.7,
+         "guess": {"room": "bedroom", "confidence": 0.4}},
+        {"room": "bedroom", "confidence": "UNKNOWN", "age_h": None,
+         "guess": {"room": "bedroom", "confidence": 0.4}},
+        {"room": "bedroom", "confidence": "UNKNOWN", "age_h": "old",
+         "guess": {"room": "bedroom", "confidence": 0.4}},
+    ]
+    for marker in markers:
+        text = mt.frame(_model(_state({"ilya": marker})), NOW)
+        assert "I Ilya: guess bedroom (weight 40%, not a probability); last label UNKNOWN" in text
+        assert "last label bedroom" not in text
 
 
 def test_missing_floorplan_is_unknown_and_draws_no_rooms():
