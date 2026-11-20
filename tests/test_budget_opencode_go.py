@@ -48,6 +48,15 @@ def test_missing_account_and_unreadable_file_are_unknown(tmp_path):
     assert code == 3 and report["verdict"] == "UNKNOWN"
 
 
+def test_main_reports_unknown_when_budget_file_unreadable(tmp_path, capsys):
+    """The UNKNOWN path has no `detail`; main() must still print the verdict, not raise KeyError."""
+    code = mod.main(["--home", str(tmp_path), "--budget", str(tmp_path / "missing.json")])
+    out = capsys.readouterr().out
+    assert code == 3
+    assert "budget-opencode-go: UNKNOWN" in out
+    assert "engine budget unreadable" in out
+
+
 def test_spent_weekly_window_is_red():
     code, line = mod.evaluate(budget(used=0.95), ledger(), NOW)
     assert code == 2 and "LOW" in line
