@@ -72,6 +72,8 @@ class CommitRiskTests(unittest.TestCase):
             ("src/mishe_tauftauf/consumer_fence.py", "delivery-path"),
             ("tools/map_tiles.py", "ordinary"),
             ("src/mishe_tauftauf/commit_risk_text.py", "ordinary"),
+            ("tools/map_render.py", "ordinary"),
+            ("src/mishe_tauftauf/retirement.py", "delivery-path"),
         )
         for path, label in checks:
             with self.subTest(path=path):
@@ -84,6 +86,9 @@ class CommitRiskTests(unittest.TestCase):
                 self.assertEqual((result["label"], result["source"]), (label, "system0"))
         self.assertIsNone(cr.system0(["src/mishe_tauftauf/arm.py",
                                       "src/mishe_tauftauf/consumer_fence.py"]))
+        # Two different non-routine exact rules still leave the residual to the model.
+        self.assertIsNone(cr.system0(["src/mishe_tauftauf/retirement.py",
+                                      "src/mishe_tauftauf/arm.py"]))
 
     def test_delivery_requests_is_delivery_not_dispatch(self):
         # delivery_requests.py is delivery work (enqueue/consume, patch/revert,

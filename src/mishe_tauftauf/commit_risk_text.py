@@ -47,6 +47,15 @@ RULES = (
     # zero disagreement, zero label flips and zero regressions.
     ("ordinary", re.compile(r"^tools/map_tiles\.py\Z")),
     ("ordinary", re.compile(r"^src/mishe_tauftauf/commit_risk_text\.py\Z")),
+    # map_render.py is the read-only apartment-map renderer. All 3 model answers on it in
+    # the 879-row ledger were `ordinary` (0.90/0.99/0.98, all "map:" observation subjects).
+    # Replaying with this lookup newly settles 2 residual rows with zero disagreement.
+    ("ordinary", re.compile(r"^tools/map_render\.py\Z")),
+    # retirement.py retires finished author branches and protects live runtime pins for
+    # the delivery watcher — delivery work, the sibling of consumer_fence.py. Both model
+    # answers (0.99, 0.73) chose delivery-path. Exact file, not a family: a mixed path set
+    # with dispatch code still escalates.
+    ("delivery-path", re.compile(r"^src/mishe_tauftauf/retirement\.py\Z")),
     ("routine", re.compile(r"^(docs/|tests/|checks/|.*\.md\Z)")),
 )
 
