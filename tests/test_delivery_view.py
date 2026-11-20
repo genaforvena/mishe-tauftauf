@@ -1,8 +1,8 @@
 """tools/delivery_view.py: the checked-to-live report keeps missing evidence explicit.
 
 The report reads the promote path's own records, so the tests build synthetic ones: a delivered
-promotion with every timestamp, a rolled-back one (which must name its failure without inventing
-a rollback duration), and one whose timestamps are missing (UNKNOWN, never a zero).
+promotion with every timestamp, a rolled-back one (which must name its failure and show only a
+duration the record actually carries), and one whose timestamps are missing (UNKNOWN, never a zero).
 """
 import importlib.util
 import json
@@ -64,7 +64,7 @@ def test_p90_is_nearest_rank_not_interpolated():
     assert out["wake_wait_s"]["mean"] == 10.0
 
 
-def test_a_rolled_back_run_is_named_without_a_duration(monkeypatch, tmp_path):
+def test_a_failed_rollback_is_named_without_an_invented_duration(monkeypatch, tmp_path):
     rolled = record(phase="UNKNOWN", delivered_at=None, reviewed_at=None,
                     failure="functional probe failed: old consumer invocations remain",
                     activation_started_at=2600.0)
@@ -74,9 +74,40 @@ def test_a_rolled_back_run_is_named_without_a_duration(monkeypatch, tmp_path):
     monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))  # no waiting commits: unknown pin range
     text = view.render(home, Path("/nope"), 24 * 3600.0, 4000.0)
     assert "old consumer invocations remain" in text
-    assert "rollback end time is not recorded" in text
+    assert "UNKNOWN (rollback probe failed)" in text
+    assert "rollback duration UNKNOWN (no recorded end timestamp)" in text
     assert "drain + functional observation" in text          # the delivered run still reports its stages
     assert "UNKNOWN: no pin" not in text                      # the pin itself resolved
+
+
+def test_a_rolled_back_run_shows_only_the_recorded_duration(monkeypatch, tmp_path):
+    rolled = record(phase="rolled-back", delivered_at=None, reviewed_at=None,
+                    failure="functional probe failed: old consumer invocations remain",
+                    activation_started_at=2600.0, rollback_at=2700.0, rollback_completed_at=2790.0)
+    home = home_with(tmp_path, [record(), rolled])
+    (tmp_path / "runtime").mkdir()
+    os.symlink(f"{tmp_path}/releases/{'c' * 40}", tmp_path / "runtime" / "current")
+    monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
+    text = view.render(home, Path("/nope"), 24 * 3600.0, 4000.0)
+    assert f"rolled back {'b' * 8}" in text
+    assert "rollback 1m30s (completed)" in text
+    assert "completed rollback time mean 1m30s max 1m30s  (n=1)" in text
+    assert "not recorded" not in text
+
+
+def test_a_failed_rollback_probe_never_claims_the_pin_was_restored(monkeypatch, tmp_path):
+    rolled = record(phase="UNKNOWN", delivered_at=None, reviewed_at=None,
+                    failure="pin observation failed", activation_started_at=2600.0,
+                    rollback_at=2700.0, rollback_failed_at=2760.0)
+    home = home_with(tmp_path, [record(), rolled])
+    (tmp_path / "runtime").mkdir()
+    os.symlink(f"{tmp_path}/releases/{'c' * 40}", tmp_path / "runtime" / "current")
+    monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
+    text = view.render(home, Path("/nope"), 24 * 3600.0, 4000.0)
+    assert "UNKNOWN (rollback probe failed)" in text
+    assert "rollback 1m00s (probe failed)" in text
+    assert "failed-probe rollback time mean 1m00s max 1m00s  (n=1)" in text
+    assert "completed rollback time" not in text
 
 
 def test_unreadable_records_report_unknown_not_a_series(tmp_path):

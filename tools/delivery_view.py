@@ -11,9 +11,11 @@ permits:
   activation_started_at -> delivered_at     consumer drain + functional observation
   delivered_at -> reviewed_at       independent review after the pin moved
 
-A record keeps no timestamp for a rollback's completion, so a rolled-back run is named with its
-failure reason, never a rollback duration. Missing or unreadable evidence prints as UNKNOWN and
-never becomes a zero. This is a report, not a detector: it always exits 0 unless it cannot run.
+A rolled-back run is named with its failure reason and shows only a duration the record actually
+carries (rollback_at to rollback_completed_at or rollback_failed_at). A failed rollback probe stays
+UNKNOWN, never a claim that the old pin was restored. Missing or unreadable evidence prints as
+UNKNOWN and never becomes a zero. This is a report, not a detector: it always exits 0 unless it
+cannot run.
 """
 from __future__ import annotations
 
@@ -175,11 +177,28 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
     if zero_fence:
         lines.append(f"  fence held nothing in {zero_fence}/{len(delivered)} delivered runs"
                      f" (no wake was live at activation)")
+    rollback_done, rollback_probe_failed = [], []
     for record in rolled_back:
         failure = str(record.get("failure") or record.get("phase"))
-        lines.append(f"  rolled back {record.get('sha', '?')[:8]} after {fmt_ts(record.get('activation_started_at'))}"
-                     f" — {failure[:160]}")
-        lines.append("    rollback end time is not recorded, so no rollback duration is shown")
+        phase = record.get("phase")
+        verb = "rolled back" if phase == "rolled-back" else f"{phase} (rollback probe failed)"
+        lines.append(f"  {verb} {record.get('sha', '?')[:8]} after"
+                     f" {fmt_ts(record.get('activation_started_at'))} — {failure[:160]}")
+        start = record.get("rollback_at")
+        completed = record.get("rollback_completed_at")
+        failed = record.get("rollback_failed_at")
+        end = completed or failed
+        if start and end and end >= start:
+            lines.append(f"    rollback {fmt_s(end - start)}"
+                         f" ({'completed' if completed else 'probe failed'})")
+            (rollback_done if completed else rollback_probe_failed).append(end - start)
+        else:
+            lines.append("    rollback duration UNKNOWN (no recorded end timestamp)")
+    for label, times in (("completed rollback", rollback_done),
+                         ("failed-probe rollback", rollback_probe_failed)):
+        if times:
+            lines.append(f"  {label} time mean {fmt_s(sum(times) / len(times))}"
+                         f" max {fmt_s(max(times))}  (n={len(times)})")
     pin = pin_sha(home)
     if pin:
         waiting = commit_log(repo, f"{pin}..HEAD")
