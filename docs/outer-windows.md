@@ -59,7 +59,11 @@ finds the release it started in, and compares that view's bytes with the script
 at the current pin; RED names the window and the exact respawn command. An
 unchanged promotion is not a false RED, and a pane restored from the working
 tree is not release-pinned so it is not judged here. A missing or dead window
-belongs to `view-window-coverage`; anything unreadable is UNKNOWN.
+belongs to `view-window-coverage`. If tmux or the pane evidence is unreadable,
+the check exits 3 and the producer logs the reason without refreshing the last
+reading. That reading expires 900 seconds after the last successful poll, and
+the expiry edge routes to Genome. To see the most recent poll outcome, run
+`journalctl --user -u mishe-producer-outer-pane-code.service -n 12`.
 
 **Rule: a view has a window.** Every `tools/*_view.py` renderer has a row in this table, an entry in the
 site window registry (`restore: true`) and a live window in the `plants` session running it. A view
