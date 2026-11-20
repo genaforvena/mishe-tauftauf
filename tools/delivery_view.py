@@ -202,14 +202,18 @@ def poll_wake_starts(delivered: list[dict], starts: list[float],
 
 
 def fence_holders(events: list[dict] | None, delivered: list[dict]) -> dict[str, dict[str, float]] | None:
-    """Attribute hold-wait fence coverage to the wakes that supplied it, by candidate and role.
+    """Attribute hold-wait fence coverage to the wakes that supplied it, by candidate, role and origin.
 
     Only a wake with a paired select/outcome span counts: a bare select is a start, not evidence
     that the wake held the lock for any interval. Each overlap is clipped to one fence, so a
     wake that ran before or after a fence does not donate those seconds. An uncovered fence
-    contributes nothing and never becomes a fabricated zero. Returns None when no hold-wait
-    fence has a measured holder, so a broken ledger stays UNKNOWN instead of reading as an
-    empty distribution.
+    contributes nothing and never becomes a fabricated zero. ``by_origin`` splits the same
+    seconds by when the holder started relative to this fence's own quiet poll: ``pre-existing``
+    wakes were already running when the wait began (the exclusive lock must drain them under
+    today's gate), ``quiet-poll start`` wakes grabbed the shared lock during the poll and extended
+    it (what the 120 s patience suppresses), and ``after hold`` should be empty while the hold
+    stands. Returns None when no hold-wait fence has a measured holder, so a broken ledger stays
+    UNKNOWN instead of reading as an empty distribution.
     """
     if not events:
         return None
@@ -231,6 +235,7 @@ def fence_holders(events: list[dict] | None, delivered: list[dict]) -> dict[str,
         return None
     by_candidate: dict[str, float] = {}
     by_role: dict[str, float] = {}
+    by_origin: dict[str, float] = {}
     distinct: list[int] = []
     for rec in delivered:
         fence = stages(rec)["wake_wait_s"]
@@ -240,6 +245,7 @@ def fence_holders(events: list[dict] | None, delivered: list[dict]) -> dict[str,
         if not (isinstance(ws, (int, float)) and isinstance(ac, (int, float)) and ac > ws):
             continue
         holders: set[str] = set()
+        poll_end = ws + quiet_poll_s(rec)
         for role, key, a, b, wake in spans:
             overlap = min(ac, b) - max(ws, a)
             if overlap <= 0:
@@ -247,11 +253,15 @@ def fence_holders(events: list[dict] | None, delivered: list[dict]) -> dict[str,
             holders.add(wake)
             by_candidate[key] = by_candidate.get(key, 0.0) + overlap
             by_role[role] = by_role.get(role, 0.0) + overlap
+            origin = ("pre-existing" if a < ws else
+                      "quiet-poll start" if a < poll_end else "after hold")
+            by_origin[origin] = by_origin.get(origin, 0.0) + overlap
         if holders:
             distinct.append(len(holders))
     if not by_candidate:
         return None
-    return {"by_candidate": by_candidate, "by_role": by_role, "distinct": distinct}
+    return {"by_candidate": by_candidate, "by_role": by_role,
+            "by_origin": by_origin, "distinct": distinct}
 
 
 def _holder_line(label: str, values: dict[str, float], limit: int = 4) -> str:
@@ -481,6 +491,8 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
             else:
                 lines.append(_holder_line("candidate", holders["by_candidate"]))
                 lines.append(_holder_line("role", holders["by_role"]))
+                lines.append(_holder_line(f"holder origin ({patience_text} patience)",
+                                          holders["by_origin"], limit=3))
                 d = holders["distinct"]
                 lines.append(f"  distinct wakes per hold-wait fence: mean {sum(d) / len(d):.1f}"
                              f" (max {max(d)}), {len(d)} fences")

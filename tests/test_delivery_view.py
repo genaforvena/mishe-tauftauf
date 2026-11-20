@@ -514,6 +514,23 @@ def test_fence_holders_clips_each_wake_to_the_fence_and_counts_distinct_wakes():
     assert out["distinct"] == [2]
 
 
+def test_fence_holders_splits_holder_seconds_by_wake_origin():
+    # Fence [2010, 2410): quiet poll [2010, 2130), hold [2130, 2410).
+    held = record(quiet_poll_s=120, waiting_since=2010.0, activation_started_at=2410.0)
+    events = [
+        _holder_event("p1", "select", 1900.0, "genome", "model-a"),
+        _holder_event("p2", "select", 2100.0, "pub", "model-b"),
+        _holder_event("p3", "select", 2200.0, "health", "model-c"),
+        _holder_event("p1", "outcome", 2200.0, "genome", "model-a"),
+        _holder_event("p2", "outcome", 2300.0, "pub", "model-b"),
+        _holder_event("p3", "outcome", 2500.0, "health", "model-c"),
+    ]
+    out = view.fence_holders(events, [held])
+    assert out["by_origin"] == {"pre-existing": 190.0,
+                                "quiet-poll start": 200.0, "after hold": 210.0}
+    assert out["distinct"] == [3]
+
+
 def test_fence_holders_ignores_a_select_without_an_outcome():
     held = record(waiting_since=2010.0, activation_started_at=3010.0)
     events = [_holder_event("w1", "select", 2000.0, "genome", "model-a")]
@@ -547,6 +564,7 @@ def test_report_prints_fence_holder_attribution(tmp_path, monkeypatch):
     text = view.render(home, Path("/nope"), 86400.0, 4000.0)
     assert "fence-holder wake-seconds by candidate: model-a 500s (50%), model-b 500s (50%)" in text
     assert "fence-holder wake-seconds by role: genome 500s (50%), pub 500s (50%)" in text
+    assert "fence-holder wake-seconds by holder origin (600s patience): pre-existing 500s (50%), quiet-poll start 500s (50%)" in text
     assert "distinct wakes per hold-wait fence: mean 2.0 (max 2), 1 fences" in text
 
 
