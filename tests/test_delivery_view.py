@@ -285,3 +285,23 @@ def test_promotion_gap_is_unknown_without_a_pair(tmp_path):
     home = home_with(tmp_path, [record()])
     text = view.render(home, Path("/nope"), 86400.0, 6000.0)
     assert "delivered finish -> next delivered start  UNKNOWN" in text
+
+
+def test_recent_stages_shows_a_regime_shift_next_to_the_lagging_window_mean():
+    old = [record(created_at=1000.0 + i * 100, check={"at": 1960.0 + i * 100}) for i in range(10)]
+    new = [record(created_at=3000.0 + i * 100, check={"at": 3500.0 + i * 100}) for i in range(10)]
+    line = view.recent_stages(old + new)
+    assert "newest 10 delivered" in line
+    assert "check 8m20s (window 12m10s)" in line
+
+
+def test_recent_stages_never_turns_a_missing_stage_into_zero():
+    line = view.recent_stages([record(check=None) for _ in range(3)])
+    assert "check UNKNOWN" in line
+
+
+def test_report_prints_recent_stages_beside_the_window_table(tmp_path):
+    home = home_with(tmp_path, [record()])
+    text = view.render(home, Path("/nope"), 86400.0, 6000.0)
+    assert "newest 1 delivered" in text
+    assert "check 16m40s (window 16m40s)" in text

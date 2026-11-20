@@ -48,6 +48,32 @@ An exact-zero test never fires and hides that the quiet-gap path works; one seco
 a first-try acquisition from even a single retry.
 """
 
+RECENT_N = 10
+"""How many newest delivered promotions get a stage mean beside the window's mean.
+
+A 24 h window mixes regimes: on 2026-11-20 the check stage fell from about 16 min to
+about 8.5 min when the suite began running with two xdist workers, while the window
+mean stayed near 14 min. A reader asking where delivery time goes now must see both,
+or the lagging window figure sends the next investigation at an already-fixed stage.
+"""
+
+
+def recent_stages(delivered: list[dict], count: int = RECENT_N) -> str:
+    """Stage means of the newest deliveries, each beside the whole window's mean."""
+    newest = sorted(delivered, key=lambda r: r["created_at"])[-count:]
+    if not newest:
+        return "newest delivered promotions: UNKNOWN (none in the window)"
+    recent, whole = summarize(newest), summarize(delivered)
+    parts = []
+    for key, label in (("check_s", "check"), ("wake_wait_s", "fence"),
+                       ("checked_to_live_s", "total")):
+        row, window_row = recent.get(key, {}), whole.get(key, {})
+        value = fmt_s(row["mean"]) if row else "UNKNOWN"
+        before = f" (window {fmt_s(window_row['mean'])})" if window_row else ""
+        parts.append(f"{label} {value}{before}")
+    return (f"newest {len(newest)} delivered (since {fmt_ts(newest[0]['created_at'])}): "
+            + "  ".join(parts))
+
 
 def git(repo: Path, *args: str, timeout: float = 30.0) -> tuple[int, str]:
     """Run git read-only; ``(1, "")`` on any failure so a caller can print UNKNOWN, not crash."""
@@ -210,6 +236,7 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
                          f"  max {fmt_s(row['max']):>9s}  (n={int(row['n'])})")
         else:
             lines.append(f"  {label:36s} UNKNOWN (no record in the window carries both timestamps)")
+    lines.append("  " + recent_stages(delivered))
     gaps = promotion_gaps(delivered)
     gap_label = "delivered finish -> next delivered start"
     if gaps:
