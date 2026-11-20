@@ -20,11 +20,10 @@ Hooks and automatic updates are disabled for this read. It reads no credentials.
 The result is `operator/budget/claude-native-quota.json`. Every attempt retains
 its original stdout/stderr and previous observation in `operator/budget/native-evidence/`.
 Failure publishes no current windows; last-good readings remain evidence and
-cannot admit work. The producer should run at least every ten minutes; the
+cannot establish budget readiness. The producer should run at least every ten minutes. The
 producer and the budget pane expire readings after fifteen minutes (`MAX_AGE_S`
-900 s). A missing or stale producer therefore cannot establish budget readiness. Senses owns acquisition
-failures; the `budget-claude` signal carries the verdict and, for a RED, the cause that
-held work. The tracked publisher registers
+900 s). Senses owns acquisition failures. The `budget-claude` signal carries the
+verdict and names the window and rule that triggered a RED. The tracked publisher registers
 that signal with no subscribers, so a site that wants the verdict routed registers its own
 resolver. The codex-a verdict is report-only: it travels in the publisher's result and
 the household budget view, with no second unattended RED signal.
@@ -36,7 +35,7 @@ parses (the display rounds down to the minute), and a reset up to a minute
 beyond the window's own length is still inside it. A reset further in the past
 is expired, and the attempt becomes UNKNOWN. It is not an exact
 token allowance or a replacement forecast. The existing LOW and burn-rate rules
-remain in effect. A fresh report can still hold spontaneous work RED.
+remain in effect.
 
 The previous statusLine tap remains historical evidence. Its callback timestamp
 establishes a render, while `rate_limits` only appears after an API response in
@@ -60,11 +59,16 @@ Status: no code applies a 50% gate, and the router does not read the policy.
   render-only since 2026-11-12: it draws the producer's burn and ETA and decides
   nothing.
 - `src/mishe_tauftauf/provider_budget.py` builds the Claude and codex-a rows from
-  `engine/budget.json` itself (`rows_from_engine_budget`) and turns a non-`ok`
-  window into the `budget-claude` or `budget-codex` RED: `LOW` when `used > 0.9`,
-  `RUNS OUT BEFORE RESET` when the producer's `eta_s` lands before the reset. The
-  tracked module has no weekly-percentage rule.
-- The router does not read it. `engine_policy._classify_account` judges a window
+  `engine/budget.json` itself (`rows_from_engine_budget`). It reports `LOW` when
+  `used > 0.9` and `RUNS OUT BEFORE RESET` when the producer's `eta_s` lands before
+  the reset and the window is at least 5% used. Either result turns the account
+  verdict RED.
+- A role can use `budget-claude` to admit spontaneous intentions. The owed check
+  also accepts fresh free-route evidence from the plant's budget snapshot. The
+  inner router selects a candidate for the role using its own eligibility, tier
+  and cool-off rules. During a free route's cool-off it can select Haiku as the
+  Claude subscription fallback.
+- For candidates with a registered account, `engine_policy._classify_account` judges a window
   by its remaining fraction against a reserve threshold of 15%, so a weekly
   window at 60% or 80% used still classifies as healthy and admission depends
   on the remaining fraction alone.

@@ -53,8 +53,7 @@ def test_red_and_green_readings_carry_their_cause(tmp_path):
     assert budget.publish(tmp_path, burning, now=100)["state"] == "RED"
     red = signal_store.read(tmp_path, "budget-claude", now=101)
     assert red.value == "RED"
-    assert red.reason == ("provider's existing quota or burn rule holds spontaneous work: "
-                          "7d RUNS OUT BEFORE RESET (20% used)")
+    assert red.reason == "7d RUNS OUT BEFORE RESET (20% used)"
     assert budget.publish(tmp_path, rows(), now=110)["state"] == "GREEN"
     green = signal_store.read(tmp_path, "budget-claude", now=111)
     assert green.value == "GREEN"

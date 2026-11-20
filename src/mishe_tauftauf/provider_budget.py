@@ -1,8 +1,7 @@
 """Scope existing quota verdicts to the provider used by a mind.
 
-This does not collect accounts, change limits or invent a burn forecast. It
-consumes decoded rows from the site's existing budget view and preserves its
-freshness/forecast verdicts. Missing evidence never admits spontaneous work.
+It reports freshness and forecast verdicts from the site's existing budget
+view. Wake admission also considers free routes.
 """
 import math
 from pathlib import Path
@@ -51,11 +50,7 @@ def evaluate(rows, account, *, now):
     holding = [f"{r['window']} {r['verdict']} ({r['used']:.0%} used)"
                for r in selected if r["verdict"] != "ok"]
     if holding:
-        # Name the window and rule: a subscriber woken by RED must see that a forward-looking
-        # burn forecast on a lightly used window can hold work, not only a spent account
-        # (2026-11-19: 5h 9%, 7d 24%, RED solely on "7d RUNS OUT BEFORE RESET").
-        return "RED", ("provider's existing quota or burn rule holds spontaneous work: "
-                       + ", ".join(holding))
+        return "RED", ", ".join(holding)
     return "GREEN", "both provider windows satisfy the existing budget policy"
 
 
@@ -84,7 +79,7 @@ def rows_from_engine_budget(home, now):
     The verdict keeps the pre-cutover rule: LOW on a spent window (used > 0.9), RUNS OUT BEFORE RESET when the burn ETA
     lands before the reset, otherwise ok. A forecast on a window below ``BURN_FORECAST_MIN_USED`` is a short-span
     extrapolation and stays ok. An unreadable file, a malformed account or a stale observation becomes an error row or
-    a non-FRESH row, so ``evaluate`` reports UNKNOWN or STALE and never admits spontaneous work.
+    a non-FRESH row, so ``evaluate`` reports UNKNOWN.
     """
     try:
         data = state_files.read_json(Path(home) / "engine" / "budget.json")
@@ -163,9 +158,7 @@ def publish(home, rows, *, now):
     if state == "UNKNOWN":
         signal_store.observe_unknown(Path(home), name, now=now, reason=reason, source=source)
     else:
-        # Carry the cause into the reading: a RED with an empty reason tells a subscriber the
-        # provider holds work but not which window or rule did it (2026-11-16: the live
-        # budget-claude RED recorded reason="" while ``evaluate`` had already named the cause).
+        # Carry the verdict's cause so subscribers can see which window triggered it.
         signal_store.observe(Path(home), name, state, now=now, source=source, reason=reason)
     # Cadence beat: observe_unknown never touches .seen (a failed input is not fresh evidence),
     # so without this a live producer declaring UNKNOWN looks like a missed cadence to coverage.
