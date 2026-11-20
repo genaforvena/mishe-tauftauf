@@ -37,6 +37,8 @@ the duty is promoted — it was not present under release `35748377`. The viewer
 flags a render older than 30 minutes as stale, so a fresh render keeps the pane
 from reading STALE.
 
+Two status lines in that pane are easy to misread. `activity living` and `activity bedroom` give the age of the newest usable motion bucket, not camera frame time: a quiet room reads `(stale)` past five minutes (living) or fifteen (bedroom) without meaning a camera failed — the pane says this itself. That is a different freshness from the 30-minute render staleness above. The `night prior 21-05Z` line checks the assumed local-night window against measured living-room daylight and activity: it says `matches` only when 21Z is both the darkest and quietest hour, prints the measured values when it is `unvalidated`, and stays `timing UNKNOWN` when a curve is missing or older than 30 minutes, or the renderer publishes a different window.
+
 The `network` window is watched by its own duty: `network-window`
 (`duties.json`, every 300 s, `max_age` 900 s, resolver `network`) runs
 `checks/network-care.py window`. It is RED when the `plants:network` window is
