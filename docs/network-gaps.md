@@ -95,3 +95,10 @@ shown), **MISSING** (not measured or not shown).
    usual; the since-boot attempts share and the driver's rate stay the absolute readings. The
    earlier "two APs on channel 13" question is closed: `ra0` is the 2.4 GHz access point, `rax0` the
    5 GHz one, and `apcli0`/`apclix0` are client-mode interfaces on the same radios.
+   **Recheck 2026-11-20:** the retained log held 514 good reads over 2.0 days; 34 complete hourly
+   windows could be scored, and each band had exactly one `much worse` hour (2.4 GHz 27.8% failed
+   attempts against a 12.7% usual at 11-19 04:00Z; 5 GHz 16.0% against 5.9% at 11-18 22:00Z).
+   The longest run of consecutive `much worse` hours on either band was one, so the comparison
+   stays display-only and no alarm duty is warranted. The trigger to revisit is two consecutive
+   `much worse` hours on one band, or a sustained run that the window already labels `for at least
+   N h`; both are visible in the pane before any new signal is added.
