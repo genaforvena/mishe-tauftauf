@@ -102,6 +102,24 @@ def test_producer_execstart_keeps_a_spaced_argument_as_one_word(cfg):
     assert "ExecStart=/usr/bin/python3 tool.py camera --room " in line
 
 
+def test_typed_relay_units_run_the_pinned_check(cfg):
+    # 2026-11-20: the first relay was hand-written into the unit dir and ran the
+    # working tree's script, so it was neither delivery-pinned nor installed on a
+    # fresh plant. The generated form must name the release's copy for execution
+    # and the shared checkout only as the --repo argument the check observes.
+    (Path(cfg.pythonpath).resolve().parent / "duties.json").write_text('{"duties": []}', encoding="utf-8")
+    files = units.render(cfg, ROLES)
+    svc = files["mishe-human-typed-relay.service"]
+    timer = files["mishe-human-typed-relay.timer"]
+    source = Path(cfg.pythonpath).resolve().parent          # release root; src/ is only its PYTHONPATH
+    assert f"ExecStart={cfg.python} {source}/checks/human-typed-relayed.py" in svc
+    assert f" --repo {cfg.repo} --relay" in svc
+    assert f"{cfg.repo}/checks/human-typed-relayed.py" not in svc
+    assert "Type=oneshot" in svc and "TimeoutStartSec=60" in svc
+    assert "OnUnitActiveSec=300" in timer
+    assert "Unit=mishe-human-typed-relay.service" in timer
+
+
 def test_dual_probe_is_a_durable_restarting_monitor_routed_to_failure(cfg):
     svc = units.render(cfg, ROLES)["mishe-dual-probe.service"]
     for needle in ("Type=simple", "Restart=always", "RestartSec=60", "WantedBy=default.target",

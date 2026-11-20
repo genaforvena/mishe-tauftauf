@@ -265,6 +265,23 @@ def render(cfg: Config, roles, *, producers=(), resolvers=None) -> dict:
         "[Unit]\nDescription=Run the Mishe doctor",
         f"[Timer]\nOnBootSec=60\nOnUnitActiveSec={cfg.doctor_every}\nAccuracySec=10s\nUnit={p}-doctor.service",
         "[Install]\nWantedBy=timers.target")
+    # The typed relay was hand-written in the unit dir on 2026-11-20: it ran the
+    # working tree's script, so an uncommitted edit became live immediately and a
+    # fresh plant had no relay at all. Emit it from the pinned release like every
+    # other trigger; sync then replaces the hand-written files and enables the timer.
+    from .work_boundary import runtime_source
+    source = runtime_source(cfg.repo, cfg.pythonpath)
+    relay = source / "checks" / "human-typed-relayed.py"
+    files[f"{p}-human-typed-relay.service"] = _file(
+        "[Unit]\nDescription=Relay the human's typed lines into the operator chat",
+        "[Service]\nType=oneshot\nUMask=0077\n" + _env(cfg)
+        + f"ExecStart={_exec_word(str(cfg.python))} {_exec_word(str(relay))}"
+        + f" --home {_exec_word(str(cfg.home))} --repo {_exec_word(str(cfg.repo))} --relay\n"
+        + "TimeoutStartSec=60\n")
+    files[f"{p}-human-typed-relay.timer"] = _file(
+        "[Unit]\nDescription=Relay human typed lines every 5 minutes",
+        f"[Timer]\nOnBootSec=90\nOnUnitActiveSec=300\nAccuracySec=10s\nUnit={p}-human-typed-relay.service",
+        "[Install]\nWantedBy=timers.target")
     # The root-fs stall probe is a long-running monitor, not a timer: it must come back after a
     # reboot or crash by itself (a transient unit does neither). Restart=always, because a clean
     # exit from a monitor would otherwise end the stall record silently.
