@@ -272,6 +272,7 @@ def summarize(living: tuple[list[dict], list[float]], bedroom: tuple[list[dict],
                               for w in cleaning],
         "lights_events": [{"utc": hhmm(e["t"]), "kind": e["kind"], "step": e["step"]} for e in lights],
         "lights_out_utc": hhmm(lights_out),
+        "lights_out_iso": iso_utc(lights_out),
         "first_activity_after_lights_out_utc": hhmm(first_active),
         "settled_for_night": [{"from_utc": hhmm(a), "to_utc": hhmm(b), "minutes": round((b - a) / 60)}
                               for a, b in settled],
@@ -288,11 +289,27 @@ def summarize(living: tuple[list[dict], list[float]], bedroom: tuple[list[dict],
     }
 
 
-def rhythm_line(summary: dict) -> str:
-    """One plain line for the household window; missing parts read UNKNOWN."""
+def rhythm_line(summary: dict, now: float | None = None) -> str:
+    """One plain line for the household window; missing parts read UNKNOWN.
+
+    The summary names the night by time of day only. When it also carries the absolute
+    date, say so: a freshly rewritten file can still describe a night days ago.
+    """
     quiet = summary.get("longest_quiet_block_living_room")
     quiet_text = (f"{quiet['from_utc']} to {quiet['to_utc']} ({quiet['minutes']} min)" if quiet else "UNKNOWN")
-    return ("RHYTHM (provisional): lights out " + (summary.get("lights_out_utc") or "UNKNOWN")
+    when = ""
+    lo_iso = summary.get("lights_out_iso")
+    if isinstance(lo_iso, str):
+        try:
+            lo_dt = datetime.datetime.fromisoformat(lo_iso)
+        except ValueError:
+            lo_dt = None
+        if lo_dt is not None:
+            when = " on " + lo_dt.date().isoformat()
+            if now is not None:
+                age_days = int((now - lo_dt.timestamp()) // 86400)
+                when += " (today)" if age_days <= 0 else f" ({age_days}d ago, not last night)"
+    return ("RHYTHM (provisional): lights out " + (summary.get("lights_out_utc") or "UNKNOWN") + when
             + "; first living-room activity after that "
             + (summary.get("first_activity_after_lights_out_utc") or "UNKNOWN")
             + "; longest quiet block " + quiet_text + ". " + gap_text(summary)

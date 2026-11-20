@@ -518,7 +518,7 @@ def rhythm_lines(now):
     data, mtime = read_json_file(ACTIVITY_FILE)
     if not isinstance(data, dict):
         return ["  RHYTHM: UNKNOWN (no activity reading yet)"]
-    out = ["  " + hact.rhythm_line(data.get("summary", {})) + stale_note(mtime, now)]
+    out = ["  " + hact.rhythm_line(data.get("summary", {}), now) + stale_note(mtime, now)]
     sound = data.get("sound_by_hour", {}).get("livingroom", {})
     vals = [sound.get("%02d" % h, {}).get("median_rms") for h in range(24)]
     top = max([v for v in vals if v is not None] or [1.0])
@@ -672,7 +672,7 @@ def draw():
     out += voice_lines()
     out += note3_lines(now)
     out.append("")
-    out.append("DAYLIGHT, RHYTHM (camera source; one night of data; not validated)")
+    out.append("DAYLIGHT, RHYTHM (camera source; all retained days; not validated)")
     out += daylight_lines(now)
     out += rhythm_lines(now)
     out.append("")

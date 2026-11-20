@@ -73,6 +73,19 @@ def test_rhythm_line_comes_from_the_activity_summary(tmp_path, monkeypatch):
     assert "RHYTHM (provisional): lights out 23:58Z; first living-room activity after that UNKNOWN" in lines[0]
     assert lines[1].startswith("  SOUND by UTC hour, living room")
 
+
+def test_rhythm_line_shows_the_night_date_from_the_summary(tmp_path, monkeypatch):
+    import datetime, json, time
+    activity = tmp_path / "activity.json"
+    now = time.time()
+    lo_iso = datetime.datetime.fromtimestamp(now - 10 * 86400, datetime.timezone.utc).isoformat(timespec="seconds")
+    activity.write_text(json.dumps({"summary": {"lights_out_utc": "04:11Z", "lights_out_iso": lo_iso,
+                                                "first_activity_after_lights_out_utc": None,
+                                                "longest_quiet_block_living_room": None}}))
+    monkeypatch.setattr(hv, "ACTIVITY_FILE", activity)
+    lines = hv.rhythm_lines(now)
+    assert "lights out 04:11Z on " + lo_iso[:10] + " (10d ago, not last night)" in lines[0]
+
 def test_once_writes_the_view_without_a_none_line(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(hv, "LOG", tmp_path / "signatures.jsonl")
     monkeypatch.setattr(hv, "CAMERAS", {})

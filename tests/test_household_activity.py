@@ -65,6 +65,38 @@ def test_missing_parts_read_unknown_in_the_rhythm_line():
     assert "provisional" in line.lower()
 
 
+def test_summary_carries_the_nights_absolute_date():
+    lamp_off = T0 + 3000
+    lr = _frames("living room", T0, lamp_off + 6 * 3600, lambda t: 80 if t < lamp_off else 40,
+                 moving_at=lambda t: t < T0 + 2000)
+    recs, times = ha.frame_records(lr)
+    summary = ha.summarize((recs, times), ([], []))
+    assert summary["lights_out_iso"].startswith(ha.iso_utc(lamp_off)[:10])
+
+
+def test_rhythm_line_dates_an_old_night_as_not_last_night():
+    from datetime import datetime, timezone
+    summary = {"lights_out_utc": "02:44Z", "lights_out_iso": "2026-11-10T02:44:41+00:00",
+               "first_activity_after_lights_out_utc": "08:53Z",
+               "longest_quiet_block_living_room": {"from_utc": "02:53Z", "to_utc": "08:52Z", "minutes": 358}}
+    now = datetime(2026, 11, 20, 4, 11, tzinfo=timezone.utc).timestamp()
+    line = ha.rhythm_line(summary, now)
+    assert "lights out 02:44Z on 2026-11-10 (10d ago, not last night)" in line
+    assert "longest quiet block 02:53Z to 08:52Z (358 min)" in line
+
+
+def test_rhythm_line_of_today_says_today():
+    from datetime import datetime, timezone
+    summary = {"lights_out_utc": "02:44Z", "lights_out_iso": "2026-11-20T02:44:41+00:00"}
+    now = datetime(2026, 11, 20, 4, 11, tzinfo=timezone.utc).timestamp()
+    assert "lights out 02:44Z on 2026-11-20 (today)" in ha.rhythm_line(summary, now)
+
+
+def test_rhythm_line_with_unusable_date_makes_no_new_claim():
+    summary = {"lights_out_utc": "02:44Z", "lights_out_iso": "not-a-date"}
+    assert "lights out 02:44Z;" in ha.rhythm_line(summary, T0)
+
+
 def test_sound_is_bucketed_by_utc_hour_of_day():
     rows = [{"t": T0 + k, "room": "livingroom", "rms": v} for k, v in ((0, 100), (30, 300), (60, 500))]
     rows.append({"t": "bad", "room": "livingroom", "rms": 1})
