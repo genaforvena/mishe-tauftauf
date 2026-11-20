@@ -241,10 +241,19 @@ def test_promotion_gap_ignores_torn_finish_and_keeps_start_order():
     assert view.promotion_gaps(rows) == [900.0]
 
 
-def test_promotion_gap_is_rendered_and_stays_unknown_without_a_pair(tmp_path):
-    home = home_with(tmp_path / "paired", [record(), record(created_at=5000.0)])
+def test_report_names_the_delivered_endpoints_even_with_an_intervening_failed_check(tmp_path):
+    home = home_with(tmp_path, [
+        record(),
+        record(created_at=3500.0, phase="check-failed"),
+        record(created_at=5000.0, delivered_at=5500.0),
+    ])
     text = view.render(home, Path("/nope"), 86400.0, 6000.0)
-    assert "queue: previous delivery -> next start" in text
-    alone = home_with(tmp_path / "alone", [record()])
-    text = view.render(alone, Path("/nope"), 86400.0, 6000.0)
-    assert "queue: previous delivery -> next start  UNKNOWN" in text
+    gap = next(line.split() for line in text.splitlines() if "finish ->" in line)
+    assert gap == ("delivered finish -> next delivered start "
+                   "mean 38m20s p90 38m20s max 38m20s (n=1)").split()
+
+
+def test_promotion_gap_is_unknown_without_a_pair(tmp_path):
+    home = home_with(tmp_path, [record()])
+    text = view.render(home, Path("/nope"), 86400.0, 6000.0)
+    assert "delivered finish -> next delivered start  UNKNOWN" in text

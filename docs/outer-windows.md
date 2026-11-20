@@ -15,6 +15,10 @@ pane it draws in: 41 rows, and 170 columns for the health view, which is the wid
 | delivery | tools/delivery_view.py (looped each minute by the window command) | genome | checked-to-live time per promotion: check stage, wake fence, drain, review |
 | budget | operator/budget/budget_view.py (site-local) | budget | provider quota and spend |
 
+The delivery window summarizes how long commits waited for their promotion to start. The
+interval between delivered promotions runs from the previous finish to the next
+start and can include time before new commits and time spent on failed attempts.
+
 The `budget` window runs `operator/budget/budget_pane.sh` (site-local, under `SITE_HOME`), a loop that calls
 `budget_view.py` every 20 s and clears the screen between frames, so the registry's
 command and the table's tool name the same view.

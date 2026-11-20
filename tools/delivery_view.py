@@ -11,6 +11,9 @@ permits:
   activation_started_at -> delivered_at     consumer drain + functional observation
   delivered_at -> reviewed_at       independent review after the pin moved
 
+Between delivered promotions it measures the previous finish to the next start.
+The interval can include time before a commit and time spent on unsuccessful attempts.
+
 A rolled-back run shows the failure reason and the recorded rollback duration if available.
 A failed recovery stays UNKNOWN and identifies the stage when the record carries that evidence.
 Missing or unreadable evidence prints as UNKNOWN and never becomes a zero. This is a report,
@@ -127,9 +130,8 @@ def commit_waits(records: list[dict], repo: Path) -> list[float]:
 def promotion_gaps(records: list[dict]) -> list[float]:
     """Seconds from one delivered promotion's finish to the next promotion's start.
 
-    This is the queue a checked change joins: only one promotion runs at a time, so a
-    commit made during a promotion waits for it to finish and for the cadence's next tick.
-    Records are paired in start order; a torn finish timestamp contributes no sample.
+    Pair delivered records in start order. Any intervening attempts fall inside the
+    interval. A torn finish timestamp contributes no sample.
     """
     delivered = sorted((r for r in records if r.get("phase") == "delivered"),
                        key=lambda r: r["created_at"])
@@ -198,13 +200,14 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
         else:
             lines.append(f"  {label:36s} UNKNOWN (no record in the window carries both timestamps)")
     gaps = promotion_gaps(delivered)
+    gap_label = "delivered finish -> next delivered start"
     if gaps:
         ordered = sorted(gaps)
         p90 = ordered[min(len(ordered) - 1, max(0, round(0.9 * len(ordered)) - 1))]
-        lines.append(f"  {'queue: previous delivery -> next start':36s} mean {fmt_s(sum(gaps) / len(gaps)):>9s}"
+        lines.append(f"  {gap_label} mean {fmt_s(sum(gaps) / len(gaps)):>9s}"
                      f"  p90 {fmt_s(p90):>9s}  max {fmt_s(ordered[-1]):>9s}  (n={len(gaps)})")
     else:
-        lines.append("  queue: previous delivery -> next start  UNKNOWN (no paired delivered records)")
+        lines.append(f"  {gap_label}  UNKNOWN (no paired delivered records)")
     zero_fence = sum(1 for r in delivered if stages(r)["wake_wait_s"] == 0)
     if zero_fence:
         lines.append(f"  fence held nothing in {zero_fence}/{len(delivered)} delivered runs"
