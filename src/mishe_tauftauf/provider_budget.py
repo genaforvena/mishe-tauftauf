@@ -10,9 +10,16 @@ from pathlib import Path
 from . import signal_store, state_files
 
 
+# Both accounts publish the producer's own 5h/7d verdicts. codex-a joined when
+# gpt-6.2-sol became tier 0 in three roles (2026-11-20): its forecast was in
+# engine/budget.json but no signal exposed it, so a burn-out-before-reset verdict
+# was invisible beside the aggregate GREEN budget signal.
+SIGNALS = {"claude": "budget-claude", "codex-a": "budget-codex"}
+
+
 def evaluate(rows, account, *, now):
-    if account != "claude":
-        return "UNKNOWN", "provider window contract not configured"
+    if account not in SIGNALS:
+        return "UNKNOWN", f"provider window contract not configured for {account}"
     # An error tagged with another account (e.g. codex-a STALE) does not make this provider's evidence incomplete;
     # an untagged error (unreadable file, accounting failure) still does.
     if not isinstance(rows, list):
@@ -117,9 +124,16 @@ def rows_from_engine_budget(home, now):
                              state="FRESH" if fresh else "STALE", verdict=verdict))
     return rows
 
-
 def publish(home, rows, *, now):
-    state, reason = evaluate(rows, "claude", now=now)
+    """Observe the Claude verdict; return it with every supported provider's verdict.
+
+    Only budget-claude is a registered signal. A second subscriber-less RED would
+    be unattended by the signal-coverage duty; codex-a's forecast stays in the
+    returned record and the household budget view instead of changing wake routing.
+    """
+    results = {account: dict(zip(("state", "reason"), evaluate(rows, account, now=now)))
+               for account in SIGNALS}
+    state, reason = results["claude"]["state"], results["claude"]["reason"]
     name = "budget-claude"
     if name not in signal_store.registry(Path(home)):
         signal_store.register(Path(home), name, max_age=900, subscribers=[])
@@ -131,4 +145,4 @@ def publish(home, rows, *, now):
         # provider holds work but not which window or rule did it (2026-11-16: the live
         # budget-claude RED recorded reason="" while ``evaluate`` had already named the cause).
         signal_store.observe(Path(home), name, state, now=now, source=source, reason=reason)
-    return dict(state=state, reason=reason)
+    return dict(results["claude"], accounts=results)

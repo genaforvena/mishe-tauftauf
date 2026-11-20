@@ -313,6 +313,20 @@ def test_budget_forecast_line_fails_closed(tmp_path, monkeypatch):
     assert hv.budget_forecast_line(now) is None                     # non-object accounts
 
 
+def test_budget_forecast_line_reads_codex_without_a_claude_row(tmp_path, monkeypatch):
+    import json
+    now = 1795129932.0
+    row = {"state": "FRESH", "used": 0.48, "burn_h": 0.0114, "eta_s": 167109,
+           "reset_at": now + 456610, "observed_at": now - 10}
+    path = tmp_path / "budget.json"
+    path.write_text(json.dumps({"accounts": {"codex-a": {
+        "state": "FRESH", "windows": {"7d": row}}}}))
+    monkeypatch.setattr(hv, "BUDGET_FILE", path)
+    line = hv.budget_forecast_line(now, "codex-a", "codex")
+    assert "budget-codex 7d: 48% used" in line and "short of reset" in line
+    assert hv.budget_forecast_line(now) is None
+
+
 def test_map_evidence_line_reports_the_weak_room_test(tmp_path, monkeypatch):
     import json
     import time

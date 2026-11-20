@@ -303,8 +303,8 @@ def signal_stability(name, now, window_s=None):
     return flips, green, len(values)
 
 
-def budget_forecast_line(now=None):
-    """Read the claude 7d burn forecast as a magnitude, or UNKNOWN (None).
+def budget_forecast_line(now=None, account="claude", label=None):
+    """Read an account's 7d burn forecast as a magnitude, or UNKNOWN (None).
 
     ``RUNS OUT BEFORE RESET`` is a projection, not exhaustion: this reports how
     far projected exhaustion lands from the window reset and the burn rate
@@ -320,10 +320,10 @@ def budget_forecast_line(now=None):
     if not isinstance(data, dict):
         return None
     accounts = data.get("accounts")
-    claude = accounts.get("claude") if isinstance(accounts, dict) else None
-    if not isinstance(claude, dict) or claude.get("state") != "FRESH":
+    selected = accounts.get(account) if isinstance(accounts, dict) else None
+    if not isinstance(selected, dict) or selected.get("state") != "FRESH":
         return None
-    windows = claude.get("windows")
+    windows = selected.get("windows")
     row = windows.get("7d") if isinstance(windows, dict) else None
     if not isinstance(row, dict) or row.get("state") != "FRESH":
         return None
@@ -339,10 +339,11 @@ def budget_forecast_line(now=None):
     need_burn = (1.0 - used) / to_reset_h
     gap_h = to_reset_h - eta / 3600.0
     pct = 100 * used
+    label = label or account
     if gap_h > 0:
-        return (f"  budget-claude 7d: {pct:.0f}% used, forecast {gap_h:.0f}h short of reset "
+        return (f"  budget-{label} 7d: {pct:.0f}% used, forecast {gap_h:.0f}h short of reset "
                 f"(burn {100*burn:.2f}%/h, need <={100*need_burn:.2f}%/h)")
-    return (f"  budget-claude 7d: {pct:.0f}% used, forecast reaches reset "
+    return (f"  budget-{label} 7d: {pct:.0f}% used, forecast reaches reset "
             f"with {-gap_h:.0f}h spare (burn {100*burn:.2f}%/h)")
 
 
@@ -664,6 +665,8 @@ def draw():
                    f"GREEN in {100 * green // total}% of {total} verdicts")
     out.append(budget_forecast_line(time.time()) or
                "  budget-claude 7d forecast: UNKNOWN (no fresh 7d budget row)")
+    out.append(budget_forecast_line(time.time(), "codex-a", "codex") or
+               "  budget-codex 7d forecast: UNKNOWN (no fresh 7d budget row)")
     out.append("")
     out.append("")
     out.append("SOUND, VOICE, SENSOR FEEDS")

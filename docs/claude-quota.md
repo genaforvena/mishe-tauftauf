@@ -26,7 +26,8 @@ producer and the budget pane expire readings after fifteen minutes (`MAX_AGE_S`
 failures; the `budget-claude` signal carries the verdict and, for a RED, the cause that
 held work. The tracked publisher registers
 that signal with no subscribers, so a site that wants the verdict routed registers its own
-resolver.
+resolver. The codex-a verdict is report-only: it travels in the publisher's result and
+the household budget view, with no second unattended RED signal.
 
 The native report has display precision: whole percentage points and minute
 reset times. The result records that precision explicitly. The tolerance is one
@@ -58,11 +59,11 @@ Status: no code applies a 50% gate, and the router does not read the policy.
   `SITE_HOME/operator/budget.md`. The pane `SITE_HOME/operator/budget/budget_view.py` has been
   render-only since 2026-11-12: it draws the producer's burn and ETA and decides
   nothing.
-- `src/mishe_tauftauf/provider_budget.py` builds the Claude rows from
+- `src/mishe_tauftauf/provider_budget.py` builds the Claude and codex-a rows from
   `engine/budget.json` itself (`rows_from_engine_budget`) and turns a non-`ok`
-  window into the `budget-claude` RED: `LOW` when `used > 0.9`, `RUNS OUT BEFORE
-  RESET` when the producer's `eta_s` lands before the reset. The tracked module
-  has no weekly-percentage rule.
+  window into the `budget-claude` or `budget-codex` RED: `LOW` when `used > 0.9`,
+  `RUNS OUT BEFORE RESET` when the producer's `eta_s` lands before the reset. The
+  tracked module has no weekly-percentage rule.
 - The router does not read it. `engine_policy._classify_account` judges a window
   by its remaining fraction against a reserve threshold of 15%, so a weekly
   window at 60% or 80% used still classifies as healthy and admission depends

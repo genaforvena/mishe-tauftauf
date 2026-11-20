@@ -139,3 +139,23 @@ def test_unknown_reason_names_the_failing_account_read():
     assert state == "UNKNOWN"
     assert "account state UNREADABLE" in reason
     assert "five_hour reset not yet reported" in reason
+
+
+def test_unsupported_provider_contract_stays_unknown():
+    assert budget.evaluate(rows(), "go-a", now=100)[0] == "UNKNOWN"
+
+
+def test_codex_forecast_is_published_beside_claude(tmp_path):
+    now = 10_000.0
+    data = _engine_budget(now)
+    data["accounts"]["codex-a"] = {"state": "FRESH", "windows": {
+        "5h": dict(used=0.2, reset_at=now + 3600, observed_at=now - 10, state="FRESH", eta_s=None),
+        "7d": dict(used=0.47, reset_at=now + 100_000, observed_at=now - 10, state="FRESH", eta_s=1000),
+    }}
+    _write_engine_budget(tmp_path, data)
+    result = budget.publish(tmp_path, budget.rows_from_engine_budget(tmp_path, now), now=now)
+    assert result["state"] == "GREEN"
+    assert result["accounts"]["codex-a"]["state"] == "RED"
+    assert "7d RUNS OUT BEFORE RESET (47% used)" in result["accounts"]["codex-a"]["reason"]
+    assert "budget-codex" not in signal_store.registry(tmp_path)
+    assert not (tmp_path / "signals/budget-codex.json").exists()
