@@ -27,8 +27,9 @@ The name is not a diagram. Reducing the couplings to a picture of a flat
 network closes the question the name is meant to keep open, and the knots are
 real: a trigger wakes a mind only when something is owed, a wake ends in a
 `yield`, a commit on `main` is pushed by the checkout's post-commit hook, with
-the bounded `main-publication` duty as its fallback, and genome checks CI and
-live consumers. None of that contradicts peer re-entry. Every mind works in the one
+the bounded `main-publication` duty as its fallback (a check every five minutes
+that publishes local `main` commits the hook missed, never by force), and genome
+checks CI and live consumers. None of that contradicts peer re-entry. Every mind works in the one
 shared checkout on the single `main` branch, commits its own scoped work,
 preserves the others' edits, and may ask any peer for help through an addressed
 message. Interrupted work is reconciled before new work. If several turns have
