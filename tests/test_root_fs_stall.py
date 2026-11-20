@@ -153,6 +153,34 @@ def test_stall_older_than_a_day_is_not_recurrence():
     assert code == 0 and "recurrence" not in lines[0]
 
 
+def test_green_recurrence_carries_worst_peak_pressure_and_burst_count():
+    stalls = [rec(event="slow", at=NOW - 5000 + i * 400, total=9.9 + i, fsync=9.9 + i,
+                  psi_io=40.0 + i, psi_mem=0.1 * (i + 1)) for i in range(3)]
+    stalls.append(rec(event="slow", at=NOW - 5000 + 0.01, total=9.9, psi_io=40.0, psi_mem=0.1))
+    code, lines = mod.evaluate([rec()] + stalls, NOW)
+    assert code == 0
+    assert "worst 11.9s" in lines[0]
+    assert "peak io_psi 42.00" in lines[0] and "peak mem_psi 0.30" in lines[0]
+    assert "3 separate bursts (gaps >= 2 min)" in lines[0]
+    assert ", newest " not in lines[0]                       # GREEN already says "most recent X min ago"
+
+
+def test_green_recurrence_single_stall_shows_its_own_pressure():
+    code, lines = mod.evaluate(
+        [rec(), rec(event="slow", at=NOW - 5000, total=9.9, psi_io=84.66, psi_mem=23.93)], NOW)
+    assert code == 0 and "worst 9.9s" in lines[0]
+    assert "io_psi 84.66" in lines[0] and "mem_psi 23.93" in lines[0]
+    assert "peak" not in lines[0] and "separate bursts" not in lines[0]
+
+
+def test_green_recurrence_two_bursts_do_not_repeat_the_newest_stamp():
+    stalls = [rec(event="slow", at=NOW - 5000, total=9.9),
+              rec(event="slow", at=NOW - 960, total=9.9)]
+    code, lines = mod.evaluate([rec()] + stalls, NOW)
+    assert code == 0 and "2 separate bursts" in lines[0]
+    assert ", newest " not in lines[0] and "most recent 16 min ago" in lines[0]
+
+
 def test_short_slow_probe_is_not_a_stall():
     assert mod.evaluate([rec(), rec(event="slow", at=NOW - 30, total=1.2)], NOW)[0] == 0
 

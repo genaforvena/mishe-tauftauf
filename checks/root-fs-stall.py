@@ -34,6 +34,11 @@ and peak mem_psi across all of them, not just the longest stall's own readings.
 The worst-by-duration cliff need not be the most contended or the one carrying
 a reclaim signature; the peak keeps that distinction visible in the signal.
 
+The same diagnostics are carried on the quiet (GREEN) line when the last 24 h
+holds a recurrence: worst duration, peak pressures and the number of distinct
+bursts. That is the state a reader sees almost all the time; a pressure spike
+that would change disposition must not be visible only while the signal is RED.
+
 Exit status:
   0  the probe is fresh and no root probe in the window reached STALL_S
   2  a root-filesystem probe took STALL_S or longer inside the window
@@ -157,14 +162,22 @@ def bursts(eps: list[list[dict]]) -> list[list[list[dict]]]:
     return groups
 
 
-def burst_suffix(eps: list[list[dict]]) -> str:
-    """Name distinct bursts so a recurring stall inside one RED window is visible."""
+def burst_suffix(eps: list[list[dict]], *, with_newest: bool = True) -> str:
+    """Name distinct bursts so recurrence inside one window is visible.
+
+    RED also names the newest burst's time. The GREEN recurrence line already
+    says how long ago the last stall was, so it asks without the stamp rather
+    than print the same instant twice.
+    """
     groups = bursts(eps)
     if len(groups) < 2:
         return ""
-    newest = max(r["at"] for ep in groups[-1] for r in ep)
-    stamp = datetime.fromtimestamp(newest, timezone.utc).strftime("%H:%M:%SZ")
-    return f"; {len(groups)} separate bursts (gaps >= {BURST_GAP_S / 60:.0f} min), newest {stamp}"
+    out = f"; {len(groups)} separate bursts (gaps >= {BURST_GAP_S / 60:.0f} min)"
+    if with_newest:
+        newest = max(r["at"] for ep in groups[-1] for r in ep)
+        stamp = datetime.fromtimestamp(newest, timezone.utc).strftime("%H:%M:%SZ")
+        out += f", newest {stamp}"
+    return out
 
 
 def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
@@ -196,8 +209,14 @@ def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
         eps = episodes(recurrence)
         count = (f"{len(eps)} stall(s)" if len(eps) == len(recurrence)
                  else f"{len(eps)} stall episode(s) from {len(recurrence)} probe reports")
+        worst_hist = max(recurrence, key=lambda r: r["total"])
+        pressure = (peak_psi_suffix(recurrence) if len(recurrence) >= 2
+                    else psi_suffix(worst_hist))
         line += (f"; recurrence: {count} >= {STALL_S:.0f}s in the last "
-                 f"{RECURRENCE_S / 3600:.0f} h, most recent {(now - last) / 60:.0f} min ago")
+                 f"{RECURRENCE_S / 3600:.0f} h, worst {worst_hist['total']:.1f}s"
+                 f"{pressure}"
+                 f"{burst_suffix(eps, with_newest=False)}"
+                 f", most recent {(now - last) / 60:.0f} min ago")
     return 0, [line]
 
 
