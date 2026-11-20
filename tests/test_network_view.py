@@ -88,7 +88,7 @@ def _wifi_read(monkeypatch, stdout):
     monkeypatch.setitem(view._wifi, "at", 0.0)
 
 
-def test_live_wifi_line_names_the_weakest_device_the_recorded_read_knows(tmp_path, monkeypatch):
+def test_live_wifi_line_names_the_weak_device_the_recorded_read_knows(tmp_path, monkeypatch):
     import network_router as nr
     mac = "7C:C3:A1:A5:20:D7"
     _router_log(tmp_path, monkeypatch,
@@ -96,7 +96,7 @@ def test_live_wifi_line_names_the_weakest_device_the_recorded_read_knows(tmp_pat
                  "clients": [{"id": nr.client_id(mac), "name": "iMac-Rozalia", "band": "2.4", "dbm": -81}]})
     _wifi_read(monkeypatch, f"BAND 2.472\n{mac}  -81 dBm / unknown (SNR -81)  0 ms ago\nBAND 5.200\n")
     text, weak = view.wifi_facts()
-    assert "weakest iMac-Rozalia -81 dBm on 2.4 GHz" in text
+    assert "weak devices: iMac-Rozalia -81 dBm on 2.4 GHz" in text
     assert weak is True
 
 
@@ -104,8 +104,46 @@ def test_live_wifi_line_keeps_the_bare_dbm_when_no_recorded_name_matches(tmp_pat
     _router_log(tmp_path, monkeypatch, {"ts": time.time(), "ok": True, "clients": []})
     _wifi_read(monkeypatch, "BAND 2.472\n7C:C3:A1:A5:20:D7  -81 dBm / unknown  0 ms ago\nBAND 5.200\n")
     text, weak = view.wifi_facts()
-    assert "weakest -81 dBm on 2.4 GHz" in text
+    assert "weak devices: -81 dBm on 2.4 GHz" in text
     assert weak is True
+
+
+def test_live_wifi_line_names_every_weak_device_with_its_band(tmp_path, monkeypatch):
+    import network_router as nr
+    weak24, weak5 = "7C:C3:A1:A5:20:D7", "AA:BB:CC:DD:EE:03"
+    _router_log(tmp_path, monkeypatch, {"ts": time.time(), "ok": True, "clients": [
+        {"id": nr.client_id(weak24), "name": "iMac-Rozalia", "band": "2.4", "dbm": -81},
+        {"id": nr.client_id(weak5), "name": "Redmi-10", "band": "5", "dbm": -78},
+    ]})
+    _wifi_read(monkeypatch, f"BAND 2.472\n{weak24}  -81 dBm / unknown  0 ms ago\n"
+                            f"BAND 5.200\n{weak5}  -78 dBm / unknown  0 ms ago\n")
+    text, weak = view.wifi_facts()
+    assert "weak devices: iMac-Rozalia -81 dBm on 2.4 GHz, Redmi-10 -78 dBm on 5 GHz" in text
+    assert "WEAK SIGNAL" in text and weak is True
+
+
+def test_live_wifi_line_caps_weak_device_names_and_counts_the_rest(tmp_path, monkeypatch):
+    import network_router as nr
+    macs = [f"AA:BB:CC:DD:EE:0{n}" for n in range(4)]
+    _router_log(tmp_path, monkeypatch, {"ts": time.time(), "ok": True, "clients": [
+        {"id": nr.client_id(mac), "name": f"Phone-{n}", "band": "2.4", "dbm": -80 - n}
+        for n, mac in enumerate(macs)
+    ]})
+    _wifi_read(monkeypatch, "BAND 2.472\n" + "".join(
+        f"{mac}  {-80 - n} dBm / unknown  0 ms ago\n" for n, mac in enumerate(macs)) + "BAND 5.200\n")
+    text, weak = view.wifi_facts()
+    assert "weak devices: Phone-3 -83 dBm on 2.4 GHz, Phone-2 -82 dBm on 2.4 GHz, " \
+           "Phone-1 -81 dBm on 2.4 GHz (+1 more)" in text, text
+    assert weak is True
+
+
+def test_live_wifi_line_keeps_single_weakest_wording_when_all_devices_are_strong(tmp_path, monkeypatch):
+    _router_log(tmp_path, monkeypatch, {"ts": time.time(), "ok": True, "clients": []})
+    _wifi_read(monkeypatch, "BAND 2.472\nAA:BB:CC:DD:EE:01  -35 dBm / unknown  0 ms ago\n"
+                            "BAND 5.200\nAA:BB:CC:DD:EE:02  -42 dBm / unknown  0 ms ago\n")
+    text, weak = view.wifi_facts()
+    assert "weakest -42 dBm on 5 GHz" in text and "weak devices" not in text
+    assert weak is False and "WEAK SIGNAL" not in text
 
 
 def test_live_wifi_line_names_a_band_its_listing_did_not_show(tmp_path, monkeypatch):

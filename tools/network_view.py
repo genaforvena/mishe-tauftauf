@@ -39,6 +39,7 @@ USUAL_BUCKETS = 40         # width of the trend sparkline
 _router = {"at": 0.0, "text": None, "read_at": 0.0}
 _wifi = {"at": 0.0, "text": None, "weak": False}
 WEAK_WIFI_DBM = -75
+WEAK_WIFI_NAMES = 3      # at most this many weak devices are named on the WI-FI line
 REPO = Path(__file__).resolve().parent.parent
 OWN_FILES = (Path(__file__).resolve(), Path(__file__).resolve().parent / "network_boundary.py")
 OWN_GIT_PATHS = ("tools/network_view.py", "tools/network_boundary.py")
@@ -419,7 +420,13 @@ def client_names():
 
 
 def wifi_facts():
-    """(text, weak) for the home Wi-Fi from a read-only router listing; (None, False) when it cannot be read."""
+    """(text, weak) for the home Wi-Fi from a read-only router listing; (None, False) when it cannot be read.
+
+    The healthy line names only the weakest device. When any device is below WEAK_WIFI_DBM, the line
+    names every weak device with its band (capped at WEAK_WIFI_NAMES), so a second weak client on the
+    other band is not hidden behind the global minimum. Names come from the recorded router reads;
+    the live listing supplies signal values and client counts.
+    """
     if time.time() - _wifi["at"] < ROUTER_EVERY_S:
         return _wifi["text"], _wifi["weak"]
     _wifi["at"] = time.time()
@@ -435,6 +442,7 @@ def wifi_facts():
         return None, False
     names = client_names()
     parts, weakest, weakest_band, weakest_name = [], None, None, None
+    weak_clients = []
     for band in sorted(set(bands) | set(nb.EXPECTED_BANDS)):
         clients = bands.get(band)
         if clients is None:  # the router has this band, the live listing did not show its radio
@@ -445,10 +453,23 @@ def wifi_facts():
             cid, dbm = min(clients, key=lambda client: client[1])
             if weakest is None or dbm < weakest:
                 weakest, weakest_band, weakest_name = dbm, band, names.get(cid)
+            for cid, dbm in clients:
+                if dbm < WEAK_WIFI_DBM:
+                    weak_clients.append((dbm, band, names.get(cid)))
     total = sum(len(v) for v in bands.values())
-    weak = weakest is not None and weakest < WEAK_WIFI_DBM
-    who = f"{weakest_name} " if weakest_name else ""
-    tail = f", weakest {who}{weakest} dBm on {weakest_band} GHz" if weakest is not None else ""
+    weak = bool(weak_clients)
+    if weak:
+        # "who is weak?" is plural: name every weak device, on its own band, not just the global
+        # minimum. Cap the line so a suddenly crowded band cannot push the readings off the pane.
+        weak_clients.sort(key=lambda item: item[0])
+        listed = ", ".join(f"{(nm + ' ') if nm else ''}{dbm} dBm on {band} GHz"
+                           for dbm, band, nm in weak_clients[:WEAK_WIFI_NAMES])
+        if len(weak_clients) > WEAK_WIFI_NAMES:
+            listed += f" (+{len(weak_clients) - WEAK_WIFI_NAMES} more)"
+        tail = f", weak devices: {listed}"
+    else:
+        who = f"{weakest_name} " if weakest_name else ""
+        tail = f", weakest {who}{weakest} dBm on {weakest_band} GHz" if weakest is not None else ""
     _wifi["text"] = f"{total} clients ({'; '.join(parts)}){tail}" + ("  WEAK SIGNAL" if weak else "")
     _wifi["weak"] = weak
     return _wifi["text"], weak
@@ -1738,7 +1759,9 @@ def draw():
     out.append("")
     out.append("  OUTAGES (home internet DOWN, from the probes)")
     out.extend(outage_lines(data))
-    out.append("  WI-FI         " + wifi_line() + "   (read-only, live read; name from the recorded read)")
+    wifi_note = ("   (read-only, live read; name from the recorded read; "
+                 f"weak below {WEAK_WIFI_DBM} dBm)")
+    out.append("  WI-FI         " + wifi_line() + wifi_note)
     out.append("  WI-FI RADIO   " + wifi_radio_line() + "   (read-only iwinfo on the router)")
     quality = wifi_quality_line().split("\n")
     out.append("  WI-FI QUALITY " + quality[0])
