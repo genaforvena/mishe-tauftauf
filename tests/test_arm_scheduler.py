@@ -69,12 +69,12 @@ def test_timer_name_and_glob_are_plant_scoped(monkeypatch):
     monkeypatch.setattr(arm.subprocess, "run", fake)
     command = ["python", "-m", "mishe_tauftauf", "--home", "/site/us", "due"]
     arm.systemd_scheduler(2_000_000_000.0, command=command)
-    tag = arm._plant_tag(command)
+    base = arm.timer_base("/site/us")
     unit = next(a for c in fake.calls if c[0] == "systemd-run" for a in c if a.startswith("--unit="))
-    assert unit.startswith(f"--unit=mishe-next-due-{tag}-")
+    assert unit.startswith(f"--unit={base}-")
     globs = [c[-1] for c in fake.calls
              if c[:4] == ["systemctl", "--user", "list-units", "--type=timer"]]
-    assert globs and all(tag in g for g in globs)
+    assert globs == [f"{base}-*.timer"]
 
 
 def test_without_home_keeps_the_untagged_name(monkeypatch):
@@ -82,8 +82,7 @@ def test_without_home_keeps_the_untagged_name(monkeypatch):
     monkeypatch.setattr(arm.subprocess, "run", fake)
     arm.systemd_scheduler(2_000_000_000.0, command=["python", "due"])
     unit = next(a for c in fake.calls if c[0] == "systemd-run" for a in c if a.startswith("--unit="))
-    assert unit.startswith("--unit=mishe-next-due-")
-    assert arm._plant_tag(["python", "due"]) is None
+    assert unit.startswith("--unit=mishe-next-due-local-")
 
 
 def test_untagged_arm_never_stops_a_tagged_neighbour_timer(monkeypatch):

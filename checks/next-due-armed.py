@@ -3,9 +3,9 @@
 
 Observed 2026-11-08: units-installed was missing, zero mishe-next-due timers existed, and
 next-due.json stayed frozen for hours. runtime_cli.scheduler() recorded the next due time but
-never armed it, so only DM and signal triggers woke minds. This check reads the two site-local
-facts that prove arming (the recorded due time and a systemd transient timer) and goes RED when
-they disagree.
+never armed it, so only DM and signal triggers woke minds. This check reads the recorded due
+time and lists transient timers scoped to this site's systemd unit namespace. It goes RED
+when the site needs a timer and has none, even if a neighbour has an armed timer.
 
 Exit status:
   0  next-due.json is fresh (or not yet due) and a mishe-next-due timer is armed
@@ -24,8 +24,10 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from mishe_tauftauf.arm import timer_base  # noqa: E402
+
 GRACE_S = 300.0
-TIMER_PREFIX = "mishe-next-due-"
 # The scheduler (arm.systemd_scheduler) holds this lock across its stop-then-start replacement.
 # Listing timers outside it can sample the gap between the two and report a timer as never armed.
 LOCK_NAME = "next-due.lock"
@@ -41,8 +43,10 @@ def replacement_lock(home: Path):
 
 def list_timers(home: Path) -> tuple[int, list[str]]:
     try:
+        prefix = f"{timer_base(home)}-"
         with replacement_lock(home):
-            done = subprocess.run(["systemctl", "--user", "list-timers", "--all", "--no-legend", "--plain"],
+            done = subprocess.run(["systemctl", "--user", "list-timers", "--all", "--no-legend", "--plain",
+                                   f"{prefix}*.timer"],
                                   capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError) as exc:
         return 3, [str(exc)]
@@ -51,7 +55,7 @@ def list_timers(home: Path) -> tuple[int, list[str]]:
     names = []
     for line in done.stdout.splitlines():
         for field in line.split():
-            if field.startswith(TIMER_PREFIX) and field.endswith(".timer"):
+            if field.startswith(prefix) and field.endswith(".timer"):
                 names.append(field)
                 break
     return 0, names
@@ -75,7 +79,7 @@ def evaluate(home: Path, now: float, timers: list[str] | None, grace: float = GR
             return 3, problems + ["timer listing unavailable, so arming cannot be confirmed"]
         return 3, ["timer listing unavailable"]
     if not timers and due >= now - grace:
-        problems.append("no mishe-next-due timer is armed")
+        problems.append("no mishe-next-due timer is armed for this site")
     if problems:
         return 2, problems
     return 0, [f"next due {int(due)} (in {int((due - now) // 60)} min); armed timers: {', '.join(timers) or 'none needed'}"]
