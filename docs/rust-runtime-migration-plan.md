@@ -3954,3 +3954,31 @@ unprofiled in a fresh process, `read_scan_series(home, "sense.disk.free")` costs
 `scan-series-baseline-20261118.txt`). So the summary-line slice is worth ~1.9 of
 the run's 22.4 CPU-s, ~0.3 % of one core — the cheapest *clean* slice on the
 list, not a large one, and it retires a cost that grows with the corpus.
+
+### 10.69 The one RED was contention, not a regression: same feed bytes, r=0.852 (2026-11-20)
+
+The retained `rust-measurement-history.jsonl` (71 samples, 2026-11-17T07:02Z to
+2026-11-20T03:35Z) has one RED: 01:34:50Z, senses 5.086 CPU-s against the 5.0 bar.
+Its guard carried `cpu_pressure_some_avg10` 55.6 and its elapsed/fold was 2.60,
+against a median 0.68 and p90 1.35 over 106 readings. Its release `b538498e`
+carries the same `feed.py` bytes (sha256 prefix `0d18955508`) as 30 other
+samples, so the code is held constant across the comparison.
+
+Across those 31 identical-feed samples, demeaned Pearson r between PSI `some
+avg10` and max reader CPU is 0.852; load1 reaches only 0.393. A least-squares
+fit gives +0.0297 CPU-s per pressure point from a 3.307 CPU-s intercept:
+predicted 4.96 at 55.6, measured 5.086. Buckets over all 70 admissible samples
+are monotonic — median 3.283 CPU-s (<5%, n=29), 3.819 (5-20%, n=28), 3.950
+(20-40%, n=12), 5.086 (>=40%, n=1). Counterexamples remain (9.0 pressure with
+3.454 CPU-s, 1.4 pressure with 3.831), so pressure explains much but not all of
+the variance; the two low-pressure 4.4-4.6 CPU-s samples predate provenance
+recording and carry no release digest, so they cannot be controlled this way.
+
+Decision: the 5.0 CPU-s bar stands and no RED is suppressed. A RED with pressure
+above ~40 and elapsed/fold above ~2 is *attributed* to host contention until a
+same-pressure A/B says otherwise; the raw readings stay in the history. This
+removes the only measurement-based reason to reopen the read-path searches
+closed in §§10.39-10.43: no byte-level seam has been measured, and the standing
+question stays UNKNOWN with pressure as the next thing to control, not a port
+to attempt. Full working is in `$SITE/analysis/rust-pressure-20261120.md`
+(site-local, not committed).
