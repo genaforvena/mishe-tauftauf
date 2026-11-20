@@ -66,6 +66,17 @@ FRESH_S = 900
 # reset ~161 h away, flipping budget-claude RED right after the weekly reset).
 BURN_FORECAST_MIN_USED = 0.05
 
+REOFFER_S = 3600
+"""Re-offer cadence for the budget-claude signal.
+
+``yielding.settle`` arms a known disposition's ``recheck_at`` wake only for
+signals registered with a reoffer. budget-claude's RED is a forward-looking
+burn forecast that is dispositioned and rechecked, so a registration without
+reoffer left those dispositions with no wake at their deadline: a 2.2 h lapse
+flapped signal-coverage RED on 2026-11-20. Every other budget signal carries
+3600; this matches them.
+"""
+
 
 def rows_from_engine_budget(home, now):
     """Rows for ``evaluate`` from the producer's engine/budget.json (the one budget source since the 2026-11-12 cutover).
@@ -135,8 +146,17 @@ def publish(home, rows, *, now):
                for account in SIGNALS}
     state, reason = results["claude"]["state"], results["claude"]["reason"]
     name = "budget-claude"
-    if name not in signal_store.registry(Path(home)):
-        signal_store.register(Path(home), name, max_age=900, subscribers=[])
+    reg = signal_store.registry(Path(home))
+    if name not in reg:
+        signal_store.register(Path(home), name, max_age=900, subscribers=[], reoffer=REOFFER_S)
+    elif "reoffer" not in reg[name]:
+        # Self-heal a registration made before reoffer existed. register() replaces the
+        # whole entry, so carry the existing subscribers and wake_on forward: dropping them
+        # would silently remove the senses/steward wake triggers signal-coverage relies on.
+        entry = reg[name]
+        signal_store.register(Path(home), name, max_age=entry.get("max_age", 900),
+                              subscribers=entry.get("subscribers", []), reoffer=REOFFER_S,
+                              wake_on=entry.get("wake_on", "change"))
     source = "existing-budget-view:claude"
     if state == "UNKNOWN":
         signal_store.observe_unknown(Path(home), name, now=now, reason=reason, source=source)

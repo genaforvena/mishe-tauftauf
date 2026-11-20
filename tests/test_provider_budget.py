@@ -172,3 +172,40 @@ def test_publish_records_cadence_beat_even_when_input_unreadable(tmp_path):
     assert (tmp_path / "signals" / "budget-claude.ran").exists()
     assert signal_store.recorded(tmp_path, "budget-claude")["state"] == "UNKNOWN"
     assert not (tmp_path / "signals" / "budget-claude.seen").exists()
+
+
+def test_budget_claude_registration_carries_reoffer(tmp_path):
+    # 2026-11-20: budget-claude had no reoffer, so a known disposition's recheck_at wake was
+    # never armed and a 2.2 h lapse flapped signal-coverage RED. A legacy registration (with
+    # subscribers, no reoffer) must be healed without losing its subscribers.
+    signal_store.register(tmp_path, "budget-claude", max_age=900,
+                          subscribers=["senses", "steward"])
+    budget.publish(tmp_path, rows(), now=100)
+    entry = signal_store.registry(tmp_path)["budget-claude"]
+    assert entry["reoffer"] == budget.REOFFER_S
+    assert entry["subscribers"] == ["senses", "steward"]
+    assert entry["max_age"] == 900
+    fresh = tmp_path / "fresh"; fresh.mkdir()
+    budget.publish(fresh, rows(), now=100)
+    assert signal_store.registry(fresh)["budget-claude"]["reoffer"] == budget.REOFFER_S
+
+
+def test_dispositioned_budget_claude_arms_its_recheck(tmp_path):
+    # End to end: the registration must make settle arm the recheck intention, or the
+    # disposition's deadline still lapses despite the disposition being recorded.
+    from mishe_tauftauf import dispositions, intentions, owed, yielding
+    from mishe_tauftauf.state_files import write_json
+
+    signal_store.register(tmp_path, "budget-claude", max_age=900,
+                          subscribers=["senses", "steward"])
+    evidence = rows(); evidence[0]["verdict"] = "RUNS OUT BEFORE RESET"
+    budget.publish(tmp_path, evidence, now=100)
+    dispositions.set_disposition(tmp_path, "budget-claude", "known", "steward",
+                                 "evidence", ttl=3600, now=200)
+    write_json(yielding.snapshot_path(tmp_path, "wake-steward-1"),
+               dict(role="steward", snapshot=owed.Snapshot().to_json()))
+    yielding.settle(tmp_path, "steward", "wake-steward-1", text="Work", result="changed",
+                    now=300, wall_writer=lambda *a: None)
+    due = {e["id"]: e["due"] for e in intentions.list_(tmp_path, "steward") if "due" in e}
+    assert due["disposition-budget-claude"] == 200 + 3600
+    assert "reoffer-budget-claude" not in due
