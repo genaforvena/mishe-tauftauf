@@ -75,21 +75,31 @@ def test_p90_is_nearest_rank_not_interpolated():
     assert out["wake_wait_s"]["mean"] == 10.0
 
 
-def test_a_quiet_gap_is_not_hidden_by_an_exact_zero_test(monkeypatch, tmp_path):
-    # held_delivery_lock retries on a 1 s sleep, so a first-try acquisition crosses the two
-    # record saves in ~20 ms — never exactly zero. An exact-zero count reports none of these.
+def test_fence_modes_split_quiet_polled_and_hold_waits(monkeypatch, tmp_path):
+    # held_delivery_lock retries on a 1 s sleep, so a first-try gap crosses the two record
+    # saves in ~20 ms, never exactly zero. A fence at patience_s=600 means the hold was written.
     quick = [record(waiting_since=t, activation_started_at=t + d)
              for t, d in ((2010.0, 0.02), (2020.0, 0.05))]
-    waited = record(waiting_since=2030.0, activation_started_at=2033.0)
+    polled = record(waiting_since=2030.0, activation_started_at=2050.0)   # 20 s
+    held = record(waiting_since=2060.0, activation_started_at=2660.0)    # 600 s
     unmeasured = record(waiting_since=None, activation_started_at=None)
-    home = home_with(tmp_path, quick + [waited, unmeasured])
+    home = home_with(tmp_path, quick + [polled, held, unmeasured])
     (tmp_path / "runtime").mkdir()
     os.symlink(f"{tmp_path}/releases/{'c' * 40}", tmp_path / "runtime" / "current")
     monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
     text = view.render(home, Path("/nope"), 24 * 3600.0, 4000.0)
-    # The unmeasured run is UNKNOWN, not a non-quiet fence, so it stays out of the denominator.
-    assert "fence found a quiet gap in 2/3 measured fences" in text
-    assert "fence held nothing" not in text
+    # The unmeasured run is absent, never a zero-second fence, so it stays out of the count.
+    assert "fence modes: 2/4 quiet gaps (<1s), 1 polled (1-600s mean 0m20s)," in text
+    assert "1 hold-waits (>=600s mean 10m00s max 10m00s)" in text
+    assert "release the shared dispatch lock" in text
+
+
+def test_fence_modes_boundary_at_patience():
+    modes = view.fence_modes([
+        record(waiting_since=2000.0, activation_started_at=2599.0),  # just under 600 s
+        record(waiting_since=3000.0, activation_started_at=3600.0),  # exactly 600 s
+    ])
+    assert modes == {"quiet": [], "polled": [599.0], "hold": [600.0]}
 
 
 def test_legacy_unknown_recovery_keeps_its_reason_and_stage_unknown(monkeypatch, tmp_path):

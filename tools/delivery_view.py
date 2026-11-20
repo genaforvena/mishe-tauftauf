@@ -48,6 +48,13 @@ An exact-zero test never fires and hides that the quiet-gap path works; one seco
 a first-try acquisition from even a single retry.
 """
 
+FENCE_HOLD_S = 600.0
+"""``held_delivery_lock``'s patience_s (release_promotion.py:259): seconds it polls for a quiet
+gap before writing the hold and waiting for running wakes. A fence at or beyond this is a hold-wait,
+not a wake-free acquisition. The caller passes only wait_s (line 1055), so patience stays 600 s;
+the promotion record does not store it, which is why the view names the constant here.
+"""
+
 RECENT_N = 10
 """How many newest delivered promotions get a stage mean beside the window's mean.
 
@@ -114,6 +121,27 @@ def stages(record: dict) -> dict:
         "review_s": span(record.get("delivered_at"), record.get("reviewed_at")),
         "checked_to_live_s": span(record.get("created_at"), record.get("delivered_at")),
     }
+
+
+def fence_modes(delivered: list[dict]) -> dict[str, list[float]]:
+    """Fence seconds split by how the dispatch lock was acquired, from record timestamps alone.
+
+    ``quiet`` (<1 s): the first poll found a gap. ``polled`` (1-600 s): a gap appeared within
+    patience. ``hold`` (>=600 s): no gap appeared, the hold was written, and the promotion waited
+    for running wakes to release the shared dispatch lock. Unmeasured runs are absent, never zero.
+    """
+    out: dict[str, list[float]] = {"quiet": [], "polled": [], "hold": []}
+    for record in delivered:
+        seconds = stages(record)["wake_wait_s"]
+        if seconds is None:
+            continue
+        if seconds < FENCE_QUIET_S:
+            out["quiet"].append(seconds)
+        elif seconds < FENCE_HOLD_S:
+            out["polled"].append(seconds)
+        else:
+            out["hold"].append(seconds)
+    return out
 
 
 def _check_at(record: dict) -> float | None:
@@ -246,11 +274,19 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
                      f"  p90 {fmt_s(p90):>9s}  max {fmt_s(ordered[-1]):>9s}  (n={len(gaps)})")
     else:
         lines.append(f"  {gap_label}  UNKNOWN (no paired delivered records)")
-    fenced = [r for r in delivered if stages(r)["wake_wait_s"] is not None]
-    quiet_fences = sum(1 for r in fenced if stages(r)["wake_wait_s"] < FENCE_QUIET_S)
-    if quiet_fences:
-        lines.append(f"  fence found a quiet gap in {quiet_fences}/{len(fenced)} measured fences"
-                     f" (no wake held the dispatch lock at first try)")
+    modes = fence_modes(delivered)
+    measured = sum(len(v) for v in modes.values())
+    if measured:
+        quiet, polled, hold = modes["quiet"], modes["polled"], modes["hold"]
+        polled_mean = f" mean {fmt_s(sum(polled) / len(polled))}" if polled else ""
+        hold_stats = (f" mean {fmt_s(sum(hold) / len(hold))} max {fmt_s(max(hold))}"
+                      if hold else "")
+        lines.append(f"  fence modes: {len(quiet)}/{measured} quiet gaps (<1s),"
+                     f" {len(polled)} polled (1-600s{polled_mean}),"
+                     f" {len(hold)} hold-waits (>=600s{hold_stats})")
+        if hold:
+            lines.append("  hold-waits exhaust the 600 s poll, then wait for a running wake to"
+                         " release the shared dispatch lock")
     rollback_done, rollback_probe_failed = [], []
     for record in recoveries:
         sha = record.get("sha", "?")[:8]
