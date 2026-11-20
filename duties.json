@@ -1711,6 +1711,29 @@
       "replaces": []
     },
     {
+      "name": "outer-pane-code",
+      "command": [
+        "{python}",
+        "{repo}/checks/outer-pane-code.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 300,
+      "timeout": 30,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "genome",
+      "covers": "every release-pinned outer view pane runs the script bytes at the current pin: the live pane's cwd names its release, the registry names its view, and the check compares content so an unchanged promotion is not a false RED; RED names the window, its release, the pin and the respawn command when a long-lived pane keeps superseded code (senses found plants:senses-map stale for days through several promotions on 2026-11-20); panes restored from the working tree are not release-pinned and are not judged here; a missing window belongs to view-window-coverage; UNKNOWN when tmux, the registry, the pin, a pane cwd or a script cannot be read",
+      "replaces": []
+    },
+    {
       "name": "tmux-restorer",
       "command": [
         "{python}",

@@ -51,6 +51,16 @@ reached, the pane process cannot be read, or the view files cannot be read — a
 that cannot look is UNKNOWN, never a quiet pass. Comparing by content means
 committing unchanged code is not a false RED.
 
+Every other release-pinned view window is watched by the `outer-pane-code` duty
+(`duties.json`, every 300 s, resolver `genome`), which runs
+`checks/outer-pane-code.py`. A long-lived pane keeps the code it started from:
+promoting the pin does not restart it. The check reads the pane's live cwd,
+finds the release it started in, and compares that view's bytes with the script
+at the current pin; RED names the window and the exact respawn command. An
+unchanged promotion is not a false RED, and a pane restored from the working
+tree is not release-pinned so it is not judged here. A missing or dead window
+belongs to `view-window-coverage`; anything unreadable is UNKNOWN.
+
 **Rule: a view has a window.** Every `tools/*_view.py` renderer has a row in this table, an entry in the
 site window registry (`restore: true`) and a live window in the `plants` session running it. A view
 without a window is unfinished: the author adds the window and the row in the same change. The

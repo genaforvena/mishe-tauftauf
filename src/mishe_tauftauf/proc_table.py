@@ -356,6 +356,21 @@ def release_names(raw: bytes | str) -> list[str]:
     text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
     return sorted(set(RELEASE_NAME.findall(text)))
 
+def read_pane_cwd(pid: str) -> str:
+    """The pane process's ``/proc/<pid>/cwd`` as a path string.
+
+    A long-lived outer view is started from its release directory, so its cwd
+    names the code it actually imported even when no PYTHONPATH is set. A
+    vanished, dead or unreadable process yields "" rather than a guess; the
+    caller reports UNKNOWN, never a clean pass.
+    """
+    if not pid:
+        return ""
+    try:
+        return os.readlink(f"/proc/{pid}/cwd")
+    except OSError:
+        return ""
+
 def read_pane_cmdline(pid: str) -> str:
     """The pane process's ``/proc/<pid>/cmdline`` as a single string.
 
