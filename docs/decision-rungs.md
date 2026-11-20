@@ -161,3 +161,10 @@ corpus raises rather than reporting a false no-hit.
 The builtin `repo-change` duty (`duties.json`, every 900 s, `max_age` 2700 s) runs that seam
 for each changed path. It publishes the newest commit with per-subscriber deltas for `pub` and
 `docs`, calls no model and wakes no one itself; the residual judgement goes to System 1.
+
+The wake dossier also carries the registered ack command for each signal the wake saw: for
+`repo-change` it is `env PYTHONPATH=src python3 -m mishe_tauftauf.repo_change_signal --home {home}
+--repo {repo} --wake {role}`. Running it advances only the named subscriber's cursor to the current
+HEAD; a subscriber that reads the detail but never acks keeps receiving the same commit tail. A
+signal with no registered ack adds no instruction, and the producer refreshes the registration on
+publish so older sites gain the command without restarting the signal's age.

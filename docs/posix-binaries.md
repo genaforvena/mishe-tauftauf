@@ -146,7 +146,7 @@ them. Updated 2026-11-15 after the operator DM 301336.
    its byte part first (framing, UTF-8, hashing into `mishe-records`); keep the
    policy call in Python until a contract exists.
 
-6. **Dossier cut** (`src/mishe_tauftauf/dossier.py`, 191 lines). Input: the
+6. **Dossier cut** (`src/mishe_tauftauf/dossier.py`). Input: the
    readings a wake needs. Output: the dossier sections. Least stable: it composes
    many readings and changes with each of them. Testable only as a whole. Last in
    the ranking until the readings it composes are binaries.
