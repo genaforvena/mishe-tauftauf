@@ -4010,3 +4010,53 @@ dependency. Require identical normal state and edge bytes, bounded re-arming
 under repeated stalls, and tested routing for missing, stale and broken
 observations. The earlier six-pair sweep offered only about 0.11 CPU-s to
 recover by batching verdicts.
+
+### 10.71 In-process freshness removes the verifier delay (2026-11-20)
+
+The installed path can sweep twice per due handler. `arm.due` expires readings
+before calling `arm`. The scheduler returned by `runtime_cli.scheduler` expires
+them again before writing `next-due.json` and calling systemd when units are
+installed. The fixture used both callers from release `8592c07c`, the installed
+verifier checked against its recorded digest, and a stand-in for systemd.
+
+Three paired runs per path used 142 synthetic registrations, matching the
+live registry count. The signal files, freshness stamp timestamps, history
+bytes, observed filesystem notifications and timer receipt matched across the
+four paths. The fixture covered equality at the age boundary, a reading just
+over it, a future stamp, the registration grace period and legacy
+registrations. Missing stamps and corrupt readings displayed UNKNOWN, and the
+malformed reading bytes were preserved. A repeat at the same time wrote no
+edge. A new observation restored an expired reading and ordinary expiry
+routed it again.
+
+| Freshness path | Normal wall median | Normal CPU median including children | Child launches per normal handler | Split stall before re-arm |
+|---|---:|---:|---:|---:|
+| Installed Rust verifier | 0.249 s | 0.256 s | 273 | 20.034 s |
+| Ten seconds per sweep | 0.261 s | 0.269 s | 273 | 20.031 s |
+| Ten seconds across the handler | 0.243 s | 0.251 s | 273 | 10.017 s |
+| Existing in-process comparison | 0.054 s | 0.051 s | 0 | 0.004 s |
+
+For the split stall, one verdict hung in the first sweep and a different
+verdict hung in the second. Both deadline prototypes turned a third healthy
+reading UNKNOWN because its verdict was skipped after the budget ran out.
+The installed path got that verdict and kept the third reading OK. The
+in-process comparison kept all three valid readings OK even with an absent,
+corrupt or stalled verifier. An outage of the separate executable is a
+deliberate behavior difference. A missing, stale or corrupt observation still
+reads UNKNOWN. These are fixture timings through the scheduler closure.
+Live verifier stall frequency and the live CPU savings remain UNKNOWN.
+
+The 2026-11-20 experiment favors retiring the verifier through strong delivery.
+Share the existing comparison between expiry and display and keep the
+current observation and edge handling. Remove the crate, caller, bootstrap
+and measurement entries and protocol registration together. Retain the
+installed binary and digest while the previous release can still be used for
+rollback. Require a pinned-consumer check for UNKNOWN edges and re-arming,
+with controlled missing, stale and corrupt observations and recovery. The
+five-minute next-due check still routes missing arms to Genome. It cannot
+establish that an overdue reading emitted its edge. Before rollout, exercise
+an independent check that sees an overdue stored OK reading, reports RED after
+the grace period and reports UNKNOWN when its inputs are unreadable. Route a
+failed check to rust-plan while the freshness change is under observation.
+The site-local comparison output is
+`artifacts/rust-plan-20261107/freshness-path-comparison-20261120.out`.
