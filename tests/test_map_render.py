@@ -111,6 +111,23 @@ def test_newest_usable_bucket_wins_and_unusable_is_skipped(tmp_path):
     assert state["room_activity"]["balcony"]["activity"] == 0.07
 
 
+def test_newest_frame_utc_is_published_for_the_tile_view(tmp_path):
+    now = _now()
+    frame = _iso(now - datetime.timedelta(seconds=37))
+    activity = _activity({"bedroom": [_bucket(now - datetime.timedelta(minutes=20), 0.09)]})
+    activity["newest_frame_utc"] = frame
+    site = _site(tmp_path, activity)
+    state, _ = _render(site)
+    assert state["room_activity"]["_newest_frame_utc"] == frame
+
+
+def test_missing_newest_frame_fails_closed(tmp_path):
+    now = _now()
+    site = _site(tmp_path, _activity({"bedroom": [_bucket(now - datetime.timedelta(minutes=20), 0.09)]}))
+    state, _ = _render(site)
+    assert state["room_activity"]["_newest_frame_utc"] is None
+
+
 def test_missing_activity_file_is_unknown(tmp_path):
     site = _site(tmp_path, activity=None)
     state, svg = _render(site)

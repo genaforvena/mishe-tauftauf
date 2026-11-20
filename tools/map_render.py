@@ -199,6 +199,7 @@ def room_activity():
         entry.update(state=state, reason="; ".join(reasons), usable_buckets=v.get("usable_buckets"))
         out[room] = entry
     out["_generated_utc"] = data.get("generated_utc")
+    out["_newest_frame_utc"] = data.get("newest_frame_utc")
     return out
 
 

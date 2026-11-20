@@ -32,7 +32,7 @@ TILE_M = 0.5          # the floorplan tile size; one tile is two characters wide
 CHAR_PER_TILE = 2
 MAX_WIDTH = 100       # panes are about 170 columns; the map never exceeds this
 STALE_MAP_S = 30 * 60
-CAMERA_FRESH_S = {"living_room": 300, "bedroom": 900}   # capture cadence reused as the activity-bucket freshness limit
+ACTIVITY_FRESH_S = 1800   # bar scale only; the verdict comes from map_render's room_activity state
 ASSUMED_NIGHT_UTC = (21, 5)   # mirrors map_render.NIGHT_UTC; a published mismatch fails the check closed
 NIGHT_CURVE_MAX_AGE_S = 1800  # the daylight and activity duties renew their curves about every 10 min
 NIGHT_MIN_SAMPLES = 30        # hours with fewer samples do not carry a median luma
@@ -181,6 +181,24 @@ def _camera_age(activity, now, generated_utc):
         return _age_s_at(now, generated_utc, activity["age_s"])
     try:
         when = datetime.datetime.fromisoformat(str(activity.get("last_usable_utc")))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        return None
+    return max(0.0, (now - when).total_seconds())
+
+
+def _frame_age(act, now):
+    """Age now of the newest camera frame recorded by the activity producer.
+
+    activity.json publishes one frame time for both rooms. A missing, undated or
+    malformed stamp is UNKNOWN, never an assumed fresh camera.
+    """
+    raw = (act or {}).get("_newest_frame_utc")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        when = datetime.datetime.fromisoformat(raw)
     except ValueError:
         return None
     if when.tzinfo is None:
@@ -391,12 +409,21 @@ def _status(m, floor, state, state_reason, phone, now, stability=None):
     for rid in ("living_room", "bedroom"):
         a = act.get(rid) or {}
         age = _camera_age(a, now, gen) if state else None
-        frac = _fresh_fraction(age, CAMERA_FRESH_S[rid])
+        frac = _fresh_fraction(age, ACTIVITY_FRESH_S)
+        verdict = {"current": " (fresh)", "historical": " (stale)",
+                   "UNKNOWN": " (UNKNOWN)"}.get(a.get("state"))
+        if verdict is None:
+            verdict = "" if age is None else (
+                " (fresh)" if age <= ACTIVITY_FRESH_S else " (stale)")
         act_lines.append("activity %-7s [%s] %s%s" % (
-            "living" if rid == "living_room" else "bedroom", _bar(frac), _age_text(age),
-            "" if age is None else (" (fresh)" if age <= CAMERA_FRESH_S[rid] else " (stale)")))
+            "living" if rid == "living_room" else "bedroom", _bar(frac), _age_text(age), verdict))
     m["status"].extend(act_lines)
-    m["status"].append("activity age = newest usable motion bucket, not camera frame time (quiet room reads stale)")
+    frame_age = _frame_age(act, now)
+    if frame_age is None:
+        m["status"].append("camera frame UNKNOWN (no dated frame in activity.json)")
+    else:
+        m["status"].append("camera frame %s old (newest frame in activity.json)" % _age_text(frame_age))
+    m["status"].append("activity age = newest usable 15-min bucket; bar is bucket age, not camera health")
     if phone is None:
         m["status"].append("phone Redmi10 [%s] UNKNOWN (no phones row)" % _bar(None))
     else:

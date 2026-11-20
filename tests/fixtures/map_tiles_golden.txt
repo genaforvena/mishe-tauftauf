@@ -16,9 +16,10 @@ SENSES MAP  apartment, best guess (23:50Z)
 
 +-- status ------------------------------------------------------------
 time 2026-11-13 23:50:00Z
-activity living  [######....] 2 min (fresh)
+activity living  [#########.] 2 min (fresh)
 activity bedroom [..........] 3 h (stale)
-activity age = newest usable motion bucket, not camera frame time (quiet room reads stale)
+camera frame UNKNOWN (no dated frame in activity.json)
+activity age = newest usable 15-min bucket; bar is bucket age, not camera health
 phone Redmi10 [##########] newest row 15 s (status ok)
 phone history UNKNOWN (no usable collector rows; bar is newest-row age only)
 rssi UNKNOWN, no redmi10 rssi

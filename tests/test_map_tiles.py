@@ -233,8 +233,8 @@ def test_camera_age_is_derived_from_last_usable_bucket_when_no_age_field():
 
 
 def test_camera_age_field_adds_time_since_render():
-    # age_s was measured when the state was rendered 10 min before NOW; the living camera
-    # limit is 5 min, so the bucket is 11 min old now and must be tagged stale, not fresh.
+    # age_s was measured when the state was rendered 10 min before NOW; the producer's bar
+    # scale is 30 min, so an 11 min old bucket is still current, not stale.
     rooms = {"living_room": {"last_usable_utc": "2026-11-13T23:48:00+00:00",
                              "activity": 0.01, "age_s": 60.0},
              "bedroom": {"last_usable_utc": "2026-11-13T20:00:00+00:00",
@@ -242,19 +242,51 @@ def test_camera_age_field_adds_time_since_render():
     state = _state(FRESH_ILYA, generated="2026-11-13T23:40:00Z", rooms=rooms)
     model = _model(state)
     living = [s for s in model["status"] if s.startswith("activity living")][0]
-    assert "11 min" in living and "(stale)" in living and "(fresh)" not in living
+    assert "11 min" in living and "(fresh)" in living and "(stale)" not in living
     assert mt._camera_age(rooms["living_room"], NOW, None) is None   # no render time: UNKNOWN
     assert mt._camera_age(rooms["living_room"], NOW, "2026-11-13T23:55:00Z") == 60.0  # clamped
     assert model["sprites"], "sprites stay until the map state is 30 min old"
 
-def test_activity_lines_explain_motion_bucket_not_camera_health():
-    status = _model(_state(FRESH_ILYA))["status"]
+def test_activity_lines_explain_bucket_clock_with_a_separate_frame_line():
+    act = {"_newest_frame_utc": "2026-11-13T23:49:50+00:00",
+           "living_room": {"last_usable_utc": "2026-11-13T23:48:00+00:00", "activity": 0.01},
+           "bedroom": {"last_usable_utc": "2026-11-13T20:00:00+00:00", "activity": 0.02}}
+    state = {"generated_utc": "2026-11-13T23:49:00Z", "markers": FRESH_ILYA,
+             "room_activity": act, "rssi": {"text": "UNKNOWN"}}
+    status = _model(state)["status"]
     rooms = [s for s in status if s.startswith(("activity living", "activity bedroom"))]
     assert len(rooms) == 2
     assert all("camera" not in s for s in rooms)
-    notes = [s for s in status if "newest usable motion bucket" in s]
-    assert len(notes) == 1 and "not camera frame time" in notes[0]
-    assert not any(s.startswith("camera ") for s in status)
+    notes = [s for s in status if s.startswith("activity age = ")]
+    assert len(notes) == 1 and "15-min bucket" in notes[0] and "not camera health" in notes[0]
+    frames = [s for s in status if s.startswith("camera frame ")]
+    assert len(frames) == 1 and "10 s old" in frames[0]
+
+
+def test_producer_state_is_authoritative_over_the_bar_scale():
+    # The previous 300/900 s thresholds called this bucket stale while the producer said current.
+    now = datetime.datetime(2026, 11, 20, 17, 18, 23, tzinfo=UTC)
+    rooms = {"living_room": {"last_usable_utc": "2026-11-20T17:00:00+00:00",
+                             "activity": 0.01, "age_s": 1103.2, "state": "current"},
+             "bedroom": {"last_usable_utc": "2026-11-20T17:16:00+00:00",
+                         "activity": 0.02, "age_s": 143.0, "state": "historical"}}
+    state = _state(FRESH_ILYA, generated="2026-11-20T17:18:23Z", rooms=rooms)
+    status = _model(state, now=now)["status"]
+    living = [s for s in status if s.startswith("activity living")][0]
+    bedroom = [s for s in status if s.startswith("activity bedroom")][0]
+    assert "18 min" in living and "(fresh)" in living
+    assert "2 min" in bedroom and "(stale)" in bedroom
+
+
+def test_camera_frame_age_fails_closed_on_missing_or_malformed_stamp():
+    base = _state(FRESH_ILYA)
+    base["room_activity"]["_newest_frame_utc"] = "not-a-date"
+    status = _model(base)["status"]
+    assert "camera frame UNKNOWN (no dated frame in activity.json)" in status
+    base["room_activity"]["_newest_frame_utc"] = "2026-11-13T23:49:50"
+    assert any(s.startswith("camera frame UNKNOWN") for s in _model(base)["status"])
+    assert mt._frame_age(None, NOW) is None
+    assert mt._frame_age({}, NOW) is None
 
 
 def test_every_frame_line_fits_one_hundred_columns():
