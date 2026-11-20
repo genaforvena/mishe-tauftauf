@@ -167,9 +167,11 @@ is not mistaken for a quiet mind.
   request, so printing them raw would double count the connect and leave the figures short of the
   page total.
   It also gives the handshake's usual median over the loaded rows and, when both have at least
-  `PHASE_BASELINE_MIN` rows, the medians for overnight (00:00–05:59) and the busy evening
-  (18:00–20:59). Those hours are named because the handshake median is elevated there in the
-  loaded window; 21:00 sits near the daytime baseline. The line says where the time went, not why:
+  `PHASE_BASELINE_MIN` rows, the medians for overnight (00:00–05:59) and the busy hours
+  (16:00–20:59). Those hours are named because the web checks and the handshake are elevated there
+  in the loaded window (16/17/18h medians 609/671/562 ms for web, 475/520/411 ms for the handshake,
+  against about 350/210 ms overnight); 21:00 sits near the daytime baseline. The line says where
+  the time went, not why:
   household traffic and the ISP's evening peak look the same from here. Probe cadence does not
   vary by time of day: the thin evening counts in the eight-day log come from a partial first day
   and the host reboot of 2026-11-10 (boot ended 18:15Z, next probe 19:54Z), not evening load, and
@@ -207,11 +209,12 @@ is not mistaken for a quiet mind.
   lines above show the newest probe only, and two different numbers both labelled as "now" made
   the pane look self-contradictory (on 2026-11-18 09:36Z the newest probe read 371 ms while the
   half-hour median read 664 ms). The
-  typical is phase matched: during the evening hours (18–20 UTC, where pages run structurally
-  elevated — the retained rows' evening median is about 1.3× the pooled day median) it is the
-  median of the retained evening samples with the newest 60 of them left out, labelled
-  `of evenings`, so an ordinary evening no longer reads `slower than usual` against a baseline
-  biased low by the quiet hours; the headline then says `for the evening`. Outside those hours,
+  typical is phase matched: during the busy hours (16–20 UTC, where pages run structurally
+  elevated — on the 2026-11-20 17:20Z loaded window the 16/17/18h web medians were 609/671/562 ms
+  against about 350 ms overnight) it is the median of the retained busy-hour samples with the newest
+  60 of them left out, labelled `of evenings`, so an ordinary peak hour no longer reads `slower than
+  usual` against a baseline biased low by the quiet hours; the headline then says `for the evening`.
+  Outside those hours,
   or without enough evening samples, it is the median of the last day's samples with the last
   `USUAL_EXCLUDE` (60) samples left out, labelled `of samples`, so a spike cannot inflate its own
   baseline; fewer than `USUAL_MIN_SAMPLES` (120) samples is UNKNOWN. `about usual` below 1.25×,

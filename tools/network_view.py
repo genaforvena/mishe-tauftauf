@@ -1205,11 +1205,14 @@ def web_sample(row):
 
 SECURE_HOSTS = ("gstatic", "cloudflare")
 NIGHT_HOURS = range(0, 6)      # the household is asleep; the quiet baseline for a handshake
-# The busy evening, 18:00-20:59 clock time, where the disjoint handshake median is elevated in the
-# loaded window (18/19/20 = 330/252/306 ms, against ~210 ms overnight on 1440 recent probes).
-# The household asks "why are pages slow at 7pm?", so these hours get named; the cause (household
-# traffic or the ISP's evening peak) is not asserted.
-EVENING_HOURS = range(18, 21)
+# The busy part of the day, 16:00-20:59 UTC, where the web checks and the handshake are structurally
+# elevated. Measured on the 1440 rows loaded at 2026-11-20 17:20Z: web-sample medians 609/671/562 ms
+# at 16/17/18h against ~350 ms overnight, and handshake medians 475/520/411 ms at those hours against
+# ~210 ms overnight; the peak is 16-18h, not 18-20h. An earlier 3-day sample put it at 18-20h, so the
+# busiest hours were judged against the pooled day median and read "slower than usual" every ordinary
+# day. The household asks "why are pages slow at 7pm?", so these hours get named; the cause (household
+# traffic or the ISP's peak) is not asserted.
+EVENING_HOURS = range(16, 21)
 PHASE_BASELINE_MIN = 60        # rows needed before a night/evening median means anything
 PHASE_SPLIT_RATIO = 2.0      # when one host's handshake is this many times the other's ...
 PHASE_SPLIT_MS = 200         # ... and at least this far apart, the mean hides which host was slow

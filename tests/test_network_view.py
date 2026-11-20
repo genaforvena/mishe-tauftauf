@@ -760,6 +760,47 @@ def test_thin_evening_support_falls_back_to_the_day_comparison(monkeypatch):
     assert "for the evening" not in view.headline_state("OK", rows, now=now, facts=facts)
 
 
+def _busy_window_rows(now, busy_ms, tonight_ms, other_ms=300.0):
+    """Three days at the real cadence ending inside the 16-20h busy window, independent of the
+    view's phase constant: earlier busy hours at `busy_ms`, tonight's busy hours at `tonight_ms`,
+    every other hour at `other_ms`. Building the data from the measured peak keeps this a test of
+    the constant, not a restatement of it.
+    """
+    rows = []
+    for i in range(3 * 424):
+        t = now - (3 * 424 - 1 - i) * 204
+        hour = time.gmtime(t).tm_hour
+        busy = 16 <= hour <= 20
+        tonight = busy and (now - t) < 86400
+        ms = tonight_ms if tonight else (busy_ms if busy else other_ms)
+        rows.append({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t)),
+                     "internet": {name: {"ok": True, "total_ms": ms}
+                                  for name in ("gstatic", "cloudflare")}})
+    return rows
+
+
+def test_busy_peak_hours_get_the_busy_baseline_not_the_day(monkeypatch):
+    # The retained day's web-latency peak is 16-18h UTC (609/671/562 ms), not 18-20h. With an
+    # 18-20h-only phase an ordinary 17h was judged against the quiet day median and read
+    # "slower than usual" every day at the busiest hour. The phase must cover the peak hours.
+    now = 1_795_106_700  # 2025-11-19T17:30:00Z, inside the 16-20h busy window
+    monkeypatch.setattr(time, "time", lambda: now)
+    rows = _busy_window_rows(now, busy_ms=650.0, tonight_ms=680.0)
+    assert "of evenings" in view.usuality_line(rows, now=now)
+    assert view.headline_state("OK", rows, now=now) == "OK"
+
+
+def test_slow_peak_hour_still_flags_against_the_busy_baseline(monkeypatch):
+    # Widening the phase must not silence a genuine slowdown at the peak: tonight's own slow samples
+    # still flag against the earlier busy hours, and the headline says "for the evening".
+    now = 1_795_106_700  # 2025-11-19T17:30:00Z
+    monkeypatch.setattr(time, "time", lambda: now)
+    rows = _busy_window_rows(now, busy_ms=650.0, tonight_ms=1400.0)
+    line = view.usuality_line(rows, now=now)
+    assert "typical 650 ms" in line and "of evenings" in line and "much slower than usual" in line
+    assert "for the evening" in view.headline_state("OK", rows, now=now)
+
+
 def test_non_evening_hours_keep_the_pooled_typical():
     # Outside the evening phase the pooled wording stays as it was.
     noon = 1_795_003_200  # 2025-11-18T12:00:00Z
