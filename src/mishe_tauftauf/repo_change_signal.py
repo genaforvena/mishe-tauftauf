@@ -40,6 +40,16 @@ AREA_PREFIXES = (
 NOISE_SUBJECT = re.compile(r"^(?:chore|style|typo|whitespace|pin|pinbump)\b", re.IGNORECASE)
 
 
+def named_path(path: str) -> bool:
+    """Behaviour paths whose reader-doc naming is checked: src modules, tools, checks, duties files.
+
+    Widened from src-only after c5d47a63 (duties.json) changed behaviour yet got no naming
+    at all, although operating.md and recovery.md name duties.json.
+    """
+    return (path.startswith("src/") and path.endswith(".py")) or path.startswith(
+        ("tools/", "checks/", "duties"))
+
+
 def area_for(paths) -> list[str]:
     """Sorted areas touched by a commit; unknown paths are 'other'."""
     areas = set()
@@ -173,8 +183,8 @@ def build_report(commits: list[dict], cursors: dict, head: str, *, repo_root: Pa
     for commit in commits:
         record = dict(commit)
         record["internal_only"] = is_noise(commit)
-        source_paths = [p for p in commit["paths"] if p.startswith("src/") and p.endswith(".py")]
-        record["docs"] = docs_naming(repo_root, source_paths) if source_paths else None
+        named = [p for p in commit["paths"] if named_path(p)]
+        record["docs"] = docs_naming(repo_root, named) if named else None
         record["docs_relevant"] = bool(record["docs"] and record["docs"]["summary"]["named"]) or bool(
             {"src", "tools", "duties"} & set(commit["areas"]))
         enriched.append(record)

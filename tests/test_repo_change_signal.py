@@ -108,3 +108,14 @@ def test_builtin_on_a_non_repo_observes_unknown_not_green(tmp_path, monkeypatch)
     assert producers.repo_change(site, now=1.0) is None
     assert seen and seen[0][0] == "repo-change"
     assert seen[0][1]  # the reason names the failing git call
+
+
+def test_named_path_covers_behaviour_paths_outside_src():
+    # duties.json and tools/checks changed behaviour in c5d47a63/e5b7a219 but got no doc naming
+    # when only src/*.py was checked; README-style docs and tests are not behaviour paths.
+    assert rcs.named_path("src/mishe_tauftauf/budget_producer.py")
+    assert rcs.named_path("duties.json")
+    assert rcs.named_path("tools/delivery_view.py")
+    assert rcs.named_path("checks/wake-waste.py")
+    assert not rcs.named_path("docs/outer-windows.md")
+    assert not rcs.named_path("tests/test_duties.py")
