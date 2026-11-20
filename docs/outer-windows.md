@@ -21,8 +21,14 @@ interval between delivered promotions runs from the previous finish to the next
 start and can include time before new commits and time spent on failed attempts. A long
 gap alone is not slow dispatch: when no new commit landed in the interval it measures idle
 time, and a short gap can follow commits already waiting before the last delivery finished.
-Read the per-commit wait row for dispatch latency, and look for an UNKNOWN record inside
-the gap before blaming a failed attempt.
+The per-commit wait row is split into a busy queue and an idle cadence share: a commit
+landing while another promotion held the single path waits for that run to finish and then
+for the next cadence tick; one landing with no run in flight waits only for the tick and
+settle bound. Read that split, not the combined mean, for dispatch latency — a large mean
+can be mostly commits waiting on a busy path, so the lever is promotion cycle time, not the
+cadence tick. The split gives a failed run its best recorded end (a rollback end, or its
+check stamp as a lower bound), so that run still counts as occupying the path. Look for an
+UNKNOWN record inside the gap before blaming a failed attempt.
 The `waiting for wakes (fence)` row is broken out below into quiet gaps (under a second),
 polled fences where the gap fell inside the quiet poll, and hold-waits that wait for a
 running wake to release the shared dispatch lock. The overlap, wake-start and
