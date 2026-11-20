@@ -170,6 +170,19 @@ they wait for every running wake. The delivery cadence picks up checked commits
 from `main`. From a wake, use a request when you need to bind delivery to a
 specific target, previous pin and set of commands.
 
+The wait for running wakes is measured, not assumed: `python3 tools/delivery_view.py --home .mishe-tauftauf`
+reports each delivery's check and fence stages (newest ten beside the window mean), and
+`--fence-spans-json` exports the paired wakes that held each fence. On 2026-11-20 the check stage
+was about 8m47s after the suite moved to two xdist workers (down from about 16m), while the fence
+was 16m53s for the newest ten (12m53s over 24 h): most modern delivery time is the fence, and
+25 of 36 fences were waits for already-running wakes, covered 99.7% by them, mean 5.6 wakes each.
+The quiet poll before the hold is deliberately short (120 s): in the retired 600 s regime a wake
+that started inside the poll finished last in 13 of the 22 legacy fences (10 of those started after 120 s),
+extending the wait; after the change none of the first three fences ended on a poll-start. A
+shorter poll is not a free win — removing observed arrivals at 0/30/60/90 s leaves the same
+pre-existing last wake — so any further cut to the all-wakes-must-release gate is a high-impact
+change with its own fresh review and deterministic revert/reapply checks, not a tuning knob.
+
 ```sh
 mishe release request --sha FULL_SHA --previous FULL_SHA \
   --check-file CHECK_ARGV_JSON --observe-file OBSERVE_ARGV_JSON
