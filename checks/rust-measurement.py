@@ -107,14 +107,54 @@ ARTIFACT_DIR = Path("artifacts") / "rust-plan-20261107"
 HISTORY_MAX_LINES = 2000
 
 CHILD = r"""
-import json, resource, sys, time
+import json, os, resource, subprocess, sys, time
 from pathlib import Path
+
+# Popen reaps children with os.waitpid, which discards their rusage. wait4
+# returns the same wait result plus the reaped child's rusage: capture pid ->
+# executable at spawn and fold each child's CPU into that executable's bucket.
+# Popen serialises reaping under its own waitpid lock, so one child is handled
+# at a time and the dict needs no second lock.
+_exe_of_pid = {}
+_child_cpu_by_exe = {}
+_popen_init = subprocess.Popen.__init__
+
+def _recording_popen_init(self, args, *a, **kw):
+    _popen_init(self, args, *a, **kw)
+    argv = args if isinstance(args, (list, tuple)) else str(args).split()
+    _exe_of_pid[self.pid] = os.path.basename(str(argv[0])) if argv else "<unknown>"
+
+def _wait4(pid, options):
+    got, status, usage = os.wait4(pid, options)
+    if got > 0:
+        name = _exe_of_pid.pop(got, None)
+        if name is not None:
+            _child_cpu_by_exe[name] = (_child_cpu_by_exe.get(name, 0.0)
+                                       + usage.ru_utime + usage.ru_stime)
+    return got, status
+
+if hasattr(os, "wait4"):
+    subprocess.Popen.__init__ = _recording_popen_init
+    os.waitpid = _wait4
+
 from mishe_tauftauf.feed import Feed
 import mishe_tauftauf.feed as feed_module
 
 def child_cpu():
     u = resource.getrusage(resource.RUSAGE_CHILDREN)
     return u.ru_utime + u.ru_stime
+
+def cpu_pressure_some():
+    # PSI's `some avg10` is the percent of the last 10 s CPUs were contended.
+    # Coarse beside one fold, but it separates a spike that rode host load from
+    # one on a quiet host, which the pre-run guard alone cannot show.
+    try:
+        for line in open("/proc/pressure/cpu"):
+            if line.startswith("some "):
+                return float(line.split("avg10=", 1)[1].split()[0])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
 
 def peak_rss_kb():
     # VmHWM is this process's own high-water mark after exec. ru_maxrss is not
@@ -129,15 +169,21 @@ def peak_rss_kb():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
 home, role = Path(sys.argv[1]), sys.argv[2]
+p0 = cpu_pressure_some()
 c0 = time.process_time(); k0 = child_cpu(); t0 = time.perf_counter()
 rows = Feed(home).role_entries(role, _force_full=True)
 c1 = time.process_time(); k1 = child_cpu(); t1 = time.perf_counter()
+p1 = cpu_pressure_some()
 print(json.dumps({
     "role": role,
     "feed_path": str(Path(feed_module.__file__).resolve()),
     "entries": len(rows),
     "cpu_s": round(c1 - c0, 3),
     "children_cpu_s": round(k1 - k0, 3),
+    "child_cpu_by_exe": ({k: round(v, 3) for k, v in sorted(_child_cpu_by_exe.items())}
+                         if hasattr(os, "wait4") else None),
+    "cpu_pressure_some_avg10_before": p0,
+    "cpu_pressure_some_avg10_after": p1,
     "fold_cpu_s": round((c1 - c0) + (k1 - k0), 3),
     "elapsed_s": round(t1 - t0, 3),
     "maxrss_kb": peak_rss_kb(),
@@ -408,6 +454,11 @@ def main(argv: list[str] | None = None) -> int:
                         f"{r['children_cpu_s']} = {r['fold_cpu_s']} CPU-s "
                         f"{r['maxrss_kb'] // 1024} MB {r['entries']} entries"
                         for r in readings)
+    by_exe = "; ".join(
+        f"{r['role']}: " + ", ".join(f"{name} {secs:g}" for name, secs in r["child_cpu_by_exe"].items())
+        for r in readings if r.get("child_cpu_by_exe"))
+    if by_exe:
+        summary += f" [child cpu: {by_exe}]"
     drift = provenance["drift"]
     broken = provenance["broken"]
     unknown = "; ".join(filter(None, (provenance["unknown"], release_error))) or None

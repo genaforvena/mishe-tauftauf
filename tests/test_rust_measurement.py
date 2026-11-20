@@ -549,3 +549,54 @@ def test_fold_uses_release_source_despite_stale_bytecode(tmp_path):
 
     reading = check_module().fold_role(repo, home, "senses", 30)
     assert reading["entries"] == 3
+
+
+def _child_reading(tmp_path, feed_source):
+    mod = check_module()
+    pkg = tmp_path / "mishe_tauftauf"
+    pkg.mkdir(exist_ok=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "feed.py").write_text(feed_source)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(tmp_path)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    proc = subprocess.run(
+        [sys.executable, "-c", mod.CHILD, str(tmp_path), "probe"],
+        capture_output=True, text=True, timeout=60, env=env)
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def test_child_cpu_is_attributed_to_each_executable(tmp_path):
+    # Popen's waitpid discards rusage; wait4 returns it. A fold launching two
+    # children must name both, and their sum must equal the aggregate
+    # children_cpu_s — otherwise the breakdown is a label with no measurement.
+    source = (
+        "import subprocess, sys\n"
+        "class Feed:\n"
+        "    def __init__(self, home): pass\n"
+        "    def role_entries(self, role, _force_full=False):\n"
+        "        subprocess.run([sys.executable, '-c', 'sum(range(200000))'], check=True)\n"
+        "        subprocess.run(['/bin/sh', '-c',\n"
+        "                        'i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done'], check=True)\n"
+        "        return [1, 2]\n"
+    )
+    reading = _child_reading(tmp_path, source)
+    by_exe = reading["child_cpu_by_exe"]
+    assert set(by_exe) == {os.path.basename(sys.executable), "sh"}, by_exe
+    assert any(secs > 0 for secs in by_exe.values()), by_exe
+    assert abs(sum(by_exe.values()) - reading["children_cpu_s"]) < 0.05, reading
+    assert reading["cpu_pressure_some_avg10_before"] is not None
+    assert reading["cpu_pressure_some_avg10_after"] is not None
+
+
+def test_child_cpu_breakdown_is_empty_when_no_child_ran(tmp_path):
+    source = (
+        "class Feed:\n"
+        "    def __init__(self, home): pass\n"
+        "    def role_entries(self, role, _force_full=False):\n"
+        "        return [1]\n"
+    )
+    reading = _child_reading(tmp_path, source)
+    assert reading["child_cpu_by_exe"] == {}
+    assert reading["children_cpu_s"] == 0.0

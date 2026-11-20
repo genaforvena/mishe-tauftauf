@@ -4197,3 +4197,34 @@ measurement covers installed source and binary drift and the reader CPU and RSS
 thresholds. Raise a new milestone when a measured seam and a differential
 contract identify a candidate. Live CPU savings from the expiry change remain
 UNKNOWN.
+
+### 10.75 The hourly fold now names the child that costs CPU (2026-11-20)
+
+§10.59 left the first-fold spikes to attribution and asked for CPU by child
+command alongside per-fold pressure. The hourly checker now supplies both.
+Python's `Popen` reaps with `os.waitpid`, which discards rusage; the fold child
+substitutes `wait4`, records each reaped child's `utime+stime` against the
+executable captured at spawn, and emits `child_cpu_by_exe` plus `some avg10`
+before and after the fold. The executable breakdown also appears in the
+published GREEN line and in the retained artifact and history.
+
+The differential contract is arithmetic: the per-executable values must sum
+to the independently measured aggregate `children_cpu_s`. A hermetic fold
+launching two children asserts exactly that, and a child launching none asserts
+an empty breakdown. Both fail without the `wait4` substitution. This is the
+accounting check, not a migration: the Rust binaries and the Python caller are
+unchanged, so no new Rust slice is claimed.
+
+A scratch run at 15:06Z against the live pin `b68ab35b` under load1 4.79 on
+three CPUs (over the default guard, so this is a diagnostic sample, not an
+admissible threshold reading) gave senses `mishe-records` 2.712 and
+`mishe-tape` 0.968 CPU-s; genome 2.117 and 0.953. Each pair sums to the
+reported children total within 0.001 s. Verification is the larger child in
+both roles, roughly 2.2-2.8x framing, and the reader stayed under 5 CPU-s.
+
+This is the quiet baseline needed to read the next spike. If a first fold puts
+CPU into `mishe-records` while framing stays near 1 CPU-s, that supports the
+expiry-reverification hypothesis in §10.59; CPU concentrated in a second
+framing pass, or a spike with no child increase, refutes it. The 14:41Z hourly
+run was skipped by the host containment trip and `rust-measurement` expired to
+UNKNOWN; the flag has cleared and the next timer run restores the observation.
