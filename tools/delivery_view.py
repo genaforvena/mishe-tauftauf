@@ -6,6 +6,9 @@ For each delivered promotion in the window it measures the stages separately whe
 permits:
 
   commit -> created_at              a checked change waits before a promotion starts
+  the same wait is split by whether another promotion held the single path when the commit
+  landed: a busy queue waits for that run; an idle queue waits only for the next cadence tick
+
   created_at -> check.at            the whole-suite check stage (no intra-check timestamps recorded)
   waiting_since -> activation_started_at   the pin fence holding activation until wakes end
   activation_started_at -> delivered_at     consumer drain + functional observation
@@ -400,6 +403,79 @@ def commit_waits(records: list[dict], repo: Path) -> list[float]:
     return [w for w in waits if w >= 0]
 
 
+def promotion_end(record: dict) -> float | None:
+    """Best recorded end of a promotion's occupancy of the single path.
+
+    Delivered and rolled-back runs carry their own end; runs that failed at check or during
+    admission carry only ``check.at``, which is a lower bound on the release time. A run
+    ending there may still have held the path after that stamp, so the split is conservative:
+    it can read idle for a commit landing after a failed run's check, never busy for one
+    landing outside every recorded span.
+    """
+    for key in ("delivered_at", "rollback_completed_at", "rollback_failed_at", "reviewed_at"):
+        value = record.get(key)
+        if type(value) in (int, float) and value > 0:
+            return value
+    check = record.get("check")
+    if isinstance(check, dict) and type(check.get("at")) in (int, float):
+        return check["at"]
+    return None
+
+
+def in_flight_spans(records: list[dict]) -> list[tuple[float, float]]:
+    """Creation-to-end spans of promotions that occupied the single promote path.
+
+    A run with no usable end timestamp contributes no span, so a commit after its creation
+    can read idle; the report's in-flight line names such runs separately.
+    """
+    spans = []
+    for record in records:
+        start, end = record.get("created_at"), promotion_end(record)
+        if type(start) in (int, float) and type(end) in (int, float) and 0 < start <= end:
+            spans.append((start, end))
+    return spans
+
+
+def commit_wait_regimes(delivered: list[dict], records: list[dict], repo: Path) -> dict | None:
+    """Per-commit wait split by whether a promotion was in flight when the commit landed.
+
+    A commit that arrives while the single promote path is occupied cannot join that
+    promotion's snapshot; it waits for the run to finish and then for the next cadence
+    tick. A commit arriving with no run in flight waits only for the tick and the settle
+    bound. ``records`` is the whole readable history, so a run that began before the
+    reporting window still counts as occupying the path. Returns None when no commit
+    wait can be measured, never a zero share.
+    """
+    spans = in_flight_spans(records)
+    buckets: dict[str, list[float]] = {"busy": [], "idle": []}
+    for record in delivered:
+        previous = record.get("previous")
+        if not previous or record.get("phase") != "delivered":
+            continue
+        for _sha, committed, _subject in commit_log(repo, f"{previous}..{record.get('sha')}"):
+            wait = record["created_at"] - committed
+            if wait < 0:
+                continue
+            key = "busy" if any(start < committed < end for start, end in spans) else "idle"
+            buckets[key].append(wait)
+    if not buckets["busy"] and not buckets["idle"]:
+        return None
+    return {key: {"n": len(values), "mean": sum(values) / len(values) if values else None}
+            for key, values in buckets.items()}
+
+
+def commit_wait_regime_line(regimes: dict) -> str:
+    """One readable line naming both shares; a bucket with no samples reads UNKNOWN."""
+    total = regimes["busy"]["n"] + regimes["idle"]["n"]
+    parts = []
+    for key, label in (("busy", "busy queue"), ("idle", "idle cadence")):
+        bucket = regimes[key]
+        mean = fmt_s(bucket["mean"]) if bucket["mean"] is not None else "UNKNOWN"
+        parts.append(f"{label} {bucket['n']}/{total} mean {mean}")
+    return "commit -> start split: " + "  ".join(parts)
+
+
+
 def promotion_gaps(records: list[dict]) -> list[float]:
     """Seconds from one delivered promotion's finish to the next promotion's start.
 
@@ -497,6 +573,9 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
         else:
             lines.append(f"  {label:36s} UNKNOWN (no record in the window carries both timestamps)")
     lines.append("  " + recent_stages(delivered))
+    regimes = commit_wait_regimes(delivered, records, repo)
+    lines.append("  " + (commit_wait_regime_line(regimes) if regimes else
+                         "commit -> start split: UNKNOWN (no measurable commit wait)"))
     gaps = promotion_gaps(delivered)
     gap_label = "delivered finish -> next delivered start"
     if gaps:

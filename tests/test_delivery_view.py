@@ -341,6 +341,37 @@ def test_commit_waits_skip_records_without_a_previous_release(monkeypatch):
     assert view.commit_waits([record(previous=None)], Path("/nope")) == []
 
 
+def test_commit_wait_regimes_split_busy_and_idle(monkeypatch):
+    older = record(created_at=3900.0, delivered_at=4500.0, sha="a" * 40, previous="9" * 40)
+    delivered = [record(created_at=5000.0, delivered_at=5500.0, sha="d" * 40, previous="c" * 40)]
+    monkeypatch.setattr(view, "git", lambda repo, *a, **k:
+                        (0, "e" * 40 + ";4000;first\n" + "f" * 40 + ";4600;second\n"))
+    regimes = view.commit_wait_regimes(delivered, [older] + delivered, Path("/nope"))
+    assert regimes == {"busy": {"n": 1, "mean": 1000.0}, "idle": {"n": 1, "mean": 400.0}}
+
+
+def test_commit_wait_regime_line_names_both_shares():
+    regimes = {"busy": {"n": 126, "mean": 1386.0}, "idle": {"n": 49, "mean": 558.0}}
+    assert view.commit_wait_regime_line(regimes) == (
+        "commit -> start split: busy queue 126/175 mean 23m06s  idle cadence 49/175 mean 9m18s")
+
+
+def test_report_marks_commit_wait_split_unknown_when_no_commits(tmp_path, monkeypatch):
+    monkeypatch.setattr(view, "git", lambda *a, **k: (0, ""))
+    text = view.render(home_with(tmp_path, [record()]), Path("/nope"), 86400.0, 6000.0)
+    assert "commit -> start split: UNKNOWN" in text
+
+
+def test_failed_run_check_end_counts_as_occupancy(monkeypatch):
+    failed = record(created_at=3900.0, delivered_at=None, reviewed_at=None, phase="check-failed",
+                    check={"at": 4700.0, "code": 1}, sha="a" * 40)
+    delivered = [record(created_at=5000.0, delivered_at=5500.0, sha="d" * 40, previous="c" * 40)]
+    monkeypatch.setattr(view, "git", lambda repo, *a, **k: (0, "e" * 40 + ";4000;first\n"))
+    regimes = view.commit_wait_regimes(delivered, [failed] + delivered, Path("/nope"))
+    assert regimes["busy"] == {"n": 1, "mean": 1000.0}
+    assert regimes["idle"]["n"] == 0
+
+
 def test_promotion_gap_measures_finish_to_next_start():
     rows = [record(created_at=1000.0, delivered_at=1500.0),
             record(created_at=2000.0, delivered_at=2400.0)]
