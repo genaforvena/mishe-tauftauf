@@ -401,6 +401,15 @@ yet hold, and use `--again` when the condition you want is already true. The yie
 reports either outcome in the same message that flags an unregistered signal: an armed
 already-true wait warns that it fires at once, and an unarmed one says the timer stands.
 
+At yield the settle step also walks the signals you subscribe to that declare a `reoffer`.
+If one still reads RED or otherwise not-OK and you have not acknowledged its incident wait,
+it arms a `reoffer-NAME` intention for that signal's own reoffer interval: the wake returns
+because the signal is still not clear, not because a timer you set is stuck. A known
+disposition replaces it — its recheck deadline arms `disposition-NAME` and any pending
+reoffer is removed — and a signal that reads clear again has the leftover reoffer removed
+too. Resolve or disposition the standing fault, or acknowledge its incident wait, instead
+of re-yielding on the same condition.
+
 A yield also sets the idle pace. The default idle initiative returns in two hours, but a
 role with a ready lane in its work record and fresh spare capacity returns in thirty
 minutes instead. Spare capacity is fresh evidence: either a paid account whose 5h and 7d
