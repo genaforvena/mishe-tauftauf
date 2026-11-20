@@ -53,6 +53,13 @@ UNATTENDED_S = 900    # a RED older than this with no owner wake since it turned
 UNIT_PREFIX = "mishe-producer-"
 RESERVED_FILES = ("registry.json",)   # non-signal json in signals/ besides *.memory.json
 
+# provider_budget.SIGNALS names the signal for each evaluated account; codex-a's
+# signal is budget-codex, not a mechanical "budget-" prefix of the account id.
+# Keep in step with that map; an unmapped account falls back to the prefix so a
+# newly evaluated provider is still named as a dark lane until it is registered.
+PROVIDER_SIGNALS = {"claude": "budget-claude", "codex-a": "budget-codex"}
+
+
 
 def _read_json(path: Path):
     try:
@@ -105,6 +112,41 @@ def _accounts_unmeasured(home: Path, repo: Path) -> tuple[list[str], str | None]
     if not isinstance(budget, dict) or not isinstance(budget.get("accounts"), dict):
         return [], "engine/budget.json unmeasured (owner: budget duties)"
     return sorted(a for a in budget["accounts"] if a not in text), None
+
+def _dark_provider_verdicts(home: Path, registry: dict, now: float):
+    """RED provider forecasts with no registered signal to carry them (codex-a, 2026-11-20).
+
+    provider_budget evaluates every account in its SIGNALS map but observes only
+    budget-claude. A second account's RED therefore lives in provider-budget-latest.json
+    and the household view while no signal exists to wake a subscriber or name the
+    cause here — the dark lane Ilya asked to see. The publisher rewrites that record
+    every budget tick; an old record is a note, not a fresh finding.
+    """
+    path = home / "operator" / "autonomy-repair-20261106" / "provider-budget-latest.json"
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        age = now - path.stat().st_mtime
+    except (OSError, ValueError):
+        return [], "provider verdicts unmeasured (publisher record absent or unreadable)"
+    if age > 3600:
+        return [], f"provider verdicts unmeasured (publisher record {age / 3600:.1f} h old)"
+    accounts = record.get("accounts") if isinstance(record, dict) else None
+    if not isinstance(accounts, dict):
+        return [], "provider verdicts unmeasured (publisher record has no accounts)"
+    causes, summary = [], []
+    for account, result in sorted(accounts.items()):
+        name = PROVIDER_SIGNALS.get(account, f"budget-{account}")
+        state = result.get("state") if isinstance(result, dict) else None
+        if name in registry:
+            summary.append(f"{account}={state} (signal {name})")
+            continue
+        summary.append(f"{account}={state} (NO signal {name})")
+        if state == "RED":
+            reason = result.get("reason") if isinstance(result, dict) else ""
+            causes.append(f"dark-provider-verdict: {account} RED — {reason}; "
+                          f"no registered signal {name} to wake a subscriber "
+                          f"(register it with a reoffer and an owner, or disposition the known forecast)")
+    return causes, "provider-verdicts: " + "; ".join(summary)
 
 def _wake_intervals(wakes: Path, owners) -> dict[str, list[tuple[float, float]]] | None:
     """``[start, end]`` per owner-role wake in ``wakes/``, or None when unreadable.
@@ -356,6 +398,12 @@ def run(home: Path, now: float, *, repo: Path | None = None,
             budget_case.append(f"{probe}={reading.get('value', 'unmeasured')}"
                                f" (subs {subs}, max_age {entry.get('max_age', 0) / 60:.0f}m)")
     detail_lines.append("budget-window-care: " + ("; ".join(budget_case) or "no budget signal registered"))
+    dark_causes, dark_note = _dark_provider_verdicts(Path(home), registry, now)
+    counts["dark_providers"] = len(dark_causes)
+    causes.extend(dark_causes)
+    detail_lines.append(dark_note)
+    if dark_note.startswith("provider verdicts unmeasured"):
+        counts["notes"].append(dark_note)
 
     verdict = RED if causes else GREEN
     report = {"verdict": {GREEN: "GREEN", RED: "RED", UNKNOWN: "UNKNOWN"}[verdict],

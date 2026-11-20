@@ -382,3 +382,63 @@ def test_own_red_reading_is_not_ignored_by_itself(tmp_path, monkeypatch):
     code, report = mod.run(home, NOW, sigdir=sigdir)
     assert code == 0
     assert not any("signal-coverage reading" in c for c in report["causes"])
+
+
+def provider_record(home, accounts, *, age=60):
+    path = home / "operator" / "autonomy-repair-20261106" / "provider-budget-latest.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"state": "RED", "reason": "", "accounts": accounts}))
+    stamp = NOW - age
+    os.utime(path, (stamp, stamp))
+
+
+def _covered_site(tmp_path):
+    home, sigdir = site(tmp_path, {"doctor": register_entry()})
+    observed(sigdir, "doctor", seen=NOW - 60)
+    return home, sigdir
+
+
+def test_red_provider_verdict_without_a_signal_is_dark(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = _covered_site(tmp_path)
+    provider_record(home, {"codex-a": {"state": "RED",
+                                      "reason": "7d RUNS OUT BEFORE RESET (67% used)"}})
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 2
+    assert any(c.startswith("dark-provider-verdict: codex-a")
+               and "no registered signal budget-codex" in c
+               and "67% used" in c for c in report["causes"])
+    assert report["counts"]["dark_providers"] == 1
+
+
+def test_registered_provider_signal_covers_the_verdict(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    registry = {"doctor": register_entry(),
+                "budget-codex": register_entry(registered_at=NOW - 60)}
+    home, sigdir = site(tmp_path, registry)
+    observed(sigdir, "doctor", seen=NOW - 60)
+    provider_record(home, {"codex-a": {"state": "RED", "reason": "forecast holds work"}})
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0
+    assert report["counts"]["dark_providers"] == 0
+    assert "codex-a=RED (signal budget-codex)" in report["detail"]
+
+
+def test_stale_provider_record_is_a_note_not_a_finding(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = _covered_site(tmp_path)
+    provider_record(home, {"codex-a": {"state": "RED", "reason": "old"}}, age=7200)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0
+    assert any("provider verdicts unmeasured" in n for n in report["counts"]["notes"])
+    assert not any(c.startswith("dark-provider-verdict") for c in report["causes"])
+
+
+def test_green_unregistered_verdict_is_not_a_dark_lane(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = _covered_site(tmp_path)
+    provider_record(home, {"codex-a": {"state": "GREEN", "reason": "windows satisfy policy"}})
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0
+    assert "codex-a=GREEN (NO signal budget-codex)" in report["detail"]
+    assert not any(c.startswith("dark-provider-verdict") for c in report["causes"])
