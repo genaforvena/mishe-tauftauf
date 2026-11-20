@@ -208,7 +208,12 @@ def main(argv: list[str] | None = None) -> int:
     code, report = run(home, now, Path(args.budget) if args.budget else None)
     print(f"budget-opencode-go: {report['verdict']}"
           + (f": {report['cause']}" if report.get("cause") else ""))
-    print(report.get("detail") or "")
+    # The labelled line already carries a RED/UNKNOWN cause verbatim. Printing the identical
+    # detail again made producers.detail_brief() store the diagnosis twice, wasting half the
+    # human verdict line. GREEN has no cause there, so its window reading still goes out raw.
+    detail = report.get("detail") or ""
+    if detail and detail != report.get("cause"):
+        print(detail)
     return code
 
 
