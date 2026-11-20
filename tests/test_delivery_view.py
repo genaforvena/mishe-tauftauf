@@ -499,6 +499,13 @@ def _holder_event(wake, event, at, role, key):
     return {"wake": wake, "event": event, "at": at, "role": role, "key": key}
 
 
+def write_ledger(home, events):
+    (home / "engine").mkdir(exist_ok=True)
+    lines = [json.dumps({**ev, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ev["at"]))})
+             for ev in events]
+    (home / "engine" / "routing-ledger.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def test_fence_holders_clips_each_wake_to_the_fence_and_counts_distinct_wakes():
     held = record(waiting_since=2010.0, activation_started_at=3010.0)
     # w1 starts before the fence, w2 ends after it: neither donates the out-of-fence seconds.
@@ -580,4 +587,80 @@ def test_report_keeps_holder_attribution_unknown_without_a_paired_wake(tmp_path,
     monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
     text = view.render(home, Path("/nope"), 86400.0, 4000.0)
     assert "fence-holder attribution UNKNOWN (no paired wake span covers a hold-wait)" in text
-    assert "distinct wakes per hold-wait fence" not in text
+
+
+def test_fence_wake_spans_keeps_full_and_clipped_span_per_holder():
+    # Fence [2010, 2410): poll [2010, 2130). One wake already running, one poll start.
+    held = record(quiet_poll_s=120, waiting_since=2010.0, activation_started_at=2410.0, sha="a" * 40)
+    events = [
+        _holder_event("w1", "select", 1900.0, "health", "hy4-flash-free"),
+        _holder_event("w1", "outcome", 2500.0, "health", "hy4-flash-free"),
+        _holder_event("w2", "select", 2050.0, "docs", "claude-haiku"),
+        _holder_event("w2", "outcome", 2200.0, "docs", "claude-haiku"),
+        _holder_event("w3", "select", 1800.0, "genome", "hy4-flash-free"),
+        _holder_event("w3", "outcome", 1950.0, "genome", "hy4-flash-free"),
+    ]
+    out = view.fence_wake_spans(events, [held])
+    assert out["unmeasured"] == 0
+    assert len(out["fences"]) == 1
+    fence = out["fences"][0]
+    assert (fence["sha"], fence["fence_s"], fence["patience_s"]) == ("a" * 40, 400.0, 120.0)
+    assert fence["distinct_wakes"] == 2 and fence["holder_s"] == 550.0
+    rows = {row["wake"]: row for row in fence["wakes"]}
+    assert rows["w1"] == {"wake": "w1", "role": "health", "candidate": "hy4-flash-free",
+                          "start": 1900.0, "end": 2500.0, "span_s": 600.0,
+                          "overlap_s": 400.0, "origin": "pre-existing"}
+    assert rows["w2"]["span_s"] == rows["w2"]["overlap_s"] == 150.0
+    assert rows["w2"]["origin"] == "quiet-poll start"
+
+
+def test_fence_wake_spans_excludes_unpaired_select_and_counts_unmeasured_fences():
+    covered = record(quiet_poll_s=120, waiting_since=2010.0, activation_started_at=2410.0, sha="a" * 40)
+    bare = record(quiet_poll_s=120, waiting_since=3010.0, activation_started_at=3410.0, sha="b" * 40)
+    events = [_holder_event("w1", "select", 2000.0, "health", "hy4"),
+              _holder_event("w1", "outcome", 2500.0, "health", "hy4"),
+              _holder_event("w2", "select", 3000.0, "docs", "haiku")]
+    out = view.fence_wake_spans(events, [covered, bare])
+    assert len(out["fences"]) == 1
+    assert out["fences"][0]["distinct_wakes"] == 1
+    assert out["unmeasured"] == 1
+
+
+def test_fence_wake_spans_is_unknown_without_a_paired_wake():
+    held = record(quiet_poll_s=120, waiting_since=2010.0, activation_started_at=2410.0)
+    assert view.fence_wake_spans(None, [held]) is None
+    assert view.fence_wake_spans([_holder_event("w", "select", 2000.0, "docs", "haiku")],
+                                 [held]) is None
+
+
+def test_report_prints_full_span_beside_clipped_overlap(tmp_path):
+    held = record(quiet_poll_s=120, waiting_since=2010.0, activation_started_at=2410.0)
+    events = [_holder_event("w1", "select", 1900.0, "health", "hy4"),
+              _holder_event("w1", "outcome", 2500.0, "health", "hy4")]
+    home = home_with(tmp_path, [held])
+    write_ledger(home, events)
+    text = view.render(home, Path("/nope"), 86400.0, 6000.0)
+    assert "fence wake spans: mean full 10m00s vs clipped 6m40s per holder" in text
+
+
+def test_fence_spans_json_emits_machine_readable_fences_and_no_text_report(tmp_path, capsys):
+    home = home_with(tmp_path, [record(created_at=time.time(), quiet_poll_s=120,
+                                       waiting_since=2010.0, activation_started_at=2410.0,
+                                       sha="a" * 40)])
+    write_ledger(home, [_holder_event("w1", "select", 1900.0, "health", "hy4"),
+                        _holder_event("w1", "outcome", 2500.0, "health", "hy4")])
+    code = view.main(["--home", str(home), "--repo", "/nope", "--fence-spans-json"])
+    out = capsys.readouterr().out
+    assert code == 0 and "Checked-to-live report" not in out
+    payload = json.loads(out)
+    assert payload["window_s"] == 24 * 3600.0
+    assert len(payload["spans"]["fences"]) == 1
+    assert payload["spans"]["fences"][0]["wakes"][0]["span_s"] == 600.0
+
+
+def test_fence_spans_json_keeps_unknown_when_the_ledger_is_unreadable(tmp_path, capsys):
+    home_with(tmp_path, [record(quiet_poll_s=120, waiting_since=2010.0,
+                                activation_started_at=2410.0)])
+    assert view.main(["--home", str(tmp_path), "--fence-spans-json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["spans"] is None

@@ -17,8 +17,10 @@ The interval can include time before a commit and time spent on unsuccessful att
 A rolled-back run shows the failure reason and the recorded rollback duration if available.
 A failed recovery stays UNKNOWN and identifies the stage when the record carries that evidence.
 Missing or unreadable evidence prints as UNKNOWN and never becomes a zero. This is a report,
-not a detector: it always exits 0 unless it cannot run.
+not a detector: it always exits 0 unless it cannot run. ``--fence-spans-json`` emits the
+per-fence, per-wake spans behind the hold-wait lines for a retained series.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -201,6 +203,31 @@ def poll_wake_starts(delivered: list[dict], starts: list[float],
     }
 
 
+def _paired_wake_spans(events: list[dict] | None) -> list[tuple[str, str, str, float, float]]:
+    """(wake, role, candidate, first select, last outcome) for wakes with both ends.
+
+    A bare select is a start, not evidence that the wake held the dispatch lock. A
+    retained ledger tail can begin mid-wake, so an outcome without a select stays
+    UNKNOWN, never a zero-length span.
+    """
+    if not events:
+        return []
+    first: dict[str, tuple[str, str, float]] = {}
+    ended: dict[str, float] = {}
+    for ev in events:
+        wake, at = ev.get("wake"), ev.get("at")
+        if not wake or type(at) not in (int, float):
+            continue
+        if ev.get("event") == "select":
+            meta = (str(ev.get("role") or "?"), str(ev.get("key") or "?"), at)
+            if wake not in first or at < first[wake][2]:
+                first[wake] = meta
+        elif ev.get("event") == "outcome" and (wake not in ended or at > ended[wake]):
+            ended[wake] = at
+    return [(wake, role, key, at, ended[wake]) for wake, (role, key, at) in first.items()
+            if wake in ended and ended[wake] >= at]
+
+
 def fence_holders(events: list[dict] | None, delivered: list[dict]) -> dict[str, dict[str, float]] | None:
     """Attribute hold-wait fence coverage to the wakes that supplied it, by candidate, role and origin.
 
@@ -215,22 +242,7 @@ def fence_holders(events: list[dict] | None, delivered: list[dict]) -> dict[str,
     stands. Returns None when no hold-wait fence has a measured holder, so a broken ledger stays
     UNKNOWN instead of reading as an empty distribution.
     """
-    if not events:
-        return None
-    first: dict[str, tuple[str, str, float]] = {}
-    ended: dict[str, float] = {}
-    for ev in events:
-        wake, at = ev.get("wake"), ev.get("at")
-        if not wake or type(at) not in (int, float):
-            continue
-        if ev.get("event") == "select":
-            meta = (str(ev.get("role") or "?"), str(ev.get("key") or "?"), at)
-            if wake not in first or at < first[wake][2]:
-                first[wake] = meta
-        elif ev.get("event") == "outcome" and (wake not in ended or at > ended[wake]):
-            ended[wake] = at
-    spans = [(role, key, at, ended[wake], wake) for wake, (role, key, at) in first.items()
-             if wake in ended and ended[wake] >= at]
+    spans = _paired_wake_spans(events)
     if not spans:
         return None
     by_candidate: dict[str, float] = {}
@@ -246,7 +258,7 @@ def fence_holders(events: list[dict] | None, delivered: list[dict]) -> dict[str,
             continue
         holders: set[str] = set()
         poll_end = ws + quiet_poll_s(rec)
-        for role, key, a, b, wake in spans:
+        for wake, role, key, a, b in spans:
             overlap = min(ac, b) - max(ws, a)
             if overlap <= 0:
                 continue
@@ -262,6 +274,53 @@ def fence_holders(events: list[dict] | None, delivered: list[dict]) -> dict[str,
         return None
     return {"by_candidate": by_candidate, "by_role": by_role,
             "by_origin": by_origin, "distinct": distinct}
+
+
+
+def fence_wake_spans(events: list[dict] | None, delivered: list[dict]) -> dict | None:
+    """Per-fence wake spans: separate how many wakes arrived from how long each ran.
+
+    Each hold-wait fence carries the promotion sha, its seconds and patience, plus one
+    row per paired wake with the full select->outcome ``span_s`` and the ``overlap_s``
+    clipped to this fence. ``origin`` classifies the wake's start against this fence's
+    own quiet poll. Unpaired wakes are excluded; a fence with no paired wake is counted
+    in ``unmeasured``, never shown as zero holders. Returns None when the ledger has no
+    paired wake at all, so a broken ledger stays UNKNOWN.
+    """
+    spans = _paired_wake_spans(events)
+    if not spans:
+        return None
+    fences: list[dict] = []
+    unmeasured = 0
+    for rec in delivered:
+        fence = stages(rec)["wake_wait_s"]
+        if fence is None or fence < quiet_poll_s(rec):
+            continue
+        ws, ac = rec.get("waiting_since"), rec.get("activation_started_at")
+        if not (isinstance(ws, (int, float)) and isinstance(ac, (int, float)) and ac > ws):
+            continue
+        patience = quiet_poll_s(rec)
+        poll_end = ws + patience
+        rows: list[dict] = []
+        for wake, role, key, a, b in spans:
+            overlap = min(ac, b) - max(ws, a)
+            if overlap <= 0:
+                continue
+            rows.append({"wake": wake, "role": role, "candidate": key,
+                         "start": a, "end": b, "span_s": b - a, "overlap_s": overlap,
+                         "origin": ("pre-existing" if a < ws else
+                                    "quiet-poll start" if a < poll_end else "after hold")})
+        if not rows:
+            unmeasured += 1
+            continue
+        rows.sort(key=lambda row: (row["start"], row["wake"]))
+        fences.append({"sha": str(rec.get("sha") or "?"), "at": ws,
+                       "fence_s": ac - ws, "patience_s": patience,
+                       "distinct_wakes": len(rows),
+                       "holder_s": sum(row["overlap_s"] for row in rows),
+                       "wakes": rows})
+    fences.sort(key=lambda item: (item["at"], item["sha"]))
+    return {"fences": fences, "unmeasured": unmeasured}
 
 
 def _holder_line(label: str, values: dict[str, float], limit: int = 4) -> str:
@@ -366,6 +425,11 @@ def fmt_ts(epoch: float | None) -> str:
     return time.strftime("%m-%d %H:%M:%SZ", utc)
 
 
+def windowed(records: list[dict], window_s: float, now: float) -> list[dict]:
+    """Promotion records created inside the window; both output modes share this filter."""
+    return [r for r in records if now - r["created_at"] <= window_s]
+
+
 def render(home: Path, repo: Path, window_s: float, now: float) -> str:
     records = load_records(home)
     lines = [f"Checked-to-live report  {time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(now))}",
@@ -373,7 +437,7 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
     if not records:
         lines.append("UNKNOWN: no readable promotion records under work/releases")
         return "\n".join(lines)
-    window = [r for r in records if now - r["created_at"] <= window_s]
+    window = windowed(records, window_s, now)
     delivered = [r for r in window if r.get("phase") == "delivered"]
     recoveries = [r for r in window if r.get("phase") in ("UNKNOWN", "rolled-back")]
     busy = [r for r in window if r.get("phase") == "delivery-busy"]
@@ -496,6 +560,16 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
                 d = holders["distinct"]
                 lines.append(f"  distinct wakes per hold-wait fence: mean {sum(d) / len(d):.1f}"
                              f" (max {max(d)}), {len(d)} fences")
+            spans = fence_wake_spans(events, delivered)
+            if spans is not None and spans["fences"]:
+                rows = [row for fence in spans["fences"] for row in fence["wakes"]]
+                full = sum(row["span_s"] for row in rows) / len(rows)
+                clipped = sum(row["overlap_s"] for row in rows) / len(rows)
+                unknown = (f"; {spans['unmeasured']} fence(s) UNKNOWN (no paired wake span)"
+                           if spans["unmeasured"] else "")
+                lines.append(f"  fence wake spans: mean full {fmt_s(full)} vs clipped"
+                             f" {fmt_s(clipped)} per holder, {len(rows)} holders in"
+                             f" {len(spans['fences'])} fences{unknown}")
     rollback_done, rollback_probe_failed = [], []
     for record in recoveries:
         sha = record.get("sha", "?")[:8]
@@ -582,7 +656,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--home", type=Path, default=DEFAULT_HOME, help="site home (default: env or .mishe-tauftauf)")
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument("--window", type=float, default=DEFAULT_WINDOW_S, help="window in seconds")
+    parser.add_argument("--fence-spans-json", action="store_true",
+                        help="emit per-fence wake spans as JSON instead of the text report")
     args = parser.parse_args(argv)
+    if args.fence_spans_json:
+        now = time.time()
+        delivered = [r for r in windowed(load_records(args.home), args.window, now)
+                     if r.get("phase") == "delivered"]
+        spans = fence_wake_spans(_wake_boundary().load_events(args.home), delivered)
+        print(json.dumps({"generated_at": now, "window_s": args.window,
+                          "pin": pin_sha(args.home), "spans": spans}, sort_keys=True))
+        return 0
     print(render(args.home, args.repo, args.window, time.time()))
     return 0
 
