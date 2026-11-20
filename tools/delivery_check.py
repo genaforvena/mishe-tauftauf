@@ -27,6 +27,14 @@ sys.path.insert(0, str(Path.cwd() / "src"))
 from mishe_tauftauf import release_boundary  # noqa: E402
 
 SCRATCH_MOUNT = Path("/mnt/mishe-scratch")
+SUITE_DURATIONS = 25
+"""Report the 25 slowest tests in the retained check output.
+
+The check's output is stored in the release record (``check.output``) and copied to the
+review log, so every promotion carries a comparable per-test time-series without a
+separate measurement run. The promotion-level check-stage timestamp is too coarse to
+resolve individual test trims (see analysis/check-stage-durations-20261119.md).
+"""
 
 
 def scratch_mount() -> Path | None:
@@ -128,7 +136,8 @@ def main() -> int:
                 sys.stderr.write(f"{built} is not an ELF binary; refusing to test against it\n")
                 return 2
             env[env_name(binary)] = str(built)
-    argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+    argv = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+            "--durations", str(SUITE_DURATIONS)]
     temp = suite_temp()
     if temp is not None:
         temp.mkdir(parents=True, exist_ok=True)

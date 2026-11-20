@@ -160,3 +160,33 @@ def test_the_suite_gets_our_tmpdir_but_no_fixed_basetemp(tmp_path, monkeypatch):
     assert seen["env"]["TMPDIR"] == str(scratch / "mishe-test-tmp")
     assert (scratch / "mishe-test-tmp").is_dir()
     assert not any(str(a).startswith("--basetemp") for a in seen["argv"])
+
+
+def test_the_suite_records_per_test_durations(tmp_path, monkeypatch):
+    # The check output is retained in the release record and review log; keep the
+    # per-test time-series in it so a future trim's effect is measurable per promotion.
+    crate = tmp_path / "rust" / "tape"
+    crate.mkdir(parents=True)
+    (crate / "Cargo.toml").write_text('[package]\nname = "mishe-tape"\n')
+
+    def fake_build(crate_dir, target, cargo):
+        (target / "release").mkdir(parents=True)
+        (target / "release" / "mishe-tape").write_bytes(b"\x7fELF" + b"\0" * 8)
+
+    seen = {}
+
+    def fake_run(argv, env, **kwargs):
+        seen["argv"] = argv
+
+        class Done:
+            returncode = 0
+
+        return Done()
+
+    monkeypatch.setattr(dc, "build", fake_build)
+    monkeypatch.setattr(dc.subprocess, "run", fake_run)
+    monkeypatch.setattr(dc.Path, "cwd", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(dc, "scratch_mount", lambda: None)
+    monkeypatch.setenv("MISHE_BUILD_CACHE", str(tmp_path / "cache"))
+    assert dc.main() == 0
+    assert seen["argv"][seen["argv"].index("--durations") + 1] == str(dc.SUITE_DURATIONS)
