@@ -430,6 +430,22 @@ def windowed(records: list[dict], window_s: float, now: float) -> list[dict]:
     return [r for r in records if now - r["created_at"] <= window_s]
 
 
+def wrong_pin_failures(recoveries: list[dict]) -> dict[str, int] | None:
+    """Wrong-pin consumer failures by recorded phase, independent of rollback-probe outcome.
+
+    The same cause is recorded ``rolled-back`` when its rollback probe succeeds and
+    ``UNKNOWN`` when that probe fails. Counting by cause keeps both visible, so the
+    gate redesign's revert criterion can be falsified. None with no recoveries keeps
+    absence of failures UNKNOWN instead of a confident zero.
+    """
+    if not recoveries:
+        return None
+    rows = [r for r in recoveries if "wrong pin" in str(r.get("failure") or "").lower()]
+    return {"total": len(rows),
+            "rolled-back": sum(1 for r in rows if r.get("phase") == "rolled-back"),
+            "unknown-phase": sum(1 for r in rows if r.get("phase") != "rolled-back")}
+
+
 def render(home: Path, repo: Path, window_s: float, now: float) -> str:
     records = load_records(home)
     lines = [f"Checked-to-live report  {time.strftime('%Y-%m-%d %H:%M:%SZ', time.gmtime(now))}",
@@ -607,6 +623,10 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
                 samples.append(elapsed)
         else:
             lines.append("    rollback duration UNKNOWN (missing or invalid timestamps)")
+    wrong = wrong_pin_failures(recoveries)
+    if wrong is not None:
+        lines.append(f"  wrong-pin consumer failures in window: {wrong['total']}"
+                     f" (rolled back {wrong['rolled-back']}, UNKNOWN phase {wrong['unknown-phase']})")
     for label, times in (("completed rollback", rollback_done),
                          ("failed-probe rollback", rollback_probe_failed)):
         if times:

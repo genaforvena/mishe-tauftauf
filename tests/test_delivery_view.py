@@ -160,6 +160,33 @@ def test_a_failed_rollback_probe_never_claims_the_pin_was_restored(monkeypatch, 
     assert "completed rollback time" not in text
 
 
+def test_wrong_pin_failures_counts_one_cause_across_both_phases():
+    cause = ("functional probe failed: pin observation failed: active or queued consumer has wrong pin: "
+             "mishe-next-due-x.service")
+    rows = [record(phase="rolled-back", failure=cause, rollback_probe={"code": 0}),
+            record(phase="UNKNOWN", failure=cause, rollback_probe={"code": 1}),
+            record(phase="rolled-back", failure="functional probe failed: another cause")]
+    assert view.wrong_pin_failures(rows) == {"total": 2, "rolled-back": 1, "unknown-phase": 1}
+
+
+def test_wrong_pin_failures_is_unknown_without_recovery_records():
+    assert view.wrong_pin_failures([]) is None
+
+
+def test_report_counts_wrong_pin_failures_by_cause_not_probe_outcome(tmp_path):
+    cause = ("functional probe failed: pin observation failed: active or queued consumer has wrong pin: "
+             "mishe-next-due-x.service")
+    rolled = record(phase="rolled-back", delivered_at=None, reviewed_at=None, sha="c" * 40,
+                    failure=cause, rollback_at=2700.0, rollback_completed_at=2760.0,
+                    rollback_probe={"code": 0})
+    probe_failed = record(phase="UNKNOWN", delivered_at=None, reviewed_at=None, sha="d" * 40,
+                          failure=cause, rollback_at=2800.0, rollback_failed_at=2860.0,
+                          rollback_probe={"code": 1})
+    home = home_with(tmp_path, [record(), rolled, probe_failed])
+    text = view.render(home, Path("/nope"), 24 * 3600.0, 5000.0)
+    assert "rolled-back/UNKNOWN 2" in text
+    assert "wrong-pin consumer failures in window: 2 (rolled back 1, UNKNOWN phase 1)" in text
+
 def test_restore_error_reports_the_stage_before_the_rollback_probe(tmp_path):
     rolled = record(phase="UNKNOWN", delivered_at=None, reviewed_at=None,
                     failure="pin observation failed", rollback_at=2700.0,
