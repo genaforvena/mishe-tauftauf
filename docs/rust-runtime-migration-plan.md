@@ -4225,6 +4225,24 @@ both roles, roughly 2.2-2.8x framing, and the reader stayed under 5 CPU-s.
 This is the quiet baseline needed to read the next spike. If a first fold puts
 CPU into `mishe-records` while framing stays near 1 CPU-s, that supports the
 expiry-reverification hypothesis in §10.59; CPU concentrated in a second
-framing pass, or a spike with no child increase, refutes it. The 14:41Z hourly
-run was skipped by the host containment trip and `rust-measurement` expired to
-UNKNOWN; the flag has cleared and the next timer run restores the observation.
+framing pass, or a spike with no child increase, would point elsewhere. The
+14:41Z hourly run was skipped by the host containment trip and
+`rust-measurement` expired to UNKNOWN.
+
+**Scheduled observation at 15:42Z.** The timer ran the checker from
+`a204cc13` and the service exited 0. The published GREEN summary and retained
+history both named the two Rust children. The checker reported eight
+binaries checked, zero drift and no reader CPU or RSS threshold breaches.
+
+| Role | Python reader CPU-s | `mishe-records` CPU-s | `mishe-tape` CPU-s | Total fold CPU-s |
+|---|---:|---:|---:|---:|
+| senses | 3.518 | 2.259 | 1.001 | 6.778 |
+| genome | 3.313 | 2.029 | 0.929 | 6.271 |
+
+Both executable sums matched the recorded child CPU. Per-fold CPU pressure
+stayed below 0.2%. The five earlier first-fold spikes above 6 child CPU-s in
+63 comparable role pairs all had GREEN verdicts and lacked executable
+attribution. Read the retained hourly samples for another spike even while the
+signal stays GREEN. Executable attribution can localize the excess CPU.
+Confirming cache expiry still requires verifier decisions and frame checkpoint
+evidence as described in §10.59. A migration candidate remains UNKNOWN.
