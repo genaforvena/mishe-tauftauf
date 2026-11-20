@@ -6,8 +6,7 @@ Reads the newest record under SITE/work/releases (written by release_promotion.p
   GREEN    delivered, and runtime/current names that release; or a promotion still running and younger than --stuck-min
   RED      the newest promotion ended in check-failed, check-mutated-*, rolled-back or UNKNOWN: names the sha, the
            phase, the failure and the last failing line of the check, so the resolver fixes a cause, not a symptom
-  UNKNOWN  no promotion record, an UNREADABLE record (a corrupt or torn record is not skipped in silence:
-           the newest promotion is then unknown, not the newest record that happened to parse), a pointer that
+  UNKNOWN  no promotion record, an unreadable or unorderable record, a pointer that
            disagrees with a delivered record, or a promotion that has run longer than --stuck-min. A RUNNING
            phase is aged from its own start (``waiting_since``, ``activation_started_at``) when the record
            carries it, so a healthy wait for wakes that had to yield first is not UNKNOWN.
@@ -35,34 +34,27 @@ RUNNING = {"checking", "waiting-for-wakes", "activating"}
 
 
 def newest(directory):
-    """The newest promotion record, or the reason there is none.
+    """Return the newest orderable promotion and evidence of any unreadable record.
 
-    A record that cannot be read is NOT skipped.  It was, until the review
-    of the 2026-11-14 release refused the change on 2026-11-15 with exactly
-    this defect: a corrupt or torn record was passed over in silence, and an
-    OLDER record with phase "delivered" whose sha matched runtime/current
-    then answered GREEN.  The check reported a healthy pin while the record
-    of the promotion that actually happened was unreadable.
-
-    A record that cannot be read is a promotion whose outcome nobody can
-    rule out, so it is UNKNOWN.  Which record is "newest" cannot be known
-    from a file that does not parse, so the newest UNREADABLE record is
-    reported and the check refuses to pass on the ones it can read.
-
-    Returns ``(record, unreadable)``: the newest readable record and the
-    newest unreadable one, either of which may be None.
+    A file with no usable creation time could describe the latest promotion.
+    The caller reports UNKNOWN even when an orderable record matches the pin.
     """
     best = None
     unreadable = None
     for path in directory.glob("*.json"):
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(record, dict):
+                raise ValueError("expected a JSON object")
+            created_at = record.get("created_at")
+            if (type(created_at) not in (int, float)
+                    or not -sys.float_info.max <= created_at <= sys.float_info.max):
+                raise ValueError("created_at must be a finite numeric timestamp")
         except (OSError, ValueError) as error:
             unreadable = (path, error)
             continue
-        if isinstance(record, dict) and isinstance(record.get("created_at"), (int, float)):
-            if best is None or record["created_at"] > best["created_at"]:
-                best = record
+        if best is None or created_at > best["created_at"]:
+            best = record
     return best, unreadable
 
 

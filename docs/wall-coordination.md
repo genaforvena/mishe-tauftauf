@@ -212,8 +212,12 @@ target commit, so neither uncommitted edits in the shared checkout nor the remot
 run decide a delivery; CI stays a separate signal (`ci`), as do `pin-lag` and
 `moving-pin-delivery`. The last is a latch over *completed* attempts: while a retry is
 `checking`, it still shows the previous attempt's `FAILED`, so read `pin-delivery` (which
-names the in-flight phase) for "is a promotion running now". Scheduler, dispatch,
-settlement, locking, protocol, authorization and delivery changes keep their
+names the in-flight phase) for "is a promotion running now". When the check cannot
+read or order the records, it names a file in `signals/pin-delivery.detail` and in
+the producer journal. The last reading expires after ten minutes without a
+successful observation. The UNKNOWN edge reaches Genome.
+
+Scheduler, dispatch, settlement, locking, protocol, authorization and delivery changes keep their
 deterministic activation, revert and reapply observations;
 what they no longer wait for is a reviewer. Those observations are the deterministic
 check itself — the plan must carry a real `revert` argv (refused otherwise, below), a

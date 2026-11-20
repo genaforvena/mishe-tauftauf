@@ -7,6 +7,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 CHECK = Path(__file__).resolve().parents[1] / "checks" / "pin-delivery.py"
 spec = importlib.util.spec_from_file_location("pin_delivery_check", CHECK)
 check = importlib.util.module_from_spec(spec)
@@ -231,3 +233,24 @@ def test_a_corrupt_record_alongside_a_good_newest_is_unknown(tmp_path, capsys):
     code, out = _run(home, capsys)
     assert code == 3
     assert "could not be read" in out.err
+
+
+@pytest.mark.parametrize("malformed", [
+    [],
+    {},
+    {"created_at": "later"},
+    {"created_at": True},
+    {"created_at": float("nan")},
+    {"created_at": float("inf")},
+    {"created_at": 10**400},
+], ids=["non-object", "missing-time", "string-time", "boolean-time",
+        "nan-time", "infinite-time", "oversized-time"])
+def test_an_unorderable_record_makes_an_earlier_delivery_unknown(tmp_path, capsys, malformed):
+    home = _site(tmp_path, [_rec("delivered"), malformed])
+    signal_store = _latch(home)
+
+    code, out = _run(home, capsys)
+
+    assert code == 3
+    assert "1.json could not be read" in out.err
+    assert signal_store.read(home, "moving-pin-delivery", now=NOW).state == "UNKNOWN"
