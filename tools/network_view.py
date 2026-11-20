@@ -1690,11 +1690,18 @@ def probe_cadence_phrase(data):
 
 
 def probe_age_line(data, a=None, n=40):
-    """The 'last probe' header line; the cadence beside the age is measured, never a fixed claim."""
+    """The 'last probe' header line; the cadence and any staleness are both measured.
+
+    The per-site rows, gateway and outage list carry no freshness of their own: after the producer
+    stops, their last numbers stay on screen and "failed in last 40: 0" reads calm. This header
+    governs all of them, so it says STALE as well as showing an age that a reader must interpret.
+    """
     if a is None and data:
         a = age(data[-1])
-    return (f"  last probe: {'%ds ago' % a if a is not None else 'never'}   "
-            f"({probe_cadence_phrase(data)}; sparklines = last {n} probes unless labelled)")
+    age_txt = "%ds ago" % a if a is not None else "never"
+    stale = "  STALE" if a is not None and a > STALE_S else ""
+    return (f"  last probe: {age_txt}   "
+            f"({probe_cadence_phrase(data)}; sparklines = last {n} probes unless labelled){stale}")
 
 
 def draw():

@@ -792,6 +792,23 @@ def test_probe_cadence_unknown_without_usable_timestamps():
     assert view.probe_cadence_phrase([{"at": "not-a-time"}]) == "probe cadence UNKNOWN"
 
 
+def test_probe_header_marks_a_dead_producer_stale_not_just_old():
+    # The per-site rows keep their last numbers and "failed in last 40: 0" after the producer dies;
+    # the header is the only line governing all of them, so it must say STALE, not only count seconds.
+    rows = [{"at": "2026-11-20T01:00:00Z"}] * 5
+    fresh = view.probe_age_line(rows, 20, 40)
+    stale = view.probe_age_line(rows, view.STALE_S + 60, 40)
+    assert "STALE" not in fresh
+    assert "last probe: 360s ago" in stale
+    assert "STALE" in stale
+
+
+def test_probe_header_with_no_timestamp_is_unknown_not_stale_calm():
+    line = view.probe_age_line([{"at": "not-a-time"}], None, 40)
+    assert "last probe: never" in line
+    assert "STALE" not in line
+
+
 def _phase_rows(count, connect, tls, hour, day=10):
     """Probes at a fixed UTC clock hour carrying all three phases; baselines read the hour from `at`."""
     at = f"2026-11-{day:02d}T{hour:02d}:00:00Z"
