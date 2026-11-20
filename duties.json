@@ -1313,7 +1313,9 @@
         "--repo",
         "{repo}",
         "--require-timer",
-        "mishe-human-typed-relay.timer"
+        "mishe-human-typed-relay.timer",
+        "--require-service",
+        "mishe-human-typed-relay.service"
       ],
       "every": 120,
       "timeout": 60,
@@ -1326,7 +1328,7 @@
       ],
       "resolver": "operator",
       "replaces": [],
-      "covers": "the human's typed lines in his interactive session transcripts (~/.claude/projects/<repo-slug>/*.jsonl) reach the operator chat: the relay timer advances per-file byte cursors and DMs each new human-typed line to operator; RED when an unrelayed human line is older than the limit (relay stopped), or immediately when the relay timer itself is inactive (missing/stopped relay is visible before any line goes stale), UNKNOWN when the transcripts, cursor or the systemd timer state cannot be read. The 2026-11-19 Sonnet-ban lift arrived only in this channel, invisible to every mind until traced by hand"
+      "covers": "the human's typed lines in his interactive session transcripts (~/.claude/projects/<repo-slug>/*.jsonl) reach the operator chat: the relay timer advances per-file byte cursors and DMs each new human-typed line to operator; RED when an unrelayed human line is older than the limit, immediately when the relay timer itself is inactive, or when the relay service's last one-shot run failed (both missing/stopped relay forms are visible before a line goes stale), UNKNOWN when the transcripts, cursor, timer or service state cannot be read. The 2026-11-19 Sonnet-ban lift arrived only in this channel, invisible to every mind until traced by hand"
     },
     {
       "name": "rust-measurement",

@@ -25,12 +25,16 @@ Modes:
   --require-timer UNIT   also check that UNIT is active (the relay timer); RED
                          when it is not, so a missing or stopped relay is
                          visible even before a human line goes stale
+  --require-service UNIT  also RED when UNIT's last one-shot run failed; an
+                          active timer whose service exits nonzero otherwise
+                          stays GREEN until a typed line goes stale
 
 Exit: 0 GREEN (no unrelayed human line older than the limit),
       2 RED (a human line older than --limit minutes is not relayed, the
-      relay stopped mid-file, or --require-timer is inactive),
-      3 UNKNOWN (transcripts unreadable, cursor unusable, or the timer state
-      cannot be read).
+      relay stopped mid-file, --require-timer is inactive, or --require-service
+      reports a failed last run),
+      3 UNKNOWN (transcripts unreadable, cursor unusable, or the timer/service
+      state cannot be read).
 """
 import argparse
 import calendar
@@ -62,6 +66,25 @@ def relay_timer_state(unit):
     lines = res.stdout.strip().splitlines()
     if not lines:
         return None, res.stderr.strip() or "systemctl gave no state"
+    return lines[-1].strip(), None
+
+
+def relay_service_result(unit):
+    """Return (result, error) for a systemd user service's last one-shot run.
+
+    ``result`` is the unit's Result property (``success`` for a completed
+    one-shot, ``exit-code`` when its last invocation failed). ``error`` is set
+    only when systemctl cannot be consulted at all, which the caller maps to
+    UNKNOWN rather than treating an unreadable service as RED.
+    """
+    try:
+        res = subprocess.run(["systemctl", "--user", "show", unit, "-p", "Result", "--value"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, str(exc)
+    lines = res.stdout.strip().splitlines()
+    if not lines or not lines[-1].strip():
+        return None, res.stderr.strip() or "systemctl gave no Result"
     return lines[-1].strip(), None
 
 
@@ -179,6 +202,8 @@ def main(argv=None, now=None, mishe_bin=None):
     ap.add_argument("--relay", action="store_true", help="write the DMs and advance the cursors")
     ap.add_argument("--require-timer", metavar="UNIT", default=None,
                     help="RED when this systemd user timer is not active (relay liveness)")
+    ap.add_argument("--require-service", metavar="UNIT", default=None,
+                    help="RED when this systemd user service's last run failed (relay liveness)")
     a = ap.parse_args(argv)
     now = time.time() if now is None else now
 
@@ -187,6 +212,14 @@ def main(argv=None, now=None, mishe_bin=None):
         timer_state, timer_error = relay_timer_state(a.require_timer)
         if timer_state is None:
             print(f"human-typed-relayed: UNKNOWN cannot read relay timer {a.require_timer}: {timer_error}",
+                  file=sys.stderr)
+            return 3
+
+    service_result = None
+    if a.require_service:
+        service_result, service_error = relay_service_result(a.require_service)
+        if service_result is None:
+            print(f"human-typed-relayed: UNKNOWN cannot read relay service {a.require_service}: {service_error}",
                   file=sys.stderr)
             return 3
 
@@ -299,6 +332,10 @@ def main(argv=None, now=None, mishe_bin=None):
     detail = f"{len(pending)} unrelayed human line(s)"
     if a.require_timer and timer_state != "active":
         print(f"human-typed-relayed: RED relay timer {a.require_timer} is {timer_state}; {detail}",
+              file=sys.stderr)
+        return 2
+    if a.require_service and service_result != "success":
+        print(f"human-typed-relayed: RED relay service {a.require_service} last result {service_result}; {detail}",
               file=sys.stderr)
         return 2
     if pending:

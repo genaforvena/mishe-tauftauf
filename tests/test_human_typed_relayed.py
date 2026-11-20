@@ -244,5 +244,25 @@ class HumanTypedRelayedTests(unittest.TestCase):
     def test_unreadable_timer_state_is_unknown_not_red(self):
         self.assertEqual(self.run_main_with_timer(None, "systemctl missing")[0], 3)
 
+    def run_main_with_service(self, result, error=None):
+        argv = ["--home", str(self.home), "--repo", str(self.repo),
+                "--sessions", str(self.sessions),
+                "--require-service", "mishe-human-typed-relay.service"]
+        with mock.patch.object(htr, "relay_service_result", return_value=(result, error)) as probe:
+            rc = htr.main(argv, now=self.now, mishe_bin=str(self.recorder))
+        return rc, probe
+
+    def test_successful_relay_service_stays_green(self):
+        rc, probe = self.run_main_with_service("success")
+        self.assertEqual(rc, 0)
+        probe.assert_called_once_with("mishe-human-typed-relay.service")
+
+    def test_failed_relay_service_is_red_with_no_pending_lines(self):
+        # The dark lane: timer active, no stale line, but the one-shot failed.
+        self.assertEqual(self.run_main_with_service("exit-code")[0], 2)
+
+    def test_unreadable_service_result_is_unknown_not_red(self):
+        self.assertEqual(self.run_main_with_service(None, "systemctl missing")[0], 3)
+
 if __name__ == "__main__":
     unittest.main()
