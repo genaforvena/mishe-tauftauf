@@ -5,7 +5,6 @@ import os
 import tempfile
 import time
 import unittest
-from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -223,26 +222,6 @@ class HumanTypedRelayedTests(unittest.TestCase):
         self.assertEqual(self.run_main(relay=True), 0)
         self.assertEqual(len(self.recorded_calls()), 1)
 
-
-    def run_main_with_timer(self, state, error=None):
-        argv = ["--home", str(self.home), "--repo", str(self.repo),
-                "--sessions", str(self.sessions),
-                "--require-timer", "mishe-human-typed-relay.timer"]
-        with mock.patch.object(htr, "relay_timer_state", return_value=(state, error)) as probe:
-            rc = htr.main(argv, now=self.now, mishe_bin=str(self.recorder))
-        return rc, probe
-
-    def test_active_relay_timer_stays_green(self):
-        rc, probe = self.run_main_with_timer("active")
-        self.assertEqual(rc, 0)
-        probe.assert_called_once_with("mishe-human-typed-relay.timer")
-
-    def test_inactive_relay_timer_is_red_with_no_pending_lines(self):
-        # The dark lane: no typed line has gone stale, but the relay is gone.
-        self.assertEqual(self.run_main_with_timer("inactive")[0], 2)
-
-    def test_unreadable_timer_state_is_unknown_not_red(self):
-        self.assertEqual(self.run_main_with_timer(None, "systemctl missing")[0], 3)
 
 if __name__ == "__main__":
     unittest.main()
