@@ -172,6 +172,19 @@ def _dispositioned(home: Path, repo: Path, name: str, now: float):
         return None
 
 
+def _recheck_servable(entry) -> bool:
+    """Can ``yielding.settle`` arm this signal's known-disposition recheck wake?
+
+    settle arms ``disposition-<name>`` only for a signal registered with a reoffer and
+    at least one subscriber role (yielding.py:220). Without either, a valid disposition's
+    ``recheck_at`` never becomes an intention: the acceptance lapses unserved while this
+    check still reports the finding as answered. Observed on budget-claude 2026-11-20.
+    """
+    if not isinstance(entry, dict) or "reoffer" not in entry:
+        return False
+    return any(isinstance(role, str) and role for role in entry.get("subscribers", ()))
+
+
 def run(home: Path, now: float, *, repo: Path | None = None,
         sigdir: Path | None = None) -> tuple[int, dict]:
     repo = repo or Path(__file__).resolve().parent.parent
@@ -182,7 +195,7 @@ def run(home: Path, now: float, *, repo: Path | None = None,
                          "signals/registry.json unreadable: coverage cannot be judged"}
     causes: list[str] = []
     counts = {"registered": len(registry), "ok": 0, "unmeasured": 0, "stale": 0,
-              "ignored": 0, "unattended": 0, "unheard": 0,
+              "ignored": 0, "unattended": 0, "unheard": 0, "unserveable": 0,
               "failing_units": [], "notes": []}
     detail_lines: list[str] = []
     wake_cache: dict[frozenset, dict | None] = {}
@@ -253,6 +266,13 @@ def run(home: Path, now: float, *, repo: Path | None = None,
                     # the disposition store exists for; an expired one returns the finding.
                     counts["notes"].append(f"{name}: {value or state} dispositioned "
                                            f"{answer.get('kind')} by {answer.get('owner')}")
+                    if answer.get("kind") == "known" and not _recheck_servable(entry):
+                        counts["unserveable"] += 1
+                        causes.append(f"unserveable-disposition: {name} known disposition "
+                                      f"by {answer.get('owner')} has recheck_at "
+                                      f"{answer['recheck_at']:.0f} but no recheck wake — "
+                                      f"registration needs a reoffer and a subscriber "
+                                      f"(yielding.py:220)")
                     continue
                 counts["ignored"] += 1
                 causes.append(f"ignored: {name} reading {value or state} unchanged "

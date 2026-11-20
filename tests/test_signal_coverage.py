@@ -141,7 +141,7 @@ def test_unexpired_disposition_parks_an_ignored_reading(tmp_path, monkeypatch):
     disposition is a note, not an ignored cause (household-phones was flagged despite one)."""
     _clear_systemctl(monkeypatch)
     from mishe_tauftauf import dispositions
-    home, sigdir = site(tmp_path, {"phones": register_entry()})
+    home, sigdir = site(tmp_path, {"phones": {**register_entry(), "reoffer": 3600.0}})
     observed(sigdir, "phones", value=None, state="UNKNOWN", at=NOW - 3 * MAX_AGE, seen=NOW - 60)
     dispositions.set_disposition(home, "phones", "known", "senses", "redmi10 stale",
                                  ttl=3600, now=NOW - 60)
@@ -159,6 +159,46 @@ def test_expired_disposition_returns_the_ignored_finding(tmp_path, monkeypatch):
                                  ttl=600, now=NOW - 3600)
     code, report = mod.run(home, NOW, sigdir=sigdir)
     assert any(c.startswith("ignored") and "phones" in c for c in report["causes"])
+
+
+def test_known_disposition_without_recheck_wake_is_a_cause(tmp_path, monkeypatch):
+    """2026-11-20 budget-claude: a recorded answer is only an answer if its recheck can
+    wake someone. settle (yielding.py:220) arms the recheck only with a reoffer and a
+    subscriber; without them the disposition's deadline lapses unserved while this check
+    still reports the finding as dispositioned."""
+    _clear_systemctl(monkeypatch)
+    from mishe_tauftauf import dispositions
+    home, sigdir = site(tmp_path, {"phones": register_entry()})  # no reoffer
+    turned = NOW - 3 * MAX_AGE
+    observed(sigdir, "phones", "RED", at=turned, seen=NOW - 60)
+    wake_file(home, "steward", turned + 60, yield_at=turned + 120)
+    dispositions.set_disposition(home, "phones", "known", "steward", "forecast",
+                                 ttl=3600, now=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 2
+    assert any(c.startswith("unserveable-disposition: phones") for c in report["causes"])
+    assert not any(c.startswith("ignored: phones") for c in report["causes"])
+    assert report["counts"]["unserveable"] == 1
+
+
+def test_servable_known_disposition_stays_only_a_note(tmp_path, monkeypatch):
+    """With reoffer and a subscriber the recheck can be armed, so the disposition still
+    answers the RED; the new cause must not double-count or narrow existing coverage."""
+    _clear_systemctl(monkeypatch)
+    from mishe_tauftauf import dispositions
+    assert not mod._recheck_servable({"reoffer": 3600.0, "subscribers": []})
+    assert mod._recheck_servable({"reoffer": 3600.0, "subscribers": ["steward"]})
+    home, sigdir = site(tmp_path, {"phones": {**register_entry(), "reoffer": 3600.0}})
+    turned = NOW - 3 * MAX_AGE
+    observed(sigdir, "phones", "RED", at=turned, seen=NOW - 60)
+    wake_file(home, "steward", turned + 60, yield_at=turned + 120)
+    dispositions.set_disposition(home, "phones", "known", "steward", "forecast",
+                                 ttl=3600, now=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0
+    assert not any("phones" in c for c in report["causes"])
+    assert report["counts"]["unserveable"] == 0
+    assert any("dispositioned known by steward" in n for n in report["counts"]["notes"])
 
 
 def test_fresh_red_reading_is_pending_not_ignored(tmp_path, monkeypatch):
