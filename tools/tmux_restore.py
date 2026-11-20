@@ -27,29 +27,47 @@ def subst(s, checkout, site):
 
 def argv_for(w, checkout, site):
     cmd = [subst(c, checkout, site) for c in w["command"]]
-    env = {k: subst(v, checkout, site) for k, v in (w.get("env") or {}).items()}
-    if env:
-        cmd = ["env", *[f"{k}={v}" for k, v in env.items()], *cmd]
-    return cmd
+    return _with_env(cmd, w, checkout, site)
+
+
+def _with_env(cmd, w, checkout, site, pane=None):
+    env = {**(w.get("env") or {}), **((pane or {}).get("env") or {})}
+    env = {k: subst(v, checkout, site) for k, v in env.items()}
+    return ["env", *[f"{k}={v}" for k, v in env.items()], *cmd] if env else cmd
+
+
+def pane_argv_for(w, checkout, site, index):
+    """Command for one pane, falling back to the window command when no spec exists."""
+    panes = w.get("panes")
+    if isinstance(panes, list) and len(panes) > index and isinstance(panes[index], dict):
+        cmd = panes[index].get("command")
+        if isinstance(cmd, list) and cmd:
+            return _with_env([subst(c, checkout, site) for c in cmd], w, checkout, site, panes[index])
+    return argv_for(w, checkout, site)
 
 
 def plan(reg, checkout, site, state):
     """state: {session_key: None | {window_name: [dead_flags]}}; returns actions."""
     acts = []
     for w in reg["windows"]:
-        if w.get("restore") is not True or not w.get("command"):
+        if w.get("restore") is not True:
+            continue
+        panes = w.get("panes")
+        panes = panes if isinstance(panes, list) and panes else None
+        if not panes and not w.get("command"):
             continue
         sk = w["session"]
         live = state.get(sk)
-        argv = argv_for(w, checkout, site)
+        argv = pane_argv_for(w, checkout, site, 0) if panes else argv_for(w, checkout, site)
+        extra = [pane_argv_for(w, checkout, site, i) for i in range(1, len(panes))] if panes else []
         if live is None:
-            acts.append(("new-session" if not any(a[1] == sk and a[0] == "new-session" for a in acts) else "new-window", sk, w["name"], argv))
+            acts.append(("new-session" if not any(a[1] == sk and a[0] == "new-session" for a in acts) else "new-window", sk, w["name"], argv, extra))
         elif w["name"] not in live:
-            acts.append(("new-window", sk, w["name"], argv))
+            acts.append(("new-window", sk, w["name"], argv, extra))
         else:
             for i, dead in enumerate(live[w["name"]]):
                 if dead:
-                    acts.append(("respawn-pane", sk, w["name"], argv, i))
+                    acts.append(("respawn-pane", sk, w["name"], pane_argv_for(w, checkout, site, i), i))
     return acts
 
 
@@ -75,6 +93,7 @@ def main():
     for act in acts:  # noqa
         kind, sk, name, argv = act[:4]
         sock, sess = socks[sk]
+        extra = act[4] if kind != "respawn-pane" and len(act) > 4 else []
         print(("APPLY " if a.apply else "DRY ") + kind, sk, name, " ".join(argv)[:100])
         if not a.apply:
             continue
@@ -90,6 +109,11 @@ def main():
             print("  FAILED", r.stderr, file=sys.stderr)
         elif kind != "respawn-pane":
             tmux(sock, "set-option", "-w", "-t", f"{sess}:{name}", "remain-on-exit", "on")
+            for extra_argv in extra:
+                split = tmux(sock, "split-window", "-v", "-c", checkout, "-t", f"{sess}:{name}", *extra_argv)
+                if split.returncode:
+                    failed += 1
+                    print("  FAILED split", split.stderr, file=sys.stderr)
     if not acts:
         print("nothing to restore")
     return 2 if failed else 0
