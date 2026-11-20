@@ -15,6 +15,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import urllib.error
+
+import pytest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -265,3 +268,37 @@ def test_the_self_test_passes():
     this is the gate on the gate.
     """
     assert check._self_test() == 0
+
+
+def _urlopen_404(request, timeout=30):
+    """Every by-id read 404s, as DEV did for 5079796 on 2026-11-20."""
+    raise urllib.error.HTTPError(request.full_url, 404, "Not Found", None, None)
+
+
+def test_by_id_404_uses_the_published_listing_row(monkeypatch):
+    """A live article that 404s by id is read from the listing, not UNKNOWN."""
+    monkeypatch.setattr(check.urllib.request, "urlopen", _urlopen_404)
+    row = {"id": 5079796, "title": "A live post",
+           "body_markdown": "A clean body."}
+    article = check.read_article("https://dev.to", "key", 5079796,
+                                 listing_row=row)
+    assert article is row
+    assert article["body_markdown"] == "A clean body."
+
+
+def test_by_id_404_without_a_listing_row_stays_unknown(monkeypatch):
+    """A 404 with no row is still unreadable, never a pass."""
+    monkeypatch.setattr(check.urllib.request, "urlopen", _urlopen_404)
+    with pytest.raises(urllib.error.HTTPError):
+        check.read_article("https://dev.to", "key", 5079796)
+
+
+def test_other_http_error_does_not_use_the_listing_row(monkeypatch):
+    """A 429 or any other failure is not mistaken for a cacheable 404."""
+    def urlopen_429(request, timeout=30):
+        raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests",
+                                     None, None)
+    monkeypatch.setattr(check.urllib.request, "urlopen", urlopen_429)
+    row = {"id": 5079796, "body_markdown": "A clean body."}
+    with pytest.raises(urllib.error.HTTPError):
+        check.read_article("https://dev.to", "key", 5079796, listing_row=row)

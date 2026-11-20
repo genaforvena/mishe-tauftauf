@@ -37,6 +37,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -115,12 +116,24 @@ def read_account(base: str, key: str) -> list[dict]:
     return payload
 
 
-def read_article(base: str, key: str, article_id: int) -> dict:
-    """One article with its full body."""
-    request = urllib.request.Request(
-        base + "/api/articles/%d" % article_id,
-        headers={"api-key": key, "User-Agent": "mesh-pub/1.0"})
-    payload = json.load(urllib.request.urlopen(request, timeout=30))
+def read_article(base: str, key: str, article_id: int,
+                 listing_row: dict | None = None) -> dict:
+    """One article with its full body.
+
+    A just-published article can 404 by id while still appearing in the
+    account's own listing; that row carries the body this detector reads.  Use
+    it on a 404 so a live page is never published as UNKNOWN.  A 404 without a
+    row, or any other error, still raises and stays UNKNOWN.
+    """
+    try:
+        request = urllib.request.Request(
+            base + "/api/articles/%d" % article_id,
+            headers={"api-key": key, "User-Agent": "mesh-pub/1.0"})
+        payload = json.load(urllib.request.urlopen(request, timeout=30))
+    except urllib.error.HTTPError as err:
+        if err.code != 404 or listing_row is None:
+            raise
+        payload = listing_row
     if not isinstance(payload, dict):
         raise ValueError("the API did not answer with an article")
     return payload
@@ -425,14 +438,16 @@ def main(argv: list[str] | None = None) -> int:
         published = [a for a in published_articles if a.get("published")]
         if not published:
             raise ValueError("the account reports no published articles")
-        index = read_article(base, key, args.index_id)
+        rows_by_id = {str(a["id"]): a for a in published_articles}
+        index = read_article(base, key, args.index_id,
+                             rows_by_id.get(str(args.index_id)))
         index_body = index.get("body_markdown")
         if not isinstance(index_body, str):
             raise ValueError("the index page carries no body")
         bodies = {}
         for article in published:
             bodies[str(article["id"])] = read_article(
-                base, key, article["id"]).get("body_markdown") or ""
+                base, key, article["id"], article).get("body_markdown") or ""
         owned = {USER}
         threads, total_comments, reader_comments, people = read_threads(
             base, key, published, owned)

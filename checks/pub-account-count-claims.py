@@ -65,6 +65,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -313,12 +314,25 @@ def read_account(base: str, key: str) -> list[dict]:
     return [article for article in payload if article.get("published")]
 
 
-def read_article(base: str, key: str, article_id: int) -> dict:
-    """One article with its full body and card description."""
-    request = urllib.request.Request(
-        base + "/api/articles/%d" % article_id,
-        headers={"api-key": key, "User-Agent": "mesh-pub/1.0"})
-    payload = json.load(urllib.request.urlopen(request, timeout=30))
+def read_article(base: str, key: str, article_id: int,
+                 listing_row: dict | None = None) -> dict:
+    """One article with its full body and card description.
+
+    A just-published article can 404 by id while still appearing in the
+    account's own listing; that row carries the body and description this
+    detector reads.  Use it on a 404 so a live page is never published as
+    UNKNOWN.  A 404 without a row, or any other error, still raises and stays
+    UNKNOWN.
+    """
+    try:
+        request = urllib.request.Request(
+            base + "/api/articles/%d" % article_id,
+            headers={"api-key": key, "User-Agent": "mesh-pub/1.0"})
+        payload = json.load(urllib.request.urlopen(request, timeout=30))
+    except urllib.error.HTTPError as err:
+        if err.code != 404 or listing_row is None:
+            raise
+        payload = listing_row
     if not isinstance(payload, dict):
         raise ValueError("the API did not answer with an article")
     return payload
@@ -434,7 +448,7 @@ def main(argv: list[str] | None = None) -> int:
             bodies = {}
             descriptions = {}
             for article in published:
-                one = read_article(base, key, article["id"])
+                one = read_article(base, key, article["id"], article)
                 bodies[str(article["id"])] = one.get("body_markdown") or ""
                 description = one.get("description")
                 if isinstance(description, str) and description.strip():
