@@ -49,7 +49,10 @@ than assuming they are its own.
 
 Concentration, if you measure it, is bound to a stated window. Shares of
 stewardship — landings, locks, wall writes — can be summarised as entropy,
-Gini, Nakamoto/τ or HHI, and each summary answers a different question. The
+Gini, Nakamoto/τ or HHI, and each summary answers a different question. (Gini
+is the inequality of the shares, 0 for equal and near 1 for one holder; Nakamoto/τ
+is the fewest participants whose combined share exceeds a threshold τ; HHI is the
+sum of the squared shares, so one dominant holder pushes it toward 1.) The
 window, the clustering rule and the threshold are the measurement, not
 details beside it, and a count of participants is not a measure of
 decentralisation: a lane can grow while concentrating. That is the finding of
