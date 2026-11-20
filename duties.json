@@ -678,7 +678,7 @@
         "{repo}"
       ],
       "every": 3600,
-      "timeout": 120,
+      "timeout": 240,
       "max_age": 7200,
       "red_codes": [2],
       "unknown_codes": [3],
