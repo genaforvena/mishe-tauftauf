@@ -4126,3 +4126,25 @@ No read-path A/B opens; the standing question remains UNKNOWN on a measured
 3.4-3.5 CPU-s fold with 100-120 MB RSS. A quiet re-fold above 5.0 or a
 reader-path source diff would change that. Site-local working:
 `$SITE/analysis/rust-pressure-second-red-20261120.md`.
+
+### 10.74 Retire the freshness and crate-count milestones (2026-11-20)
+
+The initiative duty reopened two historical milestones at 08:06Z. The original
+register passed both checks against `8592c07c` and failed both against `4e35283e`.
+The first check searched the signal store for the verifier removed in §10.72.
+The second counted nine crate manifests. Removing that verifier left eight.
+A manifest count cannot establish that a Python caller uses a binary.
+
+The site register retired these two milestones and kept all 34 other entries.
+The original register and checker output are in the site-local
+`artifacts/rust-plan-initiative-retirement-20261120-0810/`. In isolation, restoring
+the original register reproduced RED. With the revised register, adding an
+overdue fixture produced RED, and an unreadable observation or a missing register
+produced UNKNOWN. The installed initiative producer published GREEN at 08:15Z
+with zero active Rust milestones.
+
+The five-minute expiry duty covers overdue signal readings. The hourly Rust
+measurement covers installed source and binary drift and the reader CPU and RSS
+thresholds. Raise a new milestone when a measured seam and a differential
+contract identify a candidate. Live CPU savings from the expiry change remain
+UNKNOWN.
