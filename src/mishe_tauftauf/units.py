@@ -94,7 +94,7 @@ class SyncReport:
     written: list = field(default_factory=list)
     removed: list = field(default_factory=list)
     linked: list = field(default_factory=list)
-    refused: list = field(default_factory=list)
+    reclaimed: list = field(default_factory=list)
 
 
 @dataclass
@@ -456,12 +456,14 @@ def unit_file_service_names(listing: str, prefix: str) -> list[str]:
 def _generated_marker(text: str) -> str | None:
     """The generated-unit marker line of ``text``, or None when the text is not generated.
 
-    Each plant patches MARKER in its own release. A path carrying a different generated
-    marker belongs to that plant even when its filename matches one we render; overwriting
-    it silently makes that plant's doctor report the unit missing.
+    Each plant patches MARKER in its own release. A different marker at a path this plant
+    renders means the 2026-11-20 03:54Z collision: the other plant used our prefix with its
+    own marker. ``sync`` reclaims that path (it only writes paths it renders, so the path is
+    ours); a correctly prefixed other plant writes names we never touch.
     """
     first = text.splitlines()[0] if text else ""
     return first if first.startswith("# ") and "-generated: " in first else None
+
 
 def _write_unit(path: Path, text: str) -> None:
     """Install one unit file atomically, so no reader or reload sees a half-written unit.
@@ -561,9 +563,10 @@ def sync(cfg: Config, roles, *, producers=(), resolvers=None, runner=None, unins
             if marker is not None and marker != MARKER:
                 # 2026-11-20 03:54Z: the second plant's promotion rendered with
                 # prefix="mishe" but its own MARKER and rewrote 179 of this plant's
-                # units. Refuse the collision instead of owning another plant's file.
-                report.refused.append(rel)
-                continue
+                # units. The path is one we render, so it is ours: reclaim it rather
+                # than leave doctor RED "...: missing" until a manual unlink. The
+                # other plant's correctly prefixed units use names we never touch.
+                report.reclaimed.append(rel)
         if existing != text:
             path.parent.mkdir(parents=True, exist_ok=True)
             _write_unit(path, text)

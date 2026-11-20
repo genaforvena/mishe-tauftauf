@@ -149,19 +149,40 @@ def test_sync_writes_and_is_idempotent_and_removes_stale_generated_only(cfg):
     assert second.written == [] and second.removed == []
 
 
-def test_sync_refuses_to_overwrite_another_plants_generated_unit(cfg):
+def test_sync_reclaims_a_foreign_marked_unit_of_ours_and_doctor_goes_green(cfg):
     # 2026-11-20 03:54Z: the second plant's promotion rendered with prefix="mishe"
     # but its own MARKER, rewriting 179 of this plant's units so doctor saw them
-    # missing. A foreign generated marker means foreign ownership, whatever the name.
+    # missing. Before 92f11a14 a bare sync reclaimed them (how 03:54Z recovered at
+    # 04:05:47Z); the guard made sync refuse them and left doctor RED until a manual unlink.
     text = units.render(cfg, ROLES)["mishe-wake@.service"]
     path = cfg.unit_dir / "mishe-wake@.service"
     path.parent.mkdir(parents=True, exist_ok=True)
     foreign = "# nginx2root-generated: nginx2root observation runtime (edit nothing here; run `mishe sync`)\n" + text.split("\n", 1)[1]
     path.write_text(foreign, encoding="utf-8")
+    assert "mishe-wake@.service: missing" in units.doctor(cfg, ROLES).problems
+
     report = units.sync(cfg, ROLES, runner=lambda c: None)
-    assert "mishe-wake@.service" in report.refused
-    assert "mishe-wake@.service" not in report.written
-    assert path.read_text(encoding="utf-8") == foreign
+    assert "mishe-wake@.service" in report.reclaimed
+    assert "mishe-wake@.service" in report.written
+    assert path.read_text(encoding="utf-8") == text
+    assert units.doctor(cfg, ROLES).state == "GREEN"
+
+    again = units.sync(cfg, ROLES, runner=lambda c: None)
+    assert again.reclaimed == [] and again.written == []
+
+
+def test_sync_leaves_a_foreign_plants_own_named_unit_alone(cfg):
+    # The nginx2root-marked witness/nginxsec survivors in the shared unit dir are
+    # not paths we render: neither reclaim nor stale removal may touch them.
+    foreign_path = cfg.unit_dir / "mishe-wake@witness.service"
+    foreign_path.parent.mkdir(parents=True, exist_ok=True)
+    foreign_text = "# nginx2root-generated: nginx2root observation runtime\n[Service]\n"
+    foreign_path.write_text(foreign_text, encoding="utf-8")
+    report = units.sync(cfg, ROLES, runner=lambda c: None)
+    assert "mishe-wake@witness.service" not in report.reclaimed
+    assert "mishe-wake@witness.service" not in report.removed
+    assert foreign_path.read_text(encoding="utf-8") == foreign_text
+
 
 def test_a_failed_unit_write_leaves_the_installed_unit_intact(cfg, monkeypatch):
     calls = []
