@@ -204,7 +204,7 @@ Exit codes: 0 GREEN, 2 RED, 3 cannot decide (ages to UNKNOWN). Its own `--max-ag
 is 900 s.
 
 The checkout declares a `budget-consistency` duty in `duties.json`: every 300 s, timeout
-60 s, signal max age 900 s, resolver **senses**. Exit 2 routes RED and exit 3 records UNKNOWN
+60 s, signal max age 900 s, resolver **steward**. Exit 2 routes RED and exit 3 records UNKNOWN
 immediately; a missing or stale observation is UNKNOWN. The check covers only the accounts section; the
 ledger and router checks remain `not_checked`. The duty is installed and running: the
 `mishe-producer-budget-consistency.timer` fires every 300 s, the unit runs the check from the
@@ -253,7 +253,7 @@ honest.
 1. Ship `src/mishe_tauftauf/budget_producer.py` + `checks/budget-consistency.py` + this
    contract as one independent delivery, with its own install record. **Done.**
 2. Run the producer; verify `budget-consistency` GREEN against the live sources. **Done
-   periodically.** The `budget` duty (`every` 600 s, `max_age` 1800 s, resolver senses) runs
+   periodically.** The `budget` duty (`every` 600 s, `max_age` 1800 s, resolver steward) runs
    the producer from its site-local `producers/budget.sh`; observed on the timer 2026-11-11
    05:28:04Z, `produced_at` 05:28:06Z, GREEN, next fire 05:38:04Z. That script is not
    git-tracked, so re-installing it loses the line; the durable home is a tracked duty entry
