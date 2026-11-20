@@ -1,36 +1,18 @@
 #!/usr/bin/env python3
-"""Detector: after a boot, is Mishe admitted to run, or stuck needing a human?
+"""Report boot admission using the current guard and producer evidence.
 
-The gap this closes.  On 2026-11-20 the host rebooted into a new kernel at
-14:39Z (the previous boot had ended at 13:08Z).  The one-shot
-``plant-mishe-boot-admit.service`` failed with "authorization expired": the
-root-owned request ``/var/lib/mishe-containment/authorized-next-boot.json``
-carried a deadline the roughly 91-minute outage passed.  By design ("no
-incident autorecovery") no producer started.  ``docs/recovery.md`` is explicit
-that Mishe does not clear or renew that request: a human decides, and the unit
-stays failed until then.
+On 2026-11-20 the one-shot boot authorization expired. The revive service
+later cleared the containment latch, and producers recovered separately. The
+failed authorization remains visible in the result. Current latches and
+producer activity determine which action is needed.
 
-Nothing watched for that state.  ``signal-coverage`` went RED only because
-about sixty producers were stale, roughly 17 minutes after boot, and the
-waking mind had to reconstruct the cause from reboot history, unit state and
-the guard's status.  From a liveness view an expired authorization, an
-unauthorized boot and a skipped admission all look the same: nothing running.
-This detector names the state and the exact human action instead of leaving it
-as a pile of unrelated stale-signal causes.
-
-The detector answers, read-only:
-
-  1. Did this boot's admission succeed, fail, or get skipped?
-  2. Is the containment latch still set, and are producers still absent?
-  3. If admission is stuck, what must a human do, and what must Mishe not do?
-
-It writes only its own state file; it starts no unit and clears no latch.
-An unreadable host is UNKNOWN (exit 3), never a pass and never a fault.
+The check writes only its own state file. See docs/recovery.md for authority
+over the root-owned request and latch.
 
 Exit status:
-  0  Mishe is admitted and producers are running
-  2  admission is stuck and the plant is down: a human root decision is owed
-  3  the evidence needed to decide cannot be read
+  0  guard ready and producers ran this boot
+  2  containment still latched, or producers absent after admission failed
+  3  evidence unavailable or admission still undecided
 """
 from __future__ import annotations
 
@@ -51,9 +33,10 @@ PROC_STAT = pathlib.Path("/proc/stat")
 ADMIT_UNIT = "plant-mishe-boot-admit.service"
 PRODUCER_PATTERN = "mishe-producer-*.service"
 
-#: A containment trip auto-rearms after a 120 s healthy interval.  A latch that
-#: still holds after this grace is not a transient trip; it is a stuck plant.
+#: Allow boot to settle before reporting an otherwise unexplained latch.
 LATCH_GRACE_SECONDS = 600
+#: The root boot admission adapter uses the same freshness interval.
+GUARD_MAX_AGE_SECONDS = 20
 
 HUMAN_ACTION = (
     "HUMAN ROOT ACTION REQUIRED: from an SSH or human shell run "
@@ -175,19 +158,28 @@ def assess(repo: pathlib.Path = REPO) -> dict:
     """Read the host and repository, return a verdict row.  Writes nothing."""
     boot = _boot_id()
     age = _boot_age()
-    latches = _latches()
-    status = _read_json(GUARD_RUN / "status.json")
     admit = _systemctl_show(ADMIT_UNIT, "LoadState", "ActiveState", "Result",
                             "ExecMainStatus", "ConditionResult")
     producers = _producer_count()
+    status = _read_json(GUARD_RUN / "status.json")
+    latches = _latches()
 
     if admit.get("LoadState", "") == "not-found":
         raise Undecidable("unit %s is not installed" % ADMIT_UNIT)
 
+    sampled_at = status.get("at")
+    if type(sampled_at) not in (int, float):
+        raise Undecidable("sentinel sample timestamp missing or malformed")
+    now = time.time()
+    if not now - GUARD_MAX_AGE_SECONDS <= sampled_at <= now:
+        raise Undecidable("sentinel sample timestamp stale or in the future")
     sentinel_state = status.get("state")
     sentinel_mode = status.get("mode")
+    if not all(isinstance(value, str) and value for value in (sentinel_state, sentinel_mode)):
+        raise Undecidable("sentinel state or mode missing or malformed")
     admit_active = admit.get("ActiveState", "")
     admit_failed = admit_active == "failed"
+    ready = sentinel_state == "READY" and sentinel_mode == "NORMAL" and not latches
 
     row = {
         "boot_id": boot,
@@ -201,48 +193,47 @@ def assess(repo: pathlib.Path = REPO) -> dict:
         "sentinel_mode": sentinel_mode,
         "producers_active": producers,
         "latch_grace_seconds": LATCH_GRACE_SECONDS,
-        "human_action": HUMAN_ACTION,
+        "human_action": None,
     }
 
-    if producers > 0 and sentinel_state == "READY" and sentinel_mode == "NORMAL":
-        row["state"] = "green"
-        row["detail"] = ("Mishe admitted this boot: sentinel %s/%s, %d producer(s) active"
-                         % (sentinel_state, sentinel_mode, producers))
-        if admit_failed:
-            row["detail"] += ("; note: %s still failed (result %s, status %s)"
-                              % (ADMIT_UNIT, row["boot_admit_result"], row["boot_admit_status"]))
-        return row
-
+    admission_failure = ""
     if admit_failed:
+        admission_failure = (" %s still failed (result %s, status %s)."
+                             % (ADMIT_UNIT, row["boot_admit_result"], row["boot_admit_status"]))
+    if latches and (admit_failed or age >= LATCH_GRACE_SECONDS):
         row["state"] = "red"
+        row["human_action"] = HUMAN_ACTION
         row["detail"] = (
-            "%s failed (result %s, status %s) after %.0fs uptime; no producers "
-            "running; boot admission was rejected and needs a human decision. %s"
-            % (ADMIT_UNIT, row["boot_admit_result"], row["boot_admit_status"],
-               age, HUMAN_ACTION))
+            "containment latch %s still set after %.0fs uptime. Sentinel %s/%s.%s %s"
+            % (",".join(latches), age, sentinel_state, sentinel_mode,
+               admission_failure, HUMAN_ACTION))
         return row
 
-    if latches and age >= LATCH_GRACE_SECONDS:
+    if ready and producers > 0:
+        row["state"] = "green"
+        row["detail"] = ("Sentinel READY/NORMAL with latch clear. "
+                         "%d producer(s) running or completed this boot.%s"
+                         % (producers, admission_failure))
+        return row
+
+    if ready and admit_failed:
         row["state"] = "red"
         row["detail"] = (
-            "containment latch %s still set after %.0fs uptime (grace %ss); sentinel "
-            "%s/%s, %d producer(s) running; the plant was not admitted after boot. %s"
-            % (",".join(latches), age, LATCH_GRACE_SECONDS, sentinel_state,
-               sentinel_mode, producers, HUMAN_ACTION))
+            "Sentinel READY/NORMAL with latch clear. No producers running or completed "
+            "this boot. Inspect user producer timers and failed services.%s" % admission_failure)
         return row
 
     row["state"] = "unknown"
     row["detail"] = (
-        "plant is not up (sentinel %s/%s, %d producer(s)) but admission is not "
-        "yet decisively stuck (admit=%s, latches=%s, uptime %.0fs); recheck before "
-        "acting" % (sentinel_state, sentinel_mode, producers, admit_active,
-                    ",".join(latches) or "none", age))
+        "Boot admission undecided. Sentinel %s/%s, %d producer(s) running or completed, "
+        "latches=%s, uptime %.0fs.%s" % (sentinel_state, sentinel_mode, producers,
+                                        ",".join(latches) or "none", age, admission_failure))
     return row
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="Report whether Mishe was admitted after this boot or needs a human")
+        description="Report current boot admission and producer readiness")
     parser.add_argument("--repo", type=pathlib.Path, default=REPO,
                         help="reviewed repository holding the check")
     parser.add_argument("--json", action="store_true", help="print the verdict as JSON")

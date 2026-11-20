@@ -1,10 +1,8 @@
 """The boot-admission detector must name a stuck boot, not a pile of stale signals.
 
-On 2026-11-20 the host rebooted, the one-shot boot authorization expired during
-the outage, and no producer started.  signal-coverage went RED only through
-about sixty stale stamps.  These tests pin the detector that closes that gap:
-each state is distinguished by its reported state and exit code, so deleting
-the behaviour it names makes the test fail.
+On 2026-11-20 the one-shot boot authorization expired. A separate recovery
+cleared the latch before producers resumed. The alert must distinguish a
+latched host from a producer outage after the guard has recovered.
 """
 import importlib.util
 import json
@@ -24,13 +22,17 @@ def load_check():
 
 def stub_host(monkeypatch, check, *, admit_active="inactive", admit_result="",
               admit_status="", latches=(), producers=0, sentinel="READY",
-              mode="NORMAL", age=1800):
+              mode="NORMAL", age=1800, sample_age=1):
+    now = 1_795_188_000
     status = {"state": sentinel, "mode": mode}
+    if sample_age is not None:
+        status["at"] = now - sample_age
     admit = {"LoadState": "loaded", "ActiveState": admit_active,
              "Result": admit_result, "ExecMainStatus": admit_status,
              "ConditionResult": "yes"}
     monkeypatch.setattr(check, "_boot_id", lambda: "test-boot-id")
     monkeypatch.setattr(check, "_boot_age", lambda: age)
+    monkeypatch.setattr(check.time, "time", lambda: now)
     monkeypatch.setattr(check, "_latches", lambda: list(latches))
     monkeypatch.setattr(check, "_read_json", lambda path: status)
     monkeypatch.setattr(check, "_systemctl_show", lambda *a, **k: admit)
@@ -42,19 +44,47 @@ def test_healthy_boot_is_green(monkeypatch):
     stub_host(monkeypatch, check, producers=12)
     row = check.assess()
     assert row["state"] == "green"
-    assert "admitted" in row["detail"]
+    assert "12 producer(s) running or completed this boot" in row["detail"]
 
 
 def test_expired_authorization_is_red_and_names_human_action(monkeypatch):
     check = load_check()
     stub_host(monkeypatch, check, admit_active="failed", admit_result="exit-code",
-              admit_status="3", sentinel="READY", mode="NORMAL", producers=0)
+              admit_status="3", latches=("tripped",), sentinel="TRIPPED",
+              mode="LIFE_SUPPORT", producers=0)
     row = check.assess()
     assert row["state"] == "red"
     assert "failed" in row["detail"]
     assert "HUMAN ROOT ACTION REQUIRED" in row["detail"]
     assert "does NOT clear or renew" in row["detail"]
     assert check.HUMAN_ACTION == row["human_action"]
+
+
+def test_expired_authorization_after_rearm_routes_producer_outage_to_health(monkeypatch):
+    check = load_check()
+    stub_host(monkeypatch, check, admit_active="failed", admit_result="exit-code",
+              admit_status="3", producers=0)
+    row = check.assess()
+    assert row["state"] == "red"
+    assert "user producer timers" in row["detail"]
+    assert "exit-code" in row["detail"]
+    assert row["human_action"] is None
+
+
+def test_a_latch_beats_earlier_successful_producers(monkeypatch):
+    check = load_check()
+    stub_host(monkeypatch, check, latches=("tripped",), producers=12)
+    row = check.assess()
+    assert row["state"] == "red"
+    assert "tripped" in row["detail"]
+
+
+@pytest.mark.parametrize("sample_age", [None, 21, -1])
+def test_unusable_guard_timestamp_stays_unknown(monkeypatch, capsys, sample_age):
+    check = load_check()
+    stub_host(monkeypatch, check, producers=12, sample_age=sample_age)
+    assert check.main([]) == 3
+    assert "UNKNOWN" in capsys.readouterr().out
 
 
 def test_latched_after_grace_with_no_producers_is_red(monkeypatch):
@@ -89,6 +119,7 @@ def test_unreadable_sentinel_is_unknown(monkeypatch):
 @pytest.mark.parametrize("kwargs,code", [
     (dict(producers=12), 0),
     (dict(admit_active="failed", admit_result="exit-code", admit_status="3"), 2),
+    (dict(admit_active="failed", sentinel="TRIPPED", mode="LIFE_SUPPORT"), 3),
     (dict(latches=("tripped",), producers=0, age=900, sentinel="TRIPPED",
           mode="LIFE_SUPPORT"), 2),
     (dict(latches=("tripped",), producers=0, age=90, sentinel="TRIPPED",
@@ -106,7 +137,8 @@ def test_green_still_notes_a_stale_failed_admit_unit(monkeypatch):
               admit_result="exit-code", admit_status="3")
     row = check.assess()
     assert row["state"] == "green"
-    assert "note" in row["detail"]
+    assert "still failed (result exit-code, status 3)" in row["detail"]
+    assert row["human_action"] is None
 
 
 def test_state_file_written_json(monkeypatch, tmp_path):
