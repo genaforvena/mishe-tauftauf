@@ -80,6 +80,29 @@ def preflight(home, spec):
         wall_patch.preflight(Path(home), record.get("delivery_plan") or {})
 
 
+def previous_matches_pin(home, spec):
+    """A request whose base pin has moved is dead: refuse it before it takes admission.
+
+    ``promote`` rechecks the installed consumer pin and rejects a superseded
+    ``previous``, but only after ``consume`` has written the admission marker. A
+    cadence promotion waiting at the dispatch fence retries admission every second;
+    a dead request's transient marker raises ``DeliveryOwned`` there and burns that
+    promotion's completed whole-suite check (2026-11-20: f3cae9a3, 8a7de0e8). Refuse
+    in preflight instead: no effect, no admission, no fence collision. An absent
+    pointer (fresh site, isolated tests) cannot be judged here, so ``promote`` keeps
+    its own check as the final word.
+    """
+    link = Path(home) / "runtime" / "current"
+    if not link.is_symlink():
+        return
+    try:
+        current = Path(os.readlink(link)).name
+    except OSError:
+        return
+    if current != spec.get("previous"):
+        raise ValueError("previous SHA does not match installed wake consumer pin")
+
+
 def _runtime_restored(record):
     runtime = Path(record["runtime"])
     try:
@@ -264,6 +287,7 @@ def consume(home):
             if not receipt or receipt.get("role") != row["role"] or receipt.get("key") != row["key"]: continue
             try:
                 preflight(home, row["spec"])
+                previous_matches_pin(home, row["spec"])
             except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 # Before admission and before any effect: an unresolvable
                 # argv fails the request and never takes the admission.

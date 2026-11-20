@@ -302,6 +302,26 @@ def test_known_promotion_preflight_rejection_does_not_park_all_minds(plant, monk
     assert not q.admission_path(home).exists()
 
 
+def test_stale_previous_is_rejected_before_admission(plant):
+    """A request whose base pin has moved is dead; it must fail without taking admission.
+
+    2026-11-20: requests f3cae9a3 and 8a7de0e8 were enqueued hours before consume,
+    failed the installed-pin check inside promote, but briefly held admission on the
+    way in. Each transient marker made a cadence promotion sitting at the dispatch
+    fence raise DeliveryOwned and burn its completed whole-suite check. Rejecting in
+    preflight keeps the marker out of the fence window entirely.
+    """
+    home, repo, old, sha = plant
+    row = request(plant); settle(home, row["key"])
+    runtime = home / "runtime"; runtime.mkdir()
+    (runtime / "current").symlink_to(home / "releases" / sha, target_is_directory=True)
+    result = q.consume(home)[0]
+    assert result["state"] == "failed"
+    assert result["error"].startswith("preflight:"), result["error"]
+    assert "previous SHA" in result["error"]
+    assert not q.admission_path(home).exists()
+
+
 def test_strong_activation_timeout_observes_successful_recovery(plant, monkeypatch):
     from mishe_tauftauf import wall_patch
     home, *_ = plant; strong_request(plant, monkeypatch)
