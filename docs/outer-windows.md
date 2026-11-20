@@ -66,6 +66,14 @@ The `budget` window runs `operator/budget/budget_pane.sh` (site-local, under `SI
 `budget_view.py` every 20 s and clears the screen between frames, so the registry's
 command and the table's tool name the same view.
 
+The `senses` window's `LISTENER` line reports the audio listener process from its own heartbeat,
+not from the audio log. A fresh heartbeat names the process state and coverage (live pane,
+2026-11-20 17:19Z: `LISTENER: LISTENING, coverage GREEN (heartbeat 7s old)`); a missing, malformed
+or more than two minutes old heartbeat reads `UNKNOWN` with the reason. Read that line separately
+from the `SOUND` rows below it: a stale sound row can mean a dead microphone or a listener that
+never started, and the `LISTENER` line tells the two apart. It carries derived state only, never
+audio content.
+
 The `senses-map` window has a renderer behind it: the `map-render` duty in
 `duties.json` runs `tools/map_render.py` every 180 s as the
 `mishe-producer-map-render.timer` producer unit, and the `map-render` signal
