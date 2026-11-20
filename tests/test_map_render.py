@@ -166,6 +166,24 @@ def test_row_without_collector_time_is_unknown(tmp_path):
     assert "no collector time" in _phone_note(state)
 
 
+def test_saved_twin_shows_the_same_phone_history_as_the_live_pane(tmp_path):
+    now = _now().timestamp()
+    rows = [_phone(now - 300 + i * 100, age_s=4.0, status=s)
+            for i, s in enumerate(["ok", "stale", "ok"])]
+    site = _site(tmp_path, _activity({}), phones=rows)
+    _render(site)
+    twin = (Path(site) / "senses" / "map" / "apartment-map.txt").read_text()
+    assert "phone history: 1 drop onsets in 7d, fresh in 66% of 3 samples" in twin
+    assert "no usable collector rows" not in twin
+
+
+def test_saved_twin_phone_history_unknown_when_collector_missing(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _render(site)
+    twin = (Path(site) / "senses" / "map" / "apartment-map.txt").read_text()
+    assert "phone history UNKNOWN" in twin
+
+
 def test_rssi_fresh_live_without_labels_is_unknown_not_a_tie(tmp_path):
     # fresh phone RSSI but no labelled moment: nothing to match, so no tie and no crash
     import json

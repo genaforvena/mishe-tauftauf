@@ -621,8 +621,8 @@ def _drop(path):
 
 def tile_text(state, fp_doc, fp_error):
     """The text twin: the same tile frame the terminal view draws (no colour)."""
-    phone = map_tiles.read_phone_row(os.path.join(HH, "phones.jsonl"))
-    model = map_tiles.build_model(fp_doc, fp_error, state, None, phone, NOW)
+    phone, stability = map_tiles.phone_and_history(os.path.join(HH, "phones.jsonl"), NOW)
+    model = map_tiles.build_model(fp_doc, fp_error, state, None, phone, NOW, stability)
     return map_tiles.frame(model, NOW, color=False)
 
 

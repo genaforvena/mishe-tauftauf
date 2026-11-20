@@ -150,6 +150,17 @@ def phone_stability(rows, now, window_s=None):
     fresh = sum(1 for s in statuses if s == "ok")
     return drops, fresh, len(statuses)
 
+def phone_and_history(path, now):
+    """(newest phone row, 7d stability) from one collector file; both fail closed."""
+    rows = read_phone_history(path)
+    if rows is None:
+        return read_phone_row(path), None
+    last = rows[-1]
+    r = last.get("redmi10") or {}
+    phone = {"age_s": r.get("age_s"), "status": r.get("status"),
+             "collector_t": last.get("t")}
+    return phone, phone_stability(rows, now)
+
 def _age_s_at(now, generated_utc, age_s):
     """Age of a value now, given its age at the moment the state was written."""
     gen = _parse(generated_utc)
@@ -731,15 +742,7 @@ def model_from_site(site, now, phone_path=None):
     except (OSError, ValueError):
         pass
     phone_file = phone_path or os.path.join(site, "spatial", "work", "household", "phones.jsonl")
-    rows = read_phone_history(phone_file)
-    if rows is None:
-        phone = read_phone_row(phone_file)
-    else:
-        last = rows[-1]
-        r = last.get("redmi10") or {}
-        phone = {"age_s": r.get("age_s"), "status": r.get("status"),
-                 "collector_t": last.get("t")}
-    stability = phone_stability(rows, now)
+    phone, stability = phone_and_history(phone_file, now)
     model = build_model(floor, floor_reason, state, state_reason, phone, now, stability)
     model["status"].append(night_prior_line(site, state, now))
     return model
