@@ -142,6 +142,16 @@ def test_invalid_rollback_timestamp_keeps_duration_unknown(tmp_path):
     assert "failed-probe rollback time" not in text
 
 
+def test_torn_activation_timestamps_report_unknown_not_a_crash(tmp_path):
+    torn = record(phase="UNKNOWN", activation_started_at="unreadable", rollback_probe={"code": 1})
+    infinite = record(phase="rolled-back", activation_started_at=float("inf"),
+                      rollback_at=2700.0, rollback_completed_at=2790.0)
+    home = home_with(tmp_path, [torn, infinite])
+    text = view.render(home, REPO, 24 * 3600.0, 4000.0)
+    assert text.count("after UNKNOWN") == 2
+    assert "rollback 1m30s (completed)" in text      # the rolled-back run's duration still reports
+
+
 def test_unreadable_records_report_unknown_not_a_series(tmp_path):
     releases = tmp_path / "work" / "releases"
     releases.mkdir(parents=True)

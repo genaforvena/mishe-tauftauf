@@ -139,7 +139,12 @@ def fmt_s(seconds: float | None) -> str:
 
 
 def fmt_ts(epoch: float | None) -> str:
-    return time.strftime("%m-%d %H:%M:%SZ", time.gmtime(epoch)) if epoch else "UNKNOWN"
+    """``UNKNOWN`` for anything a torn record might carry: ``time.gmtime`` raises TypeError on
+    non-numeric values and OverflowError on inf, and the recovery lines feed this straight from
+    record fields, so the type and finiteness are guarded here rather than at each call site."""
+    if type(epoch) not in (int, float) or not 0 < epoch < float("inf"):
+        return "UNKNOWN"
+    return time.strftime("%m-%d %H:%M:%SZ", time.gmtime(epoch))
 
 
 def render(home: Path, repo: Path, window_s: float, now: float) -> str:
