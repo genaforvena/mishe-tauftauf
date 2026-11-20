@@ -988,3 +988,17 @@ def test_a_producer_dict_in_a_signal_reason_cannot_redden_the_pane(tmp_path):
     top = view.render(home, 'genome', now=T0 + 60)
     assert machine_syntax(top) == [], top
     assert 'host-capacity exit=2' in top and 'machine detail omitted' in top
+
+
+def test_a_machine_detail_in_a_dispatch_record_cannot_redden_the_wake_line(tmp_path):
+    # The "Wake ..." line is renderer chrome, outside the prose exemption, so a
+    # structured wake detail must not reach the linter verbatim — the same class
+    # of defect as the signal reason fixed on the verdict line.
+    home = tmp_path
+    settled_wake(home)
+    write_json(home / 'dispatch/genome.json',
+               dict(role='genome', key='wake-genome-1', state='completed',
+                    detail='wake handed off result={"ok": true, "n": 1795175639}'))
+    top = view.render(home, 'genome', now=T0 + 60)
+    assert machine_syntax(top) == [], top
+    assert 'wake handed off result' in top and 'machine detail omitted' in top
