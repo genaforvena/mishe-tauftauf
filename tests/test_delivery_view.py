@@ -55,6 +55,17 @@ def test_missing_timestamps_never_become_zeros_in_the_summary():
     assert out["review_s"]["n"] == 2
 
 
+def test_delivery_busy_refusals_are_accounted_not_silently_dropped(tmp_path):
+    home = home_with(tmp_path, [
+        record(phase="delivered", created_at=1000.0),
+        record(phase="delivery-busy", created_at=2000.0, sha="c" * 40,
+               failure="delivery admission is owned by another request"),
+    ])
+    text = view.render(home, Path("/nope"), 86400.0, 6000.0)
+    assert "promotions in window: 2 delivered 1 rolled-back/UNKNOWN 0 delivery-busy 1" in text
+    assert "no-effect delivery-busy refusal (newest): cccccccc" in text
+
+
 def test_p90_is_nearest_rank_not_interpolated():
     rows = [record(waiting_since=2000.0 + i, activation_started_at=2000.0 + i + 10)
             for i in range(10)]

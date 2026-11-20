@@ -189,8 +189,9 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
     window = [r for r in records if now - r["created_at"] <= window_s]
     delivered = [r for r in window if r.get("phase") == "delivered"]
     recoveries = [r for r in window if r.get("phase") in ("UNKNOWN", "rolled-back")]
+    busy = [r for r in window if r.get("phase") == "delivery-busy"]
     lines.append(f"promotions in window: {len(window)} delivered {len(delivered)} "
-                 f"rolled-back/UNKNOWN {len(recoveries)}")
+                 f"rolled-back/UNKNOWN {len(recoveries)} delivery-busy {len(busy)}")
     s = summarize(delivered)
     for key, label in (("commit_wait_s", "commit -> promotion start"),
                        ("check_s", "check stage (created -> check done)"),
@@ -265,6 +266,11 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
         if times:
             lines.append(f"  {label} time mean {fmt_s(sum(times) / len(times))}"
                          f" max {fmt_s(max(times))}  (n={len(times)})")
+    if busy:
+        newest_busy = max(busy, key=lambda r: r["created_at"])
+        lines.append(f"  no-effect delivery-busy refusal (newest): {str(newest_busy.get('sha', '?'))[:8]}"
+                     f" launched {fmt_ts(newest_busy.get('created_at'))}"
+                     " — admission was held, no pin byte switched")
     pin = pin_sha(home)
     if pin:
         waiting = commit_log(repo, f"{pin}..HEAD")
