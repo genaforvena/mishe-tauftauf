@@ -50,6 +50,18 @@ consumer on the wrong pin, including cases where the rollback probe failed. An
 unreadable promotion record makes the total UNKNOWN. Any wrong-pin failures
 confirmed by readable records still appear below it.
 
+The `wake-view` window's `in flight` count is not a count of engines running now. It counts
+distinct wakes whose first `select` is inside the seven-day outcome window and whose id has no
+`outcome` anywhere in the retained 40000-line ledger tail. A wake cut at the 35-minute hard cap,
+killed, or otherwise ended without a recorded outcome therefore stays `in flight` until its
+`select` ages out of the window; treat the count as missing finishes to investigate, not as live
+concurrency. At the 2026-11-20 16:52Z observation the pane read `in flight 15`: ten had selects
+3.8 to 123 hours old, far past the cap, so they cannot still be running. Finished and in-flight
+wakes are windowed differently — finished by outcome time, in flight by select time — so a wake
+selected before the window and finished inside it appears only among finished wakes. A duration
+pairs the first select with the outcome; an outcome whose select is missing from the tail is
+UNKNOWN, not zero.
+
 The `budget` window runs `operator/budget/budget_pane.sh` (site-local, under `SITE_HOME`), a loop that calls
 `budget_view.py` every 20 s and clears the screen between frames, so the registry's
 command and the table's tool name the same view.
