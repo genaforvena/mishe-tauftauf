@@ -394,7 +394,11 @@ def router_facts():
                                 "ubus call network.interface.wan status | grep -E '\"up\"|\"uptime\"' | tr -d ' \\n'"],
                                capture_output=True, text=True, timeout=12)
             days, load, wan = nb.decode_router(r.stdout)
-            _router["text"] = f"router up {days:.1f} days, load {load}, WAN {'up' if wan else 'UNKNOWN/down'}"
+            loads = load.split()
+            if len(loads) not in (3, 5):  # the live read cuts fields 1-3; accept a full loadavg line too
+                raise ValueError("malformed loadavg")
+            _router["text"] = (f"router up {days:.1f} days, load {' '.join(loads[:3])} (1/5/15 min), "
+                               f"WAN {'up' if wan else 'UNKNOWN/down'}")
         except (OSError, ValueError, subprocess.SubprocessError):
             _router["text"] = None
         _router["read_at"] = time.time()

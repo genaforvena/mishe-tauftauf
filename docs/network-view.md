@@ -79,6 +79,11 @@ min, alarm at 30 min" instead of only the instant — because one walk
 (`tools/network_boundary.py`, `load_run`) feeds both the line and the duty, so they cannot
 disagree about how long a breach has lasted.
 
+The `ROUTER` line prints its three load averages as `1/5/15 min` from a separate live read (cached for
+a minute), so its 5-minute figure can differ from the `ROUTER LOAD` line's: that one comes from the
+recording made every five minutes. Both carry their own read age, so two different numbers for
+"5-minute load" in the same pane are two moments, not a contradiction.
+
 The same checker also guards the network area's own continuity. The
 `network-progress` duty (`checks/network-care.py`, subcommand `progress`, every
 900 s, `max_age` 1800 s, resolver `network`) is RED when the network mind's wall

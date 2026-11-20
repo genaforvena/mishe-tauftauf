@@ -200,9 +200,22 @@ def test_router_facts_shows_the_read_age_and_does_not_freeze_it(monkeypatch):
                         lambda *a, **k: view.subprocess.CompletedProcess(a, 0, stdout, ""))
     line = view.router_facts()
     assert "router up 10.0 days" in line and "WAN up" in line and "read 0 s ago" in line
+    assert "load 0.15 0.20 0.25 (1/5/15 min)" in line  # three bare numbers are not self-explaining
     now[0] += 10  # still inside the 60 s cache: the age must grow with the clock
     line = view.router_facts()
     assert "read 10 s ago" in line and "read 0 s ago" not in line
+
+
+def test_router_facts_malformed_loadavg_is_unknown_not_a_numberless_line(monkeypatch):
+    now = [1_795_000_000.0]
+    monkeypatch.setattr(time, "time", lambda: now[0])
+    monkeypatch.setitem(view._router, "at", 0.0)
+    monkeypatch.setitem(view._router, "text", None)
+    monkeypatch.setitem(view._router, "read_at", 0.0)
+    stdout = "864000\nloadavg unavailable\n{\"up\":true,\"uptime\":100}\n"
+    monkeypatch.setattr(view.subprocess, "run",
+                        lambda *a, **k: view.subprocess.CompletedProcess(a, 0, stdout, ""))
+    assert view.router_facts().startswith("UNKNOWN (ssh read failed)")
 
 
 def test_router_facts_failed_read_is_unknown_with_age_and_cached(monkeypatch):
