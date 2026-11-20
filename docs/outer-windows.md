@@ -23,6 +23,13 @@ gap alone is not slow dispatch: when no new commit landed in the interval it mea
 time, and a short gap can follow commits already waiting before the last delivery finished.
 Read the per-commit wait row for dispatch latency, and look for an UNKNOWN record inside
 the gap before blaming a failed attempt.
+The `waiting for wakes (fence)` row is broken out below into quiet gaps (under a second),
+polled fences where the gap fell inside the quiet poll, and hold-waits that wait for a
+running wake to release the shared dispatch lock. The overlap, wake-start and
+holder-attribution lines divide those hold-waits by which wakes held the lock. A fence the
+routing ledger cannot cover reads UNKNOWN and is left out of the mean — it is not zero
+overlap and not evidence of a failed attempt. For the measured cost and why the quiet poll
+is short, see [Wall coordination](wall-coordination.md).
 
 The `budget` window runs `operator/budget/budget_pane.sh` (site-local, under `SITE_HOME`), a loop that calls
 `budget_view.py` every 20 s and clears the screen between frames, so the registry's
