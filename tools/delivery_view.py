@@ -22,6 +22,7 @@ not a detector: it always exits 0 unless it cannot run.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
@@ -80,6 +81,16 @@ def recent_stages(delivered: list[dict], count: int = RECENT_N) -> str:
         parts.append(f"{label} {value}{before}")
     return (f"newest {len(newest)} delivered (since {fmt_ts(newest[0]['created_at'])}): "
             + "  ".join(parts))
+
+
+
+def _wake_boundary():
+    """Load the ledger decoder beside this script, by path: unit tests import us by path too."""
+    path = Path(__file__).resolve().with_name("wake_view.py")
+    spec = importlib.util.spec_from_file_location("wake_view_boundary", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def git(repo: Path, *args: str, timeout: float = 30.0) -> tuple[int, str]:
@@ -287,6 +298,26 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
         if hold:
             lines.append("  hold-waits exhaust the 600 s poll, then wait for a running wake to"
                          " release the shared dispatch lock")
+        boundary = _wake_boundary()
+        events = boundary.load_events(home)
+        if events is None:
+            lines.append("  hold-wait/wake overlap UNKNOWN (routing ledger unreadable)")
+        else:
+            intervals = boundary.wake_intervals(events)
+            overlap = []
+            for record in delivered:
+                fence = stages(record)["wake_wait_s"]
+                if fence is not None and fence >= FENCE_HOLD_S:
+                    value = boundary.interval_coverage(intervals, record["waiting_since"],
+                                                       record["activation_started_at"])
+                    if value is not None:
+                        overlap.append(value)
+            if overlap:
+                lines.append(f"  hold-wait/wake overlap: {len(overlap)} hold-waits,"
+                             f" mean {100 * sum(overlap) / len(overlap):.1f}% of each fence"
+                             " covered by a running wake")
+            else:
+                lines.append("  hold-wait/wake overlap UNKNOWN (no paired wake intervals)")
     rollback_done, rollback_probe_failed = [], []
     for record in recoveries:
         sha = record.get("sha", "?")[:8]

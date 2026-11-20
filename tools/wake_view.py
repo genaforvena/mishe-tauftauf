@@ -56,6 +56,40 @@ def load_events(home: Path) -> list[dict] | None:
         return None
     return [e for line in lines if (e := decode(line)) is not None]
 
+def wake_intervals(events: list[dict]) -> list[tuple[float, float]]:
+    """[select, outcome] spans for wakes whose ledger has both ends.
+
+    A retained tail can begin mid-wake, so a wake without a select or outcome is
+    absent, never a zero-length interval. The shared dispatch lock a wake holds
+    runs from its first select to its outcome.
+    """
+    starts, ends = {}, {}
+    for ev in events:
+        wake, at = ev.get("wake"), ev.get("at")
+        if not wake or type(at) not in (int, float):
+            continue
+        if ev.get("event") == "select":
+            if wake not in starts or at < starts[wake]:
+                starts[wake] = at
+        elif ev.get("event") == "outcome":
+            if wake not in ends or at > ends[wake]:
+                ends[wake] = at
+    return [(at, ends[wake]) for wake, at in starts.items()
+            if wake in ends and ends[wake] >= at]
+
+
+def interval_coverage(intervals: list[tuple[float, float]], start: float, end: float) -> float | None:
+    """Fraction of [start, end] inside at least one interval; None for a torn span."""
+    if type(start) not in (int, float) or type(end) not in (int, float) or end <= start:
+        return None
+    merged = []
+    for a, b in sorted((max(a, start), min(b, end)) for a, b in intervals if b > start and a < end):
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+        else:
+            merged.append((a, b))
+    return sum(b - a for a, b in merged) / (end - start)
+
 
 def classify(outcome: str, reason: str) -> str:
     """Cause class of a finished wake, aligned with checks/wake-waste.py:classify."""

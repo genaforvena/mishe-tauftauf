@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -315,3 +316,19 @@ def test_report_prints_recent_stages_beside_the_window_table(tmp_path):
     text = view.render(home, Path("/nope"), 86400.0, 6000.0)
     assert "newest 1 delivered" in text
     assert "check 16m40s (window 16m40s)" in text
+
+
+def test_hold_wait_overlap_is_measured_from_the_routing_ledger(tmp_path, monkeypatch):
+    held = record(waiting_since=2010.0, activation_started_at=2610.0)
+    home = home_with(tmp_path, [held])
+    (tmp_path / "runtime").mkdir()
+    os.symlink(f"{tmp_path}/releases/{'c' * 40}", tmp_path / "runtime" / "current")
+    (tmp_path / "engine").mkdir()
+    stamps = []
+    for event, at in (("select", 2000.0), ("outcome", 2610.0)):
+        stamps.append(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at)),
+                                  "event": event, "wake": "w1"}))
+    (tmp_path / "engine" / "routing-ledger.jsonl").write_text("\n".join(stamps) + "\n", encoding="utf-8")
+    monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
+    text = view.render(home, Path("/nope"), 86400.0, 4000.0)
+    assert "hold-wait/wake overlap: 1 hold-waits, mean 100.0% of each fence" in text

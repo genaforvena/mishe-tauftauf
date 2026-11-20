@@ -123,3 +123,17 @@ def test_longest_finished_wakes_are_sorted_by_duration_not_recency():
     text = view.render(Path("/nope"), 86400, NOW, events, view.evaluate(events, NOW, 86400))
     line = next(ln for ln in text.splitlines() if "longest finished wakes" in ln)
     assert line.index("3m20s") < line.index("1m40s")
+
+
+def test_wake_intervals_pair_both_ends_and_drop_a_torn_wake():
+    events = [ev("select", 100.0, "w1"), ev("outcome", 200.0, "w1"),
+              ev("select", 150.0, "w2")]
+    assert view.wake_intervals(events) == [(100.0, 200.0)]
+
+
+def test_interval_coverage_merges_overlap_and_clips_to_the_measured_span():
+    intervals = [(100.0, 200.0), (180.0, 260.0)]
+    assert view.interval_coverage(intervals, 110.0, 250.0) == 1.0
+    assert view.interval_coverage(intervals, 210.0, 310.0) == 0.5
+    assert view.interval_coverage([], 0.0, 10.0) == 0.0
+    assert view.interval_coverage(intervals, 300.0, 300.0) is None
