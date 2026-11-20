@@ -128,6 +128,11 @@ def test_a_missing_work_directory_is_created(tmp_path):
     src, dst = pair(tmp_path)
     put(src, "payload.bin", b"A", size=200)
     shutil.copy2(src / "t" / "payload.bin", dst / "t" / "payload.bin")
+    # `rsync -a` preserves directory mtimes; a plain file copy bumps the destination's.
+    # Without these the size+mtime clause flakes when the copy crosses a second boundary
+    # (CI run 44652704959, 2026-11-20).
+    shutil.copystat(src / "t", dst / "t")
+    shutil.copystat(src, dst)
     work = tmp_path / "fresh" / "work"
 
     done = verify(tmp_path, src, dst, work=work)
@@ -135,3 +140,22 @@ def test_a_missing_work_directory_is_created(tmp_path):
     assert done.returncode == 0, done.stdout + done.stderr
     assert "VERIFIED t" in done.stdout
     assert (work / "verify-t.sample").is_file()
+
+
+def test_directory_mtime_drift_is_not_clean(tmp_path):
+    """The step-1 size+mtime clause covers directories, not only file bytes.
+
+    CI run 44652704959 turned RED on the missing-work-dir test when the two trees'
+    `t` directory mtimes straddled a second boundary; pin the contract here.
+    """
+    src, dst = pair(tmp_path)
+    put(src, "payload.bin", b"A", size=200)
+    shutil.copy2(src / "t" / "payload.bin", dst / "t" / "payload.bin")
+    drifted = (src / "t").stat().st_mtime + 10
+    os.utime(dst / "t", (drifted, drifted))
+
+    done = verify(tmp_path, src, dst)
+
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "NOT-CLEAN t" in done.stdout
+    assert ".d..t...... ./" in done.stdout
