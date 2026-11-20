@@ -3982,3 +3982,31 @@ closed in §§10.39-10.43: no byte-level seam has been measured, and the standin
 question stays UNKNOWN with pressure as the next thing to control, not a port
 to attempt. Full working is in `$SITE/analysis/rust-pressure-20261120.md`
 (site-local, not committed).
+
+### 10.70 A stalled freshness verifier delays next-due re-arming (2026-11-20)
+
+The pinned `arm.due` at `8592c07c` finished in 5 ms with three signals
+when the scratch verifier was missing or failed its install digest check.
+An executable stall with a matching install digest took 10.014 s for one
+signal and 30.157 s for three. The sweep resolves the install once, then
+gives every verdict its own ten-second wait. The due handler re-arms only
+after the sweep returns. The installed timer service had no start timeout
+when checked. These are controlled fixture failures. Live stall frequency
+remains UNKNOWN.
+
+Each verifier fault produced one UNKNOWN history row and a filesystem
+notification on the file named by the generated subscriber path. A repeat
+produced no edge. Restoring the binary left UNKNOWN in place until a new
+observation, then ordinary expiry routed again. The display read independently
+returned UNKNOWN for missing, corrupt and stale inputs. The corrupt reading
+was preserved on disk. The fixture exercised the pinned handler and watched
+files, with a stand-in scheduler and no systemd wake launch.
+
+The hourly Rust measurement checks binary integrity. The five-minute
+next-due check checks for an armed timer. Neither measures the sweep delay
+when a verifier with a valid digest stalls. Compare the existing in-process age
+comparison with a shared verifier deadline before retaining this Rust
+dependency. Require identical normal state and edge bytes, bounded re-arming
+under repeated stalls, and tested routing for missing, stale and broken
+observations. The earlier six-pair sweep offered only about 0.11 CPU-s to
+recover by batching verdicts.
