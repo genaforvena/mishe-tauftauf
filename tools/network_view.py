@@ -14,6 +14,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 from pathlib import Path
 
@@ -481,6 +482,31 @@ def wifi_line():
     if text is None:
         return "UNKNOWN (router Wi-Fi listing could not be read)"
     return f"{text}; read {time.time() - _wifi['at']:.0f} s ago"
+
+
+def wifi_pane_rows(text, note, width=172):
+    """Lay the WI-FI listing on pane rows; overflow continues on an indented row.
+
+    Splitting on the listing's own commas keeps device names and "2.4 GHz" intact. A single clause
+    wider than the first row falls back to a word wrap. The note reserves width on the first row.
+    """
+    first, indent = "  WI-FI         ", " " * 16
+    budget = width - len(note)
+    rows, current = [], first
+    for clause in text.split(", "):
+        piece = clause if current == first else ", " + clause
+        if len(current) + len(piece) <= (budget if not rows else width):
+            current += piece
+        elif current == first:
+            wrapped = textwrap.wrap(clause, width=budget - len(first), break_on_hyphens=False)
+            rows.append(first + wrapped[0])
+            current = indent + " ".join(wrapped[1:])
+        else:
+            rows.append(current + ",")
+            current = indent + clause
+    rows.append(current)
+    rows[0] += note
+    return rows
 
 
 ROUTER_LOG = SITE / "network" / "router.jsonl"
@@ -1759,9 +1785,10 @@ def draw():
     out.append("")
     out.append("  OUTAGES (home internet DOWN, from the probes)")
     out.extend(outage_lines(data))
-    wifi_note = ("   (read-only, live read; name from the recorded read; "
-                 f"weak below {WEAK_WIFI_DBM} dBm)")
-    out.append("  WI-FI         " + wifi_line() + wifi_note)
+    # A long device name or several weak clients must not wrap the row and push the frame's header
+    # off the pane; wifi_pane_rows moves the overflow to an indented continuation row.
+    wifi_note = f"   (read-only live read; weak below {WEAK_WIFI_DBM} dBm; names recorded)"
+    out.extend(wifi_pane_rows(wifi_line(), wifi_note))
     out.append("  WI-FI RADIO   " + wifi_radio_line() + "   (read-only iwinfo on the router)")
     quality = wifi_quality_line().split("\n")
     out.append("  WI-FI QUALITY " + quality[0])

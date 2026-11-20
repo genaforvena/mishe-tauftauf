@@ -231,10 +231,12 @@ is not mistaken for a quiet mind.
   a device that only just joined shows as its dBm until the next recorded read names it. When any
   device is below -75 dBm (the threshold is printed beside the line), the line names every weak
   device on its own band instead of hiding the others behind one global minimum; at most three are
-  named and any remainder counted. `WEAK SIGNAL` marks that state. The listing is read over ssh and
-  nothing is written; the MAC the router prints is mapped to the same short hash the router row
-  stores and never shown. A band the listing did not show (its radio gave nothing) is named
-  `UNKNOWN` there, so a silent 5 GHz radio is not read as "0 clients on 5 GHz".
+  named and any remainder counted. `WEAK SIGNAL` marks that state. When the names would run past the
+  pane's width, the rest continues on an indented row below rather than wrapping over the frame's
+  title; nothing is truncated. The listing is read over ssh and nothing is written; the MAC the
+  router prints is mapped to the same short hash the router row stores and never shown. A band the
+  listing did not show (its radio gave nothing) is named `UNKNOWN` there, so a silent 5 GHz radio
+  is not read as "0 clients on 5 GHz".
 - `WI-FI RADIO`: each known radio's channel, frequency and noise floor from the read-only router
   pass, with the age of the reading; UNKNOWN when the sub-reading is absent, STALE past 15 minutes.
   The router has one access point per band (`ra0` on 2.4 GHz, `rax0` on 5 GHz), so a band the newest

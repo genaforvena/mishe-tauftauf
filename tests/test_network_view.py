@@ -146,6 +146,35 @@ def test_live_wifi_line_keeps_single_weakest_wording_when_all_devices_are_strong
     assert weak is False and "WEAK SIGNAL" not in text
 
 
+def test_wifi_line_fits_one_pane_row_even_with_a_long_device_name(monkeypatch):
+    # The note beside the line grew a threshold legend once and wrapped the WI-FI row, pushing the
+    # frame's title off the pane. Keep the whole row inside the pane's 172 columns.
+    long_text = ("6 clients (2.4 GHz 5; 5 GHz 1), weakest A-Very-Long-Household-Device-Name "
+                 "-36 dBm on 2.4 GHz; read 41 s ago")
+    monkeypatch.setattr(view, "wifi_line", lambda: long_text)
+    monkeypatch.setattr(view, "router_facts", lambda: "router up 14.9 days; read 1 s ago")
+    line = next(l for l in view.draw().splitlines() if l.startswith("  WI-FI  "))
+    assert len(line) <= 172, (len(line), line)
+
+
+def test_wifi_rows_fit_the_pane_when_several_devices_are_weak(monkeypatch):
+    # Naming every weak client makes the listing much longer than the old single-minimum wording.
+    # All of it must stay on the pane: a wrapped row pushes the frame's title and code header away.
+    long_text = ("7 clients (2.4 GHz 5; 5 GHz 2), weak devices: "
+                 "Phone-3 -83 dBm on 2.4 GHz, Phone-2 -82 dBm on 2.4 GHz, "
+                 "Phone-1 -81 dBm on 2.4 GHz (+1 more); read 21 s ago  WEAK SIGNAL")
+    monkeypatch.setattr(view, "wifi_line", lambda: long_text)
+    monkeypatch.setattr(view, "router_facts", lambda: "router up 14.9 days; read 1 s ago")
+    drawn = view.draw().splitlines()
+    start = next(i for i, line in enumerate(drawn) if line.startswith("  WI-FI  "))
+    end = next(i for i in range(start + 1, len(drawn)) if drawn[i].startswith("  WI-FI RADIO"))
+    wifi_rows = drawn[start:end]
+    assert all(len(row) <= 172 for row in wifi_rows), wifi_rows
+    joined = " ".join(wifi_rows)
+    assert "Phone-1 -81 dBm on 2.4 GHz" in joined, joined
+    assert "read 21 s ago" in joined and "WEAK SIGNAL" in joined, joined
+
+
 def test_live_wifi_line_names_a_band_its_listing_did_not_show(tmp_path, monkeypatch):
     # the router has one access point per band; a listing that showed only one is a gap, not "0 clients"
     _router_log(tmp_path, monkeypatch, {"ts": time.time(), "ok": True, "clients": []})
