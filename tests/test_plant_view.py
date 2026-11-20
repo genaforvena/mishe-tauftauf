@@ -1002,3 +1002,18 @@ def test_a_machine_detail_in_a_dispatch_record_cannot_redden_the_wake_line(tmp_p
     top = view.render(home, 'genome', now=T0 + 60)
     assert machine_syntax(top) == [], top
     assert 'wake handed off result' in top and 'machine detail omitted' in top
+
+
+def test_structured_wake_failure_points_to_the_retained_dispatch_record(tmp_path):
+    settled_wake(tmp_path)
+    record = tmp_path / 'dispatch/genome.json'
+    write_json(record, dict(role='genome', key='wake-genome-1', state='failed',
+                            detail='{"exit_code": 42}'))
+    original = record.read_bytes()
+
+    top = view.render(tmp_path, 'genome', now=T0 + 60)
+
+    line = next(line for line in top.splitlines() if line.startswith('Wake FAILED'))
+    assert 'dispatch/genome.json' in line, line
+    assert machine_syntax(top) == [], top
+    assert record.read_bytes() == original

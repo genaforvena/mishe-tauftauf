@@ -337,8 +337,8 @@ def _dispatch(home, role, now):
         key = record['key']
         running = str(record['state']).lower() == 'started'
         start, _, _ = _wake_span(home, key, now, running=running)
-        facts = [x for x in ((f'started {_stamp(start, now)}' if start is not None else ''),
-                             readable_detail(record['detail'], 100)) if x]
+        detail = readable_detail(record['detail'], 100, evidence_source=str(record_path.relative_to(home)))
+        facts = [x for x in ((f'started {_stamp(start, now)}' if start is not None else ''), detail) if x]
         out = [cut(f'Wake {str(record["state"]).upper()}' + (' — ' + '; '.join(facts) if facts else ''))]
         receipt = read_json(yielding.receipt_path(home, key))
         if (isinstance(receipt, dict) and receipt.get('role') == role and receipt.get('key') == key
