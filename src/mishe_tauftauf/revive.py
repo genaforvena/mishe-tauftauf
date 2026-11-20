@@ -126,7 +126,8 @@ class Probe:
     hold: bool = False
     needs_start: list = field(default_factory=list)      # wake paths / timers that are not active
     failed: list = field(default_factory=list)           # failed units (name, kind)
-    views: bool = False                                  # the inner tmux session answers
+    views: bool = False                                  # the inner session answers AND every expected window exists
+    missing_views: list = field(default_factory=list)    # expected windows the inner session lacks
     inventory: list = field(default_factory=list)        # the guard's stop inventory (units it stops on a trip)
     active_inventory: list = field(default_factory=list) # the inventory units active now
 
@@ -136,6 +137,7 @@ class Result:
     code: int = 0
     lines: list = field(default_factory=list)
     actions: list = field(default_factory=list)
+    rearmed: bool = False                                # a trip was cleared by this pass or since the last sample
 
     def say(self, text: str) -> None:
         self.lines.append(text)
@@ -163,6 +165,17 @@ def probe(h: Host) -> Probe:
             p.failed.append((name, kind))
     _, sessions, _ = h.run(['tmux', '-S', h.inner_socket, 'list-sessions', '-F', '#{session_name}'])
     p.views = bool(b.session_names(sessions))
+    if p.views:
+        # A session with only chat/git/wakes is NOT up (2026-11-20: 11 mind windows were missing and the
+        # probe said "alive"). Judge it against the presentation the site declares; unreadable stays as before.
+        config = b.decode_json(h.read(h.home / 'presentation.json'))
+        if isinstance(config, dict) and isinstance(config.get('session'), str):
+            want = [w for w in [*(config.get('active') or []), *(config.get('resting') or []), 'chat', 'git', 'wakes']
+                    if isinstance(w, str)]
+            _, windows, _ = h.run(['tmux', '-S', h.inner_socket, 'list-windows', '-t', '=' + config['session'],
+                                   '-F', '#{window_name}'])
+            p.missing_views = sorted(set(want) - set(b.session_names(windows)))
+            p.views = not p.missing_views
     p.inventory = inventory_units(h)
     p.active_inventory = active_units(h, p.inventory)
     return p
@@ -216,6 +229,7 @@ def note_healthy(h: Host, p: Probe, r: Result, dry_run: bool) -> None:
     last = doc.get('checked')
     if last is not None and any(t > last for t in h.latch_archive_times()):
         owe(doc, doc.get('active', []))
+        r.rearmed = True
         r.say(f'a trip was rearmed since the last sample; owed restarts: {", ".join(doc["owed"]) or "none"}')
     doc['active'], doc['checked'] = p.active_inventory, h.now()
     if not dry_run:
@@ -289,7 +303,8 @@ def restart_owed(h: Host, p: Probe, r: Result, *, dry_run: bool) -> None:
 def describe(p: Probe) -> str:
     bits = [f'guard {p.state or "UNKNOWN"}', 'latched' if p.latch else 'no latch',
             f'{len(p.needs_start)} wake path/timer not active', f'{len(p.failed)} failed unit(s)',
-            'views up' if p.views else 'views DOWN', 'HELD' if p.hold else 'not held']
+            'views up' if p.views else 'views DOWN' + (f' (missing: {", ".join(p.missing_views)})' if p.missing_views else ''),
+            'HELD' if p.hold else 'not held']
     return '; '.join(bits)
 
 
@@ -427,6 +442,21 @@ def revive_units(h: Host, p: Probe, r: Result, *, dry_run: bool) -> None:
                 r.say(f'rebuilding the views failed: {b.first_line(err)}')
 
 
+def reoffer_wakes(h: Host, p: Probe, r: Result, *, dry_run: bool) -> None:
+    """After a trip is cleared, the wakes the latch skipped are gone; nothing offers them again by itself
+    (2026-11-20: 11 roles stayed asleep until `mishe hold off` was run by hand). A hold is respected."""
+    if not r.rearmed or p.hold:
+        return
+    if dry_run:
+        r.say('dry run: would run `mishe hold off` to re-offer the wakes the trip skipped')
+        return
+    code, _, err = h.run([sys.executable, '-m', 'mishe_tauftauf', 'hold', 'off'], timeout=120)
+    r.actions.append('mishe hold off (re-offer skipped wakes)')
+    if code != 0:
+        r.code = max(r.code, 3)
+        r.say(f're-offering the skipped wakes failed: {b.first_line(err)}')
+
+
 def run(h: Host, *, auto=False, dry_run=False, allow_repeat=False, diagnosis='') -> Result:
     r = Result()
     p = probe(h)
@@ -447,12 +477,14 @@ def run(h: Host, *, auto=False, dry_run=False, allow_repeat=False, diagnosis='')
             return r
         if not wait_normal(h, r):
             return r
+        r.rearmed = True
         p = probe(h)
     elif p.state not in HEALTHY_STATES:
         r.say(f'the guard is {p.state}; waiting for it to settle before changing anything')
         return r
     note_healthy(h, p, r, dry_run)
     restart_owed(h, p, r, dry_run=dry_run)
+    reoffer_wakes(h, p, r, dry_run=dry_run)
     if not (p.needs_start or p.failed or not p.views):
         r.say('alive: nothing to revive')
         return r

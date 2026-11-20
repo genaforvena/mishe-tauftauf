@@ -68,3 +68,21 @@ def test_parse_pane_dead_flags_rejects_malformed_observations(text):
     from mishe_tauftauf.plant_tmux import parse_pane_dead_flags
     with pytest.raises(ValueError):
         parse_pane_dead_flags(text)
+
+
+def test_unmarked_hand_made_tape_views_are_adopted_but_unmarked_role_windows_are_refused(tmp_path):
+    socket = str(tmp_path / 'tmux.sock')
+    env = {k: v for k, v in os.environ.items() if k != 'TMUX'}
+    def tmux(*args):
+        return subprocess.check_output(['tmux', '-S', socket, *args], env=env, text=True).strip()
+    try:
+        tmux('new-session', '-d', '-s', 'test', '-n', 'chat', '/bin/cat')       # hand-made, no @mishe-view marker
+        tmux('new-window', '-d', '-t', 'test:', '-n', 'git', '/bin/cat')
+        setup(socket, 'test', tmp_path, ['genome'], command=['/bin/cat'])
+        for name in ('chat', 'git', 'wakes', 'genome'):
+            assert tmux('show-options', '-wqv', '-t', 'test:' + name, '@mishe-view') == name
+        tmux('new-window', '-d', '-t', 'test:', '-n', 'health', '/bin/cat')     # unmarked ROLE window: never adopted
+        with pytest.raises(ValueError, match='not an owned view'):
+            setup(socket, 'test', tmp_path, ['genome', 'health'], command=['/bin/cat'])
+    finally:
+        subprocess.run(['tmux', '-S', socket, 'kill-server'], env=env, capture_output=True)

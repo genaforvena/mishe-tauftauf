@@ -112,7 +112,12 @@ def setup(socket: str, session: str, home: Path, roles, *, command=None, view_co
         target = session + ':' + role
         exists = role in tmux('list-windows', '-t', '=' + session, '-F', '#{window_name}').splitlines()
         marker = tmux('show-options', '-wqv', '-t', target, '@mishe-view', check=False) if exists else ''
-        if exists and marker not in (role, 'bootstrap'):
+        # chat/git/wakes are pure views of the canonical tapes. A hand-made one without our marker (an
+        # operator restoring the session by hand after a boot trip, 2026-11-20) is adopted by respawning
+        # its single pane; an unmarked window of any other name is still refused, never touched.
+        adopt = (exists and marker == '' and role in ('chat', 'git', 'wakes')
+                 and len(tmux('list-panes', '-t', target, '-F', '#{pane_id}').splitlines()) == 1)
+        if exists and marker not in (role, 'bootstrap') and not adopt:
             raise ValueError(f'window {target} is not an owned view; reconcile it explicitly')
         base = command or [*view_argv(view_command), '--home', str(home.resolve()), '--role', role, '--follow']
         chat = ['tail', '-n', '100', '-F', '--', str(home.resolve() / 'chat.log')]
@@ -122,8 +127,8 @@ def setup(socket: str, session: str, home: Path, roles, *, command=None, view_co
         top = shlex.join(chat if role == 'chat' else tape if role in ('git', 'wakes') else base)
         if not exists:
             tmux('new-window', '-d', '-t', session + ':', '-n', role, top)
-        elif marker == 'bootstrap':
-            tmux('respawn-pane', '-k', '-t', target, top)  # only our newly created cat
+        elif marker == 'bootstrap' or adopt:
+            tmux('respawn-pane', '-k', '-t', target, top)  # our newly created cat, or an unmarked tape view
         tmux('set-option', '-w', '-t', target, '@mishe-view', role)
         panes = tmux('list-panes', '-t', target, '-F', '#{pane_id}').splitlines()
         expected = 1 if role in ('chat', 'git', 'wakes') else 2

@@ -19,7 +19,7 @@ UNITS = ('mishe-wake-health.path loaded inactive dead Mishe wake triggers\n'
 class Fake(revive.Host):
     def __init__(self, tmp_path, *, latch=LATCH, emergency=False, ready=READY, inside=False, restores=(),
                  units=UNITS, views=False, io=0, restore_works=True, hold=False, life=None,
-                 inventory=(), archives=(), start_fails=(), enabled=True):
+                 inventory=(), archives=(), start_fails=(), enabled=True, windows=None):
         super().__init__(tmp_path / 'site', tmp_path / 'repo')
         self.t = NOW
         self.files, self.calls, self.inside, self.restores = {}, [], inside, list(restores)
@@ -34,6 +34,10 @@ class Fake(revive.Host):
         if hold:
             self.files[str(self.home / 'hold')] = 'maintenance'
         self.ready, self.units, self.views, self.io, self.restore_works, self.life = ready, units, views, io, restore_works, life
+        self.windows = windows
+        if windows is not None:
+            self.files[str(self.home / 'presentation.json')] = json.dumps(
+                {'active': ['genome', 'health'], 'resting': [], 'session': 'mishe'})
         self.normal = not self.latched
         self.healthy = 'NORMAL'
 
@@ -75,6 +79,8 @@ class Fake(revive.Host):
             return 0, '', ''
         if argv[:3] == ['systemctl', '--user', 'is-enabled']:
             return 0, ('enabled' if self.enabled else 'disabled'), ''
+        if argv[0] == 'tmux' and 'list-windows' in argv:
+            return 0, '\n'.join(self.windows or []) + '\n', ''
         if argv[0] == 'tmux':
             return (0, 'mishe\n', '') if self.views else (1, '', 'no server')
         return 0, '', ''
@@ -302,3 +308,49 @@ def test_a_dry_run_reports_a_persisting_unknown_record(tmp_path):
                                                          'unknown': {PHONE[1]: revive.MAX_OWED_ATTEMPTS}})
     r = revive.run(h, dry_run=True)
     assert r.code == 3 and 'gave up after 12 attempts' in ' '.join(r.lines) and not acted(h)
+
+
+FULL = ['genome', 'health', 'chat', 'git', 'wakes']
+HEALTHY = 'mishe-wake-genome.path loaded active waiting x\n'
+
+
+def test_a_session_missing_mind_windows_is_not_views_up_and_gets_rebuilt(tmp_path):
+    h = Fake(tmp_path, latch=None, units=HEALTHY, views=True, windows=['chat', 'git', 'wakes'])
+    r = revive.run(h)
+    assert 'views DOWN (missing: genome, health)' in r.lines[0]
+    assert ['systemctl', '--user', 'restart', 'plant-mishe-ui.service'] in h.calls
+
+
+def test_a_complete_session_is_left_alone(tmp_path):
+    h = Fake(tmp_path, latch=None, units=HEALTHY, views=True, windows=FULL)
+    r = revive.run(h)
+    assert 'views up' in r.lines[0] and 'alive: nothing to revive' in r.lines[-1] and not acted(h)
+
+
+def test_without_a_readable_presentation_only_the_session_is_judged(tmp_path):
+    h = Fake(tmp_path, latch=None, units=HEALTHY, views=True)
+    assert 'alive: nothing to revive' in revive.run(h).lines[-1]
+
+
+HOLD_OFF = [revive.sys.executable, '-m', 'mishe_tauftauf', 'hold', 'off']
+
+
+def test_a_restored_trip_re_offers_the_wakes_it_skipped(tmp_path):
+    h = Fake(tmp_path, units=HEALTHY, views=True, windows=FULL)
+    r = revive.run(h, auto=True)
+    assert HOLD_OFF in h.calls and 'mishe hold off (re-offer skipped wakes)' in r.actions
+
+
+def test_a_held_plant_or_a_dry_run_never_gets_hold_off(tmp_path):
+    h = Fake(tmp_path, units=HEALTHY, views=True, windows=FULL, hold=True)
+    revive.run(h, auto=True)
+    assert HOLD_OFF not in h.calls
+    h = Fake(tmp_path, units=HEALTHY, views=True, windows=FULL)
+    revive.run(h, auto=True, dry_run=True)
+    assert HOLD_OFF not in h.calls
+
+
+def test_a_healthy_plant_with_no_trip_is_not_re_offered(tmp_path):
+    h = Fake(tmp_path, latch=None, units=HEALTHY, views=True, windows=FULL)
+    revive.run(h)
+    assert HOLD_OFF not in h.calls
