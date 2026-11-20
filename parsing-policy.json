@@ -83,6 +83,7 @@
     "tools/audio_hint.py",
     "tools/audio_listener.py",
     "tools/delivery_view.py",
+    "tools/wake_view.py",
     "tools/camera_signature.py",
     "tools/daylight_curve.py",
     "tools/hint_calibration.py",
