@@ -763,8 +763,19 @@ def test_holder_span_tail_counts_cap_breaches_and_long_holder_share():
 def test_holder_span_tail_line_names_cap_breach_and_share():
     tail = view.holder_span_tail(_span_tail_fixture(), cap_s=2100.0, long_s=1200.0)
     assert view.holder_span_tail_line(tail, cap_s=2100.0, long_s=1200.0) == (
-        "  fence-holder wake lengths: max 35m50s vs cap 35m00s, 1/4 over cap;"
+        "  fence-holder wake lengths: max 35m50s vs cap 35m00s, 1/4 over cap+5s;"
         " 3/4 >=20m00s gave 15m00s of 16m40s fence overlap (90%)")
+
+
+def test_holder_span_tail_ignores_cap_plus_recording_overhead():
+    spans = {"fences": [{"wakes": [
+        {"span_s": 2101.0, "overlap_s": 100.0},   # cap + 1 s: cut by the cap, not an escape
+        {"span_s": 2104.0, "overlap_s": 100.0},   # still inside the 5 s recording slack
+        {"span_s": 2500.0, "overlap_s": 100.0},   # real escape
+    ]}], "unmeasured": 0}
+    tail = view.holder_span_tail(spans)
+    assert tail["over_cap"] == 1
+    assert tail["max_span"] == 2500.0
 
 
 def test_holder_span_tail_is_unknown_without_a_paired_wake():
@@ -779,7 +790,7 @@ def test_report_prints_holder_span_tail_beside_the_span_line(tmp_path):
     home = home_with(tmp_path, [held])
     write_ledger(home, events)
     text = view.render(home, Path("/nope"), 86400.0, 6000.0)
-    assert "fence-holder wake lengths: max 10m00s vs cap 35m00s, 0/1 over cap" in text
+    assert "fence-holder wake lengths: max 10m00s vs cap 35m00s, 0/1 over cap+5s" in text
 
 
 def test_fence_spans_json_emits_machine_readable_fences_and_no_text_report(tmp_path, capsys):

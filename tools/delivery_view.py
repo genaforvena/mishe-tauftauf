@@ -68,6 +68,14 @@ Measured from recorded select/outcome timestamps, not read from the cap config, 
 regression in wake teardown stays visible in the view instead of being assumed away.
 """
 
+CAP_RECORDING_SLACK_S = 5.0
+"""Wakes stopped at the cap often record an outcome one second after the 35 min deadline.
+
+Treating any span over the bare cap as a breach turns that recording overhead into a
+false alarm: the ledger holds wakes at exactly cap+1 s that were cut by the cap. A real
+escape (the old MiniMax era ran to 50+ min) is far beyond this slack.
+"""
+
 LONG_HOLDER_S = 20 * 60.0
 """A fence holder at or above this is long enough to impose a near-cap fence on a promotion."""
 
@@ -359,8 +367,9 @@ def holder_span_tail(spans: dict | None, cap_s: float = WAKE_HARD_CAP_S,
                      long_s: float = LONG_HOLDER_S) -> dict | None:
     """Fence-holder wake lengths against the engine's hard cap.
 
-    ``over_cap`` counts holders whose full select->outcome span exceeded the cap; it is
-    the continuing detector for the 'throttled wake outlives the hard cap' hypothesis.
+    ``over_cap`` counts holders whose full select->outcome span exceeded the cap by more
+    than the outcome-recording slack; it is the continuing detector for a real
+    'throttled wake outlives the hard cap' escape, not a false alarm on cap+1 s recordings.
     ``long_overlap`` is the fence seconds donated by holders at or above ``long_s``,
     beside all overlap, so a near-cap wake's share of a fence stays visible. Returns
     None when no paired holder span exists, so a broken ledger stays UNKNOWN instead
@@ -373,7 +382,8 @@ def holder_span_tail(spans: dict | None, cap_s: float = WAKE_HARD_CAP_S,
         return None
     long_rows = [row for row in rows if row["span_s"] >= long_s]
     return {"n": len(rows), "max_span": max(row["span_s"] for row in rows),
-            "over_cap": sum(1 for row in rows if row["span_s"] > cap_s),
+            "over_cap": sum(1 for row in rows
+                            if row["span_s"] > cap_s + CAP_RECORDING_SLACK_S),
             "long_n": len(long_rows),
             "long_overlap": sum(row["overlap_s"] for row in long_rows),
             "total_overlap": sum(row["overlap_s"] for row in rows),
@@ -382,12 +392,12 @@ def holder_span_tail(spans: dict | None, cap_s: float = WAKE_HARD_CAP_S,
 
 def holder_span_tail_line(tail: dict, cap_s: float = WAKE_HARD_CAP_S,
                           long_s: float = LONG_HOLDER_S) -> str:
-    """One bounded line: cap breaches (expected zero) and the long-holder overlap share."""
+    """One bounded line: real cap escapes (beyond recording slack) and the long-holder share."""
     share = (f"{100 * tail['long_overlap'] / tail['total_overlap']:.0f}%"
              if tail["total_overlap"] > 0 else "UNKNOWN")
     unknown = (f"; {tail['unmeasured']} fence(s) UNKNOWN" if tail["unmeasured"] else "")
     return (f"  fence-holder wake lengths: max {fmt_s(tail['max_span'])} vs cap {fmt_s(cap_s)},"
-            f" {tail['over_cap']}/{tail['n']} over cap;"
+            f" {tail['over_cap']}/{tail['n']} over cap+{CAP_RECORDING_SLACK_S:g}s;"
             f" {tail['long_n']}/{tail['n']} >={fmt_s(long_s)} gave"
             f" {fmt_s(tail['long_overlap'])} of {fmt_s(tail['total_overlap'])}"
             f" fence overlap ({share}){unknown}")
