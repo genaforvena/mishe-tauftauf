@@ -246,8 +246,7 @@ change to a protocol boundary: update its `CONTRACT.md` in the same commit and r
 its contract test (`tests/test_mishe_tape_frames.py`,
 `tests/test_mishe_records_verify.py`, `tests/test_mishe_tape_facts.py`,
 `tests/test_mishe_network_probe.py`, `tests/test_rust_systemd_show.py`,
-`tests/test_signal_samples.py`, `tests/test_signal_freshness.py`,
-`tests/test_rust_unit_paths.py`).
+`tests/test_signal_samples.py`, `tests/test_rust_unit_paths.py`).
 
 A delivery request's spec holds the repository, the exact commit and its previous
 commit. The author role and the originating wake key are not in the spec; they
