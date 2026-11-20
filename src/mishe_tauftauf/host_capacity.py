@@ -103,14 +103,36 @@ def status(root, *, now=None):
                 "render_timeout": 30, "reason": str(exc)}
 
 
+def cgroup_pressure(path, name):
+    """avg60 `full` pressure of one cgroup v2 controller, or None if it cannot be read."""
+    try:
+        rows = (Path(path) / f"{name}.pressure").read_text().splitlines()
+        row = next(x for x in rows if x.startswith("full "))
+        return float(dict(x.split("=", 1) for x in row.split()[1:])["avg60"])
+    except (OSError, ValueError, KeyError, StopIteration):
+        return None
+
+
 def observe(slice_path):
+    """Capacity reading for the controlled slice.
+
+    Memory pressure is read from the slice's own memory.pressure, never the global /proc/pressure:
+    a contained neighbour slice under its own memory.high (2026-11-20, m2shell php asan build)
+    raised global PSI and gated this slice's dispatch while the slice sat at zero pressure. A
+    missing slice reading becomes None, which decide() maps to UNKNOWN (fail closed). IO and
+    available memory stay host-wide (unchanged). Global memory PSI is kept in the observation as
+    visibility only and is not used by decide().
+    """
     try:
         path = Path(slice_path)
         current, high, maximum = [int((path / name).read_text())
                                   for name in ("memory.current", "memory.high", "memory.max")]
         events = dict((key, int(value)) for key, value in
                       (line.split() for line in (path / "memory.events").read_text().splitlines()))
-        return dict(recovery.pressure(), current=current, high=high, max=maximum, events=events)
+        host = recovery.pressure()
+        return {"memory_full": cgroup_pressure(path, "memory"), "io_full": host["io_full"],
+                "available_ratio": host["available_ratio"], "host_memory_full": host["memory_full"],
+                "current": current, "high": high, "max": maximum, "events": events}
     except (OSError, ValueError, TypeError):
         return None
 

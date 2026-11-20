@@ -355,3 +355,43 @@ def test_near_max_cache_only_is_limited_not_critical():
     assert row["state"] == "CRITICAL" and row["slots"] == 0
     row = host.decide(None, sample(current=1000, memory=30.), now=100, stable_seconds=20)
     assert row["state"] == "CRITICAL", "memory_full >= 25 stays critical at any current"
+
+
+def _slice_dir(tmp_path, *, memory_full="0.00", with_pressure=True):
+    root = tmp_path / "mishe.slice"
+    root.mkdir()
+    for name, value in (("memory.current", "100"), ("memory.high", "1000"), ("memory.max", "1200")):
+        (root / name).write_text(value + "\n")
+    (root / "memory.events").write_text("low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\n")
+    if with_pressure:
+        (root / "memory.pressure").write_text(
+            f"some avg10=0.00 avg60=0.00 avg300=0.00 total=1\nfull avg10={memory_full} avg60={memory_full} avg300=0.00 total=1\n")
+        (root / "io.pressure").write_text("full avg10=0.00 avg60=0.00 avg300=0.00 total=1\n")
+    return root
+
+
+def test_contained_neighbour_pressure_does_not_gate_the_mishe_slice(tmp_path, monkeypatch):
+    # 2026-11-20: global PSI full avg60 was 28-54 from the m2shell slice while mishe.slice sat at 0.
+    # The dispatch reading must follow the controlled slice, so this stays NORMAL.
+    monkeypatch.setattr(host.recovery, "pressure", lambda: {
+        "memory_full": 53.8, "io_full": 1.0, "available_ratio": .7})
+    obs = host.observe(_slice_dir(tmp_path, memory_full="0.00"))
+    assert obs["memory_full"] == 0.0
+    assert obs["host_memory_full"] == 53.8  # visibility only
+    row = host.decide(None, obs, now=100.0)
+    assert row["state"] == "NORMAL" and row["slots"] == 4
+
+
+def test_pressure_inside_the_slice_still_gates_dispatch(tmp_path, monkeypatch):
+    monkeypatch.setattr(host.recovery, "pressure", lambda: {
+        "memory_full": 0.0, "io_full": 1.0, "available_ratio": .7})
+    obs = host.observe(_slice_dir(tmp_path, memory_full="30.00"))
+    assert host.decide(None, obs, now=100.0)["state"] == "CRITICAL"
+
+
+def test_unreadable_slice_pressure_fails_closed_to_unknown(tmp_path, monkeypatch):
+    monkeypatch.setattr(host.recovery, "pressure", lambda: {
+        "memory_full": 0.0, "io_full": 1.0, "available_ratio": .7})
+    obs = host.observe(_slice_dir(tmp_path, with_pressure=False))
+    assert obs["memory_full"] is None
+    assert host.decide(None, obs, now=100.0)["state"] == "UNKNOWN"
