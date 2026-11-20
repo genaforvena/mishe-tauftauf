@@ -176,12 +176,16 @@ reports each delivery's check and fence stages (newest ten beside the window mea
 was about 8m47s after the suite moved to two xdist workers (down from about 16m), while the fence
 was 16m53s for the newest ten (12m53s over 24 h): most modern delivery time is the fence, and
 25 of 36 fences were waits for already-running wakes, covered 99.7% by them, mean 5.6 wakes each.
-The quiet poll before the hold is deliberately short (120 s): in the retired 600 s regime a wake
-that started inside the poll finished last in 13 of the 22 legacy fences (10 of those started after 120 s),
-extending the wait; after the change none of the first three fences ended on a poll-start. A
-shorter poll is not a free win — removing observed arrivals at 0/30/60/90 s leaves the same
-pre-existing last wake — so any further cut to the all-wakes-must-release gate is a high-impact
-change with its own fresh review and deterministic revert/reapply checks, not a tuning knob.
+The quiet poll before the hold is deliberately short (120 s), and the paired-wake export now shows
+what that bought: over 26 spans, the 22 legacy 600 s fences averaged 1140 s of fence and 2240 s of
+holder wake-seconds across 5.8 wakes, with 13 ending on a wake that started inside the poll; the 4
+current 120 s fences averaged 528 s of fence and 1226 s of holder seconds across 4.0 wakes, with
+none ending on a poll-start. The change roughly halved the fence and removed poll-start-terminated
+waits. One 120 s fence did contain a poll-start (health, ending 10:35:39Z), but a pre-existing genome
+wake outlasted it by 188 s, so the poll-start still did not set the end. A shorter poll is not
+otherwise a free win — removing observed arrivals at 0/30/60/90 s leaves the same pre-existing last
+wake fixed — so any further cut to the all-wakes-must-release gate is a high-impact change with its
+own fresh review and deterministic revert/reapply checks, not a tuning knob.
 
 ```sh
 mishe release request --sha FULL_SHA --previous FULL_SHA \
