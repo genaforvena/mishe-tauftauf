@@ -118,3 +118,37 @@ def test_state_file_written_json(monkeypatch, tmp_path):
     row = json.loads(target.read_text())
     assert row["state"] == "red"
     assert row["boot_admit_status"] == "3"
+
+
+def test_oneshot_producers_that_ran_this_boot_count_as_admitted(monkeypatch):
+    """Producers are oneshot timers: between runs they are inactive.
+
+    Counting only active units read 0 on a healthy plant and sent a false RED
+    at 15:25Z on 2026-11-20 while six producers had just succeeded.  A success
+    this boot counts; a failed run and a never-run unit do not.
+    """
+    check = load_check()
+    listing = ("mishe-producer-commit-risk.service loaded inactive dead x\n"
+               "mishe-producer-bound-evidence.service loaded failed failed x\n"
+               "mishe-producer-never.service loaded inactive dead x\n"
+               "mishe-producer-running.service loaded active running x\n")
+    shown = ("Id=mishe-producer-commit-risk.service\nActiveState=inactive\n"
+             "Result=success\nExecMainExitTimestampMonotonic=5000000\n\n"
+             "Id=mishe-producer-bound-evidence.service\nActiveState=failed\n"
+             "Result=exit-code\nExecMainExitTimestampMonotonic=6000000\n\n"
+             "Id=mishe-producer-never.service\nActiveState=inactive\n"
+             "Result=success\nExecMainExitTimestampMonotonic=0\n\n"
+             "Id=mishe-producer-running.service\nActiveState=activating\n"
+             "Result=success\nExecMainExitTimestampMonotonic=0\n")
+    calls = []
+
+    class Done:
+        def __init__(self, out):
+            self.stdout, self.stderr, self.returncode = out, "", 0
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return Done(listing if "list-units" in command else shown)
+
+    monkeypatch.setattr(check.subprocess, "run", fake_run)
+    assert check._producer_count() == 2

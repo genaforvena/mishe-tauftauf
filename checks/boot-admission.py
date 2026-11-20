@@ -124,17 +124,51 @@ def _systemctl_show(unit: str, *props: str) -> dict:
 
 
 def _producer_count() -> int:
-    """Number of currently active mishe producer services."""
-    command = ["systemctl", "--user", "list-units", PRODUCER_PATTERN,
-               "--state=active", "--no-legend", "--no-pager"]
+    """Producers that are running now, or completed successfully this boot.
+
+    Producers are oneshot timer units: between runs they are inactive, so a
+    count of active units reads zero on a healthy plant.  A producer counts as
+    admitted when it is activating/active, or when it has a successful exit
+    this boot.  ExecMainExitTimestampMonotonic is measured from boot, so a
+    non-zero value means it ran since this boot.  Failed runs do not count.
+    """
+    listing = ["systemctl", "--user", "list-units", PRODUCER_PATTERN,
+               "--all", "--no-legend", "--no-pager", "--plain"]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=15)
+        result = subprocess.run(listing, capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise Undecidable("cannot list producer units: %s" % exc)
     if result.returncode:
         raise Undecidable("listing producer units failed: %s"
                           % ((result.stderr or "").strip()[-300:]))
-    return sum(1 for line in result.stdout.splitlines() if line.strip())
+    names = [line.split()[0] for line in result.stdout.splitlines() if line.strip()]
+    if not names:
+        return 0
+    command = ["systemctl", "--user", "show", "--no-pager"] + names + [
+        "-p", "Id", "-p", "ActiveState", "-p", "Result",
+        "-p", "ExecMainExitTimestampMonotonic"]
+    try:
+        shown = subprocess.run(command, capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise Undecidable("cannot read producer units: %s" % exc)
+    if shown.returncode:
+        raise Undecidable("reading producer units failed: %s"
+                          % ((shown.stderr or "").strip()[-300:]))
+    count = 0
+    for block in shown.stdout.split("\n\n"):
+        row = {}
+        for line in block.splitlines():
+            if "=" in line:
+                key, _, value = line.partition("=")
+                row[key.strip()] = value.strip()
+        if not row.get("Id"):
+            continue
+        running = row.get("ActiveState") in ("active", "activating", "reloading")
+        ran_ok = (row.get("Result") == "success"
+                  and row.get("ExecMainExitTimestampMonotonic", "0") not in ("", "0"))
+        if running or ran_ok:
+            count += 1
+    return count
 
 
 def assess(repo: pathlib.Path = REPO) -> dict:
