@@ -201,6 +201,70 @@ def poll_wake_starts(delivered: list[dict], starts: list[float],
     }
 
 
+def fence_holders(events: list[dict] | None, delivered: list[dict]) -> dict[str, dict[str, float]] | None:
+    """Attribute hold-wait fence coverage to the wakes that supplied it, by candidate and role.
+
+    Only a wake with a paired select/outcome span counts: a bare select is a start, not evidence
+    that the wake held the lock for any interval. Each overlap is clipped to one fence, so a
+    wake that ran before or after a fence does not donate those seconds. An uncovered fence
+    contributes nothing and never becomes a fabricated zero. Returns None when no hold-wait
+    fence has a measured holder, so a broken ledger stays UNKNOWN instead of reading as an
+    empty distribution.
+    """
+    if not events:
+        return None
+    first: dict[str, tuple[str, str, float]] = {}
+    ended: dict[str, float] = {}
+    for ev in events:
+        wake, at = ev.get("wake"), ev.get("at")
+        if not wake or type(at) not in (int, float):
+            continue
+        if ev.get("event") == "select":
+            meta = (str(ev.get("role") or "?"), str(ev.get("key") or "?"), at)
+            if wake not in first or at < first[wake][2]:
+                first[wake] = meta
+        elif ev.get("event") == "outcome" and (wake not in ended or at > ended[wake]):
+            ended[wake] = at
+    spans = [(role, key, at, ended[wake], wake) for wake, (role, key, at) in first.items()
+             if wake in ended and ended[wake] >= at]
+    if not spans:
+        return None
+    by_candidate: dict[str, float] = {}
+    by_role: dict[str, float] = {}
+    distinct: list[int] = []
+    for rec in delivered:
+        fence = stages(rec)["wake_wait_s"]
+        if fence is None or fence < quiet_poll_s(rec):
+            continue
+        ws, ac = rec.get("waiting_since"), rec.get("activation_started_at")
+        if not (isinstance(ws, (int, float)) and isinstance(ac, (int, float)) and ac > ws):
+            continue
+        holders: set[str] = set()
+        for role, key, a, b, wake in spans:
+            overlap = min(ac, b) - max(ws, a)
+            if overlap <= 0:
+                continue
+            holders.add(wake)
+            by_candidate[key] = by_candidate.get(key, 0.0) + overlap
+            by_role[role] = by_role.get(role, 0.0) + overlap
+        if holders:
+            distinct.append(len(holders))
+    if not by_candidate:
+        return None
+    return {"by_candidate": by_candidate, "by_role": by_role, "distinct": distinct}
+
+
+def _holder_line(label: str, values: dict[str, float], limit: int = 4) -> str:
+    """One bounded, descending line of holder seconds with each holder's share."""
+    total = sum(values.values())
+    top = sorted(values.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    parts = [f"{name} {int(seconds)}s ({100 * seconds / total:.0f}%)" for name, seconds in top]
+    if len(values) > limit:
+        parts.append(f"+{len(values) - limit} more")
+    return f"  fence-holder wake-seconds by {label}: " + ", ".join(parts)
+
+
+
 def _check_at(record: dict) -> float | None:
     check = record.get("check")
     at = check.get("at") if isinstance(check, dict) else None
@@ -411,6 +475,15 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
                              f" after hold {poll['after_mean']:.2f}{suffix}")
             elif hold_windows:
                 lines.append("  wake starts in the quiet poll UNKNOWN (same missing ledger evidence)")
+            holders = fence_holders(events, delivered)
+            if holders is None:
+                lines.append("  fence-holder attribution UNKNOWN (no paired wake span covers a hold-wait)")
+            else:
+                lines.append(_holder_line("candidate", holders["by_candidate"]))
+                lines.append(_holder_line("role", holders["by_role"]))
+                d = holders["distinct"]
+                lines.append(f"  distinct wakes per hold-wait fence: mean {sum(d) / len(d):.1f}"
+                             f" (max {max(d)}), {len(d)} fences")
     rollback_done, rollback_probe_failed = [], []
     for record in recoveries:
         sha = record.get("sha", "?")[:8]

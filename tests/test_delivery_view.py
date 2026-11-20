@@ -493,3 +493,73 @@ def test_report_does_not_claim_zero_overlap_without_ledger_evidence(tmp_path, mo
         assert "hold-wait/wake overlap UNKNOWN (no wake interval covers a measured fence)" in text
         assert "wake starts in the quiet poll UNKNOWN (same missing ledger evidence)" in text
         assert "after hold 0.00" not in text
+
+
+def _holder_event(wake, event, at, role, key):
+    return {"wake": wake, "event": event, "at": at, "role": role, "key": key}
+
+
+def test_fence_holders_clips_each_wake_to_the_fence_and_counts_distinct_wakes():
+    held = record(waiting_since=2010.0, activation_started_at=3010.0)
+    # w1 starts before the fence, w2 ends after it: neither donates the out-of-fence seconds.
+    events = [
+        _holder_event("w1", "select", 1900.0, "genome", "model-a"),
+        _holder_event("w2", "select", 2510.0, "pub", "model-b"),
+        _holder_event("w1", "outcome", 2510.0, "genome", "model-a"),
+        _holder_event("w2", "outcome", 3200.0, "pub", "model-b"),
+    ]
+    out = view.fence_holders(events, [held])
+    assert out["by_candidate"] == {"model-a": 500.0, "model-b": 500.0}
+    assert out["by_role"] == {"genome": 500.0, "pub": 500.0}
+    assert out["distinct"] == [2]
+
+
+def test_fence_holders_ignores_a_select_without_an_outcome():
+    held = record(waiting_since=2010.0, activation_started_at=3010.0)
+    events = [_holder_event("w1", "select", 2000.0, "genome", "model-a")]
+    assert view.fence_holders(events, [held]) is None
+
+
+def test_fence_holders_is_unknown_when_no_wake_covers_a_hold_wait():
+    held = record(waiting_since=2010.0, activation_started_at=3010.0)
+    events = [_holder_event("w1", "select", 1000.0, "genome", "model-a"),
+              _holder_event("w1", "outcome", 1500.0, "genome", "model-a")]
+    assert view.fence_holders(events, [held]) is None
+
+
+def test_report_prints_fence_holder_attribution(tmp_path, monkeypatch):
+    held = record(waiting_since=2010.0, activation_started_at=3010.0)
+    home = home_with(tmp_path, [held])
+    (tmp_path / "runtime").mkdir()
+    os.symlink(f"{tmp_path}/releases/{'c' * 40}", tmp_path / "runtime" / "current")
+    (tmp_path / "engine").mkdir()
+    lines = []
+    for wake, event, at, role, key in (
+        ("w1", "select", 1900.0, "genome", "model-a"),
+        ("w2", "select", 2510.0, "pub", "model-b"),
+        ("w1", "outcome", 2510.0, "genome", "model-a"),
+        ("w2", "outcome", 3200.0, "pub", "model-b"),
+    ):
+        lines.append(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at)),
+                                 "event": event, "wake": wake, "role": role, "key": key}))
+    (tmp_path / "engine" / "routing-ledger.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
+    text = view.render(home, Path("/nope"), 86400.0, 4000.0)
+    assert "fence-holder wake-seconds by candidate: model-a 500s (50%), model-b 500s (50%)" in text
+    assert "fence-holder wake-seconds by role: genome 500s (50%), pub 500s (50%)" in text
+    assert "distinct wakes per hold-wait fence: mean 2.0 (max 2), 1 fences" in text
+
+
+def test_report_keeps_holder_attribution_unknown_without_a_paired_wake(tmp_path, monkeypatch):
+    held = record(waiting_since=2010.0, activation_started_at=3010.0)
+    home = home_with(tmp_path, [held])
+    (tmp_path / "runtime").mkdir()
+    os.symlink(f"{tmp_path}/releases/{'c' * 40}", tmp_path / "runtime" / "current")
+    (tmp_path / "engine").mkdir()
+    (tmp_path / "engine" / "routing-ledger.jsonl").write_text(
+        json.dumps({"at": "1970-01-01T00:33:20Z", "event": "select", "wake": "w1",
+                    "role": "genome", "key": "model-a"}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
+    text = view.render(home, Path("/nope"), 86400.0, 4000.0)
+    assert "fence-holder attribution UNKNOWN (no paired wake span covers a hold-wait)" in text
+    assert "distinct wakes per hold-wait fence" not in text
