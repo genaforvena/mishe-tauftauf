@@ -140,3 +140,21 @@ Rows outside the window and rows with a torn or non-numeric timestamp are not co
 missing ledger reports null counts (`ledger: missing`), never a zero saving. An empty ledger
 reports zero counts and no share. The block is advisory like the rest of the signal: a missing
 commit-risk ledger does not turn the duty UNKNOWN, because the wake numbers remain measured.
+
+## Docs-naming seam (repo-change, System 0)
+
+The `repo-change` initiative (Ilya, 2026-11-20) calls for one signal with pub and docs
+listeners. Docs needs its deterministic part first: which reader docs even name a changed
+source path? `mishe_tauftauf.repo_change_docs.docs_naming()` answers that from the changed
+paths alone. For each path it searches the reader corpus defined by `docs_tools.search_docs`
+(README.md and immediate `docs/*.md`, symlinks excluded) for three identifiers — the full
+relative path, the dotted module name for `src/` Python files, and the file stem. A hit must
+match the whole identifier, not a substring, so the word `budget` does not name
+`budget_producer.py`. Results group passages by doc with line numbers, in path/line order;
+duplicate paths collapse and a path with no hit is a complete negative, not an error.
+
+This is evidence for the next rung, not a decision: a candidate doc is what a System 1
+decision model would receive alongside the commit, and a no-hit still leaves the separate
+question of a behaviour change. Nothing wakes docs from this function, and an unreadable
+corpus raises rather than reporting a false no-hit. The signal producer and the two
+listeners are not built yet; this seam is their shared deterministic prerequisite.

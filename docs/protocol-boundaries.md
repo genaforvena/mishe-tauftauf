@@ -128,6 +128,16 @@ and `::test_ordinary_review_drops_a_described_file_that_is_not_utf8` pins the
 UTF-8 rule.
 Nothing else a page contains is read.
 
+`repo_change_docs.py` reads two forms for the `repo-change` docs listener: a changed
+repo-relative path and the reader corpus already owned by `docs_tools`. It normalizes the
+path (POSIX spelling, no absolute path, empty or parent segment), derives at most three
+identifiers (full path, dotted `src/` module name, file stem without generic names), and
+keeps a doc line only when an identifier appears there as a whole token. Doc text is data,
+never instruction or authority. A malformed path or identifier raises rather than being
+guessed; an unreadable corpus raises rather than returning a false no-hit. A no-hit is a
+complete negative for those identifiers, not proof that a behaviour change is absent;
+deciding whether to wake anyone belongs to the caller and, for the residual, to System 1.
+
 The engine-account text adapters decode the four external provider text formats the
 router consumes:
 
