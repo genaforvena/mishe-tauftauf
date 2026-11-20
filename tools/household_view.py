@@ -215,6 +215,32 @@ def redmi10_battery():
     return None
 
 
+def redmi10_reading_freshness(now=None):
+    """Phone-row age at the last reading, and the reading's own age, in seconds.
+
+    The discovery snapshot is renewed on a ~10 min cadence, so ``now - battery.epoch``
+    grows with snapshot lag even while the phone is sending fresh rows. The stream
+    reading records its own row age; report both clocks so a lagging reader is not
+    shown as phone silence. Returns (row_age_s, snapshot_age_s), or None when the
+    reading is missing or malformed (fail closed, never a guessed zero).
+    """
+    now = time.time() if now is None else now
+    try:
+        data = json.loads(LATEST.read_text())
+        snapshot_age = now - LATEST.stat().st_mtime
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for row in data.get("observations", []):
+        if not isinstance(row, dict) or str(row.get("id", "")) != "sense.body.redmi10.stream":
+            continue
+        age = row.get("row_age_s")
+        if isinstance(age, (int, float)) and age >= 0:
+            return float(age), max(0.0, float(snapshot_age))
+    return None
+
+
 def _read_phone_rows():
     """All parsed collector rows, or None if missing/unreadable/malformed (fail closed)."""
     try:
@@ -606,7 +632,14 @@ def draw():
         pct = f"{level * 100:.0f}%" if isinstance(level, (int, float)) else "?"
         charging = "yes" if bat.get("charging") else "no"
         if current:
-            out.append(f"  redmi10  battery={pct}  charging={charging}  (row {age:.0f}s old)")
+            fresh = redmi10_reading_freshness()
+            if fresh is not None and fresh[1] >= 120:
+                row_age, snapshot_age = fresh
+                out.append(f"  redmi10  battery={pct}  charging={charging}  "
+                           f"(phone row {row_age:.0f}s old at reading; reading {snapshot_age/60:.0f} min old — "
+                           f"live row may be fresher)")
+            else:
+                out.append(f"  redmi10  battery={pct}  charging={charging}  (row {age:.0f}s old)")
         else:
             out.append(f"  redmi10  last known battery={pct}  charging={charging}  "
                        f"({age/3600:.1f}h ago, no current row; history only, not current)")

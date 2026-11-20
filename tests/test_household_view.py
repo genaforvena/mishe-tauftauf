@@ -139,7 +139,21 @@ def test_phones_render_note3_sampler_and_redmi10_battery(tmp_path, monkeypatch):
     lines = hv.draw().splitlines()
     phones = [l for l in lines if l.startswith("  redmi10")]
     assert "  redmi10  battery=92%  charging=yes  (row 5s old)" in phones
-    assert "  redmi10  history: 0 drop onsets in 7d, fresh in 100% of 3 samples" in phones
+    # a lagging discovery snapshot must not be drawn as phone silence: the row was
+    # 5s old when read 10 min ago, even though the battery epoch now looks 605s old
+    import os
+    stream_row(row_age_s=5,
+               values={"battery": {"level": 0.92, "charging": True, "epoch": now - 605}})
+    os.utime(latest, (now - 600, now - 600))
+    assert hv.redmi10_reading_freshness(now) == (5.0, 600.0)
+    lines = hv.draw().splitlines()
+    phones = [l for l in lines if l.startswith("  redmi10")]
+    assert any("phone row 5s old at reading" in l and "reading 10 min old" in l for l in phones)
+
+
+def test_redmi10_reading_freshness_fails_closed_without_a_reading(tmp_path, monkeypatch):
+    monkeypatch.setattr(hv, "LATEST", tmp_path / "absent.json")
+    assert hv.redmi10_reading_freshness(1794342600.0) is None
 
 
 def test_redmi10_stability_counts_onsets_and_fails_closed(tmp_path, monkeypatch):
