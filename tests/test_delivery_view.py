@@ -393,6 +393,57 @@ def test_report_prints_poll_starts_beside_the_hold_overlap(tmp_path, monkeypatch
             " 1/1 fences had >=1; after hold 1.00") in text
 
 
+def test_poll_wake_starts_restricts_to_evidenced_windows():
+    held = record(waiting_since=2010.0, activation_started_at=3010.0)
+    # A fence the ledger does not cover must not fold its zero starts into the mean.
+    out = view.poll_wake_starts([held], [2100.0], [(2010.0, 3010.0, 600.0)])
+    assert out == {"holds": 1, "poll_mean": 1.0, "poll_max": 1,
+                   "after_mean": 0.0, "with_poll_start": 1}
+    assert view.poll_wake_starts([held], [2100.0], []) is None
+
+
+def test_report_keeps_positive_evidence_when_another_fence_is_uncovered(tmp_path, monkeypatch):
+    covered = record(waiting_since=2010.0, activation_started_at=2610.0)
+    gap = record(waiting_since=4010.0, activation_started_at=4610.0, sha="d" * 40)
+    home = home_with(tmp_path, [covered, gap])
+    (tmp_path / "runtime").mkdir()
+    os.symlink(f"{tmp_path}/releases/{'c' * 40}", tmp_path / "runtime" / "current")
+    (tmp_path / "engine").mkdir()
+    stamps = []
+    for wake, start, end in (("w1", 2000.0, 2610.0), ("w2", 2100.0, 2610.0)):
+        for event, at in (("select", start), ("outcome", end)):
+            stamps.append(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at)),
+                                      "event": event, "wake": wake}))
+    (tmp_path / "engine" / "routing-ledger.jsonl").write_text("\n".join(stamps) + "\n", encoding="utf-8")
+    monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
+    text = view.render(home, Path("/nope"), 86400.0, 6000.0)
+    assert "hold-wait/wake overlap: 1/2 hold-waits, mean 100.0% of each fence" in text
+    assert "1 hold-wait fence(s) UNKNOWN: no wake interval inside (0 torn), excluded" in text
+    assert ("1/1 fences had >=1; after hold 0.00;"
+            " 1 fence(s) UNKNOWN (no ledger interval inside), excluded") in text
+    assert "mean 50.0%" not in text
+
+
+def test_report_keeps_already_running_wake_zero_starts_in_the_poll_mean(tmp_path, monkeypatch):
+    held = record(waiting_since=2010.0, activation_started_at=2610.0)
+    home = home_with(tmp_path, [held])
+    (tmp_path / "runtime").mkdir()
+    os.symlink(f"{tmp_path}/releases/{'c' * 40}", tmp_path / "runtime" / "current")
+    (tmp_path / "engine").mkdir()
+    stamps = []
+    for event, at in (("select", 2000.0), ("outcome", 2610.0)):
+        stamps.append(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at)),
+                                  "event": event, "wake": "w1"}))
+    (tmp_path / "engine" / "routing-ledger.jsonl").write_text("\n".join(stamps) + "\n", encoding="utf-8")
+    monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
+    text = view.render(home, Path("/nope"), 86400.0, 4000.0)
+    assert "hold-wait/wake overlap: 1 hold-waits, mean 100.0% of each fence" in text
+    # The lock was held by a wake that started before the fence: zero starts is a real
+    # observation, not a ledger gap, so it stays in the mean and needs no UNKNOWN suffix.
+    assert ("wake starts in the quiet poll (600s): mean 0.00/hold-wait (max 0),"
+            " 0/1 fences had >=1; after hold 0.00") in text
+
+
 def test_quiet_poll_s_rejects_boolean_patience():
     assert view.quiet_poll_s({}) == view.FENCE_HOLD_S
     assert view.quiet_poll_s({"quiet_poll_s": 120}) == 120.0
