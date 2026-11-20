@@ -45,7 +45,9 @@ def evaluate(cache: Path) -> tuple[int, list[str]]:
         release = crate / "release"
         if not release.is_dir():
             continue
-        for name in sorted(BINARY_NAMES):
+        # a stub may carry the crate dir name (crate mishe-signal-samples, bin mishe-signal-sample),
+        # so the crate's own name is checked alongside the installed binary names
+        for name in sorted(BINARY_NAMES | {crate.name}):
             path = release / name
             if not path.is_file() or path.is_symlink():
                 continue

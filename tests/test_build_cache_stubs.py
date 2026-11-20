@@ -30,6 +30,18 @@ def test_shell_stub_is_red(tmp_path):
     assert "mishe-tape is not ELF" in lines[0]
 
 
+def test_stub_named_after_crate_dir_is_red(tmp_path):
+    # 2026-11-20: a 36-byte shell stub named mishe-signal-samples (the crate dir, not the bin name)
+    # sat in the shared cache and the installed-name set alone reported GREEN
+    cache = tmp_path / "cache"
+    release = cache / "mishe-signal-samples" / "release"
+    release.mkdir(parents=True)
+    (release / "mishe-signal-samples").write_bytes(b"#!/bin/sh\necho mishe-signal-samples\n")
+    code, lines = mod.evaluate(cache)
+    assert code == 2
+    assert "mishe-signal-samples is not ELF" in lines[0]
+
+
 def test_unrelated_names_are_ignored(tmp_path):
     cache = _cache_with(tmp_path, "build", b"not a binary")
     code, _ = mod.evaluate(cache)
