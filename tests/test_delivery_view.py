@@ -343,3 +343,34 @@ def test_hold_wait_overlap_is_measured_from_the_routing_ledger(tmp_path, monkeyp
     monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
     text = view.render(home, Path("/nope"), 86400.0, 4000.0)
     assert "hold-wait/wake overlap: 1 hold-waits, mean 100.0% of each fence" in text
+
+
+def test_poll_wake_starts_counts_wake_starts_inside_the_poll_only():
+    # fence [2010, 3010): poll [2010, 2610), hold [2610, 3010). 2000 predates the fence.
+    held = record(waiting_since=2010.0, activation_started_at=3010.0)
+    out = view.poll_wake_starts([held], [2000.0, 2100.0, 2609.0, 2610.0, 2800.0])
+    assert out == {"holds": 1, "poll_mean": 2.0, "poll_max": 2,
+                   "after_mean": 2.0, "with_poll_start": 1}
+
+
+def test_poll_wake_starts_is_unknown_without_a_hold_wait():
+    quick = record(waiting_since=2010.0, activation_started_at=2400.0)  # 390 s < patience
+    assert view.poll_wake_starts([quick], [2100.0]) is None
+
+
+def test_report_prints_poll_starts_beside_the_hold_overlap(tmp_path, monkeypatch):
+    held = record(waiting_since=2010.0, activation_started_at=3010.0)
+    home = home_with(tmp_path, [held])
+    (tmp_path / "runtime").mkdir()
+    os.symlink(f"{tmp_path}/releases/{'c' * 40}", tmp_path / "runtime" / "current")
+    (tmp_path / "engine").mkdir()
+    stamps = []
+    for wake, at in (("w1", 2100.0), ("w2", 2800.0)):
+        for event in ("select", "outcome"):
+            stamps.append(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at)),
+                                      "event": event, "wake": wake}))
+    (tmp_path / "engine" / "routing-ledger.jsonl").write_text("\n".join(stamps) + "\n", encoding="utf-8")
+    monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
+    text = view.render(home, Path("/nope"), 86400.0, 4000.0)
+    assert ("wake starts in the 600 s poll: mean 1.00/hold-wait (max 1),"
+            " 1/1 fences had >=1; after hold 1.00") in text

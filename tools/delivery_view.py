@@ -155,6 +155,35 @@ def fence_modes(delivered: list[dict]) -> dict[str, list[float]]:
     return out
 
 
+def poll_wake_starts(delivered: list[dict], starts: list[float]) -> dict | None:
+    """Wake starts inside each hold-wait fence's 600 s poll versus after the hold.
+
+    Only hold-wait fences (>= ``FENCE_HOLD_S``) are counted: a quiet or polled
+    fence never wrote a hold, so a start inside it is not a poll-start. ``starts``
+    are wake start epochs from the routing ledger. A start during the poll grabs
+    the shared dispatch lock and can extend the fence; the hold blocks new starts
+    only after the poll expires. Returns None when no hold-wait fence is measured
+    (never a fabricated zero).
+    """
+    holds = []
+    for record in delivered:
+        if stages(record)["wake_wait_s"] is None or stages(record)["wake_wait_s"] < FENCE_HOLD_S:
+            continue
+        ws, ac = record.get("waiting_since"), record.get("activation_started_at")
+        if isinstance(ws, (int, float)) and isinstance(ac, (int, float)):
+            holds.append((ws, ac))
+    if not holds:
+        return None
+    poll = [sum(1 for s in starts if ws <= s < ws + FENCE_HOLD_S) for ws, _ in holds]
+    after = [sum(1 for s in starts if ws + FENCE_HOLD_S <= s < ac) for ws, ac in holds]
+    return {
+        "holds": len(holds),
+        "poll_mean": sum(poll) / len(poll),
+        "poll_max": max(poll),
+        "after_mean": sum(after) / len(after),
+        "with_poll_start": sum(1 for n in poll if n >= 1),
+    }
+
 def _check_at(record: dict) -> float | None:
     check = record.get("check")
     at = check.get("at") if isinstance(check, dict) else None
@@ -320,6 +349,12 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
                              " covered by a running wake")
             else:
                 lines.append("  hold-wait/wake overlap UNKNOWN (no paired wake intervals)")
+            poll = poll_wake_starts(delivered, [a for a, _ in intervals])
+            if poll is not None:
+                lines.append(f"  wake starts in the {int(FENCE_HOLD_S)} s poll:"
+                             f" mean {poll['poll_mean']:.2f}/hold-wait (max {poll['poll_max']}),"
+                             f" {poll['with_poll_start']}/{poll['holds']} fences had >=1;"
+                             f" after hold {poll['after_mean']:.2f}")
     rollback_done, rollback_probe_failed = [], []
     for record in recoveries:
         sha = record.get("sha", "?")[:8]
