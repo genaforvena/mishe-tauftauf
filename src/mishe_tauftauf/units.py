@@ -94,6 +94,7 @@ class SyncReport:
     written: list = field(default_factory=list)
     removed: list = field(default_factory=list)
     linked: list = field(default_factory=list)
+    refused: list = field(default_factory=list)
 
 
 @dataclass
@@ -452,6 +453,16 @@ def unit_file_service_names(listing: str, prefix: str) -> list[str]:
     return units
 
 
+def _generated_marker(text: str) -> str | None:
+    """The generated-unit marker line of ``text``, or None when the text is not generated.
+
+    Each plant patches MARKER in its own release. A path carrying a different generated
+    marker belongs to that plant even when its filename matches one we render; overwriting
+    it silently makes that plant's doctor report the unit missing.
+    """
+    first = text.splitlines()[0] if text else ""
+    return first if first.startswith("# ") and "-generated: " in first else None
+
 def _write_unit(path: Path, text: str) -> None:
     """Install one unit file atomically, so no reader or reload sees a half-written unit.
 
@@ -539,7 +550,21 @@ def sync(cfg: Config, roles, *, producers=(), resolvers=None, runner=None, unins
         _install_runner_link(cfg.home, report)
     for rel, text in expected.items():
         path = cfg.unit_dir / rel
-        if not path.exists() or path.read_text(encoding="utf-8") != text:
+        existing = None
+        if path.exists():
+            try:
+                existing = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                existing = None
+        if existing is not None:
+            marker = _generated_marker(existing)
+            if marker is not None and marker != MARKER:
+                # 2026-11-20 03:54Z: the second plant's promotion rendered with
+                # prefix="mishe" but its own MARKER and rewrote 179 of this plant's
+                # units. Refuse the collision instead of owning another plant's file.
+                report.refused.append(rel)
+                continue
+        if existing != text:
             path.parent.mkdir(parents=True, exist_ok=True)
             _write_unit(path, text)
             report.written.append(rel)
