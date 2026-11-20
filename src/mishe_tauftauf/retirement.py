@@ -56,7 +56,11 @@ def busy(repo: Path, home: Path, proc_root: Path = Path("/proc")) -> str | None:
             # An already-granted read-only capability may resolve protected proc
             # entries. Missing capability remains UNKNOWN, never a guessed absence.
             try:
-                cwd_result = subprocess.run(["sudo", "-n", "readlink", "-e", str(process / "cwd")],
+                # Plain readlink, not -e: -e fails when the cwd target was
+                # removed (a live process in a deleted temp dir or replaced
+                # release dir). The raw target still names the path to compare
+                # against the candidate root; a failed read stays UNKNOWN.
+                cwd_result = subprocess.run(["sudo", "-n", "readlink", str(process / "cwd")],
                     capture_output=True, text=True, timeout=3)
                 args_result = subprocess.run(["sudo", "-n", "cat", str(process / "cmdline")],
                     capture_output=True, timeout=3)

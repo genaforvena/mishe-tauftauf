@@ -132,6 +132,48 @@ def test_busy_sees_a_process_whose_cwd_target_was_removed(tmp_path):
         child.terminate(); child.wait(timeout=5)
 
 
+def test_busy_deleted_cwd_in_sudo_fallback_is_not_an_unavailable_check(tmp_path, monkeypatch):
+    """A live process whose cwd target was removed still names that target through plain readlink."""
+    repo = tmp_path / "candidate"
+    (repo / "src").mkdir(parents=True)
+    proc_dir = tmp_path / "proc"
+    proc_dir.mkdir()
+    removed = tmp_path / "removed-cwd"
+    removed.mkdir()
+    process = proc_dir / "100"
+    process.mkdir()
+    # stat: state + flags word 0 (a user process).
+    (process / "stat").write_text("100 (p) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n")
+    (process / "cwd").symlink_to(removed, target_is_directory=True)
+    (process / "cmdline").write_bytes(b"python\0")
+    environ = process / "environ"
+    environ.write_bytes(b"PYTHONPATH=/unrelated\0")
+    environ.chmod(0)
+    removed.rmdir()  # cwd target is gone, but the process is still live.
+
+    calls = []
+    def fake_sudo(*args, **kwargs):
+        argv = args[0]
+        calls.append(argv)
+        if "readlink" in argv:
+            if "-e" in argv:  # readlink -e fails on a removed target, as on the host.
+                return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"")
+            return subprocess.CompletedProcess(argv, 0, stdout=str(removed) + "\n", stderr=b"")
+        if any("cmdline" in part for part in argv):
+            return subprocess.CompletedProcess(argv, 0, stdout=b"python\0", stderr=b"")
+        if any("environ" in part for part in argv):
+            return subprocess.CompletedProcess(argv, 0, stdout=b"PYTHONPATH=/unrelated\0", stderr=b"")
+        return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"")
+    monkeypatch.setattr(subprocess, "run", fake_sudo)
+
+    class ProcRoot:
+        def iterdir(self):
+            return iter([process])
+
+    assert retirement.busy(repo, tmp_path, proc_root=ProcRoot()) is None
+    assert any("readlink" in call for call in calls)
+
+
 def test_busy_unreadable_process_does_not_mask_definite_detection(tmp_path, monkeypatch):
     """A protected /proc entry must not hide a process that really uses the candidate."""
     repo = tmp_path / "candidate"
