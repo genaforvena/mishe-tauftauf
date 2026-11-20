@@ -378,7 +378,7 @@
       ],
       "resolver": "steward",
       "replaces": [],
-      "covers": "the opencode-go weekly allowance window (go-a, glm-5.3 first in every role): remaining, burn per hour, projected end and ledger selections; UNKNOWN when unmeasured"
+      "covers": "the opencode-go weekly allowance window (go-a): remaining, burn per hour, projected end and ledger selections; UNKNOWN when unmeasured"
     },
     {
       "name": "signal-coverage",
