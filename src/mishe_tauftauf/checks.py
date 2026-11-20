@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fcntl
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -24,11 +25,25 @@ def stamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def loaded_commit(home: Path) -> str:
+    """The commit of the release ``runtime/current`` resolves to, or ``unknown``.
+
+    Releases are named by commit sha, so the resolved directory name is the commit whose
+    bytes the producers run. A check row carries it so a failure names the release it measured.
+    """
+    try:
+        name = (Path(home) / "runtime" / "current").resolve().name
+    except OSError:
+        return "unknown"
+    return name if re.fullmatch(r"[0-9a-f]{40}", name) else "unknown"
+
+
 def run_check(home: Path, slug: str, argv: list[str]) -> Path:
     validate_slug(slug)
     if not argv:
         raise ValueError("check requires a program after --")
     started = stamp()
+    commit = loaded_commit(home)
     try:
         result = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True)
         code = result.returncode
@@ -43,7 +58,7 @@ def run_check(home: Path, slug: str, argv: list[str]) -> Path:
     ended = stamp()
     report = (
         f"check: {shlex.join(argv)}\n"
-        f"started: {started}\nended: {ended}\nlaunch: {launch}\nexit: {code}\n"
+        f"started: {started}\nended: {ended}\ncommit: {commit}\nlaunch: {launch}\nexit: {code}\n"
         "stdout:\n" + stdout + ("" if stdout.endswith("\n") or not stdout else "\n") +
         "stderr:\n" + stderr + ("" if stderr.endswith("\n") or not stderr else "\n")
     )

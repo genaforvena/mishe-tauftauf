@@ -32,3 +32,18 @@ def test_other_slugs_do_not_take_health_lock(tmp_path):
         fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         path = run_check(tmp_path, "witness", ["true"])
     assert path.name == "witness"
+
+
+def test_check_report_stamps_the_loaded_commit(tmp_path):
+    sha = "e" * 40
+    release = tmp_path / "releases" / sha
+    release.mkdir(parents=True)
+    (tmp_path / "runtime").mkdir()
+    (tmp_path / "runtime" / "current").symlink_to(release)
+    path = run_check(tmp_path, "probe", ["true"])
+    assert f"commit: {sha}\n" in path.read_text(encoding="utf-8")
+
+
+def test_check_report_commit_is_unknown_without_a_pin(tmp_path):
+    path = run_check(tmp_path, "probe", ["true"])
+    assert "commit: unknown\n" in path.read_text(encoding="utf-8")
