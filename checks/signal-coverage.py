@@ -113,7 +113,7 @@ def _accounts_unmeasured(home: Path, repo: Path) -> tuple[list[str], str | None]
         return [], "engine/budget.json unmeasured (owner: budget duties)"
     return sorted(a for a in budget["accounts"] if a not in text), None
 
-def _dark_provider_verdicts(home: Path, registry: dict, now: float):
+def _dark_provider_verdicts(home: Path, registry: dict, now: float, repo: Path):
     """RED provider forecasts with no registered signal to carry them (codex-a, 2026-11-20).
 
     provider_budget evaluates every account in its SIGNALS map but observes only
@@ -121,6 +121,9 @@ def _dark_provider_verdicts(home: Path, registry: dict, now: float):
     and the household view while no signal exists to wake a subscriber or name the
     cause here — the dark lane Ilya asked to see. The publisher rewrites that record
     every budget tick; an old record is a note, not a fresh finding.
+    An active disposition is named in the cause so a waking mind sees the owner and
+    recheck already recorded instead of a stale "disposition it" instruction; this
+    only adds information — the verdict stays RED and the detector is not narrowed.
     """
     path = home / "operator" / "autonomy-repair-20261106" / "provider-budget-latest.json"
     try:
@@ -143,9 +146,16 @@ def _dark_provider_verdicts(home: Path, registry: dict, now: float):
         summary.append(f"{account}={state} (NO signal {name})")
         if state == "RED":
             reason = result.get("reason") if isinstance(result, dict) else ""
-            causes.append(f"dark-provider-verdict: {account} RED — {reason}; "
-                          f"no registered signal {name} to wake a subscriber "
-                          f"(register it with a reoffer and an owner, or disposition the known forecast)")
+            cause = (f"dark-provider-verdict: {account} RED — {reason}; "
+                     f"no registered signal {name} to wake a subscriber")
+            answer = _dispositioned(home, repo, name, now)
+            if answer is not None:
+                due = datetime.fromtimestamp(answer["recheck_at"], timezone.utc)
+                cause += (f"; dispositioned {answer.get('kind')} by {answer.get('owner')} "
+                          f"until {due:%d %b %H:%MZ} — RED is intended visibility")
+            else:
+                cause += " (register it with a reoffer and an owner, or disposition the known forecast)"
+            causes.append(cause)
     return causes, "provider-verdicts: " + "; ".join(summary)
 
 def _wake_intervals(wakes: Path, owners) -> dict[str, list[tuple[float, float]]] | None:
@@ -398,7 +408,7 @@ def run(home: Path, now: float, *, repo: Path | None = None,
             budget_case.append(f"{probe}={reading.get('value', 'unmeasured')}"
                                f" (subs {subs}, max_age {entry.get('max_age', 0) / 60:.0f}m)")
     detail_lines.append("budget-window-care: " + ("; ".join(budget_case) or "no budget signal registered"))
-    dark_causes, dark_note = _dark_provider_verdicts(Path(home), registry, now)
+    dark_causes, dark_note = _dark_provider_verdicts(Path(home), registry, now, repo)
     counts["dark_providers"] = len(dark_causes)
     causes.extend(dark_causes)
     detail_lines.append(dark_note)

@@ -411,6 +411,37 @@ def test_red_provider_verdict_without_a_signal_is_dark(tmp_path, monkeypatch):
     assert report["counts"]["dark_providers"] == 1
 
 
+def test_dispositioned_dark_verdict_names_owner_and_keeps_red(tmp_path, monkeypatch):
+    from mishe_tauftauf import dispositions
+    _clear_systemctl(monkeypatch)
+    home, sigdir = _covered_site(tmp_path)
+    provider_record(home, {"codex-a": {"state": "RED",
+                                      "reason": "7d RUNS OUT BEFORE RESET (68% used)"}})
+    dispositions.set_disposition(home, "budget-codex", "known", "steward",
+                                 "weekly forecast", ttl=86400, now=NOW)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 2
+    cause = [c for c in report["causes"] if c.startswith("dark-provider-verdict: codex-a")][0]
+    assert "dispositioned known by steward" in cause
+    assert "no registered signal budget-codex" in cause
+    assert "register it with a reoffer" not in cause
+    assert report["counts"]["dark_providers"] == 1
+
+
+def test_expired_dark_disposition_restores_register_instruction(tmp_path, monkeypatch):
+    from mishe_tauftauf import dispositions
+    _clear_systemctl(monkeypatch)
+    home, sigdir = _covered_site(tmp_path)
+    provider_record(home, {"codex-a": {"state": "RED", "reason": "7d RUNS OUT BEFORE RESET"}})
+    dispositions.set_disposition(home, "budget-codex", "known", "steward",
+                                 "old forecast", ttl=60, now=NOW - 120)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 2
+    cause = [c for c in report["causes"] if c.startswith("dark-provider-verdict: codex-a")][0]
+    assert "register it with a reoffer" in cause
+    assert "dispositioned known by" not in cause
+
+
 def test_registered_provider_signal_covers_the_verdict(tmp_path, monkeypatch):
     _clear_systemctl(monkeypatch)
     registry = {"doctor": register_entry(),
