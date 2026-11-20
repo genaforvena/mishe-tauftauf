@@ -66,6 +66,14 @@ def test_banned_candidate_is_skipped_before_construction():
     assert "banned" in choice["trail"][0]["reason"]
 
 
+def test_blank_model_candidate_is_skipped_before_construction():
+    blank = {"engine": "omp", "model": "", "account": "go-a"}
+    choice = router.choose("health", [blank, HAIKU], status(**{"go-a": account()}), {}, NOW_MS)
+    assert choice["key"] == router.candidate_key(HAIKU)
+    assert choice["trail"][0]["verdict"] == "skipped"
+    assert "empty" in choice["trail"][0]["reason"]
+
+
 def test_stale_or_unknown_account_is_skipped_for_next_candidate():
     st = status(**{"go-a": account(state="STALE", reason="provider reading older than report TTL"),
                    "minimax-a": account(provider="minimax-code")})
