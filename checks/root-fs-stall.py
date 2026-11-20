@@ -41,7 +41,18 @@ Exit status:
 """
 from __future__ import annotations
 
+BURST_GAP_S = 120.0
+"""Episodes separated by at least this much quiet are separate bursts of stalls.
+
+A window can hold several distinct bursts. While the signal stays RED through
+all of them, a total count alone cannot tell a responder that stalls recurred
+after a quiet gap, and a second RED is not a new edge that wakes one. Naming
+the bursts in the refreshed cause keeps that recurrence visible without
+changing the signal value, its thresholds or its window.
+"""
+
 import argparse
+from datetime import datetime, timezone
 import json
 import sys
 import time
@@ -133,6 +144,29 @@ def episodes(stalls: list[dict]) -> list[list[dict]]:
     return groups
 
 
+def bursts(eps: list[list[dict]]) -> list[list[list[dict]]]:
+    """Split episodes on quiet gaps; a multi-probe cliff is still one episode."""
+    groups: list[list[list[dict]]] = []
+    for ep in eps:
+        if groups and ep[0]["at"] - groups[-1][-1][-1]["at"] >= BURST_GAP_S:
+            groups.append([ep])
+        elif groups:
+            groups[-1].append(ep)
+        else:
+            groups.append([ep])
+    return groups
+
+
+def burst_suffix(eps: list[list[dict]]) -> str:
+    """Name distinct bursts so a recurring stall inside one RED window is visible."""
+    groups = bursts(eps)
+    if len(groups) < 2:
+        return ""
+    newest = max(r["at"] for ep in groups[-1] for r in ep)
+    stamp = datetime.fromtimestamp(newest, timezone.utc).strftime("%H:%M:%SZ")
+    return f"; {len(groups)} separate bursts (gaps >= {BURST_GAP_S / 60:.0f} min), newest {stamp}"
+
+
 def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
     seen = [r for r in records if r.get("dir") == TARGET and isinstance(r.get("at"), (int, float))]
     if not seen:
@@ -152,7 +186,8 @@ def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
             lead = (f"{len(stalls)} root-filesystem stall(s) >= {STALL_S:.0f}s in the last "
                     f"{WINDOW_S:.0f}s")
         return 2, [f"{lead}; worst {worst['total']:.1f}s (create {worst.get('create')}, fsync {worst.get('fsync')})"
-                   f"{psi_suffix(worst)}{timing_suffix(stalls, len(eps), now)}{peak_psi_suffix(stalls)}"]
+                   f"{psi_suffix(worst)}{timing_suffix(stalls, len(eps), now)}{peak_psi_suffix(stalls)}"
+                   f"{burst_suffix(eps)}"]
     recurrence = [r for r in seen if r.get("event") == "slow" and now - r["at"] <= RECURRENCE_S
                   and (r.get("total") or 0) >= STALL_S]
     line = f"root probe fresh ({now - newest:.0f}s) with no stall >= {STALL_S:.0f}s in {WINDOW_S:.0f}s"

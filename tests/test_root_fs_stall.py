@@ -101,6 +101,36 @@ def test_single_episode_reports_recency_without_a_span():
     assert "bursts span" not in lines[0]
 
 
+def test_two_bursts_inside_one_window_are_named():
+    stalls = [rec(event="slow", at=NOW - 800, total=9.9, fsync=9.9),
+              rec(event="slow", at=NOW - 100, total=8.1, fsync=8.1)]
+    code, lines = mod.evaluate([rec()] + stalls, NOW)
+    assert code == 2
+    assert "2 separate bursts (gaps >= 2 min)" in lines[0]
+    assert "newest 02:45:00Z" in lines[0]
+
+
+def test_nearby_episodes_are_one_burst():
+    stalls = [rec(event="slow", at=NOW - 600, total=9.9, fsync=9.9),
+              rec(event="slow", at=NOW - 500, total=8.1, fsync=8.1)]
+    code, lines = mod.evaluate([rec()] + stalls, NOW)
+    assert code == 2 and "separate bursts" not in lines[0]     # 100s gap is one burst
+
+
+def test_gap_just_above_threshold_is_a_second_burst():
+    stalls = [rec(event="slow", at=NOW - 600, total=9.9, fsync=9.9),
+              rec(event="slow", at=NOW - 470, total=8.1, fsync=8.1)]  # 130s > 120s
+    code, lines = mod.evaluate([rec()] + stalls, NOW)
+    assert code == 2 and "2 separate bursts" in lines[0]
+
+
+def test_multiprobe_cliff_does_not_inflate_burst_count():
+    stalls = [rec(event="slow", at=NOW - 700 + i * 0.01, total=9.9, fsync=9.9) for i in range(3)]
+    stalls += [rec(event="slow", at=NOW - 100 + i * 0.01, total=8.1, fsync=8.1) for i in range(3)]
+    code, lines = mod.evaluate([rec()] + stalls, NOW)
+    assert code == 2 and "2 separate bursts" in lines[0]       # de-dup happens before grouping
+
+
 def test_recurrence_counts_episodes_when_probes_overlap():
     stalls = [rec(event="slow", at=NOW - 5000 + i * 0.01, total=9.9, fsync=9.9) for i in range(3)]
     code, lines = mod.evaluate([rec()] + stalls, NOW)
