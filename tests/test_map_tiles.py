@@ -155,7 +155,7 @@ def test_stale_state_is_flagged_and_sprites_are_hidden():
 
 def test_camera_age_is_derived_from_last_usable_bucket_when_no_age_field():
     model = _model(_state(FRESH_ILYA))
-    lines = [s for s in model["status"] if s.startswith("camera living")]
+    lines = [s for s in model["status"] if s.startswith("activity living")]
     assert lines and "2 min" in lines[0] and "fresh" in lines[0]
 
 
@@ -168,11 +168,20 @@ def test_camera_age_field_adds_time_since_render():
                          "activity": 0.02, "age_s": None}}
     state = _state(FRESH_ILYA, generated="2026-11-13T23:40:00Z", rooms=rooms)
     model = _model(state)
-    living = [s for s in model["status"] if s.startswith("camera living")][0]
+    living = [s for s in model["status"] if s.startswith("activity living")][0]
     assert "11 min" in living and "(stale)" in living and "(fresh)" not in living
     assert mt._camera_age(rooms["living_room"], NOW, None) is None   # no render time: UNKNOWN
     assert mt._camera_age(rooms["living_room"], NOW, "2026-11-13T23:55:00Z") == 60.0  # clamped
     assert model["sprites"], "sprites stay until the map state is 30 min old"
+
+def test_activity_lines_explain_motion_bucket_not_camera_health():
+    status = _model(_state(FRESH_ILYA))["status"]
+    rooms = [s for s in status if s.startswith(("activity living", "activity bedroom"))]
+    assert len(rooms) == 2
+    assert all("camera" not in s for s in rooms)
+    notes = [s for s in status if "newest usable motion bucket" in s]
+    assert len(notes) == 1 and "not camera frame time" in notes[0]
+    assert not any(s.startswith("camera ") for s in status)
 
 
 def test_every_frame_line_fits_one_hundred_columns():

@@ -16,8 +16,9 @@ SENSES MAP  apartment, best guess (23:50Z)
 
 +-- status ------------------------------------------------------------
 time 2026-11-13 23:50:00Z
-camera living  [######....] 2 min (fresh)
-camera bedroom [..........] 3 h (stale)
+activity living  [######....] 2 min (fresh)
+activity bedroom [..........] 3 h (stale)
+activity age = newest usable motion bucket, not camera frame time (quiet room reads stale)
 phone Redmi10 [##########] 15 s (status ok)
 rssi UNKNOWN, no redmi10 rssi
 map confidence LOW
