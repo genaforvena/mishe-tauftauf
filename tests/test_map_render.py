@@ -220,6 +220,34 @@ def test_saved_twin_camera_room_bias_unknown_without_activity(tmp_path):
     twin = (Path(site) / "senses" / "map" / "apartment-map.txt").read_text()
     assert "camera room bias UNKNOWN" in twin
 
+def test_saved_twin_carries_night_prior_and_audio_lines(tmp_path):
+    now = _now()
+    site = _site(tmp_path, _activity({}))
+    hh = Path(site) / "spatial" / "work" / "household"
+    (hh / "daylight.json").write_text(json.dumps({"rooms": {"living room": {"hours": {
+        "21": {"median_luma": 114.0, "samples": 477},
+        "03": {"median_luma": 16.0, "samples": 523},
+    }}}}))
+    (hh / "activity.json").write_text(json.dumps({"rooms": {"living room": {"buckets": [
+        {"utc": "21:00Z", "activity": 0.005},
+        {"utc": "03:00Z", "activity": 0.002},
+    ]}}}))
+    (hh / "audio.jsonl").write_text(
+        json.dumps({"room": "livingroom", "t": now.timestamp(), "status": "NO_HINT"}) + "\n")
+    _render(site)
+    twin = (Path(site) / "senses" / "map" / "apartment-map.txt").read_text()
+    assert "night prior 21-05Z is unvalidated: at 21Z living-room luma 114" in twin
+    assert "audio livingroom: speech " in twin and "not a person claim" in twin
+
+
+def test_saved_twin_keeps_unknown_status_lines_when_sources_are_missing(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _render(site)
+    twin = (Path(site) / "senses" / "map" / "apartment-map.txt").read_text()
+    assert "night prior 21-05Z: timing UNKNOWN" in twin
+    assert "audio livingroom UNKNOWN (no audio log)" in twin
+
+
 
 def test_rssi_fresh_live_without_labels_is_unknown_not_a_tie(tmp_path):
     # fresh phone RSSI but no labelled moment: nothing to match, so no tie and no crash

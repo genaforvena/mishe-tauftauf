@@ -624,7 +624,7 @@ def tile_text(state, fp_doc, fp_error):
     """The text twin: the same tile frame the terminal view draws (no colour)."""
     phone, stability = map_tiles.phone_and_history(os.path.join(HH, "phones.jsonl"), NOW)
     model = map_tiles.build_model(fp_doc, fp_error, state, None, phone, NOW, stability)
-    model["status"].append(map_tiles.camera_room_bias_line(SITE, NOW))
+    model["status"].extend(map_tiles.derived_status_lines(SITE, state, NOW))
     return map_tiles.frame(model, NOW, color=False)
 
 

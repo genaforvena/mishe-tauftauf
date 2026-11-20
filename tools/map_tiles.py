@@ -856,6 +856,15 @@ def audio_room_line(site, now):
         _age_text(max(0.0, now.timestamp() - speech)), _age_text(age))
 
 
+def derived_status_lines(site, state, now):
+    """The derived status lines both the saved map twin and the terminal view draw."""
+    return [
+        night_prior_line(site, state, now),
+        camera_room_bias_line(site, now),
+        audio_room_line(site, now),
+    ]
+
+
 def model_from_site(site, now, phone_path=None):
     """Load the derived files under SITE and build the model. Missing files are UNKNOWN."""
     mapdir = os.path.join(site, "senses", "map")
@@ -880,7 +889,5 @@ def model_from_site(site, now, phone_path=None):
     phone_file = phone_path or os.path.join(site, "spatial", "work", "household", "phones.jsonl")
     phone, stability = phone_and_history(phone_file, now)
     model = build_model(floor, floor_reason, state, state_reason, phone, now, stability)
-    model["status"].append(night_prior_line(site, state, now))
-    model["status"].append(camera_room_bias_line(site, now))
-    model["status"].append(audio_room_line(site, now))
+    model["status"].extend(derived_status_lines(site, state, now))
     return model
