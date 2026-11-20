@@ -53,6 +53,19 @@ class CommitRiskTests(unittest.TestCase):
         self.assertEqual(cr.system0(["tools/delivery_check.py",
                                      "tests/test_delivery_check_script.py"]), "delivery-path")
 
+    def test_reporting_file_lookups_are_exact_and_do_not_shadow_dispatch(self):
+        for path in ("tools/household_view.py", "tools/commit-msg-attribution.py",
+                     "src/mishe_tauftauf/provider_budget.py",
+                     "src/mishe_tauftauf/system1_savings.py"):
+            with self.subTest(path=path):
+                self.assertEqual(cr.system0([path]), "ordinary")
+                self.assertEqual(cr.system0([path, "docs/decision-rungs.md"]), "ordinary")
+                self.assertIsNone(cr.path_label(path + "\n"))
+                # A view change alongside dispatch stays the model's residual.
+                self.assertIsNone(cr.system0([path, "src/mishe_tauftauf/owed.py"]))
+                result = cr.classify("unrelated subject", [path], None)
+                self.assertEqual((result["label"], result["source"]), ("ordinary", "system0"))
+
     def test_delivery_requests_is_delivery_not_dispatch(self):
         # delivery_requests.py is delivery work (enqueue/consume, patch/revert,
         # release_promotion), not dispatch. Two confident model labels (1.0, 0.89) on

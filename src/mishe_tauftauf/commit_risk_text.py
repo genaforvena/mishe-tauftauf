@@ -24,6 +24,16 @@ RULES = (
                                  r"|scripts/.*(deliver|heal|release)\S*)")),
     ("delivery-path", re.compile(r"^tools/delivery_check\.py\Z")),
     ("ordinary", re.compile(r"^tools/network_view\.py\Z")),
+    # Reporting/view files with repeated model answers of ``ordinary`` and no
+    # dispatch/delivery effect: household_view 8/8, commit-msg-attribution 4/4,
+    # provider_budget 4/4 and system1_savings 4 ordinary + 1 escalate in the
+    # 773-row ledger. Replaying with these lookups settles 18 residual rows with
+    # zero disagreement against a model label. Exact files, not a family: a
+    # view change alongside dispatch code still leaves the residual to the model.
+    ("ordinary", re.compile(r"^tools/household_view\.py\Z")),
+    ("ordinary", re.compile(r"^tools/commit-msg-attribution\.py\Z")),
+    ("ordinary", re.compile(r"^src/mishe_tauftauf/provider_budget\.py\Z")),
+    ("ordinary", re.compile(r"^src/mishe_tauftauf/system1_savings\.py\Z")),
     ("routine", re.compile(r"^(docs/|tests/|checks/|.*\.md\Z)")),
 )
 
