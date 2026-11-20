@@ -11,11 +11,10 @@ permits:
   activation_started_at -> delivered_at     consumer drain + functional observation
   delivered_at -> reviewed_at       independent review after the pin moved
 
-A rolled-back run is named with its failure reason and shows only a duration the record actually
-carries (rollback_at to rollback_completed_at or rollback_failed_at). A failed rollback probe stays
-UNKNOWN, never a claim that the old pin was restored. Missing or unreadable evidence prints as
-UNKNOWN and never becomes a zero. This is a report, not a detector: it always exits 0 unless it
-cannot run.
+A rolled-back run shows the failure reason and the recorded rollback duration if available.
+A failed recovery stays UNKNOWN and identifies the stage when the record carries that evidence.
+Missing or unreadable evidence prints as UNKNOWN and never becomes a zero. This is a report,
+not a detector: it always exits 0 unless it cannot run.
 """
 from __future__ import annotations
 
@@ -152,9 +151,9 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
         return "\n".join(lines)
     window = [r for r in records if now - r["created_at"] <= window_s]
     delivered = [r for r in window if r.get("phase") == "delivered"]
-    rolled_back = [r for r in window if r.get("phase") in ("UNKNOWN", "rolled-back")]
+    recoveries = [r for r in window if r.get("phase") in ("UNKNOWN", "rolled-back")]
     lines.append(f"promotions in window: {len(window)} delivered {len(delivered)} "
-                 f"rolled-back/UNKNOWN {len(rolled_back)}")
+                 f"rolled-back/UNKNOWN {len(recoveries)}")
     s = summarize(delivered)
     for key, label in (("commit_wait_s", "commit -> promotion start"),
                        ("check_s", "check stage (created -> check done)"),
@@ -178,22 +177,42 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
         lines.append(f"  fence held nothing in {zero_fence}/{len(delivered)} delivered runs"
                      f" (no wake was live at activation)")
     rollback_done, rollback_probe_failed = [], []
-    for record in rolled_back:
-        failure = str(record.get("failure") or record.get("phase"))
-        phase = record.get("phase")
-        verb = "rolled back" if phase == "rolled-back" else f"{phase} (rollback probe failed)"
-        lines.append(f"  {verb} {record.get('sha', '?')[:8]} after"
-                     f" {fmt_ts(record.get('activation_started_at'))} — {failure[:160]}")
-        start = record.get("rollback_at")
-        completed = record.get("rollback_completed_at")
-        failed = record.get("rollback_failed_at")
-        end = completed or failed
-        if start and end and end >= start:
-            lines.append(f"    rollback {fmt_s(end - start)}"
-                         f" ({'completed' if completed else 'probe failed'})")
-            (rollback_done if completed else rollback_probe_failed).append(end - start)
+    for record in recoveries:
+        sha = record.get("sha", "?")[:8]
+        completed = record.get("phase") == "rolled-back"
+        revert_started = record.get("revert_started_at")
+        if not completed and type(revert_started) in (int, float) and 0 < revert_started < float("inf"):
+            detail = str(record.get("revert_error") or "")[:160]
+            line = f"  UNKNOWN (explicit revert failed) {sha} after {fmt_ts(revert_started)}"
+            lines.append(f"{line} — {detail}" if detail else line)
+            continue
+
+        probe = record.get("rollback_probe")
+        probe_code = probe.get("code") if isinstance(probe, dict) else None
+        detail = record.get("failure") or "UNKNOWN"
+        samples = None
+        if completed:
+            label, outcome = "rolled back", "completed"
+            samples = rollback_done
+        elif record.get("rollback_error"):
+            label, outcome = "UNKNOWN (rollback restore failed)", "restore failed"
+            detail = record["rollback_error"]
+        elif type(probe_code) is int and probe_code != 0:
+            label, outcome = "UNKNOWN (rollback probe failed)", "probe failed"
+            samples = rollback_probe_failed
         else:
-            lines.append("    rollback duration UNKNOWN (no recorded end timestamp)")
+            label, outcome = "UNKNOWN (recovery stage unrecorded)", "failed"
+        activated = fmt_ts(record.get("activation_started_at"))
+        lines.append(f"  {label} {sha} after {activated} — {str(detail)[:160]}")
+        start = record.get("rollback_at")
+        end = record.get("rollback_completed_at" if completed else "rollback_failed_at")
+        if type(start) in (int, float) and type(end) in (int, float) and 0 < start <= end < float("inf"):
+            elapsed = end - start
+            lines.append(f"    rollback {fmt_s(elapsed)} ({outcome})")
+            if samples is not None:
+                samples.append(elapsed)
+        else:
+            lines.append("    rollback duration UNKNOWN (missing or invalid timestamps)")
     for label, times in (("completed rollback", rollback_done),
                          ("failed-probe rollback", rollback_probe_failed)):
         if times:

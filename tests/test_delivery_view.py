@@ -64,7 +64,7 @@ def test_p90_is_nearest_rank_not_interpolated():
     assert out["wake_wait_s"]["mean"] == 10.0
 
 
-def test_a_failed_rollback_is_named_without_an_invented_duration(monkeypatch, tmp_path):
+def test_legacy_unknown_recovery_keeps_its_reason_and_stage_unknown(monkeypatch, tmp_path):
     rolled = record(phase="UNKNOWN", delivered_at=None, reviewed_at=None,
                     failure="functional probe failed: old consumer invocations remain",
                     activation_started_at=2600.0)
@@ -74,8 +74,8 @@ def test_a_failed_rollback_is_named_without_an_invented_duration(monkeypatch, tm
     monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))  # no waiting commits: unknown pin range
     text = view.render(home, Path("/nope"), 24 * 3600.0, 4000.0)
     assert "old consumer invocations remain" in text
-    assert "UNKNOWN (rollback probe failed)" in text
-    assert "rollback duration UNKNOWN (no recorded end timestamp)" in text
+    assert "UNKNOWN (recovery stage unrecorded)" in text
+    assert "rollback duration UNKNOWN" in text
     assert "drain + functional observation" in text          # the delivered run still reports its stages
     assert "UNKNOWN: no pin" not in text                      # the pin itself resolved
 
@@ -98,7 +98,7 @@ def test_a_rolled_back_run_shows_only_the_recorded_duration(monkeypatch, tmp_pat
 def test_a_failed_rollback_probe_never_claims_the_pin_was_restored(monkeypatch, tmp_path):
     rolled = record(phase="UNKNOWN", delivered_at=None, reviewed_at=None,
                     failure="pin observation failed", activation_started_at=2600.0,
-                    rollback_at=2700.0, rollback_failed_at=2760.0)
+                    rollback_at=2700.0, rollback_failed_at=2760.0, rollback_probe={"code": 1})
     home = home_with(tmp_path, [record(), rolled])
     (tmp_path / "runtime").mkdir()
     os.symlink(f"{tmp_path}/releases/{'c' * 40}", tmp_path / "runtime" / "current")
@@ -108,6 +108,38 @@ def test_a_failed_rollback_probe_never_claims_the_pin_was_restored(monkeypatch, 
     assert "rollback 1m00s (probe failed)" in text
     assert "failed-probe rollback time mean 1m00s max 1m00s  (n=1)" in text
     assert "completed rollback time" not in text
+
+
+def test_restore_error_reports_the_stage_before_the_rollback_probe(tmp_path):
+    rolled = record(phase="UNKNOWN", delivered_at=None, reviewed_at=None,
+                    failure="pin observation failed", rollback_at=2700.0,
+                    rollback_failed_at=2760.0, rollback_error="unit configuration could not be restored")
+    home = home_with(tmp_path, [rolled])
+    text = view.render(home, REPO, 24 * 3600.0, 4000.0)
+    assert "UNKNOWN (rollback restore failed)" in text
+    assert "unit configuration could not be restored" in text
+    assert "rollback 1m00s (restore failed)" in text
+    assert "failed-probe rollback time" not in text
+
+
+def test_failed_explicit_revert_is_distinct_from_automatic_rollback(tmp_path):
+    reverted = record(phase="UNKNOWN", revert_started_at=3300.0,
+                      revert_failed_at=3400.0, revert_probe={"code": 1})
+    home = home_with(tmp_path, [reverted])
+    text = view.render(home, REPO, 24 * 3600.0, 4000.0)
+    assert f"UNKNOWN (explicit revert failed) {'b' * 8} after {view.fmt_ts(3300.0)}" in text
+    assert "rollback probe failed" not in text
+    assert "rollback duration" not in text
+
+
+def test_invalid_rollback_timestamp_keeps_duration_unknown(tmp_path):
+    rolled = record(phase="UNKNOWN", rollback_at=2700.0, rollback_failed_at="unreadable",
+                    rollback_probe={"code": 1})
+    home = home_with(tmp_path, [rolled])
+    text = view.render(home, REPO, 24 * 3600.0, 4000.0)
+    assert "UNKNOWN (rollback probe failed)" in text
+    assert "rollback duration UNKNOWN" in text
+    assert "failed-probe rollback time" not in text
 
 
 def test_unreadable_records_report_unknown_not_a_series(tmp_path):
