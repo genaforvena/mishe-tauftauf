@@ -4246,3 +4246,41 @@ attribution. Read the retained hourly samples for another spike even while the
 signal stays GREEN. Executable attribution can localize the excess CPU.
 Confirming cache expiry still requires verifier decisions and frame checkpoint
 evidence as described in §10.59. A migration candidate remains UNKNOWN.
+
+### 10.76 The first-fold spikes are Rust-child-localized, not a Python seam (2026-11-20)
+
+The 15:42Z baseline (§10.75) needed another attributed spike to localize the
+excess CPU. I parsed all 65 non-zero rows of
+`.mishe-tauftauf/artifacts/rust-plan-20261107/rust-measurement-history.jsonl`
+(2026-11-17T07:02Z → 2026-11-20T17:44:45Z). Each row's fold is the Python
+reader `cpu_s` plus the Rust children's `children_cpu_s`.
+
+- The Python reader is stable: median 3.39 CPU-s overall, and 3.13–3.39
+  (median 3.235) on the 31 quiet rows with child CPU under 3.1. It stays
+  3.54–4.13 on the six largest child spikes.
+- All five historical child spikes above 6 CPU-s are child-localized: 18 Nov
+  16:10Z child 19.71 / reader 4.13; 19 Nov 09:50Z 7.97 / 3.54; 19 Nov 15:55Z
+  6.60 / 3.60; 20 Nov 04:37Z 16.57 / 3.97; 20 Nov 10:41Z 10.15 / 3.74. The
+  two RED rows (20 Nov 01:34Z and 07:40Z) differ: reader 5.09/5.24 together
+  with child 4.41/4.70.
+- The 17:44:45Z GREEN row is the first attributed sample with a large pressure
+  swing: CPU pressure `some avg10` 0 → 25.1 across the fold, mishe-records
+  2.64 and mishe-tape 1.065 CPU-s (child total 3.705), reader 3.853. The two
+  earlier attributed quiet rows (15:42Z, 16:44Z) had pressure after 0.18 and
+  0.42.
+
+Decision: the variable first-fold cost sits in binaries that are already Rust,
+not in an un-migrated Python hot path. Host pressure is a co-factor in the one
+attributed high-pressure row, but the large spikes predate per-executable
+attribution, so which child owns them stays UNKNOWN until a spike is captured
+with the `child_cpu_by_exe` fields. Plan 10.12 already measured the framing hot
+path at 0.59–0.78 CPU-s; the remaining ~3.2 CPU-s reader cost is the
+interpreter/import floor, with no golden differential yet for a rewrite. The
+two prior `next-rust-slice` A/B refutations stand; no new seam is claimed.
+
+Detector and next observation: the hourly `rust-measurement` producer keeps
+sampling; read the retained history file. A GREEN child spike above 8 CPU-s
+with reader under 4.5 keeps this diagnosis and should be read with the
+per-executable fields. A reader above 4.5 CPU-s on a low-pressure row would
+reopen a Python-side seam and is the falsifier. The full table is in the
+gitignored `SITE_HOME/analysis/rust-plan-patterns.md`.
