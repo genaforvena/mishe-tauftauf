@@ -207,13 +207,13 @@ def build_report(commits: list[dict], cursors: dict, head: str, *, repo_root: Pa
 
 def produce(home, repo, *, wake: str | None = None, window: int = DEFAULT_WINDOW, now: float | None = None) -> dict:
     """Read git + cursors, write the detail, observe the signal. Returns the report."""
-    if wake is not None and wake not in SUBSCRIBERS:
-        raise ValueError(f"wake must be one of {', '.join(SUBSCRIBERS)}")
     now = time.time() if now is None else now
     home, repo = Path(home), Path(repo)
     cursors = read_cursors(home)
     sha = head_sha(repo)
-    if wake is not None:
+    # Only cursor readers move a cursor. A resolver watch (declared by sync, e.g. system1) gets the
+    # same ack command in its dossier; for it the ack is a read-only refresh and must exit cleanly.
+    if wake in SUBSCRIBERS:
         cursors[wake] = sha
         write_cursors(home, cursors)
     commits = read_log(repo, rev_range(repo, [cursors.get(name) for name in SUBSCRIBERS], window))
@@ -241,7 +241,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", required=True, help="site home (signals live under it)")
     parser.add_argument("--repo", default=".", help="repository to read commits from")
-    parser.add_argument("--wake", choices=SUBSCRIBERS, help="advance this subscriber's cursor to HEAD")
+    parser.add_argument("--wake", help="advance this cursor reader's cursor to HEAD (other roles: read-only ack)")
     parser.add_argument("--window", type=int, default=DEFAULT_WINDOW, help="tail when a cursor is absent")
     args = parser.parse_args(argv)
     try:

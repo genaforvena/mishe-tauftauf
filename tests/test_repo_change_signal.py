@@ -100,6 +100,18 @@ def test_registered_ack_command_advances_the_subscriber_cursor(tmp_path, repo):
     assert rcs.main(shlex.split(command)[5:]) == 0
     assert rcs.read_cursors(home) == {"docs": rcs.head_sha(repo)}
 
+def test_resolver_ack_exits_cleanly_and_moves_no_cursor(tmp_path, repo):
+    """A declared resolver (system1) receives the same ack command; it must not fail or move a cursor."""
+    import shlex
+    from mishe_tauftauf import signal_store
+    home = tmp_path / "home"
+    (home / "signals").mkdir(parents=True)
+    rcs.produce(home, repo, now=1_000_000.0)
+    ack = signal_store.registry(home)["repo-change"]["ack"]
+    command = ack.replace("{home}", str(home)).replace("{repo}", str(repo)).replace("{role}", "system1")
+    assert rcs.main(shlex.split(command)[5:]) == 0
+    assert "system1" not in rcs.read_cursors(home)
+
 def test_produce_keeps_the_declared_resolver_subscriber(tmp_path, repo):
     """sync declares the resolver as a subscriber; the ack refresh must not drop it."""
     from mishe_tauftauf import signal_store
