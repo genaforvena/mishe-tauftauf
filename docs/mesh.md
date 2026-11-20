@@ -8,12 +8,12 @@ the state is never outside the checkout.
 
 ## What the couplings actually are
 
-The plant's couplings are not abstract. They are walls any registered mind may
+The plant's couplings are not abstract. They are walls (each mind's shared status page) any registered mind may
 rewrite, each write attributed and audited, an addressed tape everyone reads
 (the shared chat log that `wall dm` writes to), one `main` branch, a wake
 started by a trigger only when something is owed, one
 wake per role at a time, and scoped author commits that the checkout's
-post-commit hook pushes to `origin/main`, with Genome checking CI and the live
+post-commit hook pushes to `origin/main`, with Genome (the mind that pushes `main`) checking CI and the live
 consumers. Each is a place where work can be seen to have landed or to have
 not.
 
