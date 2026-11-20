@@ -61,6 +61,16 @@ Promotions now record the patience they actually used (120 s since 2026-11-20). 
 such field keep the old 600 s rule, so a regime change does not silently reclassify history.
 """
 
+WAKE_HARD_CAP_S = 35 * 60.0
+"""Engine hard wake cap. A fence-holder span past this means a wake leaked past the cap.
+
+Measured from recorded select/outcome timestamps, not read from the cap config, so a
+regression in wake teardown stays visible in the view instead of being assumed away.
+"""
+
+LONG_HOLDER_S = 20 * 60.0
+"""A fence holder at or above this is long enough to impose a near-cap fence on a promotion."""
+
 
 def quiet_poll_s(record: dict) -> float:
     """The quiet-poll patience in force when this promotion waited for the dispatch lock."""
@@ -343,6 +353,44 @@ def fence_wake_spans(events: list[dict] | None, delivered: list[dict]) -> dict |
                        "wakes": rows})
     fences.sort(key=lambda item: (item["at"], item["sha"]))
     return {"fences": fences, "unmeasured": unmeasured}
+
+
+def holder_span_tail(spans: dict | None, cap_s: float = WAKE_HARD_CAP_S,
+                     long_s: float = LONG_HOLDER_S) -> dict | None:
+    """Fence-holder wake lengths against the engine's hard cap.
+
+    ``over_cap`` counts holders whose full select->outcome span exceeded the cap; it is
+    the continuing detector for the 'throttled wake outlives the hard cap' hypothesis.
+    ``long_overlap`` is the fence seconds donated by holders at or above ``long_s``,
+    beside all overlap, so a near-cap wake's share of a fence stays visible. Returns
+    None when no paired holder span exists, so a broken ledger stays UNKNOWN instead
+    of reading as 'no wake over the cap'.
+    """
+    if not spans or not spans.get("fences"):
+        return None
+    rows = [row for fence in spans["fences"] for row in fence["wakes"]]
+    if not rows:
+        return None
+    long_rows = [row for row in rows if row["span_s"] >= long_s]
+    return {"n": len(rows), "max_span": max(row["span_s"] for row in rows),
+            "over_cap": sum(1 for row in rows if row["span_s"] > cap_s),
+            "long_n": len(long_rows),
+            "long_overlap": sum(row["overlap_s"] for row in long_rows),
+            "total_overlap": sum(row["overlap_s"] for row in rows),
+            "unmeasured": spans.get("unmeasured", 0)}
+
+
+def holder_span_tail_line(tail: dict, cap_s: float = WAKE_HARD_CAP_S,
+                          long_s: float = LONG_HOLDER_S) -> str:
+    """One bounded line: cap breaches (expected zero) and the long-holder overlap share."""
+    share = (f"{100 * tail['long_overlap'] / tail['total_overlap']:.0f}%"
+             if tail["total_overlap"] > 0 else "UNKNOWN")
+    unknown = (f"; {tail['unmeasured']} fence(s) UNKNOWN" if tail["unmeasured"] else "")
+    return (f"  fence-holder wake lengths: max {fmt_s(tail['max_span'])} vs cap {fmt_s(cap_s)},"
+            f" {tail['over_cap']}/{tail['n']} over cap;"
+            f" {tail['long_n']}/{tail['n']} >={fmt_s(long_s)} gave"
+            f" {fmt_s(tail['long_overlap'])} of {fmt_s(tail['total_overlap'])}"
+            f" fence overlap ({share}){unknown}")
 
 
 def _holder_line(label: str, values: dict[str, float], limit: int = 4) -> str:
@@ -684,6 +732,9 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
                 lines.append(f"  fence wake spans: mean full {fmt_s(full)} vs clipped"
                              f" {fmt_s(clipped)} per holder, {len(rows)} holders in"
                              f" {len(spans['fences'])} fences{unknown}")
+                tail = holder_span_tail(spans)
+                if tail is not None:
+                    lines.append(holder_span_tail_line(tail))
     rollback_done, rollback_probe_failed = [], []
     for record in recoveries:
         sha = record.get("sha", "?")[:8]

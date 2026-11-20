@@ -744,6 +744,44 @@ def test_report_prints_full_span_beside_clipped_overlap(tmp_path):
     assert "fence wake spans: mean full 10m00s vs clipped 6m40s per holder" in text
 
 
+def _span_tail_fixture():
+    return {"fences": [{"wakes": [
+        {"span_s": 600.0, "overlap_s": 100.0},
+        {"span_s": 1900.0, "overlap_s": 200.0},
+        {"span_s": 2150.0, "overlap_s": 300.0},
+        {"span_s": 1300.0, "overlap_s": 400.0},
+    ]}], "unmeasured": 0}
+
+
+def test_holder_span_tail_counts_cap_breaches_and_long_holder_share():
+    tail = view.holder_span_tail(_span_tail_fixture(), cap_s=2100.0, long_s=1200.0)
+    assert tail == {"n": 4, "max_span": 2150.0, "over_cap": 1,
+                    "long_n": 3, "long_overlap": 900.0, "total_overlap": 1000.0,
+                    "unmeasured": 0}
+
+
+def test_holder_span_tail_line_names_cap_breach_and_share():
+    tail = view.holder_span_tail(_span_tail_fixture(), cap_s=2100.0, long_s=1200.0)
+    assert view.holder_span_tail_line(tail, cap_s=2100.0, long_s=1200.0) == (
+        "  fence-holder wake lengths: max 35m50s vs cap 35m00s, 1/4 over cap;"
+        " 3/4 >=20m00s gave 15m00s of 16m40s fence overlap (90%)")
+
+
+def test_holder_span_tail_is_unknown_without_a_paired_wake():
+    assert view.holder_span_tail(None) is None
+    assert view.holder_span_tail({"fences": [], "unmeasured": 2}) is None
+
+
+def test_report_prints_holder_span_tail_beside_the_span_line(tmp_path):
+    held = record(quiet_poll_s=120, waiting_since=2010.0, activation_started_at=2410.0)
+    events = [_holder_event("w1", "select", 1900.0, "health", "hy4"),
+              _holder_event("w1", "outcome", 2500.0, "health", "hy4")]
+    home = home_with(tmp_path, [held])
+    write_ledger(home, events)
+    text = view.render(home, Path("/nope"), 86400.0, 6000.0)
+    assert "fence-holder wake lengths: max 10m00s vs cap 35m00s, 0/1 over cap" in text
+
+
 def test_fence_spans_json_emits_machine_readable_fences_and_no_text_report(tmp_path, capsys):
     home = home_with(tmp_path, [record(created_at=time.time(), quiet_poll_s=120,
                                        waiting_since=2010.0, activation_started_at=2410.0,
