@@ -50,6 +50,32 @@ def test_stall_line_renders_memory_pressure_alone_when_io_is_absent():
     assert code == 2 and "mem_psi 23.93" in lines[0] and "io_psi" not in lines[0]
 
 
+def test_one_cliff_seen_by_three_probes_is_one_episode():
+    stalls = [rec(event="slow", at=NOW - 60 + i * 0.01, total=5.2 + i, fsync=5.2 + i)
+              for i in range(3)]
+    code, lines = mod.evaluate([rec()] + stalls, NOW)
+    assert code == 2
+    assert "1 root-filesystem stall episode(s)" in lines[0]
+    assert "3 near-simultaneous probe reports" in lines[0]
+    assert "worst 7.2s" in lines[0]
+
+
+def test_distinct_stalls_are_not_collapsed_into_one_episode():
+    stalls = [rec(event="slow", at=NOW - 60, total=9.9, fsync=9.9),
+              rec(event="slow", at=NOW - 50, total=8.1, fsync=8.1)]
+    code, lines = mod.evaluate([rec()] + stalls, NOW)
+    assert code == 2 and "2 root-filesystem stall(s)" in lines[0]
+    assert "episode" not in lines[0]
+
+
+def test_recurrence_counts_episodes_when_probes_overlap():
+    stalls = [rec(event="slow", at=NOW - 5000 + i * 0.01, total=9.9, fsync=9.9) for i in range(3)]
+    code, lines = mod.evaluate([rec()] + stalls, NOW)
+    assert code == 0
+    assert "recurrence: 1 stall episode(s) from 3 probe reports" in lines[0]
+    assert "most recent 83 min ago" in lines[0]
+
+
 def test_old_stall_outside_window_is_ignored():
     assert mod.evaluate([rec(), rec(event="slow", at=NOW - 5000, total=9.9)], NOW)[0] == 0
 

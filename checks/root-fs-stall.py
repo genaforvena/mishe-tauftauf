@@ -47,6 +47,14 @@ RECURRENCE_S = 86400.0
 STALE_S = 300.0
 STALL_S = 5.0
 TARGET = "root"
+EPISODE_CLUSTER_S = 2.0
+"""Stall records closer than this are one host-wide cliff seen by several plants' probes.
+
+Each plant runs its own dual_probe.py into the shared /dev/shm log, so a single
+root-drive latency cliff yields one stall record per plant within milliseconds.
+Counting those as separate stalls overstates the number of events and misattributes
+one cliff as several. The probe interval is 1 s; 2 s keeps distinct (10 s-apart)
+stalls separate while collapsing same-instant multi-probe reports."""
 LIVE_LOG = "/dev/shm/dual-probe.jsonl"
 """The probe's full, volatile log (tmpfs). Read with the durable mirror, never alone."""
 
@@ -72,6 +80,17 @@ def psi_suffix(record: dict) -> str:
     return ", " + ", ".join(parts) if parts else ""
 
 
+def episodes(stalls: list[dict]) -> list[list[dict]]:
+    """Group stall records by time proximity; one cliff seen by N probes is one episode."""
+    groups: list[list[dict]] = []
+    for record in sorted(stalls, key=lambda r: r["at"]):
+        if groups and record["at"] - groups[-1][-1]["at"] <= EPISODE_CLUSTER_S:
+            groups[-1].append(record)
+        else:
+            groups.append([record])
+    return groups
+
+
 def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
     seen = [r for r in records if r.get("dir") == TARGET and isinstance(r.get("at"), (int, float))]
     if not seen:
@@ -83,15 +102,24 @@ def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
               and (r.get("total") or 0) >= STALL_S]
     if stalls:
         worst = max(stalls, key=lambda r: r["total"])
-        return 2, [f"{len(stalls)} root-filesystem stall(s) >= {STALL_S:.0f}s in the last {WINDOW_S:.0f}s; "
-                   f"worst {worst['total']:.1f}s (create {worst.get('create')}, fsync {worst.get('fsync')})"
+        eps = episodes(stalls)
+        if len(eps) < len(stalls):
+            lead = (f"{len(eps)} root-filesystem stall episode(s) >= {STALL_S:.0f}s in the last "
+                    f"{WINDOW_S:.0f}s ({len(stalls)} near-simultaneous probe reports)")
+        else:
+            lead = (f"{len(stalls)} root-filesystem stall(s) >= {STALL_S:.0f}s in the last "
+                    f"{WINDOW_S:.0f}s")
+        return 2, [f"{lead}; worst {worst['total']:.1f}s (create {worst.get('create')}, fsync {worst.get('fsync')})"
                    f"{psi_suffix(worst)}"]
     recurrence = [r for r in seen if r.get("event") == "slow" and now - r["at"] <= RECURRENCE_S
                   and (r.get("total") or 0) >= STALL_S]
     line = f"root probe fresh ({now - newest:.0f}s) with no stall >= {STALL_S:.0f}s in {WINDOW_S:.0f}s"
     if recurrence:
         last = max(r["at"] for r in recurrence)
-        line += (f"; recurrence: {len(recurrence)} stall(s) >= {STALL_S:.0f}s in the last "
+        eps = episodes(recurrence)
+        count = (f"{len(eps)} stall(s)" if len(eps) == len(recurrence)
+                 else f"{len(eps)} stall episode(s) from {len(recurrence)} probe reports")
+        line += (f"; recurrence: {count} >= {STALL_S:.0f}s in the last "
                  f"{RECURRENCE_S / 3600:.0f} h, most recent {(now - last) / 60:.0f} min ago")
     return 0, [line]
 
