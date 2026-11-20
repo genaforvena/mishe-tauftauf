@@ -3,6 +3,15 @@ import pytest
 from mishe_tauftauf import model_policy
 from mishe_tauftauf.engine_claude import ClaudeEngine
 from mishe_tauftauf.engine_omp import OmpEngine
+from mishe_tauftauf.engine_codex import CodexEngine
+from mishe_tauftauf.engine_qwen import QwenEngine
+
+
+@pytest.mark.parametrize("engine", [ClaudeEngine, OmpEngine, CodexEngine, QwenEngine])
+@pytest.mark.parametrize("model", ["opencode-go/glm-5.3", "routerai/z-ai/GLM-5.3-flash"])
+def test_glm_53_is_refused_at_every_engine_boundary(engine, model):
+    with pytest.raises(ValueError, match="banned"):
+        engine(model)
 
 
 @pytest.mark.parametrize("model", ["~anthropic/claude-sonnet-latest", "claude-sonnet-5-5", "claude-haiku-5-5", "opus", "opencode-go/beam-free", None])

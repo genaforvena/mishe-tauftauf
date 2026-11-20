@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Detector: the opencode-go allowance windows (go-a, glm-5.3 first choice in every role)
+"""Detector: the opencode-go allowance windows (go-a)
 are measured, safe, and counted beside the ledger that selects them.
 
 engine/budget.json is the one budget source (docs/budget-json-contract.md, produced by

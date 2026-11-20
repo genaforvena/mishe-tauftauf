@@ -58,6 +58,14 @@ def test_first_fresh_admitted_candidate_is_selected():
     assert c["decision"] == "select" and c["key"] == router.candidate_key(GO)
 
 
+def test_banned_candidate_is_skipped_before_construction():
+    banned = {"engine": "omp", "model": "opencode-go/GLM-5.3", "account": "go-a"}
+    choice = router.choose("health", [banned, HAIKU], status(**{"go-a": account()}), {}, NOW_MS)
+    assert choice["key"] == router.candidate_key(HAIKU)
+    assert choice["trail"][0]["verdict"] == "skipped"
+    assert "banned" in choice["trail"][0]["reason"]
+
+
 def test_stale_or_unknown_account_is_skipped_for_next_candidate():
     st = status(**{"go-a": account(state="STALE", reason="provider reading older than report TTL"),
                    "minimax-a": account(provider="minimax-code")})

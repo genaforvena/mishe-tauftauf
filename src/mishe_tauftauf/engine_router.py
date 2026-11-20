@@ -51,6 +51,7 @@ from . import engine_policy as policy
 from .router_text import file_lines, iso_ms, ledger_events, load_json, retry_after_ms, split_cooling_key
 from . import signal_store
 from . import yielding
+from .model_policy import refuse_banned_model
 from .wake import (EngineExhausted, EngineNotStarted, EngineRateLimited, EngineRejected, EngineTimeout)
 
 ROUTES = "routes.json"
@@ -294,6 +295,11 @@ def choose(role: str, candidates: list, status, cooling: dict, now_ms: float,
     trail = []
     for c in candidates:
         key = candidate_key(c)
+        try:
+            refuse_banned_model(c["model"])
+        except ValueError as exc:
+            trail.append({"key": key, "verdict": "skipped", "reason": str(exc)})
+            continue
         if key in exclude:
             trail.append({"key": key, "verdict": "tried-this-wake"})
             continue
