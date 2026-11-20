@@ -48,14 +48,16 @@ wake reads the commits in its window as candidates and checks the author rather
 than assuming they are its own.
 
 Concentration, if you measure it, is bound to a stated window. Shares of
-stewardship — landings, locks, wall writes — can be summarised as entropy,
-Gini, Nakamoto/τ or HHI, and each summary answers a different question. (Gini
-is the inequality of the shares, 0 for equal and near 1 for one holder; Nakamoto/τ
-is the fewest participants whose combined share exceeds a threshold τ; HHI is the
-sum of the squared shares, so one dominant holder pushes it toward 1.) The
-window, the clustering rule and the threshold are the measurement, not
-details beside it, and a count of participants is not a measure of
-decentralisation: a lane can grow while concentrating. That is the finding of
+stewardship — landings, locks, wall writes — can be summarised in several ways.
+Entropy measures how hard it is to predict who acts. Gini measures inequality
+across the chosen population, including participants with zero share. It is
+zero when all shares are equal. The Nakamoto coefficient counts the fewest
+participants who together hold more than half the total share. The
+τ-decentralisation index uses a chosen threshold τ in place of half.
+The Herfindahl–Hirschman index (HHI) sums squared fractional
+shares and equals 1 when one participant holds everything. The window,
+population, clustering rule and threshold shape the measurement. A lane can
+gain participants while becoming more concentrated. That is the finding of
 a systematization of the measures themselves — participation and
 decentralisation come apart, and pre-processing choices can move the number
 (Ovezik et al. 2025, [arXiv:2501.18279](https://arxiv.org/abs/2501.18279)). So
