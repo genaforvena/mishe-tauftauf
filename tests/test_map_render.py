@@ -182,6 +182,52 @@ def test_rssi_fresh_live_without_labels_is_unknown_not_a_tie(tmp_path):
     assert "tie" not in state["rssi"]["text"]
 
 
+def _rssi_inputs(site, moments, dbm=-44.0):
+    mapdir = Path(site) / "senses" / "map"
+    mapdir.mkdir(parents=True, exist_ok=True)
+    stamp = _now().strftime("%Y-%m-%dT%H:%M:%SZ")
+    (mapdir / "rssi-table.json").write_text(json.dumps(
+        {"generated_at": stamp, "vantages": [{"vantage": "redmi10", "rssi": dbm, "rssi_age_s": 1}]}))
+    (mapdir / "label-rssi-vectors.json").write_text(json.dumps({"moments": moments}))
+
+
+def _moment(who, room, dbm):
+    return {"who": who, "room": room, "label_utc": "2026-11-11T13:00Z",
+            "phone_to_ap": {"rssi_median_dbm": dbm, "n": 120}}
+
+
+def test_rssi_same_value_for_every_label_is_named_not_a_failed_test(tmp_path):
+    # three labels in two rooms, all at one dBm: nearest-neighbour scoring cannot separate them
+    site = _site(tmp_path, _activity({}))
+    _rssi_inputs(site, [_moment("bruno", "bedroom", -60),
+                        _moment("ilya", "bedroom", -60),
+                        _moment("rozalia", "kitchen_stall", -60)])
+    state, _ = _render(site)
+    text = state["rssi"]["text"]
+    assert state["rssi"]["state"] == "fresh"
+    assert "all 3 labels -60 dBm, no room spread" in text
+    assert "0/3 correct" in text
+    assert "not a room claim" in text
+
+
+def test_rssi_different_labels_do_not_claim_no_spread(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _rssi_inputs(site, [_moment("bruno", "bedroom", -60),
+                        _moment("ilya", "bedroom", -50),
+                        _moment("rozalia", "kitchen_stall", -70)])
+    state, _ = _render(site)
+    assert "no room spread" not in state["rssi"]["text"]
+
+
+def test_rssi_one_label_does_not_claim_no_spread(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _rssi_inputs(site, [_moment("bruno", "bedroom", -60)])
+    state, _ = _render(site)
+    text = state["rssi"]["text"]
+    assert "no room spread" not in text
+    assert "nearest bedroom" in text
+
+
 def test_rssi_line_without_vectors_is_unknown_not_a_room(tmp_path):
     # no label-rssi-vectors.json or rssi-table.json: the fingerprint cannot run, so the line is UNKNOWN
     site = _site(tmp_path, _activity({}))

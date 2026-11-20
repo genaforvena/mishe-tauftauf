@@ -107,6 +107,21 @@ def loo(moments):
             "rows": rows}
 
 
+def all_equal_labels(moments):
+    """The one dBm shared by every label, or None when labels differ or are thin.
+
+    Nearest-neighbour scoring cannot separate rooms when all labelled moments
+    carry the same value. Reporting that fact keeps a 0/n score from reading as
+    a test that failed on distinguishable rooms.
+    """
+    dbms = [m.get("dbm") for m in moments]
+    if len(dbms) < 2 or any(not isinstance(v, (int, float)) or isinstance(v, bool) for v in dbms):
+        return None
+    if max(dbms) != min(dbms):
+        return None
+    return float(dbms[0])
+
+
 def main(argv=None):
     a = rt.parse_cli(argv, "RSSI room fingerprint for one site.")
     site = os.path.abspath(a.site)
@@ -114,6 +129,7 @@ def main(argv=None):
     now = parse_iso(a.now) if a.now else datetime.datetime.now(datetime.timezone.utc)
     moments = load_moments(os.path.join(mapdir, "label-rssi-vectors.json"))
     cv = loo(moments)
+    same = all_equal_labels(moments)
     live = live_vector(os.path.join(mapdir, "rssi-table.json"), now)
     # No labelled moment means nothing to match against: a fresh RSSI is not a
     # room claim, so mark the live vector UNKNOWN instead of reporting a tie.
@@ -132,6 +148,7 @@ def main(argv=None):
     out = {"generated_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "live": live,
            "estimate": est, "confidence": confidence,
            "loo": cv,
+           "labels": {"n": len(moments), "all_equal_dbm": same},
            "note": "one feature, %d labelled moments; accuracy is not a claim of room discrimination"
                    % cv["n"]}
     os.makedirs(mapdir, exist_ok=True)

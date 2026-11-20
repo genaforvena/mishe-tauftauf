@@ -301,6 +301,12 @@ def rssi_evidence():
     loo = doc.get("loo") or {}
     loo_txt = "leave-one-out %s/%s correct, majority baseline %s" % (
         loo.get("correct"), loo.get("n"), loo.get("majority_baseline_accuracy"))
+    labels = doc.get("labels") or {}
+    same = labels.get("all_equal_dbm")
+    n_labels = labels.get("n")
+    if (isinstance(same, (int, float)) and not isinstance(same, bool)
+            and isinstance(n_labels, int) and n_labels >= 2):
+        loo_txt += " (all %d labels %.0f dBm, no room spread)" % (n_labels, same)
     live = doc.get("live") or {}
     if live.get("state") != "fresh":
         return {"state": "UNKNOWN", "text": "rssi (Redmi10): UNKNOWN, %s; %s"
