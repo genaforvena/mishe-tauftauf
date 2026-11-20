@@ -75,17 +75,28 @@ or the lagging window figure sends the next investigation at an already-fixed st
 
 
 def recent_stages(delivered: list[dict], count: int = RECENT_N) -> str:
-    """Stage means of the newest deliveries, each beside the whole window's mean."""
+    """Stage means of the newest deliveries, each beside the whole window's mean.
+
+    A newest-N fence mean can still mix the legacy hold patience with a newer, shorter
+    one. Name the current regime beside it so a reader does not chase a fence the
+    newest deliveries have already shortened.
+    """
     newest = sorted(delivered, key=lambda r: r["created_at"])[-count:]
     if not newest:
         return "newest delivered promotions: UNKNOWN (none in the window)"
     recent, whole = summarize(newest), summarize(delivered)
+    patience = quiet_poll_s(newest[-1])
+    same_regime = [r for r in newest if quiet_poll_s(r) == patience]
+    regime_fence = (summarize(same_regime).get("wake_wait_s", {})
+                    if 1 <= len(same_regime) < len(newest) else {})
     parts = []
     for key, label in (("check_s", "check"), ("wake_wait_s", "fence"),
                        ("checked_to_live_s", "total")):
         row, window_row = recent.get(key, {}), whole.get(key, {})
         value = fmt_s(row["mean"]) if row else "UNKNOWN"
         before = f" (window {fmt_s(window_row['mean'])})" if window_row else ""
+        if key == "wake_wait_s" and regime_fence:
+            before += f"; {patience:g}s regime {fmt_s(regime_fence['mean'])} n={len(same_regime)}"
         parts.append(f"{label} {value}{before}")
     return (f"newest {len(newest)} delivered (since {fmt_ts(newest[0]['created_at'])}): "
             + "  ".join(parts))

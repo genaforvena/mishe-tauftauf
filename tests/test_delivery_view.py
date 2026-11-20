@@ -380,6 +380,24 @@ def test_recent_stages_shows_a_regime_shift_next_to_the_lagging_window_mean():
     assert "check 8m20s (window 12m10s)" in line
 
 
+def test_recent_stages_names_the_current_fence_regime_inside_a_mixed_mean():
+    old = [record(created_at=1000.0 + i * 100, check={"at": 1500.0 + i * 100},
+                  waiting_since=1000.0 + i * 100,
+                  activation_started_at=1600.0 + i * 100) for i in range(6)]
+    new = [record(created_at=3000.0 + i * 100, quiet_poll_s=120,
+                  check={"at": 3500.0 + i * 100},
+                  waiting_since=3000.0 + i * 100,
+                  activation_started_at=3300.0 + i * 100) for i in range(6)]
+    line = view.recent_stages(old + new)
+    assert "fence 7m00s (window" in line
+    assert "; 120s regime 5m00s n=6" in line
+
+
+def test_recent_stages_leaves_a_single_fence_regime_unlabelled():
+    rows = [record(created_at=1000.0 + i * 100, quiet_poll_s=120) for i in range(3)]
+    assert "regime" not in view.recent_stages(rows)
+
+
 def test_recent_stages_never_turns_a_missing_stage_into_zero():
     line = view.recent_stages([record(check=None) for _ in range(3)])
     assert "check UNKNOWN" in line
