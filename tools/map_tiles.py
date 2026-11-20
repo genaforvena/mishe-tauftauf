@@ -37,6 +37,7 @@ ASSUMED_NIGHT_UTC = (21, 5)   # mirrors map_render.NIGHT_UTC; a published mismat
 NIGHT_CURVE_MAX_AGE_S = 1800  # the daylight and activity duties renew their curves about every 10 min
 NIGHT_MIN_SAMPLES = 30        # hours with fewer samples do not carry a median luma
 PHONE_FRESH_S = 900   # the household_phones limit (Redmi10 stream)
+PHONE_HISTORY_WINDOW_S = 7 * 24 * 3600   # the trailing window for the reliability line
 
 GHOST_BELOW = 0.3     # a guess under this number is shown as a ghost, not a letter
 PEOPLE = ["ilya", "rozalia", "bruno"]
@@ -113,6 +114,42 @@ def read_phone_row(path):
         return None
 
 
+def read_phone_history(path):
+    """All collector rows, newest last, or None when missing or malformed."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            rows = [json.loads(line) for line in fh if line.strip()]
+    except (OSError, ValueError):
+        return None
+    if not rows or not all(isinstance(r, dict) for r in rows):
+        return None
+    return rows
+
+
+def phone_stability(rows, now, window_s=None):
+    """(drop onsets, fresh rows, total rows) for redmi10 over the trailing window.
+
+    A drop onset is an ok row followed by unknown or stale; the fresh fraction
+    is ok rows over all rows in the window. These are the collector's rows, not
+    the phone's body log, so this is a different population from delivery-gaps.
+    Missing, malformed or empty history is None (UNKNOWN), never a zero.
+    """
+    if not rows:
+        return None
+    window_s = PHONE_HISTORY_WINDOW_S if window_s is None else window_s
+    now_s = now.timestamp() if hasattr(now, "timestamp") else now
+    window = [r for r in rows
+              if isinstance(r.get("t"), (int, float)) and r["t"] >= now_s - window_s]
+    if not window:
+        return None
+    statuses = [(r.get("redmi10") or {}).get("status") for r in window]
+    if any(not isinstance(s, str) for s in statuses):
+        return None
+    drops = sum(1 for prev, cur in zip(statuses, statuses[1:])
+                if prev == "ok" and cur in ("unknown", "stale"))
+    fresh = sum(1 for s in statuses if s == "ok")
+    return drops, fresh, len(statuses)
+
 def _age_s_at(now, generated_utc, age_s):
     """Age of a value now, given its age at the moment the state was written."""
     gen = _parse(generated_utc)
@@ -147,8 +184,7 @@ def _parse(text):
     except (TypeError, ValueError):
         return None
 
-
-def build_model(floor, floor_reason, state, state_reason, phone, now):
+def build_model(floor, floor_reason, state, state_reason, phone, now, stability=None):
     """Pure model: rooms, grid cells, sprites, legend and status lines. No file I/O."""
     m = {"rooms": {}, "cells": {}, "sprites": [], "legend": [], "status": [], "banner": []}
     rooms = []
@@ -170,7 +206,7 @@ def build_model(floor, floor_reason, state, state_reason, phone, now):
     _draw_doors(m, floor or {})
     _draw_furniture(m, floor or {})
     _draw_sprites(m, state, now)
-    _status(m, floor, state, state_reason, phone, now)
+    _status(m, floor, state, state_reason, phone, now, stability)
     return m
 
 
@@ -323,7 +359,7 @@ def _age_text(age_s):
     return "%d h" % (age_s // 3600)
 
 
-def _status(m, floor, state, state_reason, phone, now):
+def _status(m, floor, state, state_reason, phone, now, stability=None):
     gen = (state or {}).get("generated_utc")
     if state is None:
         m["banner"].append("Best guess UNKNOWN: map-state.json %s." % (state_reason or "missing"))
@@ -357,8 +393,14 @@ def _status(m, floor, state, state_reason, phone, now):
         if _num(phone.get("collector_t")) and _num(phone.get("age_s")):
             age = (now.timestamp() - phone["collector_t"]) + phone["age_s"]
         frac = _fresh_fraction(age, PHONE_FRESH_S)
-        m["status"].append("phone Redmi10 [%s] %s (status %s)" % (
+        m["status"].append("phone Redmi10 [%s] newest row %s (status %s)" % (
             _bar(frac), _age_text(age), phone.get("status")))
+    if stability is None:
+        m["status"].append("phone history UNKNOWN (no usable collector rows; bar is newest-row age only)")
+    else:
+        drops, fresh, total = stability
+        m["status"].append("phone history: %d drop onsets in 7d, fresh in %d%% of %d samples; bar is newest-row age only"
+                           % (drops, 100 * fresh // total, total))
     rssi = ((state or {}).get("rssi") or {}).get("text") or "RSSI UNKNOWN (no rssi state)"
     m["status"].append("rssi " + rssi.replace("rssi (Redmi10): ", "").replace("rssi ", ""))
     m["status"].insert(0, "time %s" % now.strftime("%Y-%m-%d %H:%M:%SZ"))
@@ -688,7 +730,16 @@ def model_from_site(site, now, phone_path=None):
             state, state_reason = st, None
     except (OSError, ValueError):
         pass
-    phone = read_phone_row(phone_path or os.path.join(site, "spatial", "work", "household", "phones.jsonl"))
-    model = build_model(floor, floor_reason, state, state_reason, phone, now)
+    phone_file = phone_path or os.path.join(site, "spatial", "work", "household", "phones.jsonl")
+    rows = read_phone_history(phone_file)
+    if rows is None:
+        phone = read_phone_row(phone_file)
+    else:
+        last = rows[-1]
+        r = last.get("redmi10") or {}
+        phone = {"age_s": r.get("age_s"), "status": r.get("status"),
+                 "collector_t": last.get("t")}
+    stability = phone_stability(rows, now)
+    model = build_model(floor, floor_reason, state, state_reason, phone, now, stability)
     model["status"].append(night_prior_line(site, state, now))
     return model

@@ -19,7 +19,8 @@ time 2026-11-13 23:50:00Z
 activity living  [######....] 2 min (fresh)
 activity bedroom [..........] 3 h (stale)
 activity age = newest usable motion bucket, not camera frame time (quiet room reads stale)
-phone Redmi10 [##########] 15 s (status ok)
+phone Redmi10 [##########] newest row 15 s (status ok)
+phone history UNKNOWN (no usable collector rows; bar is newest-row age only)
 rssi UNKNOWN, no redmi10 rssi
 map confidence LOW
   rooms measured 0 of 2 (sizes are assumed)

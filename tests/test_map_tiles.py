@@ -298,6 +298,39 @@ def test_phone_row_age_counts_from_collector_time(tmp_path):
     model = _model(_state(FRESH_ILYA), phone=phone)
     assert any("phone Redmi10" in s and "104 s" in s for s in model["status"])
 
+def test_phone_stability_counts_drops_and_fresh_rows():
+    t = NOW.timestamp()
+    rows = [{"t": t - 600 + i * 100, "redmi10": {"status": s}}
+            for i, s in enumerate(["ok", "ok", "stale", "ok", "unknown", "ok"])]
+    assert mt.phone_stability(rows, NOW) == (2, 4, 6)
+    assert mt.phone_stability(rows, NOW, window_s=250) == (0, 1, 2)
+
+
+def test_phone_stability_fails_closed():
+    assert mt.phone_stability([], NOW) is None
+    old = [{"t": NOW.timestamp() - 1e7, "redmi10": {"status": "ok"}}]
+    assert mt.phone_stability(old, NOW) is None
+    bad_status = [{"t": NOW.timestamp(), "redmi10": {"status": 3}}]
+    assert mt.phone_stability(bad_status, NOW) is None
+    bad_time = [{"t": "yesterday", "redmi10": {"status": "ok"}}]
+    assert mt.phone_stability(bad_time, NOW) is None
+
+
+def test_model_from_site_adds_phone_history_line(tmp_path):
+    path = tmp_path / "phones.jsonl"
+    rows = [{"t": NOW.timestamp() - 300 + i * 100, "redmi10": {"status": s, "age_s": 4.0}}
+            for i, s in enumerate(["ok", "stale", "ok"])]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    model = mt.model_from_site(str(tmp_path / "absent"), NOW, phone_path=str(path))
+    assert any("phone history: 1 drop onsets in 7d, fresh in 66% of 3 samples" in s
+               for s in model["status"])
+    assert any("phone Redmi10" in s and "newest row" in s for s in model["status"])
+
+
+def test_model_from_site_phone_history_unknown_when_missing(tmp_path):
+    model = mt.model_from_site(str(tmp_path / "absent"), NOW,
+                               phone_path=str(tmp_path / "absent.jsonl"))
+    assert any(s.startswith("phone history UNKNOWN") for s in model["status"])
 
 def _night_curves():
     daylight = {"rooms": {"living room": {"hours": {
