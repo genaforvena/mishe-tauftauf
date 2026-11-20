@@ -80,6 +80,22 @@ def psi_suffix(record: dict) -> str:
     return ", " + ", ".join(parts) if parts else ""
 
 
+def timing_suffix(stalls: list[dict], episode_count: int, now: float) -> str:
+    """How recent and how spread the stalls were — the lead time a reader can measure from the signal.
+
+    The episode count alone cannot tell a fresh cliff that is still decaying from a burst spread
+    over minutes, or how long ago the last stall was seen. Those two numbers are what decide
+    whether a responder is early or late, so they belong in the reason rather than in a 25 MB
+    probe log nobody reads at 03:00.
+    """
+    last = max(r["at"] for r in stalls)
+    first = min(r["at"] for r in stalls)
+    out = f"; most recent stall {now - last:.0f}s ago"
+    if episode_count > 1:
+        out += f"; bursts span {(last - first) / 60:.0f} min"
+    return out
+
+
 def episodes(stalls: list[dict]) -> list[list[dict]]:
     """Group stall records by time proximity; one cliff seen by N probes is one episode."""
     groups: list[list[dict]] = []
@@ -110,7 +126,7 @@ def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
             lead = (f"{len(stalls)} root-filesystem stall(s) >= {STALL_S:.0f}s in the last "
                     f"{WINDOW_S:.0f}s")
         return 2, [f"{lead}; worst {worst['total']:.1f}s (create {worst.get('create')}, fsync {worst.get('fsync')})"
-                   f"{psi_suffix(worst)}"]
+                   f"{psi_suffix(worst)}{timing_suffix(stalls, len(eps), now)}"]
     recurrence = [r for r in seen if r.get("event") == "slow" and now - r["at"] <= RECURRENCE_S
                   and (r.get("total") or 0) >= STALL_S]
     line = f"root probe fresh ({now - newest:.0f}s) with no stall >= {STALL_S:.0f}s in {WINDOW_S:.0f}s"

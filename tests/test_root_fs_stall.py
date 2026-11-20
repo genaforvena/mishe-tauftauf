@@ -68,6 +68,23 @@ def test_distinct_stalls_are_not_collapsed_into_one_episode():
     assert "episode" not in lines[0]
 
 
+def test_stall_line_reports_recency_and_burst_span():
+    stalls = [rec(event="slow", at=NOW - 600, total=9.9, fsync=9.9),
+              rec(event="slow", at=NOW - 120, total=8.1, fsync=8.1)]
+    code, lines = mod.evaluate([rec()] + stalls, NOW)
+    assert code == 2
+    assert "most recent stall 120s ago" in lines[0]
+    assert "bursts span 8 min" in lines[0]
+
+
+def test_single_episode_reports_recency_without_a_span():
+    stalls = [rec(event="slow", at=NOW - 600 + i * 0.01, total=5.2, fsync=5.2) for i in range(3)]
+    code, lines = mod.evaluate([rec()] + stalls, NOW)
+    assert code == 2
+    assert "most recent stall 600s ago" in lines[0]
+    assert "bursts span" not in lines[0]
+
+
 def test_recurrence_counts_episodes_when_probes_overlap():
     stalls = [rec(event="slow", at=NOW - 5000 + i * 0.01, total=9.9, fsync=9.9) for i in range(3)]
     code, lines = mod.evaluate([rec()] + stalls, NOW)
