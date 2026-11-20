@@ -166,8 +166,9 @@ Every running wake holds the dispatch lock for its whole run; the lock is
 shared, so a site may run several minds at once, up to `max` in
 `SITE_HOME/wake-concurrency.json` (default 1, at most 8), and one role never
 runs twice at once. Delivery and activation take the same lock exclusively, so
-they wait for every running wake; direct promotion from inside an engine is
-refused. Queue the delivery while awake:
+they wait for every running wake. The delivery cadence picks up checked commits
+from `main`. From a wake, use a request when you need to bind delivery to a
+specific target, previous pin and set of commands.
 
 ```sh
 mishe release request --sha FULL_SHA --previous FULL_SHA \
@@ -259,6 +260,13 @@ it or remove admission because its parent PID died: child activation processes
 and effects need reconciliation. Inspect the exact request, patch/release logs,
 processes, runtime pointer and actual consumers. Preserve original failure
 records. Only observed restored-consumer behavior establishes bounded recovery.
+
+A request refused with “previous SHA does not match installed wake consumer pin”
+stopped before activation. Read the installed pin and the matching delivery
+record. If the cadence already delivered the target or a descendant, verify the
+intended change in the running release and retain the refusal as recorded. If
+the change is still owed, base any new request on the pin you just observed.
+
 The `delivery-requests` signal expires after ten minutes (`max_age` 600 in `duties.json`) if its consumer stops
 observing; missing, stale or malformed monitoring never establishes success.
 
@@ -268,9 +276,9 @@ unit (`mishe-promote` runs
 materializes a worktree of HEAD and runs the whole suite on it through
 `release advance`. A manual delivery driver
 must run in a separately supervised service under the existing containment,
-with retained logs and an explicit result. `setsid` and `nohup` do not escape a
-wake service's systemd control group: when the wake exits, systemd kills those
-descendants. Prefer the queued request above for authored delivery.
+with retained logs and an explicit result. When a wake exits, systemd kills
+the descendants still in its control group, including processes launched with
+`setsid` or `nohup`.
 
 The promotion holds new wakes only while it waits for the dispatch lock at
 activation, applies the pin and exercises recovery, and releases the hold when
