@@ -284,3 +284,72 @@ def test_budget_forecast_line_fails_closed(tmp_path, monkeypatch):
     assert hv.budget_forecast_line(now) is None                     # malformed field
     write(5)
     assert hv.budget_forecast_line(now) is None                     # non-object accounts
+
+
+def test_map_evidence_line_reports_the_weak_room_test(tmp_path, monkeypatch):
+    import json
+    import time
+    fp = tmp_path / "rssi-fingerprint.json"
+    state = tmp_path / "map-state.json"
+    fp.write_text(json.dumps({"loo": {"n": 3, "correct": 0,
+                                      "majority_baseline_accuracy": 0.67}}))
+    state.write_text(json.dumps({"markers": {
+        "ilya": {"age_h": 202.6}, "rozalia": {"age_h": 202.5}, "bruno": {"age_h": 205.4}}}))
+    now = time.time()
+    monkeypatch.setattr(hv, "RSSI_FP_FILE", fp)
+    monkeypatch.setattr(hv, "MAP_STATE_FILE", state)
+    line = hv.map_evidence_line(now)
+    assert "0/3 correct" in line and "67% by always guessing" in line
+    assert "3 labels, newest label 202 h old" in line
+    assert "no better than a guess" in line
+
+
+def test_map_evidence_line_when_the_room_test_beats_the_baseline(tmp_path, monkeypatch):
+    import json
+    import time
+    fp = tmp_path / "rssi-fingerprint.json"
+    fp.write_text(json.dumps({"loo": {"n": 3, "correct": 2,
+                                      "majority_baseline_accuracy": 0.5}}))
+    monkeypatch.setattr(hv, "RSSI_FP_FILE", fp)
+    monkeypatch.setattr(hv, "MAP_STATE_FILE", tmp_path / "absent-state.json")
+    # no state file -> label ages UNKNOWN, but the room test is still reported
+    assert hv.map_evidence_line(time.time()) is None  # state is required
+    state = tmp_path / "map-state.json"
+    state.write_text(json.dumps({"markers": {"ilya": {"age_h": "x"}}}))
+    monkeypatch.setattr(hv, "MAP_STATE_FILE", state)
+    line = hv.map_evidence_line(time.time())
+    assert "2/3 correct vs 50% by always guessing" in line
+    assert "label ages UNKNOWN" in line and "beats the majority baseline" in line
+    assert "no better" not in line
+
+
+def test_map_evidence_line_fails_closed(tmp_path, monkeypatch):
+    import json
+    import os
+    import time
+    fp = tmp_path / "rssi-fingerprint.json"
+    state = tmp_path / "map-state.json"
+    monkeypatch.setattr(hv, "RSSI_FP_FILE", fp)
+    monkeypatch.setattr(hv, "MAP_STATE_FILE", state)
+    now = time.time()
+    assert hv.map_evidence_line(now) is None                        # missing
+    fp.write_text("{broken\n")
+    state.write_text("{}")
+    assert hv.map_evidence_line(now) is None                        # malformed fingerprint
+    good = {"loo": {"n": 3, "correct": 0, "majority_baseline_accuracy": 0.67}}
+    fp.write_text(json.dumps(good))
+    assert hv.map_evidence_line(now) is not None                    # baseline case
+    fp.write_text(json.dumps({}))
+    assert hv.map_evidence_line(now) is None                        # no loo
+    fp.write_text(json.dumps({"loo": {"n": 0, "correct": 0, "majority_baseline_accuracy": 0.67}}))
+    assert hv.map_evidence_line(now) is None                        # no labelled moments
+    fp.write_text(json.dumps({"loo": {"n": 3, "correct": 4, "majority_baseline_accuracy": 0.67}}))
+    assert hv.map_evidence_line(now) is None                        # impossible score
+    fp.write_text(json.dumps({"loo": {"n": 3, "correct": 0, "majority_baseline_accuracy": "x"}}))
+    assert hv.map_evidence_line(now) is None                        # malformed field
+    fp.write_text(json.dumps(good))
+    state.write_text("{broken\n")
+    assert hv.map_evidence_line(now) is None                        # malformed map state
+    state.write_text("{}")
+    os.utime(state, (now - hv.MAP_EVIDENCE_MAX_AGE_S - 120,) * 2)
+    assert hv.map_evidence_line(now) is None                        # stale renderer

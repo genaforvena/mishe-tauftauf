@@ -25,6 +25,9 @@ NOTE3_GLOB = "spatial/work/household/note3_samples_run*.jsonl"
 PHONES_FILE = SITE / "spatial/work/household/phones.jsonl"
 SIGNALS_EDGES = SITE / "signals" / "edges.jsonl"
 BUDGET_FILE = SITE / "engine" / "budget.json"
+MAP_STATE_FILE = SITE / "senses" / "map" / "map-state.json"
+RSSI_FP_FILE = SITE / "senses" / "map" / "rssi-fingerprint.json"
+MAP_EVIDENCE_MAX_AGE_S = 1800
 STABILITY_WINDOW_S = 7 * 24 * 3600
 XTTS_DIR = Path.home() / ".local/share/tts/tts_models--multilingual--multi-dataset--xtts_v2"
 XTTS_SIZE = 1867929118
@@ -317,6 +320,47 @@ def budget_forecast_line(now=None):
             f"with {-gap_h:.0f}h spare (burn {100*burn:.2f}%/h)")
 
 
+def map_evidence_line(now=None):
+    """How much room evidence the map actually has, or None (UNKNOWN).
+
+    The map draws people in rooms with a confidence number. That number is a
+    heuristic, not a validated probability: this reports the only room test we
+    retain — the fingerprint's leave-one-out score against its majority
+    baseline — beside the number and age of the labels behind it. Reads the
+    renderer's derived files; missing, stale, malformed or empty data is None.
+    """
+    now = time.time() if now is None else now
+    fp, fp_mtime = read_json_file(RSSI_FP_FILE)
+    state, state_mtime = read_json_file(MAP_STATE_FILE)
+    if not isinstance(fp, dict) or not isinstance(state, dict):
+        return None
+    if any(m is None or not (now - MAP_EVIDENCE_MAX_AGE_S <= m <= now + 5)
+           for m in (fp_mtime, state_mtime)):
+        return None
+    loo = fp.get("loo")
+    if not isinstance(loo, dict):
+        return None
+    n, correct, baseline = loo.get("n"), loo.get("correct"), loo.get("majority_baseline_accuracy")
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in (n, correct, baseline)):
+        return None
+    if not (n >= 1 and n == int(n) and 0 <= correct <= n and correct == int(correct)
+            and 0 <= baseline <= 1):
+        return None
+    ages = []
+    markers = state.get("markers")
+    if isinstance(markers, dict):
+        for mk in markers.values():
+            if isinstance(mk, dict) and isinstance(mk.get("age_h"), (int, float)) \
+                    and not isinstance(mk.get("age_h"), bool):
+                ages.append(mk["age_h"])
+    age_text = "newest label %.0f h old" % min(ages) if ages else "label ages UNKNOWN"
+    base = ("  MAP EVIDENCE: RSSI room test %d/%d correct vs %.0f%% by always guessing; "
+            "%d labels, %s" % (correct, n, 100 * baseline, n, age_text))
+    if correct / n <= baseline:
+        return base + " — room placement is no better than a guess"
+    return base + " — room placement beats the majority baseline"
+
+
 def redmi10_hourly(rows=None):
     """Fresh-row fraction by UTC hour over all retained collector rows.
 
@@ -600,6 +644,8 @@ def draw():
     out += rhythm_lines(now)
     out.append("")
     out.append("WHERE IS ILYA: UNKNOWN. Not validated against labels yet.")
+    out.append(map_evidence_line(time.time()) or
+               "  MAP EVIDENCE: UNKNOWN (no fresh RSSI fingerprint or map state)")
     best = None
     for room, cam in CAMERAS.items():
         if cam["dist"]:
