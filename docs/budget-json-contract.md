@@ -157,6 +157,17 @@ only that file and computes nothing itself.
 - **`free_models`** are the `routes.json` candidates with `free: true` / `account: null`.
   They get their own rows and MUST NOT be summed into any paid account window. Their
   verdict is `FREE` with `no limit known`, plus turns/h and last outcome.
+- A free candidate on the same provider as a paid account (for example any
+  `omp:opencode-go/*` candidate and `go-a`) still spends that provider's shared
+  quota: `engine/accounts.json` ties go-a to the default OMP client's
+  opencode-go credential, and the provider reports one `shared` quota for that
+  account. `verdict: FREE` means the router reads no account window for the
+  candidate, not that the candidate costs nothing. Observed 2026-11-20: go-a
+  fell about 4%/h while the main ledger had zero go-a-attributed selects, with
+  `hy4-flash-free` free selects locally and glm-5.3 selects in two sibling
+  plants on the same credential. `budget-consistency` rule 2 catches a free
+  model *booked under* a paid account, not this shared-quota case; the drop in
+  the provider quota history is the detector.
 - **`paid_models`** are candidates with an account. Their spend is the ledger's, not a
   share of the account window. **Exception (steward decision, DM 300199):** the Claude
   subscription safety net is listed here with `account: null`, `in_routes: true` and an
