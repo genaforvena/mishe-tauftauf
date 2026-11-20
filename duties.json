@@ -1194,7 +1194,7 @@
         3
       ],
       "resolver": "network",
-      "covers": "the outer tmux window plants:network exists and runs tools/network_view.py; RED when missing or dead, RED when the running copy of the view differs from the view's files on disk (or it never reported its copy) with the exact respawn command and the copy's own load time, GREEN for a difference within 30 s of the newest file write because the view reloads on its next 10 s redraw, UNKNOWN when tmux or git cannot be read",
+      "covers": "the outer tmux window plants:network exists and runs tools/network_view.py; RED when missing or dead, RED when the running copy of the view differs from the view's files on disk (or it never reported its copy) with the exact respawn command and the copy's own load time, RED when the visible pane says WINDOW ERROR (a live process drawing no readings), GREEN for a difference within 30 s of the newest file write because the view reloads on its next 10 s redraw, UNKNOWN when tmux or git cannot be read or the pane text cannot be captured",
       "replaces": []
     },
     {

@@ -283,7 +283,11 @@ is not mistaken for a quiet mind.
 - The view redraws every 10 s and reloads its own edited files. A redraw that raises keeps the
   window: it prints `WINDOW ERROR <type>: <message>` and says that nothing in the pane is a reading
   until the error clears, so a partly edited or buggy view is visibly broken instead of making the
-  outer window disappear. Only the five-minute `network-window` check would notice a vanished pane.
+  outer window disappear. The five-minute `network-window` check notices a vanished pane and now also
+  turns RED when the visible pane says `WINDOW ERROR`: process identity and code freshness alone used
+  to call an error frame GREEN, though the frame itself says nothing in it is a reading. Pane text
+  that cannot be captured, or an empty pane, is UNKNOWN, never a pass; only the visible pane is read,
+  so an old error scrolled off cannot hold a recovered window RED.
   A new copy of the file is only run after it both compiles and starts (its top level is imported
   once in a short subprocess with the main block disabled); a copy that raises at import keeps the
   old pane and the window prints `EDIT REFUSED` with the error, because re-execing into that copy

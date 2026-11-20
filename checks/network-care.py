@@ -31,6 +31,7 @@ FILES = ("tools/network_view.py", "tools/network_boundary.py", "rust/mishe-netwo
 RESPAWN = ("tmux respawn-pane -k -c {repo} -t {session}:network "
            "'env MISHE_TAUFTAUF_HOME=$MISHE_SEED_HOME python3 tools/network_view.py'")
 WINDOW_FILES = ("tools/network_view.py", "tools/network_boundary.py")
+WINDOW_ERROR_MARKER = "WINDOW ERROR"  # the view's own error frame, printed by network_view.render_frame()
 
 
 RELOAD_GRACE_S = 30        # the view checks its own files every 10 s; a younger edit has not had a redraw
@@ -142,6 +143,29 @@ def window_process(home, pane_pid, pane_cmd):
     return 0
 
 
+def window_frame_health(session):
+    """0 for a normal frame, 2 when the visible pane says WINDOW ERROR, 3 when its text cannot be read.
+
+    The view's error frame declares that nothing in the pane is a reading, but the process is still
+    alive and runs the current code, so the identity and copy-freshness checks alone call it GREEN.
+    Only the visible pane is captured, not scrollback: a past error that has scrolled off must not
+    hold a recovered window RED. An unreadable or empty pane is UNKNOWN, never a pass.
+    """
+    try:
+        r = subprocess.run(["tmux", "capture-pane", "-p", "-t", f"{session}:network"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"network-care: pane text unreadable: {exc}", file=sys.stderr)
+        return 3
+    if r.returncode != 0 or not r.stdout.strip():
+        print("network-care: pane text unreadable; cannot tell", file=sys.stderr)
+        return 3
+    if WINDOW_ERROR_MARKER in r.stdout:
+        print("network-care: pane shows WINDOW ERROR; nothing in it is a reading", file=sys.stderr)
+        return 2
+    return 0
+
+
 def window(session, home, repo):
     try:
         r = subprocess.run(["tmux", "list-panes", "-t", f"{session}:network", "-F",
@@ -169,6 +193,9 @@ def window(session, home, repo):
         return 2
     if stale == 3:
         return 3
+    frame = window_frame_health(session)
+    if frame != 0:
+        return frame
     print("network-care: window GREEN")
     return 0
 
