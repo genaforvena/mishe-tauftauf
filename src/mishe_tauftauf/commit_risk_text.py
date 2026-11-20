@@ -20,9 +20,16 @@ RULES = (
     # model labels on that path (1.0, 0.89) agree it is delivery-path.
     ("dispatch-path", re.compile(r"^src/mishe_tauftauf/(wake|engine_\w+|owed|access|"
                                  r"work_state|dispositions|failure|host_capacity)\w*\.py\Z")),
+    # arm.py is the scheduler's arming/due-timer path. All 6 model answers on it in the
+    # 879-row ledger chose dispatch-path; no model chose another label. It is the cautious
+    # label. One exact file, not a wake/engine_\w* family, so siblings stay residual.
+    ("dispatch-path", re.compile(r"^src/mishe_tauftauf/arm\.py\Z")),
     ("delivery-path", re.compile(r"^(src/mishe_tauftauf/(release|deliver|delivery|heal|promotion|pin)\w*\.py"
                                  r"|scripts/.*(deliver|heal|release)\S*)")),
     ("delivery-path", re.compile(r"^tools/delivery_check\.py\Z")),
+    # consumer_fence.py is delivery's queued/active wrong-pin consumer check. All 4 model
+    # answers chose delivery-path, the cautious label. Exact file, not a consumer\w* family.
+    ("delivery-path", re.compile(r"^src/mishe_tauftauf/consumer_fence\.py\Z")),
     ("ordinary", re.compile(r"^tools/network_view\.py\Z")),
     # Reporting/view files with repeated model answers of ``ordinary`` and no
     # dispatch/delivery effect: household_view 8/8, commit-msg-attribution 4/4,
@@ -34,6 +41,12 @@ RULES = (
     ("ordinary", re.compile(r"^tools/commit-msg-attribution\.py\Z")),
     ("ordinary", re.compile(r"^src/mishe_tauftauf/provider_budget\.py\Z")),
     ("ordinary", re.compile(r"^src/mishe_tauftauf/system1_savings\.py\Z")),
+    # Two more exact-file ordinary lookups in the 879-row ledger: map_tiles 8/8 ordinary
+    # and commit_risk_text 4/4 ordinary, no model labelling either dispatch or delivery.
+    # Replaying them together with arm and consumer_fence settles 25 residual rows with
+    # zero disagreement, zero label flips and zero regressions.
+    ("ordinary", re.compile(r"^tools/map_tiles\.py\Z")),
+    ("ordinary", re.compile(r"^src/mishe_tauftauf/commit_risk_text\.py\Z")),
     ("routine", re.compile(r"^(docs/|tests/|checks/|.*\.md\Z)")),
 )
 

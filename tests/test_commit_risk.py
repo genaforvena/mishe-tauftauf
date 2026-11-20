@@ -66,6 +66,25 @@ class CommitRiskTests(unittest.TestCase):
                 result = cr.classify("unrelated subject", [path], None)
                 self.assertEqual((result["label"], result["source"]), ("ordinary", "system0"))
 
+    def test_new_exact_lookups_decide_without_a_model(self):
+        checks = (
+            ("src/mishe_tauftauf/arm.py", "dispatch-path"),
+            ("src/mishe_tauftauf/consumer_fence.py", "delivery-path"),
+            ("tools/map_tiles.py", "ordinary"),
+            ("src/mishe_tauftauf/commit_risk_text.py", "ordinary"),
+        )
+        for path, label in checks:
+            with self.subTest(path=path):
+                self.assertEqual(cr.system0([path]), label)
+                self.assertEqual(cr.system0([path, "docs/decision-rungs.md"]), label)
+                self.assertIsNone(cr.path_label(path + "\n"))
+                # Exact files, not families: a sibling still leaves the residual.
+                self.assertIsNone(cr.system0([path, "src/mishe_tauftauf/feed.py"]))
+                result = cr.classify("unrelated subject", [path], None)
+                self.assertEqual((result["label"], result["source"]), (label, "system0"))
+        self.assertIsNone(cr.system0(["src/mishe_tauftauf/arm.py",
+                                      "src/mishe_tauftauf/consumer_fence.py"]))
+
     def test_delivery_requests_is_delivery_not_dispatch(self):
         # delivery_requests.py is delivery work (enqueue/consume, patch/revert,
         # release_promotion), not dispatch. Two confident model labels (1.0, 0.89) on
