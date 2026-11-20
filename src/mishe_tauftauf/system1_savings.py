@@ -3,8 +3,8 @@
 A System 0 producer. It reads only the ledgers the wake path already keeps and calls no
 provider, so a missing decision service cannot stop it:
 
-- ``decision-log/wake-gate.jsonl``: one ``start`` row per wake (trigger class, the System 0
-  ``same_dossier_as_last`` verdict) and one ``end`` row (the yielded result).
+- ``decision-log/wake-gate.jsonl``: one ``start`` row per wake (trigger class, its ``signal:``
+  reasons, the System 0 ``same_dossier_as_last`` verdict) and one ``end`` row (yielded result).
 - ``decision-log/wake-gate-live.jsonl``: rows a live gate wrote (``action`` skip or wake).
   Absent means no gate is live, so avoided wakes are 0 and the gate reads ``off``.
 - ``engine/budget.json`` under ``routerai.decision``: calls and spend of the decision budget.
@@ -15,6 +15,12 @@ skipped), the changed-rate of those projected skips against the changed-rate of 
 and the decision calls and spend. Exit 0 measured (GREEN), 3 UNKNOWN when a ledger or
 the budget is unusable. The wake-gate ledger needs a readable start row, even when
 none of its starts fall inside the window.
+
+It also reports per-signal changed rates (from each start's ``signal:`` reasons) and flags
+signals with at least ``MIN_SIGNAL_ENDED`` ended wakes and a changed rate below
+``MAX_SIGNAL_CHANGED_RATE`` as ``retirement_candidates``. This is a detector only: the flag
+never skips a wake. The volume floor exempts rare-event detectors, whose low changed rate is
+their purpose, not waste.
 """
 from __future__ import annotations
 
@@ -32,12 +38,28 @@ WINDOW_S = 24 * 3600
 BUDGET_STALE_S = 6 * 3600
 WAKE_LOG = "decision-log/wake-gate.jsonl"
 LIVE_LOG = "decision-log/wake-gate-live.jsonl"
+MIN_SIGNAL_ENDED = 20
+MAX_SIGNAL_CHANGED_RATE = 0.15
 
 
 def _trigger_class(trigger) -> str:
     """Bucket a trigger by its prefix (signal, intention, inbox, ...) so cardinality stays bounded."""
     text = str(trigger or "none")
     return text.split(":", 1)[0] or "none"
+
+
+def _signal_names(start) -> set[str]:
+    """Signal names a start woke on, from its reasons. A wake co-firing on several
+    signals counts once per name; this is a detector, never a gate."""
+    names = set()
+    reasons = start.get("reasons")
+    if isinstance(reasons, list):
+        for reason in reasons:
+            if isinstance(reason, str) and reason.startswith("signal:"):
+                name = reason.split(":", 1)[1]
+                if name:
+                    names.add(name)
+    return names
 
 
 def _rate(num: int, den: int):
@@ -101,6 +123,38 @@ def measure(home, *, now: float) -> dict:
         }
         for trigger in sorted(by_trigger)
     }
+
+    signal_ended = Counter()
+    signal_yielded = Counter()
+    signal_changed = Counter()
+    for start, end in ended:
+        names = _signal_names(start)
+        if not names:
+            continue
+        result = end.get("result")
+        clean = end.get("state") == "yielded" and result in yielding.RESULTS
+        for name in names:
+            signal_ended[name] += 1
+            if clean:
+                signal_yielded[name] += 1
+                if result == "changed":
+                    signal_changed[name] += 1
+    signal_rates = {
+        name: {
+            "ended": signal_ended[name],
+            "yielded": signal_yielded[name],
+            "changed": signal_changed[name],
+            "changed_rate": _rate(signal_changed[name], signal_yielded[name]),
+        }
+        for name in sorted(signal_ended)
+    }
+    retirement_candidates = [
+        name
+        for name, stats in signal_rates.items()
+        if stats["ended"] >= MIN_SIGNAL_ENDED
+        and stats["changed_rate"] is not None
+        and stats["changed_rate"] < MAX_SIGNAL_CHANGED_RATE
+    ]
     results = Counter(e.get("result") or "none" for _, e in ended)
     same = [(s, e) for s, e in ended if s.get("same_dossier_as_last") is True]
     changed_all = sum(1 for _, e in ended if e.get("result") == "changed")
@@ -118,6 +172,8 @@ def measure(home, *, now: float) -> dict:
         "starts_by_trigger": dict(sorted(by_trigger.items())),
         "ended": len(ended),
         "changed_by_trigger": trigger_rates,
+        "changed_by_signal": signal_rates,
+        "retirement_candidates": retirement_candidates,
         "results": dict(sorted(results.items())),
         "gate": "live" if live_path.exists() else "off",
         "avoided": skipped,

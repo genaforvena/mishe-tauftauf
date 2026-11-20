@@ -75,6 +75,15 @@ and is null when there are none. The top-level `changed_rate_all` keeps the whol
 A ledger with no readable start reports UNKNOWN. Readable starts before the
 window can support a measured zero even when a torn line was skipped.
 
+Since 2026-11-20 the signal also reports `changed_by_signal`, computed from each started
+wake's `signal:` reasons (a wake co-firing on several signals counts once per name).
+`retirement_candidates` lists signals with at least 20 ended wakes in the 24 h window and a
+changed rate below 15% — a flag for trigger-retirement review, never an auto-skip. The
+volume floor exempts rare-event detectors such as `doctor`, whose low changed rate is their
+purpose; the values are screening thresholds, not fitted cutoffs. On the ledger that
+motivated the check no signal qualifies (`moving-pin-delivery` is 21/75, 28.0%), so the list
+was empty at introduction. The three escapes and the no-gate close above still stand.
+
 ### Revised gate spec (2026-11-19): no safe gate for signal wakes
 
 Ilya's revised objective is to reduce wasted wakes without losing productive changed wakes, using a real pre-wake discriminator or an honest no-gate close. A full search over the clean yielded population of `decision-log/wake-gate.jsonl` — 1,611 of 1,733 joined starts; the other 122 are `state: unknown` engine failures and were excluded — found no such discriminator.

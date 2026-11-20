@@ -28,6 +28,22 @@ def _wake(key, ts, trigger, same, result):
     ]
 
 
+def _signal_wakes(name, count, changed):
+    """Count wakes co-firing on one signal, with `changed` of them yielding changed."""
+    rows = []
+    for i in range(count):
+        key = f"{name}-{i}"
+        result = "changed" if i < changed else "verified"
+        rows += [
+            {"kind": "start", "key": key, "role": "x", "ts": NOW - 100 - i,
+             "trigger": "signal:" + name, "reasons": ["signal:" + name],
+             "same_dossier_as_last": False},
+            {"kind": "end", "key": key, "role": "x", "ts": NOW - 95 - i,
+             "state": "yielded", "result": result},
+        ]
+    return rows
+
+
 def test_measures_trigger_classes_and_projected_skip(tmp_path):
     rows = []
     rows += _wake("a", NOW - 100, "signal:ci", False, "changed")
@@ -73,6 +89,57 @@ def test_trigger_rates_use_clean_yields_and_retain_failed_end_counts(tmp_path):
     }
     assert out["ended"] == 6
     assert out["results"] == {"blocked": 1, "changed": 2, "none": 2, "verified": 1}
+
+
+def test_per_signal_rates_from_reasons_with_cofiring(tmp_path):
+    rows = [
+        {"kind": "start", "key": "w1", "role": "x", "ts": NOW - 100,
+         "trigger": "signal:a",
+         "reasons": ["signal:a", "signal:b", "signal:a", "signal:", 42, None, "intention:again"],
+         "same_dossier_as_last": False},
+        {"kind": "end", "key": "w1", "role": "x", "ts": NOW - 95, "state": "yielded", "result": "changed"},
+        {"kind": "start", "key": "w2", "role": "x", "ts": NOW - 90,
+         "trigger": "signal:b", "reasons": ["signal:b"], "same_dossier_as_last": False},
+        {"kind": "end", "key": "w2", "role": "x", "ts": NOW - 85, "state": "yielded", "result": "verified"},
+    ]
+    rows += _wake("w3", NOW - 80, "inbox", False, "changed")  # no signal reasons
+    _write_rows(tmp_path, rows)
+    _budget(tmp_path)
+    out = s.measure(tmp_path, now=NOW)
+    assert out["changed_by_signal"] == {
+        "a": {"ended": 1, "yielded": 1, "changed": 1, "changed_rate": 1.0},
+        "b": {"ended": 2, "yielded": 2, "changed": 1, "changed_rate": 0.5},
+    }
+    assert out["retirement_candidates"] == []
+
+
+def test_retirement_candidate_needs_volume_and_low_rate(tmp_path):
+    rows = []
+    rows += _signal_wakes("wasteful", 20, 1)    # 0.05 -> flag
+    rows += _signal_wakes("productive", 20, 4)  # 0.20 -> no flag
+    rows += _signal_wakes("rare", 5, 0)         # low volume -> exempt
+    _write_rows(tmp_path, rows)
+    _budget(tmp_path)
+    out = s.measure(tmp_path, now=NOW)
+    assert out["changed_by_signal"]["wasteful"]["changed_rate"] == 0.05
+    assert out["retirement_candidates"] == ["wasteful"]
+
+
+def test_retirement_candidate_excludes_signals_with_no_clean_yields(tmp_path):
+    rows = []
+    for i in range(20):
+        key = f"unknown-{i}"
+        rows += [
+            {"kind": "start", "key": key, "role": "x", "ts": NOW - 100 - i,
+             "trigger": "signal:unknown", "reasons": ["signal:unknown"], "same_dossier_as_last": False},
+            {"kind": "end", "key": key, "role": "x", "ts": NOW - 95 - i,
+             "state": "yielded", "result": "none"},
+        ]
+    _write_rows(tmp_path, rows)
+    _budget(tmp_path)
+    out = s.measure(tmp_path, now=NOW)
+    assert out["changed_by_signal"]["unknown"]["changed_rate"] is None
+    assert out["retirement_candidates"] == []
 
 
 def test_live_gate_counts_skips_in_window(tmp_path):
