@@ -184,5 +184,7 @@ The wake dossier also carries the registered ack command for each signal the wak
 `repo-change` it is `env PYTHONPATH=src python3 -m mishe_tauftauf.repo_change_signal --home {home}
 --repo {repo} --wake {role}`. Running it advances only the named subscriber's cursor to the current
 HEAD; a subscriber that reads the detail but never acks keeps receiving the same commit tail. A
+resolver watch that is not a cursor reader (system1) gets the same command as a read-only refresh
+that moves no cursor. A
 signal with no registered ack adds no instruction, and the producer refreshes the registration on
 publish so older sites gain the command without restarting the signal's age.
