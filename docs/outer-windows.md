@@ -37,6 +37,14 @@ routing ledger cannot cover reads UNKNOWN and is left out of the mean — it is 
 overlap and not evidence of a failed attempt. For the measured cost and why the quiet poll
 is short, see [Wall coordination](wall-coordination.md).
 
+The `fence-holder wake lengths` line is a regression check, not a fault count. `over cap+5s`
+counts holder spans beyond the 35-minute engine hard cap with a five-second recording slack:
+wakes cut at the cap routinely log their outcome one second late, and a real escape (the old
+MiniMax era ran past 50 minutes) is far beyond that slack. The `>=20m00s` share is the diagnostic:
+it reports the fence seconds donated by near-cap holders even when no wake breached the cap, so a
+long fence can be explained without an alarm. With no paired wake span the length line is absent
+and the attribution above reads UNKNOWN, never a zero overlap.
+
 The wrong-pin count includes failed promotions whose cause was an active or queued
 consumer on the wrong pin, including cases where the rollback probe failed. An
 unreadable promotion record makes the total UNKNOWN. Any wrong-pin failures
