@@ -86,6 +86,21 @@ def voice_active():
     return out.stdout.strip() == "active"
 
 
+def voice_unit_state():
+    """Name why the receiver is down: enablement and activity, so the resolver is not guessed."""
+    try:
+        out = subprocess.run(["systemctl", "--user", "show", "mesh-voice-rx",
+                              "-p", "UnitFileState", "-p", "ActiveState", "-p", "Result"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return "unit state unreadable"
+    fields = dict(line.split("=", 1) for line in out.stdout.splitlines() if "=" in line)
+    if not fields:
+        return "unit state unreadable"
+    return (f"unit {fields.get('UnitFileState', '?')}, {fields.get('ActiveState', '?')}, "
+            f"result {fields.get('Result', '?')}")
+
+
 DM_TIMEOUT_S = 60
 
 
@@ -132,7 +147,8 @@ def main(argv=None, now=None, voice=voice_active, mishe_bin=None):
 
     active = voice()
     if active is None or active is False:
-        print("human-inbound-relayed: UNKNOWN mesh-voice-rx is not active; the human channel is deaf", file=sys.stderr)
+        print("human-inbound-relayed: UNKNOWN mesh-voice-rx is not active; the human channel is deaf"
+              f" ({voice_unit_state()})", file=sys.stderr)
         return 3
 
     new = list(pending(log_bytes, offset))
