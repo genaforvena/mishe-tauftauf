@@ -1642,6 +1642,17 @@
       "replaces": []
     },
     {
+      "name": "repo-change",
+      "builtin": true,
+      "every": 900,
+      "timeout": 120,
+      "max_age": 2700,
+      "signal": {"subscribers": ["pub", "docs"]},
+      "resolver": "system1",
+      "covers": "System 0 repo-change signal (initiative repo-change-signal): on each run it reads the commits on the checkout since the oldest subscriber cursor, drops internal-only noise, names the reader docs that mention each changed source path, and publishes value = newest commit with per-subscriber deltas (pub, docs) in its detail. UNKNOWN when git or the reader corpus cannot be read; never GREEN on missing evidence; it calls no model and wakes no one itself",
+      "replaces": []
+    },
+    {
       "name": "system1-savings",
       "command": [
         "{python}",

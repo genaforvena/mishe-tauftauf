@@ -48,6 +48,7 @@
     "src/mishe_tauftauf/memory_reading.py",
     "src/mishe_tauftauf/recovery_io.py",
     "src/mishe_tauftauf/repo_change_docs.py",
+    "src/mishe_tauftauf/repo_change_signal.py",
     "src/mishe_tauftauf/reflog_boundary.py",
     "src/mishe_tauftauf/release_boundary.py",
     "src/mishe_tauftauf/release_retention.py",

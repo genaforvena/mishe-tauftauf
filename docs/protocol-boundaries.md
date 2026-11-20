@@ -138,6 +138,12 @@ guessed; an unreadable corpus raises rather than returning a false no-hit. A no-
 complete negative for those identifiers, not proof that a behaviour change is absent;
 deciding whether to wake anyone belongs to the caller and, for the residual, to System 1.
 
+`repo_change_signal.py` reads two forms from git: the `git log` header that ends at a group
+separator (sha, subject, body), followed by the `--name-only` path list; and the subscriber cursor file
+`signals/repo-change-cursors.json`. It splits trailers from the last body paragraph only, drops a record without a
+40-hex sha or without paths, and treats a missing cursor as a bounded tail. Changed paths are matched by prefix to
+area names only; an unknown path is area `other`, never guessed into a behaviour area.
+
 The engine-account text adapters decode the four external provider text formats the
 router consumes:
 

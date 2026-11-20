@@ -15,6 +15,7 @@ unit succeeds, so a routine stale sample does not mark the producer failed.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -228,6 +229,21 @@ def delivery_requests(home, *, now: float) -> str:
     return "RED" if requests.standing_problem(home, now) else "GREEN"
 
 
+def repo_change(home, *, now: float, **_):
+    """System 0 repo-change producer: the site's checkout is its parent directory.
+
+    The producer observes the signal itself (value = newest commit, detail = per-subscriber delta),
+    so it returns None here; a failed read observes UNKNOWN with its cause, never GREEN.
+    """
+    from . import repo_change_signal
+    try:
+        repo_change_signal.produce(home, Path(home).parent, now=now)
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        signal_store.observe_unknown(home, "repo-change", now=now, source="builtin:repo-change",
+                                     reason=str(exc)[:300])
+    return None
+
+
 def memory_samples(home, *, now: float, **_) -> str:
     """Append one row each for memory PSI avg10 and anon memory to the signal sample store.
 
@@ -275,7 +291,7 @@ def footprint(home, *, now: float, **_) -> str:
 
 
 BUILTIN = {"dispatch": dispatch, "ci": ci, "tape-lock": tape_lock, "delivery-requests": delivery_requests,
-           "memory-samples": memory_samples, "footprint": footprint}
+           "memory-samples": memory_samples, "footprint": footprint, "repo-change": repo_change}
 
 
 def produce(home, name: str, *, now: float, **kw) -> str | None:
