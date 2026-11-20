@@ -4086,3 +4086,30 @@ after 15 minutes without a successful run. A controlled missing expiry
 produced a RED edge owed to rust-plan. The sweep and another check recovered
 GREEN, while a corrupt reading and a silent monitor each yielded UNKNOWN.
 The existing `next-due-armed` duty still routes a missing timer to Genome.
+
+### 10.73 The second RED was the same contention: quiet re-fold 3.48 CPU-s (2026-11-20)
+
+The 07:40:56Z sample repeated the 01:34Z RED on release `e4ad74c3`: senses
+5.242 CPU-s and genome 5.055 against the 5.0 bar, with 122/110 MB peak RSS far
+under the 204,800 KB bar. Its guard carried CPU pressure `some avg10` 41.96 and
+load1 7.79; elapsed/fold was 3.401. Across all 74 completed samples, Pearson r
+between reader CPU-s and CPU pressure is 0.758; the only two samples above 40
+pressure are also the only two above the trigger, and at pressure <=10 the 41
+samples average 3.416 CPU-s with a 4.447 maximum.
+
+Source held constant: `git diff 8592c07c e4ad74c3 -- src/mishe_tauftauf/`
+changes only `provider_budget.py`; `feed.py` is byte-identical across the green
+06:38Z release, the RED 07:40Z release and HEAD. A controlled re-fold on the RED
+release with the same checker and `--no-artifact` under pressure 4.82 returned
+GREEN: senses 3.476 + children 3.241 = 6.717 CPU-s / 111 MB / 36,383 entries,
+genome 3.432 + children 3.103 = 6.535 CPU-s / 100 MB / 30,333 entries, 9
+binaries checked. The ~1.8 CPU-s gap is host contention on identical bytes, not
+a reopened seam.
+
+The §10.69 disposition rule therefore covers a second RED: pressure above ~40
+with elapsed/fold above ~2 attributes the reading to contention and leaves the
+raw sample in the history. The 5.0 bar is not moved and no RED is suppressed.
+No read-path A/B opens; the standing question remains UNKNOWN on a measured
+3.4-3.5 CPU-s fold with 100-120 MB RSS. A quiet re-fold above 5.0 or a
+reader-path source diff would change that. Site-local working:
+`$SITE/analysis/rust-pressure-second-red-20261120.md`.
