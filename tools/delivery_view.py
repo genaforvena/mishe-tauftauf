@@ -38,6 +38,16 @@ finishing leaves its phase behind (2026-11-18 06:13Z dispatch race left 0148ab3e
 ``waiting-for-wakes`` for good). Measured checked-to-live max is under 1 h, so 3 h bounds any
 legitimate run; pin-lag (checks/pin-lag.py) already uses the same red-age bound."""
 
+FENCE_QUIET_S = 1.0
+"""A fence under one second is a quiet-gap acquisition, not a wake wait.
+
+``held_delivery_lock`` retries the dispatch lock on a 1 s sleep while no hold is written
+(``release_promotion.py``), so a promotion that found a gap on its first try crosses
+``waiting_since`` to ``activation_started_at`` in only the two record saves (~20 ms measured).
+An exact-zero test never fires and hides that the quiet-gap path works; one second separates
+a first-try acquisition from even a single retry.
+"""
+
 
 def git(repo: Path, *args: str, timeout: float = 30.0) -> tuple[int, str]:
     """Run git read-only; ``(1, "")`` on any failure so a caller can print UNKNOWN, not crash."""
@@ -208,10 +218,11 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
                      f"  p90 {fmt_s(p90):>9s}  max {fmt_s(ordered[-1]):>9s}  (n={len(gaps)})")
     else:
         lines.append(f"  {gap_label}  UNKNOWN (no paired delivered records)")
-    zero_fence = sum(1 for r in delivered if stages(r)["wake_wait_s"] == 0)
-    if zero_fence:
-        lines.append(f"  fence held nothing in {zero_fence}/{len(delivered)} delivered runs"
-                     f" (no wake was live at activation)")
+    fenced = [r for r in delivered if stages(r)["wake_wait_s"] is not None]
+    quiet_fences = sum(1 for r in fenced if stages(r)["wake_wait_s"] < FENCE_QUIET_S)
+    if quiet_fences:
+        lines.append(f"  fence found a quiet gap in {quiet_fences}/{len(fenced)} measured fences"
+                     f" (no wake held the dispatch lock at first try)")
     rollback_done, rollback_probe_failed = [], []
     for record in recoveries:
         sha = record.get("sha", "?")[:8]

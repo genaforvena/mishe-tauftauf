@@ -64,6 +64,23 @@ def test_p90_is_nearest_rank_not_interpolated():
     assert out["wake_wait_s"]["mean"] == 10.0
 
 
+def test_a_quiet_gap_is_not_hidden_by_an_exact_zero_test(monkeypatch, tmp_path):
+    # held_delivery_lock retries on a 1 s sleep, so a first-try acquisition crosses the two
+    # record saves in ~20 ms — never exactly zero. An exact-zero count reports none of these.
+    quick = [record(waiting_since=t, activation_started_at=t + d)
+             for t, d in ((2010.0, 0.02), (2020.0, 0.05))]
+    waited = record(waiting_since=2030.0, activation_started_at=2033.0)
+    unmeasured = record(waiting_since=None, activation_started_at=None)
+    home = home_with(tmp_path, quick + [waited, unmeasured])
+    (tmp_path / "runtime").mkdir()
+    os.symlink(f"{tmp_path}/releases/{'c' * 40}", tmp_path / "runtime" / "current")
+    monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
+    text = view.render(home, Path("/nope"), 24 * 3600.0, 4000.0)
+    # The unmeasured run is UNKNOWN, not a non-quiet fence, so it stays out of the denominator.
+    assert "fence found a quiet gap in 2/3 measured fences" in text
+    assert "fence held nothing" not in text
+
+
 def test_legacy_unknown_recovery_keeps_its_reason_and_stage_unknown(monkeypatch, tmp_path):
     rolled = record(phase="UNKNOWN", delivered_at=None, reviewed_at=None,
                     failure="functional probe failed: old consumer invocations remain",
