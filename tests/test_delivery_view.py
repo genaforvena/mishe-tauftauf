@@ -191,6 +191,17 @@ def test_torn_activation_timestamps_report_unknown_not_a_crash(tmp_path):
     assert "rollback 1m30s (completed)" in text      # the rolled-back run's duration still reports
 
 
+def test_out_of_range_activation_timestamps_keep_recovery_evidence(tmp_path):
+    out_of_range = [
+        record(phase="rolled-back", activation_started_at=epoch,
+               rollback_at=2700.0, rollback_completed_at=2790.0)
+        for epoch in (1e17, 1e100)
+    ]
+    text = view.render(home_with(tmp_path, out_of_range), REPO, 24 * 3600.0, 4000.0)
+    assert text.count("after UNKNOWN") == 2
+    assert text.count("rollback 1m30s (completed)") == 2
+
+
 def test_unreadable_records_report_unknown_not_a_series(tmp_path):
     releases = tmp_path / "work" / "releases"
     releases.mkdir(parents=True)
