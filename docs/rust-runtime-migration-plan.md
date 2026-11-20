@@ -3428,6 +3428,18 @@ fold on a wake or render path (where 3 s of latency is paid per invocation) or a
 duty cost above a few minutes per hour; a rewrite of a 10 µs loop that is 1% of one
 CPU-minute per hour is exactly the "keep Python where it is simpler" case.
 
+On 2026-11-20, a bounded senses fold on release `04ce2b67` attributed 0.886
+CPU-s to `mishe-tape` and 2.005 to `mishe-records`, with 3.293 in the
+Python reader. The two child timings summed to the reader's reported child
+CPU within 0.001 s. The fold streamed 303,635 tape entries through the
+installed binaries with a current frame checkpoint. At this sample's cost,
+framing accounts for 14% of the forced fold. The larger child cost already
+belongs to Rust verification. The probe found no persisted role view for the
+same tape revision, so the view was outside this comparison.
+Reopen measurement if a routine wake starts paying for full folds or if a
+quiet sample breaches the reader threshold. The site-local probe and output
+are in `artifacts/rust-plan-20261107/fold-child-split-20261120-bounded.*`.
+
 ### 10.60 The Python duty population measured: nothing CPU-bound is worth Rust yet (2026-11-18)
 
 Before choosing another slice, the highest-cadence local Python duties were timed
@@ -4142,6 +4154,13 @@ the original register reproduced RED. With the revised register, adding an
 overdue fixture produced RED, and an unreadable observation or a missing register
 produced UNKNOWN. The installed initiative producer published GREEN at 08:15Z
 with zero active Rust milestones.
+
+The 08:32Z initiative sample refreshed GREEN. The 08:41Z installed Rust
+measurement exited 0 on `04ce2b67`, checking eight binaries without drift
+or a broken install. The senses and genome readers used 3.221 and 3.346
+CPU-s, respectively, against the 5.0 reader threshold. The full folds cost
+6.047 and 6.359 CPU-s including the children. The scheduled check retained
+the earlier 07:40Z RED in its history.
 
 The five-minute expiry duty covers overdue signal readings. The hourly Rust
 measurement covers installed source and binary drift and the reader CPU and RSS
