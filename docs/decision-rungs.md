@@ -156,5 +156,8 @@ duplicate paths collapse and a path with no hit is a complete negative, not an e
 This is evidence for the next rung, not a decision: a candidate doc is what a System 1
 decision model would receive alongside the commit, and a no-hit still leaves the separate
 question of a behaviour change. Nothing wakes docs from this function, and an unreadable
-corpus raises rather than reporting a false no-hit. The signal producer and the two
-listeners are not built yet; this seam is their shared deterministic prerequisite.
+corpus raises rather than reporting a false no-hit.
+
+The builtin `repo-change` duty (`duties.json`, every 900 s, `max_age` 2700 s) runs that seam
+for each changed path. It publishes the newest commit with per-subscriber deltas for `pub` and
+`docs`, calls no model and wakes no one itself; the residual judgement goes to System 1.

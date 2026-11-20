@@ -106,7 +106,10 @@ verbatim. These existing protocol boundaries are declared in `parsing-policy.jso
 the planner consumes decoded values.
 
 - Dry run is the default. It prints the `DRY` actions it would take. `--apply` acts.
-- Only entries with `"restore": true` and a command are touched. Entries marked
+- Only entries with `"restore": true` and either a `command` or a `panes` list are touched. A
+  window with a `panes` list gets each pane's own command (and `env`, falling back to the window's
+  command). The first pane creates the window; each further pane is split in below it, so a
+  multi-pane window comes back with its panes, not one. Entries marked
   `pending-decision`, `observed-only`, or `empty-shell` are skipped, and so are windows
   the registry does not list.
 - A missing window is created; a dead pane (remain-on-exit) of a restorable window is respawned.
@@ -118,9 +121,11 @@ the planner consumes decoded values.
 - A run with nothing to do prints `nothing to restore`. A run right after a successful apply
   should act on nothing, unless a restorable pane has died again.
 
-What is not in place yet (UNKNOWN until it is):
+The `tmux-restorer` duty is in place (every 300 s, `max_age` 900 s, resolver steward). It runs
+`tools/tmux_restore.py --apply`, so a missing or dead restorable window comes back without a hand. It
+exits 2 (RED) when a restore command failed and 3 (UNKNOWN) when the registry or its sessions cannot be
+read. Still open:
 
-- The `tmux-restorer` duty (every 300 s, resolver steward) runs `tools/tmux_restore.py --apply`, so a missing or dead restorable window comes back without a hand. It exits 2 (RED) when a restore command failed and 3 (UNKNOWN) when the registry cannot be read.
 - Many inner `mind-view` windows are `pending-decision`; they are not restored until someone
   classifies them as per-duty or drops them.
 
