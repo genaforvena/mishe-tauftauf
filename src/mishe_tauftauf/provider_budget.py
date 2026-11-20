@@ -138,9 +138,11 @@ def rows_from_engine_budget(home, now):
 def publish(home, rows, *, now):
     """Observe the Claude verdict; return it with every supported provider's verdict.
 
-    Only budget-claude is a registered signal. A second subscriber-less RED would
-    be unattended by the signal-coverage duty; codex-a's forecast stays in the
-    returned record and the household budget view instead of changing wake routing.
+    Only budget-claude is a registered signal. codex-a's forecast stays in the
+    returned record and the household budget view rather than changing wake
+    routing: it has no subscriber, and an hourly reoffer on a weekly forecast
+    would wake a mind daily until the 7d reset. The red lane is dispositioned by
+    the budget owner and surfaced by signal-coverage's dark-provider-verdict.
     """
     results = {account: dict(zip(("state", "reason"), evaluate(rows, account, now=now)))
                for account in SIGNALS}
