@@ -152,7 +152,11 @@ router consumes:
   and with what token values.
 - `router_text.py` — the engine router's own stream and the wake-concurrency JSON
   files: retry-after-ms extraction, JSON-lines event streams, routing ledger events,
-  and cooling-key splitting.
+  and cooling-key splitting. It also reads the last terminal assistant error from a
+  bounded tail of an OMP stream, so `wake-waste` can name an OpenCode Go key or
+  subscription failure. When the tail cannot be read, the wake still counts as a
+  yield-less wake without the provider label, and the message names the missing detail
+  as unclassified rather than inventing a cause.
 - `codex_text.py` — the codex CLI's session rollouts under `~/.codex/sessions`
   (rate_limits readings) and the JSONL event stream of a `codex exec` run.
 - `claude_quota_text.py` — Claude Code's native zero-inference `/usage` report
