@@ -7,6 +7,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 CHECK = Path(__file__).resolve().parents[1] / "checks" / "delivery-cadence.py"
 
 spec = importlib.util.spec_from_file_location("delivery_cadence", CHECK)
@@ -52,12 +54,15 @@ def test_newest_promotion_refused_reads_only_the_newest_record(tmp_path):
     releases = tmp_path / "work" / "releases"
     releases.mkdir(parents=True)
     old = releases / f"{HEAD}-1.json"
-    old.write_text(json.dumps({"sha": HEAD, "phase": "delivery-busy"}))
-    assert cadence._newest_promotion_refused(tmp_path, HEAD) is True
+    old.write_text(json.dumps({"sha": HEAD, "phase": "delivery-busy", "created_at": 9901.0}))
+    assert cadence._newest_promotion_refused(tmp_path, HEAD, 9900.0, 10000.0) is True
     new = releases / f"{HEAD}-2.json"
-    new.write_text(json.dumps({"sha": HEAD, "phase": "checking"}))
+    new.write_text(json.dumps({"sha": HEAD, "phase": "checking", "created_at": 9999.0}))
     os.utime(new, (2_000_000_000, 2_000_000_000))
-    assert cadence._newest_promotion_refused(tmp_path, HEAD) is False
+    assert cadence._newest_promotion_refused(tmp_path, HEAD, 9900.0, 10000.0) is False
+    new.write_text("[]")
+    os.utime(new, (2_000_000_000, 2_000_000_000))
+    assert cadence._newest_promotion_refused(tmp_path, HEAD, 9900.0, 10000.0) is False
 
 
 def test_run_skips_inside_a_wake_without_anything(monkeypatch):
@@ -154,7 +159,8 @@ def test_successful_launcher_records_started_attempt(monkeypatch, tmp_path):
     assert cadence.run(tmp_path, tmp_path, now=10000) == 0
     assert cadence._read_state(tmp_path) == (HEAD, 10000, "started")
 
-def test_run_retries_a_delivery_busy_refusal_before_the_retry_bound(monkeypatch, tmp_path):
+@pytest.mark.parametrize("launcher_exit", [0, 1])
+def test_run_retries_a_delivery_busy_refusal_only_once(monkeypatch, tmp_path, capsys, launcher_exit):
     monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
     monkeypatch.setattr(cadence, "gate_running", lambda home: False)
     monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
@@ -163,13 +169,29 @@ def test_run_retries_a_delivery_busy_refusal_before_the_retry_bound(monkeypatch,
         out = {"rev-parse": HEAD, "log": "0", "merge-base": PIN, "rev-list": "1"}[args[0]]
         return subprocess.CompletedProcess(args, 0, out, "")
     monkeypatch.setattr(cadence, "_git", fake_git)
-    monkeypatch.setattr(cadence.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "started", ""))
+    launcher = tmp_path / "bin" / "mishe-deliver"
+    launcher.parent.mkdir()
+    launcher.write_text(f"#!/bin/sh\necho 'launcher called'\nexit {launcher_exit}\n")
+    launcher.chmod(0o755)
     releases = tmp_path / "work" / "releases"
     releases.mkdir(parents=True)
-    (releases / f"{HEAD}-123.json").write_text(json.dumps({"sha": HEAD, "phase": "delivery-busy"}))
+    (releases / f"{HEAD}-123.json").write_text(json.dumps({
+        "sha": HEAD, "phase": "delivery-busy", "created_at": 9950.0,
+    }))
     (tmp_path / "delivery-cadence.last").write_text(f"{HEAD} 9900 started\n")
-    assert cadence.run(tmp_path, tmp_path, now=10000) == 0
-    assert cadence._read_state(tmp_path) == (HEAD, 10000, "started")
+    expected_code = 0 if launcher_exit == 0 else 3
+    expected_status = "started" if launcher_exit == 0 else "unknown"
+    assert cadence.run(tmp_path, tmp_path, now=10000) == expected_code
+    assert "launcher called" in capsys.readouterr().out
+    assert cadence._read_state(tmp_path) == (HEAD, 10000, expected_status)
+
+    assert cadence.run(tmp_path, tmp_path, now=10001) == expected_code
+    output = capsys.readouterr().out
+    assert "launcher called" not in output
+    assert "wait for HEAD to move" in output
+    if launcher_exit:
+        assert "previous launch outcome remains unknown" in output
+    assert cadence._read_state(tmp_path) == (HEAD, 10000, expected_status)
 
 
 def test_gate_sees_a_delivery_request_holding_admission(monkeypatch, tmp_path):

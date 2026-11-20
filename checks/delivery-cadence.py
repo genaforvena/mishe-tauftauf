@@ -12,8 +12,7 @@ the ``delivery-cadence`` signal ages to UNKNOWN if the cadence stops running.
 Starts one promotion when all hold:
   - no promotion, heal or patch gate is already running;
   - the pin trails HEAD and the newest commit is older than SETTLE_S (minds done);
-  - this HEAD was not already attempted and refused (retry only when HEAD moves or
-    after RETRY_S).
+  - HEAD is outside the retry bound, or the latest launch has a no-effect refusal.
 
 Remote CI is not a condition: the promotion check runs the whole suite on the exact
 bytes in a clean worktree, so CI is only logged here. This script never edits the
@@ -38,29 +37,29 @@ SETTLE_S = 60
 """The newest commit must be at least this old before a promotion starts (minds done with it)."""
 
 RETRY_S = 10800
-"""A refused HEAD is not retried until HEAD moves or this many seconds have passed."""
+"""Bound between attempts without a current no-effect refusal."""
 
-def _newest_promotion_refused(home: Path, head: str) -> bool:
-    """True when the newest promotion record for HEAD is a no-effect ``delivery-busy`` refusal.
 
-    ``delivery-busy`` is written only when a promote gives up before switching the pin
-    (``release_promotion.held_delivery_lock``): it consumed neither the pin nor any
-    runtime byte, so it must not consume RETRY_S either. Without this the cadence
-    records the launch as ``started`` and refuses the same HEAD for three hours after
-    a transient admission contention (2026-11-20, sha 04577bcf).
+def _newest_promotion_refused(home: Path, head: str, attempted_at: float, now: float) -> bool:
+    """A recorded delivery-busy outcome can authorize a retry of the latest launch.
+
+    A launch can end before it writes a promotion record. Use the record's creation
+    time so a refusal predating that launch cannot authorize another retry.
     """
     directory = home / "work" / "releases"
     try:
-        records = sorted(directory.glob(f"{head}-*.json"), key=lambda path: path.stat().st_mtime)
-    except OSError:
-        return False
-    for path in reversed(records):
-        try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        newest = max(directory.glob(f"{head}-*.json"), key=lambda path: path.stat().st_mtime, default=None)
+        if newest is None:
             return False
-        return record.get("phase") == "delivery-busy"
-    return False
+        record = json.loads(newest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(record, dict):
+        return False
+    created_at = record.get("created_at")
+    return (record.get("sha") == head and record.get("phase") == "delivery-busy"
+            and isinstance(created_at, (int, float)) and attempted_at <= created_at <= now)
+
 
 RUNNING_UNITS = ("moving-pin-delivery-*", "genome-deliver-*")
 """Transient units a promotion or heal runs as; one running means the cadence must not start another."""
@@ -179,7 +178,7 @@ def _remote_ci(repo: Path, head: str) -> str:
 
 
 def run(home: Path, repo: Path, *, now: float | None = None) -> int:
-    now = time.time() if now is None else now
+    tick_at = time.time() if now is None else now
     if os.environ.get("MISHE_WAKE_KEY"):
         _log("inside a wake: skip")
         return 0
@@ -190,8 +189,9 @@ def run(home: Path, repo: Path, *, now: float | None = None) -> int:
     head = _git(repo, "rev-parse", "HEAD").stdout.strip()
     newest = _git(repo, "log", "-1", "--format=%ct", head).stdout.strip()
     last = _read_state(home)
-    refused = _newest_promotion_refused(home, head)
-    start, reason = should_start(pin, head, float(newest or 0), last, now, refused=refused)
+    refused = bool(last and last[0] == head and last[2] == "started"
+                   and _newest_promotion_refused(home, head, last[1], tick_at))
+    start, reason = should_start(pin, head, float(newest or 0), last, tick_at, refused=refused)
     if not start:
         _log(reason)
         if pin != head and last and last[0] == head and last[2] == "unknown":
@@ -210,7 +210,8 @@ def run(home: Path, repo: Path, *, now: float | None = None) -> int:
         previous = state_path.read_bytes()
     except FileNotFoundError:
         previous = None
-    state_path.write_text(f"{head} {int(now)} unknown\n", encoding="utf-8")
+    attempted_at = time.time() if now is None else now
+    state_path.write_text(f"{head} {attempted_at} unknown\n", encoding="utf-8")
     _log(f"pin {pin[:8]} -> HEAD {head[:8]}, {count or '?'} commits, delivering")
     env = {**os.environ, "MISHE_SEED_HOME": str(home)}
     env.pop("MISHE_WAKE_KEY", None)
@@ -233,7 +234,7 @@ def run(home: Path, repo: Path, *, now: float | None = None) -> int:
     if done.returncode != 0:
         _log(f"promotion launch exited {done.returncode}; outcome unknown")
         return 3
-    state_path.write_text(f"{head} {int(now)} started\n", encoding="utf-8")
+    state_path.write_text(f"{head} {attempted_at} started\n", encoding="utf-8")
     return 0
 
 
