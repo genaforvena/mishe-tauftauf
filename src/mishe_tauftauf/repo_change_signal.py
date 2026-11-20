@@ -223,7 +223,12 @@ def produce(home, repo, *, wake: str | None = None, window: int = DEFAULT_WINDOW
     detail.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     # Refresh the registration so sites that predate the ack field get the command in their dossier.
     # register() keeps the original registered_at, so this does not restart the signal's age.
-    signal_store.register(home, SIGNAL, max_age=MAX_AGE_S, subscribers=list(SUBSCRIBERS),
+    # Keep the subscribers sync declared: duties.declared() adds the duty's resolver to the signal's
+    # extras, and overwriting that list here drops the resolver's wake watch from the generated path
+    # unit until the next sync (2026-11-20: a 15-minute doctor RED oscillator).
+    existing = signal_store.registry(home).get(SIGNAL) or {}
+    subscribers = existing.get("subscribers") or list(SUBSCRIBERS)
+    signal_store.register(home, SIGNAL, max_age=MAX_AGE_S, subscribers=subscribers,
                           reoffer=REOFFER_S, wake_on="change", now=now,
                           ack="env PYTHONPATH=src python3 -m mishe_tauftauf.repo_change_signal "
                               "--home {home} --repo {repo} --wake {role}")
