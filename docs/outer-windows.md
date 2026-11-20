@@ -101,4 +101,5 @@ A periodic crash-only drill (stop or crash the plant, confirm nothing continues 
 then confirm recovery resumes, including the tmux windows coming back) was proposed on
 2026-10-31. As of 2026-11-11 there is no drill code in the repository and no timer for one.
 Until a drill runs through the real detectors and recovery path, nothing shows that crash
-recovery works end to end. The restorer above is a manual tool, not a drill.
+recovery works end to end. The restorer runs on its 300 s duty, but that only restores windows;
+it does not stop the plant and check that nothing continues on its own, so it is not a drill.
