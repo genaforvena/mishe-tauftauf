@@ -139,8 +139,18 @@ def test_error_connecting_tmux_is_unknown(tmp_path, monkeypatch):
     assert check.main(["--home", str(tmp_path), "--repo", str(repo)]) == 3
 
 
-def test_missing_window_stays_a_quiet_pass(tmp_path, monkeypatch, capsys):
+def test_real_missing_window_message_stays_a_quiet_pass(tmp_path, monkeypatch, capsys):
     repo = site_for_main(tmp_path)
-    monkeypatch.setattr(check.subprocess, "run", _tmux_run("window not found: senses-map"))
+    monkeypatch.setattr(check.subprocess, "run", _tmux_run("can't find window: senses-map"))
     assert check.main(["--home", str(tmp_path), "--repo", str(repo)]) == 0
     assert "GREEN" in capsys.readouterr().out
+
+
+def test_unrecognised_tmux_failure_is_unknown_not_green(tmp_path, monkeypatch, capsys):
+    repo = site_for_main(tmp_path)
+    for stderr in ("permission denied", "", "can't find session: plants"):
+        monkeypatch.setattr(check.subprocess, "run", _tmux_run(stderr))
+        assert check.main(["--home", str(tmp_path), "--repo", str(repo)]) == 3, stderr
+        out = capsys.readouterr()
+        assert "GREEN" not in out.out + out.err, stderr
+        assert "cannot tell" in out.err, stderr

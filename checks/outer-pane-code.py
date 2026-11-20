@@ -158,7 +158,16 @@ def main(argv=None) -> int:
             if "no server" in r.stderr or "error connecting" in r.stderr:
                 print("outer-pane-code: tmux server unreachable; cannot tell", file=sys.stderr)
                 return 3
-            continue  # a missing window is view-window-coverage's finding
+            if "can't find window" in r.stderr or "window not found" in r.stderr:
+                continue  # a missing window is view-window-coverage's finding
+            # tmux returns 1 for failures beyond server-down (permission denied,
+            # empty stderr, a vanished session). Only the missing-window case
+            # above is a quiet pass; every other nonzero must be UNKNOWN, or
+            # the loop falls through and prints a false GREEN.
+            detail = r.stderr.strip() or f"rc {r.returncode} with no detail"
+            print(f"outer-pane-code: tmux unreadable for {name} ({detail}); cannot tell",
+                  file=sys.stderr)
+            return 3
         try:
             rows = decode_genome_pane_table(r.stdout)
         except ValueError:
