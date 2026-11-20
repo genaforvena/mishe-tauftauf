@@ -47,7 +47,11 @@ def _window_verdict(w: dict, now: float) -> tuple[str, str] | None:
     if not _num(used) or not _num(reset):
         return None
     if used > USED_LOW:
-        return "low", f"{ACCOUNT} window used {used * 100:.0f}% (LOW)"
+        cause = f"{ACCOUNT} window used {used * 100:.0f}% (LOW)"
+        if _num(eta) and _num(reset):
+            cause += (f"; eta {eta / 60:.0f}m to depletion"
+                      f"; reset in {(reset - now) / 3600:.1f}h")
+        return "low", cause
     if _num(eta) and used >= BURN_MIN_USED and now + eta < reset:
         return "runs-out", (f"{ACCOUNT} window burns out in {eta / 3600:.1f} h "
                             f"before reset in {(reset - now) / 3600:.1f} h (RUNS OUT BEFORE RESET)")

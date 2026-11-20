@@ -62,6 +62,17 @@ def test_spent_weekly_window_is_red():
     assert code == 2 and "LOW" in line
 
 
+def test_spent_window_red_reason_carries_eta_and_reset():
+    """A LOW verdict must tell the reader when the allowance runs out, not only that it is low."""
+    code, line = mod.evaluate(
+        budget(**{"7d": {"used": 0.95, "eta_s": 1800.0, "reset_at": NOW + 6 * 3600}}),
+        ledger(), NOW)
+    assert code == 2
+    assert "LOW" in line
+    assert "eta 30m to depletion" in line
+    assert "reset in 6.0h" in line
+
+
 def test_burn_runs_out_before_reset_is_red():
     code, line = mod.evaluate(budget(**{"7d": {"eta_s": 600.0}}), ledger(), NOW)
     assert code == 2 and "RUNS OUT BEFORE RESET" in line
