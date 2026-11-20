@@ -90,6 +90,10 @@ is not mistaken for a quiet mind.
 
 ## What the view says about it
 
+- `last probe` header: the age of the newest probe, the measured cadence, and `STALE` once that age
+  passes 5 minutes. The per-site rows, the gateway line and the outage list carry no freshness of
+  their own, so this header is the only thing that says they are old. A dead probe leaves their last
+  numbers on screen, and `failed in last 40: 0` there is not a calm reading while `STALE` shows.
 - `HOME INTERNET`: the reachability verdict from the newest probe — DOWN when the router or the
   secure sites stop answering, DEGRADED on loss or absolute slowness, UNKNOWN when the probe is stale
   or older than the web checks. An otherwise OK headline also names a sustained relative slowdown
