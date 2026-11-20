@@ -60,8 +60,10 @@ def test_known_disposition_swaps_the_reoffer_for_its_recheck(tmp_path):
     home = tmp_path / "site"; home.mkdir()
     signal_store.register(home, "standing-fault", max_age=900, subscribers=["genome"], reoffer=3600, now=10)
     signal_store.observe(home, "standing-fault", "RED", now=10, source="test")
+    _open(home, "genome", "wake-g-1"); _settle(home, "genome", "wake-g-1", 15)
+    assert "reoffer-standing-fault" in _ids(home, "genome")
     dispositions.set_disposition(home, "standing-fault", "known", "resolver", "evidence", ttl=3600, now=20)
-    _open(home, "genome", "wake-g-1"); _settle(home, "genome", "wake-g-1", 30)
+    _open(home, "genome", "wake-g-2"); _settle(home, "genome", "wake-g-2", 30)
     assert "reoffer-standing-fault" not in _ids(home, "genome")
     due = {e["id"]: e["due"] for e in intentions.list_(home, "genome") if "due" in e}
     assert due["disposition-standing-fault"] == 20 + 3600
