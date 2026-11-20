@@ -22,11 +22,15 @@ Modes:
               past a truncated file is reset to the new end. Cursor writes
               merge forward of a concurrent relay.
   --relay     append the new human lines as DMs and advance the cursors
+  --require-timer UNIT   also check that UNIT is active (the relay timer); RED
+                         when it is not, so a missing or stopped relay is
+                         visible even before a human line goes stale
 
 Exit: 0 GREEN (no unrelayed human line older than the limit),
-      2 RED (a human line older than --limit minutes is not relayed, or the
-      relay stopped mid-file; the cursor stays at the last relayed line),
-      3 UNKNOWN (transcripts unreadable or cursor unusable).
+      2 RED (a human line older than --limit minutes is not relayed, the
+      relay stopped mid-file, or --require-timer is inactive),
+      3 UNKNOWN (transcripts unreadable, cursor unusable, or the timer state
+      cannot be read).
 """
 import argparse
 import calendar
@@ -41,6 +45,24 @@ from pathlib import Path
 
 LIMIT_MIN = 10
 DM_TIMEOUT_S = 60
+
+
+def relay_timer_state(unit):
+    """Return (state, error) for a systemd user timer from systemctl is-active.
+
+    ``state`` is the last line of stdout (active, inactive, failed, ...).
+    ``error`` is set only when systemctl cannot be consulted at all, which the
+    caller maps to UNKNOWN rather than treating an unreadable timer as RED.
+    """
+    try:
+        res = subprocess.run(["systemctl", "--user", "is-active", unit],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, str(exc)
+    lines = res.stdout.strip().splitlines()
+    if not lines:
+        return None, res.stderr.strip() or "systemctl gave no state"
+    return lines[-1].strip(), None
 
 
 def slug_for_repo(repo):
@@ -155,8 +177,19 @@ def main(argv=None, now=None, mishe_bin=None):
                     help="transcripts directory (default: ~/.claude/projects/<repo-slug>)")
     ap.add_argument("--limit", type=int, default=LIMIT_MIN, help="minutes before an unrelayed line is RED")
     ap.add_argument("--relay", action="store_true", help="write the DMs and advance the cursors")
+    ap.add_argument("--require-timer", metavar="UNIT", default=None,
+                    help="RED when this systemd user timer is not active (relay liveness)")
     a = ap.parse_args(argv)
     now = time.time() if now is None else now
+
+    timer_state = None
+    if a.require_timer:
+        timer_state, timer_error = relay_timer_state(a.require_timer)
+        if timer_state is None:
+            print(f"human-typed-relayed: UNKNOWN cannot read relay timer {a.require_timer}: {timer_error}",
+                  file=sys.stderr)
+            return 3
+
     sdir = a.sessions if a.sessions is not None else default_sessions(a.repo)
     cursor_path = a.home / "human-typed" / "cursor.json"
     if not sdir.is_dir():
@@ -264,6 +297,10 @@ def main(argv=None, now=None, mishe_bin=None):
             return 3
     stale = [at for _, _, at, _, _, _ in pending if now - at > a.limit * 60]
     detail = f"{len(pending)} unrelayed human line(s)"
+    if a.require_timer and timer_state != "active":
+        print(f"human-typed-relayed: RED relay timer {a.require_timer} is {timer_state}; {detail}",
+              file=sys.stderr)
+        return 2
     if pending:
         detail += f", newest {int((now - pending[-1][2]) / 60)} min old"
     detail += note
