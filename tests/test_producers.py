@@ -171,6 +171,16 @@ def test_declared_unknown_code_logs_its_reason_to_the_journal(home, capsys):
     assert "devto: unknown=4 detail=" in err and "mac_unreachable" in err
 
 
+def test_declared_red_logs_its_cause_to_the_journal(home, capsys):
+    # 2026-11-20: two rust-plan-progress RED exits left no edge and no journal cause. The wrapper
+    # logged detail= only for UNKNOWN/crash exits, so a resolver woken later could not say why.
+    script = "print('wall is 7207s old, past the 7200s bound'); import sys; sys.exit(2)"
+    assert producers.run(home, "devto", [PY, "-c", script], now=NOW, timeout=10) == 0
+    err = capsys.readouterr().err
+    assert "devto: exit=2 detail=" in err and "past the 7200s bound" in err
+    assert store.read(home, "devto", now=NOW).value == "RED"
+
+
 def test_undeclared_code_stays_a_failure_even_with_unknown_codes_set(home):
     assert producers.run(home, "devto", [PY, "-c", "import sys; sys.exit(1)"], now=NOW, timeout=10,
                          unknown_codes=(4,)) == 2

@@ -97,9 +97,9 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
     # for a producer that ran on time and said its input is stale.
     (Path(home) / "signals" / f"{name}.ran").touch()
     os.replace(scratch, detail)
-    if code in unknown_codes or (code != 0 and code not in red_codes):
+    if code != 0:
         # The detail file is overwritten by the next run, so the journal carries the check's output for every
-        # non-GREEN exit, including a declared unknown one whose reason would otherwise survive only in the detail file.
+        # non-GREEN exit — declared RED included — whose reason would otherwise survive only until that overwrite.
         output = detail.read_bytes()[:DETAIL_BYTES]
         # An empty capture is itself the evidence: the check exited without writing to stdout or stderr.
         shown = repr(output) if output else "(no output on stdout or stderr)"
