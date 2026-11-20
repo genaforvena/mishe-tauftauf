@@ -171,9 +171,8 @@ def poll_wake_starts(delivered: list[dict], starts: list[float],
     a hold, so a start inside it is not a poll-start. ``starts`` are wake start epochs from the
     routing ledger. A start during the poll grabs the shared dispatch lock and can extend the
     fence; the hold blocks new starts only after that promotion's poll expires. ``windows``, when
-    given, restricts the count to hold-wait fences with positive ledger evidence, so a fence the
-    ledger does not cover is not folded in as a fabricated zero. Returns None when no such fence
-    is measured (never a fabricated zero).
+    given, restricts the count to hold-wait fences with a recorded start or positive overlap.
+    Returns None when no such fence is measured.
     """
     if windows is None:
         holds = []
@@ -356,10 +355,11 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
             lines.append("  hold-wait/wake overlap UNKNOWN (routing ledger unreadable)")
         else:
             intervals = boundary.wake_intervals(events)
+            starts = list(boundary.first_wake_starts(events).values())
             # A fence with no interval inside it cannot show zero wake overlap: the ledger may
             # simply have stopped recording before that fence. Require positive per-fence
             # evidence for coverage, and expose fences we cannot measure instead of folding
-            # them in as zero. A zero-length interval is a wake start but not coverage evidence.
+            # them in as zero. A recorded select establishes a start even without an outcome.
             hold_windows: list[tuple[float, float]] = []
             ledger_evidenced: list[tuple[float, float, float]] = []
             overlap: list[float] = []
@@ -376,13 +376,14 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
                     continue
                 hold_windows.append((ws, ac))
                 value = boundary.interval_coverage(intervals, ws, ac)
+                has_overlap = value is not None and value > 0
                 if value is None:
                     torn += 1
-                elif value > 0:
+                elif has_overlap:
                     overlap.append(value)
                 else:
                     uncovered += 1
-                if any(iv[1] > ws and iv[0] < ac for iv in intervals):
+                if has_overlap or any(ws <= start < ac for start in starts):
                     ledger_evidenced.append((ws, ac, patience))
             unevidenced = uncovered + torn
             if not hold_windows:
@@ -400,11 +401,11 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
                     lines.append(f"  {unevidenced} hold-wait fence(s) UNKNOWN: no wake interval inside"
                                  f" ({torn} torn), excluded from the overlap mean")
             no_ledger = len(hold_windows) - len(ledger_evidenced)
-            poll = poll_wake_starts(delivered, [a for a, _ in intervals], ledger_evidenced)
+            poll = poll_wake_starts(delivered, starts, ledger_evidenced)
             if poll is not None:
-                suffix = (f"; {no_ledger} fence(s) UNKNOWN (no ledger interval inside), excluded"
+                suffix = (f"; {no_ledger} fence(s) UNKNOWN (no ledger interval or start inside), excluded"
                           if no_ledger else "")
-                lines.append(f"  wake starts in the quiet poll ({patience_text}):"
+                lines.append(f"  recorded wake starts in the quiet poll ({patience_text}):"
                              f" mean {poll['poll_mean']:.2f}/hold-wait (max {poll['poll_max']}),"
                              f" {poll['with_poll_start']}/{poll['holds']} fences had >=1;"
                              f" after hold {poll['after_mean']:.2f}{suffix}")

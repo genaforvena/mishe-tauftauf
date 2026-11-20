@@ -56,6 +56,17 @@ def load_events(home: Path) -> list[dict] | None:
         return None
     return [e for line in lines if (e := decode(line)) is not None]
 
+def first_wake_starts(events: list[dict]) -> dict[str, float]:
+    """First recorded select per wake, including wakes with no recorded outcome."""
+    starts = {}
+    for ev in events:
+        wake, at = ev.get("wake"), ev.get("at")
+        if ev.get("event") == "select" and wake and type(at) in (int, float):
+            if wake not in starts or at < starts[wake]:
+                starts[wake] = at
+    return starts
+
+
 def wake_intervals(events: list[dict]) -> list[tuple[float, float]]:
     """[select, outcome] spans for wakes whose ledger has both ends.
 
@@ -63,15 +74,11 @@ def wake_intervals(events: list[dict]) -> list[tuple[float, float]]:
     absent, never a zero-length interval. The shared dispatch lock a wake holds
     runs from its first select to its outcome.
     """
-    starts, ends = {}, {}
+    starts = first_wake_starts(events)
+    ends = {}
     for ev in events:
         wake, at = ev.get("wake"), ev.get("at")
-        if not wake or type(at) not in (int, float):
-            continue
-        if ev.get("event") == "select":
-            if wake not in starts or at < starts[wake]:
-                starts[wake] = at
-        elif ev.get("event") == "outcome":
+        if ev.get("event") == "outcome" and wake and type(at) in (int, float):
             if wake not in ends or at > ends[wake]:
                 ends[wake] = at
     return [(at, ends[wake]) for wake, at in starts.items()
@@ -119,12 +126,7 @@ def evaluate(events: list[dict], now: float, window_s: float) -> dict:
     Selects are read from the whole retained tail: a wake that started just
     before the window still has a measured duration when its outcome is inside.
     """
-    starts: dict[str, float] = {}
-    for ev in events:
-        if ev["event"] == "select" and ev["wake"]:
-            at = starts.get(ev["wake"])
-            if at is None or ev["at"] < at:
-                starts[ev["wake"]] = ev["at"]
+    starts = first_wake_starts(events)
     outcomes = [ev for ev in events if ev["event"] == "outcome"
                 and now - window_s <= ev["at"] <= now + 5]
     rows = []

@@ -11,6 +11,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("delivery_view", REPO / "tools" / "delivery_view.py")
 view = importlib.util.module_from_spec(spec)
@@ -420,7 +422,7 @@ def test_report_keeps_positive_evidence_when_another_fence_is_uncovered(tmp_path
     assert "hold-wait/wake overlap: 1/2 hold-waits, mean 100.0% of each fence" in text
     assert "1 hold-wait fence(s) UNKNOWN: no wake interval inside (0 torn), excluded" in text
     assert ("1/1 fences had >=1; after hold 0.00;"
-            " 1 fence(s) UNKNOWN (no ledger interval inside), excluded") in text
+            " 1 fence(s) UNKNOWN (no ledger interval or start inside), excluded") in text
     assert "mean 50.0%" not in text
 
 
@@ -442,6 +444,32 @@ def test_report_keeps_already_running_wake_zero_starts_in_the_poll_mean(tmp_path
     # observation, not a ledger gap, so it stays in the mean and needs no UNKNOWN suffix.
     assert ("wake starts in the quiet poll (600s): mean 0.00/hold-wait (max 0),"
             " 0/1 fences had >=1; after hold 0.00") in text
+
+
+@pytest.mark.parametrize("paired_wake", [False, True])
+def test_report_counts_recorded_starts_without_outcomes(tmp_path, monkeypatch, paired_wake):
+    held = record(waiting_since=2010.0, activation_started_at=3010.0)
+    home = home_with(tmp_path, [held])
+    ledger = home / "engine" / "routing-ledger.jsonl"
+    ledger.parent.mkdir()
+    rows = [("select", "interrupted", 2010), ("select", "interrupted", 2700)]
+    if paired_wake:
+        rows = [("select", "running", 2000), ("outcome", "running", 2210)] + rows
+    ledger.write_text("\n".join(
+        json.dumps({"event": event, "wake": wake,
+                    "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(at))})
+        for event, wake, at in sorted(rows, key=lambda row: row[2])
+    ) + "\n", encoding="utf-8")
+    monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
+
+    text = view.render(home, Path("/nope"), 86400.0, 4000.0)
+
+    assert ("wake starts in the quiet poll (600s): mean 1.00/hold-wait (max 1),"
+            " 1/1 fences had >=1; after hold 0.00") in text
+    if paired_wake:
+        assert "hold-wait/wake overlap: 1 hold-waits, mean 20.0%" in text
+    else:
+        assert "hold-wait/wake overlap UNKNOWN (no wake interval covers a measured fence)" in text
 
 
 def test_quiet_poll_s_rejects_boolean_patience():
