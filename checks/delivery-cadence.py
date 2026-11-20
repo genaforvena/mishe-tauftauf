@@ -40,6 +40,28 @@ SETTLE_S = 60
 RETRY_S = 10800
 """A refused HEAD is not retried until HEAD moves or this many seconds have passed."""
 
+def _newest_promotion_refused(home: Path, head: str) -> bool:
+    """True when the newest promotion record for HEAD is a no-effect ``delivery-busy`` refusal.
+
+    ``delivery-busy`` is written only when a promote gives up before switching the pin
+    (``release_promotion.held_delivery_lock``): it consumed neither the pin nor any
+    runtime byte, so it must not consume RETRY_S either. Without this the cadence
+    records the launch as ``started`` and refuses the same HEAD for three hours after
+    a transient admission contention (2026-11-20, sha 04577bcf).
+    """
+    directory = home / "work" / "releases"
+    try:
+        records = sorted(directory.glob(f"{head}-*.json"), key=lambda path: path.stat().st_mtime)
+    except OSError:
+        return False
+    for path in reversed(records):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return record.get("phase") == "delivery-busy"
+    return False
+
 RUNNING_UNITS = ("moving-pin-delivery-*", "genome-deliver-*")
 """Transient units a promotion or heal runs as; one running means the cadence must not start another."""
 
@@ -115,11 +137,13 @@ def gate_running(home) -> bool:
 
 
 def should_start(pin: str, head: str, newest_at: float, last: tuple | None, now: float,
-                 *, settle: int = SETTLE_S, retry: int = RETRY_S) -> tuple:
+                 *, settle: int = SETTLE_S, retry: int = RETRY_S, refused: bool = False) -> tuple:
     """``(start, reason)`` for the pure timing gate, so the decision is testable without a delivery.
 
     ``pin``/``head`` are commit sha strings, ``newest_at`` the HEAD commit time, ``last`` the
     ``(sha, attempted_at)`` last written or None, and ``now`` the current epoch seconds.
+    ``refused`` marks a delivery-busy outcome for HEAD: that launch had no effect, so the
+    retry bound does not apply and the next tick may start a fresh promotion.
     """
     if not pin or not head:
         return False, "no pin or HEAD to compare"
@@ -127,7 +151,7 @@ def should_start(pin: str, head: str, newest_at: float, last: tuple | None, now:
         return False, "pin is HEAD: nothing to do"
     if now - newest_at < settle:
         return False, f"newest commit is {int(now - newest_at)}s old (< {settle}s): wait"
-    if last is not None and last[0] == head and 0 <= now - last[1] < retry:
+    if last is not None and last[0] == head and not refused and 0 <= now - last[1] < retry:
         return False, f"{head[:8]} was attempted {int((now - last[1]) / 60)} min ago: wait for HEAD to move"
     return True, "deliver"
 
@@ -166,7 +190,8 @@ def run(home: Path, repo: Path, *, now: float | None = None) -> int:
     head = _git(repo, "rev-parse", "HEAD").stdout.strip()
     newest = _git(repo, "log", "-1", "--format=%ct", head).stdout.strip()
     last = _read_state(home)
-    start, reason = should_start(pin, head, float(newest or 0), last, now)
+    refused = _newest_promotion_refused(home, head)
+    start, reason = should_start(pin, head, float(newest or 0), last, now, refused=refused)
     if not start:
         _log(reason)
         if pin != head and last and last[0] == head and last[2] == "unknown":

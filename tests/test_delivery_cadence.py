@@ -1,5 +1,7 @@
 """The tracked delivery cadence: its timing gate starts one promotion, and it never starts one from inside a wake."""
 import importlib.util
+import json
+import os
 import subprocess
 import sys
 import time
@@ -38,6 +40,24 @@ def test_does_not_retry_an_attempted_head_before_the_retry_bound():
     assert start, "a different sha than the one attempted is not blocked"
     start, _ = cadence.should_start(PIN, HEAD, newest_at=0.0, last=last, now=9900.0 + cadence.RETRY_S + 1)
     assert start, "an old attempt past the retry bound is retried"
+
+def test_retries_a_head_whose_promotion_was_refused_without_effect():
+    last = (HEAD, 9900.0)
+    start, reason = cadence.should_start(PIN, HEAD, newest_at=0.0, last=last,
+                                         now=10000.0, refused=True)
+    assert start and reason == "deliver"
+
+
+def test_newest_promotion_refused_reads_only_the_newest_record(tmp_path):
+    releases = tmp_path / "work" / "releases"
+    releases.mkdir(parents=True)
+    old = releases / f"{HEAD}-1.json"
+    old.write_text(json.dumps({"sha": HEAD, "phase": "delivery-busy"}))
+    assert cadence._newest_promotion_refused(tmp_path, HEAD) is True
+    new = releases / f"{HEAD}-2.json"
+    new.write_text(json.dumps({"sha": HEAD, "phase": "checking"}))
+    os.utime(new, (2_000_000_000, 2_000_000_000))
+    assert cadence._newest_promotion_refused(tmp_path, HEAD) is False
 
 
 def test_run_skips_inside_a_wake_without_anything(monkeypatch):
@@ -131,6 +151,23 @@ def test_successful_launcher_records_started_attempt(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(args, 0, out, "")
     monkeypatch.setattr(cadence, "_git", fake_git)
     monkeypatch.setattr(cadence.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "started", ""))
+    assert cadence.run(tmp_path, tmp_path, now=10000) == 0
+    assert cadence._read_state(tmp_path) == (HEAD, 10000, "started")
+
+def test_run_retries_a_delivery_busy_refusal_before_the_retry_bound(monkeypatch, tmp_path):
+    monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
+    monkeypatch.setattr(cadence, "gate_running", lambda home: False)
+    monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
+    monkeypatch.setattr(cadence, "_remote_ci", lambda *args: "unknown")
+    def fake_git(repo, *args):
+        out = {"rev-parse": HEAD, "log": "0", "merge-base": PIN, "rev-list": "1"}[args[0]]
+        return subprocess.CompletedProcess(args, 0, out, "")
+    monkeypatch.setattr(cadence, "_git", fake_git)
+    monkeypatch.setattr(cadence.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "started", ""))
+    releases = tmp_path / "work" / "releases"
+    releases.mkdir(parents=True)
+    (releases / f"{HEAD}-123.json").write_text(json.dumps({"sha": HEAD, "phase": "delivery-busy"}))
+    (tmp_path / "delivery-cadence.last").write_text(f"{HEAD} 9900 started\n")
     assert cadence.run(tmp_path, tmp_path, now=10000) == 0
     assert cadence._read_state(tmp_path) == (HEAD, 10000, "started")
 
