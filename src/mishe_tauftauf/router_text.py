@@ -49,6 +49,40 @@ def stream_events(path: Path):
                 yield event
 
 
+def opencode_go_terminal_error(path: Path) -> str | None:
+    """Read a bounded Omp stream tail and label the last completed assistant error."""
+    tail_bytes = 2 * 1024 * 1024
+    with path.open("rb") as stream:
+        end = stream.seek(0, 2)
+        start = max(0, end - tail_bytes)
+        stream.seek(start - 1 if start else 0)
+        starts_inside_line = start and stream.read(1) != b"\n"
+        tail = stream.read(end - start)
+    lines = tail.split(b"\n")
+    # The tail may start partway through an event. Drop that fragment.
+    if starts_inside_line:
+        lines = lines[1:]
+    for line in reversed(lines):
+        try:
+            event = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(event, dict) or event.get("type") != "message_end":
+            continue
+        message = event.get("message")
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        if message.get("stopReason") != "error":
+            return None
+        error = message.get("errorMessage")
+        if error == "No API key for provider: opencode-go":
+            return "OpenCode Go API key missing"
+        if isinstance(error, str) and error.startswith("403 An active OpenCode Go subscription is required"):
+            return "OpenCode Go subscription required"
+        return None
+    return None
+
+
 def split_cooling_key(key: str) -> tuple:
     """``role|candidate`` -> (role, candidate); a bare candidate has role None."""
     if "|" not in key:
