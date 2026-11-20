@@ -1,4 +1,5 @@
 """Delivery acceptance tests use separate real worktrees and a bare origin."""
+from functools import partial
 import json
 import subprocess
 from unittest.mock import patch
@@ -216,7 +217,7 @@ def submit_main_only(candidate):
     return delivery.submit(home, "repair", "senses", work, base, "candidate", review, main_only=True)
 
 
-def test_main_only_candidate_lands_without_a_publication_branch(candidate, monkeypatch):
+def test_main_only_candidate_lands_without_a_publication_branch(candidate, monkeypatch, tmp_path):
     home, primary, work, _, head, _ = candidate
     # A main-only repository forbids publication branches: no remote candidate ref.
     git(work, "push", "-q", "origin", "--delete", "candidate")
@@ -236,9 +237,13 @@ def test_main_only_candidate_lands_without_a_publication_branch(candidate, monke
     delivery.finish(home, "repair", "senses", proof)
     assert delivery.load(home, "repair")["phase"] == "done"
     # Retirement must not require a remote publication branch either.
-    from mishe_tauftauf.retirement import retire
-    retired = retire(home, "repair")
-    assert retired["state"] == "retired"
+    from mishe_tauftauf import retirement
+    # Control process visibility for this disposable candidate.
+    proc_root = tmp_path / "idle-proc"
+    proc_root.mkdir()
+    monkeypatch.setattr(retirement, "busy", partial(retirement.busy, proc_root=proc_root))
+    retired = retirement.retire(home, "repair")
+    assert retired["state"] == "retired", retired["reason"]
     assert git(primary, "for-each-ref", "--format=%(refname)", "refs/heads") == "refs/heads/main"
 
 
