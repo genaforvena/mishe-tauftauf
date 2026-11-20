@@ -218,6 +218,54 @@ def reconcile(root, row, config):
 
 GUARD_SCOPE = "capacity producer freshness; not restoration"
 
+def capacity_cause(row):
+    """Name the reading that crossed a bound for a non-NORMAL capacity verdict.
+
+    The RED signal otherwise carries only the bare guard verdict (``capacity=CRITICAL``,
+    ``state=FRESH``) and a reader must open the sample log to learn why. Mirrors the
+    thresholds in ``decide()`` against the very observation that produced the verdict,
+    so the guard output explains itself. NORMAL and UNKNOWN rows carry no cause.
+    """
+    state = row.get("state")
+    if state not in {"CRITICAL", "LIMITED"}:
+        return None
+    obs = row.get("observation")
+    if not isinstance(obs, dict):
+        return None
+
+    def num(key, default=0.0):
+        value = obs.get(key, default)
+        return value if type(value) in (int, float) and math.isfinite(value) else default
+
+    memory = num("memory_full")
+    io = num("io_full")
+    available = num("available_ratio")
+    current = num("current")
+    high = num("high", 1.0)
+    maximum = num("max", 1.0)
+    oom = row.get("oom_delta", 0)
+    near_max = bool(high and maximum) and current >= maximum * .97
+    if state == "CRITICAL":
+        if type(oom) in (int, float) and oom > 0:
+            return f"oom_delta=+{oom}"
+        if memory >= 25:
+            return f"memory_full={memory:g}>=25"
+        if available < .06:
+            return f"available={available:.3f}<0.06"
+        if near_max and memory >= 5:
+            return f"near_max current={current / 1e9:.1f}GiB and memory_full={memory:g}>=5"
+        return "critical bound (see observation)"
+    if current >= high * .9:
+        return f"current={current / 1e9:.1f}GiB>=0.9*high"
+    if available < .12:
+        return f"available={available:.3f}<0.12"
+    if memory >= 5:
+        return f"memory_full={memory:g}>=5"
+    if io >= 40:
+        return f"io_full={io:g}>=40"
+    return "sustained overload"
+
+
 
 def guard_diagnostic(guard_row, observed_at):
     """Return the guard freshness verdict and each check that failed, with the inputs seen."""
@@ -314,6 +362,9 @@ def guard(root, *, now=None):
     row = status(root, now=now)
     result = {"checked_at": now, "state": "UNKNOWN" if "reason" in row else "FRESH",
               "capacity": row["state"], "scope": "capacity producer freshness; not restoration"}
+    cause = capacity_cause(row)
+    if cause:
+        result["cause"] = cause
     path = Path(root) / "host-capacity-guard.json"
     try:
         previous = recovery.read_json(path)

@@ -197,6 +197,32 @@ def test_guard_older_than_window_is_stale(tmp_path, monkeypatch):
     assert not row["guard_fresh"] and row["state"] == "UNKNOWN"
 
 
+def test_capacity_cause_names_the_deciding_pressure_reading():
+    row = host.decide(None, sample(memory=48.7), now=100)
+    assert row["state"] == "CRITICAL"
+    assert "memory_full=48.7>=25" in host.capacity_cause(row)
+
+
+def test_capacity_cause_prefers_oom_over_pressure():
+    prev = host.decide(None, sample(oom=0), now=100)
+    row = host.decide(prev, sample(oom=1, memory=48.7), now=110)
+    assert row["oom_delta"] == 1
+    assert host.capacity_cause(row) == "oom_delta=+1"
+
+
+def test_capacity_cause_absent_on_normal_and_unknown():
+    assert host.capacity_cause(host.decide(None, sample(), now=100)) is None
+    assert host.capacity_cause({"state": "UNKNOWN"}) is None
+
+
+def test_guard_output_carries_the_capacity_cause(tmp_path):
+    row = host.decide(None, sample(memory=48.7), now=100)
+    recovery.save(tmp_path / "host-capacity.json", row)
+    out = host.guard(tmp_path, now=100)
+    assert out["capacity"] == "CRITICAL"
+    assert "memory_full=48.7>=25" in out["cause"]
+
+
 def test_reconciliation_drops_managed_units_without_mutating_the_set_it_walks(tmp_path, monkeypatch):
     """The controller must survive a tick where the units it manages came back.
 
