@@ -3440,6 +3440,36 @@ Reopen measurement if a routine wake starts paying for full folds or if a
 quiet sample breaches the reader threshold. The site-local probe and output
 are in `artifacts/rust-plan-20261107/fold-child-split-20261120-bounded.*`.
 
+**First-fold child CPU outliers (2026-11-20).** Through the 10:41 UTC
+measurement, 60 of 78 retained rows had both roles' child CPU and pre-run
+pressure. Five put senses above 6 child CPU-s (6.598–19.713). Their paired
+genome folds used 2.764–3.834 child CPU-s. Senses always ran first. One
+outlier began at 0.28% CPU pressure, so a quiet guard before the run did
+not exclude the spike. At 10:41 on `4c72c89d`, child CPU was 10.148 s for
+senses and 3.436 s for genome. Both Python readers stayed below 5 CPU-s.
+The reader, crates and checker were unchanged from the 09:41 release.
+
+Cache expiry can produce this first-fold pattern. Two pairs of outliers
+were just over six hours apart, matching the store's freshness limit. In a
+scratch store, the installed `mishe-records` used 0.091 CPU-s to reverify
+48 expired synthetic records and 0.003 CPU-s on the next pass. All 48
+decisions changed from `N` to `V` with the same sequences and kinds.
+An indexed sample of 1,024 live store rows taken at 10:48 found 254
+verification timestamps from 10:41:07 through 10:41:25, within the
+measurement service's 10:41:06–34 run. Some rows were refreshed before it
+started. The store records timestamps alone, so the writer and the share
+of outlier CPU due to reverification remain UNKNOWN.
+
+Keep the 5 CPU-s reader trigger. The hourly measurement retains
+recurrences, and rust-plan owns attribution. In a scheduled sample,
+compare CPU by child command and count verifier `N` and `V` decisions
+alongside checkpoint validity and per-fold pressure. A spike with few
+misses, or CPU concentrated in a second framing pass, would disfavor the
+cache-expiry explanation. Keep decision bytes and failure handling
+covered by the existing framing goldens and verifier fixtures. No new
+Rust migration seam is supported by this evidence. The scratch probe and
+indexed sample are site-local under `artifacts/rust-plan-20261107/verify-*.json`.
+
 ### 10.60 The Python duty population measured: nothing CPU-bound is worth Rust yet (2026-11-18)
 
 Before choosing another slice, the highest-cadence local Python duties were timed
