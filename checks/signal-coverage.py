@@ -42,6 +42,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 GREEN, RED, UNKNOWN = 0, 2, 3
@@ -172,6 +173,28 @@ def _dispositioned(home: Path, repo: Path, name: str, now: float):
         return None
 
 
+def _lapsed_known_disposition(home: Path, repo: Path, name: str, now: float):
+    """The expired known disposition for ``name``, if any.
+
+    ``active()`` deliberately returns None once the recheck is due, so the ignored
+    cause cannot say who owed the answer or when it lapsed. Reading the record back
+    from the listing keeps the finding actionable: a resolver and a deadline, not
+    just an age. A broken store still returns None; it never mutes the finding.
+    """
+    try:
+        src = str(Path(repo) / "src")
+        if src not in sys.path:
+            sys.path.insert(0, src)
+        from mishe_tauftauf import dispositions
+        for row in dispositions.listing(Path(home), now=now):
+            if (row.get("key") == name and row.get("kind") == "known"
+                    and row.get("expired") is True):
+                return row
+    except Exception:  # noqa: BLE001 - a broken store must not hide a finding
+        pass
+    return None
+
+
 def _recheck_servable(entry) -> bool:
     """Can ``yielding.settle`` arm this signal's known-disposition recheck wake?
 
@@ -275,8 +298,14 @@ def run(home: Path, now: float, *, repo: Path | None = None,
                                       f"(yielding.py:220)")
                     continue
                 counts["ignored"] += 1
-                causes.append(f"ignored: {name} reading {value or state} unchanged "
-                             f"{(now - observed_at) / 3600:.1f} h > bound {bound / 3600:.1f} h")
+                cause = (f"ignored: {name} reading {value or state} unchanged "
+                         f"{(now - observed_at) / 3600:.1f} h > bound {bound / 3600:.1f} h")
+                lapsed = _lapsed_known_disposition(home, repo, name, now)
+                if lapsed is not None and isinstance(lapsed.get("recheck_at"), (int, float)):
+                    due = datetime.fromtimestamp(lapsed["recheck_at"], timezone.utc)
+                    cause += (f"; known disposition by {lapsed.get('owner')} lapsed "
+                              f"{due:%H:%M:%SZ} — recheck that resolver")
+                causes.append(cause)
                 continue
             counts["notes"].append(f"{name}: {value or state} fresh, response pending")
             continue

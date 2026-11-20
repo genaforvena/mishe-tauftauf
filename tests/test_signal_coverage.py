@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import stat
+from datetime import datetime, timezone
 from pathlib import Path
 
 SPEC = importlib.util.spec_from_file_location(
@@ -158,7 +159,13 @@ def test_expired_disposition_returns_the_ignored_finding(tmp_path, monkeypatch):
     dispositions.set_disposition(home, "phones", "known", "senses", "redmi10 stale",
                                  ttl=600, now=NOW - 3600)
     code, report = mod.run(home, NOW, sigdir=sigdir)
-    assert any(c.startswith("ignored") and "phones" in c for c in report["causes"])
+    cause = [c for c in report["causes"] if c.startswith("ignored") and "phones" in c]
+    assert cause, report["causes"]
+    # The finding returns with the resolver and deadline named, so no one has to
+    # open the disposition file to learn who owes the recheck (budget-opencode-go,
+    # 2026-11-20 11:38Z).
+    due = datetime.fromtimestamp(NOW - 3600 + 600, timezone.utc)
+    assert f"known disposition by senses lapsed {due:%H:%M:%SZ}" in cause[0]
 
 
 def test_known_disposition_without_recheck_wake_is_a_cause(tmp_path, monkeypatch):
