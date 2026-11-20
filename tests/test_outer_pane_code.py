@@ -4,9 +4,11 @@ The check compares decoded values: the release named by the pane's cwd, the
 view the registry says the window runs, and the script bytes at the pin.
 """
 import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -101,3 +103,44 @@ def test_a_window_without_a_known_view_script_is_skipped(tmp_path):
 def test_pane_cwd_boundary_reads_a_live_process_and_refuses_a_dead_one():
     assert proc.read_pane_cwd(str(os.getpid())) == os.readlink(f"/proc/{os.getpid()}/cwd")
     assert proc.read_pane_cwd("999999999") == ""
+
+
+def site_for_main(tmp_path):
+    """Minimal site with one registered outer view window and a pinned script."""
+    (tmp_path / "operator").mkdir(parents=True)
+    (tmp_path / "runtime").mkdir(parents=True)
+    (tmp_path / "releases" / PIN / "tools").mkdir(parents=True)
+    (tmp_path / "releases" / PIN / "tools" / SCRIPT).write_text("pinned code")
+    (tmp_path / "runtime" / "current").symlink_to(tmp_path / "releases" / PIN)
+    (tmp_path / "operator" / "window-registry.json").write_text(
+        '{"windows": [' + json.dumps(WINDOW) + ']}')
+    repo = tmp_path / "repo"
+    (repo / "tools").mkdir(parents=True)
+    (repo / "tools" / SCRIPT).write_text("pinned code")
+    return repo
+
+
+def _tmux_run(stderr):
+    return lambda *args, **kwargs: SimpleNamespace(returncode=1, stderr=stderr, stdout="")
+
+
+def test_dead_tmux_server_is_unknown_not_green(tmp_path, monkeypatch, capsys):
+    repo = site_for_main(tmp_path)
+    monkeypatch.setattr(check.subprocess, "run", _tmux_run("no server running on /tmp/tmux-1000/default"))
+    assert check.main(["--home", str(tmp_path), "--repo", str(repo)]) == 3
+    err = capsys.readouterr().err
+    assert "tmux server unreachable; cannot tell" in err
+    assert "GREEN" not in err
+
+
+def test_error_connecting_tmux_is_unknown(tmp_path, monkeypatch):
+    repo = site_for_main(tmp_path)
+    monkeypatch.setattr(check.subprocess, "run", _tmux_run("error connecting to /tmp/tmux-1000/default"))
+    assert check.main(["--home", str(tmp_path), "--repo", str(repo)]) == 3
+
+
+def test_missing_window_stays_a_quiet_pass(tmp_path, monkeypatch, capsys):
+    repo = site_for_main(tmp_path)
+    monkeypatch.setattr(check.subprocess, "run", _tmux_run("window not found: senses-map"))
+    assert check.main(["--home", str(tmp_path), "--repo", str(repo)]) == 0
+    assert "GREEN" in capsys.readouterr().out
