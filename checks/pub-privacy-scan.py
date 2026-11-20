@@ -353,6 +353,14 @@ def collect(key: str) -> list[dict]:
             item = {"id": aid, "state": state}
             if state == "draft":
                 item["row"] = row
+            else:
+                # The published listing already carries every field read_item
+                # needs: body_markdown, title, tag_list, description,
+                # canonical_url, cover_image and comments_count.  Keep it as a
+                # fallback because DEV answers 404 on GET /articles/{id} for a
+                # just-published article that is live in this listing and on
+                # its public page (first seen on 5079796, 2026-11-20).
+                item["listing_row"] = row
             items.append(item)
             time.sleep(0.4)
     return items
@@ -476,11 +484,23 @@ def read_item(item: dict, key: str, owner: str = "") -> dict:
     showing the sentence the description was written with.  It is our own
     text: the publisher sends it from the front matter whenever the front
     matter names one.
+
+    A live article whose by-id GET 404s is read from the published listing row
+    captured in `collect`; the listing carries every field scanned here.  A
+    404 without that row, or any other fetch failure, stays UNKNOWN.
     """
     fields: dict[str, object] = {}
     expected = None
     try:
-        art = item["row"] if "row" in item else get(f"/articles/{item['id']}", key)
+        if "row" in item:
+            art = item["row"]
+        else:
+            try:
+                art = get(f"/articles/{item['id']}", key)
+            except urllib.error.HTTPError as err:
+                if err.code != 404 or "listing_row" not in item:
+                    raise
+                art = item["listing_row"]
         fields["title"] = art.get("title")
         fields["body"] = art.get("body_markdown")
         fields["tags"] = " ".join(art.get("tag_list") or []) if isinstance(art.get("tag_list"), list) else art.get("tag_list")

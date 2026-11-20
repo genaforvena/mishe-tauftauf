@@ -36,6 +36,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -521,6 +522,44 @@ def test_the_read_item_captures_the_description_the_api_answers():
     scan.get = lambda path, key=None: article
     fields = scan.read_item({"id": 4218940, "state": "live"}, "key", "owner")
     assert fields["description"] == "the card"
+
+
+def _by_id_404_get(path, key=None):
+    """The by-id read 404s; comments still answer, as they do in production."""
+    if path.startswith("/articles/"):
+        raise urllib.error.HTTPError(path, 404, "Not Found", None, None)
+    if path.startswith("/comments?"):
+        return []
+    raise AssertionError(path)
+
+
+def test_a_by_id_404_falls_back_to_the_published_listing_row():
+    """A just-published article 404s by id but is whole in the listing.
+
+    DEV returned 404 on GET /articles/5079796 while /articles/me/published
+    carried the body, title, description and canonical URL.  Without the
+    fallback the scan published UNKNOWN for a live public article.
+    """
+    scan = load_scan()
+    scan.get = _by_id_404_get
+    listing = {"title": "A live post", "body_markdown": "A clean body.",
+               "tag_list": ["one"], "description": "the card",
+               "canonical_url": "https://example.org/p", "cover_image": None,
+               "comments_count": 0}
+    item = {"id": 5079796, "state": "live", "listing_row": listing}
+    fields = scan.read_item(item, "key", "owner")
+    assert "_read_error" not in fields
+    assert fields["title"] == "A live post"
+    assert fields["body"] == "A clean body."
+    assert fields["description"] == "the card"
+
+
+def test_a_by_id_404_without_a_listing_row_stays_unknown():
+    """A 404 with no listing row is still unreadable, never a pass."""
+    scan = load_scan()
+    scan.get = _by_id_404_get
+    fields = scan.read_item({"id": 9, "state": "live"}, "key", "owner")
+    assert fields.get("_read_error") == "HTTPError"
 
 
 # ---- the owner-name rule, contradicted by the grant, fixed 2026-11-14 ------------
