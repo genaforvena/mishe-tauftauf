@@ -119,6 +119,14 @@ are screening thresholds, not fitted cutoffs. On the ledger that motivated the c
 signal qualifies (`moving-pin-delivery` is 21/75, 28.0%), so the list and the review were
 empty at introduction. The three escapes and the no-gate close above still stand.
 
+Read `sole_signal_receipts` alongside the claimed yield rates. For clean yields with a
+single signal reason, it counts known and unknown work receipts and shows how many wakes
+had an attributed commit or a registered artifact. A wake can count in both output columns.
+Signals with no such yields have no entry.
+For example, a delivery wake can yield `verified` and register evidence from the live
+consumer. Missing, malformed or mismatched receipts count as unknown. Use the receipts
+to find evidence before retiring a trigger, then inspect what the outputs establish.
+
 ### Revised gate spec (2026-11-19): no safe gate for signal wakes
 
 Ilya's revised objective is to reduce wasted wakes without losing productive changed wakes, using a real pre-wake discriminator or an honest no-gate close. A full search over the clean yielded population of `decision-log/wake-gate.jsonl` — 1,611 of 1,733 joined starts; the other 122 are `state: unknown` engine failures and were excluded — found no such discriminator.

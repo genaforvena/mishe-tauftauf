@@ -24,6 +24,9 @@ signals with at least ``MIN_SIGNAL_ENDED`` ended wakes and a changed rate below
 never skips a wake. The volume floor exempts rare-event detectors, whose low changed rate is
 their purpose, not waste.
 
+For clean yields whose only reason was one signal, the report also counts recorded artifacts
+and attributed commits from the corresponding work receipts. Unknown receipts stay visible.
+
 It also measures what the deterministic rung already took off the model and the mind: the
 trailing-window count of commit-risk rows decided by a path or subject rule, against model
 answers and escalations. A missing commit-risk ledger reports null counts, not a zero saving.
@@ -34,7 +37,7 @@ import argparse
 import json
 import math
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from . import state_files, yielding
@@ -92,6 +95,37 @@ def _cofired(start, name) -> bool:
 
 def _rate(num: int, den: int):
     return None if den == 0 else round(num / den, 4)
+
+
+def _receipt_output(home: Path, start: dict, result: str) -> tuple[bool, bool] | None:
+    """Read factual output from the exact wake receipt. None means evidence is unknown."""
+    key = start["key"]
+    role = start.get("role")
+    if Path(key).name != key or not isinstance(role, str) or not role:
+        return None
+    path = home / "wakes" / f"{key}.work.json"
+    try:
+        receipt = state_files.read_json(path) if not path.is_symlink() and path.is_file() else None
+    except (OSError, ValueError):
+        return None
+    if not isinstance(receipt, dict) or (
+        receipt.get("version") != 1 or receipt.get("evidence_state") != "KNOWN"
+        or receipt.get("wake_key") != key or receipt.get("role") != role
+        or receipt.get("claimed_result") != result
+    ):
+        return None
+    commits = receipt.get("commits_attributed")
+    artifacts = receipt.get("artifacts")
+    if not isinstance(commits, list) or not isinstance(artifacts, list):
+        return None
+    if any(not isinstance(sha, str) or len(sha) not in (40, 64) for sha in commits):
+        return None
+    if any(not isinstance(ref, dict) or not isinstance(ref.get("path"), str) or not ref["path"]
+           or type(ref.get("size")) is not int or ref["size"] <= 0
+           or not isinstance(ref.get("sha256"), str) or len(ref["sha256"]) != 64
+           for ref in artifacts):
+        return None
+    return bool(commits), bool(artifacts)
 
 
 def measure(home, *, now: float) -> dict:
@@ -156,6 +190,7 @@ def measure(home, *, now: float) -> dict:
     signal_yielded = Counter()
     signal_changed = Counter()
     signal_changed_cofired = Counter()
+    signal_receipts = defaultdict(Counter)
     for start, end in ended:
         names = _signal_names(start)
         if not names:
@@ -165,12 +200,24 @@ def measure(home, *, now: float) -> dict:
         changed = clean and result == "changed"
         for name in names:
             signal_ended[name] += 1
-            if clean:
-                signal_yielded[name] += 1
-                if changed:
-                    signal_changed[name] += 1
-                    if _cofired(start, name):
-                        signal_changed_cofired[name] += 1
+            if not clean:
+                continue
+            signal_yielded[name] += 1
+            if changed:
+                signal_changed[name] += 1
+                if _cofired(start, name):
+                    signal_changed_cofired[name] += 1
+            if start.get("reasons") != [f"signal:{name}"]:
+                continue
+            output = _receipt_output(home, start, result)
+            counts = signal_receipts[name]
+            if output is None:
+                counts["unknown"] += 1
+            else:
+                committed, registered = output
+                counts["known"] += 1
+                counts["with_attributed_commit"] += committed
+                counts["with_registered_artifact"] += registered
     signal_rates = {
         name: {
             "ended": signal_ended[name],
@@ -217,6 +264,12 @@ def measure(home, *, now: float) -> dict:
         "ended": len(ended),
         "changed_by_trigger": trigger_rates,
         "changed_by_signal": signal_rates,
+        "sole_signal_receipts": {
+            name: {field: counts[field] for field in (
+                "known", "unknown", "with_attributed_commit", "with_registered_artifact",
+            )}
+            for name, counts in sorted(signal_receipts.items())
+        },
         "retirement_candidates": retirement_candidates,
         "retirement_review": retirement_review,
         "results": dict(sorted(results.items())),

@@ -110,6 +110,7 @@ def test_per_signal_rates_from_reasons_with_cofiring(tmp_path):
         "a": {"ended": 1, "yielded": 1, "changed": 1, "changed_rate": 1.0},
         "b": {"ended": 2, "yielded": 2, "changed": 1, "changed_rate": 0.5},
     }
+    assert set(out["sole_signal_receipts"]) == {"b"}
     assert out["retirement_candidates"] == []
 
 
@@ -166,6 +167,58 @@ def test_retirement_review_flags_a_non_cofired_changed_wake(tmp_path):
     out = s.measure(tmp_path, now=NOW)
     assert out["retirement_review"]["wasteful"] == {
         "changed": 1, "changed_cofired": 0, "changed_all_cofired": False,
+    }
+
+
+def _write_work_receipt(home, key, **fields):
+    path = home / "wakes" / f"{key}.work.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(version=1, wake_key=key, role="x", claimed_result="verified",
+                   evidence_state="KNOWN", commits_attributed=[], artifacts=[])
+    payload.update(fields)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_sole_signal_receipts_count_factual_output_independently_of_yield(tmp_path):
+    rows = _signal_wakes("delivery", 21, 1)
+    rows[0]["reasons"].append("inbox")
+    _write_rows(tmp_path, rows)
+    _budget(tmp_path)
+    _write_work_receipt(tmp_path, "delivery-0", claimed_result="changed", commits_attributed=["a" * 40])
+    artifact = {"path": "artifacts/verification.md", "size": 321, "sha256": "a" * 64}
+    _write_work_receipt(tmp_path, "delivery-1", classification="commit-observed", artifacts=[artifact])
+    _write_work_receipt(tmp_path, "delivery-2", commits_attributed=["b" * 40], artifacts=[artifact])
+    _write_work_receipt(tmp_path, "delivery-3")
+    for i in range(4, 21):
+        _write_work_receipt(tmp_path, f"delivery-{i}")
+
+    out = s.measure(tmp_path, now=NOW)
+
+    assert out["retirement_review"]["delivery"]["changed_all_cofired"] is True
+    assert out["sole_signal_receipts"]["delivery"] == {
+        "known": 20, "unknown": 0, "with_attributed_commit": 1, "with_registered_artifact": 2,
+    }
+
+
+def test_sole_signal_receipts_report_bad_receipts_as_unknown(tmp_path):
+    rows = _signal_wakes("delivery", 7, 0)
+    rows[-1]["state"] = "unknown"
+    _write_rows(tmp_path, rows)
+    _budget(tmp_path)
+    _write_work_receipt(tmp_path, "delivery-0", evidence_state="UNKNOWN")
+    _write_work_receipt(tmp_path, "delivery-1", claimed_result="changed")
+    _write_work_receipt(tmp_path, "delivery-2", artifacts=[None])
+    _write_work_receipt(tmp_path, "delivery-3", role="other")
+    _write_work_receipt(tmp_path, "delivery-4").write_text("{torn", encoding="utf-8")
+    _write_work_receipt(tmp_path, "delivery-6")
+
+    code, detail = s.duty(tmp_path, now=NOW)
+
+    assert code == s.GREEN
+    out = json.loads(detail.removeprefix("GREEN: "))
+    assert out["sole_signal_receipts"]["delivery"] == {
+        "known": 0, "unknown": 6, "with_attributed_commit": 0, "with_registered_artifact": 0,
     }
 
 
