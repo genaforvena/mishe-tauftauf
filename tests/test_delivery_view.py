@@ -391,3 +391,26 @@ def test_report_prints_poll_starts_beside_the_hold_overlap(tmp_path, monkeypatch
     text = view.render(home, Path("/nope"), 86400.0, 4000.0)
     assert ("wake starts in the quiet poll (600s): mean 1.00/hold-wait (max 1),"
             " 1/1 fences had >=1; after hold 1.00") in text
+
+
+def test_quiet_poll_s_rejects_boolean_patience():
+    assert view.quiet_poll_s({}) == view.FENCE_HOLD_S
+    assert view.quiet_poll_s({"quiet_poll_s": 120}) == 120.0
+    assert view.quiet_poll_s({"quiet_poll_s": True}) == view.FENCE_HOLD_S
+
+
+def test_report_does_not_claim_zero_overlap_without_ledger_evidence(tmp_path, monkeypatch):
+    held = record(waiting_since=2010.0, activation_started_at=3010.0)
+    home = home_with(tmp_path, [held])
+    (tmp_path / "runtime").mkdir()
+    os.symlink(f"{tmp_path}/releases/{'c' * 40}", tmp_path / "runtime" / "current")
+    (tmp_path / "engine").mkdir()
+    ledger = tmp_path / "engine" / "routing-ledger.jsonl"
+    monkeypatch.setattr(view, "git", lambda repo, *a, **k: (1, ""))
+    stale = json.dumps({"at": "1970-01-01T00:16:40Z", "event": "select", "wake": "old"})
+    for content in ("", stale + "\n"):
+        ledger.write_text(content, encoding="utf-8")
+        text = view.render(home, Path("/nope"), 86400.0, 4000.0)
+        assert "hold-wait/wake overlap UNKNOWN (no wake interval covers a measured fence)" in text
+        assert "wake starts in the quiet poll UNKNOWN (same missing ledger evidence)" in text
+        assert "after hold 0.00" not in text

@@ -60,7 +60,7 @@ such field keep the old 600 s rule, so a regime change does not silently reclass
 def quiet_poll_s(record: dict) -> float:
     """The quiet-poll patience in force when this promotion waited for the dispatch lock."""
     value = record.get("quiet_poll_s")
-    return value if isinstance(value, (int, float)) and value > 0 else FENCE_HOLD_S
+    return value if type(value) in (int, float) and value > 0 else FENCE_HOLD_S
 
 RECENT_N = 10
 """How many newest delivered promotions get a stage mean beside the window's mean.
@@ -350,26 +350,38 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
             lines.append("  hold-wait/wake overlap UNKNOWN (routing ledger unreadable)")
         else:
             intervals = boundary.wake_intervals(events)
-            overlap = []
-            for record in delivered:
-                fence = stages(record)["wake_wait_s"]
-                if fence is not None and fence >= quiet_poll_s(record):
-                    value = boundary.interval_coverage(intervals, record["waiting_since"],
-                                                       record["activation_started_at"])
+            hold_windows = []
+            for rec in delivered:
+                fence = stages(rec)["wake_wait_s"]
+                if fence is not None and fence >= quiet_poll_s(rec):
+                    hold_windows.append((rec["waiting_since"], rec["activation_started_at"]))
+            # A ledger with no wake interval in a fence cannot show zero wake overlap:
+            # it may simply have stopped recording before that fence.
+            evidence = [iv for iv in intervals
+                        if any(iv[1] >= ws and iv[0] <= ac for ws, ac in hold_windows)]
+            if not hold_windows:
+                lines.append("  hold-wait/wake overlap UNKNOWN (no paired wake intervals)")
+            elif not evidence:
+                lines.append("  hold-wait/wake overlap UNKNOWN (no wake interval covers a measured fence)")
+                lines.append("  wake starts in the quiet poll UNKNOWN (same missing ledger evidence)")
+            else:
+                overlap = []
+                for ws, ac in hold_windows:
+                    value = boundary.interval_coverage(intervals, ws, ac)
                     if value is not None:
                         overlap.append(value)
-            if overlap:
-                lines.append(f"  hold-wait/wake overlap: {len(overlap)} hold-waits,"
-                             f" mean {100 * sum(overlap) / len(overlap):.1f}% of each fence"
-                             " covered by a running wake")
-            else:
-                lines.append("  hold-wait/wake overlap UNKNOWN (no paired wake intervals)")
-            poll = poll_wake_starts(delivered, [a for a, _ in intervals])
-            if poll is not None:
-                lines.append(f"  wake starts in the quiet poll ({patience_text}):"
-                             f" mean {poll['poll_mean']:.2f}/hold-wait (max {poll['poll_max']}),"
-                             f" {poll['with_poll_start']}/{poll['holds']} fences had >=1;"
-                             f" after hold {poll['after_mean']:.2f}")
+                if overlap:
+                    lines.append(f"  hold-wait/wake overlap: {len(overlap)} hold-waits,"
+                                 f" mean {100 * sum(overlap) / len(overlap):.1f}% of each fence"
+                                 " covered by a running wake")
+                else:
+                    lines.append("  hold-wait/wake overlap UNKNOWN (no paired wake intervals)")
+                poll = poll_wake_starts(delivered, [a for a, _ in intervals])
+                if poll is not None:
+                    lines.append(f"  wake starts in the quiet poll ({patience_text}):"
+                                 f" mean {poll['poll_mean']:.2f}/hold-wait (max {poll['poll_max']}),"
+                                 f" {poll['with_poll_start']}/{poll['holds']} fences had >=1;"
+                                 f" after hold {poll['after_mean']:.2f}")
     rollback_done, rollback_probe_failed = [], []
     for record in recoveries:
         sha = record.get("sha", "?")[:8]
