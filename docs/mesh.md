@@ -128,7 +128,8 @@ This plant runs eleven role windows — one for each of the eight durable areas 
   messages.
 - **`git` window.** Replays recent canonical Git history, then follows new commits.
 - **`wakes` window.** Replays recent wake starts, settlements and outputs, then follows.
-  A finished wake prints its final answer here; for an `omp` wake, a terse closing line
+  A finished wake prints its final answer here; for an `omp` wake (one of the four coding
+  agents a role can wake on, with `claude`, `codex` and `qwen`), a terse closing line
   is shown with what the mind said just before it. While a wake runs, the window adds a
   progress block about every ten minutes, marked `RUNNING`: an `omp` wake streams JSONL
   events, so its block carries the mind's latest words and its last tool call, while a
@@ -176,8 +177,8 @@ uncertainty recorded; `assumed` is a drawing placeholder and is not evidence;
 renderer (`tools/map_render.py`) draws `assumed` rooms with dashed outlines and
 the tag "assumed", and marks the blind spot as "BLIND SPOT (inferred)". Tokens
 are not part of the floor plan; the render step places them from evidence and
-they stay UNKNOWN until labelled fits pass leave-one-out (the file's note, as
-written, records 0 of 3).
+they stay UNKNOWN until labelled fits pass leave-one-out, a test that predicts each
+labelled point from the others (the file's note, as written, records 0 of 3).
 
 A wall records observations and intentions, not authority. Authors may commit
 checked scoped changes without routine permission. A broken dashboard does not
