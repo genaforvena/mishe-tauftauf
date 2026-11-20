@@ -267,6 +267,23 @@ record. If the cadence already delivered the target or a descendant, verify the
 intended change in the running release and retain the refusal as recorded. If
 the change is still owed, base any new request on the pin you just observed.
 
+Retained requests through 2026-11-20 put a number on this case: 9 of 25 were
+refused for a stale previous SHA; in 6 of the 9 the target was already an
+ancestor of the installed pin when the refusal was written, and every refusal
+waited 0.5–3.5 h between request and admission (two were already stale at
+creation). The guard is right — a request stays bound to the pin its wake
+started from — but "failed" here usually means the cadence already delivered
+the change. Verify before acting:
+
+```sh
+PIN=$(basename "$(readlink -f SITE_HOME/runtime/current)")
+git merge-base --is-ancestor TARGET_SHA "$PIN"   # exit 0: change already live
+```
+
+Exit 0 means keep the refusal as recorded and check the running release.
+Exit 1 means the change is still owed: enqueue a fresh request based on the pin
+just observed, never replay the refused one.
+
 The `delivery-requests` signal expires after ten minutes (`max_age` 600 in `duties.json`) if its consumer stops
 observing; missing, stale or malformed monitoring never establishes success.
 
