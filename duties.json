@@ -74,6 +74,27 @@
       "covers": "installed host guard bytes equal the reviewed target"
     },
     {
+      "name": "boot-admission",
+      "command": [
+        "{python}",
+        "{repo}/checks/boot-admission.py",
+        "--state",
+        "{home}/health/boot-admission.json"
+      ],
+      "every": 300,
+      "timeout": 120,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "health",
+      "replaces": [],
+      "covers": "Mishe admitted after boot; containment latch clear and producers running"
+    },
+    {
       "name": "restore-readiness",
       "command": [
         "{python}",
