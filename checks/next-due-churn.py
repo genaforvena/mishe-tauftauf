@@ -50,8 +50,10 @@ def units_started(journal: str, home: str | None = None) -> tuple[set[str], set[
     timers, so a journal without ``home`` attributes the other plant's churn to this one.
     """
     if home:
-        marker = f"--home {home}"
-        journal = "\n".join(line for line in journal.splitlines() if marker in line)
+        # A substring also matches /site/us-b when home is /site/us; the arg is
+        # followed by a space before "due" in the systemd journal description.
+        marker = re.compile(rf"--home {re.escape(home)}(?=\s|$)")
+        journal = "\n".join(line for line in journal.splitlines() if marker.search(line))
     timers = {HEX.search(name).group(1) for name in TIMER_START.findall(journal)}
     services = {HEX.search(name).group(1) for name in SERVICE_RUN.findall(journal)}
     return timers, services

@@ -72,6 +72,14 @@ def test_a_neighbour_plants_timer_is_not_our_churn():
     timers, services = check.units_started(journal, home="/site/us")
     assert timers == {"aaaa11111111"}
     assert check.evaluate(timers, services, window_s=600)[0] == 0
+def test_a_home_path_that_extends_ours_is_not_our_churn():
+    check = load_check()
+    journal = "\n".join([
+        "Started mishe-next-due-aaaa11111111.timer - python --home /site/us due.",
+        "Started mishe-next-due-bbbb22222222.timer - python --home /site/us-b due.",
+    ])
+    timers, services = check.units_started(journal, home="/site/us")
+    assert timers == {"aaaa11111111"}
 
 
 def test_plant_tagged_timer_names_are_paired_by_arm_hex():

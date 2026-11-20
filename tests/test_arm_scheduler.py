@@ -1,5 +1,5 @@
+from fnmatch import fnmatchcase
 from mishe_tauftauf import arm
-
 
 class FakeRun:
     def __init__(self, listed=""):
@@ -9,6 +9,9 @@ class FakeRun:
     def __call__(self, argv, **kwargs):
         self.calls.append(argv)
         stdout = self.listed if argv[:4] == ["systemctl", "--user", "list-units", "--type=timer"] else ""
+        if argv[:4] == ["systemctl", "--user", "list-units", "--type=timer"]:
+            stdout = "".join(line for line in stdout.splitlines(keepends=True)
+                             if line.strip() and fnmatchcase(line.split()[0], argv[-1]))
 
         class Done:
             returncode = 0
@@ -40,22 +43,22 @@ def test_arm_never_reuses_the_running_due_service_name(monkeypatch):
 
 
 def test_earlier_pending_timers_are_stopped_before_rearm(monkeypatch):
-    listed = "mishe-next-due-aaaa1111.timer loaded active waiting\n"
+    listed = "mishe-next-due-local-aaaa1111.timer loaded active waiting\n"
     fake = FakeRun(listed=listed)
     monkeypatch.setattr(arm.subprocess, "run", fake)
     arm.systemd_scheduler(2_000_000_000.0, command=["python", "due"])
     stops = [c[-1] for c in fake.calls if c[:3] == ["systemctl", "--user", "stop"]]
-    assert "mishe-next-due-aaaa1111.timer" in stops
-    assert stops.index("mishe-next-due-aaaa1111.timer") < next(
+    assert "mishe-next-due-local-aaaa1111.timer" in stops
+    assert stops.index("mishe-next-due-local-aaaa1111.timer") < next(
         i for i, c in enumerate(fake.calls) if c[0] == "systemd-run")
 
 
 def test_none_only_removes_pending_timers(monkeypatch):
-    fake = FakeRun(listed="mishe-next-due-aaaa1111.timer loaded active waiting\n")
+    fake = FakeRun(listed="mishe-next-due-local-aaaa1111.timer loaded active waiting\n")
     monkeypatch.setattr(arm.subprocess, "run", fake)
     arm.systemd_scheduler(None, command=["python", "due"])
     assert not any(c[0] == "systemd-run" for c in fake.calls)
-    assert ["systemctl", "--user", "stop", "mishe-next-due-aaaa1111.timer"] in fake.calls
+    assert ["systemctl", "--user", "stop", "mishe-next-due-local-aaaa1111.timer"] in fake.calls
 
 
 
@@ -81,6 +84,20 @@ def test_without_home_keeps_the_untagged_name(monkeypatch):
     unit = next(a for c in fake.calls if c[0] == "systemd-run" for a in c if a.startswith("--unit="))
     assert unit.startswith("--unit=mishe-next-due-")
     assert arm._plant_tag(["python", "due"]) is None
+
+
+def test_untagged_arm_never_stops_a_tagged_neighbour_timer(monkeypatch):
+    """A plain arm has no --home; its glob must not match another plant's tagged timer."""
+    fake = FakeRun(listed="mishe-next-due-deadbeef-aaaa1111.timer loaded active waiting\n")
+    monkeypatch.setattr(arm.subprocess, "run", fake)
+    arm.systemd_scheduler(2_000_000_000.0, command=["python", "due"])
+    stops = [c[-1] for c in fake.calls if c[:3] == ["systemctl", "--user", "stop"]]
+    assert "mishe-next-due-deadbeef-aaaa1111.timer" not in stops
+    globs = [c[-1] for c in fake.calls
+             if c[:4] == ["systemctl", "--user", "list-units", "--type=timer"]]
+    assert globs and all("deadbeef" not in g and "mishe-next-due-*.timer" not in g for g in globs)
+
+
 def calendar_of(fake):
     call = next(c for c in fake.calls if c[0] == "systemd-run")
     return next(a[len("--on-calendar="):] for a in call if a.startswith("--on-calendar="))
@@ -244,8 +261,9 @@ class TimerListing:
         if argv[:3] == ["systemctl", "--user", "list-timers"]:
             done.stdout = self.listing
         elif argv[:4] == ["systemctl", "--user", "list-units", "--type=timer"]:
-            done.stdout = "".join(line.split()[-1] + " loaded active waiting\n"
-                                  for line in self.listing.splitlines() if line.strip())
+            names = [line.split()[-1] for line in self.listing.splitlines() if line.strip()]
+            done.stdout = "".join(f"{name} loaded active waiting\n" for name in names
+                                  if fnmatchcase(name, argv[-1]))
         elif argv[:3] == ["systemctl", "--user", "show"] and "Triggers" in argv:
             done.stdout = argv[3].replace(".timer", ".service")
         elif argv[:3] == ["systemctl", "--user", "show"] and "Environment" in argv:
@@ -257,7 +275,7 @@ class TimerListing:
 
 def test_overdue_target_keeps_a_retry_already_due_in_the_window(monkeypatch):
     import time
-    fake = TimerListing(_listing(_row(60, "mishe-next-due-aaaa1111.timer")))
+    fake = TimerListing(_listing(_row(60, "mishe-next-due-local-aaaa1111.timer")))
     monkeypatch.setattr(arm.subprocess, "run", fake)
     arm.systemd_scheduler(time.time() - 3600, command=["python", "due"])
     assert not any(c[:3] == ["systemctl", "--user", "stop"] for c in fake.calls)
@@ -267,26 +285,26 @@ def test_overdue_target_keeps_a_retry_already_due_in_the_window(monkeypatch):
 def test_overdue_target_replaces_an_in_window_retry_armed_by_an_older_release(monkeypatch):
     # The c14bac1f move observe failed on this: a retry due in the window, armed under the old pin, was kept.
     import time
-    fake = TimerListing(_listing(_row(60, "mishe-next-due-9bb6d573d265.timer")),
+    fake = TimerListing(_listing(_row(60, "mishe-next-due-local-9bb6d573d265.timer")),
                         env="PYTHONPATH=/home/x/releases/422912216/src MISHE_WORKLOAD_SLICE=mishe-plants.slice")
     monkeypatch.setattr(arm.subprocess, "run", fake)
     arm.systemd_scheduler(time.time() - 3600, command=["python", "due"])
-    assert ["systemctl", "--user", "stop", "mishe-next-due-9bb6d573d265.timer"] in fake.calls
+    assert ["systemctl", "--user", "stop", "mishe-next-due-local-9bb6d573d265.timer"] in fake.calls
     assert any(c[0] == "systemd-run" for c in fake.calls)
 
 
 def test_overdue_target_replaces_a_retry_later_than_the_window(monkeypatch):
     import time
-    fake = TimerListing(_listing(_row(3000, "mishe-next-due-aaaa1111.timer")))
+    fake = TimerListing(_listing(_row(3000, "mishe-next-due-local-aaaa1111.timer")))
     monkeypatch.setattr(arm.subprocess, "run", fake)
     arm.systemd_scheduler(time.time() - 3600, command=["python", "due"])
-    assert ["systemctl", "--user", "stop", "mishe-next-due-aaaa1111.timer"] in fake.calls
+    assert ["systemctl", "--user", "stop", "mishe-next-due-local-aaaa1111.timer"] in fake.calls
     assert any(c[0] == "systemd-run" for c in fake.calls)
 
 
 def test_unparseable_listing_falls_back_to_replacement(monkeypatch):
     import time
-    fake = TimerListing(_listing("n/a n/a n/a n/a mishe-next-due-aaaa1111.timer"))
+    fake = TimerListing(_listing("n/a n/a n/a n/a mishe-next-due-local-aaaa1111.timer"))
     monkeypatch.setattr(arm.subprocess, "run", fake)
     arm.systemd_scheduler(time.time() - 3600, command=["python", "due"])
     assert any(c[0] == "systemd-run" for c in fake.calls)
@@ -298,7 +316,7 @@ def test_a_future_target_keeps_a_pending_timer_that_fires_sooner(monkeypatch):
     # sample, NEXT still 30-45 s out). A timer that fires at or before the target already covers it:
     # it fires once, and the due handler re-arms to whatever is then earliest.
     import time
-    fake = TimerListing(_listing(_row(30, "mishe-next-due-aaaa1111.timer")))
+    fake = TimerListing(_listing(_row(30, "mishe-next-due-local-aaaa1111.timer")))
     monkeypatch.setattr(arm.subprocess, "run", fake)
     arm.systemd_scheduler(time.time() + 600, command=["python", "due"])
     assert not any(c[0] == "systemd-run" for c in fake.calls)
@@ -307,10 +325,10 @@ def test_a_future_target_keeps_a_pending_timer_that_fires_sooner(monkeypatch):
 
 def test_a_pending_timer_later_than_the_target_is_replaced(monkeypatch):
     import time
-    fake = TimerListing(_listing(_row(600, "mishe-next-due-aaaa1111.timer")))
+    fake = TimerListing(_listing(_row(600, "mishe-next-due-local-aaaa1111.timer")))
     monkeypatch.setattr(arm.subprocess, "run", fake)
     arm.systemd_scheduler(time.time() + 30, command=["python", "due"])
-    assert ["systemctl", "--user", "stop", "mishe-next-due-aaaa1111.timer"] in fake.calls
+    assert ["systemctl", "--user", "stop", "mishe-next-due-local-aaaa1111.timer"] in fake.calls
     assert any(c[0] == "systemd-run" for c in fake.calls)
 
 
@@ -318,11 +336,11 @@ def test_a_pending_timer_armed_by_an_older_release_is_replaced_for_a_future_targ
     # The c14bac1f guard applied to every keep, not only the overdue retry: an old-pin timer kept
     # across a pin move would run old code at the new target.
     import time
-    fake = TimerListing(_listing(_row(30, "mishe-next-due-9bb6d573d265.timer")),
+    fake = TimerListing(_listing(_row(30, "mishe-next-due-local-9bb6d573d265.timer")),
                         env="PYTHONPATH=/home/x/releases/422912216/src MISHE_WORKLOAD_SLICE=mishe-plants.slice")
     monkeypatch.setattr(arm.subprocess, "run", fake)
     arm.systemd_scheduler(time.time() + 600, command=["python", "due"])
-    assert ["systemctl", "--user", "stop", "mishe-next-due-9bb6d573d265.timer"] in fake.calls
+    assert ["systemctl", "--user", "stop", "mishe-next-due-local-9bb6d573d265.timer"] in fake.calls
     assert any(c[0] == "systemd-run" for c in fake.calls)
 
 
@@ -353,7 +371,7 @@ def test_pin_source_is_this_release_when_the_pointer_names_nothing(tmp_path):
 def test_overdue_target_keeps_an_in_window_retry_armed_by_the_pin(monkeypatch, tmp_path):
     import time
     pin = str((tmp_path / "src").resolve())
-    fake = TimerListing(_listing(_row(60, "mishe-next-due-aaaa1111.timer")),
+    fake = TimerListing(_listing(_row(60, "mishe-next-due-local-aaaa1111.timer")),
                         env="PYTHONPATH=" + pin + " MISHE_WORKLOAD_SLICE=mishe-plants.slice")
     monkeypatch.setattr(arm.subprocess, "run", fake)
     arm.systemd_scheduler(time.time() - 3600, command=["python", "due"], source=pin)

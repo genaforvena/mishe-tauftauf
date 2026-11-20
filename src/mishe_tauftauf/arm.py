@@ -22,14 +22,18 @@ TIMER_UNIT = "mishe-next-due"
 # Each arm gets its own transient unit name. The due handler is itself a running
 # unit; re-arming under the same name collides with it (systemd-run rc=1).
 TIMER_GLOB = f"{TIMER_UNIT}-*.timer"
+# An arm without --home cannot attribute a tagged timer to a plant. Its own namespace
+# keeps the pending glob from matching - and stopping - another plant's tagged timer.
+UNTAGGED_BASE = f"{TIMER_UNIT}-local"
 
 def _plant_tag(command: list[str]) -> str | None:
     """Stable short tag from the due command's ``--home``.
 
     Two plants on one host share the user@1000 systemd manager and arm identically named
     transient timers. Without a plant tag each arm sees - and stops - the other plant's
-    pending timer, so neither due fires (2026-11-20 next-due-churn RED). Callers that do
-    not pass ``--home`` keep the untagged name, so a plain invocation still works.
+    pending timer, so neither due fires (2026-11-20 next-due-churn RED). Callers without
+    ``--home`` use the separate untagged namespace: a plain invocation still works, but
+    its pending glob never matches another plant's tagged timer.
     """
     try:
         home = command[command.index("--home") + 1]
@@ -39,7 +43,7 @@ def _plant_tag(command: list[str]) -> str | None:
 
 
 def _timer_base(tag: str | None) -> str:
-    return f"{TIMER_UNIT}-{tag}" if tag else TIMER_UNIT
+    return f"{TIMER_UNIT}-{tag}" if tag else UNTAGGED_BASE
 
 
 # An already-overdue target (after an outage, or while wakes are blocked) is retried on a backoff. Re-arming it
