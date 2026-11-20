@@ -4,7 +4,7 @@ Every recurring decision a mind makes goes on the lowest rung that can carry it.
 
 - **System 0** is deterministic code: a check, a threshold, a lookup or a path rule. If a rule decides it, write the check and delete the mind work.
 - **System 1** is a typed decision model. It picks one label from a list we supply and returns per-option probabilities and a confidence. It is used only for a residual that System 0 cannot settle. Every choice offers an escape option (unclear / none). Code, not the model, acts on the answer. A confidence below the threshold, or the model choosing the escape option, escalates to a mind.
-- **System 2** is a mind: a model-backed agent on one of the installed engines. It takes what neither rung settles.
+- **System 2** is a mind: a model-backed agent on one of the installed engines (the model runtime a wake runs on). It takes what neither rung settles.
 
 ## Registry
 
