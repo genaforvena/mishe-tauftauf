@@ -60,8 +60,8 @@ def load_records(home: Path) -> list[dict]:
 def stages(record: dict) -> dict:
     """Per-stage seconds of one promotion, ``None`` where the record does not permit the measure.
 
-    ``check.at`` is the stage's end (delivery_check.py runs about 16 min inside it), so the check
-    stage subsumes any queue wait before the run started; that split is not recorded.
+    ``check.at`` is the stage's end; the check stage subsumes any queue wait before the run
+    started; that split is not recorded.
     """
     def span(start: float | None, end: float | None) -> float | None:
         if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
@@ -124,6 +124,26 @@ def commit_waits(records: list[dict], repo: Path) -> list[float]:
     return [w for w in waits if w >= 0]
 
 
+def promotion_gaps(records: list[dict]) -> list[float]:
+    """Seconds from one delivered promotion's finish to the next promotion's start.
+
+    This is the queue a checked change joins: only one promotion runs at a time, so a
+    commit made during a promotion waits for it to finish and for the cadence's next tick.
+    Records are paired in start order; a torn finish timestamp contributes no sample.
+    """
+    delivered = sorted((r for r in records if r.get("phase") == "delivered"),
+                       key=lambda r: r["created_at"])
+    gaps = []
+    for before, after in zip(delivered, delivered[1:]):
+        end = before.get("delivered_at")
+        if not isinstance(end, (int, float)) or isinstance(end, bool):
+            continue
+        gap = after["created_at"] - end
+        if gap >= 0:
+            gaps.append(gap)
+    return gaps
+
+
 def pin_sha(home: Path) -> str | None:
     try:
         target = Path(os.readlink(home / "runtime" / "current"))
@@ -177,6 +197,14 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
                          f"  max {fmt_s(row['max']):>9s}  (n={int(row['n'])})")
         else:
             lines.append(f"  {label:36s} UNKNOWN (no record in the window carries both timestamps)")
+    gaps = promotion_gaps(delivered)
+    if gaps:
+        ordered = sorted(gaps)
+        p90 = ordered[min(len(ordered) - 1, max(0, round(0.9 * len(ordered)) - 1))]
+        lines.append(f"  {'queue: previous delivery -> next start':36s} mean {fmt_s(sum(gaps) / len(gaps)):>9s}"
+                     f"  p90 {fmt_s(p90):>9s}  max {fmt_s(ordered[-1]):>9s}  (n={len(gaps)})")
+    else:
+        lines.append("  queue: previous delivery -> next start  UNKNOWN (no paired delivered records)")
     zero_fence = sum(1 for r in delivered if stages(r)["wake_wait_s"] == 0)
     if zero_fence:
         lines.append(f"  fence held nothing in {zero_fence}/{len(delivered)} delivered runs"
@@ -226,6 +254,7 @@ def render(home: Path, repo: Path, window_s: float, now: float) -> str:
     pin = pin_sha(home)
     if pin:
         waiting = commit_log(repo, f"{pin}..HEAD")
+
     else:
         waiting = []
     if pin is None:
