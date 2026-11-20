@@ -642,3 +642,53 @@ def test_non_fresh_tap_publishes_no_window_but_keeps_its_cause():
     assert accounts["claude"]["state"] == "UNREADABLE"
     assert accounts["claude"]["windows"] == {}
     assert accounts["claude"]["reason"] == "five_hour reset not yet reported; sample not trusted"
+
+
+def _routing_site(tmp_path):
+    from mishe_tauftauf import engine_router as er
+
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    cand = {"engine": "omp", "model": "free-first", "account": None, "free": True, "tier": 0}
+    (engine / er.ROUTES).write_text(json.dumps({"version": 1, "roles": {"health": [cand]}}))
+
+
+def test_producer_write_reobserves_routing_signal(tmp_path):
+    from mishe_tauftauf import engine_router as er, signal_store
+
+    _routing_site(tmp_path)
+    out = tmp_path / "budget.json"
+    assert bp.main(tmp_path, out=out) == 0
+    row = signal_store.recorded(tmp_path, er.SIGNAL)
+    assert row is not None
+    produced = json.loads(out.read_text())
+    assert row["value"] == produced["routing"]["state"]
+    assert row["observed_at"] >= produced["produced_at"]
+
+
+def test_dry_run_does_not_observe_routing_signal(tmp_path, capsys):
+    from mishe_tauftauf import engine_router as er, signal_store
+
+    _routing_site(tmp_path)
+    assert bp.main(tmp_path) == 0
+    capsys.readouterr()
+    assert signal_store.recorded(tmp_path, er.SIGNAL) is None
+
+
+def test_producer_stamps_at_write_clock_not_preprobe_now(tmp_path, monkeypatch):
+    # A wake outcome observed later must not be overwritten by the producer's older captured `now`.
+    from mishe_tauftauf import engine_router as er, signal_store
+
+    er.observe(tmp_path, {"state": "RED", "reason": "no candidate"}, now=NOW + 100)
+    assert signal_store.recorded(tmp_path, er.SIGNAL)["value"] == "RED"
+    _routing_site(tmp_path)
+    calls = {"n": 0}
+
+    def clock():
+        calls["n"] += 1
+        return NOW if calls["n"] == 1 else NOW + 200
+
+    monkeypatch.setattr(bp.time, "time", clock)
+    assert bp.main(tmp_path, out=tmp_path / "budget.json") == 0
+    row = signal_store.recorded(tmp_path, er.SIGNAL)
+    assert row["observed_at"] == NOW + 200

@@ -630,6 +630,15 @@ def main(home: Path, out: Path | None = None) -> int:
     payload["unknowns"] = payload["unknowns"] + ledger["ledger_unknowns"]
     if out:
         write_atomic(Path(out), payload)
+        # The router stamps engine-routing only at wake outcomes (select, timeout, no
+        # candidate); quiet windows let that 15-min signal expire even though the routing
+        # inputs stay healthy. This producer runs every 10 min and already assessed
+        # routing above, so re-observe that assessment here. Observe (not a bare
+        # freshness beat) re-checks the value, so a silently broken routes file cannot
+        # keep an old GREEN alive. Stamp at the actual write clock, not the pre-probe
+        # `now`, so a wake outcome observed in between is never overwritten by an older time.
+        from . import engine_router as er
+        er.observe(home, payload["routing"], now=time.time())
     else:
         print(json.dumps(payload, sort_keys=True, indent=1, allow_nan=False))
     return 0
