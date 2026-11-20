@@ -159,3 +159,16 @@ def test_codex_forecast_is_published_beside_claude(tmp_path):
     assert "7d RUNS OUT BEFORE RESET (47% used)" in result["accounts"]["codex-a"]["reason"]
     assert "budget-codex" not in signal_store.registry(tmp_path)
     assert not (tmp_path / "signals/budget-codex.json").exists()
+
+
+def test_publish_records_cadence_beat_even_when_input_unreadable(tmp_path):
+    # A producer that runs on time and declares budget-claude UNKNOWN must leave a cadence beat:
+    # observe_unknown omits .seen on purpose, and coverage reads .ran to tell a live producer with
+    # a bad input from one that missed its cadence (2026-11-20 signal-coverage false cause).
+    signal_store.register(tmp_path, "budget-claude", max_age=900, subscribers=[])
+    bad = rows() + [dict(account="claude", error="claude: five_hour reset not yet reported")]
+    result = budget.publish(tmp_path, bad, now=10_000.0)
+    assert result["state"] == "UNKNOWN"
+    assert (tmp_path / "signals" / "budget-claude.ran").exists()
+    assert signal_store.recorded(tmp_path, "budget-claude")["state"] == "UNKNOWN"
+    assert not (tmp_path / "signals" / "budget-claude.seen").exists()

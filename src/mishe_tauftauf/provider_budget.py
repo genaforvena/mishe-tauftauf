@@ -145,4 +145,7 @@ def publish(home, rows, *, now):
         # provider holds work but not which window or rule did it (2026-11-16: the live
         # budget-claude RED recorded reason="" while ``evaluate`` had already named the cause).
         signal_store.observe(Path(home), name, state, now=now, source=source, reason=reason)
+    # Cadence beat: observe_unknown never touches .seen (a failed input is not fresh evidence),
+    # so without this a live producer declaring UNKNOWN looks like a missed cadence to coverage.
+    signal_store.beat(Path(home), name)
     return dict(results["claude"], accounts=results)

@@ -231,6 +231,18 @@ def refresh(home, name: str, *, now: float) -> bool:
     return True
 
 
+def beat(home, name: str) -> None:
+    """Record that a producer completed a run, without changing the reading or its freshness stamp.
+
+    Coverage reads ``NAME.ran`` as the cadence beat. A producer that ran on time and declared its
+    input UNKNOWN leaves ``.seen`` untouched (a failure is not fresh evidence), so this beat is
+    what keeps a live producer from being reported as a missed cadence.
+    """
+    _check_name(name)
+    _entry(home, name)
+    (Path(home) / "signals" / f"{name}.ran").touch()
+
+
 def observe_unknown(home, name: str, *, now: float, reason: str, source: str) -> bool:
     """Record a failed observation as UNKNOWN now, so a stale GREEN is never left standing.
 
