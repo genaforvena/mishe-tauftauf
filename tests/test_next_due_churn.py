@@ -62,3 +62,39 @@ def test_service_lines_only_match_this_unit_family():
         "Started mishe-producer-next-due-armed.service - Mishe producer next-due-armed.\n")
     assert timers == {"aaaa11111111"}
     assert services == set()
+
+def test_a_neighbour_plants_timer_is_not_our_churn():
+    check = load_check()
+    journal = "\n".join([
+        "Started mishe-next-due-aaaa11111111.timer - python -m mishe_tauftauf --home /site/us due.",
+        "Started mishe-next-due-bbbb22222222.timer - python -m mishe_tauftauf --home /site/them due.",
+    ])
+    timers, services = check.units_started(journal, home="/site/us")
+    assert timers == {"aaaa11111111"}
+    assert check.evaluate(timers, services, window_s=600)[0] == 0
+
+
+def test_plant_tagged_timer_names_are_paired_by_arm_hex():
+    check = load_check()
+    journal = "\n".join([
+        "Started mishe-next-due-deadbeef-aaaa11111111.timer - python --home /site/us due.",
+        "Finished mishe-next-due-deadbeef-aaaa11111111.service - python --home /site/us due.",
+    ])
+    timers, services = check.units_started(journal, home="/site/us")
+    assert timers == services == {"aaaa11111111"}
+    assert check.evaluate(timers, services, window_s=600)[0] == 0
+
+
+def test_without_home_the_journal_is_attributed_in_full():
+    check = load_check()
+    journal = ("Started mishe-next-due-aaaa11111111.timer - python --home /site/us due.\n"
+               "Started mishe-next-due-bbbb22222222.timer - python --home /site/them due.")
+    timers, _ = check.units_started(journal)
+    assert timers == {"aaaa11111111", "bbbb22222222"}
+
+
+def test_a_bare_run_is_unknown_not_a_cross_plant_red(monkeypatch):
+    check = load_check()
+    monkeypatch.setattr(check, "read_journal", lambda _w:
+                        "Started mishe-next-due-aaaa11111111.timer - python --home /site/them due.")
+    assert check.main([]) == 3

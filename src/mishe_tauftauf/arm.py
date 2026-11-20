@@ -7,6 +7,7 @@ silent signals (an edge subscribers are woken by) and arms the next one.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
@@ -21,6 +22,26 @@ TIMER_UNIT = "mishe-next-due"
 # Each arm gets its own transient unit name. The due handler is itself a running
 # unit; re-arming under the same name collides with it (systemd-run rc=1).
 TIMER_GLOB = f"{TIMER_UNIT}-*.timer"
+
+def _plant_tag(command: list[str]) -> str | None:
+    """Stable short tag from the due command's ``--home``.
+
+    Two plants on one host share the user@1000 systemd manager and arm identically named
+    transient timers. Without a plant tag each arm sees - and stops - the other plant's
+    pending timer, so neither due fires (2026-11-20 next-due-churn RED). Callers that do
+    not pass ``--home`` keep the untagged name, so a plain invocation still works.
+    """
+    try:
+        home = command[command.index("--home") + 1]
+    except (ValueError, IndexError):
+        return None
+    return hashlib.sha256(str(Path(home).resolve()).encode()).hexdigest()[:8]
+
+
+def _timer_base(tag: str | None) -> str:
+    return f"{TIMER_UNIT}-{tag}" if tag else TIMER_UNIT
+
+
 # An already-overdue target (after an outage, or while wakes are blocked) is retried on a backoff. Re-arming it
 # for now+1 s made the due handler fire every second and ask for a wake each time; the host start limit
 # (3 per 300 s) then refused them, left the wake units failed and the owed minds unwakeable.
@@ -32,9 +53,10 @@ def target(home) -> float | None:
     return min(times) if times else None
 
 
-def _pending_timers() -> list[str]:
-    """Names of earlier next-due timers (stopping a timer leaves a running service alone)."""
-    return sorted(set(units.user_timer_names(TIMER_GLOB) + [f"{TIMER_UNIT}.timer"]))
+def _pending_timers(tag: str | None = None) -> list[str]:
+    """Names of this plant's earlier next-due timers (stopping a timer leaves a running service alone)."""
+    base = _timer_base(tag)
+    return sorted(set(units.user_timer_names(f"{base}-*.timer") + [f"{base}.timer"]))
 
 
 @contextmanager
@@ -56,14 +78,15 @@ def _replacement_lock(lock: Path | None):
         yield
 
 
-def _pending_next_instant() -> float | None:
-    """The instant the earliest pending next-due timer fires, or ``None`` when none does.
+def _pending_next_instant(tag: str | None = None) -> float | None:
+    """The instant the earliest of this plant's pending next-due timers fires, or None.
 
     Parsed from ``systemctl list-timers`` NEXT column (``Sat 2026-11-14 05:10:58 UTC``).
     An unparseable line is skipped, so the caller falls back to replacing the timer.
     """
     listed = subprocess.run(["systemctl", "--user", "list-timers", "--all", "--plain", "--no-legend",
-                             TIMER_GLOB], check=False, capture_output=True, text=True).stdout
+                             f"{_timer_base(tag)}-*.timer"],
+                            check=False, capture_output=True, text=True).stdout
     instants = [nxt.timestamp() for nxt in decode_listed_next_instants(listed)]
     return min(instants) if instants else None
 
@@ -106,12 +129,14 @@ def systemd_scheduler(epoch: float | None, *, command: list[str],
     ``source`` is the tree the timer's service must run; callers pass ``pin_source(home)`` so an arm
     from an old-release process still names the pin. It defaults to this process's release."""
     root = str(Path(source).resolve()) if source else _source_root()
+    tag = _plant_tag(command)
+    base = _timer_base(tag)
     with _replacement_lock(lock):
         now = time.time()
         # A genuinely upcoming time keeps its precision (at least a second out); one that is already overdue backs off.
         when = None if epoch is None else (max(epoch, now + 1) if epoch > now
                                           else now + OVERDUE_RETRY_SECONDS)
-        pending = _pending_timers()
+        pending = _pending_timers(tag)
         # A pending timer that already fires no later than the target stays. Every producer signal write
         # arms, and replacing the timer each time restarted it every few seconds with the same or a later
         # NEXT (measured 2026-11-18: unit name changed every 5 s sample, ~17 replacements/min), so the
@@ -119,7 +144,7 @@ def systemd_scheduler(epoch: float | None, *, command: list[str],
         # timer must be replaced (c14bac1f move observe failure). The same rule keeps an overdue retry
         # inside the backoff window instead of pushing it out again (2026-11-14 churn).
         if when is not None and pending:
-            earliest = _pending_next_instant()
+            earliest = _pending_next_instant(tag)
             if (earliest is not None and earliest <= when + 1.0
                     and _armed_by_this_release(pending, root)):
                 return
@@ -129,7 +154,7 @@ def systemd_scheduler(epoch: float | None, *, command: list[str],
         if when is None:
             return
         moment = datetime.fromtimestamp(when, timezone.utc)
-        unit = f"{TIMER_UNIT}-{uuid.uuid4().hex[:12]}"
+        unit = f"{base}-{uuid.uuid4().hex[:12]}"
         # oneshot, not systemd-run's default simple: the consumer fence fails closed on any
         # active non-oneshot consumer, and a due handler caught mid-run rolled back the
         # 2026-11-16 04:36Z promotion ("unbounded pinned consumer: mishe-next-due-...").

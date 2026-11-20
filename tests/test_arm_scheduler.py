@@ -58,6 +58,29 @@ def test_none_only_removes_pending_timers(monkeypatch):
     assert ["systemctl", "--user", "stop", "mishe-next-due-aaaa1111.timer"] in fake.calls
 
 
+
+
+def test_timer_name_and_glob_are_plant_scoped(monkeypatch):
+    fake = FakeRun(listed="mishe-next-due-deadbeef-aaaa1111.timer loaded active waiting\n"
+                          "mishe-next-due-cafebabe-bbbb2222.timer loaded active waiting\n")
+    monkeypatch.setattr(arm.subprocess, "run", fake)
+    command = ["python", "-m", "mishe_tauftauf", "--home", "/site/us", "due"]
+    arm.systemd_scheduler(2_000_000_000.0, command=command)
+    tag = arm._plant_tag(command)
+    unit = next(a for c in fake.calls if c[0] == "systemd-run" for a in c if a.startswith("--unit="))
+    assert unit.startswith(f"--unit=mishe-next-due-{tag}-")
+    globs = [c[-1] for c in fake.calls
+             if c[:4] == ["systemctl", "--user", "list-units", "--type=timer"]]
+    assert globs and all(tag in g for g in globs)
+
+
+def test_without_home_keeps_the_untagged_name(monkeypatch):
+    fake = FakeRun()
+    monkeypatch.setattr(arm.subprocess, "run", fake)
+    arm.systemd_scheduler(2_000_000_000.0, command=["python", "due"])
+    unit = next(a for c in fake.calls if c[0] == "systemd-run" for a in c if a.startswith("--unit="))
+    assert unit.startswith("--unit=mishe-next-due-")
+    assert arm._plant_tag(["python", "due"]) is None
 def calendar_of(fake):
     call = next(c for c in fake.calls if c[0] == "systemd-run")
     return next(a[len("--on-calendar="):] for a in call if a.startswith("--on-calendar="))

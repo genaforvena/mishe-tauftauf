@@ -17,6 +17,8 @@ replacement that cost a restart. A kept timer shows up once, at arm time, and fi
 
 ``checks/next-due-armed.py`` owns "a timer exists"; this check only judges whether the scheduler
 keeps it, so an empty window is undecidable here rather than a second GREEN for the same fact.
+The ``--home`` argument scopes the journal to this plant: two plants on one host share the user
+systemd manager and arm same-named transient timers, so an unscoped read counts the neighbour's churn.
 
 Exit status:
   0  GREEN   at most --max-churn timer starts had no matching due handler run
@@ -32,16 +34,24 @@ import sys
 
 TIMER_UNIT = "mishe-next-due"
 HEX_LEN = 12
-TIMER_START = re.compile(rf"Started ({TIMER_UNIT}-[0-9a-f]{{{HEX_LEN}}}\.timer)")
-SERVICE_RUN = re.compile(rf"(?:Starting|Finished|Failed) ({TIMER_UNIT}-[0-9a-f]{{{HEX_LEN}}}\.service)")
-HEX = re.compile(rf"{TIMER_UNIT}-([0-9a-f]{{{HEX_LEN}}})\.")
+TAGGED = rf"(?:[0-9a-f]{{8}}-)?"
+TIMER_START = re.compile(rf"Started ({TIMER_UNIT}-{TAGGED}[0-9a-f]{{{HEX_LEN}}}\.timer)")
+SERVICE_RUN = re.compile(rf"(?:Starting|Finished|Failed) ({TIMER_UNIT}-{TAGGED}[0-9a-f]{{{HEX_LEN}}}\.service)")
+HEX = re.compile(rf"{TIMER_UNIT}-{TAGGED}([0-9a-f]{{{HEX_LEN}}})\.")
 WINDOW_S = 300.0
 MAX_CHURN = 10
 BASELINE = "156 timer starts against 1 due handler run in 10 min at release 4f0962ae (2026-11-18 09:47Z)"
 
 
-def units_started(journal: str) -> tuple[set[str], set[str]]:
-    """Start hexes of next-due timers and hexes of next-due services that were started or finished."""
+def units_started(journal: str, home: str | None = None) -> tuple[set[str], set[str]]:
+    """Start hexes of this plant's next-due timers and hexes of its due-handler services.
+
+    Two plants on one host share the user systemd manager and arm identically named transient
+    timers, so a journal without ``home`` attributes the other plant's churn to this one.
+    """
+    if home:
+        marker = f"--home {home}"
+        journal = "\n".join(line for line in journal.splitlines() if marker in line)
     timers = {HEX.search(name).group(1) for name in TIMER_START.findall(journal)}
     services = {HEX.search(name).group(1) for name in SERVICE_RUN.findall(journal)}
     return timers, services
@@ -77,13 +87,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--window-seconds", type=float, default=WINDOW_S)
     parser.add_argument("--max-churn", type=int, default=MAX_CHURN)
+    parser.add_argument("--home", help="only count timer units armed for this site home")
     args = parser.parse_args(argv)
+    if not args.home:
+        print("UNKNOWN: --home is required to attribute next-due timers to this plant")
+        return 3
     try:
         journal = read_journal(args.window_seconds)
     except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
         print(f"journal unreadable, so churn cannot be judged: {exc}")
         return 3
-    timers, services = units_started(journal)
+    timers, services = units_started(journal, home=args.home)
     code, lines = evaluate(timers, services, window_s=args.window_seconds, max_churn=args.max_churn)
     print("\n".join(lines))
     return code
