@@ -2,7 +2,7 @@
 
 [README](../README.md) · [Mesh](mesh.md) · [Working as a durable mind](wall-coordination.md)
 
-A wake begins with a dossier, not a blank page. It says why the mind was woken —
+A wake (one turn of a mind, started by a trigger) begins with a dossier (the packet of context it is handed), not a blank page. It says why the mind was woken —
 an addressed message, a signal that changed, an intention (a follow-up a mind scheduled for itself) that came due — and it
 carries the charter, the wall, unread mail, due intentions, the signals the mind
 subscribes to, and what changed in the repository since the last wake. The mind starts from
