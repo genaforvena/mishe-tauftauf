@@ -720,6 +720,68 @@ def night_prior_line(site, state, now):
     return _night_prior_text(daylight, daylight_age, activity, activity_age, state)
 
 
+# The camera's "busiest room" feeds every best guess, but it may be nearly
+# constant. Measure it from the retained 15-min buckets before a reader treats
+# it as evidence that locates a person.
+CAMERA_BIAS_MIN_BUCKETS = 24       # fewer shared buckets than a day is too thin to read
+CAMERA_BIAS_MIN_HOUR_N = 6         # hours with fewer buckets do not carry a share
+
+
+def _room_activity_series(activity):
+    """Room -> {timestamp: activity} from dated, numeric camera buckets."""
+    rooms = activity.get("rooms") if isinstance(activity, dict) else None
+    if not isinstance(rooms, dict):
+        return {}, {}
+    out = {}
+    for name in ("bedroom", "living room"):
+        info = rooms.get(name)
+        buckets = info.get("buckets") if isinstance(info, dict) else None
+        series = {}
+        if isinstance(buckets, list):
+            for b in buckets:
+                if not isinstance(b, dict):
+                    continue
+                value = b.get("activity")
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                try:
+                    when = datetime.datetime.fromisoformat(str(b.get("utc_iso")))
+                except (TypeError, ValueError):
+                    continue
+                series[when] = value
+        out[name] = series
+    return out["bedroom"], out["living room"]
+
+
+def camera_room_bias_line(site, now):
+    """One derived status line: how often the camera's busiest room is actually bedroom.
+
+    Missing, stale or thin activity data stays UNKNOWN; a room-by-hour prior is
+    not published unless it can beat this constant on held-out days.
+    """
+    prefix = "camera room bias"
+    activity, age = _curve_at(site, "activity.json", now)
+    if activity is None or not isinstance(age, (int, float)) or age > NIGHT_CURVE_MAX_AGE_S:
+        return prefix + " UNKNOWN (activity curve missing or stale)"
+    bed, liv = _room_activity_series(activity)
+    shared = sorted(set(bed) & set(liv))
+    if len(shared) < CAMERA_BIAS_MIN_BUCKETS:
+        return prefix + " UNKNOWN (only %d shared activity buckets)" % len(shared)
+    wins = sum(1 for t in shared if bed[t] > liv[t])
+    by_hour = {}
+    for t in shared:
+        n, k = by_hour.get(t.hour, (0, 0))
+        by_hour[t.hour] = (n + 1, k + (bed[t] > liv[t]))
+    flips = sorted(h for h, (n, k) in by_hour.items()
+                   if n >= CAMERA_BIAS_MIN_HOUR_N and k * 2 <= n)
+    pct = 100 * wins // len(shared)
+    if flips:
+        return "%s: bedroom busier in %d%% of %d shared buckets; living room leads at %s — not a person signal" % (
+            prefix, pct, len(shared), ", ".join("%02dZ" % h for h in flips))
+    return "%s: bedroom busier in %d%% of %d shared buckets and in all %d hours — near-constant, not a person signal" % (
+        prefix, pct, len(shared), len(by_hour))
+
+
 def model_from_site(site, now, phone_path=None):
     """Load the derived files under SITE and build the model. Missing files are UNKNOWN."""
     mapdir = os.path.join(site, "senses", "map")
@@ -745,4 +807,5 @@ def model_from_site(site, now, phone_path=None):
     phone, stability = phone_and_history(phone_file, now)
     model = build_model(floor, floor_reason, state, state_reason, phone, now, stability)
     model["status"].append(night_prior_line(site, state, now))
+    model["status"].append(camera_room_bias_line(site, now))
     return model

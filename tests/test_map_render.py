@@ -184,6 +184,26 @@ def test_saved_twin_phone_history_unknown_when_collector_missing(tmp_path):
     assert "phone history UNKNOWN" in twin
 
 
+def test_saved_twin_carries_the_camera_room_bias(tmp_path):
+    now = _now()
+    bed, liv = [], []
+    for i in range(30):
+        when = now - datetime.timedelta(minutes=15 * (30 - i))
+        bed.append(_bucket(when, 0.09))
+        liv.append(_bucket(when, 0.03))
+    site = _site(tmp_path, _activity({"bedroom": bed, "living room": liv}))
+    _render(site)
+    twin = (Path(site) / "senses" / "map" / "apartment-map.txt").read_text()
+    assert "camera room bias: bedroom busier in 100% of 30 shared buckets" in twin
+
+
+def test_saved_twin_camera_room_bias_unknown_without_activity(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _render(site)
+    twin = (Path(site) / "senses" / "map" / "apartment-map.txt").read_text()
+    assert "camera room bias UNKNOWN" in twin
+
+
 def test_rssi_fresh_live_without_labels_is_unknown_not_a_tie(tmp_path):
     # fresh phone RSSI but no labelled moment: nothing to match, so no tie and no crash
     import json

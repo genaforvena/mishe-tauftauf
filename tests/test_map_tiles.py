@@ -385,3 +385,50 @@ def test_missing_site_adds_unknown_night_prior_line(tmp_path):
     model = mt.model_from_site(str(tmp_path / "absent"), NOW)
     assert any(s.startswith("night prior 21-05Z:") and "UNKNOWN" in s for s in model["status"])
     assert "night prior 21-05Z:" in mt.frame(model, NOW)
+
+
+def _bias_slots(hour, count):
+    """Unique past timestamps in one UTC hour, spreading across days (4 per day)."""
+    return [datetime.datetime(2026, 11, 13 - i // 4, hour, (i % 4) * 15, tzinfo=UTC)
+            for i in range(count)]
+
+
+def _bias_activity(bed_win_hours, living_win_hours):
+    """Shared 15-min buckets; each (hour, count) names the room that wins there."""
+    bed, liv = [], []
+    for room, wins in (("bed", bed_win_hours), ("liv", living_win_hours)):
+        for hour, count in wins:
+            for when in _bias_slots(hour, count):
+                iso = when.isoformat(timespec="seconds")
+                bed.append({"utc_iso": iso, "activity": 0.09 if room == "bed" else 0.03})
+                liv.append({"utc_iso": iso, "activity": 0.03 if room == "bed" else 0.09})
+    return {"generated_utc": "2026-11-13T23:49:00Z",
+            "rooms": {"bedroom": {"buckets": bed}, "living room": {"buckets": liv}}}
+
+
+def _bias_site(tmp_path, activity):
+    hh = tmp_path / "site" / "spatial" / "work" / "household"
+    hh.mkdir(parents=True, exist_ok=True)
+    (hh / "activity.json").write_text(json.dumps(activity))
+    return str(tmp_path / "site")
+
+
+def test_camera_bias_reports_near_constant_bedroom(tmp_path):
+    site = _bias_site(tmp_path, _bias_activity([(10, 20), (11, 10)], []))
+    line = mt.camera_room_bias_line(site, NOW)
+    assert "bedroom busier in 100% of 30 shared buckets" in line
+    assert "in all 2 hours" in line
+    assert "near-constant, not a person signal" in line
+
+
+def test_camera_bias_names_the_flip_hour(tmp_path):
+    site = _bias_site(tmp_path, _bias_activity([(10, 20)], [(11, 10)]))
+    line = mt.camera_room_bias_line(site, NOW)
+    assert "bedroom busier in 66% of 30 shared buckets" in line
+    assert "living room leads at 11Z" in line
+
+
+def test_camera_bias_fails_closed(tmp_path):
+    assert "UNKNOWN" in mt.camera_room_bias_line(str(tmp_path / "absent"), NOW)
+    thin = _bias_activity([(10, 3)], [])
+    assert "only 3 shared activity buckets" in mt.camera_room_bias_line(_bias_site(tmp_path, thin), NOW)
