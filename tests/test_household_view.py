@@ -394,3 +394,39 @@ def test_map_evidence_line_fails_closed(tmp_path, monkeypatch):
     state.write_text("{}")
     os.utime(state, (now - hv.MAP_EVIDENCE_MAX_AGE_S - 120,) * 2)
     assert hv.map_evidence_line(now) is None                        # stale renderer
+
+
+def test_audio_listener_line_reports_process_state(tmp_path, monkeypatch):
+    import json
+    import os
+    now = 1795194160.0
+    path = tmp_path / "audio-listener-status.json"
+    path.write_text(json.dumps({"state": "LISTENING", "coverage_state": "WARMING"}))
+    os.utime(path, (now - 5, now - 5))
+    monkeypatch.setattr(hv, "AUDIO_STATUS", path)
+    line = hv.audio_listener_line(now)
+    assert "LISTENING" in line and "WARMING" in line and "heartbeat 5s old" in line
+
+
+def test_audio_listener_line_fails_closed(tmp_path, monkeypatch):
+    import json
+    import os
+    now = 1795194160.0
+    path = tmp_path / "audio-listener-status.json"
+    monkeypatch.setattr(hv, "AUDIO_STATUS", path)
+    assert hv.audio_listener_line(now) == "  LISTENER: UNKNOWN (no readable heartbeat)"
+    path.write_text(json.dumps({"state": "LISTENING", "coverage_state": "GREEN"}))
+    os.utime(path, (now - 900, now - 900))
+    line = hv.audio_listener_line(now)
+    assert "UNKNOWN" in line and "not reporting" in line
+    path.write_text("{broken\n")
+    os.utime(path, (now, now))
+    assert "UNKNOWN" in hv.audio_listener_line(now)
+
+
+def test_sound_lines_show_listener_state_even_without_a_log(tmp_path, monkeypatch):
+    monkeypatch.setattr(hv, "AUDIO", tmp_path / "absent.jsonl")
+    monkeypatch.setattr(hv, "AUDIO_STATUS", tmp_path / "absent.json")
+    lines = hv.sound_lines(1795194160.0)
+    assert lines[0].startswith("  LISTENER: UNKNOWN")
+    assert "no audio log" in lines[1]

@@ -21,6 +21,7 @@ SITE = Path(os.environ.get("MISHE_TAUFTAUF_HOME")
 LOG = SITE / "spatial/work/household/signatures.jsonl"
 LATEST = SITE / "discovery/latest.json"
 AUDIO = SITE / "spatial/work/household/audio.jsonl"
+AUDIO_STATUS = SITE / "spatial/work/household/audio-listener-status.json"
 NOTE3_GLOB = "spatial/work/household/note3_samples_run*.jsonl"
 PHONES_FILE = SITE / "spatial/work/household/phones.jsonl"
 SIGNALS_EDGES = SITE / "signals" / "edges.jsonl"
@@ -454,13 +455,30 @@ def rms_spark(values):
     return "".join(SPARK[min(7, int(v / top * 7.999))] for v in values)
 
 
+def audio_listener_line(now):
+    """Process state from the listener heartbeat, not inferred from the audio log."""
+    try:
+        data = json.loads(AUDIO_STATUS.read_text())
+        mtime = AUDIO_STATUS.stat().st_mtime
+    except (OSError, ValueError):
+        return "  LISTENER: UNKNOWN (no readable heartbeat)"
+    if not isinstance(data, dict):
+        return "  LISTENER: UNKNOWN (malformed heartbeat)"
+    age = max(0, int(now - mtime))
+    if age > 120:
+        return "  LISTENER: UNKNOWN (heartbeat %d min old — not reporting)" % (age // 60)
+    return "  LISTENER: %s, coverage %s (heartbeat %ds old)" % (
+        data.get("state", "?"), data.get("coverage_state", "?"), age)
+
+
 def sound_lines(now):
+    listener = audio_listener_line(now)
     rows = read_rows(AUDIO)
     if rows is None:
-        return ["  SOUND: UNKNOWN (no audio log at all)"]
+        return [listener, "  SOUND: UNKNOWN (no audio log at all)"]
     if not rows:
-        return ["  SOUND: UNKNOWN (audio log empty)"]
-    out = []
+        return [listener, "  SOUND: UNKNOWN (audio log empty)"]
+    out = [listener]
     mics = {}
     for r in rows:
         mics.setdefault(r.get("room", "?") + " / " + str(r.get("source", "?")), []).append(r)
