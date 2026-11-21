@@ -217,7 +217,7 @@ field, so say which window you compared when you report the numbers.
 ## Stop
 
 ```sh
-mishe hold on                         # no more model calls; units stay installed
+mishe hold on --reason "stopping"     # no more model calls; units stay installed
 mishe sync --uninstall                # remove the generated units
 ```
 

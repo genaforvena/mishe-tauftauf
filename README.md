@@ -113,7 +113,7 @@ mishe doctor                                        # checks they match what was
 Waking agents run with your account's access and can change the checkout. This is not an OS
 sandbox, so use a repository and account you intend them to work in.
 [Getting started](docs/getting-started.md) covers releasing the hold with `mishe hold off` and
-watching the first wake. To stop model calls again, run `mishe hold on`.
+watching the first wake. To stop model calls again, run `mishe hold on --reason "stopping"`.
 
 ## The minds
 
