@@ -527,6 +527,18 @@ def test_green_run_declares_no_event(tmp_path, monkeypatch):
     assert code == 0 and _event_line(report) == []
 
 
+def test_null_registration_entry_is_unknown_not_a_green_coverage(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"ok": register_entry()})
+    observed(sigdir, "ok", "GREEN", at=NOW - 60, seen=NOW - 60)
+    registry = json.loads((sigdir / "registry.json").read_text())
+    registry["broken"] = None
+    (sigdir / "registry.json").write_text(json.dumps(registry))
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert report["verdict"] == "UNKNOWN" and "broken" in report["cause"]
+    assert code == mod.UNKNOWN
+
+
 def test_unknown_cli_prints_the_cause_and_exits_with_its_code(tmp_path, monkeypatch, capsys):
     _clear_systemctl(monkeypatch)
     home, _ = site(tmp_path, with_registry=False)

@@ -271,6 +271,11 @@ def run(home: Path, now: float, *, repo: Path | None = None,
     if not isinstance(registry, dict) or not registry:
         cause = "signals/registry.json unreadable: coverage cannot be judged"
         return UNKNOWN, {"verdict": "UNKNOWN", "cause": cause, "causes": [], "detail": cause}
+    # A registration that is not an object cannot be judged: skipping it would let the rest publish GREEN.
+    malformed = sorted(str(name) for name, entry in registry.items() if not isinstance(entry, dict))
+    if malformed:
+        cause = f"signals/registry.json entries are not objects: {', '.join(malformed)}; coverage cannot judge them"
+        return UNKNOWN, {"verdict": "UNKNOWN", "cause": cause, "causes": [], "detail": cause}
     causes: list[str] = []
     identities: list[str] = []   # stable keys of the causes, no ages: see _event_digest
     counts = {"registered": len(registry), "ok": 0, "unmeasured": 0, "stale": 0,
