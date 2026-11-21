@@ -224,7 +224,7 @@ field, so say which window you compared when you report the numbers.
 
 ```sh
 mishe hold on --reason "stopping"     # no more model calls; units stay installed
-mishe sync --uninstall                # remove the generated units
+mishe sync --uninstall                # remove this plant's generated units (other plants' marked units stay)
 ```
 
 The hold file belongs to whoever wrote it. A promotion or a root-migration flip that
