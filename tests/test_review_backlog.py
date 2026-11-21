@@ -120,3 +120,12 @@ def test_unreadable_record_is_skipped_not_fatal(tmp_path):
     (tmp_path / 'work' / 'releases' / 'broken.json').write_text('{not json')
     code, _ = backlog.evaluate(tmp_path, NOW)
     assert code == 0
+
+
+def test_inflight_review_without_error_is_not_described_as_a_fault(tmp_path):
+    home = record(tmp_path, pending=True, delivered_at=NOW - 20)
+    code, lines = backlog.evaluate(home, NOW)
+    assert code == 2
+    detail = ' '.join(lines)
+    assert 'may be in flight' in detail
+    assert 'no reason recorded' not in detail

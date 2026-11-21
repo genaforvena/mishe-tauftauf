@@ -81,7 +81,9 @@ def _when(epoch: float) -> str:
 
 def _reason(record: dict) -> str:
     """The failure sentence, not the traceback that precedes it."""
-    text = " ".join(str(record.get("review_error") or "no reason recorded").split())
+    # No recorded error is normal for a review still in flight right after delivery; say so
+    # rather than reading as a fault ("no reason recorded" sounded like a broken record).
+    text = " ".join(str(record.get("review_error") or "no failure recorded yet; the review may be in flight").split())
     if "RuntimeError:" in text:
         text = text.split("RuntimeError:")[-1].strip()
     # The message was built from a repr, so its quotes and newlines arrive escaped.
