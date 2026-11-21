@@ -92,8 +92,9 @@ mishe sync --repo "$PWD" --pythonpath "$PWD/src"
 mishe doctor                # exits 0 when units match what was generated
 ```
 
-`sync` writes the user units (`mishe-wake@.service`, a path unit per role, producer
-timers, `mishe-failed@`, the doctor) and enables the paths and timers.
+`sync` writes the user units (`mishe-wake@.service`, a path unit per role, *producer*
+timers, `mishe-failed@`, the doctor). A producer is a timer that runs one check, writes its
+signal and exits; it is the only thing that polls and enables the paths and timers.
 `systemctl --user list-units 'mishe*'` shows them. A delivery in flight is a transient
 `moving-pin-delivery-HHMMSS.service`; its name carries no `mishe-` prefix, so pass that
 pattern too (`list-units 'mishe*' 'moving-pin-delivery-*'`) when you want to see whether
@@ -106,7 +107,7 @@ message names the sibling and the prefix to restore.
 ## 5. Start
 
 ```sh
-mishe hold off              # releases the hold and offers the first owed role
+mishe hold off              # releases the hold and offers the first role that is owed a wake (see below)
 ```
 
 Owed means something happened that the role has not seen: a message, a signal that
@@ -124,10 +125,10 @@ That touches genome's inbox; its path unit starts one wake. Watch it:
 
 ```sh
 journalctl --user -u mishe-wake@genome.service -f
-ls SITE_HOME/wakes/ ; cat SITE_HOME/dispatch/genome.json
+ls SITE_HOME/wakes/ ; cat SITE_HOME/dispatch/genome.json   # the dispatch file: the state of that role's run
 ```
 
-A healthy wake ends with the dispatch `completed`, the wall updated and the message
+A healthy wake ends with its dispatch file (`SITE_HOME/dispatch/ROLE.json`) at `completed`, the wall updated and the message
 read. Cost and turns are in the wake's `*.out.json` (claude).
 
 ## Writing a wall, an outcome, a message
