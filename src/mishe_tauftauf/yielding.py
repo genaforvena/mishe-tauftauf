@@ -29,11 +29,23 @@ SPARE_5H, SPARE_7D = 0.10, 0.05
 RESULTS = ("changed", "verified", "blocked")
 
 
+def _pacing_budget(home):
+    """engine/budget.json for the pacing reads, or None when it is absent, unreadable or not JSON.
+
+    Settlement must not raise on bad budget evidence (2026-11-21 review of 4346a39f): a truncated file
+    left the wake without its receipt and idle intention. Bad evidence reads as no spare budget.
+    """
+    try:
+        return read_json(Path(home) / "engine" / "budget.json")
+    except (OSError, ValueError):
+        return None
+
+
 def spare_budget(home, now) -> bool:
     """True only on fresh evidence: some account has both 5h and 7d windows FRESH, recent, not yet reset and above the spare floor.
     The reset rule is the router's own (budget_producer.window_fresh_at), so a window cannot read as spare past its reset.
     Missing, stale or unreadable evidence is UNKNOWN and reads as False."""
-    data = read_json(Path(home) / "engine" / "budget.json")
+    data = _pacing_budget(home)
     if not isinstance(data, dict) or not isinstance(data.get("accounts"), dict):
         return False
     for acct in data["accounts"].values():
@@ -57,7 +69,7 @@ def fresh_free_route(home, now) -> bool:
     ``in_routes``, the producer's FREE verdict and a recent observation keeps this
     evidence: a retired or stale free route does not hold the faster idle pace.
     """
-    data = read_json(Path(home) / "engine" / "budget.json")
+    data = _pacing_budget(home)
     if not isinstance(data, dict) or not isinstance(data.get("free_models"), dict):
         return False
     for row in data["free_models"].values():

@@ -178,3 +178,16 @@ def test_spare_floors_leave_room_to_spend_but_not_the_last_of_a_window(tmp_path)
          "7d": dict(state="FRESH", observed_at=1000, remaining=0.04, reset_at=4600)}
     write_json(home / "engine" / "budget.json", dict(accounts=dict(a=dict(state="FRESH", windows=w))))
     assert yielding.spare_budget(home, 1000) is False                            # the weekly window is spent
+
+
+def test_settle_survives_a_truncated_budget_file(tmp_path):
+    # 2026-11-21 review of 4346a39f: a truncated engine/budget.json raised out of settlement after the
+    # wall was written and the cursor advanced, so no receipt or idle intention was left. Bad budget
+    # evidence reads as no spare budget and the role still settles on the 2 h pace.
+    home = tmp_path / "site"; (home / "engine").mkdir(parents=True)
+    (home / "engine" / "budget.json").write_text("{", encoding="utf-8")
+    _open(home, "health", "wake-h-9")
+    yielding.settle(home, "health", "wake-h-9", text="Work", result="changed", now=100, wall_writer=lambda *a: None)
+    assert yielding.receipt_path(home, "wake-h-9").exists()
+    idle = [e for e in intentions.list_(home, "health") if e.get("id") == yielding.IDLE_ID]
+    assert idle and float(idle[0]["due"]) == 100 + yielding.DEFAULT_IDLE_SECONDS
