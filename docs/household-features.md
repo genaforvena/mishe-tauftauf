@@ -32,3 +32,5 @@ detail, not repaired.
 
 **Reading it.** One JSON object per line; `t` is the hour's start in epoch seconds, `hour` the same
 as text. Series for a prediction net are columns across rows, e.g. `camera["living room"].motion`.
+
+The forecasts built on this store, and the window that shows them, are described in [House predictions](house-predictions.md).

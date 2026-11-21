@@ -14,6 +14,7 @@ pane it draws in: 41 rows, and 170 columns for the health view, which is the wid
 | network | tools/network_view.py | network | home network and connection |
 | delivery | tools/delivery_view.py (looped each minute by the window command) | genome | checked-to-live time per promotion: check stage, wake fence, drain, review |
 | wake-view | tools/wake_view.py (looped each 5 min by the window command) | steward | where engine wall time goes across retained wakes |
+| house | tools/house_view.py (looped each minute by the window command) | senses | forecasts about the house written before each hour and scored after; see [House predictions](house-predictions.md) |
 | budget | operator/budget/budget_view.py (site-local) | budget | provider quota and spend |
 
 The delivery window summarizes how long commits waited for their promotion to start. The
@@ -61,6 +62,11 @@ wakes are windowed differently — finished by outcome time, in flight by select
 selected before the window and finished inside it appears only among finished wakes. A duration
 pairs the first select with the outcome; an outcome whose select is missing from the tail is
 UNKNOWN, not zero.
+
+The `house` window shows the prediction log's scoreboard (`tools/house_view.py`, refreshed each minute). Its
+`LIVE` table counts only forecasts written before their hour; the `REPLAY` table is a retrospective walk-forward
+over stored history and is never mixed into it. A scoreboard older than 45 minutes prints `STALE`; a missing one
+prints `UNKNOWN` (exit 3). The `house-predictions` duty (`duties.json`, every 900 s, resolver senses) writes it.
 
 The `budget` window runs `operator/budget/budget_pane.sh` (site-local, under `SITE_HOME`), a loop that calls
 `budget_view.py` every 20 s and clears the screen between frames, so the registry's

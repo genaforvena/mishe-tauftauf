@@ -1036,6 +1036,24 @@
       "replaces": []
     },
     {
+      "name": "house-predictions",
+      "command": [
+        "{python}",
+        "{repo}/tools/house_predict.py",
+        "--site",
+        "{home}"
+      ],
+      "every": 900,
+      "timeout": 120,
+      "max_age": 2700,
+      "unknown_codes": [
+        4
+      ],
+      "resolver": "senses",
+      "covers": "house prediction log: each run writes forecasts for the next hour and the same hour tomorrow (baselines last-value and same-hour) BEFORE the hour, scores earlier ones when their hour reaches the feature store, and refreshes the scoreboard the house window prints; no feature store or a store newer than 4 h old absent exits UNKNOWN and makes no forecast, an unmeasured hour is unobserved, never zero",
+      "replaces": []
+    },
+    {
       "name": "household-activity",
       "command": [
         "{python}",
