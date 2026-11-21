@@ -160,7 +160,10 @@ only that file and computes nothing itself.
   counted), so missing collector output cannot read as GREEN.
 - **`free_models`** are the `routes.json` candidates with `free: true` / `account: null`.
   They get their own rows and MUST NOT be summed into any paid account window. Their
-  verdict is `FREE` with `no limit known`, plus turns/h and last outcome.
+  verdict is `FREE` with `no limit known`, plus turns/h and last outcome. A free row's
+  `observed_at` is the producer's read time, not the newest ledger event of any role: a free
+  route has no window to age, and on a quiet ledger that old event would read stale and hold
+  a free route with an open slot (fixed in 54b0772f).
 - A free candidate on the same provider as a paid account (for example any
   `omp:opencode-go/*` candidate and `go-a`) still spends that provider's shared
   quota: `engine/accounts.json` ties go-a to the default OMP client's

@@ -108,9 +108,7 @@ an area. A further role, `operator`, is the human owner's standing delegate: it
 answers the requests addressed to it and is not an area. Another role, `system1`,
 owns the ladder of work: it moves each recurring decision to the lowest rung that
 can carry it — deterministic code, then a typed decision model, then a mind.
-Each carries initiatives (one piece of work, followed from investigation to an observed result) through checks, delivery and observation. Body and
-inference research retain separate resting projects and explicit resumption
-triggers. An area's dashboard is rendered on demand by
+Each carries initiatives (one piece of work, followed from investigation to an observed result) through checks, delivery and observation. An area's dashboard is rendered on demand by
 `mishe pain read ROLE --launcher dashboard`: it calls no model and prints plain text for
 people, with no JSON or raw timestamps. It shows the role's wake state, what the last wake
 changed in git, the wall's opening lines, signals, the next due item and unread mail. Signals are named conditions a mind watches, such as a new commit on the repository (`repo-change`). A
