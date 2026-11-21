@@ -4298,3 +4298,27 @@ of verifier CPU due to cache misses remain UNKNOWN. On the next fold above
 verifier decisions and framing checkpoint state. A reader above 4.5 CPU-s
 during low pressure warrants a fresh Python profile. No new Rust migration
 slice is supported by this observation.
+
+### 10.77 The hourly fold reports verifier decisions and checkpoint work (2026-11-21)
+
+The 21 November 16:06 UTC senses fold rose to 8.033 CPU-s from 6.330 at
+15:05. The reader added 0.779 CPU-s, records added 0.711, and tape added
+0.213. CPU pressure increased during the fold. The hourly history could
+place the cost but could not show whether the verifier reread more records
+or whether the fold ran the frame-offset pass.
+
+The hourly measurement now records `record_decisions` and
+`checkpoint_rebuilt` beside per-executable CPU and pressure in the latest
+reading and history. The counts come from the verifier responses decoded
+during the same fold. `N` means the verifier reread the record, `V` means it
+served a verified record, and `S` means it skipped the entry. An `N` can
+also follow a file identity change or a missing store entry. The checkpoint
+field records whether the fold computed offsets to rebuild the index. Both
+fields are null when there is no tape to fold. A failed verification yields
+UNKNOWN through the existing detector.
+
+The hourly duty still applies the reader CPU and RSS thresholds. At the
+next child CPU outlier, rust-plan compares the decision counts and checkpoint
+work with an ordinary fold. More `N` decisions would quantify the extra
+verification work. Identifying expiry as the reason requires cache age
+evidence as well.

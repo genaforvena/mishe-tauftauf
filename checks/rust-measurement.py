@@ -17,6 +17,10 @@ a forced fold at load1 4.34 on 3 CPUs measured senses children 19.6 s (total
 calibrated on quiet runs would flap under contention. Every run now records both
 quantities in the history, which is where the total's own bar will be calibrated.
 
+Each fold also records the verifier's V (served), N (reverified) and S (skipped)
+decisions and whether it rebuilt the tape's frame index. These observations help
+attribute child CPU outliers. A fold with no tape leaves both fields null.
+
 This is a System 0 duty: a deterministic measurement, no judgment. Each role is
 folded in its own child process, so CPU and peak RSS are not shared between
 roles. The host guard comes first: a measurement made on a saturated host would
@@ -180,10 +184,11 @@ def peak_rss_kb():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
 home, role = Path(sys.argv[1]), sys.argv[2]
+diagnostics = {}
 p0 = cpu_pressure_some()
 m0 = memory_pressure_some()
 c0 = time.process_time(); k0 = child_cpu(); t0 = time.perf_counter()
-rows = Feed(home).role_entries(role, _force_full=True)
+rows = Feed(home).role_entries(role, _force_full=True, _fold_diagnostics=diagnostics)
 c1 = time.process_time(); k1 = child_cpu(); t1 = time.perf_counter()
 p1 = cpu_pressure_some()
 m1 = memory_pressure_some()
@@ -195,6 +200,8 @@ print(json.dumps({
     "children_cpu_s": round(k1 - k0, 3),
     "child_cpu_by_exe": ({k: round(v, 3) for k, v in sorted(_child_cpu_by_exe.items())}
                          if hasattr(os, "wait4") else None),
+    "record_decisions": diagnostics.get("record_decisions"),
+    "checkpoint_rebuilt": diagnostics.get("checkpoint_rebuilt"),
     "cpu_pressure_some_avg10_before": p0,
     "cpu_pressure_some_avg10_after": p1,
     "memory_pressure_some_avg10_before": m0,

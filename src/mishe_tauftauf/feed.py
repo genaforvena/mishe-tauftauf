@@ -9,7 +9,7 @@ import sqlite3
 import subprocess
 import tempfile
 import threading
-from collections import OrderedDict, deque
+from collections import Counter, OrderedDict, deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -600,12 +600,14 @@ class _RecordsChild:
     drain and maps the exit status; ``close`` reaps an abandoned child.
     """
 
-    def __init__(self, home: Path, *, payloads: bool, sink: dict | None):
+    def __init__(self, home: Path, *, payloads: bool, sink: dict | None,
+                 observe_decisions: bool = False):
         argv = [_records_binary(), "verify", "--home", str(home)]
         if payloads:
             argv.append("--payloads")
         self._payloads = payloads
         self._sink = sink
+        self.decisions = Counter() if observe_decisions else None
         self._kinds: dict[int, str] = {}
         self._error: Exception | None = None
         self._broken = False
@@ -619,6 +621,7 @@ class _RecordsChild:
         """Read the child's decisions. A failure here stops the child so the writer unblocks."""
         try:
             stdout = self._proc.stdout
+            decisions = self.decisions
             while True:
                 line = stdout.readline()
                 if not line:
@@ -661,6 +664,8 @@ class _RecordsChild:
                             self._sink[sequence] = json.loads(body)
                         except ValueError as exc:
                             raise RecordsUnknown(f"mishe-records payload is not JSON: {exc}") from exc
+                if decisions is not None:
+                    decisions[head] += 1
         except Exception as exc:  # a thread cannot raise into the writing thread
             self._error = exc
             try:
@@ -752,11 +757,12 @@ class _VerificationPass:
     fails closed.
     """
 
-    def __init__(self):
+    def __init__(self, *, decision_counts: Counter[str] | None = None):
         self._children: dict[str, _RecordsChild] = {}
         self._home: Path | None = None
         self._child: _RecordsChild | None = None
         self._sink: dict | None = None
+        self._decision_counts = decision_counts
 
     def _child_for(self, entry) -> _RecordsChild:
         home = entry.home
@@ -769,8 +775,10 @@ class _VerificationPass:
         key = str(path)
         child = self._children.get(key)
         if child is None:
-            child = self._children[key] = _RecordsChild(path, payloads=self._sink is not None,
-                                                        sink=self._sink)
+            child = self._children[key] = _RecordsChild(
+                path, payloads=self._sink is not None, sink=self._sink,
+                observe_decisions=self._decision_counts is not None,
+            )
             if self._child is None:
                 self._home, self._child = path, child
         return child
@@ -802,6 +810,9 @@ class _VerificationPass:
             except Exception as exc:  # ValueError (a fault) or RecordsUnknown
                 if first is None:
                     first = exc
+            else:
+                if self._decision_counts is not None:
+                    self._decision_counts.update(child.decisions)
         if first is not None:
             raise first
 
@@ -1245,12 +1256,13 @@ class Feed:
         except OSError:
             pass  # the cache only saves work; failing to write it loses nothing
 
-    def role_entries(self, role: str, *, _force_full=False):
+    def role_entries(self, role: str, *, _force_full=False, _fold_diagnostics: dict | None = None):
         """Verified role control/view projection, without retaining the whole tape.
 
         Every captured record is verified before pruning. Keep the role's full
         lifecycle, unknown seed evidence, twelve addressed/recent messages and
         global activity witnesses. Full history remains available via entries().
+        The scheduled full fold can opt into diagnostics for the pass it ran.
         """
         validate_slug(role)
         key = (str(self.path), role)
@@ -1310,7 +1322,8 @@ class Feed:
             # the cold read. The rules are unchanged: every record reference
             # is verified, and the pass fails closed on a replaced records
             # directory.
-            verification = _VerificationPass()
+            decision_counts = Counter(V=0, N=0, S=0) if _fold_diagnostics is not None else None
+            verification = _VerificationPass(decision_counts=decision_counts)
             retry = False
             try:
                 try:
@@ -1325,7 +1338,7 @@ class Feed:
             finally:
                 verification.close()
             if retry:
-                return self.role_entries(role, _force_full=True)
+                return self.role_entries(role, _force_full=True, _fold_diagnostics=_fold_diagnostics)
             if valid and tail != checkpoint["sequence"]:
                 raise FeedError("role view disagrees with canonical checkpoint")
             if not valid:
@@ -1339,6 +1352,9 @@ class Feed:
                 self._store_role_cache(role, metadata, tail, projection, _prefix_guard(handle, metadata[1]))
         finally:
             handle.close()
+        if _fold_diagnostics is not None:
+            _fold_diagnostics.update(record_decisions=dict(decision_counts),
+                                     checkpoint_rebuilt=not valid)
         view = tuple(_role_view(projection))
         with _ENTRIES_CACHE_LOCK:
             current = _ROLE_ENTRIES_CACHE.get(key)

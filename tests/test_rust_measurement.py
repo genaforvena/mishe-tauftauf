@@ -13,6 +13,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from tests.records_binary import pin_records_binary
+from tests.tape_binary import pin_tape_binary
+
 CHECK = Path(__file__).resolve().parents[1] / "checks" / "rust-measurement.py"
 REPO = CHECK.parents[1]
 
@@ -143,6 +148,8 @@ def test_artifact_records_the_reading(tmp_path):
     reading = data["readings"][0]
     assert reading["children_cpu_s"] >= 0
     assert reading["fold_cpu_s"] >= reading["cpu_s"]
+    assert reading["record_decisions"] is None
+    assert reading["checkpoint_rebuilt"] is None
     assert data["triggers"]["cpu_s"] == 1000.0
     assert data["over"] == []
     # The reading is only auditable if the guard facts it was taken under are kept.
@@ -204,7 +211,7 @@ def test_duty_measures_release_source_not_editable_checkout(tmp_path):
         (package / "feed.py").write_text(
             "class Feed:\n"
             "    def __init__(self, home): pass\n"
-            f"    def role_entries(self, role, _force_full=False): return [None] * {count}\n"
+            f"    def role_entries(self, role, _force_full=False, _fold_diagnostics=None): return [None] * {count}\n"
         )
     (release / "duties.json").write_text((REPO / "duties.json").read_text())
     # The duty compares the installed bytes with the release commit, so the release
@@ -293,7 +300,7 @@ def _rust_release(tmp_path: Path) -> Path:
     (package / "feed.py").write_text(
         "class Feed:\n"
         "    def __init__(self, home): pass\n"
-        "    def role_entries(self, role, _force_full=False): return [None] * 3\n")
+        "    def role_entries(self, role, _force_full=False, _fold_diagnostics=None): return [None] * 3\n")
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
     _commit(repo, "release with the installed bytes")
     return repo
@@ -575,7 +582,7 @@ def test_child_cpu_is_attributed_to_each_executable(tmp_path):
         "import subprocess, sys\n"
         "class Feed:\n"
         "    def __init__(self, home): pass\n"
-        "    def role_entries(self, role, _force_full=False):\n"
+        "    def role_entries(self, role, _force_full=False, _fold_diagnostics=None):\n"
         "        subprocess.run([sys.executable, '-c', 'sum(range(200000))'], check=True)\n"
         "        subprocess.run(['/bin/sh', '-c',\n"
         "                        'i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done'], check=True)\n"
@@ -594,9 +601,40 @@ def test_child_cpu_breakdown_is_empty_when_no_child_ran(tmp_path):
     source = (
         "class Feed:\n"
         "    def __init__(self, home): pass\n"
-        "    def role_entries(self, role, _force_full=False):\n"
+        "    def role_entries(self, role, _force_full=False, _fold_diagnostics=None):\n"
         "        return [1]\n"
     )
     reading = _child_reading(tmp_path, source)
     assert reading["child_cpu_by_exe"] == {}
     assert reading["children_cpu_s"] == 0.0
+
+
+@pytest.mark.usefixtures("pin_records_binary", "pin_tape_binary")
+def test_fold_reports_verifier_decisions_and_checkpoint_rebuild(tmp_path):
+    from mishe_tauftauf.feed import Feed, _encode_entry
+    from mishe_tauftauf.records import prepare
+
+    mod = check_module()
+    feed = Feed(tmp_path)
+    missing = mod.fold_role(REPO, tmp_path, "senses", 30)
+    assert missing["record_decisions"] is None
+    assert missing["checkpoint_rebuilt"] is None
+
+    reference = prepare(tmp_path, {"fixture": True}, kind="event")
+    feed.path.write_bytes(_encode_entry(1, "2026-11-21T16:00:00Z", "senses",
+                                        f"Measurement fixture\n{reference}"))
+    cold = mod.fold_role(REPO, tmp_path, "senses", 30)
+    warm = mod.fold_role(REPO, tmp_path, "senses", 30)
+
+    assert cold["record_decisions"] == {"V": 0, "N": 1, "S": 0}
+    assert warm["record_decisions"] == {"V": 1, "N": 0, "S": 0}
+    assert cold["checkpoint_rebuilt"] is True
+    assert warm["checkpoint_rebuilt"] is False
+    assert cold["entries"] == warm["entries"]
+
+    record, = (tmp_path / "records").glob("*.json")
+    record.unlink()
+    failed = run(tmp_path, "--max-load", "100000")
+    assert failed.returncode == 3
+    assert "UNKNOWN fold failed" in failed.stderr and "record unavailable" in failed.stderr
+    assert "GREEN" not in failed.stdout
