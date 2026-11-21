@@ -148,7 +148,8 @@ only that file and computes nothing itself.
   labels `FRESH` can be `FRESH`, and the producer re-ages it at its own `now` (observed within
   `MAX_AGE_S`, not from the future, reset still ahead), otherwise `STALE`. Every non-`FRESH`
   window state is a legitimate non-admitting state, never a malformed file. An account is
-  `FRESH` only when every window is `FRESH`, `UNREADABLE` with no windows, otherwise `STALE`.
+  `FRESH` only when every window is `FRESH`; `UNREADABLE` with no windows or with a malformed
+  window (one the producer cannot read a number from); otherwise `STALE`.
   Provenance is the engine's own `observed_at` (window, else account); a window with no
   observation time is dropped, never stamped with the collection time. A missing or unreadable
   account is `UNREADABLE`, never OK. An account with no windows carries the source's own
