@@ -21,8 +21,8 @@ devices. A device is a sensor channel, not someone.
 **Absence is unknown.** If a source gave nothing in an hour, the row has no key for it. A reader
 must treat a missing key, and a missing hour, as unknown and never as zero or "quiet".
 
-**Kept for years.** The store is the memory prediction nets learn from. No retention class may name
-`features/`. The raw samplers it reads (`spatial/work/household/*.jsonl`) are not trimmed by anything
+**Kept for years.** The store is the memory prediction nets learn from. The retention tool refuses `features/` under every
+spelling of the path (a test pins this). The raw samplers it reads (`spatial/work/household/*.jsonl`) are not trimmed by anything
 today; if that changes, the store must already have consumed them: a row is only ever added for an
 hour that is over, and rows are never rewritten.
 

@@ -38,7 +38,14 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     home = args.home
+    # features/ is the long-lived household record (docs/household-features.md): never a retention class,
+    # whatever spelling reaches here (a, a/, ./a, a/../a, an absolute path or a symlink resolving into it).
+    protected = (home / "features").resolve()
     class_dir = home / args.class_name
+    if class_dir.resolve() == protected or protected in class_dir.resolve().parents:
+        print(json.dumps({"state": "unknown", "class": args.class_name,
+                          "reason": "features/ is the long-lived household record and is not a retention class"}))
+        return 2
     if not class_dir.is_dir():
         print(json.dumps({"state": "unknown", "reason": f"no class dir {class_dir}"}))
         return 2

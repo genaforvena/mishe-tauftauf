@@ -17,7 +17,7 @@ Rules (the point of the store is later pattern work, so these are not negotiable
 * Only hours strictly before the current one are written, each once. The watermark is the last row
   of the store, so a crash between the append and the state file cannot duplicate an hour.
 * Malformed and unusable lines are counted in the state file and the printed detail, never repaired.
-* The store is a long-lived record: no retention class may name features/ (see docs/household-features.md).
+* The store is a long-lived record: checks/retention-apply.py refuses features/ (see docs/household-features.md).
 
 usage: household_features.py --site SITE [--now EPOCH]
 Exit codes (duty runner): 0 fresh and valid, 4 UNKNOWN (no source file readable), 1 crash.
