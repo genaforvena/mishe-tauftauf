@@ -5,7 +5,8 @@ One line per promised slot in the network charter. Checked against `tools/networ
 Speed, day-trend, baseline and Wi-Fi channel/noise/counter rows rechecked 2026-11-17; the upload
 duty's verdict, the live Wi-Fi line's device naming and the driver's error-rate wording rechecked
 2026-11-18; the day-trend label and its empty-bucket gap rechecked 2026-11-19; the "Worse than
-usual?" busy-hour baseline rechecked 2026-11-20.
+usual?" busy-hour baseline rechecked 2026-11-20; the per-device reach row (the DEVICE PING
+freshness, future-timestamp and reply rules, and the `network-device-reach` duty) rechecked 2026-11-21.
 
 Status words: **BUILT** (the window shows it with an age or UNKNOWN), **PARTLY** (some of it is
 shown), **MISSING** (not measured or not shown).
