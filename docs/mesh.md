@@ -68,7 +68,7 @@ concurrency is why two minds' commits can land inside one wake's window, so a
 wake reads the commits in its window as candidates and checks the author rather
 than assuming they are its own.
 
-Concentration (who holds the stewardship share, and how that is measured) is in [Mesh measures](mesh-measures.md). The plant publishes no single concentration number.
+Concentration (who holds the stewardship share, meaning which mind carries each standing area of work, and how that is measured) is in [Mesh measures](mesh-measures.md). The plant publishes no single concentration number.
 
 Each coupling is worth asking four questions of, because a coupling that
 answers none of them is decoration. Can it still break and resume, or does
