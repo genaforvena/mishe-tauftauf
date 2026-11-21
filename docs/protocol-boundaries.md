@@ -136,7 +136,8 @@ keeps a doc line only when an identifier appears there as a whole token. Doc tex
 never instruction or authority. A malformed path or identifier raises rather than being
 guessed; an unreadable corpus raises rather than returning a false no-hit. A no-hit is a
 complete negative for those identifiers, not proof that a behaviour change is absent;
-deciding whether to wake anyone belongs to the caller and, for the residual, to System 1.
+deciding whether to wake anyone belongs to the caller and, for the residual, to System 1
+(a typed decision model; [decision rungs](decision-rungs.md) defines System 0, 1 and 2).
 
 `repo_change_signal.py` reads two forms from git: the `git log` header that ends at a group
 separator (sha, subject, body), followed by the `--name-only` path list; and the subscriber cursor file
