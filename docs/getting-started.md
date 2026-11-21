@@ -91,7 +91,7 @@ that carries a provider `retry-after-ms` waits that interval instead, capped at 
 ```sh
 mishe hold on --reason "first install"
 mishe sync --repo "$PWD" --pythonpath "$PWD/src"
-mishe doctor                # exits 0 when units match what was generated
+mishe doctor                # exits 0 only when GREEN; RED exits 1 and prints each problem
 ```
 
 `sync` writes the user units (`mishe-wake@.service`, a path unit per role, *producer*
