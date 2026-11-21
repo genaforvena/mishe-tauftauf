@@ -937,3 +937,21 @@ def test_measured_rate_breaks_a_tie_inside_one_tier(routed):
     selects = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()
                if json.loads(x)["event"] == "select"]
     assert selects[-1]["key"] == router.candidate_key(MINI)
+
+
+SOL = {"engine": "codex", "model": "gpt-6.2-sol", "account": "codex-a"}
+
+
+def test_reserve_pct_is_per_candidate_validated_and_defaults_to_the_policy_reserve(tmp_path):
+    st = status(**{"codex-a": account(provider="openai-codex", remaining=0.10)})
+    assert router._eligible("steward", SOL, st, NOW_MS)[0] is False                      # 10% left < default 15%
+    assert router._eligible("steward", dict(SOL, reserve_pct=0.05), st, NOW_MS)[0] is True
+    assert router._eligible("steward", dict(SOL, reserve_pct=0.12), st, NOW_MS)[0] is False
+    low = status(**{"codex-a": account(provider="openai-codex", remaining=0.03)})
+    assert router._eligible("steward", dict(SOL, reserve_pct=0.05), low, NOW_MS)[0] is False   # the smaller reserve still holds
+    routes_file(tmp_path, {"steward": [dict(SOL, reserve_pct=0.05)]})
+    assert router.load_routes(tmp_path)["roles"]["steward"][0]["reserve_pct"] == 0.05
+    for bad in (-0.1, 1, True, "0.05"):
+        routes_file(tmp_path, {"steward": [dict(SOL, reserve_pct=bad)]})
+        with pytest.raises(ValueError, match="invalid reserve_pct"):
+            router.load_routes(tmp_path)

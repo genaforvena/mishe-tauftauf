@@ -208,3 +208,22 @@ def test_dispositioned_budget_claude_arms_its_recheck(tmp_path):
     due = {e["id"]: e["due"] for e in intentions.list_(tmp_path, "steward") if "due" in e}
     assert due["disposition-budget-claude"] == 200 + 3600
     assert "reoffer-budget-claude" not in due
+
+
+def test_claude_weekly_projection_is_accepted_but_spent_and_5h_still_alarm(tmp_path):
+    now = 10_000.0
+    data = _engine_budget(now, eta_s=100)                                    # both windows burning past their reset
+    data["accounts"]["claude"]["windows"]["5h"] = dict(data["accounts"]["claude"]["windows"]["7d"], eta_s=10**9)
+    _write_engine_budget(tmp_path, data)
+    by_window = {r["window"]: r["verdict"] for r in budget.rows_from_engine_budget(tmp_path, now) if r.get("account") == "claude"}
+    assert by_window == {"5h": "ok", "7d": "ok"}                             # 7d projection accepted (Ilya 2026-11-21)
+    assert budget.evaluate(budget.rows_from_engine_budget(tmp_path, now), "claude", now=now)[0] == "GREEN"
+    data["accounts"]["claude"]["windows"]["5h"]["eta_s"] = 100               # the rolling 5 h window is not exempt
+    _write_engine_budget(tmp_path, data)
+    assert budget.evaluate(budget.rows_from_engine_budget(tmp_path, now), "claude", now=now)[0] == "RED"
+    _write_engine_budget(tmp_path, _engine_budget(now, used=0.95, eta_s=100))   # a spent weekly window still reads LOW
+    assert {r["window"]: r["verdict"] for r in budget.rows_from_engine_budget(tmp_path, now)}["7d"] == "LOW"
+    other = _engine_budget(now, eta_s=100)
+    other["accounts"] = {"codex-a": other["accounts"]["claude"]}
+    _write_engine_budget(tmp_path, other)
+    assert {r["verdict"] for r in budget.rows_from_engine_budget(tmp_path, now)} == {"RUNS OUT BEFORE RESET"}   # other accounts unchanged

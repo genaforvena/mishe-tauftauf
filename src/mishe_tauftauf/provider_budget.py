@@ -61,6 +61,13 @@ FRESH_S = 900
 # reset ~161 h away, flipping budget-claude RED right after the weekly reset).
 BURN_FORECAST_MIN_USED = 0.05
 
+# Windows whose owner has decided to run to the limit. Ilya, 2026-11-21: "let haiku run past 50%,
+# weekly limit is fine". A burn projection that lands before the reset on such a window is
+# information, not a verdict (it would otherwise hold work and re-wake the steward every hour for a
+# limit that is accepted). A SPENT window (used > 0.9) still reads LOW, and the rolling 5 h window,
+# which can stall work within hours, keeps its projection. Remove an entry to restore the alarm.
+PROJECTION_ACCEPTED = {("claude", "7d")}
+
 REOFFER_S = 3600
 """Re-offer cadence for the budget-claude signal.
 
@@ -122,7 +129,8 @@ def rows_from_engine_budget(home, now):
                 verdict = "LOW"
             elif used < BURN_FORECAST_MIN_USED:
                 verdict = "ok"
-            elif isinstance(eta, (int, float)) and not isinstance(eta, bool) and now + eta < reset:
+            elif ((account, window) not in PROJECTION_ACCEPTED
+                  and isinstance(eta, (int, float)) and not isinstance(eta, bool) and now + eta < reset):
                 verdict = "RUNS OUT BEFORE RESET"
             else:
                 verdict = "ok"

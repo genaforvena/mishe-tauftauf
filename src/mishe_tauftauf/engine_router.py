@@ -143,7 +143,13 @@ def load_routes(home) -> dict | None:
             cap = c.get("max_parallel")
             if cap is not None and (isinstance(cap, bool) or not isinstance(cap, int) or cap < 1):
                 raise ValueError(f"invalid max_parallel for {role!r}: {c!r}")
+            reserve = c.get("reserve_pct")
+            if reserve is not None and (isinstance(reserve, bool) or not isinstance(reserve, (int, float))
+                                        or not 0 <= reserve < 1):
+                raise ValueError(f"invalid reserve_pct for {role!r}: {c!r}")
             entry = {"engine": c["engine"], "model": c["model"], "account": account}
+            if reserve is not None:
+                entry["reserve_pct"] = float(reserve)
             if tmo is not None:
                 entry["timeout_s"] = tmo
             if hard is not None:
@@ -282,8 +288,11 @@ def _eligible(role: str, cand: dict, status, now_ms) -> tuple[bool, str]:
         return False, f"{alias} {row.get('state')}: {row.get('reason') or 'no fresh reading'}"
     route = {"provider": row.get("provider"), "alias": alias, "model": cand["model"],
              "effort": "high", "runner": cand["engine"]}
+    # reserve_pct: the share of a window kept back from routing. Unset keeps the policy default (0.15); an owner
+    # who has decided to spend a subscription closer to its limit sets it per candidate in routes.json.
+    reserve = {"reserve_pct": cand["reserve_pct"]} if cand.get("reserve_pct") is not None else {}
     result = policy.decide(role=role, status=status, allowlist={role: [route]},
-                           current_route=None, now_ms=now_ms, reservations=None)
+                           current_route=None, now_ms=now_ms, reservations=None, **reserve)
     if result.get("decision") == "select":
         return True, result.get("reason") or f"{alias} healthy"
     return False, f"{alias} {result.get('decision')}: {result.get('reason')}"
