@@ -412,7 +412,10 @@ def build_ledger(home: Path, now: float) -> dict:
         if m["free"]:
             base = {"free": True, "account": None, "in_routes": True, "verdict": "FREE",
                     "note": "no limit known"}
-            free_models[key] = _model_row(tally, key, base, present, wm)
+            # A free route has no account window to age. Its freshness is the producer's observation of the
+            # roster, not the newest ledger event of any role: on a quiet ledger that event goes stale and
+            # would hold a free route with an open slot (replay: 3900 s quiet, row FREE, wake skipped).
+            free_models[key] = _model_row(tally, key, base, present, now * 1000)
         else:
             base = {"free": False, "account": m["account"], "in_routes": True, "verdict": None}
             if m["account"] is None:

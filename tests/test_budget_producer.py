@@ -692,3 +692,23 @@ def test_producer_stamps_at_write_clock_not_preprobe_now(tmp_path, monkeypatch):
     assert bp.main(tmp_path, out=tmp_path / "budget.json") == 0
     row = signal_store.recorded(tmp_path, er.SIGNAL)
     assert row["observed_at"] == NOW + 200
+
+
+def test_free_row_freshness_is_the_producer_read_not_a_quiet_ledger(tmp_path):
+    # Replay: 3900 s after the last routing event, the free row inherited that event as observed_at,
+    # aged past the 3600 s budget window and held an open-slot free route. A free route has no window to
+    # age, so its row is observed when the producer read the roster.
+    import json
+    from mishe_tauftauf.engine_router import _iso
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    routes = {"version": 1, "cool_off_s": 600, "env": {}, "roles": {"idle": [
+        {"engine": "omp", "model": "free/m", "free": True}]}}
+    (engine / "routes.json").write_text(json.dumps(routes))
+    now = 1794464000.0
+    rows = [_ev("outcome", key="omp:free/m:-", wake="a", outcome="yielded", at=_iso((now - 3900) * 1000))]
+    (engine / "routing-ledger.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    out = bp.build_ledger(tmp_path, now)
+    row = out["free_models"]["omp:free/m:-"]
+    assert row["observed_at"] == now
+    assert row["turns_24h"] == 1

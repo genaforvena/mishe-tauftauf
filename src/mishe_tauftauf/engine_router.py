@@ -331,6 +331,24 @@ def choose(role: str, candidates: list, status, cooling: dict, now_ms: float,
     return {"decision": "none", "candidate": None, "key": None, "trail": trail}
 
 
+def _admit(home, role: str, candidates: list, *, status, now_ms: float, exclude: frozenset,
+           horizon_s: float, event: dict) -> dict:
+    """Choose a candidate and open its ``select`` in one locked step.
+
+    The live count of running wakes, the choice and the ``select`` append share the routing state lock.
+    Read separately, two wakes could both see a route at zero running and both open the same
+    one-slot candidate (replay: two full idle wakes, ``max_parallel: 1``, ledger select,select).
+    """
+    with _state_lock(home):
+        cooling = _load_state(home)["cooling"]
+        running = running_candidates(home, now_ms=now_ms, horizon_s=horizon_s)
+        choice = choose(role, candidates, status, cooling, now_ms, exclude=exclude, running=running)
+        if choice["candidate"] is not None:
+            record(home, {"role": role, "event": "select", "key": choice["key"], "trail": choice["trail"],
+                          **event}, now_ms=now_ms)
+    return choice
+
+
 def _free_roster(home, role: str, now: float) -> tuple[list, dict]:
     """Intersect the role's current free roster with fresh budget ledger evidence."""
     try:
@@ -707,13 +725,11 @@ class RoutedEngine:
             else:
                 roster, routes = self.candidates, self.routes
                 status = live_status(self.home)
-            cooling = _load_state(self.home)["cooling"]
-            running = running_candidates(self.home, now_ms=now_ms,
-                                         horizon_s=routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S))
             ranked = rank_candidates(roster, measured_tally(self.home, now_ms=now_ms))
-            choice = choose(self.role, ranked, status, cooling, now_ms,
-                            exclude=frozenset(tried), running=running)
             scope = {"free_only": True} if free_only else {}
+            choice = _admit(self.home, self.role, ranked, status=status, now_ms=now_ms,
+                            exclude=frozenset(tried), horizon_s=routes.get("hard_timeout_s", DEFAULT_HARD_TIMEOUT_S),
+                            event={"wake": key_wake, "tried": sorted(tried), **scope})
             if choice["candidate"] is None:
                 record(self.home, {"role": self.role, "event": "none", "wake": key_wake,
                                    "trail": choice["trail"], **scope},
@@ -721,8 +737,6 @@ class RoutedEngine:
                 self._observe(now_ms)
                 raise EngineNotStarted(f"no working engine candidate for {self.role}")
             cand, key = choice["candidate"], choice["key"]
-            record(self.home, {"role": self.role, "event": "select", "wake": key_wake, "key": key,
-                               "tried": sorted(tried), "trail": choice["trail"], **scope}, now_ms=now_ms)
             engine = self._build(cand)
             try:
                 limit = min(timeout, cand["timeout_s"]) if cand.get("timeout_s") else timeout

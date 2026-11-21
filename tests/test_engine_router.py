@@ -955,3 +955,31 @@ def test_reserve_pct_is_per_candidate_validated_and_defaults_to_the_policy_reser
         routes_file(tmp_path, {"steward": [dict(SOL, reserve_pct=bad)]})
         with pytest.raises(ValueError, match="invalid reserve_pct"):
             router.load_routes(tmp_path)
+
+
+def test_admit_keeps_a_one_slot_free_route_to_one_of_two_concurrent_wakes(tmp_path, monkeypatch):
+    # Replay (steward-idle-routing-20261121): two full idle wakes read zero running wakes, both chose the
+    # max_parallel=1 free route and both appended a select. The count, choice and append now share the
+    # routing lock; the slow count widens the window that used to let both wakes through.
+    real_running = router.running_candidates
+
+    def slow_running(*args, **kwargs):
+        time.sleep(0.3)
+        return real_running(*args, **kwargs)
+
+    monkeypatch.setattr(router, "running_candidates", slow_running)
+    free = {"engine": "omp", "model": "free/one-slot", "account": None, "free": True, "max_parallel": 1}
+
+    def admit(wake):
+        return router._admit(tmp_path, "idle", [free], status=None, now_ms=time.time() * 1000,
+                             exclude=frozenset(), horizon_s=3600, event={"wake": wake, "tried": []})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        choices = [pool.submit(admit, w).result(timeout=10) for w in ("wake-a", "wake-b")]
+    selected = [c for c in choices if c["candidate"] is not None]
+    assert len(selected) == 1
+    refused = next(c for c in choices if c["candidate"] is None)
+    assert any(t.get("verdict") == "at-capacity" for t in refused["trail"])
+    selects = [json.loads(line) for line in (tmp_path / "engine" / router.LEDGER).read_text().splitlines()
+               if '"select"' in line]
+    assert len(selects) == 1
