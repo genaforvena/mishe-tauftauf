@@ -114,6 +114,17 @@ def test_window_fresh_with_reset_already_past_at_production_is_red(tmp_path: Pat
     assert any("shown FRESH" in p for p in result["problems"])
 
 
+def test_account_with_malformed_window_beside_fresh_one_is_unreadable_not_red(tmp_path: Path):
+    # the producer's own output: a valid FRESH window plus one the producer cannot read a number from
+    status = _status("FRESH")
+    status["accounts"]["codex-a"]["windows"]["7d"] = {"remaining": "??", "reset_at": NOW + 3600, "state": "FRESH"}
+    budget = bp.build_budget(status, None, NOW)
+    assert budget["accounts"]["codex-a"]["state"] == "UNREADABLE"
+    code, result = bc.run(_home_with(tmp_path, budget), 900.0, NOW, None)
+    assert not any("its windows say" in p for p in result["problems"]), result["problems"]
+    assert result["accounts"]["codex-a"] == "UNREADABLE"
+
+
 def test_account_fresh_over_a_non_fresh_window_is_red(tmp_path: Path):
     budget = bp.build_budget(_status("UNKNOWN"), None, NOW)
     budget["accounts"]["codex-a"]["state"] = "FRESH"

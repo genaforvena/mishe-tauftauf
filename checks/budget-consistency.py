@@ -13,7 +13,7 @@ Checks (RED when any fails):
     file is separately rejected as UNKNOWN once produced_at is older than --max-age.
   - a window with a non-numeric used/remaining/reset_at/observed_at field
   - an account whose state disagrees with its windows (FRESH needs every window FRESH and at
-    least one window; UNREADABLE needs no windows; otherwise STALE)
+    least one window; UNREADABLE needs no windows or a malformed window; otherwise STALE)
   - an account marked FRESH with no windows
   - decision level (live file only): the pinned scheduler's admission (yielding.spare_budget, run in a fresh
     interpreter from runtime/current/src) disagrees with the admission rule recomputed from raw fields (FRESH account
@@ -119,7 +119,9 @@ def check_accounts(data: dict, produced_at: float, max_age: float) -> tuple[list
             # a malformed window already reported; the account cannot be judged fully
             summary[account] = "MALFORMED"
             continue
-        if not windows:
+        if not windows or row.get("malformed"):
+            # the producer marks an account with a malformed window UNREADABLE even when other
+            # windows read fine (budget_producer.build_budget): non-admitting, never FRESH
             expect = "UNREADABLE"
         elif all(s == "FRESH" for s in shown):
             expect = "FRESH"
