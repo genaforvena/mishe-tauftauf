@@ -84,7 +84,7 @@ def rows_from_engine_budget(home, now):
     """Rows for ``evaluate`` from the producer's engine/budget.json (the one budget source since the 2026-11-12 cutover).
 
     The verdict keeps the pre-cutover rule: LOW on a spent window (used > 0.9), RUNS OUT BEFORE RESET when the burn ETA
-    lands before the reset, otherwise ok. A forecast on a window below ``BURN_FORECAST_MIN_USED`` is a short-span
+    lands before the reset, otherwise ok. A forecast on a window at or below ``BURN_FORECAST_MIN_USED`` is a short-span
     extrapolation and stays ok. An unreadable file, a malformed account or a stale observation becomes an error row or
     a non-FRESH row, so ``evaluate`` reports UNKNOWN.
     """
@@ -127,7 +127,9 @@ def rows_from_engine_budget(home, now):
                 verdict = "STALE"
             elif used > 0.9:
                 verdict = "LOW"
-            elif used < BURN_FORECAST_MIN_USED:
+            elif round(used, 6) <= BURN_FORECAST_MIN_USED:
+                # round(): engine/budget.json stores 5% as 0.050000000000000044, which must not
+                # clear the short-span guard by float noise (2026-11-21 codex-a 7d RED at 1.6 h elapsed).
                 verdict = "ok"
             elif ((account, window) not in PROJECTION_ACCEPTED
                   and isinstance(eta, (int, float)) and not isinstance(eta, bool) and now + eta < reset):

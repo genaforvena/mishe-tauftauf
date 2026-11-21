@@ -144,6 +144,21 @@ def test_unsupported_provider_contract_stays_unknown():
     assert budget.evaluate(rows(), "go-a", now=100)[0] == "UNKNOWN"
 
 
+@pytest.mark.parametrize("used,expected", [(0.050000000000000044, "GREEN"), (0.06, "RED")])
+def test_short_span_guard_holds_at_the_five_percent_boundary(tmp_path, used, expected):
+    # 2026-11-21: codex-a 7d read used=0.050000000000000044 about 1.6 h into the window and fired a
+    # RUNS OUT forecast; the guard is "at or below 5%", so float noise at the boundary must not flip it.
+    now = 10_000.0
+    data = _engine_budget(now)
+    data["accounts"]["codex-a"] = {"state": "FRESH", "windows": {
+        "5h": dict(used=0.2, reset_at=now + 3600, observed_at=now - 10, state="FRESH", eta_s=None),
+        "7d": dict(used=used, reset_at=now + 166 * 3600, observed_at=now - 10, state="FRESH", eta_s=109_922),
+    }}
+    _write_engine_budget(tmp_path, data)
+    result = budget.publish(tmp_path, budget.rows_from_engine_budget(tmp_path, now), now=now)
+    assert result["accounts"]["codex-a"]["state"] == expected
+
+
 def test_codex_forecast_is_published_beside_claude(tmp_path):
     now = 10_000.0
     data = _engine_budget(now)
