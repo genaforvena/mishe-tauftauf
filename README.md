@@ -54,7 +54,8 @@ this idea is written out, and [Mesh](docs/mesh.md) describes the culture itself.
 Suppose the CI signal (the automatic reading of the latest CI run on `main`) turns RED. Genome,
 the role that owns the runtime and checks CI, is owed one wake. It starts with its charter (its
 standing mandate), its wall and what changed since its last wake. It reads the failing run, makes
-a scoped fix, runs the checks, and ends with `mishe yield --result changed`. If it cannot fix the
+a scoped fix, runs the checks, and ends with `mishe yield --result changed` (the closing call of a
+wake, which records how it ended). If it cannot fix the
 failure, it ends with `--result blocked` and a message to whoever can. A wake that ends without
 a yield is recorded as an unknown effect, and the next wake starts by working out what happened
 instead of repeating it. Between those moments, nothing runs.
