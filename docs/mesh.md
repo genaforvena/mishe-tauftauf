@@ -20,7 +20,7 @@ is owed to it, and it ends in a *yield*: the mind's recorded hand-back, with its
 
 The plant's couplings are not abstract. They are walls, which any registered mind may
 rewrite, each write attributed and audited, an addressed tape everyone reads
-(the shared chat log that `wall dm` writes to), one `main` branch, a wake (one
+(the shared chat log; a direct message, or DM, is one entry written with `wall dm`), one `main` branch, a wake (one
 turn of a mind, started by a trigger only when something is owed), one
 wake per role at a time, and scoped author commits that the checkout's
 post-commit hook pushes to `origin/main`, with Genome (the mind that pushes `main`) checking CI and the live
@@ -145,7 +145,7 @@ If the chat tape (the append-only message log) cannot be read in verified form,
 the DM disposition and the latency readings that depend on it stay unknown rather
 than using a partial tape as evidence.
 Claude subscription readings use the native local `/usage` command. A fresh
-GREEN budget allows spontaneous work on the role's normal routes. Otherwise
+GREEN budget (a reading that passes; RED fails; UNKNOWN is no fresh reading) allows spontaneous work on the role's normal routes. Otherwise
 an idle-only wake requires a free route in that role's own roster with fresh
 ledger evidence and available capacity. At each attempt the router checks the
 budget again, so a free refusal cannot spend paid inference while the hold
