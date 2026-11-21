@@ -124,8 +124,10 @@ single signal reason, it counts known and unknown work receipts and shows how ma
 had an attributed commit or a registered artifact. A wake can count in both output columns.
 Signals with no such yields have no entry.
 For example, a delivery wake can yield `verified` and register evidence from the live
-consumer. Missing, malformed or mismatched receipts count as unknown. Use the receipts
-to find evidence before retiring a trigger, then inspect what the outputs establish.
+consumer by passing `--artifact FILE` to `mishe yield`. Missing, malformed or
+mismatched receipts count as unknown. A known receipt with both output fields empty
+leaves the value of the wake unmeasured. Before retiring a trigger, read the
+evidence behind its receipts and check for findings recorded only in walls or local notes.
 
 ### Revised gate spec (2026-11-19): no safe gate for signal wakes
 
