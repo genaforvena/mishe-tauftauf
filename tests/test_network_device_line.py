@@ -7,6 +7,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 
 
@@ -19,6 +21,7 @@ def load(path, name):
 
 sys.path.insert(0, str(REPO / "tools"))
 view = load(REPO / "tools" / "network_view.py", "network_view_device_line_under_test")
+care = load(REPO / "checks" / "network-care.py", "network_care_device_line_under_test")
 
 
 def point_at(monkeypatch, tmp_path, rows):
@@ -51,6 +54,7 @@ def test_silent_device_is_named_not_shown_as_fast(monkeypatch, tmp_path):
         {"ts": now - 60, "devices": {"iPad-Rozalia": {"ok": False, "why": "timeout"}}},
     ])
     line = view.devices_line(now=now)
+    assert line.startswith("UNKNOWN")
     assert "iPad-Rozalia no reply (timeout)" in line
     assert "ms avg" not in line
 
@@ -61,7 +65,9 @@ def test_old_row_is_marked_stale(monkeypatch, tmp_path):
         {"ts": now - 40 * 60, "devices": {"iMac-Rozalia": {"ok": True, "avg_ms": 5.0, "loss_pct": 0.0}}},
     ])
     line = view.devices_line(now=now)
-    assert "read 40 min ago  STALE" in line
+    assert line.startswith("UNKNOWN")
+    assert "40 min old (STALE)" in line
+    assert "ms avg" not in line
 
 
 def test_malformed_lines_are_skipped(monkeypatch, tmp_path):
@@ -70,3 +76,64 @@ def test_malformed_lines_are_skipped(monkeypatch, tmp_path):
     log.write_text("not json\n" + json.dumps({"ts": now - 30, "devices": {"iMac-Rozalia": {"ok": True, "avg_ms": 4.0, "loss_pct": 0.0}}}) + "\n")
     monkeypatch.setattr(view, "DEVICES_LOG", log)
     assert "iMac-Rozalia 4 ms avg" in view.devices_line(now=now)
+
+
+def test_future_row_is_unknown_in_view_and_detector(monkeypatch, tmp_path):
+    now = 10_000.0
+    rows = [{"ts": now + 60, "devices": {"Example": {"ok": True, "avg_ms": 4.0, "loss_pct": 0.0}}}]
+    point_at(monkeypatch, tmp_path, rows)
+    assert care.devices_state(rows, now)[0] == 3
+    line = view.devices_line(now=now)
+    assert line.startswith("UNKNOWN")
+    assert "from the future" in line
+    assert "ms avg" not in line
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        {"ok": True, "avg_ms": 4.0},
+        {"ok": True, "avg_ms": 4.0, "loss_pct": "broken"},
+        {"ok": True, "avg_ms": float("nan"), "loss_pct": 0.0},
+        {"ok": True, "avg_ms": 4.0, "loss_pct": 100.0},
+    ],
+)
+def test_invalid_reply_is_unknown_in_view_and_detector(monkeypatch, tmp_path, reply):
+    now = 10_000.0
+    rows = [{"ts": now - 30, "devices": {"Example": reply}}]
+    point_at(monkeypatch, tmp_path, rows)
+    line = view.devices_line(now=now)
+    assert line.startswith("UNKNOWN")
+    assert "Example" in line
+    assert "ms avg" not in line
+
+    code, message = care.devices_state(rows, now)
+    assert code == 3
+    assert "Example" in message
+
+
+def test_newer_empty_row_does_not_hide_behind_an_older_reply(monkeypatch, tmp_path):
+    now = 10_000.0
+    rows = [
+        {"ts": now - 90, "devices": {"Example": {"ok": True, "avg_ms": 4.0, "loss_pct": 0.0}}},
+        {"ts": now - 30, "devices": {}},
+    ]
+    point_at(monkeypatch, tmp_path, rows)
+    assert view.devices_line(now=now).startswith("UNKNOWN")
+    assert care.devices_state(rows, now)[0] == 3
+
+
+@pytest.mark.parametrize("broken_row", [b'{"ts":', b'{"ts": null}', b'\xff'])
+def test_unreadable_newest_row_is_unknown_in_view_and_detector(monkeypatch, tmp_path, capsys, broken_row):
+    now = 10_000.0
+    network = tmp_path / "network"
+    network.mkdir()
+    log = network / "devices.jsonl"
+    good_row = {"ts": now - 60, "devices": {"Example": {"ok": True, "avg_ms": 4.0, "loss_pct": 0.0}}}
+    log.write_bytes(json.dumps(good_row).encode() + b"\n" + broken_row + b"\n")
+    monkeypatch.setattr(view, "DEVICES_LOG", log)
+    monkeypatch.setattr(care.time, "time", lambda: now)
+
+    assert view.devices_line(now=now).startswith("UNKNOWN")
+    assert care.devices(tmp_path) == 3
+    assert "unreadable" in capsys.readouterr().err

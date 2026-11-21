@@ -810,34 +810,32 @@ def router_health_line(now=None):
 
 
 DEVICES_LOG = SITE / "network" / "devices.jsonl"
-STALE_DEVICES_S = 15 * 60  # same ceiling the network-care devices detector uses
 
 
 def devices_line(now=None):
-    """Per-device ping from the newest recorded row: average, loss and the age of that row.
-
-    A device that did not answer is named as no reply, never shown as a fast one. No row at all, or
-    a row older than STALE_DEVICES_S, is UNKNOWN rather than a calm line."""
+    """Show the newest per-device average, loss and age, or why the reading is UNKNOWN."""
     now = time.time() if now is None else now
     try:
-        text = DEVICES_LOG.read_text()
-    except OSError:
-        return "UNKNOWN (no per-device ping reading recorded yet)"
-    fresh = [r for r in nb.decode_json_lines(text) if isinstance(r, dict)
-             and isinstance(r.get("ts"), (int, float)) and isinstance(r.get("devices"), dict) and r["devices"]]
-    if not fresh:
-        return "UNKNOWN (no per-device ping reading recorded yet)"
-    last = max(fresh, key=lambda r: r["ts"])
-    ago = now - last["ts"]
+        rows = nb.read_device_ping_rows(DEVICES_LOG)
+    except FileNotFoundError:
+        return "UNKNOWN (no per-device ping reading yet)"
+    except (OSError, ValueError):
+        return "UNKNOWN (per-device ping log is unreadable)"
+    devices, age, problem = nb.device_ping_sample(rows, now)
+    if problem:
+        return f"UNKNOWN ({problem})"
+
     parts = []
-    for name, res in sorted(last["devices"].items()):
-        if isinstance(res, dict) and res.get("ok") and isinstance(res.get("avg_ms"), (int, float)):
-            parts.append(f"{name} {res['avg_ms']:.0f} ms avg, {float(res.get('loss_pct') or 0):.0f}% loss")
+    unknown = False
+    for name, result in sorted(devices.items()):
+        problem = nb.device_ping_reply_problem(result)
+        if problem:
+            parts.append(f"{name} {problem}")
+            unknown = True
         else:
-            why = res.get("why", "no reply") if isinstance(res, dict) else "no reply"
-            parts.append(f"{name} no reply ({why})")
-    stale = "  STALE" if ago > STALE_DEVICES_S else ""
-    return "; ".join(parts) + f"; read {max(ago, 0) / 60:.0f} min ago{stale}"
+            parts.append(f"{name} {result['avg_ms']:.0f} ms avg, {result['loss_pct']:.0f}% loss")
+    status = "UNKNOWN: " if unknown else ""
+    return status + "; ".join(parts) + f"; read {age / 60:.0f} min ago"
 
 
 def _data_size(n):

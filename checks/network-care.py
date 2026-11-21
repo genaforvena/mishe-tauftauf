@@ -506,41 +506,26 @@ def load(home):
     return code
 
 
-DEVICES_MAX_AGE_S = 900      # the newest per-device row must be this fresh, else UNKNOWN
-
-
 def devices_state(rows, now):
-    """Judge the per-device ping reading from network/devices.jsonl.
-
-    Row shape: {"ts", "devices": {name: {"ok", "avg_ms", "loss_pct"} | {"ok": false, "why"}}}.
-    Returns (code, message): 0 GREEN, 2 RED, 3 UNKNOWN. Only a fresh row where every named device
-    answered is GREEN; a device whose ping failed or could not run is UNKNOWN naming it, because a
-    dead probe must never look like a calm house. Slowness is reported in the message, not judged
-    here: the window owns how slow is worth showing.
-    """
-    fresh = [r for r in rows if isinstance(r, dict) and isinstance(r.get("ts"), (int, float))
-             and isinstance(r.get("devices"), dict) and r["devices"]]
-    if not fresh:
-        return 3, "network-care: no per-device ping reading yet"
-    newest = max(fresh, key=lambda r: r["ts"])
-    ago = now - newest["ts"]
-    if ago > DEVICES_MAX_AGE_S:
-        return 3, f"network-care: newest per-device ping reading is {ago / 60:.0f} min old"
-    if ago < -5:
-        return 3, "network-care: per-device ping reading is from the future"
-    silent = [name for name, res in sorted(newest["devices"].items())
-              if not isinstance(res, dict) or not res.get("ok")]
-    if silent:
-        return 3, ("network-care: no ping reply from " + ", ".join(silent)
-                   + " in the newest per-device read (UNKNOWN, not a pass)")
+    """Return 0 GREEN when all replies are usable, or 3 UNKNOWN with the reason."""
+    readings, _, problem = nb.device_ping_sample(rows, now)
+    if problem:
+        return 3, f"network-care: {problem}"
+    entries = sorted(readings.items())
+    problems = [f"{name} {problem}" for name, result in entries
+                if (problem := nb.device_ping_reply_problem(result))]
+    if problems:
+        return 3, "network-care: per-device ping UNKNOWN (" + "; ".join(problems) + ")"
     parts = [f"{name} {res['avg_ms']:.1f} ms avg, {res['loss_pct']:.0f}% loss"
-             for name, res in sorted(newest["devices"].items())]
+             for name, res in entries]
     return 0, "network-care: devices GREEN (" + "; ".join(parts) + ")"
 
 
 def devices(home):
-    rows = router_readings(home, "devices.jsonl")
-    if rows is None:
+    try:
+        rows = nb.read_device_ping_rows(home / "network" / "devices.jsonl")
+    except (OSError, ValueError) as exc:
+        print(f"network-care: per-device ping log unreadable: {exc}", file=sys.stderr)
         return 3
     code, message = devices_state(rows, time.time())
     print(message, file=sys.stderr if code else sys.stdout)

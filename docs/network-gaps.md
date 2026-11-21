@@ -20,7 +20,7 @@ shown), **MISSING** (not measured or not shown).
 | Latency to a couple of regional hosts | MISSING | only two secure sites are checked (gstatic, cloudflare) |
 | Packet loss | PARTLY | loss to the router only (`loss_pct`, "worst loss"); no loss to the internet |
 | Jitter | BUILT | `jitter_ms` is the mdev of the 5 gateway pings from ping's summary line (`rust/mishe-network-probe`, `ping()`/`rtt()`); it is the spread of the round-trip times, not RFC 3550 jitter. Shown as "jitter N ms" in `gateway_line()`, or "jitter UNKNOWN" when absent |
-| Per-device reach (each named household device) | BUILT | `devices_line()`, the `DEVICE PING` line: each named device's average ping, loss and the age of the newest row in `network/devices.jsonl`; a device that did not answer is named "no reply" with its reason; no row or a row older than 15 minutes is UNKNOWN. Its detector is `network-device-reach` in `duties.json` |
+| Per-device reach (each named household device) | BUILT | The [DEVICE PING line](network-view.md) shows each device's average ping, loss and the reading's age. Failed replies, unreadable results and invalid or expired readings show UNKNOWN. Its detector is `network-device-reach` in `duties.json` |
 | DNS lookup time | BUILT | `dns_ms` line with sparkline |
 | HTTPS time to stable sites | PARTLY | two sites (gstatic.com, cloudflare.com), full time and "failed in last 40" |
 

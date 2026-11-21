@@ -152,11 +152,13 @@ is not mistaken for a quiet mind.
   `wan_link`, or the kernel reports no speed; a step backwards in the last hour (a reboot
   or driver reset) still counts the drops since it and reads "at least N in the last hour
   (counters reset by a reboot)", never "none". STALE past 15 minutes.
-- `DEVICE PING`: one entry per named household device from the newest row of
-  `network/devices.jsonl`: its average ping and loss, or "no reply" with the reason when it did not
-  answer, so a slow device shows in its own entry instead of hiding behind a healthy router. The age
-  of that row is printed; no row, or a row older than 15 minutes, is UNKNOWN (the line says STALE past
-  15 minutes). A silent device is never shown as a fast one.
+- `DEVICE PING` shows each named household device's average ping and loss, along with the age
+  of the newest reading in `network/devices.jsonl`. The line shows UNKNOWN when a device did
+  not answer or its result is unreadable, and names the affected device. A missing or unreadable
+  reading, a timestamp more than five seconds in the future, or a reading older than 15 minutes
+  also shows UNKNOWN. Readings older than 15 minutes are marked STALE. The five-minute
+  `network-device-reach` duty logs the same problems and lets its last GREEN expire 15 minutes
+  after the last usable observation.
 - `router (LAN)` (in the reachability table): the newest probe's latency, loss and jitter beside a
   sparkline, then the worst packet loss across all loaded probe rows. That worst spans the whole
   loaded window, not the 40 probes in the sparkline next to it, so the line names its span

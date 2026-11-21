@@ -5,6 +5,7 @@ The speed reading's own log is decoded here too, so tools/network_speed.py reads
 values and never parses text itself.
 """
 import json
+import math
 import os
 import re
 import time
@@ -474,6 +475,64 @@ def counter_steps(values):
 def decode_router_rows(text):
     """Router log rows that carry a numeric ``ts``, oldest first. Malformed lines are skipped."""
     return [row for row in decode_json_lines(text) if isinstance(row.get("ts"), (int, float))]
+
+
+DEVICE_PING_MAX_AGE_S = 15 * 60
+
+
+def read_device_ping_rows(path):
+    """Expose an unreadable final row even when the log contains older usable samples."""
+    text = path.read_text(encoding="utf-8").rstrip()
+    if not text:
+        return []
+    history, _, last = text.rpartition("\n")
+    newest = decode_json_lines(last)
+    if not newest:
+        raise ValueError("newest per-device ping row is unreadable")
+    return decode_json_lines(history) + newest
+
+
+def _nonnegative_number(value):
+    try:
+        return type(value) in (int, float) and value >= 0 and math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def device_ping_sample(rows, now):
+    """Return (devices, age in seconds, problem) for the newest timestamped sample."""
+    if not rows:
+        return None, None, "no per-device ping reading yet"
+    last = rows[-1]
+    if not isinstance(last, dict) or not _nonnegative_number(last.get("ts")):
+        return None, None, "newest per-device ping timestamp is unreadable"
+    timed = [row for row in rows if isinstance(row, dict) and _nonnegative_number(row.get("ts"))]
+    newest = max(timed, key=lambda row: row["ts"])
+    age = now - newest["ts"]
+    if age > DEVICE_PING_MAX_AGE_S:
+        return None, age, f"newest per-device ping reading is {age / 60:.0f} min old (STALE)"
+    if age < -5:
+        return None, age, "per-device ping reading is from the future"
+    devices = newest.get("devices")
+    if not isinstance(devices, dict) or not devices:
+        return None, age, "newest per-device ping row has no device results"
+    return devices, max(age, 0), None
+
+
+def device_ping_reply_problem(result):
+    """Describe a failed or malformed reply, or return None for a usable measurement."""
+    if not isinstance(result, dict):
+        return "unreadable ping result"
+    if result.get("ok") is False:
+        why = result.get("why")
+        return f"no reply ({why})" if isinstance(why, str) and why else "no reply"
+    avg = result.get("avg_ms")
+    loss = result.get("loss_pct")
+    if result.get("ok") is not True:
+        return "unreadable ping result"
+    if not _nonnegative_number(avg) or not _nonnegative_number(loss) or loss >= 100:
+        return "unreadable ping result"
+    return None
 
 
 def stderr_summary(stderr, limit=120):
