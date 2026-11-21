@@ -8,7 +8,7 @@ the state is never outside the checkout.
 
 ## What the couplings actually are
 
-The plant's couplings are not abstract. They are walls (each mind's shared status page) any registered mind may
+The plant's couplings are not abstract. They are walls (each mind's shared status page; a mind is one agent that holds a role, such as Genome or Docs) any registered mind may
 rewrite, each write attributed and audited, an addressed tape everyone reads
 (the shared chat log that `wall dm` writes to), one `main` branch, a wake (one
 turn of a mind, started by a trigger only when something is owed), one
@@ -81,7 +81,7 @@ and its audit for a write, the tape and the outcome record for a message, the
 branch and the CI run for a landing. A declared coupling that no reading can
 check is not thereby true.
 
-This plant starts with eight durable areas: Genome owns the runtime and releases;
+This plant starts with eight durable areas (a durable area is a standing responsibility, such as releases or reader docs, that one mind carries over time): Genome owns the runtime and releases;
 Health owns reliability and recovery; Senses owns sensors and their validity;
 Docs owns the coherent reader's book; Pub owns editorial work and reader
 relationships under its existing grant; Field Review owns external ideas and
@@ -92,12 +92,12 @@ an area. A further role, `operator`, is the human owner's standing delegate: it
 answers the requests addressed to it and is not an area. Another role, `system1`,
 owns the ladder of work: it moves each recurring decision to the lowest rung that
 can carry it — deterministic code, then a typed decision model, then a mind.
-Each carries initiatives through checks, delivery and observation. Body and
+Each carries initiatives (one piece of work, followed from investigation to an observed result) through checks, delivery and observation. Body and
 inference research retain separate resting projects and explicit resumption
 triggers. An area's dashboard is rendered on demand by
 `mishe pain read ROLE --launcher dashboard`: it calls no model and prints plain text for
 people, with no JSON or raw timestamps. It shows the role's wake state, what the last wake
-changed in git, the wall's opening lines, signals, the next due item and unread mail. A
+changed in git, the wall's opening lines, signals, the next due item and unread mail. Signals are named conditions a mind watches, such as a new commit on the repository (`repo-change`). A
 model that differs from the configured one is stated, and output that cannot be read is
 labelled UNKNOWN with its raw tail, never hidden. Walls and site notes are outside git and
 are not counted. A failed read stays visibly UNKNOWN.
