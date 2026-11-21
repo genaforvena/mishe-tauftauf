@@ -1018,6 +1018,24 @@
       "replaces": []
     },
     {
+      "name": "household-features",
+      "command": [
+        "{python}",
+        "{repo}/tools/household_features.py",
+        "--site",
+        "{home}"
+      ],
+      "every": 900,
+      "timeout": 120,
+      "max_age": 2700,
+      "unknown_codes": [
+        4
+      ],
+      "resolver": "senses",
+      "covers": "hourly house-level feature store (features/house-hourly.jsonl) built from the household samplers: one row per complete UTC hour, derived numbers per room and device, absent source = no key (UNKNOWN), never zero; no readable source file exits UNKNOWN. The long-lived record for prediction nets; never trimmed by retention",
+      "replaces": []
+    },
+    {
       "name": "household-activity",
       "command": [
         "{python}",
