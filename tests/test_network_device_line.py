@@ -1,0 +1,72 @@
+"""The window's DEVICE PING line: a silent or stale device reading is never a calm line.
+
+Rows come from a temporary site; the line shows each device's average, its loss and the row's age.
+"""
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def load(path, name):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+sys.path.insert(0, str(REPO / "tools"))
+view = load(REPO / "tools" / "network_view.py", "network_view_device_line_under_test")
+
+
+def point_at(monkeypatch, tmp_path, rows):
+    log = tmp_path / "devices.jsonl"
+    if rows is not None:
+        log.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    monkeypatch.setattr(view, "DEVICES_LOG", log)
+
+
+def test_missing_log_is_unknown(monkeypatch, tmp_path):
+    point_at(monkeypatch, tmp_path, None)
+    assert view.devices_line(now=1000.0).startswith("UNKNOWN")
+
+
+def test_fresh_row_shows_average_loss_and_age(monkeypatch, tmp_path):
+    now = 10_000.0
+    point_at(monkeypatch, tmp_path, [
+        {"ts": now - 3600, "devices": {"iMac-Rozalia": {"ok": True, "avg_ms": 900.0, "loss_pct": 0.0}}},
+        {"ts": now - 120, "devices": {"iMac-Rozalia": {"ok": True, "avg_ms": 63.9, "loss_pct": 0.0}}},
+    ])
+    line = view.devices_line(now=now)
+    assert "iMac-Rozalia 64 ms avg, 0% loss" in line
+    assert "read 2 min ago" in line
+    assert "STALE" not in line
+
+
+def test_silent_device_is_named_not_shown_as_fast(monkeypatch, tmp_path):
+    now = 10_000.0
+    point_at(monkeypatch, tmp_path, [
+        {"ts": now - 60, "devices": {"iPad-Rozalia": {"ok": False, "why": "timeout"}}},
+    ])
+    line = view.devices_line(now=now)
+    assert "iPad-Rozalia no reply (timeout)" in line
+    assert "ms avg" not in line
+
+
+def test_old_row_is_marked_stale(monkeypatch, tmp_path):
+    now = 10_000.0
+    point_at(monkeypatch, tmp_path, [
+        {"ts": now - 40 * 60, "devices": {"iMac-Rozalia": {"ok": True, "avg_ms": 5.0, "loss_pct": 0.0}}},
+    ])
+    line = view.devices_line(now=now)
+    assert "read 40 min ago  STALE" in line
+
+
+def test_malformed_lines_are_skipped(monkeypatch, tmp_path):
+    now = 10_000.0
+    log = tmp_path / "devices.jsonl"
+    log.write_text("not json\n" + json.dumps({"ts": now - 30, "devices": {"iMac-Rozalia": {"ok": True, "avg_ms": 4.0, "loss_pct": 0.0}}}) + "\n")
+    monkeypatch.setattr(view, "DEVICES_LOG", log)
+    assert "iMac-Rozalia 4 ms avg" in view.devices_line(now=now)

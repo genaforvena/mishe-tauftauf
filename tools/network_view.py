@@ -809,6 +809,37 @@ def router_health_line(now=None):
             f"(limit: load {LOAD_LIMIT:g}, free RAM {MEM_FLOOR_MB:.0f} MB); read {age:.0f} s ago{stale}")
 
 
+DEVICES_LOG = SITE / "network" / "devices.jsonl"
+STALE_DEVICES_S = 15 * 60  # same ceiling the network-care devices detector uses
+
+
+def devices_line(now=None):
+    """Per-device ping from the newest recorded row: average, loss and the age of that row.
+
+    A device that did not answer is named as no reply, never shown as a fast one. No row at all, or
+    a row older than STALE_DEVICES_S, is UNKNOWN rather than a calm line."""
+    now = time.time() if now is None else now
+    try:
+        text = DEVICES_LOG.read_text()
+    except OSError:
+        return "UNKNOWN (no per-device ping reading recorded yet)"
+    fresh = [r for r in nb.decode_json_lines(text) if isinstance(r, dict)
+             and isinstance(r.get("ts"), (int, float)) and isinstance(r.get("devices"), dict) and r["devices"]]
+    if not fresh:
+        return "UNKNOWN (no per-device ping reading recorded yet)"
+    last = max(fresh, key=lambda r: r["ts"])
+    ago = now - last["ts"]
+    parts = []
+    for name, res in sorted(last["devices"].items()):
+        if isinstance(res, dict) and res.get("ok") and isinstance(res.get("avg_ms"), (int, float)):
+            parts.append(f"{name} {res['avg_ms']:.0f} ms avg, {float(res.get('loss_pct') or 0):.0f}% loss")
+        else:
+            why = res.get("why", "no reply") if isinstance(res, dict) else "no reply"
+            parts.append(f"{name} no reply ({why})")
+    stale = "  STALE" if ago > STALE_DEVICES_S else ""
+    return "; ".join(parts) + f"; read {max(ago, 0) / 60:.0f} min ago{stale}"
+
+
 def _data_size(n):
     """Bytes in plain words (B/KB/MB/GB), for traffic amounts a person can judge at a glance."""
     if n < 1024:
@@ -1833,6 +1864,7 @@ def draw():
     out.append("  WAN LINK      " + wan_link_line() + "   (read-only, speed and carrier drops)")
     out.append("  UPLINK RATE   " + uplink_rate_line())
     out.append("  ROUTER LOAD   " + router_health_line() + "   (read-only, one read per 5 min)")
+    out.append("  DEVICE PING   " + devices_line() + "   (named household devices, read-only pings)")
     out.append("  VPN           " + vpn_line() + "   (read-only, router process list and tun0)")
     out.append("  HOST GUARD    " + guard_line() + "   (read-only, marker file only)")
     exit_lines = exit_line().split("\n")
