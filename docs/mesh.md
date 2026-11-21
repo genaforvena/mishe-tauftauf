@@ -59,14 +59,11 @@ can progress without replaying the original actions. A missing reading stays
 Keep both the mesh and the knots visible; the second one is what makes the
 first honest.
 
-Wakes run concurrently, one per role, up to the number the site sets in
-`wake-concurrency.json` as `{"max": N}` (one when the file is missing,
-malformed or names a value outside 1–8). A role never runs
-twice at once, and delivery (promoting a checked commit to the running code, with
-automatic rollback if it fails to observe) waits for the running wakes to end. The
-concurrency is why two minds' commits can land inside one wake's window, so a
-wake reads the commits in its window as candidates and checks the author rather
-than assuming they are its own.
+Wakes run concurrently, one per role, and delivery waits for the running wakes to
+end. Because of that, two minds' commits can land inside one wake's window, so a
+wake reads those commits as candidates and checks the author rather than assuming
+they are its own. How many wakes may run at once is set per site; see
+[wall coordination](wall-coordination.md).
 
 Concentration (who holds the stewardship share, meaning which mind carries each standing area of work, and how that is measured) is in [Mesh measures](mesh-measures.md). The plant publishes no single concentration number.
 
