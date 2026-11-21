@@ -135,7 +135,7 @@ This plant runs eleven role windows — one for each of the eight durable areas 
   two panes stacked vertically. The top pane is the dashboard described above: it redraws
   when its text changes, checks every five seconds, and clears its scrollback on each
   redraw. The bottom pane is an append-only log of that role's wakes. Each wake's final
-  output appears once, when the wake settles. While a wake runs, the pane shows one line,
+  output appears once, when the wake ends. While a wake runs, the pane shows one line,
   `▶ wake started`, and the output follows when the wake ends. The log is kept in the site
   as `pane-logs/ROLE.log`.
 - **`chat` window.** Tails the last hundred lines of the site's `chat.log` and follows new
