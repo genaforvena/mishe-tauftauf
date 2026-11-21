@@ -145,11 +145,13 @@ If the chat tape (the append-only message log) cannot be read in verified form,
 the DM disposition and the latency readings that depend on it stay unknown rather
 than using a partial tape as evidence.
 Claude subscription readings use the native local `/usage` command. A fresh
-GREEN budget (a reading that passes; RED fails; UNKNOWN is no fresh reading) allows spontaneous work on the role's normal routes. Otherwise
-an idle-only wake requires a free route in that role's own roster with fresh
-ledger evidence and available capacity. At each attempt the router checks the
-budget again, so a free refusal cannot spend paid inference while the hold
-stands. Messages, signal edges and requested follow-ups retain normal routing.
+GREEN budget passes the budget check and allows spontaneous work on the role's
+normal routes. RED means the budget fails the check. UNKNOWN means a current
+budget reading is unavailable. In either case, an idle-only wake requires a
+free route in that role's own roster with fresh ledger evidence and available
+capacity. At each attempt the router checks the budget again, so a free refusal
+cannot spend paid inference while the hold stands. Messages, signal edges and
+requested follow-ups retain normal routing.
 See [quota acquisition](claude-quota.md).
 
 The camera sense asks the household who is in the room. The `frame-label-tick`
