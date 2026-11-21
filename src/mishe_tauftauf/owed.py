@@ -29,18 +29,19 @@ class Snapshot:
     signal_revs: dict = field(default_factory=dict)
     consumed: list = field(default_factory=list)
     tape_seq: int = 0
+    spontaneous_only: bool = False
 
     def to_json(self) -> dict:
         return {"reasons": self.reasons, "held": self.held, "inbox_ns": self.inbox_ns,
                 "signal_revs": self.signal_revs, "consumed": self.consumed,
-                "tape_seq": self.tape_seq}
+                "tape_seq": self.tape_seq, "spontaneous_only": self.spontaneous_only}
 
     @classmethod
     def from_json(cls, data: dict) -> "Snapshot":
         return cls(list(data.get("reasons", [])), list(data.get("held", [])),
                    int(data.get("inbox_ns", 0)), dict(data.get("signal_revs", {})),
                    list(data.get("consumed", [])),
-                   int(data.get("tape_seq", 0)))
+                   int(data.get("tape_seq", 0)), data.get("spontaneous_only") is True)
 
 
 def inbox_path(home, role: str) -> Path:
@@ -83,6 +84,7 @@ def tape_cursor(home, role: str) -> int:
 
 
 def _budget_green(home, now: float, role: str) -> bool:
+    """Whether the role's configured signal allows spending paid inference."""
     try:
         config = read_json(Path(home) / "engines" / f"{role}.json")
         config = {} if config is None else config
@@ -92,13 +94,7 @@ def _budget_green(home, now: float, role: str) -> bool:
         sig = signal_store.read(home, name, now=now)
     except (OSError, ValueError):
         return False
-    if sig.state == "OK" and sig.value == BUDGET_OK:
-        return True
-    # A free route has no account window, so the Claude budget signal cannot describe it.
-    # An admitted live free route admits spontaneous work; a missing, stale or retired
-    # free reading fails closed because it comes from the same budget view.
-    from . import yielding
-    return yielding.fresh_free_route(home, now)
+    return sig.state == "OK" and sig.value == BUDGET_OK
 
 
 def inbox_unread(home, role: str) -> bool:
@@ -113,6 +109,8 @@ def inbox_unread(home, role: str) -> bool:
 
 
 def check(home, role: str, *, now: float) -> Snapshot:
+    from . import engine_router
+
     cursor = _cursor(home, role)
     snap = Snapshot()
     if cursor is None:
@@ -135,18 +133,24 @@ def check(home, role: str, *, now: float) -> Snapshot:
                 # only when the reading is actionable (not OK: silence, expiry or a failed read).
                 if entry.get("wake_on", "change") != "state" or signal_store.read(home, name, now=now).state != "OK":
                     snap.reasons.append(f"signal:{name}")
-    green = None
+    spontaneous_allowed = None
+    spontaneous_count = 0
     for item in intentions.list_(home, role):
         if not intentions.is_met(home, item, now=now):
             continue
         tag = f"intention:{item['id']}"
         if item.get("spontaneous"):
-            green = _budget_green(home, now, role) if green is None else green
-            if not green:
+            if spontaneous_allowed is None:
+                spontaneous_allowed = _budget_green(home, now, role) or engine_router.has_free_route(
+                    home, role, now=now, require_slot=True
+                )
+            if not spontaneous_allowed:
                 snap.held.append(tag)
                 continue
+            spontaneous_count += 1
         snap.reasons.append(tag)
         snap.consumed.append(item["id"])
+    snap.spontaneous_only = bool(spontaneous_count) and spontaneous_count == len(snap.reasons)
     return snap
 
 

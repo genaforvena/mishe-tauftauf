@@ -129,20 +129,46 @@ def test_spare_budget_is_false_at_and_after_the_window_reset(tmp_path):
     assert yielding.idle_delay(home, "genome", 1000, yielding.DEFAULT_IDLE_SECONDS) == yielding.DEFAULT_IDLE_SECONDS
 
 
-def _free_budget(home, now, age=0, **changes):
+def _free_budget(home, now, age=0, role="genome", producer_age=0, **changes):
     row = dict(free=True, in_routes=True, verdict="FREE", observed_at=now - age)
     row.update(changes)
+    model = "opencode-go/hy4-flash-free"
     write_json(home / "engine" / "budget.json",
-               dict(accounts={}, free_models={"omp:opencode-go/hy4-flash-free:-": row}))
+               dict(schema=1, produced_at=now - producer_age, accounts={}, free_models={f"omp:{model}:-": row}))
+    write_json(home / "engine" / "routes.json", {
+        "version": 1, "roles": {role: [{"engine": "omp", "model": model, "free": True}]},
+    })
 
 
-def test_open_lane_with_a_fresh_free_route_returns_in_thirty_minutes(tmp_path):
+def test_open_lane_with_a_fresh_free_route_uses_the_shorter_pace(tmp_path):
     # hy4-flash has no account window, so spare_budget is False while the route is live in routes.json.
     home = tmp_path / "site"; home.mkdir(); _free_budget(home, 1000); _lane(home, "genome")
     _open(home, "genome", "w1"); _settle(home, "genome", "w1", 1000)
     assert yielding.spare_budget(home, 1000) is False
-    assert yielding.fresh_free_route(home, 1000) is True
     assert _idle_due(home, "genome") == 1000 + yielding.OPEN_LANE_SECONDS
+
+
+def test_free_route_for_another_role_keeps_the_slow_pace(tmp_path):
+    _free_budget(tmp_path, 1000, role="health")
+    _open(tmp_path, "genome", "w1")
+    _settle(tmp_path, "genome", "w1", 1000)
+    assert _idle_due(tmp_path, "genome") == 1000 + yielding.DEFAULT_IDLE_SECONDS
+
+
+def test_fresh_free_row_in_an_expired_budget_file_keeps_the_slow_pace(tmp_path):
+    _free_budget(tmp_path, 1000, age=1, producer_age=901)
+    _open(tmp_path, "genome", "w1")
+    _settle(tmp_path, "genome", "w1", 1000)
+    assert _idle_due(tmp_path, "genome") == 1000 + yielding.DEFAULT_IDLE_SECONDS
+
+
+def test_malformed_route_config_still_settles_the_wake(tmp_path):
+    _free_budget(tmp_path, 1000)
+    write_json(tmp_path / "engine" / "routes.json", {"version": 1, "roles": {}, "retired": None})
+    _open(tmp_path, "genome", "w1")
+    _settle(tmp_path, "genome", "w1", 1000)
+    assert yielding.receipt_path(tmp_path, "w1").exists()
+    assert _idle_due(tmp_path, "genome") == 1000 + yielding.DEFAULT_IDLE_SECONDS
 
 
 @pytest.mark.parametrize("changes,age", [
@@ -155,7 +181,6 @@ def test_open_lane_with_a_fresh_free_route_returns_in_thirty_minutes(tmp_path):
 def test_free_route_that_is_not_live_keeps_the_slow_pace(tmp_path, changes, age):
     home = tmp_path / "site"; home.mkdir(); _free_budget(home, 10000, age=age, **changes); _lane(home, "genome")
     _open(home, "genome", "w1"); _settle(home, "genome", "w1", 10000)
-    assert yielding.fresh_free_route(home, 10000) is False
     assert _idle_due(home, "genome") == 10000 + yielding.DEFAULT_IDLE_SECONDS
 
 

@@ -220,13 +220,14 @@ is 900 s.
 
 The checkout declares a `budget-consistency` duty in `duties.json`: every 300 s, timeout
 60 s, signal max age 900 s, resolver **steward**. Exit 2 routes RED and exit 3 records UNKNOWN
-immediately; a missing or stale observation is UNKNOWN. The check covers only the accounts section; the
-ledger and router checks remain `not_checked`. The duty is installed and running: the
+immediately, and a missing or stale observation is UNKNOWN. The check exercises the pinned
+wake caller against three synthetic RED-budget cases. It expects a paid-only role to stay
+idle, a mixed roster to select its free route and a free refusal to end without a paid call.
+The duty covers budget-account states, freshness, paid pacing and those idle-routing scenarios. The
 `mishe-producer-budget-consistency.timer` fires every 300 s, the unit runs the check from the
-pinned release, and the `budget-consistency` signal reads GREEN on a fresh run. The existing
-`budget` duty runs the producer, not this judge.
+pinned release and publishes the verdict as `budget-consistency`. The `budget` duty publishes the readings it judges.
 
-RED when any of:
+Rules 1–3 remain `not_checked` by this duty. Rule 4 applies to each production snapshot.
 
 1. A model with a ledger `select` in the last hour has no row in `engine/budget.json`.
 2. A candidate that `yielded` in the last 30 min sits under an account whose window says

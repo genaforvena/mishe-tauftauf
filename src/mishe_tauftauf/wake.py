@@ -372,6 +372,8 @@ def _ripgrep_guard(home) -> Path:
 
 
 def _execute_engine(home, role, key, *, engine, now, snap, mail, reconcile_of, repo, timeout, on_start=None):
+    from .engine_router import RoutedEngine
+
     snap.tape_seq = max([owed.tape_cursor(home, role)] + [seq for seq, _ in mail])
     yielding.wakes_dir(home).mkdir(parents=True, exist_ok=True)
     write_json(yielding.snapshot_path(home, key), {"role": role, "snapshot": snap.to_json()})
@@ -391,7 +393,14 @@ def _execute_engine(home, role, key, *, engine, now, snap, mail, reconcile_of, r
                    RIPGREP_CONFIG_PATH=str(_ripgrep_guard(home)))
         engine_started = time.monotonic()
         try:
-            code = engine.run(prompt, env=env, cwd=repo or Path(home), timeout=timeout, on_start=on_start)
+            options = {}
+            if snap.spontaneous_only and reconcile_of is None:
+                if isinstance(engine, RoutedEngine):
+                    options["spontaneous_only"] = True
+                elif not owed._budget_green(home, time.time(), role):
+                    raise EngineNotStarted("spontaneous work has no routed free engine or paid budget")
+            code = engine.run(prompt, env=env, cwd=repo or Path(home), timeout=timeout, on_start=on_start,
+                              **options)
         except EngineNotStarted as exc:
             return "failed", f"engine did not start: {exc}"
         except EngineTimeout as exc:

@@ -62,28 +62,27 @@ def spare_budget(home, now) -> bool:
             continue
     return False
 
-def fresh_free_route(home, now) -> bool:
-    """True when budget.json still shows a free route that routes.json admits.
-
-    A free route has no account window, so ``spare_budget`` cannot see it. Requiring
-    ``in_routes``, the producer's FREE verdict and a recent observation keeps this
-    evidence: a retired or stale free route does not hold the faster idle pace.
-    """
+def fresh_free_keys(home, now) -> set[str]:
+    """Candidate keys with a recent FREE row in the produced budget ledger."""
     data = _pacing_budget(home)
-    if not isinstance(data, dict) or not isinstance(data.get("free_models"), dict):
-        return False
-    for row in data["free_models"].values():
+    if not isinstance(data, dict) or data.get("schema") != budget_producer.SCHEMA:
+        return set()
+    produced_at = data.get("produced_at")
+    if type(produced_at) not in (int, float) or not now - budget_producer.MAX_AGE_S <= produced_at <= now:
+        return set()
+    models = data.get("free_models")
+    if not isinstance(models, dict):
+        return set()
+    fresh = set()
+    for key, row in models.items():
         if not isinstance(row, dict):
             continue
         if row.get("free") is not True or row.get("in_routes") is not True or row.get("verdict") != "FREE":
             continue
-        try:
-            age = now - float(row["observed_at"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if 0 <= age <= BUDGET_MAX_AGE:
-            return True
-    return False
+        observed_at = row.get("observed_at")
+        if type(observed_at) in (int, float) and now - BUDGET_MAX_AGE <= observed_at <= now:
+            fresh.add(key)
+    return fresh
 
 
 def open_lane(home, role) -> bool:
@@ -109,7 +108,11 @@ def _pending_recheck(home, role, now):
 
 
 def idle_delay(home, role, now, idle_seconds) -> float:
-    if idle_seconds == DEFAULT_IDLE_SECONDS and (spare_budget(home, now) or fresh_free_route(home, now)):
+    from . import engine_router
+
+    if idle_seconds == DEFAULT_IDLE_SECONDS and (
+        spare_budget(home, now) or engine_router.has_free_route(home, role, now=now, require_slot=False)
+    ):
         return OPEN_LANE_SECONDS if open_lane(home, role) else SPARE_IDLE_SECONDS
     return idle_seconds
 

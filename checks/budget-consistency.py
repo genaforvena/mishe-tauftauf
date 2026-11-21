@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Detector: engine/budget.json obeys the accounts-section fail-closed rules.
+"""Detector: budget accounts and spontaneous wake routing fail closed.
 
-Contract: docs/budget-json-contract.md, "budget-consistency duty". This slice checks only the
-accounts section the producer (src/mishe_tauftauf/budget_producer.py) writes today. The ledger and
-router rules (ledger select without a row, routing.roles selections) need sections that are not
-shipped yet; they are not judged here and are named in the output as not_checked.
+Contract: docs/budget-json-contract.md, "budget-consistency check". Live ledger reconciliation
+and router exhaustion are outside this check and appear in the output as not_checked.
 
 Checks (RED when any fails):
   - a window marked FRESH whose observed_at is older than --max-age, or whose reset_at is not in
@@ -20,6 +18,9 @@ Checks (RED when any fails):
   - decision level (live file only): the pinned scheduler's admission (yielding.spare_budget, run in a fresh
     interpreter from runtime/current/src) disagrees with the admission rule recomputed from raw fields (FRESH account
     and windows, age 0..900 s and within 3600 s, reset ahead, floor met). No pin, or a pin that cannot be run, is UNKNOWN.
+  - a pinned wake with only a due spontaneous intention under RED runs a paid candidate, or fails to
+    choose an available free candidate when one is in its own roster. Synthetic delegates record
+    selection and fallback without invoking a provider.
 
 Exit status:
   0  GREEN: every account row matches its windows and, at the file's own produced_at, no window is
@@ -48,6 +49,11 @@ WINDOW_STATES = {"FRESH", "STALE", "UNKNOWN", "UNATTRIBUTED", "UNREADABLE"}
 # Account rows are produced as FRESH, STALE or UNREADABLE only (budget_producer.build_accounts).
 ACCOUNT_STATES = {"FRESH", "STALE", "UNREADABLE"}
 NOT_CHECKED = ["ledger select rows (rule 1)", "cooling/routing exhaustion (rules 2-3)"]
+IDLE_ROUTING_EXPECTED = {
+    "other-role-free": [[], "skipped"],
+    "paid-first": [["free"], "completed"],
+    "free-refuses": [["free"], "failed"],
+}
 
 
 def _num(value) -> bool:
@@ -167,10 +173,64 @@ def raw_admission(data: dict, now: float) -> bool:
 # pinned bytes. The child prints the file it actually imported and the decision it actually made.
 _PROBE = """
 import json, sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import time
+from unittest.mock import patch
+
 src, home, now = sys.argv[1], sys.argv[2], float(sys.argv[3])
 sys.path.insert(0, src)
-from mishe_tauftauf import yielding
-print(json.dumps({"file": yielding.__file__, "decided": bool(yielding.spare_budget(home, now))}))
+from mishe_tauftauf import engine_router, engines, intentions, signal_store, wake, yielding
+from mishe_tauftauf.state_files import write_json
+
+role = "idle-budget-probe"
+paid = {"engine": "claude", "model": "claude-haiku-5-5", "account": None}
+free = {"engine": "omp", "model": "fixture/free", "account": None, "free": True}
+
+def exercise(site, roster, refuse=False):
+    clock = time.time()
+    write_json(site / "engine" / "routes.json", {"version": 1, "roles": {
+        role: roster, "other-role": [free],
+    }})
+    write_json(site / "engine" / "budget.json", {"schema": 1, "produced_at": clock, "accounts": {},
+        "free_models": {engine_router.candidate_key(free): {
+            "free": True, "in_routes": True, "verdict": "FREE", "observed_at": clock,
+        }},
+    })
+    signal_store.register(site, "budget", max_age=900, now=clock)
+    signal_store.observe(site, "budget", "RED", now=clock, source="budget-consistency")
+    intentions.add(site, role, "idle-initiative", note="Synthetic idle wake", due=clock, spontaneous=True)
+    engine = engines.for_role(site, role)
+    attempts = []
+
+    class Delegate:
+        def __init__(self, candidate):
+            self.free = candidate.get("free") is True
+
+        def run(self, prompt, *, env, cwd, timeout, on_start=None, hard_timeout=None):
+            attempts.append("free" if self.free else "paid")
+            if self.free and refuse:
+                raise wake.EngineRejected("synthetic refusal before tools")
+            yielding.settle(site, role, env["MISHE_WAKE_KEY"], text="Synthetic yield", result="verified",
+                            now=clock, wall_writer=lambda *_: None)
+            return 0
+
+    with patch.object(wake.wake_memory, "memory_high_path", return_value=None), patch.object(
+        engine, "_build", Delegate
+    ):
+        result = wake.run_wake(site, role, roles=[role], engine=engine, now=clock,
+                               starter=lambda *_: None, mail_reader=lambda *_: [])
+    return [attempts, result.outcome]
+
+with TemporaryDirectory(prefix="idle-budget-", dir=Path(home) / "engine") as path:
+    base = Path(path)
+    idle_routing = {
+        "other-role-free": exercise(base / "other", [paid]),
+        "paid-first": exercise(base / "rank", [paid, free]),
+        "free-refuses": exercise(base / "refusal", [free, paid], refuse=True),
+    }
+print(json.dumps({"file": yielding.__file__, "decided": bool(yielding.spare_budget(home, now)),
+                  "idle_routing": idle_routing}))
 """
 
 
@@ -198,16 +258,27 @@ def check_admission(home: Path, data: dict, now: float) -> tuple[list, dict]:
         probe = json.loads(proc.stdout)
         imported = Path(probe["file"]).resolve()
         decided = probe["decided"]
+        routing = probe["idle_routing"]
     except (ValueError, KeyError, TypeError):
         return [], {"available": False, "reason": "pinned scheduler probe printed no decision", "scheduler_src": str(src)}
     if not imported.is_relative_to(src) or not isinstance(decided, bool):
         return [], {"available": False, "reason": f"imported {imported}, not under the pin {src}", "scheduler_src": str(src)}
+    if not isinstance(routing, dict) or routing.keys() != IDLE_ROUTING_EXPECTED.keys() or any(
+        not isinstance(row, list) or len(row) != 2 or not isinstance(row[0], list)
+        or not isinstance(row[1], str) for row in routing.values()
+    ):
+        return [], {"available": False, "reason": "pinned scheduler probe printed no idle routing evidence",
+                    "scheduler_src": str(src)}
     raw = raw_admission(data, now)
     summary = {"available": True, "decided": decided, "raw": raw, "scheduler_src": str(src),
-               "scheduler_file": str(imported)}
+               "scheduler_file": str(imported), "idle_routing": routing}
+    problems = []
     if decided != raw:
-        return [f"admission disagrees: scheduler spare_budget={decided}, raw fields={raw}"], summary
-    return [], summary
+        problems.append(f"admission disagrees: scheduler spare_budget={decided}, raw fields={raw}")
+    for case, expected in IDLE_ROUTING_EXPECTED.items():
+        if routing[case] != expected:
+            problems.append(f"RED-budget idle routing {case}: observed {routing[case]!r}, expected {expected!r}")
+    return problems, summary
 
 
 def run(home: Path, max_age: float, now: float, path: Path | None) -> tuple[int, dict]:

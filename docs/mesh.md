@@ -154,14 +154,13 @@ make an old phone sample current.
 If the chat tape framer is unavailable or returns an unverifiable stream, the
 DM disposition and dependent gate-latency readings remain unknown rather than
 using a partial tape as evidence.
-Claude subscription readings use the native local `/usage` command without a
-model request. They renew independently of an interactive chat window; failed
-or stale readings hold spontaneous work. Fresh readings still have to satisfy
-the existing budget forecast. A live free route has no account window, so its
-admitted reading in `engine/budget.json` is separate evidence: it admits
-spontaneous work at the faster idle pace even while the Claude verdict is RED
-or unreadable. A missing, stale or retired free reading never does. See
-[quota acquisition](claude-quota.md).
+Claude subscription readings use the native local `/usage` command. A fresh
+GREEN budget allows spontaneous work on the role's normal routes. Otherwise
+an idle-only wake requires a free route in that role's own roster with fresh
+ledger evidence and available capacity. At each attempt the router checks the
+budget again, so a free refusal cannot spend paid inference while the hold
+stands. Messages, signal edges and requested follow-ups retain normal routing.
+See [quota acquisition](claude-quota.md).
 
 The camera sense asks the household who is in the room. The `frame-label-tick`
 duty runs every five minutes: it sweeps frames that got no answer, applies the

@@ -18,7 +18,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from mishe_tauftauf import budget_producer as bp  # noqa: E402
-from mishe_tauftauf import yielding  # noqa: E402
+from mishe_tauftauf import owed, producers, signal_store, yielding  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("budget_consistency", REPO / "checks" / "budget-consistency.py")
 bc = importlib.util.module_from_spec(_spec)
@@ -217,3 +217,31 @@ def test_detector_judges_the_pinned_bytes_not_the_checkout(tmp_path: Path):
     code, result = bc.run(home, 900.0, NOW, None)
     assert code == bc.GREEN, result
     assert result["admission"]["scheduler_file"].startswith(str((REPO / "src").resolve()))
+    assert result["admission"]["idle_routing"] == bc.IDLE_ROUTING_EXPECTED
+
+
+def test_regressed_idle_fallback_publishes_red_and_wakes_steward(tmp_path, monkeypatch):
+    pin = tmp_path / "pin-src"
+    shutil.copytree(REPO / "src", pin)
+    router = pin / "mishe_tauftauf" / "engine_router.py"
+    source = router.read_text()
+    gate = "free_only = spontaneous_only and not owed._budget_green(self.home, now, self.role)"
+    assert gate in source
+    router.write_text(source.replace(gate, "free_only = False", 1))
+    home = tmp_path / "home"
+    budget = _admit_budget(800.0)
+    (home / "engine").mkdir(parents=True)
+    (home / "engine" / "budget.json").write_text(json.dumps(budget))
+    _pin(home, pin)
+    name = "budget-consistency"
+    signal_store.register(home, name, max_age=900, subscribers=["steward"], now=NOW - 60)
+    signal_store.observe(home, name, "GREEN", now=NOW - 60, source="test")
+    owed.advance(home, "steward", owed.check(home, "steward", now=NOW - 60), now=NOW - 60)
+    monkeypatch.setattr(producers, "_restore_memory_floor", lambda *_: {"unit": None})
+    check = [sys.executable, "-B", bc.__file__, "--home", str(home), "--now", str(NOW)]
+
+    assert producers.run(home, name, check, now=NOW, timeout=60, red_codes=(2,)) == 0
+    assert signal_store.read(home, name, now=NOW).value == "RED"
+    assert f"signal:{name}" in owed.check(home, "steward", now=NOW).reasons
+    detail = json.loads((home / "signals" / f"{name}.detail").read_text())
+    assert detail["admission"]["idle_routing"]["free-refuses"] == [["free", "paid"], "completed"]

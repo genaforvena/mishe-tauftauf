@@ -247,11 +247,14 @@ def test_settle_when_without_again_sets_a_paired_deadline(tmp_path):
 
 
 def _free_budget(home, now, age=0, **changes):
-    from mishe_tauftauf.state_files import write_json
     row = dict(free=True, in_routes=True, verdict="FREE", observed_at=now - age)
     row.update(changes)
+    model = "opencode-go/hy4-flash-free"
     write_json(home / "engine" / "budget.json",
-               dict(accounts={}, free_models={"omp:opencode-go/hy4-flash-free:-": row}))
+               dict(schema=1, produced_at=now, accounts={}, free_models={f"omp:{model}:-": row}))
+    write_json(home / "engine" / "routes.json", {
+        "version": 1, "roles": {"genome": [{"engine": "omp", "model": model, "free": True}]},
+    })
 
 
 def test_live_free_route_admits_spontaneous_work_despite_red_budget(home):

@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from mishe_tauftauf import arm, intentions, owed, signal_store as store, wake, yielding
+from mishe_tauftauf import arm, engine_router as router, engines, intentions, owed, signal_store as store, wake, yielding
 from mishe_tauftauf.core.state import DispatchStore
+from mishe_tauftauf.state_files import write_json
 
 ROLES = ["genome", "health", "docs"]
 NOW = 1000.0
@@ -53,6 +54,87 @@ def test_spurious_trigger_makes_no_model_call_and_leaves_no_trace(home):
     result = go(home, "genome", engine)
     assert result.outcome == "skipped" and engine.calls == []
     assert DispatchStore(home / "dispatch").read("genome") is None
+
+
+@pytest.mark.parametrize(("scenario", "calls", "outcome"), [
+    ("other-role-free", [], "skipped"),
+    ("paid-first", ["free"], "completed"),
+    ("free-refuses", ["free"], "failed"),
+    ("free-cooling", [], "skipped"),
+    ("free-at-capacity", [], "skipped"),
+    ("green-to-red", ["paid", "free"], "completed"),
+    ("inbox", ["paid"], "completed"),
+    ("signal", ["paid"], "completed"),
+    ("follow-up", ["paid"], "completed"),
+])
+def test_budget_gate_through_dispatch_and_fallback(home, monkeypatch, scenario, calls, outcome):
+    now = time.time()
+    paid = {"engine": "claude", "model": "claude-haiku-5-5", "account": None}
+    free = {"engine": "omp", "model": "fixture/free", "free": True, "account": None, "max_parallel": 1}
+    key = router.candidate_key(free)
+    roster = [paid, free]
+    if scenario == "other-role-free":
+        roster = [paid]
+    elif scenario in {"free-refuses", "free-cooling", "free-at-capacity"}:
+        roster = [free, paid]
+    elif scenario == "green-to-red":
+        roster = [paid, dict(paid, model="claude-sonnet-5-5"), free]
+    write_json(home / "engine" / "routes.json", {"version": 1, "roles": {"genome": roster, "docs": [free]}})
+    write_json(home / "engine" / "budget.json", {"schema": 1, "produced_at": now, "accounts": {},
+               "free_models": {key: {"free": True, "in_routes": True, "verdict": "FREE", "observed_at": now}}})
+    store.register(home, "budget", max_age=900, now=now)
+    store.observe(home, "budget", "GREEN" if scenario == "green-to-red" else "RED", now=now, source="test")
+    intentions.add(home, "genome", "idle-initiative", note="idle fixture", due=now, spontaneous=True)
+    if scenario == "free-cooling":
+        router._save_state(home, {"cooling": {key: (now + 900) * 1000}})
+    elif scenario == "free-at-capacity":
+        router.record(home, {"event": "select", "wake": "another-wake", "key": key}, now_ms=now * 1000)
+    elif scenario == "inbox":
+        owed.touch_inbox(home, "genome")
+    elif scenario == "signal":
+        store.observe(home, "ci", "RED", now=now, source="test")
+    elif scenario == "follow-up":
+        intentions.add(home, "genome", "follow-up", note="requested fixture", due=now)
+
+    attempted = []
+
+    class Delegate:
+        def __init__(self, candidate):
+            self.free = candidate.get("free", False)
+
+        def run(self, prompt_file, *, env, cwd, timeout, on_start=None, hard_timeout=None):
+            attempted.append("free" if self.free else "paid")
+            if scenario == "free-refuses":
+                raise wake.EngineRejected("synthetic refusal before tools")
+            if scenario == "green-to-red" and not self.free:
+                store.observe(home, "budget", "RED", now=time.time(), source="test")
+                raise wake.EngineNotStarted("synthetic refusal before start")
+            yielding.settle(home, "genome", env["MISHE_WAKE_KEY"], text="synthetic yield",
+                            result="verified", now=now, wall_writer=lambda *_: None)
+            return 0
+
+    monkeypatch.setattr(wake.wake_memory, "memory_high_path", lambda _unit: None)
+    engine = engines.for_role(home, "genome")
+    monkeypatch.setattr(engine, "_build", Delegate)
+    result = wake.run_wake(home, "genome", roles=["genome"], engine=engine, now=now,
+                           mail_reader=lambda *_: [], starter=lambda *_: None)
+    assert attempted == calls
+    assert result.outcome == outcome
+
+
+def test_legacy_idle_checks_paid_budget_at_engine_launch(home, monkeypatch):
+    queued = time.time() - 901
+    store.register(home, "budget", max_age=900, now=queued)
+    store.observe(home, "budget", "GREEN", now=queued, source="test")
+    intentions.add(home, "genome", "idle-initiative", note="idle fixture", due=queued, spontaneous=True)
+    monkeypatch.setattr(wake.wake_memory, "memory_high_path", lambda _unit: None)
+    engine = FakeEngine(do_yield)
+
+    assert owed.check(home, "genome", now=queued).spontaneous_only
+    result = wake.run_wake(home, "genome", roles=["genome"], engine=engine, now=queued,
+                           mail_reader=lambda *_: [], starter=lambda *_: None)
+    assert engine.calls == []
+    assert result.outcome == "failed"
 
 
 def test_owed_wake_runs_engine_with_dossier_and_yield_completes(home):
