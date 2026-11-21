@@ -88,7 +88,7 @@ without new evidence that beats the base rate.
 
 The 2026-11-19 request for a first-class `signal:moving-pin-delivery` wake gate was
 declined on measured evidence. The proposed System 0 rule skipped a wake when its
-dossier matched the role's last and that wake verified, but `same_dossier_as_last`
+dossier (the context packet a wake is handed, see [How a mind chooses](how-a-mind-chooses.md)) matched the role's last and that wake verified, but `same_dossier_as_last`
 is true on 0 of 605 signal starts and 0 of 618 inbox starts in the ledger — it
 occurs only on intention wakes (55/143). The rule would skip zero of the 72 daily
 moving-pin wakes; its "last wake verified" fallback would have skipped 63 of them,
