@@ -27,13 +27,34 @@ def is_transient(error):
     return str(error).split(':')[0] in TRANSIENT_UNKNOWN
 
 
-def command(argv, timeout=10, deadline=None):
-    if deadline is not None:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise ValueError("consumer inventory budget exhausted")
-        timeout = min(timeout, remaining)
-    return subprocess.check_output(argv, text=True, timeout=timeout)
+USER_BUS_READ_RETRIES = 2
+"""Extra attempts for a read-only ``systemctl --user`` query: a user-bus disconnect is transient.
+
+2026-11-21 run 005235 rolled back ffa5725d on ``Failed to get properties: Message recipient
+disconnected from message bus without replying`` from one ``show``; the same query succeeded
+seconds later. A read-only query is safe to repeat; a failure still raises after the last try.
+"""
+
+
+def command(argv, timeout=10, deadline=None, sleep=time.sleep):
+    retries = USER_BUS_READ_RETRIES if list(argv[:2]) == ['systemctl', '--user'] else 0
+    for attempt in range(retries + 1):
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError("consumer inventory budget exhausted")
+            attempt_timeout = min(timeout, remaining)
+        else:
+            attempt_timeout = timeout
+        try:
+            return subprocess.check_output(argv, text=True, timeout=attempt_timeout)
+        except subprocess.CalledProcessError:
+            if attempt == retries:
+                raise
+            if deadline is not None:
+                sleep(max(0.0, min(1.0, deadline - time.monotonic())))
+            else:
+                sleep(1.0)
 
 
 def _cmd(argv, deadline=None):

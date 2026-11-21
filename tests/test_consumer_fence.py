@@ -351,3 +351,42 @@ def test_cgroup_pids_reads_the_group_and_its_child_groups(tmp_path):
     (group / 'cgroup.procs').write_text('31\n32\n')
     (child / 'cgroup.procs').write_text('33\n')
     assert fence.cgroup_pids('/mishe-plants.slice/mishe-x.service', root=root) == [31, 32, 33]
+
+
+def test_user_bus_read_retries_a_transient_disconnect(monkeypatch):
+    """A read-only systemctl --user query that hits a bus disconnect is repeated, then succeeds (2026-11-21)."""
+    calls = []
+
+    def flaky(argv, text=True, timeout=None):
+        calls.append(list(argv))
+        if len(calls) == 1:
+            raise fence.subprocess.CalledProcessError(1, argv)
+        return 'Triggers=mishe-x.service\n'
+    monkeypatch.setattr(fence.subprocess, 'check_output', flaky)
+    assert fence.command(['systemctl', '--user', 'show', 'mishe-x.timer', '-p', 'Triggers', '--value'],
+                         sleep=lambda s: None) == 'Triggers=mishe-x.service\n'
+    assert len(calls) == 2
+
+
+def test_user_bus_read_raises_after_the_last_retry(monkeypatch):
+    calls = []
+
+    def dead(argv, text=True, timeout=None):
+        calls.append(1)
+        raise fence.subprocess.CalledProcessError(1, argv)
+    monkeypatch.setattr(fence.subprocess, 'check_output', dead)
+    with pytest.raises(fence.subprocess.CalledProcessError):
+        fence.command(['systemctl', '--user', 'show', 'mishe-x.timer'], sleep=lambda s: None)
+    assert len(calls) == fence.USER_BUS_READ_RETRIES + 1
+
+
+def test_non_systemctl_command_is_not_retried(monkeypatch):
+    calls = []
+
+    def fails(argv, text=True, timeout=None):
+        calls.append(1)
+        raise fence.subprocess.CalledProcessError(1, argv)
+    monkeypatch.setattr(fence.subprocess, 'check_output', fails)
+    with pytest.raises(fence.subprocess.CalledProcessError):
+        fence.command(['git', 'status'], sleep=lambda s: None)
+    assert len(calls) == 1
