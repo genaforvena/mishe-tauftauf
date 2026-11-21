@@ -96,11 +96,12 @@ that carries a provider `retry-after-ms` waits that interval instead, capped at 
 ```sh
 mishe hold on --reason "first install"
 mishe sync --repo "$PWD" --pythonpath "$PWD/src"
-mishe doctor                # exits 0 only when GREEN; RED exits 1 and prints each problem
+mishe doctor                # exits 0 only when GREEN; RED exits 1 and prints each problem; UNKNOWN exits 3
 ```
 
 The doctor prints GREEN when every check passes and RED when a check fails.
-Its stored signal reads UNKNOWN if the result is missing, unreadable or too old.
+Its stored signal reads UNKNOWN if the result is missing, unreadable or too old; the
+command then exits 3, so a script treats anything other than 0 as not ready.
 
 `sync` writes the user units (`mishe-wake@.service`, a path unit per role, *producer*
 timers, `mishe-failed@`, the doctor). A producer is a timer that runs one check, writes its
