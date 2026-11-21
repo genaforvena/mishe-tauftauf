@@ -159,9 +159,9 @@ following.
 Senses' readings renew independently every ten minutes. `mishe discover show`
 shows the acquisition freshness and each source's state; a new host scan cannot
 make an old phone sample current.
-If the chat tape framer is unavailable or returns an unverifiable stream, the
-DM disposition and dependent gate-latency readings remain unknown rather than
-using a partial tape as evidence.
+If the chat tape (the append-only message log) cannot be read in verified form,
+the DM disposition and the latency readings that depend on it stay unknown rather
+than using a partial tape as evidence.
 Claude subscription readings use the native local `/usage` command. A fresh
 GREEN budget allows spontaneous work on the role's normal routes. Otherwise
 an idle-only wake requires a free route in that role's own roster with fresh
