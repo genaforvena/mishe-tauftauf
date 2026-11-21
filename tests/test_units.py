@@ -752,3 +752,17 @@ def test_live_review_retry_units_reads_only_units_that_will_still_fire():
     # A manager that cannot answer is not evidence of a live unit: the scan falls
     # back to re-arming, never to silence.
     assert units.live_review_retry_units(run=broken) == {}
+
+
+def test_timer_period_inside_the_host_start_budget_is_clear():
+    # 2026-11-21: a 60 s dispatch timer hit start-limit-hit under burst 3 per 300 s (about every other tick).
+    # 120 s gives at most three starts per window, which the budget allows.
+    assert units.start_budget_violation(120) is None
+    assert units.start_budget_violation(300) is None
+
+
+def test_timer_period_that_exceeds_the_host_start_budget_is_reported():
+    reason = units.start_budget_violation(60)
+    assert reason is not None and "6 times" in reason and "allows 3" in reason
+    assert units.start_budget_violation(100) is not None
+    assert units.start_budget_violation(60, burst=6) is None

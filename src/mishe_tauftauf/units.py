@@ -323,6 +323,29 @@ def render(cfg: Config, roles, *, producers=(), resolvers=None) -> dict:
 TIMER_ACCURACY_S = 5
 """The timer's ``AccuracySec``: a run may start this late past its period. Paired with ``timer_jitter``."""
 
+HOST_START_BURST = 3
+HOST_START_INTERVAL_S = 300
+"""The start budget the protected host drop-in gives each plant unit (``StartLimitBurst``/``StartLimitIntervalSec``).
+
+Owned by the human host guard, not by these units: this constant mirrors it so a check can compare timers to it.
+"""
+
+
+def start_budget_violation(every_seconds: int, *, burst: int = HOST_START_BURST,
+                           interval_s: int = HOST_START_INTERVAL_S) -> str | None:
+    """Return a reason when a timer of this period can exceed its start budget, else None.
+
+    A timer never fires sooner than ``every_seconds`` after its last run (the random delay only adds).
+    So the most starts that fit in one ``interval_s`` window is ``interval_s // every_seconds + 1``;
+    systemd refuses the start that would make that count exceed ``burst``. 2026-11-21: a 60 s dispatch
+    timer under burst 3 per 300 s could hit start-limit-hit on about one tick in two.
+    """
+    worst = interval_s // max(1, every_seconds) + 1
+    if worst > burst:
+        return (f"period {every_seconds}s can start {worst} times in {interval_s}s; "
+                f"the host start budget allows {burst}")
+    return None
+
 
 def timer_jitter(every_seconds: int) -> int:
     """The producer timer's ``RandomizedDelaySec``: a quarter of the period, capped at 120 s.
