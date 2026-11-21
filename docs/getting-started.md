@@ -102,7 +102,16 @@ mishe doctor                # exits 0 only when GREEN; RED exits 1 and prints ea
 
 The doctor prints GREEN when every check passes and RED when a check fails.
 Its stored signal reads UNKNOWN if the result is missing, unreadable or too old; the
-command then exits 3, so a script treats anything other than 0 as not ready.
+command then exits 3, so a script treats anything other than 0 as not ready. If the doctor
+cannot run at all (for example step 2 was skipped, so a Rust binary is missing), it prints
+the error and exits 2.
+
+A fresh site is usually RED here, and that is expected. The repository declares duties
+(recurring checks) whose resolver (the role that acts on the check) is a role `init` does
+not create: `network`, `operator`, `pub`, `rust-plan`, `steward` and `system1`. Each one shows as
+`resolver role 'X' has no charter`. GREEN needs a charter for each of them in
+`SITE_HOME/charters/`, or you accept the RED while you read on. Lines that name a host's
+own units or probes (for example `wrapper` or `root-fs probe`) depend on the machine, not on the install.
 
 `sync` writes the user units (`mishe-wake@.service`, a path unit per role, *producer*
 timers, `mishe-failed@`, the doctor). A producer is a timer that runs one check, writes its
