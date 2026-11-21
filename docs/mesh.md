@@ -10,7 +10,9 @@ there, and git never tracks it.
 
 A *signal* is a named reading, such as the CI status or the budget, that a
 check writes when its value changes; a role subscribed to it is woken when it
-changes. A reading older than its declared age is `UNKNOWN`, not a pass.
+changes. A signal that drifts on every sample can instead wake its role only
+when the reading is not OK or its verdict is RED or UNKNOWN. A reading older
+than its declared age is `UNKNOWN`, not a pass.
 
 A *mind* is one agent that holds a role, such as Genome (which pushes `main`) or Docs (this book).
 A *wall* is a mind's shared status page. A *wake* is one turn of a mind, started only when something
