@@ -47,16 +47,31 @@ def _touch_seen(home, name: str, at: float) -> None:
 DEFAULT_SUBSCRIBERS = {"moving-pin-delivery": ("field-review",)}
 
 
-def registry(home) -> dict:
+def _raw_registry(home) -> dict:
     data = read_json(_dir(home) / "registry.json")
     if data is None:
         return {}
     if not isinstance(data, dict):
         raise ValueError("signal registry must be an object")
+    return _with_defaults(data)
+
+
+def _with_defaults(data: dict) -> dict:
     for name, roles in DEFAULT_SUBSCRIBERS.items():
-        if name in data:
+        if isinstance(data.get(name), dict):
             data[name]["subscribers"] = sorted(set(data[name].get("subscribers", [])) | set(roles))
     return data
+
+
+def registry(home) -> dict:
+    """Readers' view: object entries only. A malformed (non-object) entry is named and judged UNKNOWN by
+    signal-coverage; it must not crash the readers (admission, expiry, next-expiry) that run beside it."""
+    return {name: entry for name, entry in _raw_registry(home).items() if isinstance(entry, dict)}
+
+
+def _registry_for_write(home) -> dict:
+    """Writers' view: every stored entry, malformed ones included, so an unrelated write keeps the evidence."""
+    return _raw_registry(home)
 
 
 def register(home, name: str, *, max_age: float, subscribers=(), reoffer: float | None = None,
@@ -75,8 +90,8 @@ def register(home, name: str, *, max_age: float, subscribers=(), reoffer: float 
         raise ValueError("max_age must be positive")
     if wake_on not in ("change", "state"):
         raise ValueError("wake_on must be 'change' or 'state'")
-    data = registry(home)
-    previous = data.get(name) or {}
+    data = _registry_for_write(home)
+    previous = data[name] if isinstance(data.get(name), dict) else {}
     registered_at = previous.get("registered_at", time.time() if now is None else now)
     data[name] = {"max_age": float(max_age), "subscribers": sorted(set(subscribers)),
                   "registered_at": float(registered_at), "wake_on": wake_on}
@@ -277,10 +292,10 @@ def retire(home, name: str, *, now: float, reason: str) -> list:
     if text is None:
         raise ValueError("retire needs a reason")
     _check_name(name)
-    reg = registry(home)
+    reg = _registry_for_write(home)
     if name not in reg:
         raise ValueError(f"signal {name!r} is not registered")
-    subscribers = list(reg[name].get("subscribers", []))
+    subscribers = list(reg[name].get("subscribers", [])) if isinstance(reg[name], dict) else []
     _append_edge(home, {"name": name, "state": "RETIRED", "value": None, "reason": text,
                         "event": None, "at": float(now), "source": "retire", "rev": rev(home, name) + 1})
     del reg[name]
@@ -322,9 +337,11 @@ def expire(home, *, now: float) -> list[str]:
     grace (registration + max_age) too, so a missing monitor wakes its subscribers once. Names changed.
     """
     changed = []
-    reg = registry(home)
+    reg = _registry_for_write(home)
     stamped = False
     for name, entry in sorted(reg.items()):
+        if not isinstance(entry, dict):
+            continue                                     # malformed: judged by signal-coverage, kept on disk
         if _never_observed(home, name):
             if entry.get("registered_at") is None:
                 entry["registered_at"] = float(now)      # legacy entry: the grace starts at this sweep
