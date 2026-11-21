@@ -99,6 +99,8 @@ mishe sync --repo "$PWD" --pythonpath "$PWD/src"
 mishe doctor                # exits 0 only when GREEN; RED exits 1 and prints each problem
 ```
 
+GREEN means every check passes; RED means at least one check fails; UNKNOWN means there is no fresh reading.
+
 `sync` writes the user units (`mishe-wake@.service`, a path unit per role, *producer*
 timers, `mishe-failed@`, the doctor). A producer is a timer that runs one check, writes its
 signal and exits; it is the only thing that polls and enables the paths and timers.
