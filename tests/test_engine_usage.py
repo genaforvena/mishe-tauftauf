@@ -462,7 +462,7 @@ def _budget(produced_at, observed_at=None, reset_in=3600):
     observed = now if observed_at is None else observed_at
     return {'schema': 1, 'produced_at': produced_at, 'accounts': {'go-a': {
         'provider': 'opencode-go', 'state': 'FRESH',
-        'windows': {'7d': {'remaining': 0.5, 'observed_at': observed, 'reset_at': now + reset_in}}}}}
+        'windows': {'7d': {'remaining': 0.5, 'observed_at': observed, 'reset_at': now + reset_in, 'state': 'FRESH'}}}}}
 
 
 def test_unreported_account_names_the_budget_file_reading_it_routes_on(tmp_path):
@@ -511,3 +511,27 @@ def test_malformed_budget_file_does_not_break_engine_status(tmp_path):
     omp = fake_omp(tmp_path, json.dumps(usage_doc()))
     row = dashboard(home, omp, now=time.time() * 1000)['accounts']['go-a']
     assert (row['state'], row['reason']) == ('UNKNOWN', 'no provider report')
+
+
+def _budget_with_windows(windows):
+    return {'schema': 1, 'produced_at': time.time(), 'accounts': {'go-a': {
+        'provider': 'opencode-go', 'state': 'FRESH', 'windows': windows}}}
+
+
+def test_fresh_label_with_no_windows_is_unreadable_as_the_router_reads_it(tmp_path):
+    home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
+    (home / 'engine').mkdir(exist_ok=True)
+    (home / 'engine' / 'budget.json').write_text(json.dumps(_budget_with_windows({})))
+    omp = fake_omp(tmp_path, json.dumps(usage_doc()))
+    row = dashboard(home, omp, now=time.time() * 1000)['accounts']['go-a']
+    assert row['budget_json']['state'] == 'UNREADABLE'
+
+
+def test_fresh_window_missing_remaining_is_unreadable_not_fresh(tmp_path):
+    home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
+    (home / 'engine').mkdir(exist_ok=True)
+    w = {'observed_at': time.time(), 'reset_at': time.time() + 3600, 'state': 'FRESH'}
+    (home / 'engine' / 'budget.json').write_text(json.dumps(_budget_with_windows({'7d': w})))
+    omp = fake_omp(tmp_path, json.dumps(usage_doc()))
+    row = dashboard(home, omp, now=time.time() * 1000)['accounts']['go-a']
+    assert row['budget_json']['state'] == 'UNREADABLE'

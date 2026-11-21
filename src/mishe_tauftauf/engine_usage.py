@@ -283,13 +283,26 @@ def _reaged_state(entry, now_s):
     every window it names is still observed within MAX_AGE_S and not yet reset (budget_producer's one rule)."""
     if entry.get('state') != 'FRESH':
         return entry.get('state') or 'UNKNOWN'
+    # Mirrors engine_router._budget_windows/_row_state: a window needs a numeric remaining and reset_at,
+    # no usable window is UNREADABLE, any stale window is STALE, and a malformed one makes the row UNREADABLE.
     windows = entry.get('windows')
-    if not isinstance(windows, dict):
+    rows, malformed, stale = 0, 0, False
+    for w in (windows.values() if isinstance(windows, dict) else []):
+        if not isinstance(w, dict) or not _is_num(w.get('remaining')) or not _is_num(w.get('reset_at')):
+            malformed += 1
+            continue
+        rows += 1
+        if w.get('state') != 'FRESH' or not budget_producer.window_fresh_at(w.get('observed_at'), w.get('reset_at'), now_s):
+            stale = True
+    if not rows:
+        return 'UNREADABLE'
+    if stale:
         return 'STALE'
-    for w in windows.values():
-        if not isinstance(w, dict) or not budget_producer.window_fresh_at(w.get('observed_at'), w.get('reset_at'), now_s):
-            return 'STALE'
-    return 'FRESH'
+    return 'UNREADABLE' if malformed else 'FRESH'
+
+
+def _is_num(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and x == x and x not in (float('inf'), float('-inf'))
 
 
 def _label_budget_authority(home, rows, now_ms):
