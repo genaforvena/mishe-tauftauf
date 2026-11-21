@@ -541,10 +541,16 @@ def test_producer_reads_the_declared_event_and_keeps_it_out_of_the_reason(tmp_pa
     from mishe_tauftauf import producers, signal_store
     detail = tmp_path / "x.detail"
     detail.write_text("signal-coverage: RED: ignored: alpha\nignored: alpha\nsignal-event: abc123def456aa11\n")
-    assert producers._declared_event(detail) == "abc123def456aa11"
+    from mishe_tauftauf import coverage_event
+    assert coverage_event.declared_event("signal-coverage", detail) == "abc123def456aa11"
+    # Only the declaring duty may declare: another check's prose line is never an event.
+    assert coverage_event.declared_event("devto", detail) is None
+    prose = tmp_path / "z.detail"
+    prose.write_text("ok\nsignal-event: ordinary prose one\n")
+    assert coverage_event.declared_event("devto", prose) is None
     plain = tmp_path / "y.detail"
     plain.write_text("check failed\n")
-    assert producers._declared_event(plain) is None
+    assert coverage_event.declared_event("signal-coverage", plain) is None
     home = tmp_path / "home"
     home.mkdir()
     signal_store.register(home, "gamma", max_age=600.0, subscribers=("steward",), now=NOW)

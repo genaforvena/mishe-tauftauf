@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import signal_store, units, wake_memory
+from . import coverage_event, signal_store, units, wake_memory
 from .core.state import DispatchStore
 from .engine_process import run_bounded
 from .state_files import detail_brief, read_json, write_json
@@ -119,27 +119,12 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
     reason = detail_brief(detail, REASON_MAX) if code != 0 else ""
     # A check may declare its RED's identity (checks/signal-coverage.py: a set of stable causes, no ages).
     # A new identity under the same RED is an edge, so subscribers wake on a new cause, not on age.
-    event = _declared_event(detail) if code != 0 else None
+    event = coverage_event.declared_event(name, detail) if code != 0 else None
     if event:
-        reason = reason.replace(f"{EVENT_MARK}{event}", "").strip()
+        reason = coverage_event.without_event(reason, event)
     signal_store.observe(home, name, "GREEN" if code == 0 else "RED", now=now,
                          source=f"run:{command[0]}", event=event, reason=reason)
     return 0
-
-
-EVENT_MARK = "signal-event: "   # keep in step with checks/signal-coverage.py EVENT_MARK
-
-
-def _declared_event(detail: Path) -> str | None:
-    """The check's declared event identity: its final ``signal-event: <digest>`` line, or None."""
-    try:
-        lines = Path(detail).read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return None
-    last = lines[-1].strip() if lines else ""
-    if last.startswith(EVENT_MARK):
-        return last[len(EVENT_MARK):].strip() or None
-    return None
 
 
 DISPATCH_OPEN_GRACE_S = 300.0
