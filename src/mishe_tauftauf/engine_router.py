@@ -572,6 +572,7 @@ def publish(home, *, now: float | None = None) -> dict:
 class RoutedEngine:
     """An engine whose candidate is chosen at each run from live windows and cool-offs."""
     name = "routed"
+    routed = True  # wake.py checks this flag; importing RoutedEngine there would be a cycle
 
     def __init__(self, home, role: str, routes: dict):
         self.home, self.role = Path(home), role
