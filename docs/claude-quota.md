@@ -25,8 +25,9 @@ producer and the budget pane expire readings after fifteen minutes (`MAX_AGE_S`
 900 s). Senses owns acquisition failures. The `budget-claude` signal carries the
 verdict and names the window and rule that triggered a RED. The tracked publisher registers
 that signal with no subscribers, so a site that wants the verdict routed registers its own
-resolver. The codex-a verdict is report-only: it travels in the publisher's result and
-the household budget view, with no second unattended RED signal.
+resolver. The codex-a verdict appears in the publisher's result and the household budget
+view. The `signal-coverage` duty reports a fresh RED codex-a verdict as a
+provider finding when `budget-codex` has no signal registration.
 
 The native report has display precision: whole percentage points and minute
 reset times. The result records that precision explicitly. The tolerance is one
@@ -66,21 +67,22 @@ Status: no code applies a 50% gate, and the router does not read the policy.
   verdict RED. The exception is the `claude` 7d window (`PROJECTION_ACCEPTED` in
   that module, since 2026-11-21): its burn projection is informational, so only a
   spent 7d window (`LOW`) turns it RED. The 5h window keeps the projection alarm.
-- A route candidate in `engine/routes.json` may set `reserve_pct` (a float in
-  `[0, 1)`, validated by `engine_router.load_routes`). It overrides the policy's
-  default reserve of 0.15 for that candidate only, so a subscription the owner has
-  chosen to spend closer to its limit can be routed to. Unset keeps 0.15.
+- The router compares each fresh account window's remaining fraction with the
+  candidate's reserve. The default is 15%. A candidate in `engine/routes.json`
+  can override that default with `reserve_pct`, a fraction in `[0, 1)`.
+  For example, at 93% weekly use, the provider verdict is RED for `LOW`.
+  A candidate with a 5% reserve can still be admitted because 7% remains,
+  provided its other window and route checks pass. With 4% remaining, that
+  candidate is held in reserve. The routing ledger's “all windows healthy” reason
+  describes the candidate's reserve check.
 - A role can use `budget-claude` to admit spontaneous intentions. The owed check
   also accepts fresh free-route evidence from the plant's budget snapshot, but only
   from that role's own roster in `engine/routes.json` (`free: true` candidates whose
   key has a fresh FREE row), and only when the router can choose one with a free
-  slot (`engine_router.has_free_route`, `require_slot=True`). The inner router then
-  selects a candidate for the role using its own eligibility, tier and cool-off rules. During a free route's cool-off it can select Haiku as the
-  Claude subscription fallback.
-- For candidates with a registered account, `engine_policy._classify_account` judges a window
-  by its remaining fraction against a reserve threshold of 15%, so a weekly
-  window at 60% or 80% used still classifies as healthy and admission depends
-  on the remaining fraction alone.
+  slot (`engine_router.has_free_route`, `require_slot=True`). While the paid
+  budget check fails, a wake admitted solely for spontaneous work can only try
+  free candidates. Addressed and scheduled follow-up work uses the role's
+  regular candidate roster.
 
 RouterAI is not a mind route any more. It was removed from every role in
 `engine/routes.json` on 2026-11-12 (operator DM 300461) and now sits in that
