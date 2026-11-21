@@ -10,7 +10,8 @@ with `mishe hold off` (step 5).
 ## 1. Prerequisites
 
 - Linux with a working user systemd manager (`systemctl --user status`), Python 3.10+
-  and Git.
+  and Git. On Python 3.10 only, the release path also needs `tomli`: run `pip install -e .`
+  in the clone (Python 3.11+ reads TOML from the standard library).
 - A Rust toolchain (`cargo` via rustup): step 2 builds the Rust components the
   site's readers need, each on the version pinned in its `rust/*/rust-toolchain.toml`.
 - At least one authenticated coding agent: **`claude`** (Claude Code), **`omp`**,
@@ -24,7 +25,7 @@ not an OS sandbox; use a repository and account you intend them to work in.
 
 ## 2. Install and create the site
 
-There is no install step for Mishe itself. Python 3.10 also needs `tomli` (`pip install -e .`) for the release path.
+There is no install step for Mishe itself.
 
 ```sh
 git clone https://github.com/genaforvena/mishe-tauftauf.git
