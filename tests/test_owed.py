@@ -53,6 +53,15 @@ def test_state_wake_signal_ignores_a_reading_drift_but_wakes_on_unknown(tmp_path
     assert owed.check(tmp_path, "health", now=800.0).reasons == ["signal:footprint"]
 
 
+def test_state_wake_signal_owes_on_a_fresh_red_verdict(tmp_path):
+    """signal-coverage (DM #304212): a fresh RED is observation state OK, yet its resolver must wake."""
+    store.register(tmp_path, "coverage", max_age=600, subscribers=["steward"], wake_on="state")
+    store.observe(tmp_path, "coverage", "GREEN", now=100.0, source="t")
+    owed.advance(tmp_path, "steward", owed.check(tmp_path, "steward", now=100.0))
+    store.observe(tmp_path, "coverage", "RED: ignored: network-device-reach lapsed", now=101.0, source="t")
+    assert owed.check(tmp_path, "steward", now=101.0).reasons == ["signal:coverage"]
+
+
 def test_change_wake_signal_still_owes_on_a_value_change(tmp_path):
     """The default is unchanged: a state-valued signal wakes its resolver on any value change."""
     store.register(tmp_path, "ci", max_age=60, subscribers=["genome"])

@@ -83,6 +83,14 @@ def tape_cursor(home, role: str) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
+def _actionable(sig) -> bool:
+    """A ``wake_on=state`` reading owes a wake when it is not OK, or when its verdict word is RED/UNKNOWN."""
+    if sig.state != "OK":
+        return True
+    verdict = str(sig.value or "").split(":", 1)[0].strip().upper()
+    return verdict in ("RED", "UNKNOWN")
+
+
 def _budget_green(home, now: float, role: str) -> bool:
     """Whether the role's configured signal allows spending paid inference."""
     try:
@@ -130,8 +138,10 @@ def check(home, role: str, *, now: float) -> Snapshot:
                 # worth a wake. A signal registered ``wake_on="state"`` carries a drifting reading
                 # (footprint: bytes of anon/charged memory, rewritten every sample); waking its
                 # resolver on every sample is a storm, and the wake would find nothing owed. It wakes
-                # only when the reading is actionable (not OK: silence, expiry or a failed read).
-                if entry.get("wake_on", "change") != "state" or signal_store.read(home, name, now=now).state != "OK":
+                # only when the reading is actionable: not OK (silence, expiry or a failed read), or a
+                # fresh OK reading whose verdict word is RED or UNKNOWN (signal-coverage, DM #304212:
+                # a fresh RED is observation state OK, so the state test alone never woke its resolver).
+                if entry.get("wake_on", "change") != "state" or _actionable(signal_store.read(home, name, now=now)):
                     snap.reasons.append(f"signal:{name}")
     spontaneous_allowed = None
     spontaneous_count = 0
