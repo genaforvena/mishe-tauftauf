@@ -11,6 +11,8 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("wake_view", REPO / "tools" / "wake_view.py")
 view = importlib.util.module_from_spec(spec)
@@ -95,8 +97,40 @@ def test_missing_or_empty_ledger_reports_unknown(tmp_path):
     assert "UNKNOWN" in view.render(tmp_path, 86400, NOW)
     engine = tmp_path / "engine"
     engine.mkdir()
-    (engine / "routing-ledger.jsonl").write_text("{torn\n")
-    assert "UNKNOWN" in view.render(tmp_path, 86400, NOW)
+    ledger = engine / "routing-ledger.jsonl"
+    for data in (b"", b"{torn\n", b"\xff\n"):
+        ledger.write_bytes(data)
+        assert "UNKNOWN" in view.render(tmp_path, 86400, NOW)
+
+
+@pytest.mark.parametrize("ending", [b"", b"\n"])
+def test_ledger_tail_skips_old_bytes_and_counts_torn_lines(tmp_path, monkeypatch, ending):
+    proc_io = Path("/proc/self/io")
+    if not proc_io.is_file():
+        pytest.skip("requires Linux process I/O accounting")
+
+    def bytes_read():
+        for line in proc_io.read_text().splitlines():
+            if line.startswith("rchar:"):
+                return int(line.split()[1])
+        pytest.fail("process I/O accounting is missing rchar")
+
+    monkeypatch.setattr(view, "LEDGER_TAIL_LINES", 2)
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    ledger = engine / "routing-ledger.jsonl"
+    at = "2026-11-20T03:42:00Z"
+    old = json.dumps({"at": at, "event": "select", "wake": "outside"}).encode()
+    current = json.dumps({"at": at, "event": "outcome", "wake": "inside"}).encode()
+    with ledger.open("wb") as handle:
+        handle.seek(8 * 1024 * 1024)
+        handle.write(b"\n" + old + b"\n{torn\n" + current + ending)
+
+    before = bytes_read()
+    events = view.load_events(tmp_path)
+    read = bytes_read() - before
+    assert [event["wake"] for event in events] == ["inside"]
+    assert read < 1024 * 1024, f"reading two lines consumed {read:,} bytes"
 
 
 def test_a_real_ledger_line_decodes_and_renders(tmp_path):

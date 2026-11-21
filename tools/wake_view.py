@@ -32,7 +32,7 @@ DEFAULT_HOME = Path(os.environ.get("MISHE_TAUFTAUF_HOME") or os.environ.get("MIS
                     or ".mishe-tauftauf")
 DEFAULT_WINDOW_S = 7 * 86400.0
 LEDGER_TAIL_LINES = 40000
-"""Bounded read: the retained ledger is a few MB; a tail cannot grow unbounded."""
+LEDGER_READ_BLOCK = 64 * 1024
 
 
 def decode(line: str) -> dict | None:
@@ -48,13 +48,28 @@ def decode(line: str) -> dict | None:
 
 
 def load_events(home: Path) -> list[dict] | None:
-    """Decode a bounded tail of the ledger; None when it cannot be read at all."""
+    """Decode the recent ledger lines without scanning older history."""
     ledger = Path(home) / "engine" / "routing-ledger.jsonl"
     try:
-        lines = ledger.read_text().splitlines()[-LEDGER_TAIL_LINES:]
-    except OSError:
+        with ledger.open("rb") as handle:
+            position = handle.seek(0, os.SEEK_END)
+            blocks = []
+            newlines = 0
+            # Count one extra newline to exclude a partial first line even
+            # when the final line ends in a newline.
+            while position and newlines <= LEDGER_TAIL_LINES:
+                size = min(position, LEDGER_READ_BLOCK)
+                position -= size
+                handle.seek(position)
+                block = handle.read(size)
+                if len(block) != size:
+                    return None
+                blocks.append(block)
+                newlines += block.count(b"\n")
+        lines = b"".join(reversed(blocks)).splitlines()[-LEDGER_TAIL_LINES:]
+        return [e for line in lines if (e := decode(line.decode("utf-8"))) is not None]
+    except (OSError, UnicodeError):
         return None
-    return [e for line in lines if (e := decode(line)) is not None]
 
 def first_wake_starts(events: list[dict]) -> dict[str, float]:
     """First recorded select per wake, including wakes with no recorded outcome."""
