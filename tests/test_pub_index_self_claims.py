@@ -116,6 +116,17 @@ def test_a_stale_post_count_is_found():
     assert any("published posts" in f for f in failures)
 
 
+def test_a_bold_count_in_the_newest_notice_is_the_claim_read():
+    """A count written in bold is still the page's claim, not an older notice's.
+
+    The newest notice sits first on the page and the detector reads the first
+    match.  If bold markup hid that match, the detector would read a count from
+    an older notice in the trail and report a false drift.
+    """
+    bold = PAGE.replace("holds 2 published posts", "holds **2 published posts")
+    assert _failures(bold) == []
+
+
 def test_a_stale_title_count_is_found():
     """The distinct-title count is checked separately from the post count.
 

@@ -180,7 +180,7 @@ def check(index_body: str, published: list[dict], bodies: dict[str, str],
         return match
 
     # 1. the post count and the title count
-    match = claim(r"holds ([\w-]+) published posts and ([\w-]+) distinct titles",
+    match = claim(r"holds \**([\w-]+) published posts and ([\w-]+) distinct titles",
                   "post and title counts")
     if match:
         want_posts = _number(match.group(1))
