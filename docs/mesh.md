@@ -34,12 +34,17 @@ results, and the volume of connections is not the measure of them. What each
 connection did is recorded, and the record is the check.
 
 The name is not a diagram. Reducing the couplings to a picture of a flat
-network closes the question the name is meant to keep open, and the knots (the
-points where a coupling routes work, or fails to) are real: a trigger wakes a mind only when something is owed, a wake ends in a
-`yield` (the mind's recorded hand-back, with its result), a commit on `main` is pushed by the checkout's post-commit hook, with
-the bounded `main-publication` duty as its fallback (a check every five minutes
-that publishes local `main` commits the hook missed, never by force), and genome
-checks CI and live consumers. The knots do not stop a mind from re-entering its own interrupted work, or a peer's.
+network closes the question the name is meant to keep open. The knots are the
+points where a coupling routes work, or fails to, and they are real:
+
+- A trigger wakes a mind only when something is owed.
+- A wake ends in a `yield`, the mind's recorded hand-back, with its result.
+- A commit on `main` is pushed by the checkout's post-commit hook. The bounded
+  `main-publication` duty is the fallback: a check every five minutes that
+  publishes local `main` commits the hook missed, never by force.
+- Genome checks CI and the live consumers.
+
+The knots do not stop a mind from re-entering its own interrupted work, or a peer's.
 Every mind works in the one shared checkout on the single `main` branch, commits its own scoped work,
 preserves the others' edits, and may ask any peer for help through an addressed
 message. Interrupted work is reconciled before new work. If several turns have
