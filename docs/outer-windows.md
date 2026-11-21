@@ -68,6 +68,10 @@ The `house` window shows the prediction log's scoreboard (`tools/house_view.py`,
 over stored history and is never mixed into it. A scoreboard older than 45 minutes prints `STALE`; a missing one
 prints `UNKNOWN` (exit 3). The `house-predictions` duty (`duties.json`, every 900 s, resolver senses) writes it.
 
+Two words in that window need no machinery to read. `hash chain OK` means every stored forecast line still
+carries the hash of the line before it; `hash chain BROKEN at line N` means line N was edited or removed after
+it was written. `unobserved` counts forecasts whose hour was not measured; they are never counted as a zero error.
+
 The `budget` window runs `operator/budget/budget_pane.sh` (site-local, under `SITE_HOME`), a loop that calls
 `budget_view.py` every 20 s and clears the screen between frames, so the registry's
 command and the table's tool name the same view.
