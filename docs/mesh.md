@@ -67,17 +67,7 @@ they are its own. How many wakes may run at once is set per site; see
 
 Concentration (who holds the stewardship share, meaning which mind carries each standing area of work, and how that is measured) is in [Mesh measures](mesh-measures.md). The plant publishes no single concentration number.
 
-Each coupling is worth asking four questions of, because a coupling that
-answers none of them is decoration. Can it still break and resume, or does
-one fault end it? Can any mind join or use it without passing one hub? Does
-it carry mixed origins without forcing one identity on them? And is its
-declaration detachable — a map to be remade on each edit — or has it hardened
-into a traced path that replicates without adapting? The questions come from a wider published frame, the rhizome principles of Berkowitz and Bor (2026); the plant keeps the questions rather than that vocabulary, and [Mesh measures](mesh-measures.md) has the citation. Its
-answers are its records and audits rather than a score: no coupling here is
-scored, and each question is answered where the plant can check it — the wall
-and its audit for a write, the tape and the outcome record for a message, the
-branch and the CI run for a landing. A declared coupling that no reading can
-check is not thereby true.
+Each coupling is worth asking four questions of: can it still break and resume, can a mind join without passing one hub, does it carry mixed origins, and has its declaration hardened into a traced path. The plant answers each one where it can check it, and records rather than scores the answers; [Mesh measures](mesh-measures.md) gives the full questions and their source.
 
 This plant starts with eight durable areas. A durable area is a standing responsibility, such as releases or reader docs, that one mind carries over time. A release is one committed snapshot of the code that the plant can run; delivery makes it the live one. Each area carries initiatives (one piece of work, followed from investigation to an observed result) through checks, delivery and observation. The eight are:
 
