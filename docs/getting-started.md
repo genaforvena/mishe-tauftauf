@@ -15,9 +15,9 @@ a model until you release the hold.
   **`codex`** (the `codex` CLI's own login), or **`qwen`** (Qwen Code).
   Mishe supplies neither the model nor credentials; usage counts against your plan.
 - Optional: GitHub CLI `gh` with repository access, for the CI reading. Without it
-  the CI signal stays UNKNOWN.
+  the CI signal stays UNKNOWN (no reading yet, so it is not claimed green).
 
-Waking agents run with your account's access and can change the checkout. This is
+Each agent run, called a *wake*, runs with your account's access and can change the checkout. This is
 not an OS sandbox; use a repository and account you intend them to work in.
 
 ## 2. Install and create the site
