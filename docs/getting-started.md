@@ -4,8 +4,9 @@
 
 This sets up one plant (one running Mishe installation in one checkout), **held**, and then
 lets it run. A *hold* is a switch that stops every wake (one agent run for one role); while
-it is on, nothing calls a model. You release it
-with `mishe hold off` (step 5).
+it is on, nothing calls a model. A *role* is one named job a mind does
+(for example `docs` or `genome`), defined by its *charter* (its written job
+description). You release the hold with `mishe hold off` (step 5).
 
 ## 1. Prerequisites
 
@@ -38,8 +39,9 @@ tools/install-rust-binaries.sh              # builds the Rust components into $M
 `init` alone is not enough: the tape, records and signal readers are Rust binaries that
 fail closed until the install script has put them, with their sha256 records, in the site's `bin/`.
 
-The site holds everything local (walls, signals, chat, wake files) and is never
-committed. `init` installs starter charters for `genome`, `witness`, `senses`,
+The site (`SITE_HOME`, the directory `$MISHE_SEED_HOME` points to) holds everything
+local (walls, signals, chat, wake files) and is never committed. A *wall* is a role's
+own top-of-page notes file; a *signal* is one producer's latest stored reading. `init` installs starter charters for `genome`, `witness`, `senses`,
 `discover`, `health`, `docs` and `research-methods`. A role exists when its charter
 is in `SITE_HOME/charters/`, so a site keeps, edits or drops any of them and can add
 its own (the site this repository is developed in also declares `field-review`, `pub`,
@@ -148,7 +150,7 @@ A woken mind does these itself, and ends every wake with `mishe yield --result c
 
 ```sh
 mishe wall write --owner ROLE --file NOTES        # replaces the role's wall (size-limited)
-mishe wall dm --source ROLE --to ROLE2 --text "..." # addressed message on the shared tape
+mishe wall dm --source ROLE --to ROLE2 --text "..." # addressed message on the shared message log (the *tape*)
 mishe wall outcome --owner ROLE --kind accepted --file NOTES --evidence PATH
 ```
 
