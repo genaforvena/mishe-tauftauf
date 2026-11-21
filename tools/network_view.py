@@ -759,7 +759,13 @@ def router_health_line(now=None):
     ago = now - last["ts"]
     sample = nb.load_run(rows_, now)
     if not last.get("ok"):
-        line = f"UNKNOWN (last router read failed {ago:.0f} s ago: {last.get('error', 'no reason recorded')})"
+        reason = str(last.get("error", "no reason recorded"))
+        if reason.startswith("skipped:") and sample is not None:
+            # A busy-router hold is not a failed probe: say when the next read is due, not just "failed".
+            due = time.strftime("%H:%M", time.gmtime(now - sample["ago_s"] + network_router.COOLDOWN_S))
+            line = f"UNKNOWN (router busy, no read held until about {due} UTC: {reason})"
+        else:
+            line = f"UNKNOWN (last router read failed {ago:.0f} s ago: {reason})"
         if sample is not None:
             line += (f"; last real load {sample['load']:.2f} (5 min), free RAM {sample['mem_mb']:.0f} MB, "
                      f"read {sample['ago_s'] / 60:.0f} min ago")
