@@ -7,6 +7,7 @@
   vpn       sing-box is running and tun0 is up in the newest router reading
   wifi      the read-only iwinfo channel/noise and frame-loss sub-readings are present and plausible
   load      the router's own load/free-RAM self-limit is not breached for long
+  devices   the named household devices answer their own pings (network/devices.jsonl)
 
 Exit: 0 GREEN, 2 RED (the window is missing/wrong, or the mind has gone quiet), 3 UNKNOWN
 (tmux or git cannot be read).  Nothing here holds a signal GREEN by hand.
@@ -296,9 +297,9 @@ def uplink_state(rows, now):
     return 0, f"network-care: uplink GREEN ({text}; {link_txt}{flap_txt})"
 
 
-def router_readings(home):
-    """The tail of the router's JSONL log as decoded rows, or None when it cannot be read."""
-    path = home / "network" / "router.jsonl"
+def router_readings(home, name="router.jsonl"):
+    """The tail of a network JSONL log (router.jsonl by default) as decoded rows, or None when unreadable."""
+    path = home / "network" / name
     rows = []
     try:
         with path.open("rb") as fh:
@@ -505,9 +506,50 @@ def load(home):
     return code
 
 
+DEVICES_MAX_AGE_S = 900      # the newest per-device row must be this fresh, else UNKNOWN
+
+
+def devices_state(rows, now):
+    """Judge the per-device ping reading from network/devices.jsonl.
+
+    Row shape: {"ts", "devices": {name: {"ok", "avg_ms", "loss_pct"} | {"ok": false, "why"}}}.
+    Returns (code, message): 0 GREEN, 2 RED, 3 UNKNOWN. Only a fresh row where every named device
+    answered is GREEN; a device whose ping failed or could not run is UNKNOWN naming it, because a
+    dead probe must never look like a calm house. Slowness is reported in the message, not judged
+    here: the window owns how slow is worth showing.
+    """
+    fresh = [r for r in rows if isinstance(r, dict) and isinstance(r.get("ts"), (int, float))
+             and isinstance(r.get("devices"), dict) and r["devices"]]
+    if not fresh:
+        return 3, "network-care: no per-device ping reading yet"
+    newest = max(fresh, key=lambda r: r["ts"])
+    ago = now - newest["ts"]
+    if ago > DEVICES_MAX_AGE_S:
+        return 3, f"network-care: newest per-device ping reading is {ago / 60:.0f} min old"
+    if ago < -5:
+        return 3, "network-care: per-device ping reading is from the future"
+    silent = [name for name, res in sorted(newest["devices"].items())
+              if not isinstance(res, dict) or not res.get("ok")]
+    if silent:
+        return 3, ("network-care: no ping reply from " + ", ".join(silent)
+                   + " in the newest per-device read (UNKNOWN, not a pass)")
+    parts = [f"{name} {res['avg_ms']:.1f} ms avg, {res['loss_pct']:.0f}% loss"
+             for name, res in sorted(newest["devices"].items())]
+    return 0, "network-care: devices GREEN (" + "; ".join(parts) + ")"
+
+
+def devices(home):
+    rows = router_readings(home, "devices.jsonl")
+    if rows is None:
+        return 3
+    code, message = devices_state(rows, time.time())
+    print(message, file=sys.stderr if code else sys.stdout)
+    return code
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("what", choices=("window", "progress", "uplink", "vpn", "wifi", "load"))
+    ap.add_argument("what", choices=("window", "progress", "uplink", "vpn", "wifi", "load", "devices"))
     ap.add_argument("--home", type=Path, required=True)
     ap.add_argument("--repo", type=Path, required=True)
     ap.add_argument("--session", default="plants")
@@ -520,6 +562,8 @@ def main():
         return wifi(a.home)
     if a.what == "load":
         return load(a.home)
+    if a.what == "devices":
+        return devices(a.home)
     return window(a.session, a.home, a.repo) if a.what == "window" else progress(a.home, a.repo)
 
 

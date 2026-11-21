@@ -1220,6 +1220,51 @@
       "replaces": []
     },
     {
+      "name": "network-devices",
+      "command": [
+        "{python}",
+        "{repo}/tools/network_devices.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 180,
+      "timeout": 60,
+      "max_age": 600,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "network",
+      "covers": "the per-device ping reading (rows in network/devices.jsonl, five pings each to the named household devices, currently iMac-Rozalia): a row per run, a failed ping recorded as failed; RED only when the producer itself cannot run, UNKNOWN otherwise (the detector judges the rows)",
+      "replaces": []
+    },
+    {
+      "name": "network-device-reach",
+      "command": [
+        "{python}",
+        "{repo}/checks/network-care.py",
+        "devices",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 300,
+      "timeout": 30,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "network",
+      "covers": "the newest per-device ping row in network/devices.jsonl: GREEN when every named device answered within 15 min; UNKNOWN when no row is fresh, a device's ping failed or could not run (named), or the row is from the future; slowness is printed, not judged; never RED from this detector",
+      "replaces": []
+    },
+    {
       "name": "network-wifi",
       "command": [
         "{python}",
