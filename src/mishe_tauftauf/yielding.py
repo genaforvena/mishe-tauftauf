@@ -19,10 +19,13 @@ WHEN_DEADLINE_SECONDS = 6 * 3600  # fallback timer paired with a --when that nam
 # A continue yield must not be due at once: a due-now continue re-arms the next wake in the same
 # minute, and the restart storm trips the unit's start limit (2026-11-11 health wall).
 CONTINUE_FLOOR_SECONDS = 120
-OPEN_LANE_SECONDS = 30 * 60  # a role with a ready lane and spare budget returns in 30 min (Ilya DM 300036)
+OPEN_LANE_SECONDS = 10 * 60  # a role with a ready lane and spare budget returns in 10 min (was 30 min, Ilya DM 300036; 2026-11-21: use all available inference)
+SPARE_IDLE_SECONDS = 30 * 60  # a role with no open lane but spare budget keeps its idle initiative at 30 min (was DEFAULT_IDLE_SECONDS, 2 h)
 CLAMP_SECONDS = 2 * 3600  # a role with an open lane (unread inbox or ready work) never sleeps past this (DM 300152)
 BUDGET_MAX_AGE = 3600
-SPARE_5H, SPARE_7D = 0.30, 0.30
+# Spare floors: the share of a window that must remain. 2026-11-21 (Ilya): "no need to keep below 50%", give Mishe all
+# available inference. Was 0.30/0.30; a nearly spent window still reads not-spare so the slow pace returns at the limit.
+SPARE_5H, SPARE_7D = 0.10, 0.05
 RESULTS = ("changed", "verified", "blocked")
 
 
@@ -94,8 +97,8 @@ def _pending_recheck(home, role, now):
 
 
 def idle_delay(home, role, now, idle_seconds) -> float:
-    if idle_seconds == DEFAULT_IDLE_SECONDS and open_lane(home, role) and (spare_budget(home, now) or fresh_free_route(home, now)):
-        return OPEN_LANE_SECONDS
+    if idle_seconds == DEFAULT_IDLE_SECONDS and (spare_budget(home, now) or fresh_free_route(home, now)):
+        return OPEN_LANE_SECONDS if open_lane(home, role) else SPARE_IDLE_SECONDS
     return idle_seconds
 
 

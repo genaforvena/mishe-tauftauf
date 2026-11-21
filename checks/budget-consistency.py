@@ -134,7 +134,7 @@ def check_accounts(data: dict, produced_at: float, max_age: float) -> tuple[list
 # must hold, so a window aged 901..3600 s is not admitted (DM 300163).
 ADMIT_MAX_AGE_S = 3600.0
 PRODUCER_MAX_AGE_S = 900.0
-ADMIT_FLOORS = {"5h": 0.30, "7d": 0.30}
+ADMIT_FLOORS = {"5h": 0.10, "7d": 0.05}   # mirrors yielding.SPARE_5H, SPARE_7D (2026-11-21), kept apart on purpose
 
 
 def raw_admission(data: dict, now: float) -> bool:

@@ -98,23 +98,22 @@ def _idle_due(home, role):
     return {e["id"]: e["due"] for e in intentions.list_(home, role) if "due" in e}["idle-initiative"]
 
 
-def test_open_lane_with_spare_budget_returns_in_thirty_minutes(tmp_path):
+def test_open_lane_with_spare_budget_returns_at_the_open_lane_pace(tmp_path):
     home = tmp_path / "site"; home.mkdir(); _budget(home, 1000); _lane(home, "genome")
     _open(home, "genome", "w1"); _settle(home, "genome", "w1", 1000)
     assert _idle_due(home, "genome") == 1000 + yielding.OPEN_LANE_SECONDS
 
 
 def test_unknown_budget_or_no_lane_keeps_the_slow_pace(tmp_path):
-    for case in ("stale", "stale-edge", "future", "future-1", "missing", "nolane", "low"):
+    for case in ("stale", "stale-edge", "future", "future-1", "missing", "low"):
         home = tmp_path / case; home.mkdir()
         if case == "stale": _budget(home, 10000, age=7200)
         elif case == "stale-edge": _budget(home, 10000, age=yielding.BUDGET_MAX_AGE + 1)
         elif case == "future": _budget(home, 10000, age=-7200)
         elif case == "future-1": _budget(home, 10000, age=-1)
-        elif case == "low": _budget(home, 10000, remaining=0.05)
+        elif case == "low": _budget(home, 10000, remaining=0.04)
         elif case != "missing": _budget(home, 10000)
-        if case != "nolane": _lane(home, "genome")
-        else: _lane(home, "genome", state="done")
+        _lane(home, "genome")
         _open(home, "genome", "w1"); _settle(home, "genome", "w1", 10000)
         assert _idle_due(home, "genome") == 10000 + yielding.DEFAULT_IDLE_SECONDS, case
 
@@ -158,3 +157,24 @@ def test_free_route_that_is_not_live_keeps_the_slow_pace(tmp_path, changes, age)
     _open(home, "genome", "w1"); _settle(home, "genome", "w1", 10000)
     assert yielding.fresh_free_route(home, 10000) is False
     assert _idle_due(home, "genome") == 10000 + yielding.DEFAULT_IDLE_SECONDS
+
+
+def test_idle_role_with_spare_budget_uses_the_shorter_idle_pace_and_without_spare_the_slow_one(tmp_path):
+    spare, tight = tmp_path / "spare", tmp_path / "tight"
+    spare.mkdir(); tight.mkdir(); _budget(spare, 1000); _budget(tight, 1000, remaining=0.04)
+    for home in (spare, tight):
+        _lane(home, "genome", state="done")                                      # no ready work: idle initiative only
+        _open(home, "genome", "w1"); _settle(home, "genome", "w1", 1000)
+    assert _idle_due(spare, "genome") == 1000 + yielding.SPARE_IDLE_SECONDS
+    assert _idle_due(tight, "genome") == 1000 + yielding.DEFAULT_IDLE_SECONDS
+    assert yielding.OPEN_LANE_SECONDS < yielding.SPARE_IDLE_SECONDS < yielding.DEFAULT_IDLE_SECONDS
+
+
+def test_spare_floors_leave_room_to_spend_but_not_the_last_of_a_window(tmp_path):
+    home = tmp_path / "site"; home.mkdir()
+    _budget(home, 1000, remaining=0.12)
+    assert yielding.spare_budget(home, 1000) is True                             # 5h 12% left >= 10%, 7d 12% >= 5%
+    w = {"5h": dict(state="FRESH", observed_at=1000, remaining=0.5, reset_at=4600),
+         "7d": dict(state="FRESH", observed_at=1000, remaining=0.04, reset_at=4600)}
+    write_json(home / "engine" / "budget.json", dict(accounts=dict(a=dict(state="FRESH", windows=w))))
+    assert yielding.spare_budget(home, 1000) is False                            # the weekly window is spent
