@@ -37,7 +37,7 @@ tools/install-rust-binaries.sh              # builds the Rust components into $M
 ```
 
 `init` alone is not enough: the tape, records and signal readers are Rust binaries that
-fail closed until the install script has put them, with their sha256 records, in the site's `bin/`.
+refuse to run (they *fail closed*: stop rather than guess) until the install script has put them, each with a checksum record (its sha256 hash, a fingerprint of the exact file), in the site's `bin/`.
 
 The site (`SITE_HOME`, the directory `$MISHE_SEED_HOME` points to) holds everything
 local (walls, signals, chat, wake files) and is never committed. A *wall* is a role's
