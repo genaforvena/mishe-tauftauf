@@ -8,6 +8,10 @@ the state is never outside the checkout. The site is the `.mishe-tauftauf/`
 directory: walls, chat log, signals, wake files and operator records live
 there, and git never tracks it.
 
+A *signal* is a named reading, such as the CI status or the budget, that a
+check writes when its value changes; a role subscribed to it is woken when it
+changes. A reading older than its declared age is `UNKNOWN`, not a pass.
+
 ## What the couplings actually are
 
 The plant's couplings are not abstract. They are walls (each mind's shared status page; a mind is one agent that holds a role, such as Genome or Docs) any registered mind may
