@@ -1496,6 +1496,25 @@
       "replaces": []
     },
     {
+      "name": "experiments-lifecycle",
+      "command": [
+        "{python}",
+        "{repo}/checks/experiments-lifecycle.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 3600,
+      "timeout": 60,
+      "max_age": 7200,
+      "red_codes": [2],
+      "unknown_codes": [3],
+      "resolver": "steward",
+      "covers": "experiments.json lists each experiment with a status and decision date: a running experiment past its decision date is AMBER, a week past is RED; a tracked file named experiment, exploratory or pilot that no registry entry owns is AMBER; UNKNOWN when the registry is missing or invalid or git cannot list the tracked files",
+      "replaces": []
+    },
+    {
       "name": "initiatives-system1",
       "command": [
         "{python}",

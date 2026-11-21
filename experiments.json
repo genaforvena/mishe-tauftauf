@@ -1,0 +1,25 @@
+{
+  "doc": "Committed registry of experiments (AGENTS.md: Mishe carries nothing dead). Each experiment ends as adopted (wired to a consumer or check, with the evidence stated) or retired (deleted, with its tests, docs and boundaries; recoverable from git history). checks/experiments-lifecycle.py reads this file. status: running | adopted | retired. decision_due is an ISO date; a running experiment past it is AMBER, and RED a week later. paths lists the tracked files an experiment owns, so the scan can tell registered artifacts from unregistered ones.",
+  "experiments": [
+    {
+      "id": "code-map-name-candidates",
+      "owner": "steward",
+      "started": "2026-11-16",
+      "decision_due": "2026-11-21",
+      "status": "retired",
+      "decision": "Retired 2026-11-21 with its files, extra, parsing-policy entry and README row. The pilot on src/mishe_tauftauf (2349 definitions, 0 incomplete paths) listed syntactic name candidates; one, is_recursive_c_l_diverse in body_perception.py, had no tracked reference other than its definition. No consumer or check read the list, and the experiment could not gate anything. Recover with: git show f5b1066c:tools/code_map_experiment.py",
+      "consumer_or_evidence": "none: no consumer; pilot evidence recorded on the steward wall",
+      "paths": []
+    },
+    {
+      "id": "agent-step-experiments",
+      "owner": "steward",
+      "started": "2026-10-30",
+      "decision_due": "2026-11-21",
+      "status": "adopted",
+      "decision": "Adopted for the building block, retired for the loop. The internal loop was deleted in 943276d9 and stays deleted. docs_tools.search_docs stays because repo_change_docs.docs_naming calls it (the docs-naming seam of the repo-change initiative). The narrative in docs/agent-step-experiments.md is local and gitignored; its status line now says so.",
+      "consumer_or_evidence": "src/mishe_tauftauf/repo_change_docs.py imports search_docs; tests/test_docs_tools.py covers it",
+      "paths": ["src/mishe_tauftauf/docs_tools.py", "tests/test_docs_tools.py"]
+    }
+  ]
+}
