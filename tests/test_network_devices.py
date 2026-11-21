@@ -35,18 +35,18 @@ NOW = 1_795_273_200.0
 
 class DecodePing(unittest.TestCase):
     def test_reply_is_ok_with_figures(self):
-        res = devices.decode_ping(REPLY, 0)
+        res = devices.nb.decode_ping(REPLY, 0)
         self.assertTrue(res["ok"])
         self.assertEqual(res["avg_ms"], 4.812)
         self.assertEqual(res["max_ms"], 19.955)
         self.assertEqual(res["loss_pct"], 0.0)
 
     def test_total_loss_is_not_ok(self):
-        res = devices.decode_ping(SILENT, 1)
+        res = devices.nb.decode_ping(SILENT, 1)
         self.assertFalse(res["ok"])
 
     def test_unreadable_output_is_not_a_pass(self):
-        res = devices.decode_ping("", 2)
+        res = devices.nb.decode_ping("", 2)
         self.assertFalse(res["ok"])
 
 

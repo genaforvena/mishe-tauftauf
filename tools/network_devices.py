@@ -12,11 +12,13 @@ Privacy: the row carries the household's device name and derived numbers only, n
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import network_boundary as nb  # noqa: E402  - all text decoding lives in the boundary
 
 SITE = Path(os.environ.get("MISHE_TAUFTAUF_HOME") or os.environ.get("MISHE_SEED_HOME") or ".mishe-tauftauf")
 LOG_NAME = "devices.jsonl"
@@ -29,30 +31,6 @@ DEVICES = (
     ("iMac-Rozalia", "192.168.8.214"),
 )
 
-RTT_LINE = re.compile(r"=\s*([\d.]+)/([\d.]+)/([\d.]+)")
-LOSS_LINE = re.compile(r"(\d+(?:\.\d+)?)% packet loss")
-
-
-def decode_ping(stdout, returncode):
-    """{"ok", "loss_pct", "avg_ms", "max_ms"} from ping output, or {"ok": False, "why": ...}.
-
-    A reply that carries no round-trip figures is not a pass: it is reported as not ok.
-    """
-    loss = LOSS_LINE.search(stdout)
-    rtt = RTT_LINE.search(stdout)
-    if loss is None:
-        return {"ok": False, "why": "ping output unreadable"}
-    loss_pct = float(loss.group(1))
-    if rtt is None or loss_pct >= 100.0:
-        return {"ok": False, "loss_pct": loss_pct, "why": "no reply"}
-    return {
-        "ok": True,
-        "loss_pct": loss_pct,
-        "avg_ms": float(rtt.group(2)),
-        "max_ms": float(rtt.group(3)),
-    }
-
-
 def ping(address):
     """Run a few pings to one device; a failure to run is a failed row, never a pass."""
     cmd = ["ping", "-n", "-q", "-c", str(PINGS), "-W", "2", address]
@@ -60,21 +38,15 @@ def ping(address):
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=PING_TIMEOUT_S)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {"ok": False, "why": f"ping did not run: {type(exc).__name__}"}
-    return decode_ping(out.stdout, out.returncode)
+    return nb.decode_ping(out.stdout, out.returncode)
 
 
-def read_rows(path):
+def _read_rows(path):
     try:
-        lines = Path(path).read_text().splitlines()
+        text = Path(path).read_text()
     except OSError:
         return []
-    rows = []
-    for line in lines:
-        try:
-            rows.append(json.loads(line))
-        except ValueError:
-            continue
-    return rows
+    return nb.decode_json_lines(text)
 
 
 def run(home, now=None):
@@ -89,7 +61,7 @@ def run(home, now=None):
     }
     path = home / "network" / LOG_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
-    kept = [r for r in read_rows(path) if isinstance(r.get("ts"), (int, float)) and now - r["ts"] <= KEEP_S]
+    kept = [r for r in _read_rows(path) if isinstance(r.get("ts"), (int, float)) and now - r["ts"] <= KEEP_S]
     kept.append(row)
     tmp = path.with_suffix(".jsonl.tmp")
     tmp.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in kept))
@@ -100,7 +72,7 @@ def run(home, now=None):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--home", type=Path, default=SITE)
-    a = ap.parse_args()
+    a = nb.parse_argv(ap, None)
     row = run(a.home)
     failed = [name for name, res in row["devices"].items() if not res.get("ok")]
     print(f"network-devices: {len(row['devices']) - len(failed)}/{len(row['devices'])} answered"

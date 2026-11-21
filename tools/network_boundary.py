@@ -493,3 +493,27 @@ def process_start(pid):
         return btime + ticks / os.sysconf("SC_CLK_TCK")
     except (OSError, ValueError, IndexError, StopIteration):
         return None
+
+
+PING_RTT_LINE = re.compile(r"=\s*([\d.]+)/([\d.]+)/([\d.]+)")
+PING_LOSS_LINE = re.compile(r"(\d+(?:\.\d+)?)% packet loss")
+
+
+def decode_ping(stdout, returncode):
+    """{"ok", "loss_pct", "avg_ms", "max_ms"} from ping output, or {"ok": False, "why": ...}.
+
+    A reply that carries no round-trip figures is not a pass: it is reported as not ok.
+    """
+    loss = PING_LOSS_LINE.search(stdout)
+    rtt = PING_RTT_LINE.search(stdout)
+    if loss is None:
+        return {"ok": False, "why": "ping output unreadable"}
+    loss_pct = float(loss.group(1))
+    if rtt is None or loss_pct >= 100.0:
+        return {"ok": False, "loss_pct": loss_pct, "why": "no reply"}
+    return {
+        "ok": True,
+        "loss_pct": loss_pct,
+        "avg_ms": float(rtt.group(2)),
+        "max_ms": float(rtt.group(3)),
+    }
