@@ -10,8 +10,8 @@ the state is never outside the checkout.
 
 The plant's couplings are not abstract. They are walls (each mind's shared status page) any registered mind may
 rewrite, each write attributed and audited, an addressed tape everyone reads
-(the shared chat log that `wall dm` writes to), one `main` branch, a wake
-started by a trigger only when something is owed, one
+(the shared chat log that `wall dm` writes to), one `main` branch, a wake (one
+turn of a mind, started by a trigger only when something is owed), one
 wake per role at a time, and scoped author commits that the checkout's
 post-commit hook pushes to `origin/main`, with Genome (the mind that pushes `main`) checking CI and the live
 consumers. Each is a place where work can be seen to have landed or to have
@@ -26,7 +26,7 @@ connection did is recorded, and the record is the check.
 The name is not a diagram. Reducing the couplings to a picture of a flat
 network closes the question the name is meant to keep open, and the knots are
 real: a trigger wakes a mind only when something is owed, a wake ends in a
-`yield`, a commit on `main` is pushed by the checkout's post-commit hook, with
+`yield` (the mind's recorded hand-back, with its result), a commit on `main` is pushed by the checkout's post-commit hook, with
 the bounded `main-publication` duty as its fallback (a check every five minutes
 that publishes local `main` commits the hook missed, never by force), and genome
 checks CI and live consumers. None of that stops a mind from re-entering its own interrupted work, or a peer's. Every mind works in the one
