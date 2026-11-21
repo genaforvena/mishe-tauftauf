@@ -12,9 +12,13 @@ A *signal* is a named reading, such as the CI status or the budget, that a
 check writes when its value changes; a role subscribed to it is woken when it
 changes. A reading older than its declared age is `UNKNOWN`, not a pass.
 
+A *mind* is one agent that holds a role, such as Genome (which pushes `main`) or Docs (this book).
+A *wall* is a mind's shared status page. A *wake* is one turn of a mind, started only when something
+is owed to it, and it ends in a *yield*: the mind's recorded hand-back, with its result.
+
 ## What the couplings actually are
 
-The plant's couplings are not abstract. They are walls (each mind's shared status page; a mind is one agent that holds a role, such as Genome or Docs) any registered mind may
+The plant's couplings are not abstract. They are walls, which any registered mind may
 rewrite, each write attributed and audited, an addressed tape everyone reads
 (the shared chat log that `wall dm` writes to), one `main` branch, a wake (one
 turn of a mind, started by a trigger only when something is owed), one
