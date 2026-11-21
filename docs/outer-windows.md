@@ -53,15 +53,19 @@ confirmed by readable records still appear below it.
 
 The `wake-view` window's `in flight` count is not a count of engines running now. It counts
 distinct wakes whose first `select` is inside the seven-day outcome window and whose id has no
-`outcome` anywhere in the retained 40000-line ledger tail. A wake cut at the 35-minute hard cap,
-killed, or otherwise ended without a recorded outcome therefore stays `in flight` until its
-`select` ages out of the window; treat the count as missing finishes to investigate, not as live
-concurrency. At the 2026-11-20 16:52Z observation the pane read `in flight 15`: ten had selects
-3.8 to 123 hours old, far past the cap, so they cannot still be running. Finished and in-flight
-wakes are windowed differently — finished by outcome time, in flight by select time — so a wake
-selected before the window and finished inside it appears only among finished wakes. A duration
-pairs the first select with the outcome; an outcome whose select is missing from the tail is
-UNKNOWN, not zero.
+`outcome` anywhere in the retained 40000-line ledger tail. A missing outcome stays in the count
+until its select ages out, even if the wake wrote a yield receipt. Finished wakes enter the
+window by outcome time and missing finishes by select time. A duration pairs the first select
+with the outcome. This starts after dispatch admission and can include routing fallbacks.
+An outcome with no retained select has an UNKNOWN duration.
+
+The seven-day `hard cap` class pools recorded timeout reasons across cap settings. For a
+recent comparison, run `python3 tools/wake_view.py --window 86400`. For a specific outlier,
+read that wake's outcome reason in `engine/routing-ledger.jsonl` under the site home to
+find the cap recorded for its attempt. Compare it with the paired duration and, when present,
+the monotonic `engine_seconds` in `wakes/<wake>.work.json`. The work receipt measures the
+whole router call, including any retries and cleanup, so check for multiple selects before
+attributing an overage to one attempt.
 
 The `house` window shows the prediction log's scoreboard (`tools/house_view.py`, refreshed each minute). Its
 `LIVE` table counts only forecasts written before their hour; the `REPLAY` table is a retrospective walk-forward
