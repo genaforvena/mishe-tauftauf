@@ -156,6 +156,17 @@ def cpu_pressure_some():
         pass
     return None
 
+def memory_pressure_some():
+    # Same PSI shape for memory. A CPU-time reading cannot show that reclaim or
+    # swap-in stalled the fold, so the record keeps both sides of the fold.
+    try:
+        for line in open("/proc/pressure/memory"):
+            if line.startswith("some "):
+                return float(line.split("avg10=", 1)[1].split()[0])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
 def peak_rss_kb():
     # VmHWM is this process's own high-water mark after exec. ru_maxrss is not
     # usable here: across fork+exec Linux carries the parent's RSS into the
@@ -170,10 +181,12 @@ def peak_rss_kb():
 
 home, role = Path(sys.argv[1]), sys.argv[2]
 p0 = cpu_pressure_some()
+m0 = memory_pressure_some()
 c0 = time.process_time(); k0 = child_cpu(); t0 = time.perf_counter()
 rows = Feed(home).role_entries(role, _force_full=True)
 c1 = time.process_time(); k1 = child_cpu(); t1 = time.perf_counter()
 p1 = cpu_pressure_some()
+m1 = memory_pressure_some()
 print(json.dumps({
     "role": role,
     "feed_path": str(Path(feed_module.__file__).resolve()),
@@ -184,6 +197,8 @@ print(json.dumps({
                          if hasattr(os, "wait4") else None),
     "cpu_pressure_some_avg10_before": p0,
     "cpu_pressure_some_avg10_after": p1,
+    "memory_pressure_some_avg10_before": m0,
+    "memory_pressure_some_avg10_after": m1,
     "fold_cpu_s": round((c1 - c0) + (k1 - k0), 3),
     "elapsed_s": round(t1 - t0, 3),
     "maxrss_kb": peak_rss_kb(),
