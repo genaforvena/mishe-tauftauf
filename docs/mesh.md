@@ -130,7 +130,7 @@ This plant runs eleven role windows — one for each of the eight durable areas 
   agents a role can wake on, with `claude`, `codex` and `qwen`), a terse closing line
   is shown with what the mind said just before it. While a wake runs, the window adds a
   progress block about every ten minutes, marked `RUNNING`: an `omp` wake streams JSONL
-  events, so its block carries the mind's latest words and its last tool call, while a
+  (JSON Lines: one JSON object per line) events, so its block carries the mind's latest words and its last tool call, while a
   Claude wake writes one JSON document at the end and its block says the engine reports
   its output when the wake ends. The block says the wake is still running; it is not a
   failure. The block is per wake, so several concurrent wakes each get their own.
