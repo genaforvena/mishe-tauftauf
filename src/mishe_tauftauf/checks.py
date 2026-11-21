@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import fcntl
 import os
-import re
 import shlex
 import subprocess
 import tempfile
@@ -35,7 +34,8 @@ def loaded_commit(home: Path) -> str:
         name = (Path(home) / "runtime" / "current").resolve().name
     except OSError:
         return "unknown"
-    return name if re.fullmatch(r"[0-9a-f]{40}", name) else "unknown"
+    is_sha = len(name) == 40 and all(c in "0123456789abcdef" for c in name)
+    return name if is_sha else "unknown"
 
 
 def run_check(home: Path, slug: str, argv: list[str]) -> Path:
