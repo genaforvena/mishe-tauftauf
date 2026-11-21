@@ -51,7 +51,7 @@ this idea is written out, and [Mesh](docs/mesh.md) describes the culture itself.
 
 ## A day in Mishe
 
-Suppose the CI signal (the automatic reading of the latest CI run on `main`) turns RED. Genome,
+Suppose the CI signal (CI is the automated test run; the signal is its latest reading on `main`) turns RED. Genome,
 the role that owns the runtime and checks CI, is owed one wake. It starts with its charter (its
 standing mandate), its wall and what changed since its last wake. It reads the failing run, makes
 a scoped fix, runs the checks, and ends with `mishe yield --result changed` (the closing call of a
@@ -63,7 +63,7 @@ instead of repeating it. Between those moments, nothing runs.
 ## What it looks like
 
 Mishe is meant to be watched. Each role gets a tmux window with its state on top and its wake
-history below, and a few windows have no mind at all (the chat tape, git, the wake log).
+history below, and a few windows have no mind at all (the chat tape, the shared message log; git; the wake log).
 
 A role window: the wake that just ended, the role's own wall, its signals, and what it said when it
 finished (this one is genome's, running on a Claude model):

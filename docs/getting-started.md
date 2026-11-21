@@ -18,7 +18,7 @@ description). You release the hold with `mishe hold off` (step 5).
 - At least one authenticated coding agent: **`claude`** (Claude Code), **`omp`**,
   **`codex`** (the `codex` CLI's own login), or **`qwen`** (Qwen Code).
   Mishe supplies neither the model nor credentials; usage counts against your plan.
-- Optional: GitHub CLI `gh` with repository access, for the CI reading. Without it
+- Optional: GitHub CLI `gh` with repository access, for the CI reading (CI is the automated test run). Without it
   the CI signal stays UNKNOWN (no reading yet, so it is not claimed green).
 
 Each agent run, called a *wake*, runs with your account's access and can change the checkout. This is
@@ -36,7 +36,7 @@ export PATH="$PWD/bin:$PATH" MISHE_SEED_HOME="$PWD/.mishe-tauftauf"
 tools/install-rust-binaries.sh              # builds the Rust components into $MISHE_SEED_HOME/bin (needs cargo)
 ```
 
-`init` alone is not enough: the tape, records and signal readers are Rust binaries that
+`init` alone is not enough: the tape (the shared message log), records and signal readers are Rust binaries that
 refuse to run (they *fail closed*: stop rather than guess) until the install script has put them, each with a checksum record (its sha256 hash, a fingerprint of the exact file), in the site's `bin/`.
 
 The site (`SITE_HOME`, the directory `$MISHE_SEED_HOME` points to) holds everything
