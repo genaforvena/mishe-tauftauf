@@ -181,3 +181,37 @@ def test_named_path_covers_behaviour_paths_outside_src():
     assert rcs.named_path("checks/wake-waste.py")
     assert not rcs.named_path("docs/outer-windows.md")
     assert not rcs.named_path("tests/test_duties.py")
+
+
+def test_pub_signal_wakes_only_on_reader_meaningful_commits(tmp_path, repo):
+    """Controlled drill: an internal-only commit must not wake pub; a reader-meaningful one must."""
+    from mishe_tauftauf import signal_store
+    home = tmp_path / "home"
+    (home / "signals").mkdir(parents=True)
+    rcs.produce(home, repo, now=1_000_000.0)
+    rcs.produce(home, repo, wake="pub", now=1_000_001.0)        # pub reads; nothing meaningful owed
+    rev_before = signal_store.rev(home, rcs.PUB_SIGNAL)
+    value_before = signal_store.recorded(home, rcs.PUB_SIGNAL)["value"]
+    assert signal_store.registry(home)[rcs.PUB_SIGNAL]["subscribers"] == ["pub"]
+
+    _commit(repo, "tools/bump.py", "chore: bump the tool")       # internal-only noise
+    report = rcs.produce(home, repo, now=1_000_002.0)
+    assert report["subscribers"]["pub"]["count"] == 1
+    assert signal_store.rev(home, rcs.PUB_SIGNAL) == rev_before
+    assert signal_store.recorded(home, rcs.PUB_SIGNAL)["value"] == value_before
+    assert signal_store.rev(home, rcs.SIGNAL) > 0                  # the raw signal still moved for docs
+
+    meaningful = _commit(repo, "src/mishe_tauftauf/beta.py", "fix: beta reads the cursor")
+    rcs.produce(home, repo, now=1_000_003.0)
+    assert signal_store.rev(home, rcs.PUB_SIGNAL) == rev_before + 1
+    assert signal_store.recorded(home, rcs.PUB_SIGNAL)["value"] == meaningful[:12]
+
+
+def test_pub_signal_turns_unknown_when_git_cannot_be_read(tmp_path, repo):
+    from mishe_tauftauf import signal_store
+    home = tmp_path / "home"
+    (home / "signals").mkdir(parents=True)
+    rcs.produce(home, repo, now=1_000_000.0)
+    rcs.observe_unknown_all(home, "git unreadable", now=1_000_001.0)
+    assert signal_store.read(home, rcs.PUB_SIGNAL, now=1_000_001.0).state == "UNKNOWN"
+    assert signal_store.read(home, rcs.SIGNAL, now=1_000_001.0).state == "UNKNOWN"

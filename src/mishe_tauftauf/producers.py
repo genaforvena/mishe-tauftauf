@@ -239,8 +239,7 @@ def repo_change(home, *, now: float, **_):
     try:
         repo_change_signal.produce(home, Path(home).parent, now=now)
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
-        signal_store.observe_unknown(home, "repo-change", now=now, source="builtin:repo-change",
-                                     reason=str(exc)[:300])
+        repo_change_signal.observe_unknown_all(home, str(exc), now=now)
     return None
 
 

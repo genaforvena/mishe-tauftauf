@@ -25,9 +25,10 @@ from . import signal_store
 from .repo_change_docs import docs_naming
 
 SIGNAL = "repo-change"
+PUB_SIGNAL = "repo-change-pub"   # reader-meaningful commits only; wakes pub, never the raw signal
 MAX_AGE_S = 6 * 3600
 REOFFER_S = 3600
-SUBSCRIBERS = ("pub", "docs")
+SUBSCRIBERS = ("pub", "docs")    # cursor readers; pub is woken by PUB_SIGNAL, docs by SIGNAL
 DEFAULT_WINDOW = 50          # commits shown when a subscriber has no cursor yet
 RECORD = "\x1e"              # git-log record separator
 FIELD = "\x1f"               # git-log field separator
@@ -38,6 +39,10 @@ AREA_PREFIXES = (
     ("duties", "duties"), ("docs/", "docs"), ("tests/", "tests"),
 )
 NOISE_SUBJECT = re.compile(r"^(?:chore|style|typo|whitespace|pin|pinbump)\b", re.IGNORECASE)
+
+
+ACK = ("env PYTHONPATH=src python3 -m mishe_tauftauf.repo_change_signal "
+       "--home {home} --repo {repo} --wake {role}")
 
 
 def named_path(path: str) -> bool:
@@ -226,16 +231,58 @@ def produce(home, repo, *, wake: str | None = None, window: int = DEFAULT_WINDOW
     entry = signal_store.registry(home).get(SIGNAL, {
         "max_age": MAX_AGE_S, "subscribers": SUBSCRIBERS, "reoffer": REOFFER_S,
     })
-    ack = ("env PYTHONPATH=src python3 -m mishe_tauftauf.repo_change_signal "
-           "--home {home} --repo {repo} --wake {role}")
-    if entry.get("ack") != ack:
+    if entry.get("ack") != ACK:
         signal_store.register(home, SIGNAL, max_age=entry["max_age"],
                               subscribers=entry.get("subscribers", ()),
                               reoffer=entry.get("reoffer"), wake_on=entry.get("wake_on", "change"),
-                              now=now, ack=ack)
+                              now=now, ack=ACK)
     signal_store.observe(home, SIGNAL, sha[:12], now=now, source="repo-change-producer",
                          event=sha, reason=report["summary"])
+    observe_pub(home, report, now=now)
     return report
+
+
+def pub_verdict(report: dict) -> str | None:
+    """Newest commit in pub's delta that is not internal-only, or None when pub owes no read.
+
+    The delta is oldest-first, so the last reader-meaningful entry is the newest one.
+    """
+    meaningful = [c["sha"] for c in report["subscribers"]["pub"]["new"] if not c["internal_only"]]
+    return meaningful[-1] if meaningful else None
+
+
+def observe_pub(home, report: dict, *, now: float) -> None:
+    """Publish PUB_SIGNAL: value = the reader-meaningful verdict, unchanged when there is none.
+
+    The stored value changes only when a new reader-meaningful commit arrives, so an internal-only
+    commit moves neither the value nor the rev that wakes pub. When there is no verdict the previous
+    reading is re-observed unchanged, which refreshes its freshness without an edge. The first
+    observation (no verdict yet) records 'none' once.
+    """
+    if signal_store.registry(home).get(PUB_SIGNAL, {}).get("ack") != ACK:
+        signal_store.register(home, PUB_SIGNAL, max_age=MAX_AGE_S, subscribers=("pub",),
+                              reoffer=REOFFER_S, now=now, ack=ACK)
+    verdict = pub_verdict(report)
+    previous = signal_store.recorded(home, PUB_SIGNAL)
+    if verdict is not None:
+        value, event = verdict[:12], verdict
+    elif previous is not None:
+        value, event = previous.get("value"), previous.get("event")
+    else:
+        value, event = "none", None
+    signal_store.observe(home, PUB_SIGNAL, value, now=now, source="repo-change-producer",
+                         event=event, reason={"pub_new": report["subscribers"]["pub"]["count"],
+                                              "pub_meaningful": verdict is not None})
+
+
+def observe_unknown_all(home, reason: str, *, now: float) -> None:
+    """Mark both repo-change signals UNKNOWN; each signal's own failure is recorded separately."""
+    for name in (SIGNAL, PUB_SIGNAL):
+        try:
+            signal_store.observe_unknown(Path(home), name, now=now,
+                                         source="repo-change-producer", reason=reason[:300])
+        except (ValueError, OSError):
+            pass
 
 
 def main(argv=None) -> int:
@@ -248,12 +295,7 @@ def main(argv=None) -> int:
     try:
         report = produce(args.home, args.repo, wake=args.wake, window=args.window)
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
-        now = time.time()
-        try:
-            signal_store.observe_unknown(Path(args.home), SIGNAL, now=now,
-                                         source="repo-change-producer", reason=str(exc)[:300])
-        except (ValueError, OSError):
-            pass
+        observe_unknown_all(args.home, str(exc), now=time.time())
         print(f"mishe: repo-change: UNKNOWN: {exc}", file=__import__("sys").stderr)
         return 3
     summary = report["summary"]

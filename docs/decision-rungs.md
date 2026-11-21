@@ -190,6 +190,10 @@ The builtin `repo-change` duty (`duties.json`, every 900 s, `max_age` 2700 s) ru
 for each changed path. It publishes the newest commit with per-subscriber deltas for `pub` and
 `docs`, calls no model and wakes no one itself; the residual judgement goes to System 1.
 
+`pub` no longer listens on `repo-change`. Its wake comes from `repo-change-pub`, whose value is the newest
+commit in pub's delta that is not internal-only (the producer's noise rule). An internal-only commit leaves
+that value and its rev unchanged, so it does not wake pub; `docs` still wakes on every commit of `repo-change`.
+
 The wake dossier also carries the registered ack command for each signal the wake saw: for
 `repo-change` it is `env PYTHONPATH=src python3 -m mishe_tauftauf.repo_change_signal --home {home}
 --repo {repo} --wake {role}`. Running it advances only the named subscriber's cursor to the current
