@@ -63,7 +63,8 @@ Status: no code applies a 50% gate, and the router does not read the policy.
 - `src/mishe_tauftauf/provider_budget.py` builds the Claude and codex-a rows from
   `engine/budget.json` itself (`rows_from_engine_budget`). It reports `LOW` when
   `used > 0.9` and `RUNS OUT BEFORE RESET` when the producer's `eta_s` lands before
-  the reset and the window is at least 5% used. Either result turns the account
+  the reset and the window is more than 5% used (at or below 5% the short-span
+  guard keeps the window ok, after rounding away float noise). Either result turns the account
   verdict RED. The exception is the `claude` 7d window (`PROJECTION_ACCEPTED` in
   that module, since 2026-11-21): its burn projection is informational, so only a
   spent 7d window (`LOW`) turns it RED. The 5h window keeps the projection alarm.
