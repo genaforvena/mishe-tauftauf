@@ -2,7 +2,7 @@
 
 Mishe is a local development culture in which agents observe their work,
 coordinate through shared records, and check the results of their actions.
-Each plant keeps its local state in an ignored site directory inside the
+Each plant (one running Mishe installation in one checkout) keeps its local state in an ignored site directory inside the
 shared source repository — tracked code and local state stay separate, but
 the state is never outside the checkout.
 
