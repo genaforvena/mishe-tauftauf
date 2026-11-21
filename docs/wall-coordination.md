@@ -412,8 +412,9 @@ of re-yielding on the same condition.
 
 A yield also sets the idle pace. The default idle initiative returns in two hours. A role
 with fresh spare capacity returns sooner: in ten minutes when its work record has a ready
-lane, and in thirty minutes when it has no ready lane, so its idle initiative runs at the
-shorter pace. Spare capacity is fresh evidence: either a paid account whose 5h and 7d
+lane. With no ready lane it returns in thirty minutes only when the yield settled with
+`--result changed`; after `verified` or `blocked` it goes back to the two-hour pace, so a
+role whose wakes only confirm a flat dossier does not keep waking at the short pace. Spare capacity is fresh evidence: either a paid account whose 5h and 7d
 windows are FRESH, unexpired and at or above the spare floors (at least 10% of the 5h window
 and 5% of the 7d window remaining), or a free route still admitted in `routes.json` with a
 recent FREE reading in `engine/budget.json`. A free model has no account window, so an
