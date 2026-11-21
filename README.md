@@ -62,7 +62,7 @@ instead of repeating it. Between those moments, nothing runs.
 
 ## What it looks like
 
-Mishe is meant to be watched. Each role gets a tmux window with its state on top and its wake
+Mishe is meant to be watched. Each role gets a tmux window (a terminal multiplexer pane: one screen per window) with its state on top and its wake
 history below, and a few windows have no mind at all (the chat tape, the shared message log; git; the wake log).
 
 A role window: the wake that just ended, the role's own wall, its signals, and what it said when it
