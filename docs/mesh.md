@@ -98,15 +98,17 @@ model that differs from the configured one is stated, and output that cannot be 
 labelled UNKNOWN with its raw tail, never hidden. Walls and site notes are outside git and
 are not counted. A failed read stays visibly UNKNOWN.
 
-The operator's pane shows the two household conversations as well: the tail of each
+The operator's pane (one section of the live screen view, described under the live
+tmux views below) shows the two household conversations as well: the tail of each
 conversation log, how to write to each one, and the record of approvals already given.
 A missing log is UNKNOWN there, never an empty box, so nobody concludes "no contact" from
 a wall that was not rewritten. The approvals record is the site's
 `operator/standing-approvals.md`: what is covered there is already permitted, so it is done
 without asking again.
 
-The live tmux views show the same information on screen while the plant runs. They live
-in the inner tmux server, on the socket `/tmp/tmux-<uid>/mishe-tauftauf/tmux-<uid>/default`,
+The live tmux views show the same information on screen while the plant runs. (tmux is a
+terminal multiplexer: one program that shows several terminal sessions on one screen, each
+session in its own window and pane.) They live in the inner tmux server, on the socket `/tmp/tmux-<uid>/mishe-tauftauf/tmux-<uid>/default`,
 in the session named in the site's `presentation.json`. The prefix is `Ctrl-a`, and
 `Ctrl-a [` scrolls. Attach through the `mishe` window of the outer `plants` session, or
 point `tmux -S` at the socket directly.
