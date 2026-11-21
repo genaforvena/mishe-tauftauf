@@ -25,6 +25,7 @@ import time
 
 from . import engine_boundary as boundary
 from . import budget_producer
+from . import state_files
 from . import engine_policy as policy
 
 # The OMP store caches each provider's usage report and reuses it while its fetchedAt is
@@ -273,6 +274,30 @@ def _shared_windows(rows, registry):
     return flagged
 
 
+BUDGET_FILE = 'engine/budget.json'
+OMP_GAP_REASON = 'no provider report'
+
+
+def _label_budget_authority(home, rows):
+    """An account OMP cannot report (no provider report) keeps its OMP UNKNOWN, but the row names the
+    engine/budget.json reading that the router and the budget view actually use, so the two observers
+    cannot read as one account with opposite verdicts. The budget file is the one source (docs/budget-json-contract.md)."""
+    try:
+        budget = state_files.read_json(home / BUDGET_FILE)
+    except ValueError:
+        budget = None
+    accounts = budget.get('accounts') if isinstance(budget, dict) else None
+    for alias, row in rows.items():
+        if row['state'] != 'UNKNOWN' or row.get('reason') != OMP_GAP_REASON:
+            continue
+        entry = accounts.get(alias) if isinstance(accounts, dict) else None
+        if not isinstance(entry, dict):
+            continue
+        row['reason'] = f"{OMP_GAP_REASON}; authoritative reading is {BUDGET_FILE} ({entry.get('state', 'UNKNOWN')})"
+        row['budget_json'] = {'state': entry.get('state'), 'provider': entry.get('provider'),
+                              'windows': entry.get('windows') or {}}
+
+
 def status(home, now_ms=None, omp='omp'):
     """Full dashboard: registry, credential metadata, per-store OMP usage windows with freshness and last-good samples."""
     now = now_ms if now_ms is not None else time.time() * 1000
@@ -301,6 +326,7 @@ def status(home, now_ms=None, omp='omp'):
             row.update(_attribute(entry, registry, usages[entry['store']]['reports'], now))
         rows[alias] = row
     flagged = _shared_windows(rows, registry)
+    _label_budget_authority(home, rows)
 
     last_good, last_good_error = boundary.last_good_samples(home / 'engine' / LAST_GOOD)
     samples = {}

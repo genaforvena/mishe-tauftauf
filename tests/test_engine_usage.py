@@ -454,3 +454,26 @@ def test_missing_policy_file_falls_back_to_configured_accounts(tmp_path, monkeyp
                      [(8, 'opencode-go', None), (9, 'opencode-go', None)])
     _code, out = _explain_json(home, 'docs', monkeypatch, capsys)
     assert out['decision']['selected'] is not None and out['decision']['selected']['alias'] == 'go-a'
+
+
+def test_unreported_account_names_the_budget_file_reading_it_routes_on(tmp_path):
+    """OMP has no codex report; the row must say the authoritative reading is engine/budget.json,
+    so status and the budget view cannot show one account with opposite verdicts."""
+    home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
+    (home / 'engine').mkdir(exist_ok=True)
+    (home / 'engine' / 'budget.json').write_text(json.dumps({'accounts': {'go-a': {
+        'provider': 'opencode-go', 'state': 'FRESH', 'windows': {'7d': {'remaining': 0.5}}}}}))
+    omp = fake_omp(tmp_path, json.dumps(usage_doc()))
+    row = dashboard(home, omp)['accounts']['go-a']
+    assert row['state'] == 'UNKNOWN'
+    assert row['reason'] == 'no provider report; authoritative reading is engine/budget.json (FRESH)'
+    assert row['budget_json']['state'] == 'FRESH'
+
+
+def test_malformed_budget_file_does_not_break_engine_status(tmp_path):
+    home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
+    (home / 'engine').mkdir(exist_ok=True)
+    (home / 'engine' / 'budget.json').write_text('{not json')
+    omp = fake_omp(tmp_path, json.dumps(usage_doc()))
+    row = dashboard(home, omp)['accounts']['go-a']
+    assert (row['state'], row['reason']) == ('UNKNOWN', 'no provider report')
