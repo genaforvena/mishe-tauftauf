@@ -42,8 +42,13 @@ The budget producer calculates Claude burn from `operator/budget/claude-native-r
 The native collector appends only complete `/usage` observations. The earlier
 `claude-rate-history.jsonl` contains both native samples and statusLine callbacks, whose
 timestamps can reflect a redraw of earlier API data. It remains available for historical
-investigation. During the cutover the producer labels any elapsed-window estimate
-`window-elapsed` until the native history spans at least 25 minutes for the same reset.
+investigation. When the native samples for a reset span less than 25 minutes, the producer
+can estimate burn from use divided by elapsed window time. It starts after 15 minutes of
+elapsed window time and labels the estimate `window-elapsed`. The estimate can fall even
+when usage stays flat, so a five-hour RED can clear before native history is long enough
+to measure burn. Read `burn_source` in `engine/budget.json` to see how the current
+forecast was calculated. Once the history spans 25 minutes for that reset, the producer
+labels the measured rate `history`.
 
 References: [native commands](https://code.claude.com/docs/en/commands),
 [status line data](https://code.claude.com/docs/en/statusline). Observed native
