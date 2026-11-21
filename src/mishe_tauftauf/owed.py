@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import intentions, signal_store
+from . import intentions, signal_store, verdict_text
 from .state_files import read_json, write_json
 
 BUDGET_SIGNAL = "budget"
@@ -87,8 +87,7 @@ def _actionable(sig) -> bool:
     """A ``wake_on=state`` reading owes a wake when it is not OK, or when its verdict word is RED/UNKNOWN."""
     if sig.state != "OK":
         return True
-    verdict = str(sig.value or "").split(":", 1)[0].strip().upper()
-    return verdict in ("RED", "UNKNOWN")
+    return verdict_text.verdict_word(sig.value) in ("RED", "UNKNOWN")
 
 
 def _budget_green(home, now: float, role: str) -> bool:
