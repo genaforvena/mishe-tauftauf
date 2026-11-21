@@ -61,7 +61,7 @@ account window is read from the codex CLI's own rollout files,
 so an account that has not run lately reads STALE and the router skips it.
 
 `qwen` runs the Qwen Code CLI (`qwen -p`) with the login that CLI already holds, reading
-the dossier on stdin like `claude`. Without a model it uses `qmodel_latest`. Its result
+the dossier (the context packet a wake is handed: why it woke, its charter, its wall and messages) on stdin like `claude`. Without a model it uses `qmodel_latest`. Its result
 envelope has the claude shape, so wake views read it the same way. Its stderr — qwen
 writes advisory warnings there on every run — is kept in a sibling `.err` file, so it
 cannot corrupt the one JSON envelope. The router has no account-window reading for it:
@@ -108,7 +108,7 @@ scratch namespaces only. A delivery (promoting a checked commit to the
 running code, with automatic rollback if it fails to observe)
 in flight is a transient `moving-pin-delivery-HHMMSS.service`; its name carries no `mishe-` prefix, so pass that
 pattern too (`list-units 'mishe*' 'moving-pin-delivery-*'`) when you want to see whether
-the pin is being moved.
+the pin is being moved. (The *pin* is `runtime/current`, the release the running code was loaded from; the section *How a change lands* below explains it.)
 On a host with more than one plant, `doctor` also reads sibling plants' pinned
 releases without writing to them. A fork that still promotes or starts units
 under this plant's prefix is RED before its next sync rewrites anything; the
