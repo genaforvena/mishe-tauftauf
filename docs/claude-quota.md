@@ -63,7 +63,13 @@ Status: no code applies a 50% gate, and the router does not read the policy.
   `engine/budget.json` itself (`rows_from_engine_budget`). It reports `LOW` when
   `used > 0.9` and `RUNS OUT BEFORE RESET` when the producer's `eta_s` lands before
   the reset and the window is at least 5% used. Either result turns the account
-  verdict RED.
+  verdict RED. The exception is the `claude` 7d window (`PROJECTION_ACCEPTED` in
+  that module, since 2026-11-21): its burn projection is informational, so only a
+  spent 7d window (`LOW`) turns it RED. The 5h window keeps the projection alarm.
+- A route candidate in `engine/routes.json` may set `reserve_pct` (a float in
+  `[0, 1)`, validated by `engine_router.load_routes`). It overrides the policy's
+  default reserve of 0.15 for that candidate only, so a subscription the owner has
+  chosen to spend closer to its limit can be routed to. Unset keeps 0.15.
 - A role can use `budget-claude` to admit spontaneous intentions. The owed check
   also accepts fresh free-route evidence from the plant's budget snapshot. The
   inner router selects a candidate for the role using its own eligibility, tier
