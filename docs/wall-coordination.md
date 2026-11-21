@@ -411,11 +411,13 @@ too. Resolve or disposition the standing fault, or acknowledge its incident wait
 of re-yielding on the same condition.
 
 The disposition's `owner` names the person or role accountable for the finding. The
-signal registry determines who gets the automatic recheck. After the subscriber settles,
-check its `intentions/ROLE/disposition-NAME.json` for the recorded deadline. If the
-resolver sits outside that subscriber list, record how they will be reached and when
-they will recheck. For a shared upstream outage, the subscriber can own the signal
-recheck while the upstream resolver keeps their own recovery trigger.
+subscriber arms the recheck at settlement while the known disposition is still active.
+Check that `intentions/ROLE/disposition-NAME.json` matches the current deadline
+before relying on that wake. If the deadline could pass before any subscriber arms
+it, schedule a separate recheck. If the resolver sits outside the subscriber list,
+record how they will be reached and when they will recheck. For a shared upstream
+outage, the subscriber can recheck the signal while the upstream resolver keeps
+their own recovery trigger.
 
 A yield also sets the idle pace. The default idle initiative returns in two hours. A role
 with fresh spare capacity returns sooner: in ten minutes when its work record has a ready
