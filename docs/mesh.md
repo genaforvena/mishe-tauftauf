@@ -26,10 +26,12 @@ only when something is owed), one wake per role at a time, and scoped author
 commits that the checkout's post-commit hook (a git script that runs after each
 commit) pushes to `origin/main`, with Genome (the mind that pushes `main`)
 checking CI (the automated build and test runs) and the live consumers (the
-installed services that load the pinned release, the one version the services are pointed at). Each is a place where work can
-be seen to have landed or to have not.
+installed services that load the pinned release, the one version the services
+are pointed at). Each is a place where work can be seen to have landed or to
+have not.
 
-"Mesh" is a hypothesis about that coordination, not a description of it. Read
+"Mesh" is a hypothesis (a claim to test, not yet a finding) about that
+coordination, not a description of it. Read
 it against use: which records, wakes and locks in fact route work, and which
 land nothing. A plant can make many messages, reviews or wakes without landing
 results, and the volume of connections is not the measure of them. What each
