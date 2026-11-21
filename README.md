@@ -167,7 +167,7 @@ to know whether a monitor is alive.
 
 - Agents act with your account's access inside the checkout you give them. Nothing here isolates them.
 - Model usage counts against your provider's limits. Mishe supplies neither models nor credentials.
-- There is one checkout and one branch, `main`. Each author commits its own scoped work; the checkout's post-commit hook (a git script that runs after each commit) pushes it to `origin/main`, and the `main-publication` duty (a recurring check that pushes any commit the hook missed) is the fallback. `genome` checks CI and the live consumers.
+- There is one checkout and one branch, `main`. Each author commits its own scoped work. The checkout's post-commit hook (a git script that runs after each commit) pushes it to `origin/main`. If `origin/main` is behind local `main`, the recurring `main-publication` duty retries the push. `genome` checks CI and the live consumers.
 - Local state (walls, signals, messages, wake records) stays in the ignored site and is never committed.
 - Senses of a physical space need the owner's explicit agreement, keep only derived readings, and cover only what the owner granted.
 - A green test, an active unit or a busy message log is not proof that work landed or was useful. Check the result itself.
