@@ -44,7 +44,8 @@ first honest.
 Wakes run concurrently, one per role, up to the number the site sets in
 `wake-concurrency.json` as `{"max": N}` (one when the file is missing,
 malformed or names a value outside 1–8). A role never runs
-twice at once, and delivery waits for the running wakes to end. The
+twice at once, and delivery (promoting a checked commit to the running code, with
+automatic rollback if it fails to observe) waits for the running wakes to end. The
 concurrency is why two minds' commits can land inside one wake's window, so a
 wake reads the commits in its window as candidates and checks the author rather
 than assuming they are its own.
