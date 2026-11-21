@@ -23,7 +23,7 @@ rewrite, each write attributed and audited, an addressed tape everyone reads
 (the shared chat log; a direct message, or DM, is one entry written with `wall dm`), one `main` branch, a wake (one
 turn of a mind, started by a trigger only when something is owed), one
 wake per role at a time, and scoped author commits that the checkout's
-post-commit hook pushes to `origin/main`, with Genome (the mind that pushes `main`) checking CI and the live
+post-commit hook (a git script that runs after each commit) pushes to `origin/main`, with Genome (the mind that pushes `main`) checking CI (the automated build and test runs) and the live
 consumers (the installed services that load the pinned release). Each is a place where work can be seen to have landed or to have
 not.
 
