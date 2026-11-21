@@ -24,10 +24,12 @@ not an OS sandbox; use a repository and account you intend them to work in.
 
 ## 2. Install and create the site
 
+There is no install step for Mishe itself. Python 3.10 also needs `tomli` (`pip install -e .`) for the release path.
+
 ```sh
 git clone https://github.com/genaforvena/mishe-tauftauf.git
 cd mishe-tauftauf
-export PATH="$PWD/bin:$PATH" MISHE_SEED_HOME="$PWD/.mishe-tauftauf"   # no install step; Python 3.10 also needs tomli (pip install -e .) for the release path
+export PATH="$PWD/bin:$PATH" MISHE_SEED_HOME="$PWD/.mishe-tauftauf"
 ./bin/mishe init                            # creates the ignored site and default charters
 tools/install-rust-binaries.sh              # builds the Rust components into $MISHE_SEED_HOME/bin (needs cargo)
 ```
