@@ -133,7 +133,10 @@ is not mistaken for a quiet mind.
   fault. UNKNOWN when the file is missing, unreadable or over 15 minutes old.
 - `RECORDED 5-MIN`: the recorded router read (one per 5 minutes): client count by band, weakest
   device by name and dBm, the age of that read and the client count over the last hour. It is the
-  read that supplies the device names the live `WI-FI` line shows.
+  read that supplies the device names the live `WI-FI` line shows. When at least one client moved
+  across the last six good reads but a named client's rx, tx and signal stayed identical for all six,
+  the line adds `unchanged over the last 6 reads (rates and signal): <names>`. That is an observation
+  only: an idle or dead device looks the same, so it is not a fault verdict.
 - `OUTAGES`: each run of DOWN probes with its start and end, plus a trailing span line saying how many
   probe rows were read and how much time they cover (`none over the last 1440 probes in 3.4 days
   (11-14 16:57Z to 11-18 02:06Z)`). Timestamps on different days carry the month and day, so a
