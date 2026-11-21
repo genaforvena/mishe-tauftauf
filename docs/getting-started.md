@@ -222,13 +222,11 @@ mishe sync --uninstall                # remove the generated units
 ```
 
 The hold file belongs to whoever wrote it. A promotion or a root-migration flip that
-writes its own hold removes only a hold still carrying its own text, so a manual
-`mishe hold on` and plant_boot's boot-guard hold survive both and resume only through
-`mishe hold off`. A hold nobody refreshes does not stand forever: the `hold-state` producer
-(not a wake, because a hold suppresses wake starts) releases a hold whose writer is gone, or a
-manual or boot-guard hold older than an hour, when the dispatch lock is free and the host guard
-is not tripped, and reports the release to the operator. To hold deliberately for longer, re-run
-`mishe hold on --reason ...` within the hour.
+writes its own hold removes only a hold still carrying its own text. A manual `mishe hold on`
+and plant_boot's boot-guard hold have no timer: they survive every automatic path and stay
+until `mishe hold off`. The one automatic release is for a promotion hold whose writer is gone:
+the next delivery attempt clears it when the dispatch lock is free, and that resumes the owed
+wakes.
 
 ## Area ownership and presentation
 
