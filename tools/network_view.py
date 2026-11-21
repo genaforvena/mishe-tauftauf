@@ -532,6 +532,27 @@ def router_rows():
     return nb.decode_router_rows(text)
 
 
+FROZEN_READS = 6  # a client identical across this many good reads is worth a look
+
+
+def frozen_clients(rows_, reads=FROZEN_READS):
+    """Names listed by the router whose rx, tx and signal did not change across the last `reads`
+    good reads, while at least one other client did. A stable link can look like this, so it is an
+    observation for the wall, not a verdict; an idle or dead client shows the same numbers."""
+    good = [r for r in rows_ if r.get("ok") and r.get("clients")][-reads:]
+    if len(good) < reads:
+        return []
+    def key(c):
+        return (c.get("rx"), c.get("tx"), c.get("dbm"))
+    seen = {}
+    for r in good:
+        for c in r["clients"]:
+            seen.setdefault(c.get("name", "?"), []).append(key(c))
+    same = [n for n, ks in seen.items() if len(ks) == reads and len(set(ks)) == 1]
+    moving = [n for n, ks in seen.items() if len(set(ks)) > 1]
+    return sorted(same) if moving else []
+
+
 def recorded_clients_line(now=None):
     """Client count, weakest device and last-hour trend from the recorded router reads."""
     now = time.time() if now is None else now
@@ -552,8 +573,11 @@ def recorded_clients_line(now=None):
     hour = [r for r in rows_ if now - r["ts"] <= 3600 and r.get("ok")]
     trend = spark([len(r.get("clients", [])) for r in hour]) if hour else "(no data)"
     stale = "  STALE" if ago > STALE_ROUTER_S else ""
+    frozen = frozen_clients(rows_)
+    frozen_txt = (f"\n                    unchanged over the last {FROZEN_READS} reads (rates and signal): "
+                  + ", ".join(frozen)) if frozen else ""
     return (f"{len(clients)} clients ({band_txt}){weak_txt}; read {ago:.0f} s ago{stale}\n"
-            f"                    clients over the last hour: {trend}")
+            f"                    clients over the last hour: {trend}{frozen_txt}")
 
 
 def uplink_line(now=None):
