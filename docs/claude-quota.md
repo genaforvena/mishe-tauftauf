@@ -45,9 +45,10 @@ timestamps can reflect a redraw of earlier API data. It remains available for hi
 investigation. When the native samples for a reset span less than 25 minutes, the producer
 can estimate burn from use divided by elapsed window time. It starts after 15 minutes of
 elapsed window time and labels the estimate `window-elapsed`. The estimate can fall even
-when usage stays flat, so a five-hour RED can clear before native history is long enough
-to measure burn. Read `burn_source` in `engine/budget.json` to see how the current
-forecast was calculated. Once the history spans 25 minutes for that reset, the producer
+when usage stays flat. For example, at a steady 8% used, the five-hour forecast can
+turn RED at minute 15 and clear at minute 24, when 8% of the window has elapsed.
+Read `burn_source` in `engine/budget.json` to see how the current forecast was
+calculated. Once the native history spans 25 minutes for that reset, the producer
 labels the measured rate `history`.
 
 References: [native commands](https://code.claude.com/docs/en/commands),
