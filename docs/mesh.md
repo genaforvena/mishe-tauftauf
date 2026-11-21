@@ -77,9 +77,9 @@ and its audit for a write, the tape and the outcome record for a message, the
 branch and the CI run for a landing. A declared coupling that no reading can
 check is not thereby true.
 
-This plant starts with eight durable areas. A durable area is a standing responsibility, such as releases or reader docs, that one mind carries over time. Each area carries initiatives (one piece of work, followed from investigation to an observed result) through checks, delivery and observation. The eight are:
+This plant starts with eight durable areas. A durable area is a standing responsibility, such as releases or reader docs, that one mind carries over time. A release is one committed snapshot of the code that the plant can run; delivery makes it the live one. Each area carries initiatives (one piece of work, followed from investigation to an observed result) through checks, delivery and observation. The eight are:
 
-- **Genome** owns the runtime and releases.
+- **Genome** owns the runtime (the code the plant is running now) and releases.
 - **Health** owns reliability and recovery.
 - **Senses** owns sensors and their validity.
 - **Docs** owns the coherent reader's book.
