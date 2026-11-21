@@ -26,6 +26,8 @@ from .repo_change_docs import docs_naming
 
 SIGNAL = "repo-change"
 PUB_SIGNAL = "repo-change-pub"   # reader-meaningful commits only; wakes pub, never the raw signal
+SYSTEM1_SIGNAL = "repo-change-system1"   # code commits only (src, tools, checks, duties); wakes system1, never the raw signal
+CODE_AREAS = {"src", "tools", "duties"}  # areas a rung or commit-risk decision can depend on
 MAX_AGE_S = 6 * 3600
 REOFFER_S = 3600
 SUBSCRIBERS = ("pub", "docs")    # cursor readers; pub is woken by PUB_SIGNAL, docs by SIGNAL
@@ -239,6 +241,7 @@ def produce(home, repo, *, wake: str | None = None, window: int = DEFAULT_WINDOW
     signal_store.observe(home, SIGNAL, sha[:12], now=now, source="repo-change-producer",
                          event=sha, reason=report["summary"])
     observe_pub(home, report, now=now)
+    observe_system1(home, report, now=now)
     return report
 
 
@@ -285,9 +288,36 @@ def observe_pub(home, report: dict, *, now: float) -> None:
                                               "pub_meaningful": verdict is not None})
 
 
+def system1_verdict(report: dict) -> str | None:
+    """Newest commit in the report window that touches code (src, tools, checks, duties), or None.
+
+    System 1 reads commits for rung and commit-risk decisions; a docs-only or tests-only commit cannot move
+    either. 2026-11-21: 24 of its wakes in 4 h were raw repo-change signals for docs-only commits and every
+    one verified 'no rung impact'. The report lists commits oldest-first, so the last match is the newest."""
+    code = [c["sha"] for c in report["commits"] if not c["internal_only"] and CODE_AREAS & set(c.get("areas", []))]
+    return code[-1] if code else None
+
+
+def observe_system1(home, report: dict, *, now: float) -> None:
+    """Publish SYSTEM1_SIGNAL like observe_pub: the value moves only for a new code commit."""
+    if signal_store.registry(home).get(SYSTEM1_SIGNAL, {}).get("ack") != ACK:
+        signal_store.register(home, SYSTEM1_SIGNAL, max_age=MAX_AGE_S, subscribers=("system1",),
+                              reoffer=REOFFER_S, now=now, ack=ACK)
+    verdict = system1_verdict(report)
+    previous = signal_store.recorded(home, SYSTEM1_SIGNAL)
+    if verdict is not None:
+        value, event = verdict[:12], verdict
+    elif previous is not None:
+        value, event = previous.get("value"), previous.get("event")
+    else:
+        value, event = "none", None
+    signal_store.observe(home, SYSTEM1_SIGNAL, value, now=now, source="repo-change-producer",
+                         event=event, reason={"system1_code": verdict is not None})
+
+
 def observe_unknown_all(home, reason: str, *, now: float) -> None:
-    """Mark both repo-change signals UNKNOWN; each signal's own failure is recorded separately."""
-    for name in (SIGNAL, PUB_SIGNAL):
+    """Mark every repo-change signal UNKNOWN; each signal's own failure is recorded separately."""
+    for name in (SIGNAL, PUB_SIGNAL, SYSTEM1_SIGNAL):
         try:
             signal_store.observe_unknown(Path(home), name, now=now,
                                          source="repo-change-producer", reason=reason[:300])

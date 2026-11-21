@@ -131,7 +131,7 @@ def test_ack_registration_preserves_the_duty_policy(repo):
     now += duty["every"]
     producers.repo_change(home, now=now)
     assert signal_store.registry(home)[rcs.SIGNAL] == registered
-    role = "system1"
+    role = "docs"      # the repo-change resolver since 2026-11-21 (system1 wakes on repo-change-system1)
     owed.advance(home, role, owed.check(home, role, now=now))
 
     deadline = now + declared["max_age"]
@@ -231,3 +231,30 @@ def test_docs_only_commits_do_not_wake_pub_but_stay_in_its_detail(repo):
     assert rcs.pub_verdict(report) == code                              # a code commit still wakes it
     mixed = {"sha": "m", "subject": "add thing", "areas": ["docs", "src"], "internal_only": False}
     assert rcs.docs_only(mixed) is False and rcs.docs_only({"areas": ["docs"]}) is True and rcs.docs_only({"areas": []}) is False
+
+
+def test_system1_wakes_only_for_code_commits_and_the_value_holds_on_docs_only_commits(tmp_path, repo):
+    from mishe_tauftauf import signal_store
+    home = tmp_path / "home"
+    (home / "signals").mkdir(parents=True)
+    code = _commit(repo, "src/mishe_tauftauf/delta.py", "add delta")
+    rcs.produce(home, repo, now=1_000_000.0)
+    first = signal_store.recorded(home, rcs.SYSTEM1_SIGNAL)
+    assert first["value"] == code[:12] and signal_store.registry(home)[rcs.SYSTEM1_SIGNAL]["subscribers"] == ["system1"]
+    _commit(repo, "docs/note.md", "docs: add a note")
+    _commit(repo, "tests/test_only.py", "add a test")
+    rcs.produce(home, repo, now=1_000_100.0)
+    again = signal_store.recorded(home, rcs.SYSTEM1_SIGNAL)
+    assert again["value"] == first["value"] and again.get("event") == first.get("event")   # no new value, no edge
+    newer = _commit(repo, "tools/new_tool.py", "add tool")
+    rcs.produce(home, repo, now=1_000_200.0)
+    assert signal_store.recorded(home, rcs.SYSTEM1_SIGNAL)["value"] == newer[:12]
+
+
+def test_system1_verdict_picks_the_newest_code_commit_and_none_without_one():
+    commits = [{"sha": "a" * 40, "areas": ["src"], "internal_only": False},
+               {"sha": "b" * 40, "areas": ["docs"], "internal_only": False},
+               {"sha": "c" * 40, "areas": ["tests"], "internal_only": False},
+               {"sha": "d" * 40, "areas": ["duties"], "internal_only": True}]
+    assert rcs.system1_verdict({"commits": commits}) == "a" * 40
+    assert rcs.system1_verdict({"commits": commits[1:3]}) is None

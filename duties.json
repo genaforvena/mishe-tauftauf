@@ -1746,8 +1746,8 @@
       "timeout": 120,
       "max_age": 2700,
       "signal": {"subscribers": ["docs"]},
-      "resolver": "system1",
-      "covers": "System 0 repo-change signal (initiative repo-change-signal): on each run it reads the commits on the checkout since the oldest subscriber cursor, drops internal-only noise, names the reader docs that mention each changed source path, and publishes value = newest commit with per-subscriber deltas (pub, docs) in its detail; it also publishes repo-change-pub (value = newest reader-meaningful commit, the only signal pub wakes on). UNKNOWN when git or the reader corpus cannot be read; never GREEN on missing evidence; it calls no model and wakes no one itself",
+      "resolver": "docs",
+      "covers": "System 0 repo-change signal (initiative repo-change-signal): on each run it reads the commits on the checkout since the oldest subscriber cursor, drops internal-only noise, names the reader docs that mention each changed source path, and publishes value = newest commit with per-subscriber deltas (pub, docs) in its detail; it also publishes repo-change-pub (value = newest reader-meaningful commit, not docs-only, the only signal pub wakes on) and repo-change-system1 (value = newest commit touching src, tools, checks or duties, the only signal system1 wakes on). The resolver is docs, the one reader of the raw signal: system1 is no longer subscribed to it (2026-11-21: 24 raw wakes in 4 h, all docs-only, all verified). UNKNOWN when git or the reader corpus cannot be read; never GREEN on missing evidence; it calls no model and wakes no one itself",
       "replaces": []
     },
     {
