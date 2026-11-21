@@ -2,8 +2,9 @@
 
 [README](../README.md) · [Mesh](mesh.md)
 
-This sets up one plant in a checkout, **held**, and then lets it run. Nothing calls
-a model until you release the hold.
+This sets up one plant in a checkout, **held**, and then lets it run. A *hold* is a
+switch that stops every wake; while it is on, nothing calls a model. You release it
+with `mishe hold off` (step 5).
 
 ## 1. Prerequisites
 
