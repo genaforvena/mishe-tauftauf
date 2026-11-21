@@ -20,7 +20,7 @@ WHEN_DEADLINE_SECONDS = 6 * 3600  # fallback timer paired with a --when that nam
 # minute, and the restart storm trips the unit's start limit (2026-11-11 health wall).
 CONTINUE_FLOOR_SECONDS = 120
 OPEN_LANE_SECONDS = 10 * 60  # a role with a ready lane and spare budget returns in 10 min (was 30 min, Ilya DM 300036; 2026-11-21: use all available inference)
-SPARE_IDLE_SECONDS = 30 * 60  # a role with no open lane but spare budget keeps its idle initiative at 30 min (was DEFAULT_IDLE_SECONDS, 2 h)
+SPARE_IDLE_SECONDS = 30 * 60  # an idle role whose last wake CHANGED something, with spare budget, keeps its idle initiative at 30 min (was 2 h)
 CLAMP_SECONDS = 2 * 3600  # a role with an open lane (unread inbox or ready work) never sleeps past this (DM 300152)
 BUDGET_MAX_AGE = 3600
 # Spare floors: the share of a window that must remain. 2026-11-21 (Ilya): "no need to keep below 50%", give Mishe all
@@ -107,13 +107,20 @@ def _pending_recheck(home, role, now):
     return _pending_due(home, role, now, "again-recheck")
 
 
-def idle_delay(home, role, now, idle_seconds) -> float:
+def idle_delay(home, role, now, idle_seconds, result=None) -> float:
+    """Seconds until the role's next idle-initiative wake. With spare budget a role with open work returns in
+    OPEN_LANE_SECONDS; an idle role keeps the short pace only after a wake that CHANGED something. A role whose last
+    wake only verified (or was blocked) goes back to the slow default: more wakes for the productive, fewer for the
+    flat (2026-11-21: the faster pace raised wakes 1.9x and the changed share fell from 24% to 20%)."""
     from . import engine_router
 
     if idle_seconds == DEFAULT_IDLE_SECONDS and (
         spare_budget(home, now) or engine_router.has_free_route(home, role, now=now, require_slot=False)
     ):
-        return OPEN_LANE_SECONDS if open_lane(home, role) else SPARE_IDLE_SECONDS
+        if open_lane(home, role):
+            return OPEN_LANE_SECONDS
+        if result == "changed":
+            return SPARE_IDLE_SECONDS
     return idle_seconds
 
 
@@ -181,7 +188,7 @@ def settle(home, role: str, key: str, *, text: str, result: str, now: float,
     requested_again = again
     if again is not None:
         again, clamp_note = _clamp(again, lane_open, "--again")
-    idle, idle_clamp = _clamp(idle_delay(home, role, now, idle_seconds), lane_open, "idle")
+    idle, idle_clamp = _clamp(idle_delay(home, role, now, idle_seconds, result), lane_open, "idle")
     clamp_note += idle_clamp
     # A condition that already holds is not a wait: it fires at the next due tick and, paired, retires the
     # fallback timer the mind asked for. A mind that named an explicit --again wants that timer, so the

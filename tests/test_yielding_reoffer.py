@@ -216,3 +216,16 @@ def test_settle_survives_a_truncated_budget_file(tmp_path):
     assert yielding.receipt_path(home, "wake-h-9").exists()
     idle = [e for e in intentions.list_(home, "health") if e.get("id") == yielding.IDLE_ID]
     assert idle and float(idle[0]["due"]) == 100 + yielding.DEFAULT_IDLE_SECONDS
+
+
+def test_a_wake_that_only_verified_or_was_blocked_returns_to_the_slow_idle_pace(tmp_path):
+    for result, expected in (("changed", yielding.SPARE_IDLE_SECONDS), ("verified", yielding.DEFAULT_IDLE_SECONDS),
+                             ("blocked", yielding.DEFAULT_IDLE_SECONDS)):
+        home = tmp_path / result; home.mkdir(); _budget(home, 1000); _lane(home, "genome", state="done")
+        _open(home, "genome", "w1")
+        yielding.settle(home, "genome", "w1", text="Work", result=result, now=1000, wall_writer=lambda *a: None)
+        assert _idle_due(home, "genome") == 1000 + expected, result
+    home = tmp_path / "open"; home.mkdir(); _budget(home, 1000); _lane(home, "genome")             # open work: fast whatever the result
+    _open(home, "genome", "w1")
+    yielding.settle(home, "genome", "w1", text="Work", result="verified", now=1000, wall_writer=lambda *a: None)
+    assert _idle_due(home, "genome") == 1000 + yielding.OPEN_LANE_SECONDS
