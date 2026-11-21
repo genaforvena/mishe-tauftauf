@@ -245,10 +245,12 @@ def test_orphan_signal_files_are_unheard_detail_not_cause(tmp_path, monkeypatch)
     observed(sigdir, "healthy", seen=NOW - 60)
     observed(sigdir, "legacy-orphan")           # on disk, not in registry
     (sigdir / "units.memory.json").write_text("{}")   # unit memory, never a signal
+    (sigdir / "repo-change-cursors.json").write_text("{}")   # subscriber cursor, never a signal
     code, report = mod.run(home, NOW, sigdir=sigdir)
     assert code == 0
     assert report["counts"]["unheard"] == 1
     assert "legacy-orphan" in report["detail"]
+    assert "repo-change-cursors" not in report["detail"]
 
 
 def test_failing_producer_unit_is_red(tmp_path, monkeypatch):

@@ -52,6 +52,7 @@ RESPONSE_MIN = 1800   # ... but never judged quicker than half an hour
 UNATTENDED_S = 900    # a RED older than this with no owner wake since it turned is unattended
 UNIT_PREFIX = "mishe-producer-"
 RESERVED_FILES = ("registry.json",)   # non-signal json in signals/ besides *.memory.json
+SIDE_FILE_SUFFIXES = (".memory.json", "-cursors.json")   # signal side files, never signals
 
 # provider_budget.SIGNALS names the signal for each evaluated account; codex-a's
 # signal is budget-codex, not a mechanical "budget-" prefix of the account id.
@@ -364,9 +365,10 @@ def run(home: Path, now: float, *, repo: Path | None = None,
         counts["ok"] += 1
 
     # Signals on disk nobody subscribed to (no registry entry). *.memory.json files are
-    # unit memory, not readings; registry.json is not a signal.
+    # unit memory, not readings; *-cursors.json is a subscriber's cursor file (e.g.
+    # repo-change-cursors.json, read by repo_change_signal); registry.json is not a signal.
     on_disk = {p.name[:-5] for p in sigdir.glob("*.json")
-               if p.name != "registry.json" and not p.name.endswith(".memory.json")}
+               if p.name not in RESERVED_FILES and not p.name.endswith(SIDE_FILE_SUFFIXES)}
     orphans = sorted(on_disk - set(registry))
     counts["unheard"] = len(orphans)
     if orphans:
