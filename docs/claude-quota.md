@@ -71,9 +71,11 @@ Status: no code applies a 50% gate, and the router does not read the policy.
   default reserve of 0.15 for that candidate only, so a subscription the owner has
   chosen to spend closer to its limit can be routed to. Unset keeps 0.15.
 - A role can use `budget-claude` to admit spontaneous intentions. The owed check
-  also accepts fresh free-route evidence from the plant's budget snapshot. The
-  inner router selects a candidate for the role using its own eligibility, tier
-  and cool-off rules. During a free route's cool-off it can select Haiku as the
+  also accepts fresh free-route evidence from the plant's budget snapshot, but only
+  from that role's own roster in `engine/routes.json` (`free: true` candidates whose
+  key has a fresh FREE row), and only when the router can choose one with a free
+  slot (`engine_router.has_free_route`, `require_slot=True`). The inner router then
+  selects a candidate for the role using its own eligibility, tier and cool-off rules. During a free route's cool-off it can select Haiku as the
   Claude subscription fallback.
 - For candidates with a registered account, `engine_policy._classify_account` judges a window
   by its remaining fraction against a reserve threshold of 15%, so a weekly
