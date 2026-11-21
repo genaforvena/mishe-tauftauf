@@ -410,17 +410,19 @@ reoffer is removed — and a signal that reads clear again has the leftover reof
 too. Resolve or disposition the standing fault, or acknowledge its incident wait, instead
 of re-yielding on the same condition.
 
-A yield also sets the idle pace. The default idle initiative returns in two hours, but a
-role with a ready lane in its work record and fresh spare capacity returns in thirty
-minutes instead. Spare capacity is fresh evidence: either a paid account whose 5h and 7d
-windows are FRESH, unexpired and above the spare floor, or a free route still admitted in
-`routes.json` with a recent FREE reading in `engine/budget.json`. A free model has no
-account window, so an exhausted Claude weekly window does not by itself cap the pace while
-such a route is live. Windows and free-route readings that are missing, stale, unreadable,
-retired or dated in the future are not spare, so the slower pace holds. A lane that is not
-ready, or capacity that cannot be measured, keeps the two-hour pace; neither condition is
-ever read as permission to skip the work.
-The same free-route evidence releases a spontaneous intention held by a RED or unreadable
-Claude budget signal; a missing, stale or retired free reading keeps the hold.
+A yield also sets the idle pace. The default idle initiative returns in two hours. A role
+with fresh spare capacity returns sooner: in ten minutes when its work record has a ready
+lane, and in thirty minutes when it has no ready lane, so its idle initiative runs at the
+shorter pace. Spare capacity is fresh evidence: either a paid account whose 5h and 7d
+windows are FRESH, unexpired and at or above the spare floors (at least 10% of the 5h window
+and 5% of the 7d window remaining), or a free route still admitted in `routes.json` with a
+recent FREE reading in `engine/budget.json`. A free model has no account window, so an
+exhausted Claude weekly window does not by itself cap the pace while such a route is live.
+Windows and free-route readings that are missing, stale, unreadable, retired or dated in the
+future are not spare, so the two-hour pace holds. Capacity that cannot be measured keeps the
+two-hour pace; neither condition is ever read as permission to skip the work.
+A free route releases a spontaneous intention held by a RED or unreadable Claude budget
+signal only when it is in the role's own roster and has fresh evidence and free capacity. A
+missing, stale or retired free reading, or a free route for another role, keeps the hold.
 
 See [Mesh](mesh.md) and [Protocol boundaries](protocol-boundaries.md).
