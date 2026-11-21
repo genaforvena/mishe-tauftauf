@@ -51,6 +51,7 @@ RESPONSE_MULT = 2     # a RED/UNKNOWN reading unanswered past 2 * max_age is ign
 RESPONSE_MIN = 1800   # ... but never judged quicker than half an hour
 UNATTENDED_S = 900    # a RED older than this with no owner wake since it turned is unattended
 UNIT_PREFIX = "mishe-producer-"
+EVENT_MARK = "signal-event: "   # last detail line: producers.run reads it as the RED's event identity
 RESERVED_FILES = ("registry.json",)   # non-signal json in signals/ besides *.memory.json
 SIDE_FILE_SUFFIXES = (".memory.json", "-cursors.json")   # signal side files, never signals
 
@@ -131,13 +132,13 @@ def _dark_provider_verdicts(home: Path, registry: dict, now: float, repo: Path):
         record = json.loads(path.read_text(encoding="utf-8"))
         age = now - path.stat().st_mtime
     except (OSError, ValueError):
-        return [], "provider verdicts unmeasured (publisher record absent or unreadable)"
+        return [], "provider verdicts unmeasured (publisher record absent or unreadable)", []
     if age > 3600:
-        return [], f"provider verdicts unmeasured (publisher record {age / 3600:.1f} h old)"
+        return [], f"provider verdicts unmeasured (publisher record {age / 3600:.1f} h old)", []
     accounts = record.get("accounts") if isinstance(record, dict) else None
     if not isinstance(accounts, dict):
-        return [], "provider verdicts unmeasured (publisher record has no accounts)"
-    causes, summary = [], []
+        return [], "provider verdicts unmeasured (publisher record has no accounts)", []
+    causes, identities, summary = [], [], []
     for account, result in sorted(accounts.items()):
         name = PROVIDER_SIGNALS.get(account, f"budget-{account}")
         state = result.get("state") if isinstance(result, dict) else None
@@ -157,7 +158,8 @@ def _dark_provider_verdicts(home: Path, registry: dict, now: float, repo: Path):
             else:
                 cause += " (register it with a reoffer and an owner, or disposition the known forecast)"
             causes.append(cause)
-    return causes, "provider-verdicts: " + "; ".join(summary)
+            identities.append(f"dark-provider:{account}")
+    return causes, "provider-verdicts: " + "; ".join(summary), identities
 
 def _wake_intervals(wakes: Path, owners) -> dict[str, list[tuple[float, float]]] | None:
     """``[start, end]`` per owner-role wake in ``wakes/``, or None when unreadable.
@@ -267,9 +269,10 @@ def run(home: Path, now: float, *, repo: Path | None = None,
     sigdir = sigdir or Path(home) / "signals"
     registry = _read_json(sigdir / "registry.json")
     if not isinstance(registry, dict) or not registry:
-        return UNKNOWN, {"verdict": "UNKNOWN", "cause":
-                         "signals/registry.json unreadable: coverage cannot be judged"}
+        cause = "signals/registry.json unreadable: coverage cannot be judged"
+        return UNKNOWN, {"verdict": "UNKNOWN", "cause": cause, "causes": [], "detail": cause}
     causes: list[str] = []
+    identities: list[str] = []   # stable keys of the causes, no ages: see _event_digest
     counts = {"registered": len(registry), "ok": 0, "unmeasured": 0, "stale": 0,
               "ignored": 0, "unattended": 0, "unheard": 0, "unserveable": 0,
               "failing_units": [], "notes": []}
@@ -291,6 +294,7 @@ def run(home: Path, now: float, *, repo: Path | None = None,
                 counts["unmeasured"] += 1
                 causes.append(f"unmeasured: {name} registered but never observed "
                               f"({(now - registered_at) / 3600:.1f} h since registration)")
+                identities.append(f"unmeasured:{name}")
             else:
                 counts["notes"].append(f"{name}: never observed, inside grace")
             continue
@@ -301,6 +305,7 @@ def run(home: Path, now: float, *, repo: Path | None = None,
             counts["stale"] += 1
             causes.append(f"stale: {name} freshness stamp {(now - beat) / 60:.0f} min old "
                           f"(max_age {max_age / 60:.0f} min) — producer missed cadence")
+            identities.append(f"stale:{name}")
             continue
         if name == SELF:
             # This run recomputes its own verdict; its previous RED is judged by the
@@ -334,6 +339,7 @@ def run(home: Path, now: float, *, repo: Path | None = None,
                     causes.append(f"unattended-red: {name} RED "
                                   f"{(now - observed_at) / 60:.0f} min with no wake of "
                                   f"owner {named} since it turned — wake {named} now")
+                    identities.append(f"unattended-red:{name}")
                     continue
             if now - observed_at > bound:
                 answer = _dispositioned(home, repo, name, now)
@@ -349,16 +355,20 @@ def run(home: Path, now: float, *, repo: Path | None = None,
                                       f"{answer['recheck_at']:.0f} but no recheck wake — "
                                       f"registration needs a reoffer and a subscriber "
                                       f"(yielding.py:220)")
+                        identities.append(f"unserveable:{name}:{answer.get('owner')}")
                     continue
                 counts["ignored"] += 1
                 cause = (f"ignored: {name} reading {value or state} unchanged "
                          f"{(now - observed_at) / 3600:.1f} h > bound {bound / 3600:.1f} h")
+                identity = f"ignored:{name}"
                 lapsed = _lapsed_known_disposition(home, repo, name, now)
                 if lapsed is not None and isinstance(lapsed.get("recheck_at"), (int, float)):
                     due = datetime.fromtimestamp(lapsed["recheck_at"], timezone.utc)
                     cause += (f"; known disposition by {lapsed.get('owner')} lapsed "
                               f"{due:%H:%M:%SZ} — recheck that resolver")
+                    identity += f":lapsed:{lapsed.get('owner')}:{lapsed['recheck_at']:.0f}"
                 causes.append(cause)
+                identities.append(identity)
                 continue
             counts["notes"].append(f"{name}: {value or state} fresh, response pending")
             continue
@@ -381,6 +391,7 @@ def run(home: Path, now: float, *, repo: Path | None = None,
         counts["notes"].append(unit_note)
     elif units:
         causes.append("failing-producer units: " + ", ".join(units))
+        identities.append("failing-units:" + ",".join(sorted(units)))
 
     # Self: the previous own observation past its max_age is this producer failing.
     self_entry = registry.get(SELF)
@@ -396,6 +407,7 @@ def run(home: Path, now: float, *, repo: Path | None = None,
             if age > self_max:
                 causes.append(f"self stale: signal-coverage stamp {age / 60:.0f} min old — "
                               "this producer missed its cadence")
+                identities.append("self-stale")
 
     unmeasured_accounts, account_note = _accounts_unmeasured(Path(home), repo)
     if account_note:
@@ -410,22 +422,36 @@ def run(home: Path, now: float, *, repo: Path | None = None,
             budget_case.append(f"{probe}={reading.get('value', 'unmeasured')}"
                                f" (subs {subs}, max_age {entry.get('max_age', 0) / 60:.0f}m)")
     detail_lines.append("budget-window-care: " + ("; ".join(budget_case) or "no budget signal registered"))
-    dark_causes, dark_note = _dark_provider_verdicts(Path(home), registry, now, repo)
+    dark_causes, dark_note, dark_ids = _dark_provider_verdicts(Path(home), registry, now, repo)
     counts["dark_providers"] = len(dark_causes)
     causes.extend(dark_causes)
+    identities.extend(dark_ids)
     detail_lines.append(dark_note)
     if dark_note.startswith("provider verdicts unmeasured"):
         counts["notes"].append(dark_note)
 
     verdict = RED if causes else GREEN
+    event = _event_digest(identities) if causes else None
     report = {"verdict": {GREEN: "GREEN", RED: "RED", UNKNOWN: "UNKNOWN"}[verdict],
               "counts": counts, "causes": causes,
               "unmeasured_accounts": unmeasured_accounts, "self": self_line,
               "detail": "\n".join([f"{k}: {v}" for k, v in counts.items()
                                    if k not in ("failing_units", "notes") and v]
                                   + [f"unit {u} failed" for u in units]
-                                  + detail_lines + counts["notes"][:6])}
+                                  + detail_lines + counts["notes"][:6]
+                                  + ([f"{EVENT_MARK}{event}"] if event else []))}
     return verdict, report
+
+
+def _event_digest(identities) -> str:
+    """Stable digest of the RED causes' identities (signal, owner, deadline — never ages).
+
+    producers.run passes it as the signal's event, so a new lapse under an existing RED moves
+    the revision and wakes subscribers once, while age growth and cause order stay quiet.
+    A removed lapse also moves it: the set the subscriber must act on changed.
+    """
+    import hashlib
+    return hashlib.sha256("\n".join(sorted(set(identities))).encode("utf-8")).hexdigest()[:16]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -440,7 +466,7 @@ def main(argv: list[str] | None = None) -> int:
           + (f": {report['causes'][0]}" if report.get("causes") else ""))
     for cause in report.get("causes", [])[1:]:
         print(f"  cause: {cause}")
-    print(report["detail"])
+    print(report.get("detail", report.get("cause", "")))
     return code
 
 

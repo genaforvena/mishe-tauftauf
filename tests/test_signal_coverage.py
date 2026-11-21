@@ -475,3 +475,79 @@ def test_green_unregistered_verdict_is_not_a_dark_lane(tmp_path, monkeypatch):
     assert code == 0
     assert "codex-a=GREEN (NO signal budget-codex)" in report["detail"]
     assert not any(c.startswith("dark-provider-verdict") for c in report["causes"])
+
+
+def _two_ignored(tmp_path, *, second_at):
+    """Two RED readings unchanged past the bound; the second's age is a parameter."""
+    home, sigdir = site(tmp_path, {"alpha": register_entry(), "beta": register_entry()})
+    observed(sigdir, "alpha", "RED", at=NOW - 3 * MAX_AGE, seen=NOW - 60)
+    observed(sigdir, "beta", "RED", at=second_at, seen=NOW - 60)
+    wake_file(home, "steward", NOW - 3 * MAX_AGE + 60, yield_at=NOW - 3 * MAX_AGE + 120)
+    return home, sigdir
+
+
+def _event_line(report):
+    return [line for line in report["detail"].splitlines() if line.startswith(mod.EVENT_MARK)]
+
+
+def test_event_is_stable_when_only_age_grows(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = _two_ignored(tmp_path / "a", second_at=NOW - 3 * MAX_AGE)
+    _, first = mod.run(home, NOW, sigdir=sigdir)
+    for name in ("alpha", "beta"):   # the producer keeps beating, so only the lapse ages
+        os.utime(sigdir / f"{name}.seen", (NOW + 3540, NOW + 3540))
+    _, later = mod.run(home, NOW + 3600, sigdir=sigdir)
+    assert _event_line(first) and _event_line(first) == _event_line(later)
+
+
+def test_event_moves_when_a_new_lapse_joins_the_red(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = _two_ignored(tmp_path / "b", second_at=NOW - 60)
+    _, one = mod.run(home, NOW, sigdir=sigdir)
+    observed(sigdir, "beta", "RED", at=NOW - 3 * MAX_AGE, seen=NOW - 60)
+    _, two = mod.run(home, NOW, sigdir=sigdir)
+    assert _event_line(one) != _event_line(two)
+    assert len(two["causes"]) == 2 and len(one["causes"]) == 1
+
+
+def test_event_moves_when_one_lapse_clears_and_another_keeps_red(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = _two_ignored(tmp_path / "c", second_at=NOW - 3 * MAX_AGE)
+    _, both = mod.run(home, NOW, sigdir=sigdir)
+    observed(sigdir, "beta", "GREEN", at=NOW - 60, seen=NOW - 60)
+    _, one = mod.run(home, NOW, sigdir=sigdir)
+    assert one["verdict"] == "RED" and _event_line(both) != _event_line(one)
+
+
+def test_green_run_declares_no_event(tmp_path, monkeypatch):
+    _clear_systemctl(monkeypatch)
+    home, sigdir = site(tmp_path, {"ok": register_entry()})
+    observed(sigdir, "ok", "GREEN", at=NOW - 60, seen=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert code == 0 and _event_line(report) == []
+
+
+def test_unknown_cli_prints_the_cause_and_exits_with_its_code(tmp_path, monkeypatch, capsys):
+    _clear_systemctl(monkeypatch)
+    home, _ = site(tmp_path, with_registry=False)
+    assert mod.main(["--home", str(home)]) == 3
+    out = capsys.readouterr().out
+    assert "registry.json unreadable" in out and "signal-coverage: UNKNOWN" in out
+
+
+def test_producer_reads_the_declared_event_and_keeps_it_out_of_the_reason(tmp_path):
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+    from mishe_tauftauf import producers, signal_store
+    detail = tmp_path / "x.detail"
+    detail.write_text("signal-coverage: RED: ignored: alpha\nignored: alpha\nsignal-event: abc123def456aa11\n")
+    assert producers._declared_event(detail) == "abc123def456aa11"
+    plain = tmp_path / "y.detail"
+    plain.write_text("check failed\n")
+    assert producers._declared_event(plain) is None
+    home = tmp_path / "home"
+    home.mkdir()
+    signal_store.register(home, "gamma", max_age=600.0, subscribers=("steward",), now=NOW)
+    assert signal_store.observe(home, "gamma", "RED", now=NOW, source="t", event="e1", reason="r")
+    assert not signal_store.observe(home, "gamma", "RED", now=NOW, source="t", event="e1", reason="r")
+    assert signal_store.observe(home, "gamma", "RED", now=NOW, source="t", event="e2", reason="r")

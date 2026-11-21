@@ -117,9 +117,29 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
     # and the next run overwrites it, so a subscriber woken by the edge must be able to read why
     # here; without it the verdict line records no cause for the very state that needs one.
     reason = detail_brief(detail, REASON_MAX) if code != 0 else ""
+    # A check may declare its RED's identity (checks/signal-coverage.py: a set of stable causes, no ages).
+    # A new identity under the same RED is an edge, so subscribers wake on a new cause, not on age.
+    event = _declared_event(detail) if code != 0 else None
+    if event:
+        reason = reason.replace(f"{EVENT_MARK}{event}", "").strip()
     signal_store.observe(home, name, "GREEN" if code == 0 else "RED", now=now,
-                         source=f"run:{command[0]}", reason=reason)
+                         source=f"run:{command[0]}", event=event, reason=reason)
     return 0
+
+
+EVENT_MARK = "signal-event: "   # keep in step with checks/signal-coverage.py EVENT_MARK
+
+
+def _declared_event(detail: Path) -> str | None:
+    """The check's declared event identity: its final ``signal-event: <digest>`` line, or None."""
+    try:
+        lines = Path(detail).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    last = lines[-1].strip() if lines else ""
+    if last.startswith(EVENT_MARK):
+        return last[len(EVENT_MARK):].strip() or None
+    return None
 
 
 DISPATCH_OPEN_GRACE_S = 300.0
