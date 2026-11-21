@@ -62,12 +62,6 @@ shown), **MISSING** (not measured or not shown).
 | "Worse than usual?" | BUILT | `usuality_line()` compares the median of the last 10 web samples with a typical and shows both numbers, with UNKNOWN / STALE guards. The typical is the busy hours' own median (retained busy-hour samples excluding the newest 60, still labelled "of evenings") during the 16-20 UTC busy hours, where pages run structurally elevated (16/17/18h web medians 609/671/562 ms on 2026-11-20 17:20Z, against about 350 ms overnight) and the pooled day median reads "slower than usual" on every ordinary peak hour; outside them (or without enough busy-hour samples) it is the last-day median excluding the most recent 60, labelled "of samples". The headline qualifies a flagged slowdown with "for the evening" so it cannot read as a whole-day claim |
 | Outages with start and end | BUILT | `outage_lines()` from `outage_episodes()` |
 
-## Count
-
-- BUILT: 20
-- PARTLY: 3
-- MISSING: 2
-
 ## Next gaps, in order of value
 
 1. What the radio fail counter means, and when it deserves a threshold. The counters exist now
