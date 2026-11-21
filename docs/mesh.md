@@ -26,7 +26,7 @@ only when something is owed), one wake per role at a time, and scoped author
 commits that the checkout's post-commit hook (a git script that runs after each
 commit) pushes to `origin/main`, with Genome (the mind that pushes `main`)
 checking CI (the automated build and test runs) and the live consumers (the
-installed services that load the pinned release). Each is a place where work can
+installed services that load the pinned release, the one version the services are pointed at). Each is a place where work can
 be seen to have landed or to have not.
 
 "Mesh" is a hypothesis about that coordination, not a description of it. Read
