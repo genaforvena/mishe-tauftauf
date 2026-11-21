@@ -215,3 +215,19 @@ def test_pub_signal_turns_unknown_when_git_cannot_be_read(tmp_path, repo):
     rcs.observe_unknown_all(home, "git unreadable", now=1_000_001.0)
     assert signal_store.read(home, rcs.PUB_SIGNAL, now=1_000_001.0).state == "UNKNOWN"
     assert signal_store.read(home, rcs.SIGNAL, now=1_000_001.0).state == "UNKNOWN"
+
+
+def test_docs_only_commits_do_not_wake_pub_but_stay_in_its_detail(repo):
+    pub_cursor = _git(repo, "rev-parse", "HEAD")
+    _commit(repo, "docs/recovery.md", "docs: add recovery note")
+    only_docs = _git(repo, "rev-parse", "HEAD")
+    commits = rcs.read_log(repo, rcs.rev_range(repo, [pub_cursor], 50))
+    report = rcs.build_report(commits, {"pub": pub_cursor}, only_docs, repo_root=repo)
+    assert report["subscribers"]["pub"]["count"] == 1                   # visible in the detail view
+    assert rcs.pub_verdict(report) is None                              # but pub owes no read
+    code = _commit(repo, "src/mishe_tauftauf/gamma.py", "add gamma")
+    commits = rcs.read_log(repo, rcs.rev_range(repo, [pub_cursor], 50))
+    report = rcs.build_report(commits, {"pub": pub_cursor}, code, repo_root=repo)
+    assert rcs.pub_verdict(report) == code                              # a code commit still wakes it
+    mixed = {"sha": "m", "subject": "add thing", "areas": ["docs", "src"], "internal_only": False}
+    assert rcs.docs_only(mixed) is False and rcs.docs_only({"areas": ["docs"]}) is True and rcs.docs_only({"areas": []}) is False

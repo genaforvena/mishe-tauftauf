@@ -247,8 +247,18 @@ def pub_verdict(report: dict) -> str | None:
 
     The delta is oldest-first, so the last reader-meaningful entry is the newest one.
     """
-    meaningful = [c["sha"] for c in report["subscribers"]["pub"]["new"] if not c["internal_only"]]
+    meaningful = [c["sha"] for c in report["subscribers"]["pub"]["new"]
+                  if not c["internal_only"] and not docs_only(c)]
     return meaningful[-1] if meaningful else None
+
+
+def docs_only(commit: dict) -> bool:
+    """A commit that touches documentation paths and nothing else. It stays in pub's detail view, but it does not
+    wake pub: 2026-11-21, 14 of 16 pub wakes in 5 h were docs-only commits and every one verified that no article claim
+    changed. Claim drift against the source is watched by the pub-*-claims duties and the weekly check, not by
+    reading every wording change. A commit that also touches src, tools, duties or tests still counts."""
+    areas = set(commit.get("areas", []))
+    return bool(areas) and areas <= {"docs"}
 
 
 def observe_pub(home, report: dict, *, now: float) -> None:
