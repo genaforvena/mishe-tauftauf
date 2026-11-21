@@ -149,7 +149,8 @@ This plant runs eleven role windows — one for each of the eight durable areas 
   failure. The block is per wake, so several concurrent wakes each get their own.
 
 A pane loads its code once, when its process starts, from the runtime pin in force at that
-moment. After the pin moves, a pane keeps running the code it loaded until it is restarted.
+moment. The pin is the `runtime/current` link in the site, which names the release now running;
+only the delivery path moves it. After the pin moves, a pane keeps running the code it loaded until it is restarted.
 A failed read in any window shows `View UNKNOWN` with the cause, and the window keeps
 following.
 Senses' readings renew independently every ten minutes. `mishe discover show`
