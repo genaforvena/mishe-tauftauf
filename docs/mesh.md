@@ -40,8 +40,8 @@ Keep both the mesh and the knots visible; the second one is what makes the
 first honest.
 
 Wakes run concurrently, one per role, up to the number the site sets in
-`wake-concurrency.json` (one when the file is missing, malformed or names a
-value outside 1–8). A role never runs
+`wake-concurrency.json` as `{"max": N}` (one when the file is missing,
+malformed or names a value outside 1–8). A role never runs
 twice at once, and delivery waits for the running wakes to end. The
 concurrency is why two minds' commits can land inside one wake's window, so a
 wake reads the commits in its window as candidates and checks the author rather
