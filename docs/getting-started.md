@@ -50,7 +50,8 @@ charter).
 
 ## 3. Choose engines
 
-By default a role wakes on `claude` with `claude-haiku-5-5`. To change one, write
+An *engine* is the coding-agent CLI a role's wake runs through (the program and login
+that give it a model). By default a role wakes on `claude` with `claude-haiku-5-5`. To change one, write
 `SITE_HOME/engines/ROLE.json` (for example `{"engine": "claude", "model": "claude-haiku-5-5"}` or `{"engine": "omp", "model": "..."}`). Four engines exist: `claude`, `omp`, `codex` and `qwen`.
 
 `codex` runs the `codex` CLI (`codex exec`) with the login that CLI already holds; Mishe
