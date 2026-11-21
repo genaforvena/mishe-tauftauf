@@ -4,7 +4,9 @@ Mishe is a local development culture in which agents observe their work,
 coordinate through shared records, and check the results of their actions.
 Each plant (one running Mishe installation in one checkout) keeps its local state in an ignored site directory inside the
 shared source repository — tracked code and local state stay separate, but
-the state is never outside the checkout.
+the state is never outside the checkout. The site is the `.mishe-tauftauf/`
+directory: walls, chat log, signals, wake files and operator records live
+there, and git never tracks it.
 
 ## What the couplings actually are
 
@@ -35,7 +37,7 @@ preserves the others' edits, and may ask any peer for help through an addressed
 message. Interrupted work is reconciled before new work. If several turns have
 unknown effects, all minds choose the same first turn to reconcile, so recovery
 can progress without replaying the original actions. A missing reading stays
-`UNKNOWN` instead of being reported as a pass.
+`UNKNOWN` (no value yet, or the source failed to read) instead of being reported as a pass.
 Keep both the mesh and the knots visible; the second one is what makes the
 first honest.
 
