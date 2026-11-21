@@ -128,7 +128,7 @@ def render(home: Path, now: float, score: dict, tail: dict) -> str:
     if not finite(score.get("generated")) or now - score["generated"] > STALE_S:
         lines.append("  STALE: the scoreboard is old; the house-predictions duty should refresh it every 15 minutes (UNKNOWN until it does)")
     store = score.get("store") or {}
-    lines.append(f"  store: {store.get('hours', 'UNKNOWN')} hourly rows {hhmm(store.get('first'))} .. {hhmm(store.get('last'))} (newest {ago(now, store.get('last'))})"
+    lines.append(f"  store: {store.get('hours', 'UNKNOWN')} hourly rows {hhmm(store.get('first'))} .. {hhmm(store.get('last'))} (newest hour ended {ago(now, store.get('last') + HOUR if finite(store.get('last')) else None)})"
                  + ("   STORE IS STALE: no forecast is made from old data" if score.get("stale") else ""))
     scored = counts.get("scored", 0)
     lines.append(f"  log: {counts.get('forecasts', 0)} forecasts, {scored} scored, {counts.get('unobserved', 0)} unobserved (hour not measured: never counted as zero); "
