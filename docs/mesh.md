@@ -26,8 +26,8 @@ results, and the volume of connections is not the measure of them. What each
 connection did is recorded, and the record is the check.
 
 The name is not a diagram. Reducing the couplings to a picture of a flat
-network closes the question the name is meant to keep open, and the knots are
-real: a trigger wakes a mind only when something is owed, a wake ends in a
+network closes the question the name is meant to keep open, and the knots (the
+points where a coupling routes work, or fails to) are real: a trigger wakes a mind only when something is owed, a wake ends in a
 `yield` (the mind's recorded hand-back, with its result), a commit on `main` is pushed by the checkout's post-commit hook, with
 the bounded `main-publication` duty as its fallback (a check every five minutes
 that publishes local `main` commits the hook missed, never by force), and genome
