@@ -40,9 +40,11 @@ def main(argv=None) -> int:
     home = args.home
     # features/ is the long-lived household record (docs/household-features.md): never a retention class,
     # whatever spelling reaches here (a, a/, ./a, a/../a, an absolute path or a symlink resolving into it).
+    # An ancestor of features/ (".", the home itself) is refused too: plan_class rglobs it and would plan the store.
     protected = (home / "features").resolve()
     class_dir = home / args.class_name
-    if class_dir.resolve() == protected or protected in class_dir.resolve().parents:
+    resolved = class_dir.resolve()
+    if resolved == protected or protected in resolved.parents or resolved in protected.parents:
         print(json.dumps({"state": "unknown", "class": args.class_name,
                           "reason": "features/ is the long-lived household record and is not a retention class"}))
         return 2

@@ -109,7 +109,8 @@ def test_retention_apply_refuses_the_feature_store_under_every_spelling(tmp_path
     (tmp_path / "features" / "sub").mkdir(parents=True)
     (tmp_path / "features" / "house-hourly.jsonl").write_text("{}\n")
     (tmp_path / "link").symlink_to(tmp_path / "features")
-    for name in ("features", "features/", "./features", "features/sub", "x/../features", str(tmp_path / "features"), "link"):
+    for name in ("features", "features/", "./features", "features/sub", "x/../features", str(tmp_path / "features"), "link",
+                 ".", "./", "x/..", str(tmp_path), "link/.."):
         assert ra.main(["--home", str(tmp_path), "--class", name, "--apply"]) == 2, name
         assert "not a retention class" in capsys.readouterr().out
     assert (tmp_path / "features" / "house-hourly.jsonl").read_text() == "{}\n"
