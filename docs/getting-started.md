@@ -95,8 +95,9 @@ mishe doctor                # exits 0 when units match what was generated
 `sync` writes the user units (`mishe-wake@.service`, a path unit per role, *producer*
 timers, `mishe-failed@`, the doctor). A producer is a timer that runs one check, writes its
 signal and exits; it is the only thing that polls and enables the paths and timers.
-`systemctl --user list-units 'mishe*'` shows them. A delivery in flight is a transient
-`moving-pin-delivery-HHMMSS.service`; its name carries no `mishe-` prefix, so pass that
+`systemctl --user list-units 'mishe*'` shows them. A delivery (promoting a checked commit to the
+running code, with automatic rollback if it fails to observe; see [operating](operating.md))
+in flight is a transient `moving-pin-delivery-HHMMSS.service`; its name carries no `mishe-` prefix, so pass that
 pattern too (`list-units 'mishe*' 'moving-pin-delivery-*'`) when you want to see whether
 the pin is being moved.
 On a host with more than one plant, `doctor` also reads sibling plants' pinned
