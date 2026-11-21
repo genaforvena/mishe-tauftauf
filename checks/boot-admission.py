@@ -48,6 +48,13 @@ HUMAN_ACTION = (
 NEXT_BOOT_ACTION = "Human root decision pending for unattended boot (docs/recovery.md)."
 
 
+# A single systemctl show over ~180 producer units took 16.4s at 11:19Z on
+# 2026-11-21 (exit 3, UNKNOWN) while the same call takes ~0.2s on a quiet bus.
+# 15s was too tight for a loaded user manager; 30s per call keeps three calls
+# under the 120s unit budget.
+SYSTEMCTL_TIMEOUT = 30
+
+
 class Undecidable(Exception):
     """The question cannot be decided from here; the answer is UNKNOWN."""
 
@@ -93,7 +100,7 @@ def _systemctl_show(unit: str, *props: str) -> dict:
     for prop in props:
         command += ["-p", prop]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=15)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise Undecidable("cannot read unit %s: %s" % (unit, exc))
     if result.returncode:
@@ -119,7 +126,7 @@ def _producer_count() -> int:
     listing = ["systemctl", "--user", "list-units", PRODUCER_PATTERN,
                "--all", "--no-legend", "--no-pager", "--plain"]
     try:
-        result = subprocess.run(listing, capture_output=True, text=True, timeout=15)
+        result = subprocess.run(listing, capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise Undecidable("cannot list producer units: %s" % exc)
     if result.returncode:
@@ -132,7 +139,7 @@ def _producer_count() -> int:
         "-p", "Id", "-p", "ActiveState", "-p", "Result",
         "-p", "ExecMainExitTimestampMonotonic"]
     try:
-        shown = subprocess.run(command, capture_output=True, text=True, timeout=15)
+        shown = subprocess.run(command, capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise Undecidable("cannot read producer units: %s" % exc)
     if shown.returncode:
