@@ -518,7 +518,10 @@ def _installed(cfg: Config) -> dict:
                 text = path.read_text(encoding="utf-8")
             except UnicodeError:
                 continue
-            if text.startswith(MARKER):
+            # The marker is shared by every plant, so the prefix is what says whose unit this is.
+            # A sibling plant (m2shell, 2026-11-21) installs marked units into this same
+            # directory; without the prefix check sync unlinked them and doctor called them stale.
+            if text.startswith(MARKER) and rel.startswith(f"{cfg.prefix}-"):
                 found[rel] = text
     return found
 

@@ -260,6 +260,15 @@ def test_a_leaked_hidden_temp_file_is_not_read_as_an_installed_unit(cfg):
     assert units.doctor(cfg, ROLES).problems == []          # a crash's leftover must not RED the site
 
 
+def test_a_sibling_plants_marked_units_are_neither_stale_nor_removed(cfg):
+    units.sync(cfg, ROLES, runner=lambda c: None)
+    sibling = cfg.unit_dir / "m2shell-human-typed-relay.service"
+    sibling.write_text(units.MARKER + "\n[Service]\nType=oneshot\n", encoding="utf-8")
+    assert units.doctor(cfg, ROLES).problems == []           # not reported as our stale unit
+    units.sync(cfg, ROLES, runner=lambda c: None)
+    assert sibling.exists()                                   # sync must not unlink another plant's unit
+
+
 def test_doctor_green_when_units_match(cfg):
     units.sync(cfg, ROLES, runner=lambda c: None)
     report = units.doctor(cfg, ROLES)
