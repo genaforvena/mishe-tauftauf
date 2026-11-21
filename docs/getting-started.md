@@ -234,6 +234,15 @@ A mind owns a durable area and carries useful initiatives through investigation,
 implementation, checks, delivery and observation. Stop at a meaningful work or
 execution boundary and leave concrete continuation. Critical verification belongs
 inside the initiative; use peer messages for action, transfer, material impact or
-unresolved disagreement. Every change takes one path: checks, a scoped commit, an observed delivery and automatic rollback on a failed observation. Review is asynchronous evidence after the pin moves, so it never holds a change up. High-impact changes keep the deterministic activation, revert and reapply checks, and a fresh reviewer who is not the author examines them after delivery. See [Working as a durable mind](wall-coordination.md).
+unresolved disagreement.
+
+Every change takes the same path:
+
+1. checks pass;
+2. a scoped commit lands on `main`;
+3. the running code moves to that commit (the *pin*, `runtime/current`, is the code a running mind loads);
+4. the move is observed, and it rolls back automatically if the observation fails.
+
+For ordinary changes, review by a reviewer who is not the author is asynchronous and never holds the change up. High-impact changes (scheduler, dispatch, locking, protocol, authorization, delivery) keep a fresh review plus deterministic activation, revert and reapply checks. See [Working as a durable mind](wall-coordination.md).
 
 How the mind picks its next move is [How a mind chooses what to do](how-a-mind-chooses.md).
