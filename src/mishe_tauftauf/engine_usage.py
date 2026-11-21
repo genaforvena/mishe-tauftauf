@@ -278,23 +278,46 @@ BUDGET_FILE = 'engine/budget.json'
 OMP_GAP_REASON = 'no provider report'
 
 
-def _label_budget_authority(home, rows):
+def _reaged_state(entry, now_s):
+    """The state the router would admit this budget.json account at: a FRESH label stands only while
+    every window it names is still observed within MAX_AGE_S and not yet reset (budget_producer's one rule)."""
+    if entry.get('state') != 'FRESH':
+        return entry.get('state') or 'UNKNOWN'
+    windows = entry.get('windows')
+    if not isinstance(windows, dict):
+        return 'STALE'
+    for w in windows.values():
+        if not isinstance(w, dict) or not budget_producer.window_fresh_at(w.get('observed_at'), w.get('reset_at'), now_s):
+            return 'STALE'
+    return 'FRESH'
+
+
+def _label_budget_authority(home, rows, now_ms):
     """An account OMP cannot report (no provider report) keeps its OMP UNKNOWN, but the row names the
-    engine/budget.json reading that the router and the budget view actually use, so the two observers
-    cannot read as one account with opposite verdicts. The budget file is the one source (docs/budget-json-contract.md)."""
+    engine/budget.json reading that the router and the budget view actually use, re-aged at now so a
+    stale file cannot read FRESH. A missing, unreadable or malformed budget file names no reading."""
+    now_s = now_ms / 1000
     try:
         budget = state_files.read_json(home / BUDGET_FILE)
-    except ValueError:
+    except (OSError, ValueError):
         budget = None
-    accounts = budget.get('accounts') if isinstance(budget, dict) else None
+    if not isinstance(budget, dict):
+        return
+    produced = budget.get('produced_at')
+    file_fresh = (budget.get('schema') == budget_producer.SCHEMA and isinstance(produced, (int, float))
+                  and not isinstance(produced, bool) and now_s - budget_producer.MAX_AGE_S <= produced <= now_s + 5)
+    accounts = budget.get('accounts')
+    if not isinstance(accounts, dict):
+        return
     for alias, row in rows.items():
         if row['state'] != 'UNKNOWN' or row.get('reason') != OMP_GAP_REASON:
             continue
-        entry = accounts.get(alias) if isinstance(accounts, dict) else None
+        entry = accounts.get(alias)
         if not isinstance(entry, dict):
             continue
-        row['reason'] = f"{OMP_GAP_REASON}; authoritative reading is {BUDGET_FILE} ({entry.get('state', 'UNKNOWN')})"
-        row['budget_json'] = {'state': entry.get('state'), 'provider': entry.get('provider'),
+        state = _reaged_state(entry, now_s) if file_fresh else 'STALE'
+        row['reason'] = f"{OMP_GAP_REASON}; authoritative reading is {BUDGET_FILE} ({state})"
+        row['budget_json'] = {'state': state, 'provider': entry.get('provider'),
                               'windows': entry.get('windows') or {}}
 
 
@@ -326,7 +349,7 @@ def status(home, now_ms=None, omp='omp'):
             row.update(_attribute(entry, registry, usages[entry['store']]['reports'], now))
         rows[alias] = row
     flagged = _shared_windows(rows, registry)
-    _label_budget_authority(home, rows)
+    _label_budget_authority(home, rows, now)
 
     last_good, last_good_error = boundary.last_good_samples(home / 'engine' / LAST_GOOD)
     samples = {}

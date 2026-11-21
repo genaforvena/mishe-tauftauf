@@ -2,6 +2,7 @@
 import json
 import sqlite3
 import stat
+import time
 
 import pytest
 
@@ -456,18 +457,51 @@ def test_missing_policy_file_falls_back_to_configured_accounts(tmp_path, monkeyp
     assert out['decision']['selected'] is not None and out['decision']['selected']['alias'] == 'go-a'
 
 
+def _budget(produced_at, observed_at=None, reset_in=3600):
+    now = time.time()
+    observed = now if observed_at is None else observed_at
+    return {'schema': 1, 'produced_at': produced_at, 'accounts': {'go-a': {
+        'provider': 'opencode-go', 'state': 'FRESH',
+        'windows': {'7d': {'remaining': 0.5, 'observed_at': observed, 'reset_at': now + reset_in}}}}}
+
+
 def test_unreported_account_names_the_budget_file_reading_it_routes_on(tmp_path):
     """OMP has no codex report; the row must say the authoritative reading is engine/budget.json,
     so status and the budget view cannot show one account with opposite verdicts."""
     home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
     (home / 'engine').mkdir(exist_ok=True)
-    (home / 'engine' / 'budget.json').write_text(json.dumps({'accounts': {'go-a': {
-        'provider': 'opencode-go', 'state': 'FRESH', 'windows': {'7d': {'remaining': 0.5}}}}}))
+    (home / 'engine' / 'budget.json').write_text(json.dumps(_budget(time.time())))
     omp = fake_omp(tmp_path, json.dumps(usage_doc()))
-    row = dashboard(home, omp)['accounts']['go-a']
+    row = dashboard(home, omp, now=time.time() * 1000)['accounts']['go-a']
     assert row['state'] == 'UNKNOWN'
     assert row['reason'] == 'no provider report; authoritative reading is engine/budget.json (FRESH)'
     assert row['budget_json']['state'] == 'FRESH'
+
+
+def test_stale_budget_file_is_not_named_fresh(tmp_path):
+    home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
+    (home / 'engine').mkdir(exist_ok=True)
+    (home / 'engine' / 'budget.json').write_text(json.dumps(_budget(time.time() - 3 * 3600)))
+    omp = fake_omp(tmp_path, json.dumps(usage_doc()))
+    row = dashboard(home, omp, now=time.time() * 1000)['accounts']['go-a']
+    assert row['reason'] == 'no provider report; authoritative reading is engine/budget.json (STALE)'
+
+
+def test_window_past_its_reset_is_reaged_stale(tmp_path):
+    home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
+    (home / 'engine').mkdir(exist_ok=True)
+    (home / 'engine' / 'budget.json').write_text(json.dumps(_budget(time.time(), reset_in=-60)))
+    omp = fake_omp(tmp_path, json.dumps(usage_doc()))
+    row = dashboard(home, omp, now=time.time() * 1000)['accounts']['go-a']
+    assert row['budget_json']['state'] == 'STALE'
+
+
+def test_unreadable_budget_path_does_not_break_engine_status(tmp_path):
+    home = make_site(tmp_path, {'go-a': go('a', 8)}, [(8, 'opencode-go', None)])
+    (home / 'engine' / 'budget.json').mkdir(parents=True)
+    omp = fake_omp(tmp_path, json.dumps(usage_doc()))
+    row = dashboard(home, omp, now=time.time() * 1000)['accounts']['go-a']
+    assert (row['state'], row['reason']) == ('UNKNOWN', 'no provider report')
 
 
 def test_malformed_budget_file_does_not_break_engine_status(tmp_path):
@@ -475,5 +509,5 @@ def test_malformed_budget_file_does_not_break_engine_status(tmp_path):
     (home / 'engine').mkdir(exist_ok=True)
     (home / 'engine' / 'budget.json').write_text('{not json')
     omp = fake_omp(tmp_path, json.dumps(usage_doc()))
-    row = dashboard(home, omp)['accounts']['go-a']
+    row = dashboard(home, omp, now=time.time() * 1000)['accounts']['go-a']
     assert (row['state'], row['reason']) == ('UNKNOWN', 'no provider report')
