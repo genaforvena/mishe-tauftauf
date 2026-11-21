@@ -4272,7 +4272,8 @@ charged CPU. All five large CPU spikes predate per-executable and in-fold
 pressure readings, and the run at 09:50Z on 19 Nov started at 0.28% host
 pressure. Pressure during that fold, the responsible executable and the CPU
 share due to cache expiry remain UNKNOWN. §10.59 describes the verification
-evidence that makes cache expiry a hypothesis worth checking.
+evidence that makes cache expiry a hypothesis worth checking. The paired
+comparison is in `SITE_HOME/analysis/rust-plan-paired-pressure-20261120.txt`.
 
 The reader clock starts after importing `Feed` and surrounds the forced
 role fold. Its ~3.2 CPU-s on recent quiet samples measures work inside that
@@ -4280,10 +4281,20 @@ fold. §10.12 measured 0.59–0.78 CPU-s for the framing reader, and §10.59
 profiles the remaining record processing. The measurements leave
 `next-rust-slice` closed.
 
-The hourly `rust-measurement` producer keeps this evidence even when the
-reader verdict stays GREEN. Rust-plan will inspect the next fold above 6
-child CPU-s for executable CPU, in-fold pressure, verifier decisions and
-checkpoint state. A reader above 4.5 CPU-s during low pressure warrants a
-fresh Python profile before choosing a byte-level candidate. The paired
-comparison is in the gitignored
-`SITE_HOME/analysis/rust-plan-paired-pressure-20261120.txt`.
+At 22:50 UTC on 20 November the first spike with executable timings used
+26.24 CPU-s in the senses fold. `mishe-records` used 21.39 CPU-s, compared
+with 2.22 and 2.06 in the preceding and following hourly folds on the same
+release with identical installed binary digests. Framing stayed near 1 CPU-s,
+and the following genome fold spent 2.02 CPU-s in the verifier. The service
+journal independently recorded 33.66 CPU-s for the whole invocation. The
+reader verdict stayed GREEN.
+
+CPU pressure was below 2% at both ends of the senses fold. The host memory
+PSI sample taken during the run read 0.00% and the next read 61.68% about
+two and a half minutes after it ended. Per-fold memory pressure was added in
+`8696c41a`, after this sample. Pressure across the whole fold and the share
+of verifier CPU due to cache misses remain UNKNOWN. On the next fold above
+6 child CPU-s, compare the executable timings, both pressure readings,
+verifier decisions and framing checkpoint state. A reader above 4.5 CPU-s
+during low pressure warrants a fresh Python profile. No new Rust migration
+slice is supported by this observation.
