@@ -77,18 +77,20 @@ and its audit for a write, the tape and the outcome record for a message, the
 branch and the CI run for a landing. A declared coupling that no reading can
 check is not thereby true.
 
-This plant starts with eight durable areas (a durable area is a standing responsibility, such as releases or reader docs, that one mind carries over time): Genome owns the runtime and releases;
-Health owns reliability and recovery; Senses owns sensors and their validity;
-Docs owns the coherent reader's book; Pub owns editorial work and reader
-relationships under its existing grant; Field Review owns external ideas and
-useful experiments; Steward owns cross-area priorities and budget allocation;
-Network owns seeing the home network clearly. A dedicated
-migration mind, `rust-plan`, carries the Rust runtime move alongside them rather than owning
-an area. A further role, `operator`, is the human owner's standing delegate: it
-answers the requests addressed to it and is not an area. Another role, `system1`,
-owns the ladder of work: it moves each recurring decision to the lowest rung that
-can carry it — deterministic code, then a typed decision model, then a mind.
-Each carries initiatives (one piece of work, followed from investigation to an observed result) through checks, delivery and observation. An area's dashboard is rendered on demand by
+This plant starts with eight durable areas. A durable area is a standing responsibility, such as releases or reader docs, that one mind carries over time. Each area carries initiatives (one piece of work, followed from investigation to an observed result) through checks, delivery and observation. The eight are:
+
+- **Genome** owns the runtime and releases.
+- **Health** owns reliability and recovery.
+- **Senses** owns sensors and their validity.
+- **Docs** owns the coherent reader's book.
+- **Pub** owns editorial work and reader relationships under its existing grant.
+- **Field Review** owns external ideas and useful experiments.
+- **Steward** owns cross-area priorities and budget allocation.
+- **Network** owns seeing the home network clearly.
+
+Three more roles are not areas. `rust-plan` is a migration mind that carries the Rust runtime move alongside the areas. `operator` is the human owner's standing delegate: it answers the requests addressed to it. `system1` owns the ladder of work: it moves each recurring decision to the lowest rung that can carry it — deterministic code, then a typed decision model, then a mind.
+
+An area's dashboard is rendered on demand by
 `mishe pain read ROLE --launcher dashboard`: it calls no model and prints plain text for
 people, with no JSON or raw timestamps. It shows the role's wake state, what the last wake
 changed in git, the wall's opening lines, signals, the next due item and unread mail. Signals are named conditions a mind watches, such as a new commit on the repository (`repo-change`). A
