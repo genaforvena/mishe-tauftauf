@@ -35,8 +35,9 @@ def owner_pid(text):
 
     A promotion hold names it as ``pid=N``; a root-migration flip's legacy token is
     ``root migration flip <pid>``. Every other hold -- a manual ``mishe hold on``
-    reason, plant_boot's boot guard -- names no writer, so nothing but its age can
-    say whether it outlived the work it was written for.
+    reason, plant_boot's boot guard -- names no writer, so no liveness check can
+    say whether it outlived the work it was written for. Nothing clears these
+    automatically; only ``mishe hold off`` does.
     """
     if is_promotion_hold(text):
         pid = fields(text).get("pid", "")
