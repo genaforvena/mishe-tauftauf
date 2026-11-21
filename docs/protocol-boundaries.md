@@ -181,6 +181,8 @@ the frozen legacy budget. It exits 1 when it finds a parse site outside both,
 and prints each one as `file:line: parsing outside boundary: <call>`. An exit 1
 is a real finding for the change that introduced the site: move the parsing
 into an adapter the policy names, or decode the value at an existing boundary.
+It exits 2 and prints `UNKNOWN — parsing guard unavailable` when it cannot read the tree or
+`parsing-policy.json`; that is no verdict, not a pass.
 Do not add a site to the legacy budget to make it pass. It exits 2 when the guard
 itself cannot run (a malformed policy, a missing source, an unreadable file); the
 output begins `UNKNOWN — parsing guard unavailable`. Exit 2 is UNKNOWN, not a pass.
