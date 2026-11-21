@@ -40,8 +40,9 @@ points where a coupling routes work, or fails to, and they are real:
 - A trigger wakes a mind only when something is owed.
 - A wake ends in a `yield`, the mind's recorded hand-back, with its result.
 - A commit on `main` is pushed by the checkout's post-commit hook. The bounded
-  `main-publication` duty is the fallback: a check every five minutes that
-  publishes local `main` commits the hook missed, never by force.
+  `main-publication` duty (a recurring check declared in `duties.json`) is the
+  fallback: a check every five minutes that publishes local `main` commits the
+  hook missed, never by force.
 - Genome checks CI and the live consumers.
 
 The knots do not stop a mind from re-entering its own interrupted work, or a peer's.
