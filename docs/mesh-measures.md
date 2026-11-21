@@ -1,6 +1,6 @@
 # Mesh measures
 
-[README](../README.md) · [Mesh](mesh.md) · [How it works](how-it-works.md)
+[README](../README.md) · [Mesh](mesh.md)
 
 The measurement side of the mesh: how stewardship concentration can be summarised, and the
 frame behind the four coupling questions. Nothing here is needed to read the mesh or run the plant.
