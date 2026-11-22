@@ -248,6 +248,25 @@ def in_night(hour):
     return hour >= start or hour < end
 
 
+def night_bedroom_prior(hour):
+    """Learned bedroom night prior for this UTC hour, or the hand-set one.
+
+    SITE/senses/map/priors.json is written by tools/map_priors.py. The learned value is used only when
+    its held-out score beat the hand-set constant (night_bedroom.adopted) and this hour has a sample
+    count; anything else (missing, stale, thin, not adopted) keeps NIGHT_BEDROOM.
+    """
+    try:
+        with open(os.path.join(SITE, "senses", "map", "priors.json"), encoding="utf-8") as fh:
+            doc = json.load(fh)
+        if doc.get("night_bedroom", {}).get("adopted") is True:
+            cell = doc["rooms"]["bedroom"]["by_hour_utc"][str(hour)]
+            if isinstance(cell.get("p_active"), (int, float)) and cell.get("n", 0) >= 3:
+                return float(cell["p_active"]), "learned prior %.2f (n=%d)" % (cell["p_active"], cell["n"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return NIGHT_BEDROOM, "hand-set prior %.1f" % NIGHT_BEDROOM
+
+
 def phone_home():
     """Ilya's Redmi10 on home Wi-Fi: newest phones row, status ok and fresh by its own time.
 
@@ -355,10 +374,12 @@ def add_guesses(rows, activity):
                 base_conf = max(FLOOR, 0.6 * 0.5 ** (r["age_h"] / 12.0))
             base_room, base_why = r["room"], r["why"]
         best_room, best_conf, why = base_room, base_conf, base_why
-        if night and person in ("ilya", "rozalia") and NIGHT_BEDROOM > best_conf:
-            best_room, best_conf = "bedroom", NIGHT_BEDROOM
-            why = "night prior %02d-%02d UTC (assumed local night); last label: %s" % (
-                NIGHT_UTC[0], NIGHT_UTC[1], base_why)
+        if night and person in ("ilya", "rozalia"):
+            prior, prior_note = night_bedroom_prior(NOW.hour)
+            if prior > best_conf:
+                best_room, best_conf = "bedroom", prior
+                why = "night prior %02d-%02d UTC (assumed local night, %s); last label: %s" % (
+                    NIGHT_UTC[0], NIGHT_UTC[1], prior_note, base_why)
         if person == "ilya":
             why = "%s; %s" % (why, home_note)
         if best_room == "kitchen_stall" and best_conf > BLIND_CAP:
