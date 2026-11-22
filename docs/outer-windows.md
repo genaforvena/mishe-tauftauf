@@ -10,7 +10,7 @@ Terms used below:
 
 - **plants session**: the tmux session named `plants` that holds the outer windows. A **window** is one tab in it; a window can hold several **panes** (side-by-side or stacked terminal areas), and each pane runs one command.
 - **pin**: the `runtime/current` link naming the release that is running. Only the delivery path moves it; a pane keeps the pin it loaded until restarted, as [the mesh overview](mesh.md) explains.
-- **registry**: `operator/window-registry.json` in the site home, the list of windows and the `restore` flag the restorer reads (see "Restoring missing windows" below).
+- **registry**: the file operator/window-registry.json in the site home, the list of windows and the `restore` flag the restorer reads (see "Restoring missing windows" below).
 - **duty**: a scheduled check listed in `duties.json`, run on its own interval. A duty wakes nobody by itself; [How a mind chooses](how-a-mind-chooses.md) explains the difference from a mind.
 - **UNKNOWN**: the reading when a check could not look. It is never shown as a pass.
 
