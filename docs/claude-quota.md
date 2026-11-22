@@ -1,5 +1,14 @@
 # Unattended Claude quota readings
 
+Words used below: a **window** is one usage allowance with its own reset time
+(the 5-hour and the 7-day window). **burn** is how fast a window's used share
+rises, per hour. **LOW** means a window is spent (more than 90% used). **RED** is
+an account verdict: a window is LOW, or its burn projects it to run out before
+the reset. **UNKNOWN** means the reading is missing, stale or unparseable, so
+nothing is known from it. **reserve** is the share of a window a route must leave
+unspent. **senses** is the role that owns acquiring these readings. The full
+field contract is in [budget-json-contract.md](budget-json-contract.md).
+
 Claude Code's native local command can report subscription limits without a
 model request:
 
