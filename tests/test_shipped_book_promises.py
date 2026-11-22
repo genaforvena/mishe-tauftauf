@@ -27,6 +27,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 CHECK = REPO / "checks" / "shipped-book-promises.py"
 WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
@@ -150,6 +152,37 @@ def test_the_gate_ignores_a_command_that_names_another_clause(tmp_path):
     })
     result = run_check(tmp_path, REPO / "src")
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("intro, item, sibling", [
+    ("", "-", "-"),
+    ("", "1.", "2."),
+    ("- Glossary:\n", "  -", "  -"),
+], ids=["unordered", "ordered", "nested"])
+def test_the_gate_ignores_a_command_in_the_next_list_item(tmp_path, intro, item, sibling):
+    make_tree(tmp_path, {
+        "docs/mesh.md":
+            f"{intro}{item} Tape. See [Getting started](getting-started.md).\n"
+            f"{sibling} Feed entry. Its source can be `sync`.\n",
+        "docs/getting-started.md": "# Plant a site\n\nNothing here yet.\n",
+    })
+    result = run_check(tmp_path, REPO / "src")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("continuation", ["  for `wall write`.", "  - `wall write`."],
+                         ids=["wrapped", "nested"])
+def test_the_gate_checks_a_promise_continued_within_a_list_item(tmp_path, continuation):
+    make_tree(tmp_path, {
+        "docs/mesh.md":
+            f"- See [Getting started](getting-started.md)\n{continuation}\n"
+            "- Feed entry. Its source can be `sync`.\n",
+        "docs/getting-started.md": "# Plant a site\n\nNothing here yet.\n",
+    })
+    result = run_check(tmp_path, REPO / "src")
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "names `wall write`" in result.stdout
+    assert "names `sync`" not in result.stdout
 
 
 def test_the_gate_ignores_a_link_to_a_page_the_tree_lacks(tmp_path):

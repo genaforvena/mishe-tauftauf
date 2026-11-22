@@ -43,7 +43,9 @@ Scope and limits:
   question.
 * A command named in a sentence that carries a link is required of that
   link's destination.  This is deliberately strict: if the sentence points at
-  a page *for* the command, that page must carry it.
+  a page *for* the command, that page must carry it.  A list item's promise
+  can include its indented continuation and ends before the next sibling or
+  enclosing list item.
 * The command vocabulary is the **shipped CLI's own** leaves, read from the
   committed tree, so a page cannot name a command the clone does not have.
 
@@ -76,6 +78,7 @@ Blocks are the unit a promise is read in: a wrapped sentence stays whole, and
 a table -- whose rows are separated by newlines but not by blank lines --
 stays a single block whose rows are told apart by their own links.
 """
+LIST_ITEM = re.compile(r"^([ \t]*)(?:[-+*]|[0-9]{1,9}[.)])[ \t]+", re.MULTILINE)
 
 BOOK_ROOTS = ("docs/", ".agents/skills/", "skills/")
 BOOK_FILES = ("README.md",)
@@ -270,13 +273,12 @@ def audit(tree: Path, leaves: list[str]) -> dict:
         # the commands that write a wall" stays whole, and each table row
         # stays its own row because a table has no blank lines inside it.
         for segment in BLOCK.split(prose):
-            segment = segment.strip()
-            if not segment:
-                continue
             links = [(match.start(), match.end(), match.group(2))
                      for match in LINK.finditer(segment)]
             if not links:
                 continue
+            items = [(item.start(), len(item[1].expandtabs(4)), len(item[0].expandtabs(4)))
+                     for item in LIST_ITEM.finditer(segment)]
             # A *named command* belongs to the link it follows: "read the
             # running plant with `mishe view`, or read the [Mesh](mesh.md)
             # note" promises nothing of the Mesh page, because the command
@@ -289,8 +291,17 @@ def audit(tree: Path, leaves: list[str]) -> dict:
                 resolved = _resolve(page, target, tree)
                 if resolved is None:
                     continue
-                stop = (links[index + 1][0] if index + 1 < len(links)
-                        else len(segment))
+                # A continuation can reach a nested item, whose marker starts
+                # at or beyond the current item's content column.
+                item_start, content_column = next(
+                    ((offset, content) for offset, _, content in reversed(items) if offset <= start),
+                    (0, None),
+                )
+                item_end = len(segment)
+                if content_column is not None:
+                    item_end = next((offset for offset, indent, _ in items
+                                     if offset >= end and indent < content_column), item_end)
+                stop = min(item_end, links[index + 1][0]) if index + 1 < len(links) else item_end
                 promised: set[str] = set()
                 for span in INLINE_CODE.findall(segment[end:stop]):
                     promised |= named_commands(span, leaves)
@@ -301,7 +312,7 @@ def audit(tree: Path, leaves: list[str]) -> dict:
                 # table row's phrase cannot reach the next row's link.
                 before = (links[index - 1][1] if index > 0 else 0)
                 row_start = segment.rfind("\n", before, start) + 1
-                before = max(before, row_start)
+                before = max(before, row_start, item_start)
                 for phrase, command in CAPABILITY.items():
                     pattern = r"\b" + re.escape(phrase) + r"\b"
                     if re.search(pattern, segment[end:stop], re.IGNORECASE):
@@ -317,7 +328,7 @@ def audit(tree: Path, leaves: list[str]) -> dict:
                         "file": source,
                         "target": resolved.relative_to(tree).as_posix(),
                         "command": command,
-                        "sentence": " ".join(segment.split()),
+                        "sentence": " ".join(segment[item_start:item_end].split()),
                     })
     return {"book_pages": len(pages), "promise_sentences": checked,
             "findings": findings}
