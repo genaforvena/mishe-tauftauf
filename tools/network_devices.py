@@ -41,6 +41,24 @@ def ping(address):
     return nb.decode_ping(out.stdout, out.returncode)
 
 
+def neighbour_state(address, run=subprocess.run):
+    """The kernel's IPv4 neighbour state for one device: REACHABLE/STALE/DELAY/PROBE, FAILED, or UNKNOWN.
+
+    FAILED means the LAN address did not answer ARP at all, which separates a device that has
+    left the Wi-Fi from one that is associated but silent to pings. An unreadable table is UNKNOWN.
+    """
+    try:
+        out = run(["ip", "-4", "neigh", "show", address], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return "UNKNOWN"
+    if out.returncode != 0:
+        return "UNKNOWN"
+    fields = out.stdout.split()
+    known = {"REACHABLE", "STALE", "DELAY", "PROBE", "FAILED", "INCOMPLETE", "NOARP", "PERMANENT"}
+    state = fields[-1] if fields else ""
+    return state if state in known else "UNKNOWN"
+
+
 def _read_rows(path):
     try:
         text = Path(path).read_text()
@@ -54,6 +72,7 @@ def run(home, now=None):
     result = {}
     for name, address in DEVICES:
         result[name] = ping(address)
+        result[name]["neigh"] = neighbour_state(address)
     row = {
         "ts": now,
         "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
