@@ -98,18 +98,20 @@ def keep_outcome_current(home, record, now):
 
 
 def runs_something(entry):
-    """True when the entry point has an executable statement; a comment or docstring alone runs nothing.
+    """True when the entry point calls something; an import, a comment or a docstring alone dispatches nothing.
 
     A comment-only __main__.py is non-blank text, so a whitespace test read it GREEN while
     ``python -m`` exits 0 without an outcome (field-review artifact, 2026-11-22, b29695d7).
-    A syntax error cannot run either, so it is no entry point.
+    An import-only __main__.py (``from .cli import main``) passed a bare "has a statement" test
+    for the same reason: python -m imports it and exits 0 with no checker outcome
+    (field-review-pin-import-only-20261122). Requiring a call means the entry point dispatches
+    a command. A syntax error cannot run either, so it is no entry point.
     """
     try:
-        body = ast.parse(entry.read_text(encoding="utf-8", errors="replace"), filename=str(entry)).body
+        tree = ast.parse(entry.read_text(encoding="utf-8", errors="replace"), filename=str(entry))
     except SyntaxError:
         return False
-    return any(not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
-                    and isinstance(node.value.value, str)) for node in body)
+    return any(isinstance(node, ast.Call) for node in ast.walk(tree))
 
 
 def last_failing_line(record):
