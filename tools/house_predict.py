@@ -6,6 +6,9 @@ two plain baselines that every later net must beat:
 
   persist  the last complete hour's value ("nothing changes")
   how      the median of the same hour of the week (hour-of-day while there are <3 weeks of history)
+  damp     the first net: persist + a*(how - persist), a least-squares pull fitted on the last 168 pairs and
+           clipped to 0..1. It is judged against the BETTER baseline on the hours where all three forecast;
+           it counts only with MIN_PAIRS such hours. A net that cannot forecast an hour never blocks the baselines.
 
 Each run (hour c = the current UTC hour) writes, for every target, net and horizon h in {1, 24},
 one forecast for the hour that starts at c + h hours: strictly in the future, built only from complete
@@ -41,7 +44,9 @@ from pathlib import Path
 
 HOUR = 3600
 HORIZONS = (1, 24)
-NETS = ("persist", "how")
+NETS = ("persist", "how", "damp")
+BASELINES = ("persist", "how")
+FIT_PAIRS = 168                     # damp: its coefficient is fitted on the last 168 walk-forward pairs
 STALE_S = 4 * HOUR
 UNOBSERVED_AFTER_S = 6 * HOUR
 MIN_PAIRS = 24
@@ -118,12 +123,8 @@ class Series:
             return None, len(picked)
         return statistics.median(self.values[t] for t in picked), len(picked)
 
-    def forecast(self, net: str, c: int, h: int):
-        """(value, basis) for the hour starting at c + h hours, from complete hours before c. None: no forecast."""
-        target_t = c + h * HOUR
-        if net == "persist":
-            v = self.values.get(c - HOUR)
-            return (v, "last hour") if v is not None else None
+    def _how(self, target_t: int, c: int):
+        """(value, basis) of the same-hour baseline for target_t, using only hours before c. None: too little history."""
         g = time.gmtime(target_t)
         v, n = self._median(self.by_hw.get((g.tm_wday, g.tm_hour), []), c)
         if v is not None:
@@ -132,6 +133,44 @@ class Series:
         if v is not None:
             return v, f"hour-of-day n={n}"
         return None
+
+    def _damp_coef(self, c: int, h: int):
+        """Least-squares a for damped persistence, from the last FIT_PAIRS origins whose target is observed before c.
+        Origin u forecasts u+h as persist_u + a*(how_u - persist_u), with how_u built from hours before u only."""
+        num = den = 0.0
+        pairs = 0
+        for j in range(1, FIT_PAIRS + 1):
+            target = c - j * HOUR
+            u = target - h * HOUR
+            y, p = self.values.get(target), self.values.get(u - HOUR)
+            if y is None or p is None:
+                continue
+            s = self._how(target, u)
+            if s is None:
+                continue
+            d, e = s[0] - p, y - p
+            num += d * e
+            den += d * d
+            pairs += 1
+        if pairs < MIN_PAIRS or den <= 0:
+            return None
+        return min(1.0, max(0.0, num / den))
+
+    def forecast(self, net: str, c: int, h: int):
+        """(value, basis) for the hour starting at c + h hours, from complete hours before c. None: no forecast."""
+        target_t = c + h * HOUR
+        if net == "persist":
+            v = self.values.get(c - HOUR)
+            return (v, "last hour") if v is not None else None
+        if net == "how":
+            return self._how(target_t, c)
+        # damp: last value + a * (same-hour baseline - last value)
+        p = self.values.get(c - HOUR)
+        s = self._how(target_t, c)
+        a = self._damp_coef(c, h) if p is not None and s is not None else None
+        if a is None:
+            return None
+        return p + a * (s[0] - p), f"damped a={a:.2f}"
 
 
 def sha(line: bytes) -> str:
@@ -189,8 +228,16 @@ def fresh_state() -> dict:
 
 
 def agg_slot(state: dict, slug: str, h: int) -> dict:
-    return state["agg"].setdefault(f"{slug}|{h}", {"nets": {n: {"n": 0, "abs": 0.0} for n in NETS},
-                                                   "pair": {"n": 0, "abs": {n: 0.0 for n in NETS}}, "recent": []})
+    """Per target and horizon. `pair` is the baselines' pair (persist and how present); `tri` is the hours where
+    every net forecast, so a net's edge is measured on the same hours as the better baseline. Old state slots that
+    lack a net (written before it existed) get it here, so a new net never blocks the baselines."""
+    slot = state["agg"].setdefault(f"{slug}|{h}", {"nets": {}, "pair": {"n": 0, "abs": {}},
+                                                   "tri": {"n": 0, "abs": {}}, "recent": []})
+    for n in NETS:
+        slot["nets"].setdefault(n, {"n": 0, "abs": 0.0})
+        slot["pair"]["abs"].setdefault(n, 0.0)
+        slot["tri"]["abs"].setdefault(n, 0.0)
+    return slot
 
 
 def apply_scored(state: dict, scored: list) -> None:
@@ -198,7 +245,7 @@ def apply_scored(state: dict, scored: list) -> None:
     groups = {}
     for s in scored:
         slot = agg_slot(state, s["slug"], s["h"])
-        net = slot["nets"][s["net"]]
+        net = slot["nets"][s["net"]]          # agg_slot guarantees the key
         if s["net"] == "how" and net["n"] >= MIN_PAIRS and net["abs"] > 0:
             z = s["abs_err"] / (net["abs"] / net["n"])
             if z >= SURPRISE_Z:
@@ -209,12 +256,17 @@ def apply_scored(state: dict, scored: list) -> None:
         net["abs"] += s["abs_err"]
         groups.setdefault((s["slug"], s["h"], s["t"]), {})[s["net"]] = s["abs_err"]
     for (slug, h, t), errs in sorted(groups.items()):
-        if all(n in errs for n in NETS):
+        if all(n in errs for n in BASELINES):
             slot = agg_slot(state, slug, h)
             slot["pair"]["n"] += 1
-            for n in NETS:
+            for n in BASELINES:
                 slot["pair"]["abs"][n] += errs[n]
-            slot["recent"] = (slot["recent"] + [[t, {n: round(errs[n], 4) for n in NETS}]])[-RECENT:]
+            slot["recent"] = (slot["recent"] + [[t, {n: round(errs[n], 4) for n in errs}]])[-RECENT:]
+        if all(n in errs for n in NETS):
+            slot = agg_slot(state, slug, h)
+            slot["tri"]["n"] += 1
+            for n in NETS:
+                slot["tri"]["abs"][n] += errs[n]
         state["counts"]["scored"] += len(errs)
 
 
@@ -265,8 +317,29 @@ def load_state(path: Path, log: Path) -> dict:
 
 def table_row(slot: dict) -> dict:
     p = slot["pair"]
-    row = {"n": p["n"], "mae": {n: (p["abs"][n] / p["n"] if p["n"] else None) for n in NETS}}
+    row = {"n": p["n"], "mae": {n: (p["abs"][n] / p["n"] if p["n"] else None) for n in BASELINES}}
     row["verdict"] = verdict(row)
+    t = slot["tri"]
+    row["damp"] = net_row(t["n"], {n: (t["abs"][n] / t["n"] if t["n"] else None) for n in NETS})
+    return row
+
+
+def net_row(n: int, mae: dict) -> dict:
+    """The damped net against the better baseline on the same hours. Counts only with MIN_PAIRS such hours."""
+    row = {"n": n, "mae": mae, "edge": None}
+    better = min(mae["persist"], mae["how"]) if n and mae["persist"] is not None and mae["how"] is not None else None
+    if n < MIN_PAIRS or mae.get("damp") is None or better is None:
+        row["verdict"] = f"too few ({n}/{MIN_PAIRS})"
+    elif better == 0:
+        row["verdict"] = "no difference"
+    else:
+        row["edge"] = round(1 - mae["damp"] / better, 3)
+        if row["edge"] >= 0.05:
+            row["verdict"] = "damped beats the better baseline"
+        elif row["edge"] <= -0.05:
+            row["verdict"] = "damped loses to the better baseline"
+        else:
+            row["verdict"] = "no difference"
     return row
 
 
@@ -296,18 +369,24 @@ def replay(series: dict, hours: list, days: int = 14) -> dict:
     lo = max(hours) - days * 24 * HOUR
     for slug, s in series.items():
         for h in HORIZONS:
-            n, sums = 0, {k: 0.0 for k in NETS}
+            n, sums = 0, {k: 0.0 for k in BASELINES}
+            tn, tsums = 0, {k: 0.0 for k in NETS}
             for t in sorted(s.values):
                 if t < lo:
                     continue
                 c = t - h * HOUR
                 f = {net: s.forecast(net, c, h) for net in NETS}
-                if all(v is not None for v in f.values()):
+                if all(f[net] is not None for net in BASELINES):
                     n += 1
-                    for net in NETS:
+                    for net in BASELINES:
                         sums[net] += abs(f[net][0] - s.values[t])
-            row = {"n": n, "mae": {net: (sums[net] / n if n else None) for net in NETS}}
+                if all(v is not None for v in f.values()):
+                    tn += 1
+                    for net in NETS:
+                        tsums[net] += abs(f[net][0] - s.values[t])
+            row = {"n": n, "mae": {net: (sums[net] / n if n else None) for net in BASELINES}}
             row["verdict"] = verdict(row)
+            row["damp"] = net_row(tn, {net: (tsums[net] / tn if tn else None) for net in NETS})
             out[f"{slug}|{h}"] = row
     return out
 

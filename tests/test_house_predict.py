@@ -148,3 +148,40 @@ def test_replay_is_walk_forward_labelled_and_finds_the_daily_rhythm(tmp_path):
     day = rep["lr_light|24"]
     assert day["n"] > 100 and day["mae"]["how"] < day["mae"]["persist"] and day["verdict"] == "same-hour beats last-value"
     assert score(tmp_path)["live"] == {}                                    # replay never leaks into the live board
+
+
+
+def test_the_damped_net_forecasts_from_its_own_fitted_pull_and_is_logged_beside_the_baselines(tmp_path):
+    make_site(tmp_path, 24 * 12)
+    now = D0 + 24 * 12 * 3600 + 60
+    hp.run(tmp_path, now)
+    recs = [r for r in read_log(tmp_path) if r["k"] == "forecast" and r["net"] == "damp"]
+    assert recs and {r["slug"] for r in recs} == {"lr_light"}     # motion is constant here: no fit, so no damped forecast
+    rec = next(r for r in recs if r["slug"] == "lr_light" and r["h"] == 1)
+    a = float(rec["basis"].split("=")[1])
+    assert 0.0 <= a <= 1.0
+    c = hp.hour_start(now)
+    rows = hp.load_store(tmp_path / "features" / "house-hourly.jsonl")
+    series = hp.Series({t: hp.value_of(r, "lr_light") for t, r in rows.items()})
+    p, s = series.values[c - hp.HOUR], series.forecast("how", c, 1)[0]
+    assert abs(rec["v"] - (p + a * (s - p))) < 1e-9               # exactly persist + a * (how - persist)
+
+
+def test_the_damped_net_must_not_block_the_baselines_pair_and_old_state_slots_gain_it(tmp_path):
+    state = hp.fresh_state()
+    slot = hp.agg_slot(state, "lr_light", 1)
+    del slot["nets"]["damp"], slot["pair"]["abs"]["damp"], slot["tri"]["abs"]["damp"]   # a slot written before the net
+    hp.apply_scored(state, [{"net": "persist", "slug": "lr_light", "h": 1, "t": D0, "abs_err": 3.0, "forecast": 1, "obs": 4},
+                            {"net": "how", "slug": "lr_light", "h": 1, "t": D0, "abs_err": 1.0, "forecast": 1, "obs": 4}])
+    slot = hp.agg_slot(state, "lr_light", 1)
+    assert slot["pair"]["n"] == 1 and slot["tri"]["n"] == 0       # baselines counted; no damp, so no tri
+    assert hp.table_row(slot)["damp"]["verdict"].startswith("too few")
+
+
+def test_damped_is_judged_against_the_better_baseline_with_enough_pairs_only():
+    row = hp.net_row(30, {"persist": 10.0, "how": 12.0, "damp": 8.5})
+    assert row["edge"] == 0.15 and row["verdict"] == "damped beats the better baseline"
+    assert hp.net_row(30, {"persist": 10.0, "how": 12.0, "damp": 10.2})["verdict"] == "no difference"
+    assert hp.net_row(30, {"persist": 10.0, "how": 12.0, "damp": 11.0})["verdict"] == "damped loses to the better baseline"
+    assert hp.net_row(23, {"persist": 10.0, "how": 12.0, "damp": 1.0})["verdict"].startswith("too few")
+    assert hp.net_row(30, {"persist": 10.0, "how": 12.0, "damp": None})["verdict"].startswith("too few")
