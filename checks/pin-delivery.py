@@ -23,6 +23,7 @@ HEAD, which ``pin-lag`` reports.
 Exit: 0 GREEN, 2 RED, 3 UNKNOWN. GREEN prints to stdout, the others to stderr.
 """
 import argparse
+import ast
 import json
 import sys
 import time
@@ -96,6 +97,21 @@ def keep_outcome_current(home, record, now):
               f"({type(exc).__name__}: {exc}); its reading stands and may age to UNKNOWN", file=sys.stderr)
 
 
+def runs_something(entry):
+    """True when the entry point has an executable statement; a comment or docstring alone runs nothing.
+
+    A comment-only __main__.py is non-blank text, so a whitespace test read it GREEN while
+    ``python -m`` exits 0 without an outcome (field-review artifact, 2026-11-22, b29695d7).
+    A syntax error cannot run either, so it is no entry point.
+    """
+    try:
+        body = ast.parse(entry.read_text(encoding="utf-8", errors="replace"), filename=str(entry)).body
+    except SyntaxError:
+        return False
+    return any(not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)) for node in body)
+
+
 def last_failing_line(record):
     out = (record.get("check") or {}).get("output")
     if not isinstance(out, str):
@@ -157,7 +173,7 @@ def main(argv=None):
             # An empty file is no entry point either: the retained trial of 3cb5fea3 ran an empty
             # __main__.py and the checker still read GREEN (field-review artifact, 2026-11-22).
             entry = package / "__main__.py"
-            entry_present = entry.is_file() and bool(entry.read_text(encoding="utf-8", errors="replace").strip())
+            entry_present = entry.is_file() and runs_something(entry)
         except (OSError, RuntimeError) as exc:
             print(f"pin-delivery: {status} but runtime/current is unusable: {exc}", file=sys.stderr)
             return 3

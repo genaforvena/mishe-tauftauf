@@ -195,6 +195,27 @@ def test_an_empty_entry_point_is_red_not_green(tmp_path, capsys):
     assert "__main__.py is missing" in output.err
 
 
+@pytest.mark.parametrize("source", ["# only a comment\n", "# one\n# two\n", '"""just a docstring"""\n', "def (:\n"])
+def test_an_entry_point_that_runs_nothing_is_red_not_green(tmp_path, capsys, source):
+    home = _site(tmp_path, [_rec("delivered")])
+    (home / "releases" / SHA / "src" / "mishe_tauftauf" / "__main__.py").write_text(source, encoding="utf-8")
+
+    code, output = _run(home, capsys)
+
+    assert code == 2
+    assert "__main__.py is missing" in output.err
+
+
+def test_an_entry_point_with_a_statement_after_a_comment_is_green(tmp_path, capsys):
+    home = _site(tmp_path, [_rec("delivered")])
+    (home / "releases" / SHA / "src" / "mishe_tauftauf" / "__main__.py").write_text(
+        "# entry\nimport sys\nsys.exit(0)\n", encoding="utf-8")
+
+    code, _output = _run(home, capsys)
+
+    assert code == 0
+
+
 @pytest.mark.parametrize("target_kind", ["missing", "file", "loop"])
 def test_an_unusable_pointer_is_unknown_and_does_not_refresh_the_latch(tmp_path, capsys, target_kind):
     home = _site(tmp_path, [_rec("delivered")])
