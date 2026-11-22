@@ -151,6 +151,29 @@ def test_replay_is_walk_forward_labelled_and_finds_the_daily_rhythm(tmp_path):
 
 
 
+def test_legacy_saved_state_refreshes_and_scores_without_three_net_totals(tmp_path):
+    make_site(tmp_path, 72)
+    state = hp.fresh_state()
+    state["agg"]["lr_light|1"] = {
+        "nets": {"persist": {"n": 1, "abs": 3.0}, "how": {"n": 1, "abs": 1.0}},
+        "pair": {"n": 1, "abs": {"persist": 3.0, "how": 1.0}},
+        "recent": [],
+    }
+    (tmp_path / "features" / "predictions.state.json").write_text(json.dumps(state))
+
+    code, detail = hp.run(tmp_path, D0 + 72 * hp.HOUR + 60)
+    assert code == 0 and detail["scored"] == 0
+    before = score(tmp_path)["live"]["lr_light|1"]
+    assert before["n"] == 1 and before["mae"] == {"persist": 3.0, "how": 1.0}
+    assert before["damp"]["n"] == 0 and before["damp"]["edge"] is None
+
+    make_site(tmp_path, 74)
+    code, detail = hp.run(tmp_path, D0 + 74 * hp.HOUR + 60)
+    assert code == 0 and detail["scored"] == 4 and detail["chain"] == "ok"
+    after = score(tmp_path)["live"]["lr_light|1"]
+    assert after["n"] == 2 and after["damp"]["n"] == 0
+
+
 def test_the_damped_net_forecasts_from_its_own_fitted_pull_and_is_logged_beside_the_baselines(tmp_path):
     make_site(tmp_path, 24 * 12)
     now = D0 + 24 * 12 * 3600 + 60

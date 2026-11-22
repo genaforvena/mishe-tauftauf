@@ -231,12 +231,12 @@ def agg_slot(state: dict, slug: str, h: int) -> dict:
     """Per target and horizon. `pair` is the baselines' pair (persist and how present); `tri` is the hours where
     every net forecast, so a net's edge is measured on the same hours as the better baseline. Old state slots that
     lack a net (written before it existed) get it here, so a new net never blocks the baselines."""
-    slot = state["agg"].setdefault(f"{slug}|{h}", {"nets": {}, "pair": {"n": 0, "abs": {}},
-                                                   "tri": {"n": 0, "abs": {}}, "recent": []})
+    slot = state["agg"].setdefault(f"{slug}|{h}", {"nets": {}, "pair": {"n": 0, "abs": {}}, "recent": []})
+    tri = slot.setdefault("tri", {"n": 0, "abs": {}})
     for n in NETS:
         slot["nets"].setdefault(n, {"n": 0, "abs": 0.0})
         slot["pair"]["abs"].setdefault(n, 0.0)
-        slot["tri"]["abs"].setdefault(n, 0.0)
+        tri["abs"].setdefault(n, 0.0)
     return slot
 
 
@@ -319,7 +319,7 @@ def table_row(slot: dict) -> dict:
     p = slot["pair"]
     row = {"n": p["n"], "mae": {n: (p["abs"][n] / p["n"] if p["n"] else None) for n in BASELINES}}
     row["verdict"] = verdict(row)
-    t = slot["tri"]
+    t = slot.get("tri", {"n": 0, "abs": {}})
     row["damp"] = net_row(t["n"], {n: (t["abs"][n] / t["n"] if t["n"] else None) for n in NETS})
     return row
 
