@@ -154,7 +154,10 @@ is not mistaken for a quiet mind.
   (counters reset by a reboot)", never "none". STALE past 15 minutes.
 - `DEVICE PING` shows each named household device's average ping and loss, along with the age
   of the newest reading in `network/devices.jsonl`. The line shows UNKNOWN when a device did
-  not answer or its result is unreadable, and names the affected device. A missing or unreadable
+  not answer or its result is unreadable, and names the affected device. When the reading's
+  neighbour state is `FAILED` or `INCOMPLETE`, ARP itself got no answer, so the line says
+  `not answering the LAN (no ARP answer)`: the device is asleep or firewalled, not a fault on the
+  router side. A missing or unreadable
   reading, a timestamp more than five seconds in the future, or a reading older than 15 minutes
   also shows UNKNOWN. Readings older than 15 minutes are marked STALE. The five-minute
   `network-device-reach` duty logs the same problems and lets its last GREEN expire 15 minutes
