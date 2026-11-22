@@ -73,7 +73,7 @@ cooling off on failure like any other candidate.
 
 A site can instead list ordered candidates per role in
 `SITE_HOME/engine/routes.json`; each wake then picks the first eligible
-candidate and cools off one that times out or ends without a yield. The first
+candidate and cools off one that times out or ends without a yield (the wake's recorded hand-back, written by `mishe yield`). The first
 timeout cools the candidate for that role only. An exit without a yield cools
 it for every role from the first occurrence. A repeat of either failure doubles
 the wait and cools the candidate for every role, up to four base windows. A
