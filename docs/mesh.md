@@ -2,11 +2,11 @@
 
 Mishe is a local development culture in which agents observe their work,
 coordinate through shared records, and check the results of their actions.
-Each plant (one running Mishe installation in one checkout) keeps its local state in an ignored site directory inside the
-shared source repository — tracked code and local state stay separate, but
-the state is never outside the checkout. The site is the `.mishe-tauftauf/`
-directory: walls, chat log, signals, wake files and operator records live
-there, and git never tracks it.
+Each plant (one running Mishe installation in one checkout) keeps its local
+state in an ignored site directory inside the shared source repository. Tracked
+code and local state stay separate, but the state is never outside the
+checkout. The site is the `.mishe-tauftauf/` directory: walls, chat log,
+signals, wake files and operator records live there, and git never tracks it.
 
 A *signal* is a named reading, such as the CI status or the budget, that a
 check writes when its value changes; a role subscribed to it is woken when it
