@@ -232,9 +232,13 @@ run decide a delivery; CI stays a separate signal (`ci`), as do `pin-lag` and
 names the in-flight phase) for "is a promotion running now". When the check cannot
 read or order the records or resolve `runtime/current` to the expected release
 directory, it writes the reason to `signals/pin-delivery.detail` and the producer
-journal. The last reading expires after ten minutes without a successful
-observation. If the pointed-to release directory exists but its runtime package
-is missing, the check reports RED immediately. Both edges reach Genome.
+journal. Run `mishe signal show pin-delivery` for the effective reading. An
+unchanged result refreshes `signals/pin-delivery.seen` and leaves the last edge in
+`signals/pin-delivery.json`. The detail and `.ran` timestamp can advance when a
+check cannot establish a fresh reading. The last reading expires after ten
+minutes without a successful observation. If the pointed-to release directory
+exists but its runtime package is missing, the check reports RED immediately.
+Both edges reach Genome.
 
 Scheduler, dispatch, settlement, locking, protocol, authorization and delivery changes keep their
 deterministic activation, revert and reapply observations;
