@@ -5,7 +5,7 @@ Reads the newest record under SITE/work/releases (written by release_promotion.p
 
   GREEN    runtime/current has its runtime package, and either it names the delivered release
            or a promotion is still running and younger than --stuck-min
-  RED      the current release has no runtime package, or the newest promotion ended in
+  RED      the current release has no runtime package or no __main__.py entry point, or the newest promotion ended in
            check-failed, check-mutated-*, rolled-back or UNKNOWN with its recorded cause
   UNKNOWN  no promotion record, an unreadable or unorderable record, an unusable or mismatched pointer,
            or a promotion that has run longer than --stuck-min.
@@ -150,7 +150,11 @@ def main(argv=None):
         status = f"{sha} is recorded delivered" if phase == "delivered" else f"promotion of {sha} is {phase}"
         try:
             target = pointer_target(a.home)
-            package_present = (target / "src" / "mishe_tauftauf" / "__init__.py").is_file()
+            package = target / "src" / "mishe_tauftauf"
+            package_present = (package / "__init__.py").is_file()
+            # The pinned CLI starts as ``python -m mishe_tauftauf``: a release whose package imports
+            # but lacks __main__.py cannot be run by its own entry point (2026-11-22 partial-loss counterexample).
+            entry_present = (package / "__main__.py").is_file()
         except (OSError, RuntimeError) as exc:
             print(f"pin-delivery: {status} but runtime/current is unusable: {exc}", file=sys.stderr)
             return 3
@@ -160,6 +164,10 @@ def main(argv=None):
             return 3
         if not package_present:
             print(f"pin-delivery: {status} but the runtime package is missing from {target}", file=sys.stderr)
+            return 2
+        if not entry_present:
+            print(f"pin-delivery: {status} but the runtime entry point mishe_tauftauf/__main__.py is missing from {target}",
+                  file=sys.stderr)
             return 2
 
     if phase == "delivered":
