@@ -11,6 +11,14 @@ that account, never that it is empty. A *candidate* is one `engine:model:account
 the router may select for a role, and a *steward* is the role that owns budget allocation
 (see [mesh](mesh.md)). `budget-consistency` is the check that judges the file.
 
+Four more terms recur below. The **ledger** is the append-only record of routing
+decisions and wake outcomes (`engine/routing-ledger.jsonl`); the ledger sections
+count its rows. **Cooling** holds a candidate out of selection until a time (`until`,
+epoch milliseconds) and names the reason, such as a timeout. The **native tap** is
+`operator/budget/claude_ratelimit_tap.py`, which copies Claude's own `/usage` figures
+into `claude-native-quota.json`. The **engine status** is the `quota.json` file the
+engine writes with each account's windows.
+
 Status: **active, partial**. `src/mishe_tauftauf/budget_producer.py` produces the `accounts`
 section from the engine status and the native Claude tap (`mishe budget-produce --out …`);
 `checks/budget-consistency.py` judges it. The router migration (step 4) has shipped:
