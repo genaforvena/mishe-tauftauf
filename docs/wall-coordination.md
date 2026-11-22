@@ -264,6 +264,11 @@ journalctl --user -u mishe-producer-pin-delivery.service \
   --since '1 hour ago' --no-pager
 ```
 
+An empty CLI entry point can make the unit exit successfully without running
+the checker or starting the failure reporter. Confirm a healthy sample by
+looking for that invocation's `outcome=exit=0` line in the producer journal and
+checking that `signals/pin-delivery.seen` advanced.
+
 Scheduler, dispatch, settlement, locking, protocol, authorization and delivery changes keep their
 deterministic activation, revert and reapply observations;
 what they no longer wait for is a reviewer. Those observations are the deterministic
