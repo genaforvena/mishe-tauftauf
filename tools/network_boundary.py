@@ -67,6 +67,16 @@ def row_age_seconds(row):
     return time.time() - t
 
 
+NEIGHBOUR_STATES = frozenset({"REACHABLE", "STALE", "DELAY", "PROBE", "FAILED", "INCOMPLETE", "NOARP", "PERMANENT"})
+
+
+def decode_neighbour(stdout):
+    """The kernel's state word from `ip -4 neigh show <addr>` output; UNKNOWN when unreadable."""
+    fields = stdout.split()
+    state = fields[-1] if fields else ""
+    return state if state in NEIGHBOUR_STATES else "UNKNOWN"
+
+
 def decode_router(stdout):
     """(uptime_days, load, wan_up) from the three read-only lines; ValueError when malformed."""
     lines = stdout.splitlines()

@@ -53,10 +53,7 @@ def neighbour_state(address, run=subprocess.run):
         return "UNKNOWN"
     if out.returncode != 0:
         return "UNKNOWN"
-    fields = out.stdout.split()
-    known = {"REACHABLE", "STALE", "DELAY", "PROBE", "FAILED", "INCOMPLETE", "NOARP", "PERMANENT"}
-    state = fields[-1] if fields else ""
-    return state if state in known else "UNKNOWN"
+    return nb.decode_neighbour(out.stdout)
 
 
 def _read_rows(path):
