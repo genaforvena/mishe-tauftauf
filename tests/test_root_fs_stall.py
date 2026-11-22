@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import time
 from pathlib import Path
 
@@ -216,9 +217,21 @@ def test_load_unions_logs_and_the_later_file_wins(tmp_path):
 def test_main_reads_the_live_log(tmp_path):
     live = tmp_path / "live.jsonl"
     now = time.time()
-    live.write_text(json.dumps({"dir": "root", "event": "slow", "at": now - 60, "total": 9.9}) + "\n"
-                    + json.dumps({"dir": "root", "event": "minute", "at": now, "total": 1.0}) + "\n")
+    own = os.path.realpath(tmp_path)
+    live.write_text(json.dumps({"dir": "root", "event": "slow", "at": now - 60, "total": 9.9, "source": own}) + "\n"
+                    + json.dumps({"dir": "root", "event": "minute", "at": now, "total": 1.0, "source": own}) + "\n")
     assert mod.main(["--home", str(tmp_path), "--live-log", str(live)]) == 2
+
+
+def test_main_ignores_another_plants_rows(tmp_path):
+    # Another plant's probe (its own source, or the old unstamped format) must not make this plant RED.
+    live = tmp_path / "live.jsonl"
+    now = time.time()
+    other = os.path.realpath(tmp_path / "other-plant")
+    live.write_text(json.dumps({"dir": "root", "event": "slow", "at": now - 60, "total": 9.9, "source": other}) + "\n"
+                    + json.dumps({"dir": "root", "event": "slow", "at": now - 30, "total": 9.9}) + "\n"
+                    + json.dumps({"dir": "root", "event": "minute", "at": now, "total": 1.0, "source": os.path.realpath(tmp_path)}) + "\n")
+    assert mod.main(["--home", str(tmp_path), "--live-log", str(live)]) == 0
 
 
 def test_green_line_names_the_sub_threshold_band_without_going_red():

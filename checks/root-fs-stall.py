@@ -59,6 +59,7 @@ changing the signal value, its thresholds or its window.
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -266,7 +267,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="the probe's full-history log; read together with the durable mirror")
     args = parser.parse_args(argv)
     paths = [Path(args.live_log), Path(args.home) / "operator" / "dual-probe.jsonl"]
-    records = load(paths)
+    # The live log is shared by every plant's probe. Count only rows this plant's probe wrote
+    # (dual_probe.py stamps source=<its site home>); another plant's memory stalls are not this
+    # plant's root drive. Rows with no source are another plant's old-format probe and are dropped.
+    own = os.path.realpath(args.home)
+    records = [r for r in load(paths) if r.get("source") == own]
     if not records:
         print(f"UNKNOWN: no readable probe log among {', '.join(str(p) for p in paths)}")
         return 3
