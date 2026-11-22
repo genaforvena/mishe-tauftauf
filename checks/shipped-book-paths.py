@@ -49,6 +49,10 @@ carve-out the gate failed a true sentence in ``docs/decision-rungs.md``
 ("its log stays at … and read by nobody for dispatch"), because the word
 "read" there is not a directive at all (CI run 44231575915).
 
+A path immediately followed by "in the site home" also names a runtime file.
+That qualifier applies only to that path. Other paths in the same sentence
+still need to be present in the clone if the prose directs the reader to them.
+
 The check reads the **committed** bytes through ``git archive``, exactly like
 ``checks/shipped-book-links.py``, so an untracked working-tree file can never
 satisfy a reference.  The ignore rules are read with ``git check-ignore``, the
@@ -90,6 +94,7 @@ GIT = "/usr/bin/git"
 # path under it is describing the running plant, never a file a clone should
 # contain.
 SITE_NAMESPACE = re.compile(r"^\.mishe-[A-Za-z0-9_.-]+/")
+SITE_HOME_QUALIFIER = re.compile(r"\s+in\s+the\s+site\s+home\b", re.IGNORECASE)
 # A path-shaped span: a relative path ending in a known file extension.
 PATH = re.compile(r"^([A-Za-z0-9_.\-/]+\.(?:md|py|json|yml|yaml|txt|ts|toml|sh|sqlite3|jsonl))$")
 # The verbs that turn a mention into a directive.
@@ -160,14 +165,14 @@ def audit(tree: Path, repo: Path) -> dict:
         for sentence in SENTENCE.split(prose):
             if not DIRECTIVE.search(sentence):
                 continue
-            for span in INLINE_CODE.findall(sentence):
-                match = PATH.match(span.strip())
+            for span in INLINE_CODE.finditer(sentence):
+                match = PATH.match(span.group(1).strip())
                 if not match:
                     continue
                 target = match.group(1)
                 if target.startswith("/") or ".." in target or " " in target:
                     continue
-                if SITE_NAMESPACE.match(target):
+                if SITE_NAMESPACE.match(target) or SITE_HOME_QUALIFIER.match(sentence, span.end()):
                     continue
                 if (path.parent / target).exists() or (tree / target).exists():
                     continue

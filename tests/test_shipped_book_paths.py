@@ -112,6 +112,29 @@ def test_the_gate_ignores_the_plant_local_namespace(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_the_gate_ignores_a_path_explicitly_relative_to_the_site_home(tmp_path):
+    make_tree(tmp_path, {
+        "docs/outer-windows.md":
+            '- **registry**: `operator/window-registry.json` in the site home, '
+            'the list of windows (see "Restoring missing windows" below).\n',
+    })
+    result = run_check(tmp_path, repo=REPO)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_gate_still_reports_other_paths_in_the_same_sentence(tmp_path):
+    make_tree(tmp_path, {
+        "README.md": "Read `docs/operating.md` alongside "
+                     "`operator/window-registry.json` in the site home, "
+                     "then consult `docs/recovery.md` in the checkout.\n",
+    })
+    result = run_check(tmp_path, repo=REPO)
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "MISSING FILE  README.md -> docs/operating.md" in result.stdout
+    assert "MISSING FILE  README.md -> docs/recovery.md" in result.stdout
+    assert "MISSING FILE  README.md -> operator/window-registry.json" not in result.stdout
+
+
 def test_the_gate_ignores_a_path_that_is_not_excluded(tmp_path):
     """Only a path the repository's own ignore rules exclude is a finding.
 
