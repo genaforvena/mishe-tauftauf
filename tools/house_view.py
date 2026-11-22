@@ -173,11 +173,16 @@ def render(home: Path, now: float, score: dict, tail: dict) -> str:
         lines.append(f"  {hhmm(s.get('t'))}  {labels.get(s.get('slug'), s.get('slug'))}: saw {fmt(s.get('obs'))}, expected {fmt(s.get('forecast'))}  ({s.get('z')}x)")
     # REPLAY is the most detailed and least urgent section, so it goes last and is the part cut when the pane is short.
     lines.append("")
+    head = len(lines)                      # everything before REPLAY, which is what must stay visible
     lines += table("REPLAY (retrospective walk-forward over stored history, last 14 days)", replay, labels)
     lines = [l[:MAX_COLS] for l in lines]
     if len(lines) > MAX_ROWS:
         cut = len(lines) - (MAX_ROWS - 1)
-        lines = lines[:MAX_ROWS - 1] + [f"  ... {cut} more lines cut to fit the pane (the REPLAY tail; LIVE, LAST 24 HOURS and SURPRISES are above it)"]
+        if head <= MAX_ROWS - 1:           # the cut lands inside REPLAY: say exactly that
+            note = f"  ... {cut} more lines cut to fit the pane (the REPLAY tail; LIVE, LAST 24 HOURS and SURPRISES are above it)"
+        else:                              # the sections above REPLAY alone do not fit: never claim they are visible
+            note = f"  ... {cut} more lines cut to fit the pane; the cut reaches above REPLAY, so the end of SURPRISES or LAST 24 HOURS may be missing"
+        lines = lines[:MAX_ROWS - 1] + [note]
     return "\n".join(lines)
 
 
