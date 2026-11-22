@@ -6,6 +6,7 @@ package their run pinned (``env PYTHONPATH=src``), so the latch assertions use t
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -23,7 +24,9 @@ def _site(tmp_path, records, pointer=SHA):
     for i, record in enumerate(records):
         (tmp_path / "work" / "releases" / f"{i}.json").write_text(json.dumps(record), encoding="utf-8")
     if pointer:
-        (tmp_path / "releases" / pointer).mkdir(parents=True)
+        package = tmp_path / "releases" / pointer / "src" / "mishe_tauftauf"
+        package.mkdir(parents=True)
+        (package / "__init__.py").touch()
         (tmp_path / "runtime").mkdir()
         (tmp_path / "runtime" / "current").symlink_to(tmp_path / "releases" / pointer)
     return tmp_path
@@ -159,11 +162,23 @@ def test_a_pointer_that_disagrees_does_not_refresh_the_latch(tmp_path, capsys):
     assert abs((home / "signals" / "moving-pin-delivery.seen").stat().st_mtime - (NOW - 8000)) < 1
 
 
+def test_a_matching_pointer_without_its_package_is_red(tmp_path, capsys):
+    home = _site(tmp_path, [_rec("delivered")])
+    shutil.rmtree(home / "releases" / SHA / "src" / "mishe_tauftauf")
+    signal_store = _latch(home)
+
+    code, output = _run(home, capsys)
+
+    assert code == 2
+    assert "runtime package is missing" in output.err
+    assert signal_store.read(home, "moving-pin-delivery", now=NOW).state == "UNKNOWN"
+
+
 @pytest.mark.parametrize("target_kind", ["missing", "file", "loop"])
 def test_an_unusable_pointer_is_unknown_and_does_not_refresh_the_latch(tmp_path, capsys, target_kind):
     home = _site(tmp_path, [_rec("delivered")])
     target = home / "releases" / SHA
-    target.rmdir()
+    shutil.rmtree(target)
     if target_kind == "file":
         target.touch()
     elif target_kind == "loop":
