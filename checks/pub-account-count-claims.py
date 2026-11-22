@@ -65,6 +65,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -303,12 +304,29 @@ def read_key(env_file: str) -> str:
     return key
 
 
+def _open_json(request: urllib.request.Request, timeout: int):
+    """Read one JSON answer; retry a dropped connection once, never an HTTP error.
+
+    2026-11-22: an SSL UNEXPECTED_EOF left this check UNKNOWN twice in one hour
+    (11:28Z and 12:27Z). A 4xx/5xx is an answer and is raised at once.
+    """
+    for attempt in (1, 2):
+        try:
+            return json.load(urllib.request.urlopen(request, timeout=timeout))
+        except urllib.error.HTTPError:
+            raise
+        except urllib.error.URLError:
+            if attempt == 2:
+                raise
+            time.sleep(2)
+
+
 def read_account(base: str, key: str) -> list[dict]:
     """Every published article the account holds."""
     request = urllib.request.Request(
         base + "/api/articles/me/all?per_page=1000",
         headers={"api-key": key, "User-Agent": "mesh-pub/1.0"})
-    payload = json.load(urllib.request.urlopen(request, timeout=30))
+    payload = _open_json(request, 30)
     if not isinstance(payload, list):
         raise ValueError("the API did not answer with a list of articles")
     return [article for article in payload if article.get("published")]
@@ -328,7 +346,7 @@ def read_article(base: str, key: str, article_id: int,
         request = urllib.request.Request(
             base + "/api/articles/%d" % article_id,
             headers={"api-key": key, "User-Agent": "mesh-pub/1.0"})
-        payload = json.load(urllib.request.urlopen(request, timeout=30))
+        payload = _open_json(request, 30)
     except urllib.error.HTTPError as err:
         if err.code != 404 or listing_row is None:
             raise
