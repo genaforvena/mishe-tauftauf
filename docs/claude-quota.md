@@ -6,8 +6,12 @@ rises, per hour. **LOW** means a window is spent (more than 90% used). **RED** i
 an account verdict: a window is LOW, or its burn projects it to run out before
 the reset. **UNKNOWN** means the reading is missing, stale or unparseable, so
 nothing is known from it. **reserve** is the share of a window a route must leave
-unspent. **senses** is the role that owns acquiring these readings. The full
-field contract is in [budget-json-contract.md](budget-json-contract.md).
+unspent. A **producer** is the job that measures a reading, and a **signal** is
+the published reading with its verdict; a **duty** checks a producer's signal
+against its maximum age ([network-gaps.md](network-gaps.md) defines these).
+A **candidate** is one entry in a role's roster in `engine/routes.json`, the
+choices a wake can be routed to. **senses** is the role that owns acquiring these
+readings. The full field contract is in [budget-json-contract.md](budget-json-contract.md).
 
 Claude Code's native local command can report subscription limits without a
 model request:
