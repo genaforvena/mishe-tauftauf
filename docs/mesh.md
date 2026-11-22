@@ -65,10 +65,11 @@ turn to reconcile, so recovery can progress without replaying the original actio
 reading stays `UNKNOWN` (no value yet, or the source failed to read) instead of being reported as a
 pass. Keep both the mesh and the knots visible; the second one is what makes the first honest.
 
-Wakes run concurrently, one per role, and delivery waits for the running wakes to
+Wakes may run at the same time, up to a per-site limit (default 1, at most 8), and
+one role never runs two wakes at once. Delivery waits for every running wake to
 end. Because of that, two minds' commits can land inside one wake's window, so a
 wake reads those commits as candidates and checks the author rather than assuming
-they are its own. How many wakes may run at once is set per site; see
+they are its own. The limit is set in `wake-concurrency.json`; see
 [wall coordination](wall-coordination.md).
 
 Concentration (who holds the stewardship share, meaning which mind carries each standing area of
