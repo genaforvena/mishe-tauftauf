@@ -150,15 +150,16 @@ cannot spend paid inference while the hold stands. Messages, signal edges and
 requested follow-ups retain normal routing.
 See [quota acquisition](claude-quota.md).
 
-The camera sense asks the household who is in the room. The `frame-label-tick`
-duty runs every five minutes: it sweeps frames that got no answer, applies the
-replies that arrived, and when a room's picture has changed enough it sends a
-picture to one person and waits for the answer. Every reply consumed is
-recorded as its own receipt, so a reply that cannot be matched is visible
-rather than silently dropped. A stored answer that the current parser would
-read differently is a stale label: the duty exits RED while any stale label
-stays uncorrected, so the recurrence is routed instead of sitting in the
-ledger. The frames themselves are deleted, and the household's consent decides
+The camera sense asks the plant's owner, in the owner's own chat, who is in
+the room. The `frame-label-tick` duty runs every five minutes: it sweeps frames
+older than 24 hours, applies the replies that arrived, and when a room's
+picture has changed enough it sends at most three photos per eight hours and
+waits for the answer. Every reply consumed is recorded as its own receipt, so a
+reply that cannot be matched is visible rather than silently dropped. A stored
+answer that the current parser would read differently is a stale label: the
+duty exits RED while any stale label stays uncorrected, so the recurrence is
+routed instead of sitting in the label record. Frames are deleted once used,
+and the household's consent decides
 which room may be asked at all.
 
 The floor plan (`senses/map/floorplan.json`) labels every value with where it
