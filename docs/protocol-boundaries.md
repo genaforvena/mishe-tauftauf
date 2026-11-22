@@ -199,9 +199,7 @@ is a real finding for the change that introduced the site: move the parsing
 into an adapter the policy names, or decode the value at an existing boundary.
 It exits 2 and prints `UNKNOWN — parsing guard unavailable` when it cannot read the tree or
 `parsing-policy.json`; that is no verdict, not a pass.
-Do not add a site to the legacy budget to make it pass. It exits 2 when the guard
-itself cannot run (a malformed policy, a missing source, an unreadable file); the
-output begins `UNKNOWN — parsing guard unavailable`. Exit 2 is UNKNOWN, not a pass.
+Do not add a site to the legacy budget to make it pass.
 
 The checker is a static detector with a defined scope, not proof that every
 semantic interpretation is correct. Read a new adapter's input format, malformed
