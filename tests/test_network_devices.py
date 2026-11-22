@@ -81,10 +81,6 @@ class DeviceDetector(unittest.TestCase):
         self.assertEqual(care.devices_state(rows, NOW)[0], 0)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class NeighbourStateTest(unittest.TestCase):
     """The IPv4 neighbour entry tells 'left the Wi-Fi' (FAILED) from 'associated, silent to ping'."""
 
@@ -108,3 +104,7 @@ class NeighbourStateTest(unittest.TestCase):
     def test_reachable_neighbour(self):
         run = lambda *a, **k: self._Out("192.168.8.214 dev enp42s0 lladdr 7c:c3:a1:a5:20:d7 REACHABLE\n")
         self.assertEqual(devices.neighbour_state("192.168.8.214", run), "REACHABLE")
+
+
+if __name__ == "__main__":
+    unittest.main()
