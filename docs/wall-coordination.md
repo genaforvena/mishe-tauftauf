@@ -236,9 +236,11 @@ journal. Run `mishe signal show pin-delivery` for the effective reading. An
 unchanged result refreshes `signals/pin-delivery.seen` and leaves the last edge in
 `signals/pin-delivery.json`. The detail and `.ran` timestamp can advance when a
 check cannot establish a fresh reading. The last reading expires after ten
-minutes without a successful observation. If the pointed-to release directory
-exists but its runtime package is missing, the check reports RED immediately.
-Both edges reach Genome.
+minutes without a successful observation. During a promotion the checker
+still inspects the release that `runtime/current` points to. If that release
+directory exists but its runtime package is missing, the check reports RED
+immediately. A missing or unreadable pointer yields no fresh observation.
+Genome receives the RED edge and any subsequent expiry edge.
 
 Scheduler, dispatch, settlement, locking, protocol, authorization and delivery changes keep their
 deterministic activation, revert and reapply observations;

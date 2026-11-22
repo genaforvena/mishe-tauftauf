@@ -3,9 +3,9 @@
 
 Reads the newest record under SITE/work/releases (written by release_promotion.promote) and the live pointer.
 
-  GREEN    delivered and runtime/current resolves to that release directory with its runtime package;
-           or a promotion still running and younger than --stuck-min
-  RED      the delivered release has no runtime package, or the newest promotion ended in
+  GREEN    runtime/current has its runtime package, and either it names the delivered release
+           or a promotion is still running and younger than --stuck-min
+  RED      the current release has no runtime package, or the newest promotion ended in
            check-failed, check-mutated-*, rolled-back or UNKNOWN with its recorded cause
   UNKNOWN  no promotion record, an unreadable or unorderable record, an unusable or mismatched pointer,
            or a promotion that has run longer than --stuck-min.
@@ -146,21 +146,23 @@ def main(argv=None):
     since = record.get({"waiting-for-wakes": "waiting_since",
                         "activating": "activation_started_at"}.get(phase))
     phase_min = (now - since) / 60 if isinstance(since, (int, float)) else age_min
-    if phase == "delivered":
+    if phase == "delivered" or phase in RUNNING:
+        status = f"{sha} is recorded delivered" if phase == "delivered" else f"promotion of {sha} is {phase}"
         try:
             target = pointer_target(a.home)
             package_present = (target / "src" / "mishe_tauftauf" / "__init__.py").is_file()
         except (OSError, RuntimeError) as exc:
-            print(f"pin-delivery: {sha} is recorded delivered but runtime/current is unusable: {exc}",
-                  file=sys.stderr)
+            print(f"pin-delivery: {status} but runtime/current is unusable: {exc}", file=sys.stderr)
             return 3
-        if target.name != record.get("sha"):
+        # While a promotion runs, the previous release or the candidate may be the live one.
+        if phase == "delivered" and target.name != record.get("sha"):
             print(f"pin-delivery: {sha} is recorded delivered but runtime/current names {target.name[:8]}", file=sys.stderr)
             return 3
         if not package_present:
-            print(f"pin-delivery: {sha} is recorded delivered but its runtime package is missing from {target}",
-                  file=sys.stderr)
+            print(f"pin-delivery: {status} but the runtime package is missing from {target}", file=sys.stderr)
             return 2
+
+    if phase == "delivered":
         # The pin moved when the record was marked delivered, not when its promotion
         # started: the promotion's own age read "delivered 32 min ago" for a pin that had
         # named the release for one minute (2026-11-18 05:52Z).

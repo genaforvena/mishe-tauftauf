@@ -199,6 +199,31 @@ def test_running_is_green_until_stuck_then_unknown(tmp_path, capsys):
     assert _run(_site(stuck, [_rec("checking", created_at=NOW - 7200)]), capsys)[0] == 3
 
 
+@pytest.mark.parametrize("phase", ["checking", "waiting-for-wakes", "activating"])
+def test_in_flight_promotion_detects_damage_to_the_current_pin(tmp_path, capsys, phase):
+    candidate = "b" * 40
+    promotion = _rec(phase, sha=candidate, previous=SHA, created_at=NOW - 300)
+    home = _site(tmp_path, [_rec("delivered"), promotion])
+    target = home / "releases" / SHA
+    assert _run(home, capsys)[0] == 0
+
+    shutil.rmtree(target / "src" / "mishe_tauftauf")
+    code, output = _run(home, capsys)
+    assert code == 2
+    assert f"{candidate[:8]} is {phase}" in output.err
+    assert f"runtime package is missing from {target}" in output.err
+
+    shutil.rmtree(target)
+    code, output = _run(home, capsys)
+    assert code == 3
+    assert "runtime/current is unusable" in output.err
+
+
+def test_in_flight_activation_accepts_the_pin_after_the_flip(tmp_path, capsys):
+    code, output = _run(_site(tmp_path, [_rec("activating", previous="b" * 40)]), capsys)
+    assert code == 0 and "activating" in output.out
+
+
 def test_a_long_check_does_not_age_the_wait_that_follows_it(tmp_path, capsys):
     """The check stage can take 25 min and a healthy wait for the dispatch lock 50 more.
 
