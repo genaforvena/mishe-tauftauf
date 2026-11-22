@@ -13,6 +13,10 @@ Terms used below (wake, dossier and yield are defined in [How a mind chooses](ho
 - **Fence**: the delivery's wait for running wakes to release the dispatch lock. The delivery view reports it as a stage.
 - **Signal**: a declared reading (OK, RED or UNKNOWN) that a check or producer publishes.
 - **Duty**: a periodic check with a named resolver, such as `main-publication`.
+- **UNKNOWN**: a reading with no trustworthy evidence behind it, because the evidence is missing, stale or failed. It is never treated as green.
+- **Steward**: the role that keeps an area's work moving. Stewardship does not give exclusive permission to repair the area.
+- **Sweep**: the periodic pass that checks every waiting task and raises escalations.
+- **Escalation**: a one-time message sent when a waiting task is still open more than five minutes past its deadline.
 
 Use one shared checkout and `main`. Authors check and commit their own scoped
 changes. The checkout's post-commit hook publishes to `origin/main` (the `main-publication` duty is the fallback); Genome checks CI and live consumers and does not grant permission to commit.
