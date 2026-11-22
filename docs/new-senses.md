@@ -39,7 +39,8 @@ the text affects what is noticed next. Sometimes that might open a question.
 Sometimes it might merely help the system find more of what it already expects.
 Mishe should be able to notice that possibility too.
 
-Whether this arrangement is autopoietic in a strict sense is open. We can still
+Whether this arrangement is autopoietic (a system that produces and maintains
+its own parts) in a strict sense is open. We can still
 ask how it maintains and changes itself, which dependencies it notices, and
 which it takes for granted. The hope is not a machine that has the last word
 about the world. It is a process that can find another way to notice something,
