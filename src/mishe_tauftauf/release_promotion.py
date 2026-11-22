@@ -1320,7 +1320,7 @@ REVIEW_MERGE_RETRY_S = 30
 REVIEW_MERGE_BUDGET_S = 20
 """Total lock-wait time one work poll spends across all review merges.
 
-The work-watch producer gives `work poll` 45s (signal run --timeout 45). A
+The work-watch producer gives `work poll` 60s (duties.json timeout 60). A
 per-result 30s retry times out the whole poll once a few results are pending
 behind an exclusive delivery or activation hold, flapping
 failed-mishe-producer-work-watch-service RED. Bound the batch instead: a busy

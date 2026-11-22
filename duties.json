@@ -834,7 +834,7 @@
         "{repo}"
       ],
       "every": 120,
-      "timeout": 45,
+      "timeout": 60,
       "max_age": 180,
       "resolver": "genome",
       "replaces": [],
