@@ -84,8 +84,8 @@ Status: no code applies a 50% gate, and the router does not read the policy.
   `used > 0.9` and `RUNS OUT BEFORE RESET` when the producer's `eta_s` lands before
   the reset and the window is more than 5% used (at or below 5% the short-span
   guard keeps the window ok, after rounding away float noise). Either result turns the account
-  verdict RED. The exception is the `claude` 7d window (`PROJECTION_ACCEPTED` in
-  that module, since 2026-11-21): its burn projection is informational, so only a
+  verdict RED. The exception is the `claude` 7d window (listed in the module's
+  `PROJECTION_ACCEPTED` set, since 2026-11-21): its burn projection is informational, so only a
   spent 7d window (`LOW`) turns it RED. The 5h window keeps the projection alarm.
 - The router compares each fresh account window's remaining fraction with the
   candidate's reserve. The default is 15%. A candidate in `engine/routes.json`
@@ -96,7 +96,8 @@ Status: no code applies a 50% gate, and the router does not read the policy.
   candidate is held in reserve. The routing ledger's “all windows healthy” reason
   describes the candidate's reserve check.
 - A role can use `budget-claude` to admit spontaneous intentions. The owed check
-  also accepts fresh free-route evidence from the plant's budget snapshot, but only
+  (`owed.py`: is there an unread message, a moved signal or a due intention for
+  this role?) also accepts fresh free-route evidence from the plant's budget snapshot, but only
   from that role's own roster in `engine/routes.json` (`free: true` candidates whose
   key has a fresh FREE row), and only when the router can choose one with a free
   slot (`engine_router.has_free_route`, `require_slot=True`). While the paid
