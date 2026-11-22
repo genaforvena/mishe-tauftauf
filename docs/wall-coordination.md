@@ -251,6 +251,18 @@ journalctl --user -u mishe-producer-pin-delivery.service --since '1 hour ago' \
   --grep 'mishe: pin-delivery: exit=2 detail=' --no-pager
 ```
 
+If the producer cannot import Mishe, the checker never runs and the last reading
+can remain visible until its freshness expires. The failure reporter can fail
+at the same import if both services depend on the missing package. Read both
+unit journals without the checker exit filter. Set the time range to cover the
+failure.
+
+```sh
+journalctl --user -u mishe-producer-pin-delivery.service \
+  -u mishe-failed@mishe-producer-pin-delivery.service.service \
+  --since '1 hour ago' --no-pager
+```
+
 Scheduler, dispatch, settlement, locking, protocol, authorization and delivery changes keep their
 deterministic activation, revert and reapply observations;
 what they no longer wait for is a reviewer. Those observations are the deterministic
