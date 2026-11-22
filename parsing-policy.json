@@ -111,7 +111,8 @@
     "tools/network_boundary.py",
     "tools/health_view.py",
     "tools/map_view.py",
-    "tools/map_tiles.py"
+    "tools/map_tiles.py",
+    "tools/map_priors.py"
   ],
   "legacy": {
     "src/mishe_tauftauf/access.py": {
