@@ -74,7 +74,8 @@ site's own credentials and rule terms named as absolute paths (`--env`
 exit codes mapped to the bus: exit 2 is RED, exit 3 is UNKNOWN. A scan that
 cannot read its input stays UNKNOWN rather than passing; the scanner publishes
 its own verdict to the bus, so the timer run and a hand run leave the same
-reading.
+reading. A dropped connection to the article API is retried once after 2 s
+before it counts as UNKNOWN; an HTTP error is an answer and is not retried.
 
 The check is a committed file, not a site-local script. It used to live at
 `SITE_HOME/pub/bin/pub-privacy-scan`, outside the repository, and the delivery
