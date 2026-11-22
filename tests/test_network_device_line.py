@@ -137,3 +137,14 @@ def test_unreadable_newest_row_is_unknown_in_view_and_detector(monkeypatch, tmp_
     assert view.devices_line(now=now).startswith("UNKNOWN")
     assert care.devices(tmp_path) == 3
     assert "unreadable" in capsys.readouterr().err
+
+
+def test_arp_silent_device_says_not_answering_the_lan(monkeypatch, tmp_path):
+    now = 10_000.0
+    point_at(monkeypatch, tmp_path, [
+        {"ts": now - 60, "devices": {"iMac-Rozalia": {"ok": False, "why": "no reply", "neigh": "FAILED"}}},
+    ])
+    line = view.devices_line(now=now)
+    assert line.startswith("UNKNOWN")
+    assert "iMac-Rozalia not answering the LAN (no ARP answer)" in line
+    assert "no reply (no reply)" not in line
