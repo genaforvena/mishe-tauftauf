@@ -187,6 +187,16 @@ def run(home: Path, repo: Path, *, now: float | None = None) -> int:
         return 0
     pin = pin_sha(home)
     head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    # Promote only commits origin/main holds. The promotion takes the shared checkout's HEAD, so an
+    # unpushed commit whose push is then rejected leaves the pin naming a commit main never contained
+    # (2026-11-22: pin 406dffc7 was reset away by a non-fast-forward push).
+    on_main = _git(repo, "merge-base", "--is-ancestor", head, "origin/main")
+    if on_main.returncode == 1:
+        _log(f"HEAD {head[:8]} is not on origin/main yet: not promoting an unpushed commit")
+        return 0
+    if on_main.returncode != 0:
+        _log(f"origin/main is unreadable (rc {on_main.returncode}): promotion outcome unknown")
+        return 3
     newest = _git(repo, "log", "-1", "--format=%ct", head).stdout.strip()
     last = _read_state(home)
     refused = bool(last and last[0] == head and last[2] == "started"

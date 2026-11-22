@@ -224,3 +224,36 @@ def test_gate_sees_a_release_advance_started_outside_its_unit(monkeypatch, tmp_p
     finally:
         proc.kill()
         proc.wait()
+
+
+def _git_with_origin_main(rc):
+    def fake_git(repo, *args):
+        if args[:1] == ("rev-parse",):
+            return subprocess.CompletedProcess(args, 0, HEAD + "\n", "")
+        if args[:1] == ("merge-base",) and "origin/main" in args:
+            return subprocess.CompletedProcess(args, rc, "", "")
+        return subprocess.CompletedProcess(args, 0, "0\n", "")
+
+    return fake_git
+
+
+def test_run_does_not_promote_an_unpushed_head(monkeypatch):
+    monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
+    monkeypatch.setattr(cadence, "gate_running", lambda home: False)
+    monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
+    monkeypatch.setattr(cadence, "_git", _git_with_origin_main(1))
+    started = []
+    monkeypatch.setattr(cadence.subprocess, "run", lambda *a, **k: started.append(a))
+    assert cadence.run(Path("."), Path("."), now=0.0) == 0
+    assert started == [], "a commit origin/main does not hold is never released"
+
+
+def test_run_reports_unknown_when_origin_main_is_unreadable(monkeypatch):
+    monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
+    monkeypatch.setattr(cadence, "gate_running", lambda home: False)
+    monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
+    monkeypatch.setattr(cadence, "_git", _git_with_origin_main(128))
+    started = []
+    monkeypatch.setattr(cadence.subprocess, "run", lambda *a, **k: started.append(a))
+    assert cadence.run(Path("."), Path("."), now=0.0) == 3
+    assert started == []
