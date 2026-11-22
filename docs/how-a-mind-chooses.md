@@ -48,7 +48,7 @@ the site's `initiatives.json` with an owner role, a due time and a
 deterministic acceptance check (a signal value, a file, a number in a JSON file
 or a commit subject). A duty is a scheduled check the system runs on its own
 interval, listed in `duties.json`; a duty is not a mind and wakes nobody unless
-it says so. A reading is `GREEN` (it passes), `RED` (it fails, and its resolver is routed to act) or `UNKNOWN` (no fresh reading, which is never counted as a pass). One duty per owner, `initiatives-ROLE`, evaluates the
+it says so. A reading is `GREEN` (it passes), `RED` (it fails, and its resolver, the role routed to act on it, is woken) or `UNKNOWN` (no fresh reading, which is never counted as a pass). One duty per owner, `initiatives-ROLE`, evaluates the
 owner's checks: it is RED while one is past due and not done, UNKNOWN when the
 register is missing, a check cannot be evaluated or the owner has no charter,
 and either state wakes the owner and is offered again until it clears. The
