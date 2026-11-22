@@ -48,6 +48,7 @@ impl Store {
             c.busy_timeout(Duration::from_secs(10)).ok()?;
             c.execute_batch(
                 "PRAGMA journal_mode=WAL;\n\
+                 PRAGMA synchronous=NORMAL;\n\
                  CREATE TABLE IF NOT EXISTS verified (digest TEXT PRIMARY KEY, ino INTEGER, \
                  size INTEGER, ctime_ns INTEGER, mtime_ns INTEGER, verified_at REAL, \
                  payload BLOB NOT NULL, kind TEXT);",
