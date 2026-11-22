@@ -258,3 +258,10 @@ def test_system1_verdict_picks_the_newest_code_commit_and_none_without_one():
                {"sha": "d" * 40, "areas": ["duties"], "internal_only": True}]
     assert rcs.system1_verdict({"commits": commits}) == "a" * 40
     assert rcs.system1_verdict({"commits": commits[1:3]}) is None
+
+
+def test_checks_and_tests_only_commits_do_not_wake_pub_either():
+    assert rcs.docs_only({"paths": ["checks/a.py", "docs/b.md", "tests/test_a.py"], "areas": ["tools", "docs", "tests"]}) is True
+    assert rcs.docs_only({"paths": ["checks/a.py", "tools/house_view.py"], "areas": ["tools"]}) is False   # a view is reader-facing
+    assert rcs.docs_only({"paths": ["src/mishe_tauftauf/x.py", "docs/b.md"], "areas": ["src", "docs"]}) is False
+    assert rcs.docs_only({"areas": ["docs"]}) is True and rcs.docs_only({"areas": ["tools"]}) is False

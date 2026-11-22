@@ -256,10 +256,16 @@ def pub_verdict(report: dict) -> str | None:
 
 
 def docs_only(commit: dict) -> bool:
-    """A commit that touches documentation paths and nothing else. It stays in pub's detail view, but it does not
-    wake pub: 2026-11-21, 14 of 16 pub wakes in 5 h were docs-only commits and every one verified that no article claim
-    changed. Claim drift against the source is watched by the pub-*-claims duties and the weekly check, not by
-    reading every wording change. A commit that also touches src, tools, duties or tests still counts."""
+    """True for a commit with no reader-facing surface: every path it touches is under docs/, tests/ or checks/.
+
+    Such a commit stays in pub's detail view but does not wake pub. 2026-11-21/22: 14 of 16 pub wakes in 5 h were
+    docs-only commits, and the next 5 wakes in 2 h were checks/ commits (internal detectors); all verified that no
+    article claim changed. Claim drift against the source is watched by the pub-*-claims duties and the weekly check,
+    not by reading every wording or detector change. A commit that also touches src, tools or duties still counts.
+    Without a path list the area set decides (docs only)."""
+    paths = commit.get("paths")
+    if paths:
+        return all(str(path).startswith(("docs/", "tests/", "checks/")) for path in paths)
     areas = set(commit.get("areas", []))
     return bool(areas) and areas <= {"docs"}
 
