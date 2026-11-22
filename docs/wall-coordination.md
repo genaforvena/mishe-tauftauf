@@ -238,7 +238,8 @@ unchanged result refreshes `signals/pin-delivery.seen` and leaves the last edge 
 check cannot establish a fresh reading. The last reading expires after ten
 minutes without a successful observation. During a promotion the checker
 still inspects the release that `runtime/current` points to. If that release
-directory exists but its runtime package is missing, the check reports RED
+directory exists but its runtime package or the entry point at
+`src/mishe_tauftauf/__main__.py` is missing, a running checker reports RED
 immediately. A missing or unreadable pointer yields no fresh observation.
 Genome subscribes to changes in `pin-delivery`. If a healthy sample arrives
 during Genome's 120-second wake debounce (`wake_debounce_seconds`), Genome's
@@ -251,11 +252,11 @@ journalctl --user -u mishe-producer-pin-delivery.service --since '1 hour ago' \
   --grep 'mishe: pin-delivery: exit=2 detail=' --no-pager
 ```
 
-If the producer cannot import Mishe, the checker never runs and the last reading
-can remain visible until its freshness expires. The failure reporter can fail
-at the same import if both services depend on the missing package. Read both
-unit journals without the checker exit filter. Set the time range to cover the
-failure.
+If the producer cannot start `python -m mishe_tauftauf`, the checker never runs
+and the last reading can remain visible until its freshness expires. The failure
+reporter can fail at the same startup step if both services depend on the damaged
+release. Read both unit journals without the checker exit filter. Set the time
+range to cover the failure.
 
 ```sh
 journalctl --user -u mishe-producer-pin-delivery.service \
