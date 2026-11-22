@@ -3,7 +3,7 @@
 
 Read-only terminal view over features/predictions-score.json (tools/house_predict.py) and the hourly
 feature store (features/house-hourly.jsonl, tools/household_features.py). Plain words first, numbers
-second, UNKNOWN when something was not measured. Fits 41 rows by 170 columns.
+second, UNKNOWN when something was not measured. At most 41 rows by 170 columns.
 
   last-value  assumes the next hour looks like the last complete one
   same-hour   the usual value for that hour of the week (of the day until three weeks of history exist)
@@ -129,7 +129,7 @@ def table(title, rows, labels) -> list:
     return out
 
 
-def render(home: Path, now: float, score: dict, tail: dict) -> str:
+def render(home: Path, now: float, score: dict, tail: dict, *, max_rows: int = MAX_ROWS) -> str:
     labels = score.get("targets") or {}
     c = int(now // HOUR) * HOUR
     counts, chain = score.get("counts") or {}, score.get("chain") or {}
@@ -176,13 +176,14 @@ def render(home: Path, now: float, score: dict, tail: dict) -> str:
     head = len(lines)                      # everything before REPLAY, which is what must stay visible
     lines += table("REPLAY (retrospective walk-forward over stored history, last 14 days)", replay, labels)
     lines = [l[:MAX_COLS] for l in lines]
-    if len(lines) > MAX_ROWS:
-        cut = len(lines) - (MAX_ROWS - 1)
-        if head <= MAX_ROWS - 1:           # the cut lands inside REPLAY: say exactly that
+    if len(lines) > max_rows:
+        kept = max_rows - 1               # reserve one line for the cut notice
+        cut = len(lines) - kept
+        if head <= kept:
             note = f"  ... {cut} more lines cut to fit the pane (the REPLAY tail; LIVE, LAST 24 HOURS and SURPRISES are above it)"
-        else:                              # the sections above REPLAY alone do not fit: never claim they are visible
-            note = f"  ... {cut} more lines cut to fit the pane; the cut reaches above REPLAY, so the end of SURPRISES or LAST 24 HOURS may be missing"
-        lines = lines[:MAX_ROWS - 1] + [note]
+        else:
+            note = f"  ... {cut} more lines cut to fit the pane; the cut reaches above REPLAY"
+        lines = lines[:kept] + [note]
     return "\n".join(lines)
 
 
@@ -196,7 +197,15 @@ def main(argv=None) -> int:
         print("house: UNKNOWN: no prediction score yet (features/predictions-score.json); the house-predictions duty writes it", file=sys.stderr)
         return 3
     now = a.now if a.now is not None else time.time()
-    print(render(a.home, now, score, store_tail(a.home / "features" / "house-hourly.jsonl")))
+    try:
+        terminal_rows = os.get_terminal_size().lines
+    except OSError:
+        terminal_rows = 0
+    # The trailing newline needs a row too. A redirected frame uses the default cap.
+    max_rows = min(MAX_ROWS, max(1, terminal_rows - 1)) if terminal_rows else MAX_ROWS
+    frame = render(a.home, now, score, store_tail(a.home / "features" / "house-hourly.jsonl"),
+                   max_rows=max_rows)
+    print(frame, end="" if terminal_rows == 1 else "\n")
     return 0
 
 

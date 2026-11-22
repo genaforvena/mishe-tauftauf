@@ -79,6 +79,9 @@ The `house` window shows the prediction log's scoreboard (`tools/house_view.py`,
 `LIVE` table counts only forecasts written before their hour; the `REPLAY` table is a retrospective walk-forward
 over stored history and is never mixed into it. A scoreboard older than 45 minutes prints `STALE`; a missing one
 prints `UNKNOWN` (exit 3). The `house-predictions` duty (`duties.json`, every 900 s, resolver senses) writes it.
+The renderer reads the terminal height on each refresh and leaves a row for its final newline, which
+keeps the header and freshness summary in view at the wide pane's 170-column layout. The cut notice
+reports when the visible frame ends before `REPLAY`. Redirected output uses the 41-row cap.
 
 Two words in that window need no machinery to read. `hash chain OK` means every stored forecast line still
 carries the hash of the line before it; `hash chain BROKEN at line N` means line N was edited or removed after

@@ -1,6 +1,7 @@
 """house_view: plain words first, UNKNOWN when unmeasured, fits the 41 x 170 pane."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,15 +56,27 @@ def test_the_pane_cuts_only_the_replay_tail_and_says_so(tmp_path):
         assert lines[-1].lstrip().startswith("... ") and "REPLAY tail" in lines[-1]
 
 
-def test_a_cut_that_reaches_above_replay_never_claims_those_sections_are_visible(tmp_path, monkeypatch):
+def test_a_cut_that_reaches_above_replay_never_claims_those_sections_are_visible(tmp_path):
     now = build(tmp_path)
     house_predict.run(tmp_path, now)
     score = json.loads((tmp_path / "features" / "predictions-score.json").read_text())
     tail = house_view.store_tail(tmp_path / "features" / "house-hourly.jsonl")
-    monkeypatch.setattr(house_view, "MAX_ROWS", 20)        # too short for everything above REPLAY
-    lines = house_view.render(tmp_path, now, score, tail).splitlines()
+    lines = house_view.render(tmp_path, now, score, tail, max_rows=20).splitlines()
     assert len(lines) == 20
     assert "reaches above REPLAY" in lines[-1] and "are above it" not in lines[-1]
+
+
+def test_cli_leaves_room_for_the_newline_in_the_output_terminal(tmp_path, monkeypatch, capsys):
+    now = build(tmp_path)
+    house_predict.run(tmp_path, now)
+    monkeypatch.setattr(house_view.os, "get_terminal_size", lambda fd=1: os.terminal_size((174, 38)))
+
+    assert house_view.main(["--home", str(tmp_path), "--now", str(now)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 37
+    assert lines[0].startswith("HOUSE")
+    assert "hash chain OK" in "\n".join(lines)
+    assert "more lines cut" in lines[-1]
 
 
 def test_no_score_is_unknown_and_exit_3(tmp_path, capsys):
