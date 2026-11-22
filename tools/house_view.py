@@ -104,21 +104,28 @@ def spark(values) -> str:
 
 
 def table(title, rows, labels) -> list:
-    out = [title, f"  {'target':<26}{'next hour (h=1)':<110}{'same hour tomorrow (h=24)'}"]
+    # Each horizon's baselines sit on the row; the damped net gets its own continuation line,
+    # so the h=24 cell stays at column 96 and inside the MAX_COLS pane width.
+    out = [title, f"  {'target':<26}{'next hour (h=1)':<70}{'same hour tomorrow (h=24)'}"]
     for slug, label in labels.items():
-        cells = []
+        cells, damps = [], []
         for h in (1, 24):
             r = rows.get(f"{slug}|{h}")
             if not r or not r.get("n"):
                 cells.append("none yet")
+                damps.append(None)
                 continue
             m = r["mae"]
             word = {"same-hour beats last-value": "same-hour wins", "last-value beats same-hour": "last-value wins"}.get(r["verdict"], r["verdict"])
+            cells.append(f"n={r['n']:<4} last-value {fmt(m['persist']):>6}  same-hour {fmt(m['how']):>6}  {word}")
             d = r.get("damp") or {}
-            damp = (f"  | damped {fmt((d.get('mae') or {}).get('damp')):>6} n={d.get('n', 0)} {d.get('verdict', '')}"
-                    if d.get("n") else "")
-            cells.append(f"n={r['n']:<4} last-value {fmt(m['persist']):>6}  same-hour {fmt(m['how']):>6}  {word}{damp}")
-        out.append(f"  {label:<26}{cells[0]:<110}{cells[1]}")
+            damps.append(f"damped {fmt((d.get('mae') or {}).get('damp')):>6} n={d.get('n', 0)} {d.get('verdict', '')}"
+                         if d.get("n") else None)
+        out.append(f"  {label:<26}{cells[0]:<70}{cells[1]}")
+        # one continuation line per horizon: the damped verdict can be long, so it never shares a row
+        for h, damp in zip((1, 24), damps):
+            if damp:
+                out.append(f"  {'':<26}h={h:<3}{damp}")
     return out
 
 

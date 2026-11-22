@@ -60,3 +60,15 @@ def test_a_stale_scoreboard_is_flagged_and_a_broken_chain_is_loud(tmp_path):
 def test_numbers_are_formatted_without_inventing_precision():
     f = house_view.fmt
     assert f(None) == "UNKNOWN" and f(float("nan")) == "UNKNOWN" and f(1757.77) == "1758" and f(0.015432) == "0.0154" and f(35.5) == "35.5"
+
+
+def test_a_damped_verdict_never_pushes_the_tomorrow_cell_out_of_the_pane():
+    # regression: the damped suffix used to sit inline in the h=1 cell and pushed h=24 past column 170
+    long_verdict = "damped net loses to the better baseline on this target"
+    row = lambda h: {"n": 40, "mae": {"persist": 10.0, "how": 12.0, "damp": 9.0}, "verdict": "last-value beats same-hour",
+                     "damp": {"n": 40, "verdict": long_verdict, "mae": {"damp": 9.0}}}
+    lines = house_view.table("LIVE", {"lr_light|1": row(1), "lr_light|24": row(24)}, {"lr_light": "lr_light"})
+    assert all(len(l) <= house_view.MAX_COLS for l in lines)
+    tomorrow = lines[2]
+    assert "last-value wins" in tomorrow[96:] and "same-hour" in tomorrow[96:]
+    assert long_verdict in lines[3]
