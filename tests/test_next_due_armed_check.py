@@ -48,6 +48,23 @@ def test_future_due_without_timer_is_red(tmp_path):
     assert code == 2 and 'no mishe-next-due timer' in lines[0]
 
 
+def test_due_just_fired_with_rearm_gap_is_unknown_not_red(tmp_path):
+    # 2026-11-22 11:07:29Z: the sample landed seconds after the due timer fired, before its handler re-armed.
+    code, lines = check.evaluate(home(tmp_path, NOW - 2), NOW, [])
+    assert code == 3, lines
+    assert any('re-arm not yet visible' in line for line in lines)
+
+
+def test_due_passed_beyond_grace_without_timer_is_red(tmp_path):
+    code, lines = check.evaluate(home(tmp_path, NOW - 3600), NOW, [])
+    assert code == 2 and any('never armed' in line for line in lines)
+
+
+def test_gap_after_fire_with_missing_marker_is_still_red(tmp_path):
+    code, lines = check.evaluate(home(tmp_path, NOW - 2, marker=False), NOW, [])
+    assert code == 2 and any('units-installed' in line for line in lines)
+
+
 def test_unreadable_next_due_is_unknown(tmp_path):
     code, _ = check.evaluate(home(tmp_path, None), NOW, ['mishe-next-due-abc.timer'])
     assert code == 3

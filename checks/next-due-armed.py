@@ -78,10 +78,20 @@ def evaluate(home: Path, now: float, timers: list[str] | None, grace: float = GR
         if problems:
             return 3, problems + ["timer listing unavailable, so arming cannot be confirmed"]
         return 3, ["timer listing unavailable"]
+    undecided = []
     if not timers and due >= now - grace:
-        problems.append("no mishe-next-due timer is armed for this site")
+        if due > now:
+            problems.append("no mishe-next-due timer is armed for this site")
+        else:
+            # The due timer fired and its handler arms the next one. A timer is absent in that gap by
+            # design (observed 2026-11-22 11:07:29Z: the sample landed 2 s after the due time, RED for
+            # one 5-minute producer tick, GREEN at 11:09). Undecidable here; the overdue branch above
+            # still reports RED once the grace has passed with nothing armed.
+            undecided.append(f"due time {int(due)} passed {int(now - due)} s ago; re-arm not yet visible")
     if problems:
         return 2, problems
+    if undecided:
+        return 3, undecided
     return 0, [f"next due {int(due)} (in {int((due - now) // 60)} min); armed timers: {', '.join(timers) or 'none needed'}"]
 
 
