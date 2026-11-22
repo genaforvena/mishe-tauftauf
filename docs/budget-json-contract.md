@@ -24,28 +24,29 @@ engine writes with each account's windows.
 
 Status: **active, partial**. `src/mishe_tauftauf/budget_producer.py` produces the `accounts`
 section from the engine status and the native Claude tap (`mishe budget-produce --out …`);
-`checks/budget-consistency.py` judges it. The router migration (step 4) has shipped:
-`engine_router.live_status()` reads the accounts section and the router no longer reads
-`engine_usage.status` or refetches stale readings. The producer also writes the cooling,
-ledger (`free_models`, `paid_models`, `unclassified_models`, `retired_models`,
-`per_mind`, `ledger`) sections, observed on the pinned bytes since 2026-11-12:
-the `budget` timer writes them and the live file carries all of them.
-Each fresh window also carries `burn_h` (used
-fraction per hour over the rate history, at least 1500 s of span, same reset only) and `eta_s` (ETA: seconds
-to 100% at that burn); a non-fresh window gets null for both. `burn_source` says where a burn came from: `history` (a measured
-rate reading) or `window-elapsed` (estimate: used / hours elapsed in a 5h or 7d window, used only when history has no
-honest reading and at least 0.25 h of the window has passed). A window-elapsed burn is an estimate, not a measurement. Still open: per-candidate token
-attribution in the producer and deleting the old writers (step 5); the file already carries routing and ledger verdicts. The render-only budget view
-(step 3) shipped 2026-11-12. The `budget` duty
-now runs the producer (step 2): the site-local `producers/budget.sh` runs the old collector
-first and `mishe budget-produce` after it, so the producer reads this tick's `quota.json`
-rather than the previous tick's. Observed on the timer 2026-11-11
-(`produced_at` 05:18:05Z → 05:28:06Z, next fire 05:38:04Z). With a 600 s period inside the
-900 s age limit (`MAX_AGE_S` in the producer), the file stays fresh with ~300 s of margin, so a role whose candidate
-reads an account window no longer routes on no evidence. The checkout declares a separate
-`budget-consistency` duty below; it is installed and its signal is GREEN on a fresh run.
-Roles whose candidates are all free models or the Claude safety net read no window
-and are unaffected.
+`checks/budget-consistency.py` judges it. The router reads the accounts section through
+`engine_router.live_status()`; it no longer reads `engine_usage.status` or refetches stale
+readings. The producer also writes the cooling and ledger sections (`free_models`,
+`paid_models`, `unclassified_models`, `retired_models`, `per_mind`, `ledger`).
+
+The `budget` duty runs the producer after the old collector: the site-local
+`producers/budget.sh` runs the collector first and `mishe budget-produce` after it, so the
+producer reads this tick's `quota.json`. The file's age limit is 900 s (`MAX_AGE_S` in the
+producer), so a 600 s period keeps it fresh. A role whose candidate reads an account window
+therefore never routes on stale evidence. Roles whose candidates are all free models or the
+Claude safety net read no window and are unaffected.
+
+Each fresh window carries `burn_h` (used fraction per hour over the rate history, needing at
+least 1500 s of span within the same reset) and `eta_s` (seconds to 100% at that burn). A
+non-fresh window gets null for both. `burn_source` says where a burn came from: `history`
+(a measured rate reading) or `window-elapsed` (an estimate: used / hours elapsed in a 5h or
+7d window, used only when history has no honest reading and at least 0.25 h of the window
+has passed). A window-elapsed burn is an estimate, not a measurement.
+
+Still open: per-candidate token attribution in the producer, and deleting the old writers
+(step 5). The file already carries routing and ledger verdicts. The `budget-consistency`
+duty is installed and separate from this producer. Dated rollout observations are in
+`analysis/budget-contract-status-history.md` under the site home, not in this contract.
 Owner of the model/account mapping: `engine/routes.json`. Owner of this contract: steward.
 
 Claude burn uses `operator/budget/claude-native-rate-history.jsonl`, which contains
