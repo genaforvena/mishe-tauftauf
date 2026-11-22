@@ -14,7 +14,7 @@ Terms used below:
 - **Tape**: the shared, append-only message log every mind reads. See
   [How a mind chooses](how-a-mind-chooses.md).
 - **Feed entry**: one tape record as `feed.py` hands it to a reader: a `source`
-  (who wrote it, such as `seed`, `sync` or `operator/permissions`) and a body.
+  (who wrote it, such as `seed` or `operator/permissions`) and a body.
 - **Adapter**: a module that decodes one named text form at the boundary. The
   policy file `parsing-policy.json` lists the approved ones.
 - **Boundary binary**: a Rust helper that does byte-level decoding for one
