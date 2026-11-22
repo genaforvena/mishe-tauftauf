@@ -191,15 +191,17 @@ they wait for every running wake. The delivery cadence picks up checked commits
 from `main`. From a wake, use a request when you need to bind delivery to a
 specific target, previous pin and set of commands.
 
-Most of a delivery's time is the fence, and most of that is waiting for wakes
-already running. `python3 tools/delivery_view.py --home .mishe-tauftauf` reports
-each delivery's check and fence stages for the newest ten, beside the window
-mean. On 2026-11-20 the fence averaged about 17 minutes for those ten, and 25 of
-36 fences were waits for running wakes. Shortening the quiet poll before the hold
-to 120 s roughly halved the fence. Cutting the wait further changes when the
-dispatch lock is released, so it is a high-impact change with its own fresh
-review and revert/reapply checks, not a tuning knob. The full measurements are
-kept in the site's analysis notes, not in this page.
+Run `python3 tools/delivery_view.py --home .mishe-tauftauf` to compare the check
+and fence times for the newest ten deliveries and the full reporting window.
+On 2026-11-20 the fence averaged about 17 minutes for the newest ten. In the
+24 hours ending at 04:29 UTC on 2026-11-22, 52 deliveries averaged 21 seconds
+at the fence and 8 minutes 42 seconds in checks.
+
+The quiet poll gives delivery up to 120 seconds to find a gap between wakes.
+If there is still no gap, delivery holds new wakes and waits for running wakes
+to finish. Shortening the poll starts that hold sooner. Changing the rule that
+delivery must wait for running wakes requires fresh review and deterministic
+activation, revert and reapply checks.
 
 ```sh
 mishe release request --sha FULL_SHA --previous FULL_SHA \
