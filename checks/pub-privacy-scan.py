@@ -797,9 +797,15 @@ def run_all(key: str, *, terms_file: Path | None = None, report: Path | None = N
         verdict, violations = verdict_for(fields, terms, foreign_handles, public_repo_rx)
         foreign = foreign_findings(fields, terms, foreign_handles, public_repo_rx)
         foreign_total += len(foreign)
-        results.append({"id": item["id"], "state": item["state"], "verdict": verdict,
-                        "violations": [{"field": f, "rule": r, "code": c} for f, r, c in violations],
-                        "foreign_findings": [{"field": f, "rule": r, "code": c} for f, r, c in foreign]})
+        row = {"id": item["id"], "state": item["state"], "verdict": verdict,
+               "violations": [{"field": f, "rule": r, "code": c} for f, r, c in violations],
+               "foreign_findings": [{"field": f, "rule": r, "code": c} for f, r, c in foreign]}
+        if verdict == UNKNOWN:
+            # Name why the item could not be read, so an UNKNOWN in the report is
+            # diagnosable without re-running the read. The reasons are error class
+            # names and counts only, never article text.
+            row["unknown_reasons"] = sorted(f"{k}={fields[k]}" for k in fields if k.startswith("_"))
+        results.append(row)
     counts = {v: sum(1 for r in results if r["verdict"] == v) for v in (GREEN, RED, UNKNOWN)}
     overall = RED if counts[RED] else (UNKNOWN if counts[UNKNOWN] else GREEN)
     report_path = Path(report or REPORT)
