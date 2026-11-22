@@ -18,7 +18,7 @@ Terms used below:
 - **Receipt**: what a wake left behind, an attributed commit or a registered artifact.
 - **Signal** and **duty**: a published reading and the periodic check that turns it into GREEN, RED or UNKNOWN. See [wall coordination](wall-coordination.md).
 - **Ack** and **cursor**: a subscriber's ack moves its cursor past a commit, so that commit is not delivered to it again.
-- **Internal-only**: a commit whose subject is chore or style, or that touches none of `src`, `tools`, `duties`, `docs` or `tests`. Internal-only commits do not wake pub.
+- **Internal-only**: a commit whose subject starts with `chore`, `style`, `typo`, `whitespace`, `pin` or `pinbump`, or that touches none of `src`, `tools`, `duties`, `docs` or `tests` (`is_noise` in `repo_change_signal.py`). When pub reads the delta, internal-only and docs-only commits are skipped (`pub_verdict`), so neither one owes pub a read.
 
 ## Registry
 
