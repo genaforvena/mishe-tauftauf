@@ -641,7 +641,12 @@ def main(home: Path, out: Path | None = None) -> int:
         # keep an old GREEN alive. Stamp at the actual write clock, not the pre-probe
         # `now`, so a wake outcome observed in between is never overwritten by an older time.
         from . import engine_router as er
+        from . import signal_store
         er.observe(home, payload["routing"], now=time.time())
+        # An UNKNOWN assessment (a stale provider window) leaves .seen untouched by design, so
+        # this run's cadence beat is recorded separately: coverage then reads the reason, not a
+        # "producer missed cadence" stale RED for a producer that ran on time.
+        signal_store.beat(home, er.SIGNAL)
     else:
         print(json.dumps(payload, sort_keys=True, indent=1, allow_nan=False))
     return 0

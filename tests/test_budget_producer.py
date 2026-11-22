@@ -712,3 +712,16 @@ def test_free_row_freshness_is_the_producer_read_not_a_quiet_ledger(tmp_path):
     row = out["free_models"]["omp:free/m:-"]
     assert row["observed_at"] == now
     assert row["turns_24h"] == 1
+
+
+def test_producer_run_with_unknown_routing_beats_engine_routing_cadence(tmp_path: Path, monkeypatch):
+    # 2026-11-22 incident: minimax-a's stale window made routing UNKNOWN; observe_unknown leaves .seen
+    # untouched, so engine-routing aged to a "producer missed cadence" RED although the producer ran on
+    # time. The run must leave its cadence beat for engine-routing, whatever the routing value is.
+    from mishe_tauftauf import codex_usage
+    monkeypatch.setattr(codex_usage, "refresh", lambda now, **kwargs: False)
+    out = tmp_path / "engine" / "budget.json"
+    out.parent.mkdir()
+    assert bp.main(tmp_path, out) == 0
+    assert json.loads(out.read_text())["routing"]["state"] == "UNKNOWN"
+    assert (tmp_path / "signals" / "engine-routing.ran").exists()
