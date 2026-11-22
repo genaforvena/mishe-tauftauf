@@ -223,7 +223,9 @@ def run(home: Path, repo: Path, *, now: float | None = None) -> int:
     attempted_at = time.time() if now is None else now
     state_path.write_text(f"{head} {attempted_at} unknown\n", encoding="utf-8")
     _log(f"pin {pin[:8]} -> HEAD {head[:8]}, {count or '?'} commits, delivering")
-    env = {**os.environ, "MISHE_SEED_HOME": str(home)}
+    # Bind the promotion to the SHA checked above: promote-head.sh prefers TARGET_SHA over a
+    # re-read of HEAD, so the detached service cannot select a commit this check never saw.
+    env = {**os.environ, "MISHE_SEED_HOME": str(home), "TARGET_SHA": head}
     env.pop("MISHE_WAKE_KEY", None)
     env.pop("MISHE_ROLE", None)
     try:

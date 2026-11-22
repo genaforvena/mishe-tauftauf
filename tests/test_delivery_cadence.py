@@ -159,6 +159,24 @@ def test_successful_launcher_records_started_attempt(monkeypatch, tmp_path):
     assert cadence.run(tmp_path, tmp_path, now=10000) == 0
     assert cadence._read_state(tmp_path) == (HEAD, 10000, "started")
 
+
+def test_launcher_is_handed_the_checked_head_as_target(monkeypatch, tmp_path):
+    monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
+    monkeypatch.setattr(cadence, "gate_running", lambda home: False)
+    monkeypatch.setattr(cadence, "pin_sha", lambda home: PIN)
+    monkeypatch.setattr(cadence, "_remote_ci", lambda *args: "unknown")
+    def fake_git(repo, *args):
+        out = {"rev-parse": HEAD, "log": "0", "merge-base": PIN, "rev-list": "1"}[args[0]]
+        return subprocess.CompletedProcess(args, 0, out, "")
+    seen = {}
+    def fake_run(argv, **kwargs):
+        seen["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(argv, 0, "started", "")
+    monkeypatch.setattr(cadence, "_git", fake_git)
+    monkeypatch.setattr(cadence.subprocess, "run", fake_run)
+    assert cadence.run(tmp_path, tmp_path, now=10000) == 0
+    assert seen["env"]["TARGET_SHA"] == HEAD
+
 @pytest.mark.parametrize("launcher_exit", [0, 1])
 def test_run_retries_a_delivery_busy_refusal_only_once(monkeypatch, tmp_path, capsys, launcher_exit):
     monkeypatch.delenv("MISHE_WAKE_KEY", raising=False)
