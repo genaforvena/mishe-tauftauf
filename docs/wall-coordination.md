@@ -239,7 +239,8 @@ check cannot establish a fresh reading. The last reading expires after ten
 minutes without a successful observation. During a promotion the checker
 still inspects the release that `runtime/current` points to. If that release
 directory exists but its runtime package or the entry point at
-`src/mishe_tauftauf/__main__.py` is missing or blank, a running checker reports RED
+`src/mishe_tauftauf/__main__.py` is missing, blank, or holds no executable statement
+(comment or docstring only, or a syntax error), a running checker reports RED
 immediately. A missing or unreadable pointer yields no fresh observation.
 Genome subscribes to changes in `pin-delivery`. If a healthy sample arrives
 during Genome's 120-second wake debounce (`wake_debounce_seconds`), Genome's
