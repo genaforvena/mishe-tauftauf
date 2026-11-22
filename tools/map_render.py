@@ -258,11 +258,18 @@ def night_bedroom_prior(hour):
     try:
         with open(os.path.join(SITE, "senses", "map", "priors.json"), encoding="utf-8") as fh:
             doc = json.load(fh)
-        if doc.get("night_bedroom", {}).get("adopted") is True:
-            cell = doc["rooms"]["bedroom"]["by_hour_utc"][str(hour)]
+        # Valid JSON that is not an object (a list, null, a number) is unreadable priors: hand-set kept.
+        if not isinstance(doc, dict):
+            return NIGHT_BEDROOM, "hand-set prior %.1f" % NIGHT_BEDROOM
+        night = doc.get("night_bedroom")
+        rooms = doc.get("rooms")
+        bedroom = rooms.get("bedroom") if isinstance(rooms, dict) else None
+        by_hour = bedroom.get("by_hour_utc") if isinstance(bedroom, dict) else None
+        cell = by_hour.get(str(hour)) if isinstance(by_hour, dict) else None
+        if isinstance(night, dict) and night.get("adopted") is True and isinstance(cell, dict):
             if isinstance(cell.get("p_active"), (int, float)) and cell.get("n", 0) >= 3:
                 return float(cell["p_active"]), "learned prior %.2f (n=%d)" % (cell["p_active"], cell["n"])
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         pass
     return NIGHT_BEDROOM, "hand-set prior %.1f" % NIGHT_BEDROOM
 

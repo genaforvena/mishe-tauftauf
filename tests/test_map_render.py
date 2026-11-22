@@ -471,3 +471,6 @@ def test_night_prior_uses_learned_hour_only_when_adopted_and_sampled(tmp_path):
     assert mr.night_bedroom_prior(23)[0] == mr.NIGHT_BEDROOM  # thin hour: hand-set kept
     priors.write_text("not json")
     assert mr.night_bedroom_prior(23)[0] == mr.NIGHT_BEDROOM  # unreadable: hand-set kept
+    for non_object in ("[]", "null", "3", '{"night_bedroom": {"adopted": true}, "rooms": []}'):
+        priors.write_text(non_object)
+        assert mr.night_bedroom_prior(23)[0] == mr.NIGHT_BEDROOM  # valid JSON, not a usable object: hand-set kept
