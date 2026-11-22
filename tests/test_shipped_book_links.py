@@ -23,6 +23,7 @@ rather than silently re-opening the hole.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -61,6 +62,28 @@ def test_the_gate_cannot_verify_an_unavailable_book(tmp_path, tree_kind):
     result = run_check(tree)
     assert result.returncode == 3, result.stdout + result.stderr
     assert "UNKNOWN" in result.stdout
+
+
+def test_the_gate_reports_a_looping_repository_path_as_unknown(tmp_path):
+    repo = tmp_path / "repo"
+    repo.symlink_to(repo.name)
+    result = subprocess.run([sys.executable, str(CHECK), "--home", str(REPO),
+                             "--repo", str(repo)], capture_output=True, text=True)
+
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "UNKNOWN" in result.stdout
+    assert str(repo) in result.stdout
+
+
+def test_the_gate_reports_a_missing_unpacker_and_cleans_up(tmp_path):
+    env = {**os.environ, "PATH": str(tmp_path), "TMPDIR": str(tmp_path)}
+    result = subprocess.run([sys.executable, str(CHECK), "--home", str(REPO),
+                             "--repo", str(REPO)], env=env, capture_output=True, text=True)
+
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "UNKNOWN" in result.stdout
+    assert "tar" in result.stdout
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_the_gate_cannot_verify_a_partly_unreadable_book(tmp_path):

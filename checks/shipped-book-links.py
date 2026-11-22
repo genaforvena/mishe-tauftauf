@@ -81,20 +81,17 @@ INLINE_CODE = re.compile(r"`[^`\n]+`")
 HEADING = re.compile(r"^#{1,6}\s+(.*)$", re.MULTILINE)
 
 
-def _committed_tree(repo: Path) -> tuple[Path | None, str]:
-    """Materialise the committed bytes of a repository into a temporary tree."""
-    tmp = tempfile.mkdtemp(prefix="shipped-book-")
+def _unpack_committed_tree(repo: Path, destination: str) -> str | None:
+    """Unpack the committed tree and return any error reported by Git or tar."""
     archive = subprocess.run([GIT, "-C", str(repo), "archive", "HEAD"],
                              capture_output=True)
     if archive.returncode:
-        shutil.rmtree(tmp, ignore_errors=True)
-        return None, archive.stderr.decode("utf-8", "replace").strip()
-    unpack = subprocess.run(["tar", "-x", "-C", tmp], input=archive.stdout,
+        return archive.stderr.decode("utf-8", "replace").strip()
+    unpack = subprocess.run(["tar", "-x", "-C", destination], input=archive.stdout,
                             capture_output=True)
     if unpack.returncode:
-        shutil.rmtree(tmp, ignore_errors=True)
-        return None, unpack.stderr.decode("utf-8", "replace").strip()
-    return Path(tmp), ""
+        return unpack.stderr.decode("utf-8", "replace").strip()
+    return None
 
 
 def slugify(heading: str) -> str:
@@ -202,19 +199,19 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     tmp: str | None = None
-    if args.tree:
-        tree = args.tree
-    elif args.repo:
-        tree, error = _committed_tree(args.repo.resolve())
-        if tree is None:
-            print("cannot read committed bytes: " + error)
-            return 3
-        tmp = str(tree)
-    else:
-        print("no tree and no repo given")
-        return 3
-
     try:
+        if args.tree:
+            tree = args.tree
+        elif args.repo:
+            tmp = tempfile.mkdtemp(prefix="shipped-book-")
+            error = _unpack_committed_tree(args.repo, tmp)
+            if error is not None:
+                raise ValueError(f"cannot read committed bytes: {error}")
+            tree = Path(tmp)
+        else:
+            print("no tree and no repo given")
+            return 3
+
         result = audit(tree)
         print(f"tree={tree}")
         print(f"markdown files={result['markdown_files']} "
