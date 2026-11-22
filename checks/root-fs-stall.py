@@ -67,6 +67,8 @@ WINDOW_S = 900.0
 RECURRENCE_S = 86400.0
 STALE_S = 300.0
 STALL_S = 5.0
+BAND_S = 0.3
+"""Slow root probes below STALL_S are shown on the quiet line, never a verdict by themselves."""
 TARGET = "root"
 EPISODE_CLUSTER_S = 2.0
 """Stall records closer than this are one host-wide cliff seen by several plants' probes.
@@ -217,7 +219,26 @@ def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
                  f"{pressure}"
                  f"{burst_suffix(eps, with_newest=False)}"
                  f", most recent {(now - last) / 60:.0f} min ago")
-    return 0, [line]
+    return 0, [line + sub_threshold_band_suffix(seen, now)]
+
+
+def sub_threshold_band_suffix(seen: list[dict], now: float) -> str:
+    """Show the slow-but-under-STALL_S band on the quiet line, so it is visible without moving RED.
+
+    On 2026-11-22 the last 24 h held 263 root fsyncs of 0.3 to 5 s against 8 at or above 5 s:
+    the RED threshold alone hid almost every slow write. This names the band (distinct probe
+    seconds, since several plants' probes report the same instant) without changing any verdict.
+    """
+    band = [r for r in seen if r.get("event") == "slow" and now - r["at"] <= RECURRENCE_S
+            and BAND_S <= (r.get("total") or 0) < STALL_S]
+    if not band:
+        return ""
+    worst = max(band, key=lambda r: r["total"])
+    last = max(r["at"] for r in band)
+    seconds = len({int(r["at"]) for r in band})
+    return (f"; sub-threshold band {BAND_S:g}-{STALL_S:g} s: {seconds} probe-second(s) in "
+            f"{RECURRENCE_S / 3600:.0f} h (worst {worst['total']:.2f}s, most recent "
+            f"{(now - last) / 60:.0f} min ago)")
 
 
 def load(paths: list[Path]) -> list[dict]:

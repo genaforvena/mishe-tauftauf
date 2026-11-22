@@ -219,3 +219,18 @@ def test_main_reads_the_live_log(tmp_path):
     live.write_text(json.dumps({"dir": "root", "event": "slow", "at": now - 60, "total": 9.9}) + "\n"
                     + json.dumps({"dir": "root", "event": "minute", "at": now, "total": 1.0}) + "\n")
     assert mod.main(["--home", str(tmp_path), "--live-log", str(live)]) == 2
+
+
+def test_green_line_names_the_sub_threshold_band_without_going_red():
+    code, lines = mod.evaluate(
+        [rec(), rec(event="slow", at=NOW - 60, total=0.45, fsync=0.44),
+         rec(event="slow", at=NOW - 3600, total=0.36, fsync=0.35),
+         rec(event="slow", at=NOW - 3600 + 0.2, total=0.5, fsync=0.5, dir_="root")], NOW)
+    assert code == 0
+    assert "sub-threshold band 0.3-5 s: 2 probe-second(s)" in lines[0]
+    assert "worst 0.50s" in lines[0]
+
+
+def test_band_ignores_probes_below_its_floor_and_stalls_above_it():
+    code, lines = mod.evaluate([rec(), rec(event="slow", at=NOW - 60, total=0.1)], NOW)
+    assert code == 0 and "sub-threshold" not in lines[0]
