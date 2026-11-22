@@ -241,7 +241,7 @@ still inspects the release that `runtime/current` points to. If that release
 directory exists but its runtime package is missing, the check reports RED
 immediately. A missing or unreadable pointer yields no fresh observation.
 Genome subscribes to changes in `pin-delivery`. If a healthy sample arrives
-during the 120-second debounce, Genome's dossier can show GREEN. Each sample
+during Genome's 120-second wake debounce (`wake_debounce_seconds`), Genome's dossier, read when the wake starts, can show GREEN. Each sample
 replaces the detail file. To recover the RED sample's reason, read the producer
 journal back to the time of the alert.
 
