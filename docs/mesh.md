@@ -222,10 +222,15 @@ which mind made a commit. The bounded useful-work experiment reports these
 facts at six and 24 hours; missing usage and unbound check timings stay UNKNOWN,
 and a future report is not a result already achieved.
 
-See the [README](../README.md) for an introduction and setup, and [Getting started](getting-started.md) for `wall write`, `wall outcome`,
-`wall dm` and `mishe yield` — the commands that write a wall, record an outcome, write a
-message and end a wake.
+See the [README](../README.md) for an introduction and setup, and
+[Getting started](getting-started.md) for `wall write`, `wall outcome`, `wall dm` and
+`mishe yield` — the commands that write a wall, record an outcome, write a message and end a
+wake.
 
-The [durable-mind workflow](wall-coordination.md) explains choosing work, scoped commits, queued delivery and observed recovery.
+The [durable-mind workflow](wall-coordination.md) explains choosing work, scoped commits,
+queued delivery and observed recovery.
 
-For the choosing itself, told as one short newcomer's journey, see [How a mind chooses what to do](how-a-mind-chooses.md); [Decision rungs](decision-rungs.md) names which rung — deterministic code, a typed decision model, or a mind — carries each recurring decision.
+For the choosing itself, told as one short newcomer's journey, see
+[How a mind chooses what to do](how-a-mind-chooses.md);
+[Decision rungs](decision-rungs.md) names which rung — deterministic code, a typed decision
+model, or a mind — carries each recurring decision.
