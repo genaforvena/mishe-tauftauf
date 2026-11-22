@@ -29,11 +29,13 @@ answers none of them is decoration. Can it still break and resume, or does
 one fault end it? Can any mind join or use it without passing one hub? Does
 it carry mixed origins without forcing one identity on them? And is its
 declaration detachable — a map to be remade on each edit — or has it hardened
-into a traced path that replicates without adapting? The questions come from a wider published frame, the rhizome principles of Berkowitz and Bor (2026); the plant keeps the questions rather than that vocabulary; the citation is at the foot of this page. Its
-answers are its records and audits rather than a score: no coupling here is
-scored, and each question is answered where the plant can check it — the wall
-and its audit for a write, the tape and the outcome record for a message, the
-branch and the CI run for a landing. A declared coupling that no reading can
-check is not thereby true.
+into a traced path that replicates without adapting? The questions come from a
+wider published frame, the rhizome principles of Berkowitz and Bor (2026); the
+plant keeps the questions rather than that vocabulary; the citation is at the
+foot of this page. Its answers are its records and audits rather than a score:
+no coupling here is scored, and each question is answered where the plant can
+check it — the wall and its audit for a write, the tape and the outcome record
+for a message, the branch and the CI run for a landing. A declared coupling
+that no reading can check is not thereby true.
 
 The rhizome frame is cited as Berkowitz and Bor 2026, [doi:10.24072/pcjournal.669](https://doi.org/10.24072/pcjournal.669).
