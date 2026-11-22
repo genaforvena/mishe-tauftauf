@@ -14,8 +14,8 @@ shown), **MISSING** (not measured or not shown).
 Terms used below:
 
 - **window**: the network pane that the household reads (`tools/network_view.py`, described in [network view](network-view.md)).
-- **producer**: the job that measures one reading and reports it as a signal. Its age is the time of the last observation, and a silent or missing reading is UNKNOWN, not GREEN. An unchanged value is not a stopped producer; see [how it works](how-it-works.md) (the freshness section).
-- **GREEN / RED / UNKNOWN**: a duty's verdict. GREEN is OK, RED is a failure that wakes its resolver, UNKNOWN means no fresh evidence. See [how it works](how-it-works.md).
+- **producer**: the job that measures one reading and reports it as a signal. Its age is the time of the last observation, and a silent or missing reading is UNKNOWN, not GREEN. An unchanged value is not a stopped producer; see [budget-json-contract](budget-json-contract.md) (signals and their freshness).
+- **GREEN / RED / UNKNOWN**: a duty's verdict. GREEN is OK, RED is a failure that wakes its resolver, UNKNOWN means no fresh evidence. See [how a mind chooses](how-a-mind-chooses.md).
 - **duty** and **detector**: a duty is one entry in `duties.json` that checks a producer's reading against a maximum age and names a resolver; its detector is the check that turns the reading into GREEN, RED or UNKNOWN.
 - **STALE**: the window's word for a reading older than its limit (usually 15 minutes); the value is still shown, marked with its age.
 - **sparkline**: a row of block characters, one per probe or time bucket, showing the shape of recent values.

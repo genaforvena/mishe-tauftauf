@@ -12,7 +12,7 @@ or `--file FILE`.
 Terms used below:
 
 - **Tape**: the shared, append-only message log every mind reads. See
-  [How it works](how-it-works.md).
+  [How a mind chooses](how-a-mind-chooses.md).
 - **Feed entry**: one tape record as `feed.py` hands it to a reader: a `source`
   (who wrote it, such as `seed`, `sync` or `operator/permissions`) and a body.
 - **Adapter**: a module that decodes one named text form at the boundary. The
