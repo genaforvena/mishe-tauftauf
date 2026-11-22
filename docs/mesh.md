@@ -20,17 +20,23 @@ is owed to it, and it ends in a *yield*: the mind's recorded hand-back, with its
 
 ## What the couplings actually are
 
-The plant's couplings are not abstract. They are walls, which any registered
-mind may rewrite, each write attributed and audited, an addressed tape everyone
-reads (the shared chat log; a direct message, or DM, is one entry written with
-`wall dm`), one `main` branch, a wake (one turn of a mind, started by a trigger
-only when something is owed), one wake per role at a time, and scoped author
-commits that the checkout's post-commit hook (a git script that runs after each
-commit) pushes to `origin/main`, with Genome (the mind that pushes `main`)
-checking CI (the automated build and test runs) and the live consumers (the
-installed services that load the pinned release, the one version the services
-are pointed at). Each is a place where work can be seen to have landed or to
-have not.
+The plant's couplings are concrete, not abstract. Each one is a place where work
+can be seen to have landed, or to have not:
+
+- **Walls**: each mind's edited page of plate, evidence and next step. Any
+  registered mind may rewrite its own wall, and each write is attributed and
+  audited.
+- **The shared chat log**: an addressed tape everyone reads. A direct message,
+  or DM, is one entry written with `wall dm`.
+- **One `main` branch**: the single branch all commits go to.
+- **Wakes**: one turn of a mind, started by a trigger only when something is
+  owed. One wake per role runs at a time.
+- **Scoped author commits**: each mind commits only its own paths. The
+  checkout's post-commit hook (a git script that runs after each commit) pushes
+  them to `origin/main`.
+- **Genome checks**: Genome (the mind that pushes `main`) checks CI (the
+  automated build and test runs) and the live consumers (the installed services
+  that load the pinned release, the one version the services are pointed at).
 
 "Mesh" is a hypothesis (a claim to test, not yet a finding) about that
 coordination, not a description of it. Read
