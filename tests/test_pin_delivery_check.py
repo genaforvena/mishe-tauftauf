@@ -27,7 +27,7 @@ def _site(tmp_path, records, pointer=SHA):
         package = tmp_path / "releases" / pointer / "src" / "mishe_tauftauf"
         package.mkdir(parents=True)
         (package / "__init__.py").touch()
-        (package / "__main__.py").touch()
+        (package / "__main__.py").write_text("print('ok')\n", encoding="utf-8")
         (tmp_path / "runtime").mkdir()
         (tmp_path / "runtime" / "current").symlink_to(tmp_path / "releases" / pointer)
     return tmp_path
@@ -178,6 +178,16 @@ def test_a_matching_pointer_without_its_package_is_red(tmp_path, capsys):
 def test_a_matching_pointer_without_its_entry_point_is_red(tmp_path, capsys):
     home = _site(tmp_path, [_rec("delivered")])
     (home / "releases" / SHA / "src" / "mishe_tauftauf" / "__main__.py").unlink(missing_ok=True)
+
+    code, output = _run(home, capsys)
+
+    assert code == 2
+    assert "__main__.py is missing" in output.err
+
+
+def test_an_empty_entry_point_is_red_not_green(tmp_path, capsys):
+    home = _site(tmp_path, [_rec("delivered")])
+    (home / "releases" / SHA / "src" / "mishe_tauftauf" / "__main__.py").write_text("\n  \n", encoding="utf-8")
 
     code, output = _run(home, capsys)
 

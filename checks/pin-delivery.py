@@ -154,7 +154,10 @@ def main(argv=None):
             package_present = (package / "__init__.py").is_file()
             # The pinned CLI starts as ``python -m mishe_tauftauf``: a release whose package imports
             # but lacks __main__.py cannot be run by its own entry point (2026-11-22 partial-loss counterexample).
-            entry_present = (package / "__main__.py").is_file()
+            # An empty file is no entry point either: the retained trial of 3cb5fea3 ran an empty
+            # __main__.py and the checker still read GREEN (field-review artifact, 2026-11-22).
+            entry = package / "__main__.py"
+            entry_present = entry.is_file() and bool(entry.read_text(encoding="utf-8", errors="replace").strip())
         except (OSError, RuntimeError) as exc:
             print(f"pin-delivery: {status} but runtime/current is unusable: {exc}", file=sys.stderr)
             return 3
