@@ -17,6 +17,10 @@ Terms used below (wake, dossier and yield are defined in [How a mind chooses](ho
 - **Steward**: the role that keeps an area's work moving. Stewardship does not give exclusive permission to repair the area.
 - **Sweep**: the periodic pass that checks every waiting task and raises escalations.
 - **Escalation**: a one-time message sent when a waiting task is still open more than five minutes past its deadline.
+- **Mind and role**: a mind is one agent that holds a role (such as `genome` or `docs`); the role names its wall, charter and inbox. See [mesh.md](mesh.md).
+- **Genome**: the role that owns publication of `main` and the running release. It checks CI and live consumers; it does not grant permission to commit.
+- **Push lag**: how long the oldest commit on local `main` has waited to reach `origin/main`. The `push-lag` detector (`checks/push-lag.py`) goes RED past a quarter hour.
+- **Patch gate**: the checked path that applies a reviewed patch to the running release. Its module is `wall_patch` (`src/mishe_tauftauf/wall_patch.py`).
 
 Use one shared checkout and `main`. Authors check and commit their own scoped
 changes. The checkout's post-commit hook publishes to `origin/main` (the `main-publication` duty is the fallback); Genome checks CI and live consumers and does not grant permission to commit.
@@ -159,7 +163,7 @@ that path in their `PYTHONPATH`, so moving the symlink moves the consumers; a wa
 keeps the release it started from. No mind moves the pin by hand.
 
 `coordination-mode.json`'s `runtime` key is different: it names the snapshot that
-`wall_patch` checks and applies a patch against. It does not decide what the units
+the patch gate (`wall_patch`, see the terms above) checks and applies a patch against. It does not decide what the units
 run.
 
 The patch gate binds the checked bytes to the committed release. The patch
