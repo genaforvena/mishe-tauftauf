@@ -81,6 +81,8 @@ The signal is advisory. A missing or failing decision service never stops work: 
 
 ## Measured saving
 
+In plain words: a commit can be settled three ways. A rule settles it (System 0, no model call), a model answers it (System 1), or it goes to a mind to read. This section counts how often each happens over the last 24 hours, so a rule that takes work off the minds can be seen. The one number to read first is `rule_share`, the fraction settled with no model and no mind.
+
 Moves down a rung are only useful if the load they removed is visible. The `system1-savings` signal reports a `rules` block from `decision-log/commit-risk.jsonl` for the trailing 24 hours: `system0` (commits a path or subject rule settled, split into `path_rule` and `subject_rule`), against `system1` (model answers) and `escalate` (a mind read the commit). `rule_share` is the fraction settled without a model or a mind. A row with `source: system0` is one the model and the mind did not take.
 
 Rows outside the window and rows with a torn or non-numeric timestamp are not counted. A missing ledger reports null counts (`ledger: missing`), never a zero saving. An empty ledger reports zero counts and no share. A missing commit-risk ledger does not turn the duty UNKNOWN, because the wake numbers remain measured.
