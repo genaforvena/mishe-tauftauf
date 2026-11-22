@@ -73,7 +73,8 @@ Wakes may run at the same time, up to a per-site limit (default 1, at most 8), a
 one role never runs two wakes at once. Delivery waits for every running wake to
 end. Because of that, two minds' commits can land inside one wake's window, so a
 wake reads those commits as candidates and checks the author rather than assuming
-they are its own. The limit is set in `wake-concurrency.json`; see
+they are its own. The limit is the `max` value in `wake-concurrency.json` in the site home
+(`{"max": N}`; absent or invalid reads as 1); see
 [wall coordination](wall-coordination.md).
 
 Concentration (who holds the stewardship share, meaning which mind carries each standing area of
