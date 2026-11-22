@@ -6809,6 +6809,13 @@ def _note3_adb_sampler_read(home: Path, now: float | None = None) -> dict:
         return row
     if sample is None:
         return row
+    if "sensors" not in sample and sample.get("status") == "unknown":
+        # The sampler honestly reports why it has no light reading (e.g. adb
+        # not authorized). That is an UNKNOWN with a reason, not corrupt data.
+        reason_text = str(sample.get("reason", "no reason recorded"))[:200]
+        row.update(reason="sampler-unknown", sample=(
+            f"Note3 adb light UNKNOWN: sampler-unknown reason={reason_text}; file={path}"))
+        return row
     try:
         wall = float(sample["wall_ts"])
         light = sample["sensors"]["light"]

@@ -1048,6 +1048,18 @@ def test_adb_sampler_null_or_text_channel_is_malformed_not_a_crash(tmp_path: Pat
         assert row["reason"] == "sampler-malformed"
 
 
+def test_adb_sampler_self_reported_unknown_is_not_called_malformed(tmp_path: Path):
+    folder = tmp_path / "spatial" / "work" / "household"
+    folder.mkdir(parents=True)
+    unknown = {"reason": "adb: adb rc=1: adb: device still authorizing",
+               "status": "unknown", "wall_ts": NOW - 5}
+    (folder / "note3_samples_run_unit.jsonl").write_text(json.dumps(unknown) + "\n")
+    row = discovery._note3_adb_sampler_read(tmp_path, now=NOW)
+    assert row["state"] == "unknown"
+    assert row["reason"] == "sampler-unknown"
+    assert "device still authorizing" in row["sample"]
+
+
 def test_adb_sampler_absent_and_malformed_are_unknown(tmp_path: Path):
     assert discovery._note3_adb_sampler_read(tmp_path, now=NOW)["reason"] == "sampler-absent"
     folder = tmp_path / "spatial" / "work" / "household"
