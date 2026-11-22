@@ -27,6 +27,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[1]
 CHECK = REPO / "checks" / "shipped-book-links.py"
 WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
@@ -44,6 +46,41 @@ def make_tree(tmp: Path, pages: dict[str, str]) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")
     return tmp
+
+
+@pytest.mark.parametrize("tree_kind", ["missing", "file", "empty"])
+def test_the_gate_cannot_verify_an_unavailable_book(tmp_path, tree_kind):
+    tree = tmp_path / "book"
+    if tree_kind == "file":
+        tree.write_text("# A file in place of the tree\n", encoding="utf-8")
+    elif tree_kind == "empty":
+        tree.mkdir()
+
+    result = run_check(tree)
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "UNKNOWN" in result.stdout
+
+
+def test_the_gate_cannot_verify_a_partly_unreadable_book(tmp_path):
+    make_tree(tmp_path, {
+        "README.md": "# A visible page\n",
+        "docs/guide.md": "See the [missing guide](missing.md).\n",
+    })
+    docs = tmp_path / "docs"
+    docs.chmod(0)
+    try:
+        try:
+            list(docs.iterdir())
+        except PermissionError:
+            result = run_check(tmp_path)
+        else:
+            pytest.skip("test user can read a directory without permissions")
+    finally:
+        docs.chmod(0o700)
+
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert "UNKNOWN" in result.stdout
+    assert str(docs) in result.stdout
 
 
 def test_the_gate_rejects_a_tree_with_a_dangling_relative_link(tmp_path):

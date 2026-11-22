@@ -53,6 +53,8 @@ Scope and limits:
 * This is a shipped-tree property check, not a link-rot or prose check.  It
   does not judge whether a link is the *best* destination, and it does not
   test external URLs.
+* An incomplete traversal or a tree with no Markdown files leaves the check
+  unable to verify the book.
 
 Exit status:
   0  every relative link in the shipped tree resolves, with resolvable anchors
@@ -62,6 +64,7 @@ Exit status:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -101,7 +104,17 @@ def slugify(heading: str) -> str:
 
 
 def _markdown_files(tree: Path) -> list[Path]:
-    return sorted(p for p in tree.rglob("*.md") if ".git" not in p.parts)
+    def onerror(error: OSError) -> None:
+        raise error
+
+    files = []
+    for directory, subdirectories, filenames in os.walk(tree, onerror=onerror):
+        if ".git" in subdirectories:
+            subdirectories.remove(".git")
+        files.extend(Path(directory) / name for name in filenames if name.endswith(".md"))
+    if not files:
+        raise ValueError(f"no Markdown files in {tree}")
+    return sorted(files)
 
 
 def _anchors(path: Path) -> set[str]:
@@ -189,7 +202,7 @@ def main(argv: list[str]) -> int:
 
     tmp: str | None = None
     if args.tree:
-        tree = args.tree.resolve()
+        tree = args.tree.absolute()
     elif args.repo:
         tree, error = _committed_tree(args.repo.resolve())
         if tree is None:
@@ -218,7 +231,7 @@ def main(argv: list[str]) -> int:
         print("FAIL the shipped tree contains relative links a reader cannot follow; "
               "every clone of this commit starts with a broken book")
         return 2
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         print(f"UNKNOWN — shipped-book link check unavailable: {exc}")
         return 3
     finally:
