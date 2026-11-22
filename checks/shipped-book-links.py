@@ -94,7 +94,7 @@ def _committed_tree(repo: Path) -> tuple[Path | None, str]:
     if unpack.returncode:
         shutil.rmtree(tmp, ignore_errors=True)
         return None, unpack.stderr.decode("utf-8", "replace").strip()
-    return Path(tmp).resolve(), ""
+    return Path(tmp), ""
 
 
 def slugify(heading: str) -> str:
@@ -127,9 +127,10 @@ def _anchors(path: Path) -> set[str]:
 
 def audit(tree: Path) -> dict:
     """Find relative links in the tree that do not resolve inside it."""
+    # Keep symlink loops as OSError so the CLI can report an unavailable tree.
+    tree = Path(os.path.realpath(tree, strict=True))
     files = _markdown_files(tree)
     anchor_map = {path: _anchors(path) for path in files}
-    root = tree.resolve()
     broken: list[dict] = []
     unresolved_anchor: list[dict] = []
     checked = 0
@@ -152,7 +153,7 @@ def audit(tree: Path) -> dict:
         # A link that leaves the shipped tree points at something the reader
         # does not receive.  It must not pass because the file happens to
         # exist next to the checkout on this host.
-        if not resolved.is_relative_to(root):
+        if not resolved.is_relative_to(tree):
             broken.append({"file": source, "target": target, "label": label,
                            "reason": "leaves the shipped tree"})
             return
@@ -202,7 +203,7 @@ def main(argv: list[str]) -> int:
 
     tmp: str | None = None
     if args.tree:
-        tree = args.tree.resolve()
+        tree = args.tree
     elif args.repo:
         tree, error = _committed_tree(args.repo.resolve())
         if tree is None:
@@ -231,7 +232,7 @@ def main(argv: list[str]) -> int:
         print("FAIL the shipped tree contains relative links a reader cannot follow; "
               "every clone of this commit starts with a broken book")
         return 2
-    except (OSError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         print(f"UNKNOWN — shipped-book link check unavailable: {exc}")
         return 3
     finally:

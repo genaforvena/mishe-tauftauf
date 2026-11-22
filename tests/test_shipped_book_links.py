@@ -48,13 +48,15 @@ def make_tree(tmp: Path, pages: dict[str, str]) -> Path:
     return tmp
 
 
-@pytest.mark.parametrize("tree_kind", ["missing", "file", "empty"])
+@pytest.mark.parametrize("tree_kind", ["missing", "file", "empty", "symlink-loop"])
 def test_the_gate_cannot_verify_an_unavailable_book(tmp_path, tree_kind):
     tree = tmp_path / "book"
     if tree_kind == "file":
         tree.write_text("# A file in place of the tree\n", encoding="utf-8")
     elif tree_kind == "empty":
         tree.mkdir()
+    elif tree_kind == "symlink-loop":
+        tree.symlink_to(tree.name)
 
     result = run_check(tree)
     assert result.returncode == 3, result.stdout + result.stderr
