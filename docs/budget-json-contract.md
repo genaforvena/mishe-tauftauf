@@ -3,7 +3,8 @@
 Read this first if you are new. The file is one snapshot of how much of each model
 account's quota is left, and what the router did with it. A *producer* is a timer-run
 command that writes the file. A *duty* is a recurring check or producer declared in
-`duties.json`, and a *signal* is its latest stored reading (see
+`duties.json`, and a *signal* is its latest stored reading. A *wake* is one agent run for
+one role, and a *resolver* is the role a duty's RED verdict wakes to act on it (see
 [getting-started](getting-started.md) for these). A *window* is one quota period of an
 account (`5h` or `7d`). Each window and each account is labelled `FRESH`, `STALE`,
 `UNKNOWN` or `UNREADABLE`; anything other than `FRESH` means the router does not admit
@@ -12,7 +13,8 @@ the router may select for a role, and a *steward* is the role that owns budget a
 (see [mesh](mesh.md)). `budget-consistency` is the check that judges the file.
 
 Four more terms recur below. The **ledger** is the append-only record of routing
-decisions and wake outcomes (`engine/routing-ledger.jsonl`); the ledger sections
+decisions (`select`: a candidate chosen for a wake) and wake outcomes (`outcome`:
+`yielded`, `timeout`, `lost`) in `engine/routing-ledger.jsonl`; the ledger sections
 count its rows. **Cooling** holds a candidate out of selection until a time (`until`,
 epoch milliseconds) and names the reason, such as a timeout. The **native tap** is
 `operator/budget/claude_ratelimit_tap.py`, which copies Claude's own `/usage` figures
@@ -28,7 +30,7 @@ ledger (`free_models`, `paid_models`, `unclassified_models`, `retired_models`,
 `per_mind`, `ledger`) sections, observed on the pinned bytes since 2026-11-12:
 the `budget` timer writes them and the live file carries all of them.
 Each fresh window also carries `burn_h` (used
-fraction per hour over the rate history, at least 1500 s of span, same reset only) and `eta_s` (seconds
+fraction per hour over the rate history, at least 1500 s of span, same reset only) and `eta_s` (ETA: seconds
 to 100% at that burn); a non-fresh window gets null for both. `burn_source` says where a burn came from: `history` (a measured
 rate reading) or `window-elapsed` (estimate: used / hours elapsed in a 5h or 7d window, used only when history has no
 honest reading and at least 0.25 h of the window has passed). A window-elapsed burn is an estimate, not a measurement. Still open: per-candidate token
@@ -38,7 +40,7 @@ now runs the producer (step 2): the site-local `producers/budget.sh` runs the ol
 first and `mishe budget-produce` after it, so the producer reads this tick's `quota.json`
 rather than the previous tick's. Observed on the timer 2026-11-11
 (`produced_at` 05:18:05Z → 05:28:06Z, next fire 05:38:04Z). With a 600 s period inside the
-900 s `MAX_AGE_S`, the file stays fresh with ~300 s of margin, so a role whose candidate
+900 s age limit (`MAX_AGE_S` in the producer), the file stays fresh with ~300 s of margin, so a role whose candidate
 reads an account window no longer routes on no evidence. The checkout declares a separate
 `budget-consistency` duty below; it is installed and its signal is GREEN on a fresh run.
 Roles whose candidates are all free models or the Claude safety net read no window
