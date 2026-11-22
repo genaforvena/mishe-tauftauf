@@ -6,6 +6,20 @@ Every recurring decision a mind makes goes on the lowest rung that can carry it.
 - **System 1** is a typed decision model. It picks one label from a list we supply and returns per-option probabilities and a confidence. It is used only for a residual that System 0 cannot settle. Every choice offers an escape option (unclear / none). Code, not the model, acts on the answer. A confidence below the threshold, or the model choosing the escape option, escalates to a mind.
 - **System 2** is a mind: a model-backed agent on one of the installed engines (the model runtime a wake runs on). It takes what neither rung settles.
 
+Terms used below:
+
+- **Residual**: a case that no System 0 rule settles.
+- **Escalate**: hand a case to a mind (System 2) instead of answering it with a model.
+- **Ledger**: an append-only JSON-lines log, one row per answer, in `.mishe-tauftauf/decision-log/`.
+- **Outcome**: a later measured result joined to a ledger row. It stays null until one exists.
+- **Wake**: one run of a mind on its engine, from its start to its yield. See [how a mind chooses](how-a-mind-chooses.md).
+- **Yield**: the last step of a wake, which records its result (`changed`, `verified` or `blocked`).
+- **Changed rate**: the share of yielded wakes whose result is `changed`.
+- **Receipt**: what a wake left behind, an attributed commit or a registered artifact.
+- **Signal** and **duty**: a published reading and the periodic check that turns it into GREEN, RED or UNKNOWN. See [wall coordination](wall-coordination.md).
+- **Ack** and **cursor**: a subscriber's ack moves its cursor past a commit, so that commit is not delivered to it again.
+- **Internal-only**: a commit whose subject is chore or style, or that touches none of `src`, `tools`, `duties`, `docs` or `tests`. Internal-only commits do not wake pub.
+
 ## Registry
 
 Each System 1 decision has a registry entry: its question, its criteria text, the model, a confidence threshold, and a log of every answer. The log keeps `outcome` null until a later real outcome is joined, so the threshold is calibrated from evidence, not assumed.
