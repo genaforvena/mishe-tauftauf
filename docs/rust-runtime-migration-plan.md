@@ -4322,3 +4322,20 @@ next child CPU outlier, rust-plan compares the decision counts and checkpoint
 work with an ordinary fold. More `N` decisions would quantify the extra
 verification work. Identifying expiry as the reason requires cache age
 evidence as well.
+
+On 22 November, an isolated comparison confirmed the SQLite write mechanism.
+The retained verifier (`49104857`) and the installed verifier with
+`synchronous=NORMAL` (`f446a233`) consumed the same 1,001 unique references
+from identical empty WAL schemas. Across two 500-row batches and the final
+flush, the trace recorded five WAL syncs for the control and two for NORMAL.
+Both also synced the database and its directory once. Immediate replay
+produced zero sync calls on both versions. Decision and payload frames were
+byte-identical between versions in each phase, and both stores contained
+the expected identities, kinds and decoded payloads.
+
+Four untraced, alternating write pairs had overlapping CPU and elapsed
+ranges. The most recent admitted hourly fold exercised zero `N` decisions
+on the installed verifier. The live cost of the sync-mode change and its
+effect on root filesystem stalls remain UNKNOWN. Use the hourly detector's
+next positive-`N` sample to compare verifier CPU and pressure against a
+comparable old-binary fold before attributing a live effect.
