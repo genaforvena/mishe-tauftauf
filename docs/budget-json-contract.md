@@ -14,7 +14,8 @@ the router may select for a role, and a *steward* is the role that owns budget a
 
 Four more terms recur below. The **ledger** is the append-only record of routing
 decisions (`select`: a candidate chosen for a wake) and wake outcomes (`outcome`:
-`yielded`, `timeout`, `lost`) in `engine/routing-ledger.jsonl`; the ledger sections
+`yielded`, `timeout`, or `no yield (exit N)`, which may add `quota spent after acting`)
+in `engine/routing-ledger.jsonl`; the ledger sections
 count its rows. **Cooling** holds a candidate out of selection until a time (`until`,
 epoch milliseconds) and names the reason, such as a timeout. The **native tap** is
 `operator/budget/claude_ratelimit_tap.py`, which copies Claude's own `/usage` figures
