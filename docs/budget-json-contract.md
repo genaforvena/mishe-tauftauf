@@ -1,5 +1,16 @@
 # `engine/budget.json` contract
 
+Read this first if you are new. The file is one snapshot of how much of each model
+account's quota is left, and what the router did with it. A *producer* is a timer-run
+command that writes the file. A *duty* is a recurring check or producer declared in
+`duties.json`, and a *signal* is its latest stored reading (see
+[getting-started](getting-started.md) for these). A *window* is one quota period of an
+account (`5h` or `7d`). Each window and each account is labelled `FRESH`, `STALE`,
+`UNKNOWN` or `UNREADABLE`; anything other than `FRESH` means the router does not admit
+that account, never that it is empty. A *candidate* is one `engine:model:account` route
+the router may select for a role, and a *steward* is the role that owns budget allocation
+(see [mesh](mesh.md)). `budget-consistency` is the check that judges the file.
+
 Status: **active, partial**. `src/mishe_tauftauf/budget_producer.py` produces the `accounts`
 section from the engine status and the native Claude tap (`mishe budget-produce --out …`);
 `checks/budget-consistency.py` judges it. The router migration (step 4) has shipped:
