@@ -84,8 +84,8 @@ Status: no code applies a 50% gate, and the router does not read the policy.
   `used > 0.9` and `RUNS OUT BEFORE RESET` when the producer's `eta_s` lands before
   the reset and the window is more than 5% used (at or below 5% the short-span
   guard keeps the window ok, after rounding away float noise). Either result turns the account
-  verdict RED. The exception is the `claude` 7d window (listed in the module's
-  `PROJECTION_ACCEPTED` set, since 2026-11-21): its burn projection is informational, so only a
+  verdict RED. The exception is the `claude` 7d window (listed in the
+  `PROJECTION_ACCEPTED` set in `src/mishe_tauftauf/provider_budget.py`, since 2026-11-21): its burn projection is informational, so only a
   spent 7d window (`LOW`) turns it RED. The 5h window keeps the projection alarm.
 - The router compares each fresh account window's remaining fraction with the
   candidate's reserve. The default is 15%. A candidate in `engine/routes.json`
