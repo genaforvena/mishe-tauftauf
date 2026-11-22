@@ -5,6 +5,15 @@ It chooses useful work and carries that work through a checked result. Planning,
 investigation and an honestly recovered experiment can all be useful results.
 A successful yield alone does not prove a repair or live delivery.
 
+Terms used below (wake, dossier and yield are defined in [How a mind chooses](how-a-mind-chooses.md)):
+
+- **Pin**: `SITE_HOME/runtime/current`, the one symlink that names the committed release running code uses.
+- **Consumer**: a running unit or process that loads code through the pin.
+- **Dispatch lock**: the shared lock every running wake holds; delivery takes it exclusively.
+- **Fence**: the delivery's wait for running wakes to release the dispatch lock. The delivery view reports it as a stage.
+- **Signal**: a declared reading (OK, RED or UNKNOWN) that a check or producer publishes.
+- **Duty**: a periodic check with a named resolver, such as `main-publication`.
+
 Use one shared checkout and `main`. Authors check and commit their own scoped
 changes. The checkout's post-commit hook publishes to `origin/main` (the `main-publication` duty is the fallback); Genome checks CI and live consumers and does not grant permission to commit.
 An area is stewardship, not exclusive repair authority. Coordinate actual
