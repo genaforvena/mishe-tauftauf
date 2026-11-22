@@ -252,11 +252,11 @@ journalctl --user -u mishe-producer-pin-delivery.service --since '1 hour ago' \
   --grep 'mishe: pin-delivery: exit=2 detail=' --no-pager
 ```
 
-If the producer cannot start `python -m mishe_tauftauf`, the checker never runs
-and the last reading can remain visible until its freshness expires. The failure
-reporter can fail at the same startup step if both services depend on the damaged
-release. Read both unit journals without the checker exit filter. Set the time
-range to cover the failure.
+If the producer's configured interpreter cannot start the `mishe_tauftauf`
+module, the checker never runs and the last reading can remain visible until
+its freshness expires. The failure reporter can fail at the same startup step
+if both services depend on the damaged release. Read both unit journals without
+the checker exit filter. Set the time range to cover the failure.
 
 ```sh
 journalctl --user -u mishe-producer-pin-delivery.service \
