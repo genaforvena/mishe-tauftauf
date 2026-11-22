@@ -13,6 +13,12 @@ level and the share of silent listening windows. Rooms, never people.
 weeks of history). Each run forecasts the next hour and the same hour tomorrow. Any later net has to beat
 both, on forecasts made in advance, before it counts.
 
+**The first later net is `damped`.** It starts from `last-value` and moves a fraction of the way toward
+`same-hour`: `last-value + a × (same-hour − last-value)`. The fraction `a` (between 0 and 1) is fitted by least
+squares on the last 168 forecasts it could have made. Its edge is read only on the hours where all three nets
+forecast, against the better of the two guesses, and it counts only once there are at least 24 such hours.
+A net that cannot forecast an hour does not block the two guesses from being scored.
+
 **The log cannot be quietly changed.** `features/predictions.jsonl` is append-only and every line carries
 the hash of the line before it. If a line is edited or removed the chain reads `BROKEN` in the window. A
 forecast is never made from missing data, and an hour that was not measured is `unobserved`, never an error
