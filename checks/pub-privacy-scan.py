@@ -322,19 +322,21 @@ def get(path: str, key: str | None = None):
     if key:
         headers["api-key"] = key
     req = urllib.request.Request(API + path, headers=headers)
-    # One retry for a transient transport failure (2026-11-22: an SSL
-    # UNEXPECTED_EOF left 4 live items UNKNOWN in one run).  HTTP errors are
-    # not retried: a 4xx is an answer, not a dropped connection.
-    for attempt in (1, 2):
+    # Retries for a transient transport failure (2026-11-22: an SSL
+    # UNEXPECTED_EOF left 4 live items UNKNOWN in one run, and one retry at 2 s
+    # still left 5 UNKNOWN at 13:01Z).  Three attempts with growing backoff.
+    # HTTP errors are not retried: a 4xx is an answer, not a dropped connection.
+    delays = (2, 5)
+    for attempt in range(len(delays) + 1):
         try:
             with urllib.request.urlopen(req, timeout=25) as resp:
                 return json.load(resp)
         except urllib.error.HTTPError:
             raise
         except urllib.error.URLError:
-            if attempt == 2:
+            if attempt == len(delays):
                 raise
-            time.sleep(2)
+            time.sleep(delays[attempt])
 
 
 def page_rows(path: str, key: str) -> list[dict]:
