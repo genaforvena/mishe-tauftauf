@@ -102,12 +102,12 @@ alongside the areas. `operator` is the human owner's standing delegate: it answe
 addressed to it. `system1` owns the ladder of work: it moves each recurring decision to the lowest
 rung that can carry it — deterministic code, then a typed decision model, then a mind.
 
-An area's dashboard is rendered on demand by
-`mishe pain read ROLE --launcher dashboard`: it calls no model and prints plain text for
-people, with no JSON or raw timestamps. It shows the role's wake state, what the last wake
-changed in git, the wall's opening lines, signals, the next due item and unread mail. Signals are named conditions a mind watches, such as a new commit on the repository (`repo-change`). A
-model that differs from the configured one is stated, and output that cannot be read is
-labelled UNKNOWN with its raw tail, never hidden. Walls and site notes are outside git and
+An area's dashboard is rendered on demand by `mishe pain read ROLE --launcher dashboard`: it calls
+no model and prints plain text for people, with no JSON or raw timestamps. It shows the role's wake
+state, what the last wake changed in git, the wall's opening lines, signals, the next due item and
+unread mail. Signals are named conditions a mind watches, such as a new commit on the repository
+(`repo-change`). A model that differs from the configured one is stated, and output that cannot be
+read is labelled UNKNOWN with its raw tail, never hidden. Walls and site notes are outside git and
 are not counted. A failed read stays visibly UNKNOWN.
 
 The operator's pane (one section of the live screen view, described under the live
