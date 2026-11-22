@@ -158,8 +158,6 @@ def render(home: Path, now: float, score: dict, tail: dict) -> str:
     lines.append("")
     lines += table("LIVE (made before the hour, scored after)", live, labels)
     lines.append("")
-    lines += table("REPLAY (retrospective walk-forward over stored history, last 14 days)", replay, labels)
-    lines.append("")
     lines.append("LAST 24 HOURS  ('·' = hour not measured)             last value   next hour: same-hour / last-value    tomorrow, same hour: same-hour")
     nxt = score.get("next") or {}
     hours = [c - HOUR * i for i in range(24, 0, -1)]
@@ -173,7 +171,14 @@ def render(home: Path, now: float, score: dict, tail: dict) -> str:
     lines.append("SURPRISES (a net with a record missed by 3x its usual error)" + ("" if sur else ": none yet"))
     for s in sur[-3:][::-1]:
         lines.append(f"  {hhmm(s.get('t'))}  {labels.get(s.get('slug'), s.get('slug'))}: saw {fmt(s.get('obs'))}, expected {fmt(s.get('forecast'))}  ({s.get('z')}x)")
-    return "\n".join(l[:MAX_COLS] for l in lines[:MAX_ROWS])
+    # REPLAY is the most detailed and least urgent section, so it goes last and is the part cut when the pane is short.
+    lines.append("")
+    lines += table("REPLAY (retrospective walk-forward over stored history, last 14 days)", replay, labels)
+    lines = [l[:MAX_COLS] for l in lines]
+    if len(lines) > MAX_ROWS:
+        cut = len(lines) - (MAX_ROWS - 1)
+        lines = lines[:MAX_ROWS - 1] + [f"  ... {cut} more lines cut to fit the pane (the REPLAY tail; LIVE, LAST 24 HOURS and SURPRISES are above it)"]
+    return "\n".join(lines)
 
 
 def main(argv=None) -> int:

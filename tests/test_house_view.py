@@ -43,6 +43,18 @@ def test_render_fits_the_pane_names_unknown_and_never_invents_numbers(tmp_path):
     assert "·" in next(l for l in lines if l.startswith("  living-room light") and "▁" in l)   # an unmeasured hour is a dot
 
 
+def test_the_pane_cuts_only_the_replay_tail_and_says_so(tmp_path):
+    now = build(tmp_path)
+    house_predict.run(tmp_path, now)
+    score = json.loads((tmp_path / "features" / "predictions-score.json").read_text())
+    text = house_view.render(tmp_path, now, score, house_view.store_tail(tmp_path / "features" / "house-hourly.jsonl"))
+    # LIVE, LAST 24 HOURS and SURPRISES are never the part the pane drops; REPLAY is
+    assert "LAST 24 HOURS" in text and "SURPRISES" in text and "LIVE (made before the hour" in text
+    lines = text.splitlines()
+    if any("more lines cut" in l for l in lines):
+        assert lines[-1].lstrip().startswith("... ") and "REPLAY tail" in lines[-1]
+
+
 def test_no_score_is_unknown_and_exit_3(tmp_path, capsys):
     assert house_view.main(["--home", str(tmp_path)]) == 3
     assert "UNKNOWN" in capsys.readouterr().err
