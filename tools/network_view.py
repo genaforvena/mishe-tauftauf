@@ -832,7 +832,8 @@ def devices_line(now=None):
         if problem:
             # The neighbour state says why: ARP itself got no answer, so the device is silent on the LAN
             # (asleep or firewalled), not a fault on our side. Plain words, no "no reply (no reply)" echo.
-            if result.get("neigh") in ("FAILED", "INCOMPLETE"):
+            neigh = result.get("neigh") if isinstance(result, dict) else None
+            if neigh in ("FAILED", "INCOMPLETE"):
                 problem = "not answering the LAN (no ARP answer)"
             parts.append(f"{name} {problem}")
             unknown = True

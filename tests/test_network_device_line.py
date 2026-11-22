@@ -148,3 +148,13 @@ def test_arp_silent_device_says_not_answering_the_lan(monkeypatch, tmp_path):
     assert line.startswith("UNKNOWN")
     assert "iMac-Rozalia not answering the LAN (no ARP answer)" in line
     assert "no reply (no reply)" not in line
+
+
+def test_non_object_device_value_is_unreadable_not_a_crash(monkeypatch, tmp_path):
+    now = 10_000.0
+    point_at(monkeypatch, tmp_path, [
+        {"ts": now - 60, "devices": {"iPad-Rozalia": "garbage"}},
+    ])
+    line = view.devices_line(now=now)
+    assert line.startswith("UNKNOWN")
+    assert "iPad-Rozalia unreadable ping result" in line
