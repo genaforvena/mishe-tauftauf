@@ -28,20 +28,18 @@ Commit-risk is the only live System 1 entry. It is advisory: it never gates deli
 
 ## Commit-risk: question, criteria and threshold
 
-Code: `src/mishe_tauftauf/commit_risk.py`. Question `commit-risk-class`. Criteria: `routine`, `delivery-path`, `dispatch-path`, `ordinary`, plus the escape option.
+Code: `src/mishe_tauftauf/commit_risk.py` (decision), with path rules in `src/mishe_tauftauf/commit_risk_text.py`. Question `commit-risk-class`. Criteria: `routine`, `delivery-path`, `dispatch-path`, `ordinary`, plus the escape option.
 
 - `routine`, `delivery-path` and `dispatch-path` come from System 0 path rules.
 - `ordinary` (product code with no dispatch, delivery or locking effect) is mostly a model label: a path rule cannot tell ordinary product code from the rest, so the model picks it for the residual.
 - Mixed path sets with two different non-routine rules, or any unmatched path, stay residual.
 
-Current System 0 rules. The exact lists live in `commit_risk.py`; a change to any of them is a rule change and needs a replay against the ledger.
+The System 0 path rules are the `RULES` table in `src/mishe_tauftauf/commit_risk_text.py`. That table is the authority; this page does not copy it. A change to any rule is a rule change and needs a replay against the ledger. Broadly, wake, engine-runner and scheduling modules are `dispatch-path`, and release, promotion, pin, heal and delivery modules are `delivery-path`. The rules a reader is most likely to get wrong:
 
 - Supporting paths (docs, tests, checks) do not dilute a non-routine rule.
-- Engine runner modules (`engine_*.py`) are `dispatch-path`. Release, promotion, pin and delivery modules are `delivery-path`.
-- Exact-file `ordinary` lookups, each one file and not a family: `tools/network_view.py`, `tools/household_view.py`, `tools/commit-msg-attribution.py`, `tools/map_tiles.py`, `tools/map_render.py`, `src/mishe_tauftauf/provider_budget.py`, `src/mishe_tauftauf/system1_savings.py`, `src/mishe_tauftauf/commit_risk_text.py`. A router or host-guard tool stays out of such a lookup, because it can change guard state.
-- Exact-file `delivery-path` lookups: `tools/delivery_check.py`, `src/mishe_tauftauf/consumer_fence.py` (delivery's wrong-pin consumer check), `src/mishe_tauftauf/retirement.py` (retires finished author branches and protects live pins), `src/mishe_tauftauf/delivery_requests.py`. `delivery_requests.py` is `delivery-path`, not `dispatch-path`: it enqueues and consumes delivery requests and owns patch and revert phases with `release_promotion`. Its "dispatch lock" wording names the mechanism, not the class.
-- Exact-file `dispatch-path` lookup: `src/mishe_tauftauf/arm.py`, the scheduler's arming path.
-- Subject rule, run only after the path rules: a commit whose subject opens with a `delivery` or `release` area token followed by a colon is `delivery-path`. It requires the colon, so free prose stays with the model. There is no mirrored `network:` to `ordinary` rule, because a `dispatch-path` commit must never be hidden behind a prefix shortcut. There is deliberately no `system1:` subject rule for the same reason.
+- `ordinary` lookups name exact files, not families. A view or reporting file changed alongside dispatch code still stays with the model. A router or host-guard tool never goes in an `ordinary` lookup, because it can change guard state.
+- `delivery_requests.py` is `delivery-path`, not `dispatch-path`: its "dispatch lock" wording names the mechanism, not the class.
+- Subject rule, run only after the path rules: a commit whose subject opens with a `delivery` or `release` area token followed by a colon is `delivery-path`. It requires the colon, so free prose stays with the model. There is no `system1:` subject rule, and no mirrored `network:` to `ordinary` rule, because a `dispatch-path` commit must never be hidden behind a prefix shortcut.
 - Residual that stays with the model: `tools/root-migration-flip.sh` and `duties.json`. A `duties.json` change follows which duty changed, not the file, so no path regex can classify it.
 
 Threshold: 0.7, not calibrated. Below it a commit escalates to a mind. The ledger's `outcome` field is still null. `src/mishe_tauftauf/commit_risk_outcomes.py` scores rows with a git-history proxy (a later fix or revert on the same paths within 72 h). That proxy measures fix-ups, not classification correctness, so it cannot set the threshold. Current reading: follow-up tracks the commit's label, not the model's confidence, and no aged model-labelled row fell below 0.7. The threshold stays 0.7 until an outcome that measures a wrong decision exists.
