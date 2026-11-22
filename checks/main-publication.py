@@ -63,6 +63,12 @@ def _remote_main(repo: Path, deadline: float | None = None) -> tuple[int, str]:
     """Fetch, then the remote main's sha as this clone knows it."""
     code, out = git(repo, "fetch", "--quiet", REMOTE, f"refs/heads/{BRANCH}",
                     timeout=NETWORK_TIMEOUT, deadline=deadline)
+    # A fetch that timed out (127: subprocess timeout) is a dropped connection, not an answer. On
+    # 2026-11-22 one 60 s timeout at 15:08Z failed the service RED while the next fetch succeeded in
+    # under a second. Retry once while the run's budget allows; any other git failure is reported.
+    if code == 127 and "timed out" in out:
+        code, out = git(repo, "fetch", "--quiet", REMOTE, f"refs/heads/{BRANCH}",
+                        timeout=NETWORK_TIMEOUT, deadline=deadline)
     if code != 0:
         return 3, _tail(out)
     code, out = git(repo, "rev-parse", "--verify", f"refs/remotes/{REMOTE}/{BRANCH}", deadline=deadline)

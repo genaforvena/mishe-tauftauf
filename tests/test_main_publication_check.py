@@ -223,3 +223,40 @@ def test_a_push_recovery_that_cannot_be_read_is_unknown(tmp_path, monkeypatch):
 
     assert code == 3
     assert 'cannot tell whether the push landed' in lines[0]
+
+
+def test_a_timed_out_fetch_is_retried_once_before_unknown(tmp_path, monkeypatch):
+    # 2026-11-22: one 60 s fetch timeout failed the service RED; the next fetch succeeded at once.
+    remote, work = clone_with_remote(tmp_path)
+    real_git = pub.git
+    calls = {'fetch': 0}
+
+    def flaky(repo, *args, **kwargs):
+        if args[:2] == ('fetch', '--quiet'):
+            calls['fetch'] += 1
+            if calls['fetch'] == 1:
+                return 127, 'Command timed out after 60.0 seconds'
+        return real_git(repo, *args, **kwargs)
+
+    monkeypatch.setattr(pub, 'git', flaky)
+    code, out = pub._remote_main(work)
+    assert code == 0
+    assert calls['fetch'] == 2
+    assert out == git(work, 'rev-parse', 'origin/main').strip()
+
+
+def test_a_fetch_refused_by_the_remote_is_not_retried(tmp_path, monkeypatch):
+    remote, work = clone_with_remote(tmp_path)
+    real_git = pub.git
+    calls = {'fetch': 0}
+
+    def refused(repo, *args, **kwargs):
+        if args[:2] == ('fetch', '--quiet'):
+            calls['fetch'] += 1
+            return 128, 'fatal: repository not found'
+        return real_git(repo, *args, **kwargs)
+
+    monkeypatch.setattr(pub, 'git', refused)
+    code, _ = pub._remote_main(work)
+    assert code == 3
+    assert calls['fetch'] == 1
