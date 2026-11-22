@@ -141,11 +141,15 @@ If the chat tape (the append-only message log) cannot be read in verified form,
 the DM disposition and the latency readings that depend on it stay unknown rather
 than using a partial tape as evidence.
 Claude subscription readings use the native local `/usage` command. A fresh
-GREEN budget passes the budget check and allows spontaneous work on the role's
+GREEN budget passes the budget check (the router's test of the current budget
+reading, run before each wake) and allows spontaneous work on the role's
 normal routes. RED means the budget fails the check. UNKNOWN means a current
 budget reading is unavailable. In either case, an idle-only wake requires a
-free route in that role's own roster with fresh ledger evidence and available
-capacity. At each attempt the router checks the budget again, so a free refusal
+free route (a model that costs no paid inference) in that role's own roster
+(the candidate models the role may be routed to) with fresh ledger evidence
+(the append-only log of routing decisions and wake outcomes, see
+[budget contract](budget-json-contract.md)) and available capacity. At each
+attempt the router checks the budget again, so a free refusal
 cannot spend paid inference while the hold stands. Messages, signal edges and
 requested follow-ups retain normal routing.
 See [quota acquisition](claude-quota.md).
@@ -154,7 +158,8 @@ The camera sense asks the plant's owner, in the owner's own chat, who is in
 the room. The `frame-label-tick` duty runs every five minutes: it sweeps frames
 older than 24 hours, applies the replies that arrived, and when a room's
 picture has changed enough it sends at most three photos per eight hours and
-waits for the answer. Every reply consumed is recorded as its own receipt, so a
+waits for the answer. Every reply consumed is recorded as its own receipt (a
+row marked `applied`, `unmatched` or `malformed`), so a
 reply that cannot be matched is visible rather than silently dropped. A stored
 answer that the current parser would read differently is a stale label: the
 duty exits RED while any stale label stays uncorrected, so the recurrence is
