@@ -230,9 +230,10 @@ run decide a delivery; CI stays a separate signal (`ci`), as do `pin-lag` and
 `moving-pin-delivery`. The last is a latch over *completed* attempts: while a retry is
 `checking`, it still shows the previous attempt's `FAILED`, so read `pin-delivery` (which
 names the in-flight phase) for "is a promotion running now". When the check cannot
-read or order the records, it names a file in `signals/pin-delivery.detail` and in
-the producer journal. The last reading expires after ten minutes without a
-successful observation. The UNKNOWN edge reaches Genome.
+read or order the records or resolve `runtime/current` to a release directory, it
+writes the reason to `signals/pin-delivery.detail` and the producer journal. The
+last reading expires after ten minutes without a successful observation. The
+UNKNOWN edge reaches Genome.
 
 Scheduler, dispatch, settlement, locking, protocol, authorization and delivery changes keep their
 deterministic activation, revert and reapply observations;

@@ -3,13 +3,14 @@
 
 Reads the newest record under SITE/work/releases (written by release_promotion.promote) and the live pointer.
 
-  GREEN    delivered, and runtime/current names that release; or a promotion still running and younger than --stuck-min
+  GREEN    delivered and runtime/current resolves to that release directory; or a promotion still
+           running and younger than --stuck-min
   RED      the newest promotion ended in check-failed, check-mutated-*, rolled-back or UNKNOWN: names the sha, the
            phase, the failure and the last failing line of the check, so the resolver fixes a cause, not a symptom
-  UNKNOWN  no promotion record, an unreadable or unorderable record, a pointer that
-           disagrees with a delivered record, or a promotion that has run longer than --stuck-min. A RUNNING
-           phase is aged from its own start (``waiting_since``, ``activation_started_at``) when the record
-           carries it, so a healthy wait for wakes that had to yield first is not UNKNOWN.
+  UNKNOWN  no promotion record, an unreadable or unorderable record, a pointer that is unusable
+           or disagrees with a delivered record, or a promotion that has run longer than --stuck-min.
+           A RUNNING phase is aged from its own start (``waiting_since``, ``activation_started_at``)
+           when the record carries it, so a healthy wait for wakes that had to yield first is not UNKNOWN.
 
 A GREEN reading is also this check's own observation of the ``moving-pin-delivery`` latch: that
 signal is published only when a promotion runs, so a pin equal to HEAD leaves it ``VERIFIED`` and
@@ -60,7 +61,12 @@ def newest(directory):
 
 def pointer_sha(home):
     link = home / "runtime" / "current"
-    return link.resolve().name if link.is_symlink() else None
+    if not link.is_symlink():
+        raise OSError("expected a symlink")
+    target = link.resolve(strict=True)
+    if not target.is_dir():
+        raise NotADirectoryError(f"target is not a directory: {target}")
+    return target.name
 
 
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -141,8 +147,14 @@ def main(argv=None):
                         "activating": "activation_started_at"}.get(phase))
     phase_min = (now - since) / 60 if isinstance(since, (int, float)) else age_min
     if phase == "delivered":
-        if pointer_sha(a.home) != record.get("sha"):
-            print(f"pin-delivery: {sha} is recorded delivered but runtime/current names {str(pointer_sha(a.home))[:8]}", file=sys.stderr)
+        try:
+            pinned = pointer_sha(a.home)
+        except (OSError, RuntimeError) as exc:
+            print(f"pin-delivery: {sha} is recorded delivered but runtime/current is unusable: {exc}",
+                  file=sys.stderr)
+            return 3
+        if pinned != record.get("sha"):
+            print(f"pin-delivery: {sha} is recorded delivered but runtime/current names {pinned[:8]}", file=sys.stderr)
             return 3
         # The pin moved when the record was marked delivered, not when its promotion
         # started: the promotion's own age read "delivered 32 min ago" for a pin that had

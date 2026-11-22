@@ -159,6 +159,24 @@ def test_a_pointer_that_disagrees_does_not_refresh_the_latch(tmp_path, capsys):
     assert abs((home / "signals" / "moving-pin-delivery.seen").stat().st_mtime - (NOW - 8000)) < 1
 
 
+@pytest.mark.parametrize("target_kind", ["missing", "file", "loop"])
+def test_an_unusable_pointer_is_unknown_and_does_not_refresh_the_latch(tmp_path, capsys, target_kind):
+    home = _site(tmp_path, [_rec("delivered")])
+    target = home / "releases" / SHA
+    target.rmdir()
+    if target_kind == "file":
+        target.touch()
+    elif target_kind == "loop":
+        target.symlink_to(target.name)
+    signal_store = _latch(home)
+
+    code, output = _run(home, capsys)
+
+    assert code == 3
+    assert "runtime/current" in output.err
+    assert signal_store.read(home, "moving-pin-delivery", now=NOW).state == "UNKNOWN"
+
+
 def test_running_is_green_until_stuck_then_unknown(tmp_path, capsys):
     assert _run(_site(tmp_path, [_rec("checking", created_at=NOW - 300)]), capsys)[0] == 0
     stuck = tmp_path / "b"
