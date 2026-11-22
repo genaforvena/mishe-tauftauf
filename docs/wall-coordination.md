@@ -266,9 +266,11 @@ journalctl --user -u mishe-producer-pin-delivery.service \
 ```
 
 An empty or comment-only CLI entry point can make the unit exit successfully
-without running the checker or starting the failure reporter. Confirm a healthy
-sample by looking for that invocation's `outcome=exit=0` line in the producer
-journal and checking that `signals/pin-delivery.seen` advanced.
+while skipping the checker and failure reporter. A CLI that only imports
+`main` can do the same, even when a checker launched from a retained release
+publishes GREEN. Confirm that the installed producer ran its checker by
+looking for that invocation's `outcome=exit=0` line in its journal and
+checking that `signals/pin-delivery.seen` advanced.
 
 The due timer and the `signal-expiry` watchdog also launch the CLI. If both use
 the damaged release, the timer can skip publishing the expiry edge and the
