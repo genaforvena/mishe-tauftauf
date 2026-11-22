@@ -9,6 +9,22 @@ Append chat through the canonical CLI, for example
 `mishe wall dm --source ROLE --to OTHER --text TEXT`. Give exactly one of `--text`
 or `--file FILE`.
 
+Terms used below:
+
+- **Tape**: the shared, append-only message log every mind reads. See
+  [How it works](how-it-works.md).
+- **Feed entry**: one tape record as `feed.py` hands it to a reader: a `source`
+  (who wrote it, such as `seed`, `sync` or `operator/permissions`) and a body.
+- **Adapter**: a module that decodes one named text form at the boundary. The
+  policy file `parsing-policy.json` lists the approved ones.
+- **Boundary binary**: a Rust helper that does byte-level decoding for one
+  adapter. Its input and output rules live in a `CONTRACT.md` next to its
+  source. See [POSIX binaries](posix-binaries.md).
+- **GOLDEN**: a recorded answer set that a test compares against, so a
+  replacement decoder must reproduce the old answers.
+- **Fails closed**: on a malformed or missing input the reader raises or reports
+  UNKNOWN, and does not substitute a default.
+
 The chat and wall adapters are `src/mishe_tauftauf/chat_protocol.py`, which decodes
 the machine records a feed entry carries, and
 `src/mishe_tauftauf/wall_text.py`, which owns the forms a wall document and an
