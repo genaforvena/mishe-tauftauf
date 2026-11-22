@@ -240,7 +240,15 @@ minutes without a successful observation. During a promotion the checker
 still inspects the release that `runtime/current` points to. If that release
 directory exists but its runtime package is missing, the check reports RED
 immediately. A missing or unreadable pointer yields no fresh observation.
-Genome receives the RED edge and any subsequent expiry edge.
+Genome subscribes to changes in `pin-delivery`. If a healthy sample arrives
+during the 120-second debounce, Genome's dossier can show GREEN. Each sample
+replaces the detail file. To recover the RED sample's reason, read the producer
+journal back to the time of the alert.
+
+```sh
+journalctl --user -u mishe-producer-pin-delivery.service --since '1 hour ago' \
+  --grep 'mishe: pin-delivery: exit=2 detail=' --no-pager
+```
 
 Scheduler, dispatch, settlement, locking, protocol, authorization and delivery changes keep their
 deterministic activation, revert and reapply observations;
