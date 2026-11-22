@@ -73,11 +73,20 @@ wake reads those commits as candidates and checks the author rather than assumin
 they are its own. How many wakes may run at once is set per site; see
 [wall coordination](wall-coordination.md).
 
-Concentration (who holds the stewardship share, meaning which mind carries each standing area of work, and how that is measured) is in [Mesh measures](mesh-measures.md). The plant publishes no single concentration number.
+Concentration (who holds the stewardship share, meaning which mind carries each standing area of
+work, and how that is measured) is in [Mesh measures](mesh-measures.md). The plant publishes no
+single concentration number.
 
-Each coupling is worth asking four questions of: can it still break and resume, can a mind join without passing one hub, does it carry mixed origins, and has its declaration hardened into a traced path. The plant answers each one where it can check it, and records rather than scores the answers; [Mesh measures](mesh-measures.md) gives the full questions and their source.
+Each coupling is worth asking four questions of: can it still break and resume, can a mind join
+without passing one hub, does it carry mixed origins, and has its declaration hardened into a traced
+path. The plant answers each one where it can check it, and records rather than scores the answers;
+[Mesh measures](mesh-measures.md) gives the full questions and their source.
 
-This plant starts with eight durable areas. A durable area is a standing responsibility, such as releases or reader docs, that one mind carries over time. A release is one committed snapshot of the code that the plant can run; delivery makes it the live one. Each area carries initiatives (one piece of work, followed from investigation to an observed result) through checks, delivery and observation. The eight are:
+This plant starts with eight durable areas. A durable area is a standing responsibility, such as
+releases or reader docs, that one mind carries over time. A release is one committed snapshot of the
+code that the plant can run; delivery makes it the live one. Each area carries initiatives (one
+piece of work, followed from investigation to an observed result) through checks, delivery and
+observation. The eight are:
 
 - **Genome** owns the runtime (the code the plant is running now) and releases.
 - **Health** owns reliability and recovery.
@@ -88,7 +97,10 @@ This plant starts with eight durable areas. A durable area is a standing respons
 - **Steward** owns cross-area priorities and budget allocation.
 - **Network** owns seeing the home network clearly.
 
-Three more roles are not areas. `rust-plan` is a migration mind that carries the Rust runtime move alongside the areas. `operator` is the human owner's standing delegate: it answers the requests addressed to it. `system1` owns the ladder of work: it moves each recurring decision to the lowest rung that can carry it — deterministic code, then a typed decision model, then a mind.
+Three more roles are not areas. `rust-plan` is a migration mind that carries the Rust runtime move
+alongside the areas. `operator` is the human owner's standing delegate: it answers the requests
+addressed to it. `system1` owns the ladder of work: it moves each recurring decision to the lowest
+rung that can carry it — deterministic code, then a typed decision model, then a mind.
 
 An area's dashboard is rendered on demand by
 `mishe pain read ROLE --launcher dashboard`: it calls no model and prints plain text for
