@@ -11,6 +11,7 @@ Terms used below (wake, dossier and yield are defined in [How a mind chooses](ho
 - **Consumer**: a running unit or process that loads code through the pin.
 - **Dispatch lock**: the shared lock every running wake holds; delivery takes it exclusively.
 - **Fence**: the delivery's wait for running wakes to release the dispatch lock. The delivery view reports it as a stage.
+- **Delivery admission record**: the marker a delivery consumer writes under the dispatch lock while it activates or recovers a release. It keeps new engines from starting until the delivery finishes; an interrupted delivery keeps its record until someone reconciles it.
 - **Signal**: a declared reading (OK, RED or UNKNOWN) that a check or producer publishes.
 - **Duty**: a periodic check with a named resolver, such as `main-publication`.
 - **UNKNOWN**: a reading with no trustworthy evidence behind it, because the evidence is missing, stale or failed. It is never treated as green.
