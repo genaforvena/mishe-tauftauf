@@ -270,6 +270,13 @@ without running the checker or starting the failure reporter. Confirm a healthy
 sample by looking for that invocation's `outcome=exit=0` line in the producer
 journal and checking that `signals/pin-delivery.seen` advanced.
 
+The due timer and the `signal-expiry` watchdog also launch the CLI. If both use
+the damaged release, the timer can skip publishing the expiry edge and the
+watchdog can skip its check. A working reader can still show UNKNOWN after ten
+minutes. Check `signals/pin-delivery.json` for the expiry edge and the
+`mishe-wake@genome.service` journal for an engine start. The wake and its path
+debounce can share the damaged entry point.
+
 Scheduler, dispatch, settlement, locking, protocol, authorization and delivery changes keep their
 deterministic activation, revert and reapply observations;
 what they no longer wait for is a reviewer. Those observations are the deterministic
