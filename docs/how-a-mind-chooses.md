@@ -26,7 +26,7 @@ show whether its understanding is right. It takes that step, looks at the result
 and only then decides what to do next. The step is bounded so the wake ends at a
 real boundary rather than trailing off.
 
-A blocked lane is not the end of the wake. The mind names the missing evidence
+A blocked lane (one line of work the mind is pursuing at once) is not the end of the wake. The mind names the missing evidence
 or the conflicting edit it is actually up against, takes one bounded action that
 would produce the evidence, and either advances an independent ready alternative
 or records a resolver, a disposition time and a fallback. A blocked task does not
