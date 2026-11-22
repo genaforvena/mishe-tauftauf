@@ -272,6 +272,12 @@ publishes GREEN. Confirm that the installed producer ran its checker by
 looking for that invocation's `outcome=exit=0` line in its journal and
 checking that `signals/pin-delivery.seen` advanced.
 
+The `signal-coverage` duty also starts through the pinned CLI. From an
+independent launcher it can flag a missed cadence when both the `.seen` and
+`.ran` stamps age past the limit. A retained pin producer can refresh both
+shared stamps, so coverage can show GREEN while the installed pin producer
+still skips its checker.
+
 The due timer and the `signal-expiry` watchdog also launch the CLI. If both use
 the damaged release, the timer can skip publishing the expiry edge and the
 watchdog can skip its check. A working reader can still show UNKNOWN after ten
