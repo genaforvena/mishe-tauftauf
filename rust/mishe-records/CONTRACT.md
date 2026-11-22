@@ -115,7 +115,11 @@ The structural faults and their texts (`feed.py`/`records.py`):
 
 ## The store it writes (shared with Python today)
 
-- `SITE/records.verified.sqlite3`, `PRAGMA journal_mode=WAL`,
+- `SITE/records.verified.sqlite3`, `PRAGMA journal_mode=WAL` with
+  `PRAGMA synchronous=NORMAL`: a commit is not fsynced on every transaction, so
+  after a power loss the most recent verified rows may be missing (a row is then
+  a miss and is verified again). The file is never left corrupt by this; it is a
+  cache of verified payloads, not the source of truth.
   `CREATE TABLE verified (digest TEXT PRIMARY KEY, ino INTEGER, size INTEGER,
   ctime_ns INTEGER, mtime_ns INTEGER, verified_at REAL, payload BLOB NOT NULL,
   kind TEXT)`.
