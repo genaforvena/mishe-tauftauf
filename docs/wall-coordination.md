@@ -339,6 +339,16 @@ with retained logs and an explicit result. When a wake exits, systemd kills
 the descendants still in its control group, including processes launched with
 `setsid` or `nohup`.
 
+The automatic cadence imports through `runtime/current/src`. If that package
+disappears, an interpreter without an editable checkout can fail before it
+launches promotion. The detached launcher starts from the target worktree. It
+can advance from a damaged release to a newer clean one. If that target already
+exists and has lost its package, the launcher can fail before writing a release
+record. If observation fails after activation, rollback can recreate an absent
+prior worktree from Git. A prior worktree that still exists with missing files
+fails the clean-tree check, leaving the candidate pinned and the outcome
+`UNKNOWN`. Check the pointer and the exact release record before retrying.
+
 The promotion holds new wakes only while it waits for the dispatch lock at
 activation, applies the pin and exercises recovery, and releases the hold when
 that block ends. An interruption can still leave an
