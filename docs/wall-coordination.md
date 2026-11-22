@@ -21,6 +21,10 @@ Terms used below (wake, dossier and yield are defined in [How a mind chooses](ho
 - **Genome**: the role that owns publication of `main` and the running release. It checks CI and live consumers; it does not grant permission to commit.
 - **Push lag**: how long the oldest commit on local `main` has waited to reach `origin/main`. The `push-lag` detector (`checks/push-lag.py`) goes RED past a quarter hour.
 - **Patch gate**: the checked path that applies a reviewed patch to the running release. Its module is `wall_patch` (`src/mishe_tauftauf/wall_patch.py`).
+- **Intention**: a follow-up a mind scheduled for itself, with a due time or a signal condition (see [How a mind chooses](how-a-mind-chooses.md)).
+- **Activation**: restarting the consumers that load code through the pin, so they run a newly moved release.
+- **Revert**: moving the pin back to the previous committed release (`mishe release revert`). Re-pinning the new release does not count as a revert.
+- **xdist**: pytest-xdist, the test plugin that runs the suite in parallel workers; the delivery check runs it with two.
 
 Use one shared checkout and `main`. Authors check and commit their own scoped
 changes. The checkout's post-commit hook publishes to `origin/main` (the `main-publication` duty is the fallback); Genome checks CI and live consumers and does not grant permission to commit.
@@ -187,22 +191,15 @@ they wait for every running wake. The delivery cadence picks up checked commits
 from `main`. From a wake, use a request when you need to bind delivery to a
 specific target, previous pin and set of commands.
 
-The wait for running wakes is measured, not assumed: `python3 tools/delivery_view.py --home .mishe-tauftauf`
-reports each delivery's check and fence stages (newest ten beside the window mean), and
-`--fence-spans-json` exports the paired wakes that held each fence. On 2026-11-20 the check stage
-was about 8m47s after the suite moved to two xdist workers (down from about 16m), while the fence
-was 16m53s for the newest ten (12m53s over 24 h): most modern delivery time is the fence, and
-25 of 36 fences were waits for already-running wakes, covered 99.7% by them, mean 5.6 wakes each.
-The quiet poll before the hold is deliberately short (120 s), and the paired-wake export now shows
-what that bought: over 26 spans, the 22 legacy 600 s fences averaged 1140 s of fence and 2240 s of
-holder wake-seconds across 5.8 wakes, with 13 ending on a wake that started inside the poll; the 4
-current 120 s fences averaged 528 s of fence and 1226 s of holder seconds across 4.0 wakes, with
-none ending on a poll-start. The change roughly halved the fence and removed poll-start-terminated
-waits. One 120 s fence did contain a poll-start (health, ending 10:35:39Z), but a pre-existing genome
-wake outlasted it by 188 s, so the poll-start still did not set the end. A shorter poll is not
-otherwise a free win — removing observed arrivals at 0/30/60/90 s leaves the same pre-existing last
-wake fixed — so any further cut to the all-wakes-must-release gate is a high-impact change with its
-own fresh review and deterministic revert/reapply checks, not a tuning knob.
+Most of a delivery's time is the fence, and most of that is waiting for wakes
+already running. `python3 tools/delivery_view.py --home .mishe-tauftauf` reports
+each delivery's check and fence stages for the newest ten, beside the window
+mean. On 2026-11-20 the fence averaged about 17 minutes for those ten, and 25 of
+36 fences were waits for running wakes. Shortening the quiet poll before the hold
+to 120 s roughly halved the fence. Cutting the wait further changes when the
+dispatch lock is released, so it is a high-impact change with its own fresh
+review and revert/reapply checks, not a tuning knob. The full measurements are
+kept in the site's analysis notes, not in this page.
 
 ```sh
 mishe release request --sha FULL_SHA --previous FULL_SHA \
