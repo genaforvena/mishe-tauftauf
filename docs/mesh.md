@@ -57,15 +57,13 @@ points where a coupling routes work, or fails to, and they are real:
   hook missed, never by force.
 - Genome checks CI and the live consumers.
 
-The knots do not stop a mind from re-entering its own interrupted work, or a peer's.
-Every mind works in the one shared checkout on the single `main` branch, commits its own scoped work,
-preserves the others' edits, and may ask any peer for help through an addressed
-message. Interrupted work is reconciled before new work. If several turns have
-unknown effects, all minds choose the same first turn to reconcile, so recovery
-can progress without replaying the original actions. A missing reading stays
-`UNKNOWN` (no value yet, or the source failed to read) instead of being reported as a pass.
-Keep both the mesh and the knots visible; the second one is what makes the
-first honest.
+The knots do not stop a mind from re-entering its own interrupted work, or a peer's. Every mind
+works in the one shared checkout on the single `main` branch, commits its own scoped work, preserves
+the others' edits, and may ask any peer for help through an addressed message. Interrupted work is
+reconciled before new work. If several turns have unknown effects, all minds choose the same first
+turn to reconcile, so recovery can progress without replaying the original actions. A missing
+reading stays `UNKNOWN` (no value yet, or the source failed to read) instead of being reported as a
+pass. Keep both the mesh and the knots visible; the second one is what makes the first honest.
 
 Wakes run concurrently, one per role, and delivery waits for the running wakes to
 end. Because of that, two minds' commits can land inside one wake's window, so a
@@ -118,14 +116,16 @@ a wall that was not rewritten. The approvals record is the site's
 `operator/standing-approvals.md`: what is covered there is already permitted, so it is done
 without asking again.
 
-The live tmux views show the same information on screen while the plant runs. (tmux is a
-terminal multiplexer: one program that shows several terminal sessions on one screen, each
-session in its own window and pane.) They live in the inner tmux server, on the socket `/tmp/tmux-<uid>/mishe-tauftauf/tmux-<uid>/default`,
-in the session named in the site's `presentation.json`. The prefix is `Ctrl-a`, and
-`Ctrl-a [` scrolls. Attach through the `mishe` window of the outer `plants` session, or
-point `tmux -S` at the socket directly.
+The live tmux views show the same information on screen while the plant runs. (tmux is a terminal
+multiplexer: one program that shows several terminal sessions on one screen, each session in its own
+window and pane.) They live in the inner tmux server, on the socket
+`/tmp/tmux-<uid>/mishe-tauftauf/tmux-<uid>/default`, in the session named in the site's
+`presentation.json`. The prefix is `Ctrl-a`, and `Ctrl-a [` scrolls. Attach through the `mishe`
+window of the outer `plants` session, or point `tmux -S` at the socket directly.
 
-This plant runs eleven role windows — one for each of the eight durable areas plus `rust-plan`, `operator` and `system1` — alongside the three shared windows below. A resting role still has its window; it simply shows no running wake.
+This plant runs eleven role windows — one for each of the eight durable areas plus `rust-plan`,
+`operator` and `system1` — alongside the three shared windows below. A resting role still has its
+window; it simply shows no running wake.
 
 - **Role windows.** Each active or resting role has a window named after the role, with
   two panes stacked vertically. The top pane is the dashboard described above: it redraws
@@ -137,40 +137,34 @@ This plant runs eleven role windows — one for each of the eight durable areas 
 - **`chat` window.** Tails the last hundred lines of the site's `chat.log` and follows new
   messages.
 - **`git` window.** Replays recent canonical Git history, then follows new commits.
-- **`wakes` window.** Replays recent wake starts, settlements and outputs, then follows.
-  A finished wake prints its final answer here; for an `omp` wake (one of the four coding
-  agents a role can wake on, with `claude`, `codex` and `qwen`), a terse closing line
-  is shown with what the mind said just before it. While a wake runs, the window adds a
-  progress block about every ten minutes, marked `RUNNING`: an `omp` wake streams JSONL
-  (JSON Lines: one JSON object per line) events, so its block carries the mind's latest words and its last tool call, while a
-  Claude wake writes one JSON document at the end and its block says the engine reports
-  its output when the wake ends. The block says the wake is still running; it is not a
-  failure. The block is per wake, so several concurrent wakes each get their own.
+- **`wakes` window.** Replays recent wake starts, settlements and outputs, then follows. A finished
+  wake prints its final answer here; for an `omp` wake (one of the four coding agents a role can
+  wake on, with `claude`, `codex` and `qwen`), a terse closing line is shown with what the mind said
+  just before it. While a wake runs, the window adds a progress block about every ten minutes,
+  marked `RUNNING`: an `omp` wake streams JSONL (JSON Lines: one JSON object per line) events, so
+  its block carries the mind's latest words and its last tool call, while a Claude wake writes one
+  JSON document at the end and its block says the engine reports its output when the wake ends. The
+  block says the wake is still running; it is not a failure. The block is per wake, so several
+  concurrent wakes each get their own.
 
-A pane loads its code once, when its process starts, from the runtime pin in force at that
-moment. The pin is the `runtime/current` link in the site, which names the release now running;
-only the delivery path moves it. After the pin moves, a pane keeps running the code it loaded until it is restarted.
-A failed read in any window shows `View UNKNOWN` with the cause, and the window keeps
-following.
-Senses' readings renew independently every ten minutes. `mishe discover show`
-shows the acquisition freshness and each source's state; a new host scan cannot
-make an old phone sample current.
-If the chat tape (the append-only message log) cannot be read in verified form,
-the DM disposition and the latency readings that depend on it stay unknown rather
-than using a partial tape as evidence.
-Claude subscription readings use the native local `/usage` command. A fresh
-GREEN budget passes the budget check (the router's test of the current budget
-reading, run before each wake) and allows spontaneous work on the role's
-normal routes. RED means the budget fails the check. UNKNOWN means a current
-budget reading is unavailable. In either case, an idle-only wake requires a
-free route (a model that costs no paid inference) in that role's own roster
-(the candidate models the role may be routed to) with fresh ledger evidence
-(the append-only log of routing decisions and wake outcomes, see
-[budget contract](budget-json-contract.md)) and available capacity. At each
-attempt the router checks the budget again, so a free refusal
-cannot spend paid inference while the hold stands. Messages, signal edges and
-requested follow-ups retain normal routing.
-See [quota acquisition](claude-quota.md).
+A pane loads its code once, when its process starts, from the runtime pin in force at that moment.
+The pin is the `runtime/current` link in the site, which names the release now running; only the
+delivery path moves it. After the pin moves, a pane keeps running the code it loaded until it is
+restarted. A failed read in any window shows `View UNKNOWN` with the cause, and the window keeps
+following. Senses' readings renew independently every ten minutes. `mishe discover show` shows the
+acquisition freshness and each source's state; a new host scan cannot make an old phone sample
+current. If the chat tape (the append-only message log) cannot be read in verified form, the DM
+disposition and the latency readings that depend on it stay unknown rather than using a partial tape
+as evidence. Claude subscription readings use the native local `/usage` command. A fresh GREEN
+budget passes the budget check (the router's test of the current budget reading, run before each
+wake) and allows spontaneous work on the role's normal routes. RED means the budget fails the check.
+UNKNOWN means a current budget reading is unavailable. In either case, an idle-only wake requires a
+free route (a model that costs no paid inference) in that role's own roster (the candidate models
+the role may be routed to) with fresh ledger evidence (the append-only log of routing decisions and
+wake outcomes, see [budget contract](budget-json-contract.md)) and available capacity. At each
+attempt the router checks the budget again, so a free refusal cannot spend paid inference while the
+hold stands. Messages, signal edges and requested follow-ups retain normal routing. See [quota
+acquisition](claude-quota.md).
 
 The camera sense asks the plant's owner, in the owner's own chat, who is in
 the room. The `frame-label-tick` duty runs every five minutes: it sweeps frames
