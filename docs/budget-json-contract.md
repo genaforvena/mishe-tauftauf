@@ -12,6 +12,10 @@ that account, never that it is empty. A *candidate* is one `engine:model:account
 the router may select for a role, and a *steward* is the role that owns budget allocation
 (see [mesh](mesh.md)). `budget-consistency` is the check that judges the file.
 
+Paths written as `operator/…` or `producers/…` below are in the site home
+(`$MISHE_SEED_HOME`), not in the git clone; they are untracked, so a clone cannot open them.
+The `src/…` and `checks/…` paths are in the clone.
+
 Four more terms recur below. The **ledger** is the append-only record of routing
 decisions (`select`: a candidate chosen for a wake) and wake outcomes (`outcome`:
 `yielded`, `timeout`, or `no yield (exit N)`, which may add `quota spent after acting`)
