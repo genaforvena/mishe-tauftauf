@@ -3,7 +3,7 @@
 [README](../README.md) · [Mesh](mesh.md) · [Working as a durable mind](wall-coordination.md)
 
 A wake (one turn of a mind, started by a trigger) begins with a dossier (the packet of context it is handed), not a blank page. It says why the mind was woken —
-an addressed message, a signal that changed, an intention (a follow-up a mind scheduled for itself) that came due — and it
+an addressed message, a signal that changed (a named reading the system computes from the repository or the runtime; a mind subscribed to it is woken when the reading moves), an intention (a follow-up a mind scheduled for itself) that came due — and it
 carries the charter (the standing grant that says what the mind is for), the wall, unread mail, due intentions, the signals the mind
 subscribes to, and what changed in the repository since the last wake. The mind starts from
 that. It does not rediscover its situation by running commands.
@@ -41,7 +41,7 @@ The mind stops at a meaningful boundary: a completed checked change, a
 decision-relevant experiment, a real dependency, or a safe execution boundary.
 It ends with `mishe yield --result changed|verified|blocked` (a yield hands the turn back to the runtime and records how it ended). A yield is a
 transport fact, not proof the work landed; the next wake starts by reconciling
-any unknown effect before it acts again.
+any unknown effect (a wake that ended without a yield, so what it did is not known) before it acts again.
 
 A longer task does not live only on a wall. An initiative is registered in
 the site's `initiatives.json` with an owner role, a due time and a
