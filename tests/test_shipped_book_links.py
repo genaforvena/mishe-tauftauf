@@ -105,6 +105,22 @@ def test_the_gate_rejects_a_dangling_anchor_in_a_file_that_exists(tmp_path):
     assert "BROKEN ANCHOR" in result.stdout
 
 
+def test_the_gate_accepts_a_sound_book_reached_through_a_symlink(tmp_path):
+    """A tree named through a symlinked path (macOS /var, a symlinked TMPDIR)
+    must not be reported as a broken anchor: the lookup keys and the resolved
+    link targets have to agree on one spelling of the path."""
+    real = tmp_path / "real"
+    make_tree(real, {
+        "README.md": "See [section](docs/guide.md#a-real-heading).\n",
+        "docs/guide.md": "# A real heading\n\nBody.\n",
+    })
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    result = run_check(link)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "BROKEN" not in result.stdout
+
+
 def test_the_gate_accepts_a_sound_book(tmp_path):
     """A sound book must pass, or the gate cannot be a gate."""
     make_tree(tmp_path, {

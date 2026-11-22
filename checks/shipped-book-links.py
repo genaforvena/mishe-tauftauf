@@ -94,7 +94,7 @@ def _committed_tree(repo: Path) -> tuple[Path | None, str]:
     if unpack.returncode:
         shutil.rmtree(tmp, ignore_errors=True)
         return None, unpack.stderr.decode("utf-8", "replace").strip()
-    return Path(tmp), ""
+    return Path(tmp).resolve(), ""
 
 
 def slugify(heading: str) -> str:
@@ -202,7 +202,7 @@ def main(argv: list[str]) -> int:
 
     tmp: str | None = None
     if args.tree:
-        tree = args.tree.absolute()
+        tree = args.tree.resolve()
     elif args.repo:
         tree, error = _committed_tree(args.repo.resolve())
         if tree is None:
