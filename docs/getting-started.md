@@ -94,6 +94,9 @@ that carries a provider `retry-after-ms` waits that interval instead, capped at 
 
 ## 4. Install the triggers — held
 
+A *hold* is a site-wide stop: while it stands no model is called and owed wakes wait,
+though the installed units stay in place. `mishe hold off` (step 5) releases it.
+
 ```sh
 mishe hold on --reason "first install"
 mishe sync --repo "$PWD" --pythonpath "$PWD/src"
