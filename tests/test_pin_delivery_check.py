@@ -361,6 +361,21 @@ def test_an_unorderable_record_makes_an_earlier_delivery_unknown(tmp_path, capsy
     assert signal_store.read(home, "moving-pin-delivery", now=NOW).state == "UNKNOWN"
 
 
+@pytest.mark.parametrize("test, dispatches", [
+    ('"__main__" != __name__', False),
+    ('not __name__ == "__main__"', False),
+    ('not ("__main__" == __name__)', False),
+    ('not (__name__ != "__main__")', True),
+    ('"__main__" == __name__', True),
+])
+def test_reversed_and_negated_main_guards_follow_python_m(test, dispatches):
+    """The guard shapes the field review named: a reversed or negated test decides what python -m runs."""
+    import ast
+    tree = ast.parse(f"from .cli import main\n\nif {test}:\n    main()\n")
+    calls = [n for n in check._import_time_nodes(tree) if isinstance(n, ast.Call)]
+    assert bool(calls) is dispatches
+
+
 def test_a_call_under_an_inverted_main_guard_is_not_a_dispatch():
     """python -m runs the module with __name__ == "__main__"; a call that runs only when it is not is no dispatch."""
     import ast

@@ -115,14 +115,25 @@ def runs_something(entry):
 
 
 def _is_main_guard(test):
-    """``__name__ == "__main__"`` (True) or ``__name__ != "__main__"`` (False); None for any other test."""
-    if (isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1
-            and isinstance(test.left, ast.Name) and test.left.id == "__name__"
-            and isinstance(test.comparators[0], ast.Constant) and test.comparators[0].value == "__main__"):
-        if isinstance(test.ops[0], ast.Eq):
-            return True
-        if isinstance(test.ops[0], ast.NotEq):
-            return False
+    """Truth of a test that is fixed by ``__name__ == "__main__"`` under ``python -m``; None for any other test.
+
+    Covers ``__name__ == "__main__"``, its reversed form ``"__main__" == __name__``, the ``!=`` forms,
+    and any ``not`` wrapped around them (field-review-pin-guard-20261123 found the reversed and negated
+    shapes still counted as dispatches).
+    """
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        inner = _is_main_guard(test.operand)
+        return None if inner is None else not inner
+    if isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1:
+        left, right = test.left, test.comparators[0]
+        if isinstance(right, ast.Name) and right.id == "__name__" and isinstance(left, ast.Constant):
+            left, right = right, left
+        if (isinstance(left, ast.Name) and left.id == "__name__"
+                and isinstance(right, ast.Constant) and right.value == "__main__"):
+            if isinstance(test.ops[0], ast.Eq):
+                return True
+            if isinstance(test.ops[0], ast.NotEq):
+                return False
     return None
 
 
