@@ -419,7 +419,7 @@ def run(home: Path, now: float, *, repo: Path | None = None,
         counts["notes"].append(account_note)
     # First covered case (Ilya DM #303234): budget-window-care.
     budget_case = []
-    for probe in ("budget-opencode-go", "budget-claude"):
+    for probe in ("budget-opencode-go", "budget-claude", "budget-codex"):
         entry = registry.get(probe)
         if isinstance(entry, dict):
             reading = _read_json(sigdir / f"{probe}.json") or {}

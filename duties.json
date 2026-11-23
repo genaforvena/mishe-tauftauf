@@ -400,6 +400,27 @@
       "covers": "the opencode-go weekly allowance window (go-a): remaining, burn per hour, projected end and ledger selections; UNKNOWN when unmeasured"
     },
     {
+      "name": "budget-codex",
+      "command": [
+        "{python}",
+        "{repo}/checks/budget-codex.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 600,
+      "timeout": 60,
+      "max_age": 1800,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "steward",
+      "replaces": [],
+      "covers": "the codex-a 5h and 7d windows (openai-codex): spent-window LOW and UNKNOWN when a window is not FRESH; burn is not judged"
+    },
+    {
       "name": "signal-coverage",
       "command": [
         "{python}",
