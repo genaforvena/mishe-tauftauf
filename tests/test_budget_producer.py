@@ -725,3 +725,22 @@ def test_producer_run_with_unknown_routing_beats_engine_routing_cadence(tmp_path
     assert bp.main(tmp_path, out) == 0
     assert json.loads(out.read_text())["routing"]["state"] == "UNKNOWN"
     assert (tmp_path / "signals" / "engine-routing.ran").exists()
+
+
+def test_codex_fresh_reading_is_recorded_and_flat_use_measures_zero_burn(tmp_path):
+    # A FRESH codex-a reading is written to quota-history; two flat readings 6 h apart give a measured
+    # burn of 0 (no runs-out ETA), not the window-elapsed projection that drove a false RED.
+    reset = NOW + 4 * 86400
+    codex = {"state": "FRESH", "windows": {"7d": {"remaining": 0.19, "reset_at": reset, "state": "FRESH"}}}
+    bp.append_codex_history(tmp_path, NOW - 6 * 3600, codex)
+    bp.append_codex_history(tmp_path, NOW, codex)
+    rows = [json.loads(line) for line in (tmp_path / "operator" / "budget" / "quota-history.jsonl").read_text().splitlines()]
+    assert [r["q"] for r in rows] == [{"codex-a/7d": [0.19, reset]}] * 2
+    points = bp.load_burn_history(tmp_path, NOW)[("codex-a", "7d")]
+    assert bp.recent_burn(points, reset) == 0.0
+
+
+def test_codex_stale_reading_writes_nothing(tmp_path):
+    codex = {"state": "STALE", "windows": {"7d": {"remaining": 0.19, "reset_at": NOW + 1, "state": "STALE"}}}
+    bp.append_codex_history(tmp_path, NOW, codex)
+    assert not (tmp_path / "operator" / "budget" / "quota-history.jsonl").exists()
