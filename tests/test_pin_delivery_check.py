@@ -197,7 +197,9 @@ def test_an_empty_entry_point_is_red_not_green(tmp_path, capsys):
 
 @pytest.mark.parametrize("source", ["# only a comment\n", "# one\n# two\n", '"""just a docstring"""\n', "def (:\n",
                                     "from .cli import main\n",
-                                    "from .cli import main\n\nif __name__ == '__main__':\n    pass\n"])
+                                    "from .cli import main\n\nif __name__ == '__main__':\n    pass\n",
+                                    "from .cli import main\n\ndef _unused():\n    main()\n",
+                                    "from .cli import main\n\nf = lambda: main()\n"])
 def test_an_entry_point_that_runs_nothing_is_red_not_green(tmp_path, capsys, source):
     home = _site(tmp_path, [_rec("delivered")])
     (home / "releases" / SHA / "src" / "mishe_tauftauf" / "__main__.py").write_text(source, encoding="utf-8")

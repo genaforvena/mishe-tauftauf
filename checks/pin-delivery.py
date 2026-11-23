@@ -111,7 +111,18 @@ def runs_something(entry):
         tree = ast.parse(entry.read_text(encoding="utf-8", errors="replace"), filename=str(entry))
     except SyntaxError:
         return False
-    return any(isinstance(node, ast.Call) for node in ast.walk(tree))
+    return any(isinstance(node, ast.Call) for node in _import_time_nodes(tree))
+
+
+def _import_time_nodes(tree):
+    """Nodes that run when the module is imported: a call inside an uncalled def or lambda dispatches nothing."""
+    pending = list(ast.iter_child_nodes(tree))
+    while pending:
+        node = pending.pop()
+        yield node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        pending.extend(ast.iter_child_nodes(node))
 
 
 def last_failing_line(record):
