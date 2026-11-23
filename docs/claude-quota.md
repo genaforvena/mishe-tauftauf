@@ -39,8 +39,11 @@ producer and the budget pane expire readings after fifteen minutes (`MAX_AGE_S`
 verdict and names the window and rule that triggered a RED. The tracked publisher registers
 that signal with no subscribers, so a site that wants the verdict routed registers its own
 resolver. The codex-a verdict appears in the publisher's result and the household budget
-view. The `signal-coverage` duty reports a fresh RED codex-a verdict as a
-provider finding when `budget-codex` has no signal registration.
+view. The `budget-codex` duty (`checks/budget-codex.py`, resolver `steward`) judges
+the codex-a 5h and 7d windows: RED when a FRESH window is used past 0.9, UNKNOWN when a
+window is not FRESH or malformed. Burn is not judged. The `signal-coverage` duty probes
+it beside `budget-claude` and reports a fresh RED codex-a verdict as a provider finding
+when `budget-codex` has no signal registration.
 
 The native report has display precision: whole percentage points and minute
 reset times. The result records that precision explicitly. The tolerance is one
