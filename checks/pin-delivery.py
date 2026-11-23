@@ -121,13 +121,15 @@ _LITERAL_ROOTS = (ast.Constant, ast.JoinedStr, ast.List, ast.Tuple, ast.Set, ast
 
 
 def _module_bound_names(tree):
-    """Names the module itself binds (imports, defs, classes, assignments), anywhere in the tree.
+    """Collect possible builtin shadows from the same import-time walk used for calls.
 
     A name the module binds shadows a builtin of the same name: ``from .cli import help`` makes
     ``help()`` a dispatch, not the builtin (field review of b577ab92 found the builtin test read it as no dispatch).
+    An assignment inside an uncalled function or an import under an inverted main guard cannot
+    shadow a module-level builtin during startup.
     """
     bound = set()
-    for node in ast.walk(tree):
+    for node in _import_time_nodes(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             bound.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):

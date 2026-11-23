@@ -388,11 +388,34 @@ def test_a_call_under_an_inverted_main_guard_is_not_a_dispatch():
     assert len(calls) == 1 and calls[0].lineno == 6
 
 
-def test_a_builtin_named_import_is_a_dispatch_not_the_builtin(tmp_path, capsys):
+@pytest.mark.parametrize("binding", [
+    "from .cli import help\n",
+    "if __name__ == '__main__':\n    from .cli import help\n",
+])
+def test_a_builtin_named_import_is_a_dispatch_not_the_builtin(tmp_path, capsys, binding):
     home = _site(tmp_path, [_rec("delivered")])
     (home / "releases" / SHA / "src" / "mishe_tauftauf" / "__main__.py").write_text(
-        "from .cli import help\nraise SystemExit(help())\n", encoding="utf-8")
+        binding + "raise SystemExit(help())\n", encoding="utf-8")
 
     code, _ = _run(home, capsys)
 
     assert code == 0
+
+
+@pytest.mark.parametrize("prefix", [
+    "def unused():\n    help = 1\n",
+    "async def unused():\n    from .cli import help\n",
+    "def unused():\n    def help():\n        pass\n",
+    "if __name__ != '__main__':\n    from .cli import help\n",
+], ids=["local-assignment", "local-import", "nested-def", "unreached-import"])
+def test_a_builtin_called_from_the_module_ignores_unreached_bindings(tmp_path, capsys, prefix):
+    home = _site(tmp_path, [_rec("delivered")])
+    entry = home / "releases" / SHA / "src" / "mishe_tauftauf" / "__main__.py"
+    entry.write_text(prefix + 'help("hi")\n', encoding="utf-8")
+    signal_store = _latch(home)
+
+    code, output = _run(home, capsys)
+
+    assert code == 2
+    assert "__main__.py is missing" in output.err
+    assert signal_store.read(home, "moving-pin-delivery", now=NOW).state == "UNKNOWN"
