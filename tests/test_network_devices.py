@@ -108,3 +108,29 @@ class NeighbourStateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WifiStateTests(unittest.TestCase):
+    """The router's newest client list says whether a silent device is still on Wi-Fi."""
+
+    def _home(self, text):
+        import json
+        import tempfile
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "network").mkdir()
+        if text is not None:
+            (tmp / "network" / "router.jsonl").write_text(text)
+        return tmp
+
+    def test_associated_client_is_associated(self):
+        import json
+        home = self._home(json.dumps({"clients": [{"name": "iMac-Rozalia"}]}) + "\n")
+        self.assertEqual(devices.wifi_state(home, "iMac-Rozalia"), "ASSOCIATED")
+
+    def test_missing_client_is_absent(self):
+        import json
+        home = self._home(json.dumps({"clients": [{"name": "iPhone"}]}) + "\n")
+        self.assertEqual(devices.wifi_state(home, "iMac-Rozalia"), "ABSENT")
+
+    def test_no_router_reading_is_unknown_not_absent(self):
+        self.assertEqual(devices.wifi_state(self._home(None), "iMac-Rozalia"), "UNKNOWN")

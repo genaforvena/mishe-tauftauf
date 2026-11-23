@@ -831,6 +831,8 @@ def devices_line(now=None):
     for name, result in sorted(devices.items()):
         problem = nb.device_ping_plain_problem(result)
         if problem:
+            if isinstance(result, dict) and result.get("wifi") == "ASSOCIATED":
+                problem += ", still on Wi-Fi"
             parts.append(f"{name} {problem}")
             unknown = True
         else:

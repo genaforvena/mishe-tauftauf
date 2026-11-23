@@ -56,6 +56,19 @@ def neighbour_state(address, run=subprocess.run):
     return nb.decode_neighbour(out.stdout)
 
 
+def wifi_state(home, name):
+    """Whether the router's newest reading lists the device as a Wi-Fi client: ASSOCIATED, ABSENT, or UNKNOWN.
+
+    Read from SITE/network/router.jsonl only (no extra SSH). A device associated to Wi-Fi but silent
+    to ARP and ping is asleep or its IP stack is suspended; a device absent from Wi-Fi has left.
+    """
+    rows = _read_rows(home / "network" / "router.jsonl")
+    if not rows or not isinstance(rows[-1].get("clients"), list):
+        return "UNKNOWN"
+    names = {c.get("name") for c in rows[-1]["clients"] if isinstance(c, dict)}
+    return "ASSOCIATED" if name in names else "ABSENT"
+
+
 def _read_rows(path):
     try:
         text = Path(path).read_text()
@@ -70,6 +83,7 @@ def run(home, now=None):
     for name, address in DEVICES:
         result[name] = ping(address)
         result[name]["neigh"] = neighbour_state(address)
+        result[name]["wifi"] = wifi_state(home, name)
     row = {
         "ts": now,
         "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
