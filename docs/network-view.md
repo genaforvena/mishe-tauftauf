@@ -234,10 +234,6 @@ is not mistaken for a quiet mind.
   The trend
   sparkline buckets the whole loaded day into `USUAL_BUCKETS` (40) means and is labelled `trend 24 h`
   at the line: the header's "last 40 probes" is only a default, and says wider windows are labelled.
-- `SPIKES`: how many of the same last ten web probes took over 1 s (`SPIKE_WEB_MS`). A median
-  hides intermittent spikes, so this row names the count beside `USUAL`, on its own line because
-  `USUAL` is already at the pane width. It reads `UNKNOWN` when there are no web samples in the
-  window. It is a count, not a verdict: it does not turn the headline into a warning.
   Without that label a day-long ramp read as a two-hour ramp.
   A bucket with no answered check draws as `·` rather than being skipped, so a dead
   stretch keeps its place on the trend instead of closing up and looking continuous.
@@ -245,6 +241,11 @@ is not mistaken for a quiet mind.
   the current cadence), not the duration of the slowdown — the headline above already says how long
   that lasted; a bare "over 24 h" read here as a day-long slowdown that contradicted it. The
   `trend 24 h` label still names the whole loaded day, a wider window than the baseline.
+- `SPIKES`: how many of the same last ten web probes took over 1 s (`SPIKE_WEB_MS`). A median
+  hides intermittent spikes, so this row names the count beside `USUAL`, on its own line because
+  `USUAL` is already at the pane width. It counts the web samples in the window even when the
+  `USUAL` baseline is too thin, and reads `UNKNOWN` only when there are no web samples at all. It is a count, not a verdict: it does
+  not turn the headline into a warning.
 - `WI-FI`: the live listing, one read a minute: client count per band and the weakest client with
   its dBm, its band and the name the household knows it by when the recorded read has that client;
   a device that only just joined shows as its dBm until the next recorded read names it. When any
