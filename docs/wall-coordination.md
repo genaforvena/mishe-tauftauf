@@ -240,7 +240,10 @@ minutes without a successful observation. During a promotion the checker
 still inspects the release that `runtime/current` points to. If that release
 directory has no runtime package, a running checker reports RED immediately.
 It also reports RED if `src/mishe_tauftauf/__main__.py` is missing, has a
-syntax error or only imports `main`. A missing or unreadable pointer yields
+syntax error, or makes no call at import time. An import alone dispatches
+nothing, and neither does a builtin such as `print(...)` or a method on a
+literal such as `''.join([])`; a name the module binds itself (for example
+`from .cli import help`) is a real call. A missing or unreadable pointer yields
 no fresh observation.
 Genome subscribes to changes in `pin-delivery`. If a healthy sample arrives
 during Genome's 120-second wake debounce (`wake_debounce_seconds`), Genome's
