@@ -321,3 +321,27 @@ superseded by `90d0f135`. Its tree also carries other minds' in-flight commits,
 including the codex-engine change, so re-requesting it from this role would
 promote work outside this slice. Genome owns that disposition.
 
+
+### 10.70 The live role read is not the rebuild (2026-11-23)
+
+The forced fold that `checks/rust-measurement.py` times is the cache-miss price,
+which a wake does not normally pay: `role_entries` serves the persisted role
+cache and extends it by the bytes appended since. The check now runs a second,
+separate-process `live` reading per role and records both. At pin `e85d4411`
+(16:48Z, load1 8.18, the check's own host guard passed) the run was GREEN:
+
+- senses: forced reader 4.734 + children 4.557 = 9.291 CPU-s; live 0.170 CPU-s;
+  36,388 entries, `view_digest` equal.
+- genome: forced reader 4.484 + children 3.958 = 8.443 CPU-s; live 0.111 CPU-s;
+  30,340 entries, `view_digest` equal.
+
+The differential is the digest equality: a cached view that disagrees with the
+rebuilt tape is RED (`disagree`), and `tests/test_rust_measurement.py` pins that
+case with a stale-cache fixture. The 33 measurement tests pass.
+
+What this settles: on a cache hit the role read costs about 0.1–0.2 CPU-s, so no
+Rust seam exists in the role read on that path. What it does not settle: how often
+a real wake misses the cache. The live reading is taken on a hit at this pin, and
+the history carries no cache-miss counter, so the frequency stays UNKNOWN. The safe
+trigger to collect it is a role-cache miss counter in the feed, read with the
+`live` reading on the next pin change.

@@ -460,7 +460,10 @@ def test_changed_release_during_fold_is_unknown(tmp_path, monkeypatch, capsys):
     original = mod.fold_role
     def change_then_fold(*args):
         reading = original(*args)
-        (repo / "src/mishe_tauftauf/feed.py").write_text("changed\n")
+        # A comment keeps the release importable for the live variant's child,
+        # while the dirty source is what release_identity must catch.
+        path = repo / "src" / "mishe_tauftauf" / "feed.py"
+        path.write_text(path.read_text() + "# release moved\n")
         return reading
     monkeypatch.setattr(mod, "fold_role", change_then_fold)
     assert mod.main(["--home", str(home), "--repo", str(repo), "--roles", "senses",
@@ -638,3 +641,38 @@ def test_fold_reports_verifier_decisions_and_checkpoint_rebuild(tmp_path):
     assert failed.returncode == 3
     assert "UNKNOWN fold failed" in failed.stderr and "record unavailable" in failed.stderr
     assert "GREEN" not in failed.stdout
+
+
+@pytest.mark.usefixtures("pin_records_binary", "pin_tape_binary")
+def test_live_variant_reads_the_cache_path_and_agrees_with_the_rebuild(tmp_path):
+    # The trigger rides on the forced fold, which a wake does not pay; the live
+    # child must therefore exist and answer the same view as the rebuild. On an
+    # empty tape both variants are trivially equal, which is the shape this pins.
+    mod = check_module()
+    forced = mod.fold_role(REPO, tmp_path, "senses", 30)
+    live = mod.fold_role(REPO, tmp_path, "senses", 30, "live")
+    assert live["entries"] == forced["entries"] == 0
+    assert live["view_digest"] == forced["view_digest"]
+    assert live["fold_cpu_s"] <= forced["fold_cpu_s"]
+
+
+def test_cached_view_disagreeing_with_the_rebuild_is_red(tmp_path):
+    # A role cache that serves fewer rows than the tape holds would hand a wake a
+    # stale dossier. The digest comparison must name it and fail RED, not GREEN.
+    repo = _rust_release(tmp_path)
+    (repo / "src" / "mishe_tauftauf" / "feed.py").write_text(
+        "class Feed:\n"
+        "    def __init__(self, home): pass\n"
+        "    def role_entries(self, role, _force_full=False, _fold_diagnostics=None):\n"
+        "        return [1, 2, 3] if _force_full else [1, 2]\n")
+    _commit(repo, "feed serving a stale cached view")
+    home = tmp_path / "site"
+    home.mkdir()
+    _install_all(home, repo)
+    proc = subprocess.run(
+        [sys.executable, str(CHECK), "--home", str(home), "--repo", str(repo),
+         "--roles", "senses", "--no-artifact", "--max-load", "100000",
+         "--max-cpu-pressure", "100000", "--max-mem-pressure", "100000"],
+        capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 2, (proc.returncode, proc.stderr)
+    assert "cached role view" in proc.stderr and "senses" in proc.stderr

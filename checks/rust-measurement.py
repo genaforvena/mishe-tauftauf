@@ -17,6 +17,14 @@ a forced fold at load1 4.34 on 3 CPUs measured senses children 19.6 s (total
 calibrated on quiet runs would flap under contention. Every run now records both
 quantities in the history, which is where the total's own bar will be calibrated.
 
+The forced fold is a cache-miss price, and the running consumer does not pay it
+on an ordinary wake: `role_entries` serves a persisted role cache and extends it
+by the bytes appended since (plan 10.70). So each role also gets a second child
+that reads the way a wake does, and its `cpu_s` is the live cost the trigger now
+also applies to. The two readings must agree on `view_digest` and `entries`; a
+disagreement is RED, because it means the cached view a wake receives is not the
+view the canonical tape rebuilds.
+
 Each fold also records the verifier's V (served), N (reverified) and S (skipped)
 decisions and whether it rebuilt the tape's frame index. These observations help
 attribute child CPU outliers. A fold with no tape leaves both fields null.
@@ -41,9 +49,10 @@ load1 1.17; forced at `some avg10` 39.56 the same fold measured 4.161 CPU-s,
 never GREEN.
 
 Verdicts:
-  GREEN   0  every role measured and under both triggers; the slice stays closed.
-  RED     2  a role is over a trigger (reader CPU or RSS); the slice's pre-gate
-              A/B may open.
+  GREEN   0  every role measured under both triggers, the live and rebuilt views
+              agree, and the installed bytes match the release source.
+  RED     2  a role is over a trigger (forced or live reader CPU, RSS), or the live
+              view disagrees with the rebuilt one; the slice's pre-gate A/B may open.
   UNKNOWN 3  skipped by the host guard, a child failed, the site is missing, or
               the installed bytes could not be checked against the release.
 
@@ -111,7 +120,7 @@ ARTIFACT_DIR = Path("artifacts") / "rust-plan-20261107"
 HISTORY_MAX_LINES = 2000
 
 CHILD = r"""
-import json, os, resource, subprocess, sys, time
+import hashlib, json, os, resource, subprocess, sys, time
 from pathlib import Path
 
 # Popen reaps children with os.waitpid, which discards their rusage. wait4
@@ -184,18 +193,25 @@ def peak_rss_kb():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
 home, role = Path(sys.argv[1]), sys.argv[2]
+forced = (sys.argv[3] if len(sys.argv) > 3 else "forced") == "forced"
 diagnostics = {}
 p0 = cpu_pressure_some()
 m0 = memory_pressure_some()
 c0 = time.process_time(); k0 = child_cpu(); t0 = time.perf_counter()
-rows = Feed(home).role_entries(role, _force_full=True, _fold_diagnostics=diagnostics)
+rows = Feed(home).role_entries(role, _force_full=forced, _fold_diagnostics=diagnostics)
 c1 = time.process_time(); k1 = child_cpu(); t1 = time.perf_counter()
 p1 = cpu_pressure_some()
 m1 = memory_pressure_some()
+# The digest is taken after the timed window: hashing 36k rows is not fold work,
+# and the two variants are compared by this value.
+digest = hashlib.sha256("\n".join(
+    json.dumps(row if isinstance(row, dict) else getattr(row, "__dict__", str(row)),
+               sort_keys=True, default=str) for row in rows).encode()).hexdigest()[:16]
 print(json.dumps({
     "role": role,
     "feed_path": str(Path(feed_module.__file__).resolve()),
     "entries": len(rows),
+    "view_digest": digest,
     "cpu_s": round(c1 - c0, 3),
     "children_cpu_s": round(k1 - k0, 3),
     "child_cpu_by_exe": ({k: round(v, 3) for k, v in sorted(_child_cpu_by_exe.items())}
@@ -281,8 +297,14 @@ def host_guard(max_load: float | None, min_free_kb: int,
     return None, facts
 
 
-def fold_role(repo: Path, home: Path, role: str, timeout: int) -> dict:
-    """Measure one role's forced full fold in a fresh child process."""
+def fold_role(repo: Path, home: Path, role: str, timeout: int,
+              variant: str = "forced") -> dict:
+    """Measure one role's read in a fresh child process.
+
+    ``forced`` rebuilds from the canonical tape, the original cache-miss price;
+    ``live`` reads through the persisted role cache and the tape checkpoint, as
+    a wake does.
+    """
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     src = str(repo / "src")
@@ -292,7 +314,7 @@ def fold_role(repo: Path, home: Path, role: str, timeout: int) -> dict:
     with tempfile.TemporaryDirectory(prefix="mishe-fold-pycache-") as cache:
         env["PYTHONPYCACHEPREFIX"] = cache
         proc = subprocess.run(
-            [sys.executable, "-c", CHILD, str(home), role],
+            [sys.executable, "-c", CHILD, str(home), role, variant],
             capture_output=True, text=True, timeout=timeout, env=env)
     if proc.returncode != 0:
         raise RuntimeError(f"{role} fold exited {proc.returncode}: {proc.stderr.strip()[-300:]}")
@@ -448,7 +470,12 @@ def main(argv: list[str] | None = None) -> int:
     readings = []
     try:
         for role in roles:
-            readings.append(fold_role(repo, home, role, args.timeout))
+            reading = fold_role(repo, home, role, args.timeout)
+            live = fold_role(repo, home, role, args.timeout, "live")
+            reading["live"] = {key: live[key] for key in
+                               ("cpu_s", "children_cpu_s", "fold_cpu_s", "elapsed_s",
+                                "maxrss_kb", "entries", "view_digest", "checkpoint_rebuilt")}
+            readings.append(reading)
     except (RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
         print(f"rust-measurement: UNKNOWN fold failed: {exc}", file=sys.stderr)
         return 3
@@ -466,15 +493,25 @@ def main(argv: list[str] | None = None) -> int:
     release_error = "; ".join(release_errors) or None
 
     over = []
+    disagree = []
     for r in readings:
+        live = r["live"]
         if r["cpu_s"] > args.cpu_trigger:
             over.append(f"{r['role']} reader cpu {r['cpu_s']} CPU-s > {args.cpu_trigger:g}")
+        if live["cpu_s"] > args.cpu_trigger:
+            over.append(f"{r['role']} live reader cpu {live['cpu_s']} CPU-s > {args.cpu_trigger:g}")
         if r["maxrss_kb"] > args.rss_trigger_kb:
             over.append(f"{r['role']} rss {r['maxrss_kb'] // 1024} MB > "
                         f"{args.rss_trigger_kb // 1024} MB")
+        if live["view_digest"] != r["view_digest"] or live["entries"] != r["entries"]:
+            disagree.append(f"{r['role']}: cached view {live['view_digest']} "
+                            f"({live['entries']} entries) != rebuilt {r['view_digest']} "
+                            f"({r['entries']} entries)")
     summary = "; ".join(f"{r['role']} reader {r['cpu_s']} + children "
                         f"{r['children_cpu_s']} = {r['fold_cpu_s']} CPU-s "
-                        f"{r['maxrss_kb'] // 1024} MB {r['entries']} entries"
+                        f"{r['maxrss_kb'] // 1024} MB {r['entries']} entries, live "
+                        f"{r['live']['fold_cpu_s']} CPU-s view "
+                        f"{'equal' if r['live']['view_digest'] == r['view_digest'] else 'DIFFERS'}"
                         for r in readings)
     by_exe = "; ".join(
         f"{r['role']}: " + ", ".join(f"{name} {secs:g}" for name, secs in r["child_cpu_by_exe"].items())
@@ -502,22 +539,28 @@ def main(argv: list[str] | None = None) -> int:
                 "triggers": {"cpu_s": args.cpu_trigger, "rss_kb": args.rss_trigger_kb},
                 "guard": guard,
                 "over": over,
+                "disagree": disagree,
                 "binaries": provenance,
             }, indent=1) + "\n")
         except OSError as exc:
             print(f"rust-measurement: artifact not written: {exc.strerror or exc}", file=sys.stderr)
         append_history(home, {
             "measured_at": measured_at,
-            "verdict": "red" if over or drift or broken else
+            "verdict": "red" if over or disagree or drift or broken else
                        ("unknown" if unknown else "green"),
             "release": release,
             "provenance_error": release_error,
             "readings": readings,
             "guard": guard,
             "over": over,
+            "disagree": disagree,
             "binaries": provenance,
         })
 
+    if disagree:
+        print("rust-measurement: RED the cached role view a wake receives is not the "
+              f"view the canonical tape rebuilds: {'; '.join(disagree)}", file=sys.stderr)
+        return 2
     if drift or broken:
         print("rust-measurement: RED installed Rust bytes do not match the release source: "
               f"{'; '.join(broken + drift)}", file=sys.stderr)
