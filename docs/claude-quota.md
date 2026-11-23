@@ -40,8 +40,9 @@ verdict and names the window and rule that triggered a RED. The tracked publishe
 that signal with no subscribers, so a site that wants the verdict routed registers its own
 resolver. The codex-a verdict appears in the publisher's result and the household budget
 view. The `budget-codex` duty (`checks/budget-codex.py`, resolver `steward`) judges
-the codex-a 5h and 7d windows: RED when a FRESH window is used past 0.9, UNKNOWN when a
-window is not FRESH or malformed. Burn is not judged. The `signal-coverage` duty probes
+the codex-a 5h and 7d windows: RED when a FRESH window is used past 0.9 (even if the other
+window is unmeasured), UNKNOWN when no window is spent and one is not FRESH or malformed,
+and UNKNOWN when `engine/budget.json` itself is unreadable or malformed. Burn is not judged. The `signal-coverage` duty probes
 it beside `budget-claude` and reports a fresh RED codex-a verdict as a provider finding
 when `budget-codex` has no signal registration.
 
