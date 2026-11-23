@@ -234,6 +234,10 @@ is not mistaken for a quiet mind.
   The trend
   sparkline buckets the whole loaded day into `USUAL_BUCKETS` (40) means and is labelled `trend 24 h`
   at the line: the header's "last 40 probes" is only a default, and says wider windows are labelled.
+- `SPIKES`: how many of the same last ten web probes took over 1 s (`SPIKE_WEB_MS`). A median
+  hides intermittent spikes, so this row names the count beside `USUAL`, on its own line because
+  `USUAL` is already at the pane width. It reads `UNKNOWN` when there are no web samples in the
+  window. It is a count, not a verdict: it does not turn the headline into a warning.
   Without that label a day-long ramp read as a two-hour ramp.
   A bucket with no answered check draws as `·` rather than being skipped, so a dead
   stretch keeps its place on the trend instead of closing up and looking continuous.
