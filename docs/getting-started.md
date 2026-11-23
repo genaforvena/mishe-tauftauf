@@ -137,7 +137,7 @@ message names the sibling and the prefix to restore.
 ## 5. Start
 
 ```sh
-mishe hold off              # releases the hold and offers the first role that is owed a wake (see below)
+mishe hold off              # releases the hold and starts a wake for each role that is owed one (start-spaced; see below)
 ```
 
 Owed means something happened that the role has not seen: a message, a signal that
