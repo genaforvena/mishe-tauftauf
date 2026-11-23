@@ -114,14 +114,36 @@ def runs_something(entry):
     return any(isinstance(node, ast.Call) for node in _import_time_nodes(tree))
 
 
+def _is_main_guard(test):
+    """``__name__ == "__main__"`` (True) or ``__name__ != "__main__"`` (False); None for any other test."""
+    if (isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1
+            and isinstance(test.left, ast.Name) and test.left.id == "__name__"
+            and isinstance(test.comparators[0], ast.Constant) and test.comparators[0].value == "__main__"):
+        if isinstance(test.ops[0], ast.Eq):
+            return True
+        if isinstance(test.ops[0], ast.NotEq):
+            return False
+    return None
+
+
 def _import_time_nodes(tree):
-    """Nodes that run when the module is imported: a call inside an uncalled def or lambda dispatches nothing."""
+    """Nodes that run when ``python -m`` executes the module: a call inside an uncalled def or lambda
+    dispatches nothing, and neither does a call under an ``if __name__ != "__main__"`` guard (the
+    inverted guard read GREEN on 9189368a: field-review-pin-guard-20261123)."""
     pending = list(ast.iter_child_nodes(tree))
     while pending:
         node = pending.pop()
         yield node
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             continue
+        if isinstance(node, ast.If):
+            guard = _is_main_guard(node.test)
+            if guard is False:
+                pending.extend(node.orelse)
+                continue
+            if guard is True:
+                pending.extend(node.body)
+                continue
         pending.extend(ast.iter_child_nodes(node))
 
 

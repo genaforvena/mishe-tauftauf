@@ -199,7 +199,8 @@ def test_an_empty_entry_point_is_red_not_green(tmp_path, capsys):
                                     "from .cli import main\n",
                                     "from .cli import main\n\nif __name__ == '__main__':\n    pass\n",
                                     "from .cli import main\n\ndef _unused():\n    main()\n",
-                                    "from .cli import main\n\nf = lambda: main()\n"])
+                                    "from .cli import main\n\nf = lambda: main()\n",
+                                    "from .cli import main\n\nif __name__ != '__main__':\n    main()\n"])
 def test_an_entry_point_that_runs_nothing_is_red_not_green(tmp_path, capsys, source):
     home = _site(tmp_path, [_rec("delivered")])
     (home / "releases" / SHA / "src" / "mishe_tauftauf" / "__main__.py").write_text(source, encoding="utf-8")
@@ -358,3 +359,12 @@ def test_an_unorderable_record_makes_an_earlier_delivery_unknown(tmp_path, capsy
     assert code == 3
     assert "1.json could not be read" in out.err
     assert signal_store.read(home, "moving-pin-delivery", now=NOW).state == "UNKNOWN"
+
+
+def test_a_call_under_an_inverted_main_guard_is_not_a_dispatch():
+    """python -m runs the module with __name__ == "__main__"; a call that runs only when it is not is no dispatch."""
+    import ast
+    body = "from .cli import main\n\nif __name__ != '__main__':\n    main()\nelse:\n    main()\n"
+    tree = ast.parse(body)
+    calls = [n for n in check._import_time_nodes(tree) if isinstance(n, ast.Call)]
+    assert len(calls) == 1 and calls[0].lineno == 6
