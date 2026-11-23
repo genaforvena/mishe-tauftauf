@@ -28,6 +28,7 @@ SPARK = "▁▂▃▄▅▆▇█"
 STALE_S = 300
 ROUTER_EVERY_S = 60
 SLOW_WEB_MS = 1500
+SPIKE_WEB_MS = 1000  # a single probe over this is a spike worth counting beside the median
 SLOW_DNS_MS = 500
 SPEED_USUAL_RATIO = 1.10    # within 10% of the earlier nights' median counts as "about usual"
 SPEED_BASELINE_NIGHTS = 14  # measured nights the SPEED and UPLOAD lines compare against
@@ -1637,6 +1638,7 @@ def usuality_facts(data, now=None):
             stale = f" (STALE: last probe {a:.0f}s ago)"
     return {"cur": cur, "base": base, "compare": compare, "window": window,
             "samples": samples, "span": span, "base_span": base_span, "stale": stale,
+            "recent_good": good[-USUAL_RECENT:],
             "recent_phrase": recent_phrase, "window_count": len(cur_stamps),
             "clock_phase": clock_phase, "clock_base": clock_base,
             "clock_support": clock_support, "clock_span": clock_span,
@@ -1677,6 +1679,21 @@ def usuality_line(data, now=None, facts=None):
         typical = f"typical {facts['base']:.0f} ms ({facts['compare']}; {facts['base_span']} of samples)"
     return (f"  {'USUAL':<22}{facts['window']:<24}median {facts['cur']:.0f} ms vs {typical}"
             f"  trend {facts['span']}: {day_spark(facts['samples'])}{facts['stale']}")
+
+
+def spike_share_line(facts):
+    """Web probes over SPIKE_WEB_MS in the recent median's window, on their own row.
+
+    The median hides intermittent spikes: one probe in three can take over a second while the
+    median sits near the typical, so this row names the count the median hides. It is kept off the
+    USUAL row, which is already at the pane's width. UNKNOWN when there are no web samples.
+    """
+    recent = (facts or {}).get("recent_good", [])
+    if not recent:
+        return "  SPIKES        UNKNOWN (no web samples in the recent window)"
+    over = sum(1 for v in recent if v > SPIKE_WEB_MS)
+    return (f"  {'SPIKES':<14}{over} of the last {len(recent)} web probes over "
+            f"{SPIKE_WEB_MS // 1000} s (the median hides these)")
 
 
 def headline_state(state, data, now=None, facts=None):
@@ -1841,6 +1858,7 @@ def draw():
     out.append(dns_line(data))
     out.append("  WHERE TIME GOES  " + phase_line(data, facts=facts))
     out.append(usuality_line(data, facts=facts))
+    out.append(spike_share_line(facts))
     out.append("")
     out.append("  SPEED         " + speed_line(nb_speed_rows()))
     out.append("  UPLOAD        " + speed_up_line(nb_speed_up_rows()))

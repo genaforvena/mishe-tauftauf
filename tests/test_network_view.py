@@ -1266,3 +1266,16 @@ def test_render_frame_keeps_the_window_alive_and_loud_on_an_error(monkeypatch):
     assert "WINDOW ERROR" in frame
     assert "NameError: name 'SPEED_BASELINE_NIGHTS' is not defined" in frame
     assert "UNKNOWN" in frame
+
+
+def test_spike_row_counts_the_probes_the_median_hides():
+    # Three of the last ten web probes are over a second while the median sits near the typical.
+    recent = [370.0, 1117.0, 379.0, 364.0, 413.0, 392.0, 1182.0, 366.0, 375.0, 1055.0]
+    line = view.spike_share_line({"recent_good": recent})
+    assert line.startswith("  SPIKES")
+    assert "3 of the last 10 web probes over 1 s" in line
+    assert len(line) <= 172
+
+
+def test_spike_row_is_unknown_without_web_samples():
+    assert "UNKNOWN" in view.spike_share_line({})
