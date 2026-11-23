@@ -276,13 +276,18 @@ and `_CMDLINE` to the release's checker path. Match the application's
 `_SYSTEMD_INVOCATION_ID` to the manager's `USER_INVOCATION_ID` on the
 `Finished` line. The checker outcome is logged before the producer writes
 the signal, and another invocation can advance the shared
-`signals/pin-delivery.seen` stamp. Confirm the stamp advanced during the
-successful invocation. If another writer could account for it, keep the
-producer observation UNKNOWN.
+`signals/pin-delivery.seen` stamp. Capture its mtime and ctime before the
+next sample replaces them. The mtime holds the observation time sampled at
+CLI startup. The ctime shows when the file metadata last changed. A producer
+that started earlier can finish last and move the mtime backward even when
+both units succeed. Confirm the stamp changed during the matching invocation.
+If another writer could account for the stamp, keep the producer observation
+UNKNOWN.
 
 ```sh
 journalctl --user -b -u mishe-producer-pin-delivery.service --since '1 hour ago' \
   -o json --output-fields=MESSAGE,_CMDLINE,_SYSTEMD_INVOCATION_ID,USER_INVOCATION_ID --no-pager
+stat -c 'freshness %y, file changed %z' "$MISHE_SEED_HOME/signals/pin-delivery.seen"
 ```
 
 The delivery record stores the initial `mishe-arm.service` start in
