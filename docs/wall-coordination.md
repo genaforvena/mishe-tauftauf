@@ -228,7 +228,8 @@ timer applies it. The check is the whole test suite, run in a clean worktree of 
 target commit, so neither uncommitted edits in the shared checkout nor the remote CI
 run decide a delivery; CI stays a separate signal (`ci`), as do `pin-lag` and
 `moving-pin-delivery`. The last holds the outcome of the latest completed attempt.
-Read `signals/pin-delivery.detail` for the in-flight phase during a retry. A healthy
+When it reads FAILED, `signals/moving-pin-delivery.detail` names the failing sha, phase
+and diagnostic; a delivered outcome removes that file. Read `signals/pin-delivery.detail` for the in-flight phase during a retry. A healthy
 pin check can refresh `signals/moving-pin-delivery.seen` for the same delivered
 release. To identify which commit the outcome describes, match the commit and
 phase in the `event` field of `signals/moving-pin-delivery.json` to the completed
