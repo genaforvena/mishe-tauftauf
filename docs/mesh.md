@@ -173,7 +173,7 @@ budget stays RED or UNKNOWN. Messages, signal edges and requested follow-ups ret
 acquisition](claude-quota.md).
 
 The camera sense asks the plant's owner, in the owner's own chat, who is in
-the room. The `frame-label-tick` duty runs every five minutes: it sweeps frames
+the room. The `frame-label-tick` duty runs `tools/frame_label_tick.py` every five minutes: it sweeps frames
 older than 24 hours, applies the replies that arrived, and when a room's
 picture has changed enough it sends at most three photos per eight hours and
 waits for the answer. Every reply consumed is recorded as its own receipt (a
@@ -185,7 +185,7 @@ routed instead of sitting in the label record. Frames are deleted once used,
 and the household's consent decides
 which room may be asked at all.
 
-The floor plan (`senses/map/floorplan.json`) labels every value with where it
+The floor plan (`SITE/senses/map/floorplan.json`, in the ignored site home, not in git) labels every value with where it
 came from. The file's own `provenance_kinds` key defines the five words:
 `given` is stated by a person in a DM or label and is not measured by a sensor;
 `measured` is read from a sensor or a physical measurement, with its source;
