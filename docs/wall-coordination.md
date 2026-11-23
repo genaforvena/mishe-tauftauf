@@ -272,17 +272,23 @@ Match the installed producer's `outcome=exit=0` line and journal `_CMDLINE`
 to the checker path for the release under review, then confirm
 `signals/pin-delivery.seen` advanced during that invocation.
 
-The delivery record reports a successful `mishe-arm.service` invocation
-during activation. The CLI prints the due epoch or `None` after it arms.
-Set the journal time range to cover activation. Match the application
-output to the invocation whose start is recorded in
-`rearm.started_monotonic` (microseconds since boot). A skipped command can
-also exit successfully. Treat missing application output as UNKNOWN.
+The delivery record stores the initial `mishe-arm.service` start in
+`consumer_invocation.started_monotonic`. The post-drain arm has a separate
+`rearm.started_monotonic` in the `observe.output` text. Both fields count
+microseconds since boot. The CLI prints the due epoch or `None` after it arms.
+Successive runs can print the same value.
 
 ```sh
-journalctl --user --no-pager --since '1 hour ago' -o short-monotonic \
-  _SYSTEMD_USER_UNIT=mishe-arm.service
+systemctl --user show mishe-arm.service -p ExecMainStartTimestampMonotonic -p InvocationID
+journalctl --user -b --no-pager --since '1 hour ago' -o short-monotonic -u mishe-arm.service
 ```
+
+When the current start matches the recorded one, filter the journal by
+`_SYSTEMD_INVOCATION_ID` using the ID from the same `systemctl show` output.
+For an earlier start, match the recorded time to the journal's `Starting`
+and `Finished` lines for that invocation and look for the application output
+between them. Select the boot and time range that cover activation. A skipped
+command can exit successfully. Treat absent or ambiguous output as UNKNOWN.
 
 The `signal-coverage` duty also starts through the pinned CLI. From an
 independent launcher it can flag a missed cadence when both the `.seen` and
