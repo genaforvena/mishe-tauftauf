@@ -992,7 +992,7 @@
         "--site",
         "{home}"
       ],
-      "every": 120,
+      "every": 180,
       "timeout": 30,
       "max_age": 300,
       "unknown_codes": [
