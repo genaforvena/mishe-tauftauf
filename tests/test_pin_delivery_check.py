@@ -27,7 +27,7 @@ def _site(tmp_path, records, pointer=SHA):
         package = tmp_path / "releases" / pointer / "src" / "mishe_tauftauf"
         package.mkdir(parents=True)
         (package / "__init__.py").touch()
-        (package / "__main__.py").write_text("print('ok')\n", encoding="utf-8")
+        (package / "__main__.py").write_text("from .cli import main\nraise SystemExit(main())\n", encoding="utf-8")
         (tmp_path / "runtime").mkdir()
         (tmp_path / "runtime" / "current").symlink_to(tmp_path / "releases" / pointer)
     return tmp_path
@@ -200,7 +200,10 @@ def test_an_empty_entry_point_is_red_not_green(tmp_path, capsys):
                                     "from .cli import main\n\nif __name__ == '__main__':\n    pass\n",
                                     "from .cli import main\n\ndef _unused():\n    main()\n",
                                     "from .cli import main\n\nf = lambda: main()\n",
-                                    "from .cli import main\n\nif __name__ != '__main__':\n    main()\n"])
+                                    "from .cli import main\n\nif __name__ != '__main__':\n    main()\n",
+                                    'print("hi")\n',
+                                    'if __name__ == "__main__":\n    print("hi")\n',
+                                    'len([])\n'])
 def test_an_entry_point_that_runs_nothing_is_red_not_green(tmp_path, capsys, source):
     home = _site(tmp_path, [_rec("delivered")])
     (home / "releases" / SHA / "src" / "mishe_tauftauf" / "__main__.py").write_text(source, encoding="utf-8")

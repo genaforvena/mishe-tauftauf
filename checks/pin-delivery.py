@@ -24,6 +24,7 @@ Exit: 0 GREEN, 2 RED, 3 UNKNOWN. GREEN prints to stdout, the others to stderr.
 """
 import argparse
 import ast
+import builtins
 import json
 import sys
 import time
@@ -111,7 +112,20 @@ def runs_something(entry):
         tree = ast.parse(entry.read_text(encoding="utf-8", errors="replace"), filename=str(entry))
     except SyntaxError:
         return False
-    return any(isinstance(node, ast.Call) for node in _import_time_nodes(tree))
+    return any(isinstance(node, ast.Call) and not _builtin_callee(node) for node in _import_time_nodes(tree))
+
+
+def _builtin_callee(call):
+    """True when a call's callee is a builtin name (``print``, ``len``, ...), which is no command dispatch.
+
+    An entry point whose only call is ``print("hi")`` ran nothing and read GREEN: the walker counted
+    every call, so a builtin at import time stood in for the launcher (measured 2026-11-23 on a
+    probe file; the real entry point calls a name imported from the package).
+    """
+    func = call.func
+    while isinstance(func, ast.Attribute):
+        func = func.value
+    return isinstance(func, ast.Name) and hasattr(builtins, func.id) and func.id not in ("exit", "quit")
 
 
 def _is_main_guard(test):
