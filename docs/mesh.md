@@ -14,11 +14,15 @@ changes. A signal that drifts on every sample can instead wake its role only
 when the reading is not OK or its verdict is RED or UNKNOWN. A reading older
 than its declared age is `UNKNOWN`, not a pass.
 
-Three built-in signals are easy to misread from their names alone:
+Seven built-in signals are easy to misread from their names alone:
 
 - `dispatch` is RED when a wake's dispatch record has stayed open longer than the engine's hard cap plus five minutes. A wake that is still running inside its cap is GREEN.
 - `ci` is the GitHub Actions result for the remote commit: pass is GREEN, fail is RED with its cause. While the newest run is still pending, the newest finished run decides; if no run has finished yet, the standing result stays.
 - `tape-lock` is RED only when the plant-wide tape lock (`.seed.lock`) cannot be taken across every attempt in one check. A lock held briefly by a writer is GREEN.
+- `delivery-requests` is RED while a delivery admission outlives its owner or a request is UNKNOWN. Otherwise it is GREEN.
+- `memory-samples` appends memory pressure, anonymous memory and charged memory rows to the sample store. A reading that cannot be taken writes no row, and when none can be taken the signal is UNKNOWN. Nothing is carried forward from an older sample.
+- `footprint` shows the latest anonymous memory, charged memory and pressure samples from the last 15 minutes side by side. If any one of the three is missing it is UNKNOWN, not the value of an older sample.
+- `repo-change` reports the newest commit on the checkout and each subscriber's delta. A failed read is UNKNOWN with its cause, never GREEN.
 
 A *mind* is one agent that holds a role, such as Genome (which pushes `main`) or Docs (this book).
 A *wall* is a mind's shared status page. A *wake* is one turn of a mind, started only when something
