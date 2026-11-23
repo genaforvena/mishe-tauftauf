@@ -551,19 +551,9 @@ ROUTERAI_BALANCE_HISTORY = "engine/routerai-balance.jsonl"
 
 
 def _last_history_row(path: Path) -> dict | None:
-    """The newest row of an append-only jsonl, read from its tail (the file grows every tick)."""
-    try:
-        with path.open("rb") as handle:
-            handle.seek(0, 2)
-            size = handle.tell()
-            handle.seek(max(0, size - 65536))
-            lines = handle.read().splitlines()
-        for line in reversed(lines):
-            if line.strip():
-                return json.loads(line)
-    except (OSError, ValueError):
-        return None
-    return None
+    """The newest decodable row of an append-only jsonl (decoding is read_jsonl_rows' boundary)."""
+    rows = read_jsonl_rows(path)
+    return rows[-1] if rows else None
 
 
 def append_codex_history(home: Path, now: float, codex: dict | None) -> None:
