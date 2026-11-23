@@ -513,7 +513,7 @@ def devices_state(rows, now):
         return 3, f"network-care: {problem}"
     entries = sorted(readings.items())
     problems = [f"{name} {problem}" for name, result in entries
-                if (problem := nb.device_ping_reply_problem(result))]
+                if (problem := nb.device_ping_plain_problem(result))]
     if problems:
         return 3, "network-care: per-device ping UNKNOWN (" + "; ".join(problems) + ")"
     parts = [f"{name} {res['avg_ms']:.1f} ms avg, {res['loss_pct']:.0f}% loss"

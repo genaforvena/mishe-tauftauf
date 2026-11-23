@@ -529,6 +529,21 @@ def device_ping_sample(rows, now):
     return devices, max(age, 0), None
 
 
+def device_ping_plain_problem(result):
+    """The reply problem in plain words for the window and the detector alike.
+
+    When the kernel's neighbour state says ARP got no answer, the device is silent on the LAN (asleep,
+    off, or firewalled), not a fault on our side, so say that instead of echoing "no reply (no reply)".
+    """
+    problem = device_ping_reply_problem(result)
+    if problem is None:
+        return None
+    neigh = result.get("neigh") if isinstance(result, dict) else None
+    if neigh in ("FAILED", "INCOMPLETE"):
+        return "not answering the LAN (no ARP answer)"
+    return problem
+
+
 def device_ping_reply_problem(result):
     """Describe a failed or malformed reply, or return None for a usable measurement."""
     if not isinstance(result, dict):
