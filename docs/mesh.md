@@ -169,7 +169,7 @@ free route (a model that costs no paid inference) in that role's own roster (the
 the role may be routed to) with fresh ledger evidence (the append-only log of routing decisions and
 wake outcomes, see [budget contract](budget-json-contract.md)) and available capacity. At each
 attempt the router checks the budget again, so a free refusal cannot spend paid inference while the
-hold stands. Messages, signal edges and requested follow-ups retain normal routing. See [quota
+budget stays RED or UNKNOWN. Messages, signal edges and requested follow-ups retain normal routing. See [quota
 acquisition](claude-quota.md).
 
 The camera sense asks the plant's owner, in the owner's own chat, who is in
