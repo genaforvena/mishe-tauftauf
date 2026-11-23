@@ -15,7 +15,6 @@ unit succeeds, so a routine stale sample does not mark the producer failed.
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 import time
@@ -66,8 +65,20 @@ def _restore_memory_floor(home, name: str) -> dict:
 
 
 def _cause_key(text: str) -> str:
-    """A reason with its numbers removed: the same cause at a later age or count compares equal."""
-    return re.sub(r"\d+(?:\.\d+)?", "#", text)
+    """A reason with its numbers removed: the same cause at a later age or count compares equal.
+
+    Each run of digits becomes one "#", so "age 9m" and "age 12m" compare equal.
+    """
+    out, in_number = [], False
+    for ch in text:
+        if ch.isdigit():
+            if not in_number:
+                out.append("#")
+            in_number = True
+        else:
+            out.append(ch)
+            in_number = False
+    return "".join(out)
 
 
 def run(home, name: str, command: list, *, now: float, timeout: float, red_codes=(2,), unknown_codes=()) -> int:
