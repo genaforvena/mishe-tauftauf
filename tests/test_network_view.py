@@ -1279,3 +1279,20 @@ def test_spike_row_counts_the_probes_the_median_hides():
 
 def test_spike_row_is_unknown_without_web_samples():
     assert "UNKNOWN" in view.spike_share_line({})
+
+
+def test_spike_row_counts_samples_when_the_baseline_is_too_thin():
+    # Fewer than USUAL_MIN_SAMPLES web samples: no USUAL comparison, but the SPIKES row must still
+    # count the samples it has instead of claiming there are none.
+    import time as _time
+    now = 1_800_000_000.0
+    data = []
+    for i, ms in enumerate([370, 1117, 379, 364, 413, 392, 1182, 366, 375, 1055]):
+        stamp = _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(now - (10 - i) * 300))
+        check = {"ok": True, "total_ms": ms}
+        data.append({"at": stamp, "internet": {"gstatic": check, "cloudflare": check}})
+    facts = view.usuality_facts(data, now=now)
+    assert facts["compare"] is None
+    line = view.spike_share_line(facts)
+    assert "UNKNOWN" not in line
+    assert "3 of the last 10 web probes over 1 s" in line

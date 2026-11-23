@@ -1598,7 +1598,8 @@ def usuality_facts(data, now=None):
     samples = [v for _, v, _ in recent]
     good = [v for v in samples if v is not None]
     if len(good) < USUAL_MIN_SAMPLES:
-        return {"compare": None, "good_count": len(good)}
+        # Thin data still has recent web samples: the SPIKES row must count them, not claim there are none.
+        return {"compare": None, "good_count": len(good), "recent_good": good[-USUAL_RECENT:]}
     good_stamps = [t for t, v, _ in recent if v is not None]
     cur_stamps = good_stamps[-USUAL_RECENT:]
     cur = statistics.median(good[-USUAL_RECENT:])
