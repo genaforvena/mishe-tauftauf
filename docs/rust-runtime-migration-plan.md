@@ -15,7 +15,7 @@ Status: an executed plan, not a proposal. Written from `docs/rust-runtime-invest
 | Item | Value | Source |
 |---|---|---|
 | Checkout HEAD | `949feffe` on main; upstream `3555dec8` adds the owner clarification (read with `git show`, not merged) | `git log`, `git show 3555dec8:docs/rust-runtime-investigation-plan.md` |
-| Untracked, not ours | `checks/work_balance.py`, `tests/test_work_balance.py` (left alone) | `git status --short` |
+| Untracked, not ours (at 949feffe) | `checks/work_balance.py`, `tests/test_work_balance.py` (left alone). Both are absent from the checkout as of 2026-11-23, so this row is a baseline record, not a current fact. | `git status --short` at 949feffe |
 | Live pin | `runtime/current` -> `releases/4a4b94ce09b5cedc76b2a33bf0009f043c2edba7` | symlink |
 | Pin vs HEAD | Pin is an ancestor of HEAD, 5 commits behind. `producers.py`, `duties.py`, `runtime_cli.py` differ. The pinned producer lacks `unknown_codes` (added at `7eec5ed0`). | `diff` against the pin; `systemctl --user show mishe-producer-observer-checks.service` shows no `--unknown-codes` |
 | Rust toolchain | cargo 1.97.0, rustc 1.97.0 under `/home/mesh-home/.cargo/bin`. Not pinned: no `rust-toolchain.toml` or `.rust-toolchain` in the repo. rustup 1.29.0 also present. | `cargo --version`, `rustc --version`, `ls rust-toolchain*` |
@@ -144,7 +144,7 @@ Reading:
 
 ### 2.5 Existing tests for the read path
 
-`tests/test_feed.py` covers the role-view cache directly (9 tests in the role-view and cache group, lines 90–225: streaming instead of whole reads, cache extension from the canonical tail, verification of discarded records, refusal of corruption, rejection of a bad appended record, rewrite and corrupt index). It also covers corruption refusal (line 314), corrupt index failing closed (355), checkpoint rebuild (403), identity index crash rebuild (436) and a reader failing closed mid-parse (679). `tests/test_records_verified_store.py` covers the verified store. Coverage of the role-view cache across processes is absent: no test covers a cold process reusing state, because the cache is process-local.
+`tests/test_feed.py` covers the role-view cache directly (9 tests in the role-view and cache group, lines 90–225: streaming instead of whole reads, cache extension from the canonical tail, verification of discarded records, refusal of corruption, rejection of a bad appended record, rewrite and corrupt index). It also covers corruption refusal (line 314), corrupt index failing closed (355), checkpoint rebuild (403), identity index crash rebuild (436) and a reader failing closed mid-parse (679). At the 949feffe baseline `tests/test_records_verified_store.py` covered the Python verified store; that store and its tests were retired in `9cecab64` (slice B), so the file is gone. Coverage of the role-view cache across processes is absent: no test covers a cold process reusing state, because the cache is process-local.
 
 ### 2.6 Not measured (UNKNOWN, with safe trigger)
 
