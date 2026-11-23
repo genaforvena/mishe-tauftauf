@@ -57,6 +57,11 @@ Claude burn uses `operator/budget/claude-native-rate-history.jsonl`, which conta
 complete native `/usage` samples. The older `claude-rate-history.jsonl` combines
 native observations and statusLine renders and is retained as historical evidence.
 
+Codex-a burn uses `operator/budget/quota-history.jsonl`. `budget-produce` appends one row per
+FRESH codex-a reading (`{"at": …, "q": {"codex-a/5h": [remaining, reset_at], …}}`). A stale or
+absent codex reading writes no row, so its burn is not measured until a fresh reading arrives,
+and the window-elapsed estimate applies meanwhile; a missing row is not a zero burn.
+
 ## Problem (state before the 2026-11-12 cutover)
 
 The budget window had three independent writers and a viewer that carried its own
