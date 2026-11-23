@@ -265,9 +265,9 @@ journalctl --user -u mishe-producer-pin-delivery.service \
   --since '1 hour ago' --no-pager
 ```
 
-An empty or import-only CLI entry point can make the unit exit successfully
-while skipping the checker and failure reporter. A retained checker can still
-report GREEN if `__main__.py` calls an unrelated function and skips `main`.
+The pinned CLI can exit successfully while skipping the unit's command. A
+retained checker can still report GREEN when the entry point calls an unrelated
+imported function or calls `main(["--help"])` and exits after printing usage.
 Match the installed producer's `outcome=exit=0` line and journal `_CMDLINE`
 to the checker path for the release under review, then confirm
 `signals/pin-delivery.seen` advanced during that invocation.
