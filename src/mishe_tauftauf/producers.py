@@ -107,7 +107,13 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
         label = "unknown" if code in unknown_codes else "exit"
         print(f"mishe: {name}: {label}={code} detail={shown}", file=sys.stderr)
     if code in unknown_codes:
-        return 0            # a declared "stale or missing input": not observed, so the signal ages to UNKNOWN
+        # A declared "stale or missing input": not observed, so a fresh GREEN still ages to UNKNOWN as declared.
+        # A signal already UNKNOWN keeps its stale reason ("expired after ...") unless the check says why now.
+        current = signal_store.recorded(home, name)
+        if current and current.get("state") == signal_store.UNKNOWN:
+            reason = detail_brief(detail, REASON_MAX) or f"check exit {code}"
+            signal_store.observe_unknown(home, name, now=now, source=f"run:{command[0]}", reason=reason)
+        return 0
     if code != 0 and code not in red_codes:
         # A crash or "cannot tell" (1, 3, 127, a signal) is not an observation, and the last GREEN must not stand for it.
         signal_store.observe_unknown(home, name, now=now, source=f"run:{command[0]}",

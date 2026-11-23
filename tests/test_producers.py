@@ -163,6 +163,21 @@ def test_declared_unknown_code_succeeds_and_leaves_signal_to_age(home):
     assert store.read(home, "devto", now=NOW + 5000).state == "UNKNOWN"
 
 
+def test_declared_unknown_on_an_expired_signal_records_the_checks_cause_once(home):
+    # network-device-reach: the signal already expired to UNKNOWN, and the dossier must say why now, not the age.
+    producers.run(home, "devto", [PY, "-c", "pass"], now=NOW, timeout=10)
+    store.expire(home, now=NOW + 5000)
+    script = "print('per-device ping UNKNOWN (iMac not answering the LAN)'); import sys; sys.exit(4)"
+    assert producers.run(home, "devto", [PY, "-c", script], now=NOW + 5001, timeout=10, unknown_codes=(4,)) == 0
+    recorded = store.recorded(home, "devto")
+    assert recorded["state"] == "UNKNOWN"
+    assert recorded["reason"] == "per-device ping UNKNOWN (iMac not answering the LAN)"
+    # The same cause on the next run is no edge: subscribers are not woken again.
+    before = (home / "signals" / "devto.json").read_bytes()
+    assert producers.run(home, "devto", [PY, "-c", script], now=NOW + 5100, timeout=10, unknown_codes=(4,)) == 0
+    assert (home / "signals" / "devto.json").read_bytes() == before
+
+
 def test_declared_unknown_code_logs_its_reason_to_the_journal(home, capsys):
     # A Mac-down camera exits 4 and writes its reason only to stdout; the journal must still carry it.
     script = "print('{\"reason_code\": \"mac_unreachable\"}'); import sys; sys.exit(4)"
