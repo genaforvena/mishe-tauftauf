@@ -238,10 +238,10 @@ unchanged result refreshes `signals/pin-delivery.seen` and leaves the last edge 
 check cannot establish a fresh reading. The last reading expires after ten
 minutes without a successful observation. During a promotion the checker
 still inspects the release that `runtime/current` points to. If that release
-directory exists but its runtime package or the entry point at
-`src/mishe_tauftauf/__main__.py` is missing, blank, or holds no executable statement
-(comment or docstring only, or a syntax error), a running checker reports RED
-immediately. A missing or unreadable pointer yields no fresh observation.
+directory has no runtime package, a running checker reports RED immediately.
+It also reports RED if `src/mishe_tauftauf/__main__.py` is missing, has a
+syntax error or only imports `main`. A missing or unreadable pointer yields
+no fresh observation.
 Genome subscribes to changes in `pin-delivery`. If a healthy sample arrives
 during Genome's 120-second wake debounce (`wake_debounce_seconds`), Genome's
 dossier, read when the wake starts, can show GREEN. Each sample replaces the
@@ -265,12 +265,12 @@ journalctl --user -u mishe-producer-pin-delivery.service \
   --since '1 hour ago' --no-pager
 ```
 
-An empty or comment-only CLI entry point can make the unit exit successfully
-while skipping the checker and failure reporter. A CLI that only imports
-`main` can do the same, even when a checker launched from a retained release
-publishes GREEN. Confirm that the installed producer ran its checker by
-looking for that invocation's `outcome=exit=0` line in its journal and
-checking that `signals/pin-delivery.seen` advanced.
+An empty or import-only CLI entry point can make the unit exit successfully
+while skipping the checker and failure reporter. A call under an inverted
+`__main__` guard can produce the same silent exit while a checker launched from
+a retained release publishes GREEN. Confirm that the installed producer ran
+its checker by looking for that invocation's `outcome=exit=0` line in its
+journal and checking that `signals/pin-delivery.seen` advanced.
 
 The `signal-coverage` duty also starts through the pinned CLI. From an
 independent launcher it can flag a missed cadence when both the `.seen` and
