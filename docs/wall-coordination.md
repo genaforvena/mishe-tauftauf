@@ -227,12 +227,16 @@ deterministic check on the exact bytes and ends in the phase `tested`, and the c
 timer applies it. The check is the whole test suite, run in a clean worktree of the
 target commit, so neither uncommitted edits in the shared checkout nor the remote CI
 run decide a delivery; CI stays a separate signal (`ci`), as do `pin-lag` and
-`moving-pin-delivery`. The last is a latch over *completed* attempts: while a retry is
-`checking`, it still shows the previous attempt's `FAILED`, so read `pin-delivery` (which
-names the in-flight phase) for "is a promotion running now". When the check cannot
-read or order the records or resolve `runtime/current` to the expected release
-directory, it writes the reason to `signals/pin-delivery.detail` and the producer
-journal. Run `mishe signal show pin-delivery` for the effective reading. An
+`moving-pin-delivery`. The last holds the outcome of the latest completed attempt.
+Read `signals/pin-delivery.detail` for the in-flight phase during a retry. A healthy
+pin check can refresh `signals/moving-pin-delivery.seen` for the same delivered
+release. To identify which commit the outcome describes, match the commit and
+phase in the `event` field of `signals/moving-pin-delivery.json` to the completed
+release record. For a delivered commit, also confirm `runtime/current` points to
+that release. When the check cannot read or order the records or resolve
+`runtime/current` to the expected release directory, it writes the reason to
+`signals/pin-delivery.detail` and the producer journal. Run
+`mishe signal show pin-delivery` for the effective reading. An
 unchanged result refreshes `signals/pin-delivery.seen` and leaves the last edge in
 `signals/pin-delivery.json`. The detail and `.ran` timestamp can advance when a
 check cannot establish a fresh reading. The last reading expires after ten
