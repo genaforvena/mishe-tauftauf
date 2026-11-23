@@ -410,3 +410,10 @@ def test_builtin_producer_restores_and_guards_its_floor(monkeypatch, tmp_path):
     assert record["guard"]["repaired"] >= 1
     assert record["guard"]["failed"] == 0
     assert int((cgroup / "memory.high").read_text()) >= floor
+
+
+def test_a_green_run_that_explains_a_skip_leaves_its_reason_in_the_journal(home, capsys):
+    # A cadence that skips on a GREEN exit writes its reason only to the detail file, which the next run overwrites.
+    assert producers.run(home, "devto", [PY, "-c", "print('pin is HEAD: nothing to do')"], now=NOW, timeout=10) == 0
+    err = capsys.readouterr().err
+    assert "devto: exit=0 pin is HEAD: nothing to do" in err

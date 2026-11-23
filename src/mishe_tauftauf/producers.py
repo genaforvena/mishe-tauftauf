@@ -115,6 +115,12 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
     # for a producer that ran on time and said its input is stale.
     (Path(home) / "signals" / f"{name}.ran").touch()
     os.replace(scratch, detail)
+    if code == 0:
+        # The detail file is overwritten by the next run, so a GREEN run that explains itself (a skip such as
+        # "pin is HEAD: nothing to do") would leave no journal trace. One bounded line keeps that reason attributable.
+        brief = detail_brief(detail, REASON_MAX)
+        if brief:
+            print(f"mishe: {name}: exit=0 {brief}", file=sys.stderr)
     if code != 0:
         # The detail file is overwritten by the next run, so the journal carries the check's output for every
         # non-GREEN exit — declared RED included — whose reason would otherwise survive only until that overwrite.
