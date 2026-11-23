@@ -107,8 +107,8 @@ The doctor prints GREEN when every check passes and RED when a check fails.
 Its exit code follows that reading: 0 for GREEN, 1 for RED, and 3 when it cannot read the
 installed units (UNKNOWN), so a script treats anything other than 0 as not ready. The
 stored `doctor` signal is a separate reading: it ages to UNKNOWN when the doctor stops
-running. If the doctor cannot run at all (for example step 2 was skipped, so a Rust binary
-is missing), it prints the error and exits 2.
+running. If the doctor cannot run at all (for example the `--home` path does not exist:
+`site home does not exist`), it prints the error and exits 2.
 
 A fresh site is usually RED here, and that is expected. The repository declares duties
 (recurring checks) whose resolver (the role that acts on the check) is a role `init` does
