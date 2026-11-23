@@ -10,7 +10,8 @@ signals, wake files and operator records live there, and git never tracks it.
 
 A *signal* is a named reading, such as the CI status or the budget, that a
 check writes when its value changes; a role subscribed to it is woken when it
-changes. A signal that drifts on every sample can instead wake its role only
+changes. The periodic check that writes a signal is a *duty*, declared in
+`duties.json`. A signal that drifts on every sample can instead wake its role only
 when the reading is not OK or its verdict is RED or UNKNOWN. A reading older
 than its declared age is `UNKNOWN`, not a pass.
 
