@@ -430,3 +430,38 @@ def test_sound_lines_show_listener_state_even_without_a_log(tmp_path, monkeypatc
     lines = hv.sound_lines(1795194160.0)
     assert lines[0].startswith("  LISTENER: UNKNOWN")
     assert "no audio log" in lines[1]
+
+
+def test_phones_signal_lines_name_the_stale_phone_and_its_reason(tmp_path, monkeypatch):
+    import json
+    detail = tmp_path / "household-phones.detail"
+    monkeypatch.setattr(hv, "PHONES_DETAIL", detail)
+    detail.write_text(json.dumps({
+        "note3": {"status": "ok", "age_s": 30},
+        "redmi10": {"status": "stale", "age_s": 212444.0,
+                    "reason": "Redmi10 stream row 212444s old (reader requires <=120s)"}}))
+    lines = hv.phones_signal_lines()
+    assert len(lines) == 1
+    assert lines[0].startswith("  signal   redmi10 stale: Redmi10 stream row 212444s old")
+    assert "note3" not in "".join(lines)
+
+
+def test_phones_signal_lines_all_ok_adds_nothing(tmp_path, monkeypatch):
+    import json
+    detail = tmp_path / "household-phones.detail"
+    monkeypatch.setattr(hv, "PHONES_DETAIL", detail)
+    detail.write_text(json.dumps({"note3": {"status": "ok"}, "redmi10": {"status": "ok"}}))
+    assert hv.phones_signal_lines() == []
+
+
+def test_phones_signal_lines_fail_closed(tmp_path, monkeypatch):
+    import json
+    detail = tmp_path / "household-phones.detail"
+    monkeypatch.setattr(hv, "PHONES_DETAIL", detail)
+    assert hv.phones_signal_lines() == [
+        "  signal   household-phones detail: UNKNOWN (no readable detail)"]
+    detail.write_text("{broken")
+    assert "UNKNOWN" in hv.phones_signal_lines()[0]
+    detail.write_text(json.dumps({"note3": {"status": "ok"}}))
+    assert hv.phones_signal_lines() == [
+        "  signal   redmi10 UNKNOWN (no entry in detail)"]

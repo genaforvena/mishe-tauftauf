@@ -24,6 +24,7 @@ AUDIO = SITE / "spatial/work/household/audio.jsonl"
 AUDIO_STATUS = SITE / "spatial/work/household/audio-listener-status.json"
 NOTE3_GLOB = "spatial/work/household/note3_samples_run*.jsonl"
 PHONES_FILE = SITE / "spatial/work/household/phones.jsonl"
+PHONES_DETAIL = SITE / "signals" / "household-phones.detail"
 SIGNALS_EDGES = SITE / "signals" / "edges.jsonl"
 BUDGET_FILE = SITE / "engine" / "budget.json"
 MAP_STATE_FILE = SITE / "senses" / "map" / "map-state.json"
@@ -172,6 +173,33 @@ def phones():
     except (OSError, ValueError) as exc:
         out["error"] = (str(exc)[:80], 0)
     return out
+
+
+def phones_signal_lines():
+    """Why each phone is not current, from the household-phones signal detail.
+
+    The UNKNOWN/RED verdict alone does not say which phone is stale or why; its
+    detail file carries each body's status and reason. One line per body that is
+    not ``ok``; a missing or malformed detail is reported as UNKNOWN, never as ok.
+    """
+    try:
+        data = json.loads(PHONES_DETAIL.read_text())
+    except (OSError, ValueError):
+        return ["  signal   household-phones detail: UNKNOWN (no readable detail)"]
+    if not isinstance(data, dict):
+        return ["  signal   household-phones detail: UNKNOWN (malformed detail)"]
+    lines = []
+    for body in ("note3", "redmi10"):
+        part = data.get(body)
+        if not isinstance(part, dict):
+            lines.append(f"  signal   {body} UNKNOWN (no entry in detail)")
+            continue
+        status = part.get("status")
+        if status == "ok":
+            continue
+        reason = str(part.get("reason") or "no reason recorded")
+        lines.append(f"  signal   {body} {status or 'UNKNOWN'}: {reason[:160]}")
+    return lines
 
 
 def note3_battery():
@@ -630,6 +658,7 @@ def draw():
     out.append("")
     ph = phones()
     out.append("PHONES")
+    out += phones_signal_lines()
     note3 = note3_battery()
     if note3 is None:
         out.append("  note3    UNKNOWN (no sampler row)")
