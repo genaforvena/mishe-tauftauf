@@ -266,11 +266,23 @@ journalctl --user -u mishe-producer-pin-delivery.service \
 ```
 
 An empty or import-only CLI entry point can make the unit exit successfully
-while skipping the checker and failure reporter. A call under an inverted
-`__main__` guard can produce the same silent exit while a checker launched from
-a retained release publishes GREEN. Confirm that the installed producer ran
-its checker by looking for that invocation's `outcome=exit=0` line in its
-journal and checking that `signals/pin-delivery.seen` advanced.
+while skipping the checker and failure reporter. A retained checker can still
+report GREEN if `__main__.py` calls an unrelated function and skips `main`.
+Match the installed producer's `outcome=exit=0` line and journal `_CMDLINE`
+to the checker path for the release under review, then confirm
+`signals/pin-delivery.seen` advanced during that invocation.
+
+The delivery record reports a successful `mishe-arm.service` invocation
+during activation. The CLI prints the due epoch or `None` after it arms.
+Set the journal time range to cover activation. Match the application
+output to the invocation whose start is recorded in
+`rearm.started_monotonic` (microseconds since boot). A skipped command can
+also exit successfully. Treat missing application output as UNKNOWN.
+
+```sh
+journalctl --user --no-pager --since '1 hour ago' -o short-monotonic \
+  _SYSTEMD_USER_UNIT=mishe-arm.service
+```
 
 The `signal-coverage` duty also starts through the pinned CLI. From an
 independent launcher it can flag a missed cadence when both the `.seen` and
