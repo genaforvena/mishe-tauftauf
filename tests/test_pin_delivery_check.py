@@ -419,3 +419,22 @@ def test_a_builtin_called_from_the_module_ignores_unreached_bindings(tmp_path, c
     assert code == 2
     assert "__main__.py is missing" in output.err
     assert signal_store.read(home, "moving-pin-delivery", now=NOW).state == "UNKNOWN"
+
+
+@pytest.mark.parametrize("prefix", [
+    "class Unused:\n    help = 1\n",
+    "class Unused:\n    from .cli import help\n",
+    "_ = [help for help in range(3)]\n",
+    "_ = {help: 1 for help in range(3)}\n",
+], ids=["class-assignment", "class-import", "list-comprehension", "dict-comprehension"])
+def test_a_class_body_or_comprehension_binding_does_not_shadow_a_builtin(tmp_path, capsys, prefix):
+    home = _site(tmp_path, [_rec("delivered")])
+    entry = home / "releases" / SHA / "src" / "mishe_tauftauf" / "__main__.py"
+    entry.write_text(prefix + 'help("hi")\n', encoding="utf-8")
+    signal_store = _latch(home)
+
+    code, output = _run(home, capsys)
+
+    assert code == 2
+    assert "__main__.py is missing" in output.err
+    assert signal_store.read(home, "moving-pin-delivery", now=NOW).state == "UNKNOWN"

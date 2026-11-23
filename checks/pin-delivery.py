@@ -129,7 +129,7 @@ def _module_bound_names(tree):
     shadow a module-level builtin during startup.
     """
     bound = set()
-    for node in _import_time_nodes(tree):
+    for node in _import_time_nodes(tree, module_scope=True):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             bound.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -179,15 +179,24 @@ def _is_main_guard(test):
     return None
 
 
-def _import_time_nodes(tree):
+_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+
+
+def _import_time_nodes(tree, module_scope=False):
     """Nodes that run when ``python -m`` executes the module: a call inside an uncalled def or lambda
     dispatches nothing, and neither does a call under an ``if __name__ != "__main__"`` guard (the
-    inverted guard read GREEN on 9189368a: field-review-pin-guard-20261123)."""
+    inverted guard read GREEN on 9189368a: field-review-pin-guard-20261123).
+
+    With ``module_scope`` the walk also stops at class bodies and comprehensions: their names are
+    not module-scope bindings, so they cannot shadow a builtin (c54cc3f3 review: ``class C: help = 1``
+    made ``help("hi")`` a dispatch and read GREEN). Calls in those bodies still run at import."""
     pending = list(ast.iter_child_nodes(tree))
     while pending:
         node = pending.pop()
         yield node
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        if module_scope and (isinstance(node, ast.ClassDef) or isinstance(node, _COMPREHENSIONS)):
             continue
         if isinstance(node, ast.If):
             guard = _is_main_guard(node.test)

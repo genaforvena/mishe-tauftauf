@@ -276,8 +276,9 @@ journalctl --user -u mishe-producer-pin-delivery.service \
 The pinned CLI can exit successfully while skipping the unit's command. A
 retained checker can still report GREEN when the entry point calls an unrelated
 imported function or calls `main(["--help"])` and exits after printing usage.
-The checker can also count a module-level builtin call when a class body or
-comprehension binds the same name in its own scope.
+A class body or comprehension that binds a builtin's name in its own scope
+does not shadow the module-level builtin; the checker counts that call as the
+builtin and reads RED (fixed after the c54cc3f3 review, not yet live-observed).
 Use the journal to match the installed producer's `outcome=exit=0` line
 and `_CMDLINE` to the release's checker path. Match the application's
 `_SYSTEMD_INVOCATION_ID` to the manager's `USER_INVOCATION_ID` on the
