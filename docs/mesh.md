@@ -20,7 +20,7 @@ Seven built-in signals are easy to misread from their names alone:
 - `ci` is the GitHub Actions result for the remote commit: pass is GREEN, fail is RED with its cause. While the newest run is still pending, the newest finished run decides; if no run has finished yet, the standing result stays.
 - `tape-lock` is RED only when the plant-wide tape lock (`.seed.lock`) cannot be taken across every attempt in one check. A lock held briefly by a writer is GREEN.
 - `delivery-requests` is RED while a delivery admission outlives its owner or a request is UNKNOWN. Otherwise it is GREEN.
-- `memory-samples` appends memory pressure, anonymous memory and charged memory rows to the sample store. A reading that cannot be taken writes no row, and when none can be taken the signal is UNKNOWN. Nothing is carried forward from an older sample.
+- `memory-samples` appends memory pressure, anonymous memory and charged memory rows to the sample store every three minutes. A reading that cannot be taken writes no row, and when none can be taken the signal is UNKNOWN. Nothing is carried forward from an older sample.
 - `footprint` shows the latest anonymous memory, charged memory and pressure samples from the last 15 minutes side by side. If any one of the three is missing it is UNKNOWN, not the value of an older sample.
 - `repo-change` reports the newest commit on the checkout and each subscriber's delta. A failed read is UNKNOWN with its cause, never GREEN.
 
