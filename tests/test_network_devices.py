@@ -106,15 +106,12 @@ class NeighbourStateTest(unittest.TestCase):
         self.assertEqual(devices.neighbour_state("192.168.8.214", run), "REACHABLE")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class WifiStateTests(unittest.TestCase):
     """The router's newest client list says whether a silent device is still on Wi-Fi."""
 
+    NOW = 1_800_000_000.0
+
     def _home(self, text):
-        import json
         import tempfile
         tmp = Path(tempfile.mkdtemp())
         (tmp / "network").mkdir()
@@ -122,15 +119,37 @@ class WifiStateTests(unittest.TestCase):
             (tmp / "network" / "router.jsonl").write_text(text)
         return tmp
 
-    def test_associated_client_is_associated(self):
+    def _row(self, clients, ts=None, ok=True):
         import json
-        home = self._home(json.dumps({"clients": [{"name": "iMac-Rozalia"}]}) + "\n")
-        self.assertEqual(devices.wifi_state(home, "iMac-Rozalia"), "ASSOCIATED")
+        return json.dumps({"ts": self.NOW if ts is None else ts, "ok": ok, "clients": clients}) + "\n"
+
+    def _state(self, text, name="iMac-Rozalia"):
+        return devices.wifi_state(self._home(text), name, now=self.NOW)
+
+    def test_associated_client_is_associated(self):
+        self.assertEqual(self._state(self._row([{"name": "iMac-Rozalia"}])), "ASSOCIATED")
 
     def test_missing_client_is_absent(self):
-        import json
-        home = self._home(json.dumps({"clients": [{"name": "iPhone"}]}) + "\n")
-        self.assertEqual(devices.wifi_state(home, "iMac-Rozalia"), "ABSENT")
+        self.assertEqual(self._state(self._row([{"name": "iPhone"}])), "ABSENT")
+
+    def test_client_name_match_ignores_case_and_punctuation(self):
+        self.assertEqual(self._state(self._row([{"name": "imac-rozalia"}])), "ASSOCIATED")
+        self.assertEqual(self._state(self._row([{"name": "iMac Rozalia"}])), "ASSOCIATED")
 
     def test_no_router_reading_is_unknown_not_absent(self):
-        self.assertEqual(devices.wifi_state(self._home(None), "iMac-Rozalia"), "UNKNOWN")
+        self.assertEqual(self._state(None), "UNKNOWN")
+
+    def test_stale_router_reading_is_unknown_not_associated(self):
+        stale = self._row([{"name": "iMac-Rozalia"}], ts=self.NOW - devices.ROUTER_STALE_S - 1)
+        self.assertEqual(self._state(stale), "UNKNOWN")
+
+    def test_failed_router_read_is_unknown(self):
+        self.assertEqual(self._state(self._row([{"name": "iMac-Rozalia"}], ok=False)), "UNKNOWN")
+
+    def test_newest_row_decides_not_an_older_fresh_one(self):
+        text = self._row([{"name": "iMac-Rozalia"}], ts=self.NOW - 600) + self._row([{"name": "iPhone"}])
+        self.assertEqual(self._state(text), "ABSENT")
+
+
+if __name__ == "__main__":
+    unittest.main()

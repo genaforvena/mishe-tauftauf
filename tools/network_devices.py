@@ -56,17 +56,40 @@ def neighbour_state(address, run=subprocess.run):
     return nb.decode_neighbour(out.stdout)
 
 
-def wifi_state(home, name):
+ROUTER_STALE_S = 15 * 60  # same bound as network_view.STALE_ROUTER_S: three missed producer runs
+
+
+def _plain(name):
+    """Case, spaces and punctuation removed: the router's hostname may differ in case from the device name."""
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+def wifi_state(home, name, now=None):
     """Whether the router's newest reading lists the device as a Wi-Fi client: ASSOCIATED, ABSENT, or UNKNOWN.
 
-    Read from SITE/network/router.jsonl only (no extra SSH). A device associated to Wi-Fi but silent
-    to ARP and ping is asleep or its IP stack is suspended; a device absent from Wi-Fi has left.
+    Read from SITE/network/router.jsonl only (no extra SSH). Only a fresh, successful router read counts:
+    a stopped router producer must not explain a silent device with hours-old data. A device associated
+    to Wi-Fi but silent to ARP and ping is asleep or its IP stack is suspended; a device absent from
+    Wi-Fi has left.
     """
-    rows = _read_rows(home / "network" / "router.jsonl")
-    if not rows or not isinstance(rows[-1].get("clients"), list):
+    now = time.time() if now is None else now
+    rows = nb.decode_router_rows(_read_text(home / "network" / "router.jsonl"))
+    if not rows:
         return "UNKNOWN"
-    names = {c.get("name") for c in rows[-1]["clients"] if isinstance(c, dict)}
-    return "ASSOCIATED" if name in names else "ABSENT"
+    last = rows[-1]
+    if not last.get("ok") or not 0 <= now - last["ts"] <= ROUTER_STALE_S:
+        return "UNKNOWN"
+    if not isinstance(last.get("clients"), list):
+        return "UNKNOWN"
+    names = {_plain(c.get("name")) for c in last["clients"] if isinstance(c, dict) and c.get("name")}
+    return "ASSOCIATED" if _plain(name) in names else "ABSENT"
+
+
+def _read_text(path):
+    try:
+        return Path(path).read_text()
+    except OSError:
+        return ""
 
 
 def _read_rows(path):
