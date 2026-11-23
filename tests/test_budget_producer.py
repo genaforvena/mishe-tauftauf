@@ -731,9 +731,10 @@ def test_codex_fresh_reading_is_recorded_and_flat_use_measures_zero_burn(tmp_pat
     # A FRESH codex-a reading is written to quota-history; two flat readings 6 h apart give a measured
     # burn of 0 (no runs-out ETA), not the window-elapsed projection that drove a false RED.
     reset = NOW + 4 * 86400
-    codex = {"state": "FRESH", "windows": {"7d": {"remaining": 0.19, "reset_at": reset, "state": "FRESH"}}}
-    bp.append_codex_history(tmp_path, NOW - 6 * 3600, codex)
-    bp.append_codex_history(tmp_path, NOW, codex)
+    def reading(observed):
+        return {"state": "FRESH", "windows": {"7d": {"remaining": 0.19, "reset_at": reset, "state": "FRESH", "observed_at": observed}}}
+    bp.append_codex_history(tmp_path, NOW - 6 * 3600, reading(NOW - 6 * 3600))
+    bp.append_codex_history(tmp_path, NOW, reading(NOW))
     rows = [json.loads(line) for line in (tmp_path / "operator" / "budget" / "quota-history.jsonl").read_text().splitlines()]
     assert [r["q"] for r in rows] == [{"codex-a/7d": [0.19, reset]}] * 2
     points = bp.load_burn_history(tmp_path, NOW)[("codex-a", "7d")]
@@ -744,3 +745,20 @@ def test_codex_stale_reading_writes_nothing(tmp_path):
     codex = {"state": "STALE", "windows": {"7d": {"remaining": 0.19, "reset_at": NOW + 1, "state": "STALE"}}}
     bp.append_codex_history(tmp_path, NOW, codex)
     assert not (tmp_path / "operator" / "budget" / "quota-history.jsonl").exists()
+
+
+def test_codex_row_is_stamped_with_observation_time_and_unchanged_reading_is_not_rerecorded(tmp_path):
+    # The row carries the engine's observed_at, not the producer clock; a re-written FRESH reading whose
+    # observation has not advanced adds no row (it would otherwise repeat every tick).
+    reset = NOW + 4 * 86400
+    path = tmp_path / "operator" / "budget" / "quota-history.jsonl"
+    old_obs = NOW - 900
+    codex = {"state": "FRESH", "windows": {"7d": {"remaining": 0.19, "reset_at": reset, "state": "FRESH", "observed_at": old_obs}}}
+    bp.append_codex_history(tmp_path, NOW, codex)
+    bp.append_codex_history(tmp_path, NOW + 600, codex)
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [r["at"] for r in rows] == [old_obs]
+    newer = {"state": "FRESH", "windows": {"7d": {"remaining": 0.18, "reset_at": reset, "state": "FRESH", "observed_at": NOW + 300}}}
+    bp.append_codex_history(tmp_path, NOW + 600, newer)
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [r["at"] for r in rows] == [old_obs, NOW + 300]

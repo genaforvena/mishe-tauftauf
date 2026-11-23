@@ -550,23 +550,48 @@ ROUTERAI_LLM_SPEND_LIMIT = 200  # operator DM 301051; see build_routerai for the
 ROUTERAI_BALANCE_HISTORY = "engine/routerai-balance.jsonl"
 
 
+def _last_history_row(path: Path) -> dict | None:
+    """The newest row of an append-only jsonl, read from its tail (the file grows every tick)."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - 65536))
+            lines = handle.read().splitlines()
+        for line in reversed(lines):
+            if line.strip():
+                return json.loads(line)
+    except (OSError, ValueError):
+        return None
+    return None
+
+
 def append_codex_history(home: Path, now: float, codex: dict | None) -> None:
-    """One quota-history row per codex-a reading, so codex burn is measured (recent_burn) instead of
+    """One quota-history row per codex-a observation, so codex burn is measured (recent_burn) instead of
     projected from the window average (elapsed fallback). Nothing else writes codex-a rows: without this
     a flat 7d reading (81% used for hours) still reported a 10h44m runs-out ETA. Only a FRESH reading is
-    written; a stale or absent one writes nothing, so its gap stays UNKNOWN, not zero."""
+    written; a stale or absent one writes nothing, so its gap stays UNKNOWN, not zero.
+    The row is stamped with the engine's observation time (the windows' observed_at), never the producer
+    clock, and a reading whose observation time is not newer than the last row is not re-recorded."""
     if not codex or codex.get("state") != "FRESH":
         return
     q = {}
+    observed = []
     for window, w in (codex.get("windows") or {}).items():
         if isinstance(w, dict) and _num(w.get("remaining")) and _num(w.get("reset_at")):
             q[f"{codex_alias()}/{window}"] = [w["remaining"], w["reset_at"]]
-    if not q:
+            if _num(w.get("observed_at")):
+                observed.append(w["observed_at"])
+    if not q or not observed:
         return
+    at = max(observed)
     path = home / "operator" / "budget" / ENGINE_HISTORY
+    last = _last_history_row(path)
+    if last is not None and _num(last.get("at")) and at <= last["at"]:
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"at": now, "q": q}, sort_keys=True) + "\n")
+        handle.write(json.dumps({"at": at, "q": q}, sort_keys=True) + "\n")
 
 
 def codex_alias() -> str:
