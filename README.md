@@ -158,10 +158,10 @@ A signal is a named live reading. A failed unit turns its signal RED and sends a
 role that resolves it. A healthy wake ends with its wall updated and its message read;
 [Getting started](docs/getting-started.md) shows how to watch one.
 
-`mishe signal show NAME` reports the age of the last observation. The timestamp inside the
-signal's own file is older than that on purpose: it records the last time the reading CHANGED,
-so a producer that keeps reporting the same value leaves it where it was. Read the reported age
-to know whether a monitor is alive.
+`mishe signal show NAME` prints the reading: its `value`, `state`, `source`, `reason` and
+`observed_at`. `observed_at` is the time the value last CHANGED, not the time of the last check:
+a producer that keeps reporting the same value leaves it where it was, on purpose. To tell whether
+a monitor is alive, read `state`: a reading older than its `max_age` is read back as UNKNOWN.
 
 ## Limits
 
