@@ -104,10 +104,11 @@ mishe doctor                # exits 0 only when GREEN; RED exits 1 and prints ea
 ```
 
 The doctor prints GREEN when every check passes and RED when a check fails.
-Its stored signal reads UNKNOWN if the result is missing, unreadable or too old; the
-command then exits 3, so a script treats anything other than 0 as not ready. If the doctor
-cannot run at all (for example step 2 was skipped, so a Rust binary is missing), it prints
-the error and exits 2.
+Its exit code follows that reading: 0 for GREEN, 1 for RED, and 3 when it cannot read the
+installed units (UNKNOWN), so a script treats anything other than 0 as not ready. The
+stored `doctor` signal is a separate reading: it ages to UNKNOWN when the doctor stops
+running. If the doctor cannot run at all (for example step 2 was skipped, so a Rust binary
+is missing), it prints the error and exits 2.
 
 A fresh site is usually RED here, and that is expected. The repository declares duties
 (recurring checks) whose resolver (the role that acts on the check) is a role `init` does
