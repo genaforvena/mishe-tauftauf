@@ -129,8 +129,9 @@ is not mistaken for a quiet mind.
   newest recorded router read, the line instead names the fact a household can see for itself —
   `still on Wi-Fi at -29 dBm; not answering ssh (it may be asleep)` — because an associated device
   that has gone to sleep and a real connectivity fault produce the same `No route to host`. An
-  older read (over 15 minutes) is not used for that, so a stale listing cannot explain a live
-  fault. UNKNOWN when the file is missing, unreadable or over 15 minutes old.
+  older read (over 15 minutes) or a failed read (`ok` false) is not used for that, so a stale or
+  failed listing cannot explain a live fault. Device names match the way the view matches them:
+  case and punctuation do not matter. UNKNOWN when the file is missing, unreadable or over 15 minutes old.
 - `RECORDED 5-MIN`: the recorded router read (one per 5 minutes): client count by band, weakest
   device by name and dBm, the age of that read and the client count over the last hour. It is the
   read that supplies the device names the live `WI-FI` line shows. When at least one client moved
