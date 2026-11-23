@@ -244,8 +244,8 @@ is not mistaken for a quiet mind.
 - `SPIKES`: how many of the same last ten web probes took over 1 s (`SPIKE_WEB_MS`). A median
   hides intermittent spikes, so this row names the count beside `USUAL`, on its own line because
   `USUAL` is already at the pane width. It counts the web samples in the window even when the
-  `USUAL` baseline is too thin, and reads `UNKNOWN` only when there are no web samples at all. It is a count, not a verdict: it does
-  not turn the headline into a warning.
+  `USUAL` baseline is too thin, and reads `UNKNOWN` only when there are no web samples at all.
+  It is a count, not a verdict: it does not turn the headline into a warning.
 - `WI-FI`: the live listing, one read a minute: client count per band and the weakest client with
   its dBm, its band and the name the household knows it by when the recorded read has that client;
   a device that only just joined shows as its dBm until the next recorded read names it. When any
