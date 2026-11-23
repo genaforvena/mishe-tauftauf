@@ -173,7 +173,7 @@ budget stays RED or UNKNOWN. Messages, signal edges and requested follow-ups ret
 acquisition](claude-quota.md).
 
 The camera sense asks the plant's owner, in the owner's own chat, who is in
-the room. The `frame-label-tick` duty runs `tools/frame_label_tick.py` every five minutes: it sweeps frames
+the room. The `frame-label-tick` duty (declared in `duties.json`) runs `tools/frame_label_tick.py` every five minutes: it sweeps frames
 older than 24 hours, applies the replies that arrived, and when a room's
 picture has changed enough it sends at most three photos per eight hours and
 waits for the answer. Every reply consumed is recorded as its own receipt (a
