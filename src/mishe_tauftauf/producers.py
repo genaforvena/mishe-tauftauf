@@ -15,6 +15,7 @@ unit succeeds, so a routine stale sample does not mark the producer failed.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -62,6 +63,11 @@ def _restore_memory_floor(home, name: str) -> dict:
         record["memory_high"] = throttle
     write_json(Path(home) / "signals" / f"{name}.memory.json", record)
     return record
+
+
+def _cause_key(text: str) -> str:
+    """A reason with its numbers removed: the same cause at a later age or count compares equal."""
+    return re.sub(r"\d+(?:\.\d+)?", "#", text)
 
 
 def run(home, name: str, command: list, *, now: float, timeout: float, red_codes=(2,), unknown_codes=()) -> int:
@@ -112,7 +118,9 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
         current = signal_store.recorded(home, name)
         if current and current.get("state") == signal_store.UNKNOWN:
             reason = detail_brief(detail, REASON_MAX) or f"check exit {code}"
-            signal_store.observe_unknown(home, name, now=now, source=f"run:{command[0]}", reason=reason)
+            # Numbers (ages, counters) change every run; only a change in the cause itself is an edge.
+            if _cause_key(reason) != _cause_key(str(current.get("reason") or "")):
+                signal_store.observe_unknown(home, name, now=now, source=f"run:{command[0]}", reason=reason)
         return 0
     if code != 0 and code not in red_codes:
         # A crash or "cannot tell" (1, 3, 127, a signal) is not an observation, and the last GREEN must not stand for it.

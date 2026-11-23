@@ -178,6 +178,18 @@ def test_declared_unknown_on_an_expired_signal_records_the_checks_cause_once(hom
     assert (home / "signals" / "devto.json").read_bytes() == before
 
 
+def test_an_unknown_cause_whose_only_change_is_a_number_does_not_rewrite_the_signal(home):
+    # household-phones reports age_s in its detail: a run every few minutes must not rewrite and wake subscribers.
+    producers.run(home, "devto", [PY, "-c", "pass"], now=NOW, timeout=10)
+    store.expire(home, now=NOW + 5000)
+    first = "print('phone note3 not current, age_s 44.2'); import sys; sys.exit(4)"
+    assert producers.run(home, "devto", [PY, "-c", first], now=NOW + 5001, timeout=10, unknown_codes=(4,)) == 0
+    before = (home / "signals" / "devto.json").read_bytes()
+    later = "print('phone note3 not current, age_s 351.9'); import sys; sys.exit(4)"
+    assert producers.run(home, "devto", [PY, "-c", later], now=NOW + 5300, timeout=10, unknown_codes=(4,)) == 0
+    assert (home / "signals" / "devto.json").read_bytes() == before
+
+
 def test_declared_unknown_code_logs_its_reason_to_the_journal(home, capsys):
     # A Mac-down camera exits 4 and writes its reason only to stdout; the journal must still carry it.
     script = "print('{\"reason_code\": \"mac_unreachable\"}'); import sys; sys.exit(4)"
