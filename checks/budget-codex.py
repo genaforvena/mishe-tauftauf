@@ -30,22 +30,27 @@ def _num(value) -> bool:
 
 def evaluate(budget: dict) -> tuple[int, str]:
     """(exit code, one-line detail) for the codex-a account in a parsed budget.json."""
-    account = (budget.get("accounts") or {}).get(ACCOUNT)
+    accounts = budget.get("accounts")
+    account = accounts.get(ACCOUNT) if isinstance(accounts, dict) else None
     if not isinstance(account, dict):
         return UNKNOWN, f"{ACCOUNT} absent from engine/budget.json"
-    windows = account.get("windows") or {}
-    parts, verdict = [], GREEN
+    windows = account.get("windows")
+    if not isinstance(windows, dict):
+        windows = {}
+    parts, spent, unmeasured = [], False, False
     for name in WINDOWS:
         w = windows.get(name)
         if not isinstance(w, dict) or w.get("state") != "FRESH" or not _num(w.get("used")):
             parts.append(f"{name} unmeasured")
-            verdict = max(verdict, UNKNOWN)
+            unmeasured = True
             continue
         used = w["used"]
         parts.append(f"{name} {used * 100:.0f}% used")
         if used > USED_LOW:
             parts.append(f"{name} LOW (spent window)")
-            verdict = max(verdict, RED)
+            spent = True
+    # A measured spent window is a real reading: RED outranks an unmeasured sibling.
+    verdict = RED if spent else UNKNOWN if unmeasured else GREEN
     head = f"{ACCOUNT}: " + "; ".join(parts)
     return verdict, head
 
