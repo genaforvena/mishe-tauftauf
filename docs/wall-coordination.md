@@ -271,9 +271,19 @@ journalctl --user -u mishe-producer-pin-delivery.service \
 The pinned CLI can exit successfully while skipping the unit's command. A
 retained checker can still report GREEN when the entry point calls an unrelated
 imported function or calls `main(["--help"])` and exits after printing usage.
-Match the installed producer's `outcome=exit=0` line and journal `_CMDLINE`
-to the checker path for the release under review, then confirm
-`signals/pin-delivery.seen` advanced during that invocation.
+Use the journal to match the installed producer's `outcome=exit=0` line
+and `_CMDLINE` to the release's checker path. Match the application's
+`_SYSTEMD_INVOCATION_ID` to the manager's `USER_INVOCATION_ID` on the
+`Finished` line. The checker outcome is logged before the producer writes
+the signal, and another invocation can advance the shared
+`signals/pin-delivery.seen` stamp. Confirm the stamp advanced during the
+successful invocation. If another writer could account for it, keep the
+producer observation UNKNOWN.
+
+```sh
+journalctl --user -b -u mishe-producer-pin-delivery.service --since '1 hour ago' \
+  -o json --output-fields=MESSAGE,_CMDLINE,_SYSTEMD_INVOCATION_ID,USER_INVOCATION_ID --no-pager
+```
 
 The delivery record stores the initial `mishe-arm.service` start in
 `consumer_invocation.started_monotonic`. The post-drain arm has a separate
