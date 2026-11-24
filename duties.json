@@ -1828,6 +1828,17 @@
       "covers": "the site's hold file: no hold, a hold whose named writer (a promotion pid, a flip pid) is alive, RED when that writer is gone, RED when an anonymous manual or boot hold stands longer than its --max-age (3600 s, refreshed by re-running `mishe hold on`), and one RED after such a hold ends with no recorded disposition. With --release this producer also removes a stale hold (dead writer, or anonymous past --max-age) when the dispatch lock is free and the host guard is not tripped, then reports one RED with the disposition to the operator (operator decision 2026-11-19: nobody else can, a hold suppresses wake starts). A hold suppresses wake starts, so its own fault cannot wake anyone while it stands: this producer runs on a timer and its verdict is visible in the signals and after the wake resumes"
     },
     {
+      "name": "disk-budget",
+      "builtin": true,
+      "every": 600,
+      "timeout": 600,
+      "max_age": 1300,
+      "resolver": "health",
+      "signal": {"max_age": 1300, "subscribers": ["health"], "wake_on": "state"},
+      "replaces": [],
+      "covers": "the disks Mishe needs and the bytes it owns: RED when root free space is under 30 GiB (the host guard trips at 10 GiB and re-arms at 12), /var/tmp free under 10 GiB, the checkout plus site home over 64 GiB, or the releases tree over 2 GiB; UNKNOWN when a reading cannot be taken. Over its ceiling, the releases tree is pruned to the live set plus the newest 8 (runtime/current is protected by name; 40 removals per run, reversible with git worktree add). Sizes are scanned at idle IO priority and cached 30 minutes. wake_on=state wakes health only on RED or UNKNOWN"
+    },
+    {
       "name": "footprint",
       "builtin": true,
       "every": 180,

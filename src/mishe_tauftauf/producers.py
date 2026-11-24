@@ -325,7 +325,17 @@ def footprint(home, *, now: float, **_) -> str:
     return f"anon={anon_gib:.2f}GiB charged={charged_gib:.2f}GiB psi_avg10={psi}"
 
 
-BUILTIN = {"dispatch": dispatch, "ci": ci, "tape-lock": tape_lock, "delivery-requests": delivery_requests,
+def disk_budget(home, *, now: float, **_):
+    """GREEN while the disks Mishe needs have room and what it owns is within its limits.
+
+    Also reclaims unreferenced release worktrees when their tree is over its ceiling. An unreadable
+    disk or size raises, so the signal ages to UNKNOWN, never GREEN.
+    """
+    from . import disk_budget as budget
+    return budget.run(home, now=now)
+
+
+BUILTIN = {"disk-budget": disk_budget, "dispatch": dispatch, "ci": ci, "tape-lock": tape_lock, "delivery-requests": delivery_requests,
            "memory-samples": memory_samples, "footprint": footprint, "repo-change": repo_change}
 
 
