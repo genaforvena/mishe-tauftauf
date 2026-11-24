@@ -179,6 +179,12 @@ is not mistaken for a quiet mind.
   `time_appconnect`). curl reports all three as cumulative checkpoints from the start of the
   request, so printing them raw would double count the connect and leave the figures short of the
   page total.
+  Reading the split: the router's sing-box sends every foreign address (all but `.ru`, `.su` and
+  private addresses) through one proxy outbound, so gstatic and cloudflare take the same path. A
+  connect of about 2 ms is the local tunnel stack answering, not the web server. A slow handshake
+  that moves from one host to the other between probes is therefore variance on that one proxy
+  leg, not a routing split between hosts. Both hosts slow in one row means the shared leg was slow
+  right then; one host slow alone means that single request was slow.
   It also gives the handshake's usual median over the loaded rows and, when both have at least
   `PHASE_BASELINE_MIN` rows, the medians for overnight (00:00–05:59) and the busy hours
   (16:00–20:59). Those hours are named because the web checks and the handshake are elevated there
