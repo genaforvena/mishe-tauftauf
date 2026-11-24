@@ -127,7 +127,17 @@ def prune_releases(home, *, keep: int = RELEASES_KEEP, batch: int = PRUNE_BATCH,
         protect.add(Path(os.path.realpath(home / "runtime" / "current")).name)
     except OSError:
         pass
-    candidates = release_retention.reclaimable_releases(home, protect=protect)
+    # Linked-site registry rows name the releases those sites pin (sha, observed_sha, home).
+    # Without them a release a linked site still uses is invisible here, so an unreadable
+    # registry reclaims nothing rather than a partial protected set.
+    try:
+        registry = read_json(home / "health" / "linked-sites.json")
+    except (OSError, ValueError):
+        return []
+    if not isinstance(registry, dict) or registry.get("version") != 1 or not isinstance(registry.get("sites"), list):
+        return []
+    rows = [site for site in registry["sites"] if isinstance(site, dict)]
+    candidates = release_retention.reclaimable_releases(home, protect=protect, registry_rows=rows)
     if not candidates or (home / "runtime" / "current").exists() is False:
         # No readable moving pin means the protected set is incomplete: reclaim nothing.
         return []

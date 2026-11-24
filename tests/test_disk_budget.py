@@ -66,6 +66,8 @@ def test_prune_keeps_live_current_and_newest(tmp_path, monkeypatch):
         os.utime(wt, (1000 + i, 1000 + i))
     (home / "runtime").mkdir()
     (home / "runtime" / "current").symlink_to(home / "releases" / names[0])  # oldest, pinned by the symlink
+    (home / "health").mkdir()
+    (home / "health" / "linked-sites.json").write_text(json.dumps({"version": 1, "sites": []}))
     monkeypatch.setattr(release_retention, "live_release_names", lambda h, **k: {names[1]})
     gone = []
     removed = disk_budget.prune_releases(home, keep=3, remove=lambda p: gone.append(p.name) or True)
@@ -81,3 +83,44 @@ def test_prune_does_nothing_without_a_readable_moving_pin(tmp_path, monkeypatch)
     (wt / ".git").write_text("gitdir: x")
     monkeypatch.setattr(release_retention, "live_release_names", lambda h, **k: set())
     assert disk_budget.prune_releases(home, keep=0, remove=lambda p: True) == []
+
+
+def _unreferenced_site(tmp_path):
+    home = tmp_path / "site"
+    names = [f"{i:040x}" for i in range(1, 6)]
+    for i, name in enumerate(names):
+        wt = home / "releases" / name
+        wt.mkdir(parents=True)
+        (wt / ".git").write_text("gitdir: x")
+        os.utime(wt, (1000 + i, 1000 + i))
+    (home / "runtime").mkdir()
+    (home / "runtime" / "current").symlink_to(home / "releases" / names[-1])
+    return home, names
+
+
+def test_prune_reclaims_nothing_without_a_readable_linked_site_registry(tmp_path, monkeypatch):
+    home, names = _unreferenced_site(tmp_path)
+    monkeypatch.setattr(release_retention, "live_release_names", lambda h, **k: set())
+    assert disk_budget.prune_releases(home, keep=0, remove=lambda p: True) == []
+    (home / "health").mkdir()
+    (home / "health" / "linked-sites.json").write_text("{not json")
+    assert disk_budget.prune_releases(home, keep=0, remove=lambda p: True) == []
+    (home / "health" / "linked-sites.json").write_text(json.dumps({"version": 2, "sites": []}))
+    assert disk_budget.prune_releases(home, keep=0, remove=lambda p: True) == []
+
+
+def test_prune_passes_linked_site_rows_so_their_pins_stay_protected(tmp_path, monkeypatch):
+    home, names = _unreferenced_site(tmp_path)
+    (home / "health").mkdir()
+    rows = [{"session": "other", "home": str(home), "sha": names[0], "observed_sha": names[1]}]
+    (home / "health" / "linked-sites.json").write_text(json.dumps({"version": 1, "sites": rows}))
+    seen = {}
+
+    def live(h, **k):
+        seen.update(k)
+        return set()
+
+    monkeypatch.setattr(release_retention, "live_release_names", live)
+    removed = disk_budget.prune_releases(home, keep=0, remove=lambda p: True)
+    assert seen["registry_rows"] == rows
+    assert removed  # the registry being readable does not stop the reclaim itself
