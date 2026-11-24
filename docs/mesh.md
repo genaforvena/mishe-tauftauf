@@ -169,7 +169,7 @@ A pane loads its code once, when its process starts, from the runtime pin in for
 The pin is the `runtime/current` link in the site, which names the release now running; only the
 delivery path moves it. After the pin moves, a pane keeps running the code it loaded until it is
 restarted. A failed read in any window shows `View UNKNOWN` with the cause, and the window keeps
-following. Senses' scan readings renew independently once they are more than ten minutes old, ahead of the panes' fifteen-minute freshness gate. `mishe discover show` shows the
+following. Senses' scan readings come from `mishe discover scan`. The renewal threshold is ten minutes (`RENEWAL_MAX_AGE_SECONDS`), ahead of the panes' fifteen-minute freshness gate. Nothing in the tracked code schedules that renewal since the pane runtime was removed (commit 943276d9), so a reading stays current only while something outside the tracked code runs the scan. `mishe discover show` shows the
 acquisition freshness and each source's state; a new host scan cannot make an old phone sample
 current. If the chat tape (the append-only message log) cannot be read in verified form, the DM
 disposition and the latency readings that depend on it stay unknown rather than using a partial tape
