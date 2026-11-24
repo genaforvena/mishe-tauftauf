@@ -158,6 +158,8 @@ journalctl --user -u mishe-wake@genome.service -f
 ls SITE_HOME/wakes/ ; cat SITE_HOME/dispatch/genome.json   # the dispatch file: the state of that role's run
 ```
 
+A *dispatch* is one durable record per role (`SITE_HOME/dispatch/ROLE.json`): `started`, `completed`, `unknown`, `reconciled`, … (see [How it works](how-it-works.md#file-layout)).
+
 A healthy wake ends with its dispatch file (`SITE_HOME/dispatch/ROLE.json`) at `completed`, the wall updated and the message
 read. Cost and turns are in the wake's `*.out.json` (claude).
 
