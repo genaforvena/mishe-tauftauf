@@ -208,7 +208,24 @@ def test_outage_episode_across_midnight_carries_both_dates():
 
 def test_outage_span_names_its_dates_and_length_not_just_times():
     data = [_probe("2026-11-14T16:54:05Z", False), _probe("2026-11-18T02:02:55Z", False)]
-    assert view.outage_lines(data) == ["  none over the last 2 probes in 3.4 days (11-14 16:54Z to 11-18 02:02Z)"]
+    assert view.outage_lines(data) == [
+        "  NO PROBES 11-14 16:54Z to 11-18 02:02Z (4869 min): UNKNOWN, not calm",
+        "  (over the last 2 probes in 3.4 days (11-14 16:54Z to 11-18 02:02Z))"]
+
+
+def test_a_probe_silence_of_under_fifteen_minutes_is_not_a_gap():
+    data = [_probe("2026-11-10T10:00:00Z", False), _probe("2026-11-10T10:03:00Z", False),
+            _probe("2026-11-10T10:17:00Z", False)]
+    assert view.probe_gaps(data) == []
+
+
+def test_probe_silence_is_named_unknown_between_two_calm_probes_and_sorted_with_outages():
+    # shape of the 2026-11-24 silence (16:12 -> 17:05Z): one DOWN run, then a long silence to the next row
+    data = [_probe("2026-11-10T10:00:00Z", False), _probe("2026-11-10T10:03:00Z", True),
+            _probe("2026-11-10T10:06:00Z", False), _probe("2026-11-10T11:00:00Z", False)]
+    lines = view.outage_lines(data)
+    assert lines[0] == "  DOWN 10:03Z to 10:06Z (3 min)"
+    assert lines[1] == "  NO PROBES 11-10 10:06Z to 11-10 11:00Z (54 min): UNKNOWN, not calm"
 
 
 def test_outage_lines_say_none_when_all_probes_answer_and_unknown_without_rows():

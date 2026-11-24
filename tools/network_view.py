@@ -367,19 +367,43 @@ def outage_lines(data):
                if begin is not None and finish is not None and finish >= begin else "")
     span = f"over the last {len(seen)} probes{stretch} ({at_short(first)} to {at_short(last)})"
     episodes = outage_episodes(data)
-    if not episodes:
+    gaps = probe_gaps(seen)
+    if not episodes and not gaps:
         return [f"  none {span}"]
-    out = []
+    timed = []
     for start, end in episodes:
         if end is None:
-            out.append(f"  DOWN since {at_short(start)}, still down at the last probe")
+            timed.append((nb.utc_epoch(start), f"  DOWN since {at_short(start)}, still down at the last probe"))
         else:
             same_day = at_short(start)[:5] == at_short(end)[:5]
             when = (f"{start[11:16]}Z to {end[11:16]}Z" if same_day
                     else f"{at_short(start)} to {at_short(end)}")
             mins = (nb.utc_epoch(end) - nb.utc_epoch(start)) / 60
-            out.append(f"  DOWN {when} ({mins:.0f} min)")
+            timed.append((nb.utc_epoch(start), f"  DOWN {when} ({mins:.0f} min)"))
+    timed.extend(gaps)
+    out = [line for _, line in sorted(timed, key=lambda item: item[0] or 0)]
     return out + [f"  ({span})"]
+
+
+PROBE_GAP_S = 900  # the probe runs every 3 min; a silence this long is a gap, never a calm stretch
+
+
+def probe_gaps(seen):
+    """(epoch, line) for each silence of more than PROBE_GAP_S between two secure-web probe rows.
+
+    Probes that never ran say nothing about the internet, so an outage list that only names DOWN
+    runs would read a multi-hour silence as calm. Each gap is named as UNKNOWN instead.
+    """
+    gaps = []
+    for before, after in zip(seen, seen[1:]):
+        try:
+            a, b = nb.utc_epoch(before["at"]), nb.utc_epoch(after["at"])
+        except ValueError:
+            continue
+        if a is not None and b is not None and b - a > PROBE_GAP_S:
+            gaps.append((a, f"  NO PROBES {at_short(before['at'])} to {at_short(after['at'])} "
+                            f"({(b - a) / 60:.0f} min): UNKNOWN, not calm"))
+    return gaps
 
 
 def router_facts():
