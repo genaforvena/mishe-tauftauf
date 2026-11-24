@@ -190,7 +190,7 @@ def test_the_suite_records_per_test_durations(tmp_path, monkeypatch):
     monkeypatch.setattr(dc, "scratch_mount", lambda: None)
     monkeypatch.setenv("MISHE_BUILD_CACHE", str(tmp_path / "cache"))
     assert dc.main() == 0
-    assert seen["argv"][seen["argv"].index("-n") + 1] == "2"
+    assert seen["argv"][seen["argv"].index("-n") + 1] == str(dc.SUITE_WORKERS)
 
 
 def test_a_too_long_suite_tmpdir_fails_closed(tmp_path, monkeypatch, capsys):

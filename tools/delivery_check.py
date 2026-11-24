@@ -28,10 +28,13 @@ sys.path.insert(0, str(Path.cwd() / "src"))
 from mishe_tauftauf import release_boundary  # noqa: E402
 
 SCRATCH_MOUNT = Path("/mnt/mishe-scratch")
-SUITE_WORKERS = 2
-"""Delivery-suite workers: three CPUs are shared with live wake engines, so not ``-n auto``.
+SUITE_WORKERS = 4
+"""Delivery-suite workers: CPUs are shared with live wake engines, so not ``-n auto``.
 
-Measured on this host (2026-11-20): 991 s serial, 627 s with two workers, same suite green.
+Measured on this host (2026-11-22, full suite, both green, 6230 passed / 14 skipped):
+``-n 2`` 505.3 s wall, ``-n 4`` 373.9 s wall (load ~9 on 16 CPUs, 31 GB RAM).
+Live check stage was mean 9m48s with two workers (63 promotions in 48 h to
+2026-11-24), so four workers target ~7m15s. Revert is ``SUITE_WORKERS = 2``.
 """
 MAX_WORKER_TMPDIR_LEN = 108 - 1 - 87
 """Longest TMPDIR that fits an xdist worker's tmux socket in Linux ``sun_path``.
