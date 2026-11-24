@@ -247,3 +247,16 @@ def test_green_line_names_the_sub_threshold_band_without_going_red():
 def test_band_ignores_probes_below_its_floor_and_stalls_above_it():
     code, lines = mod.evaluate([rec(), rec(event="slow", at=NOW - 60, total=0.1)], NOW)
     assert code == 0 and "sub-threshold" not in lines[0]
+
+
+def test_quiet_line_names_a_rising_rate_of_one_second_probes():
+    baseline = [rec(event="slow", at=NOW - 1800 * i - 5, total=1.5) for i in range(1, 13)]
+    recent = [rec(event="slow", at=NOW - 60 * i - 1, total=1.2) for i in range(8)]
+    code, lines = mod.evaluate([rec(), *baseline, *recent], NOW)
+    assert code == 0
+    assert "probes >= 1 s: 8 in the last 30 min vs 6 h median 1 per 30 min (rising)" in lines[0]
+
+
+def test_rate_line_is_omitted_when_no_slow_probes():
+    code, lines = mod.evaluate([rec()], NOW)
+    assert code == 0 and "probes >=" not in lines[0]

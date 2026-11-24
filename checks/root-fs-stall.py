@@ -60,6 +60,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 import os
+import statistics
 import sys
 import time
 from pathlib import Path
@@ -220,7 +221,7 @@ def evaluate(records: list[dict], now: float) -> tuple[int, list[str]]:
                  f"{pressure}"
                  f"{burst_suffix(eps, with_newest=False)}"
                  f", most recent {(now - last) / 60:.0f} min ago")
-    return 0, [line + sub_threshold_band_suffix(seen, now)]
+    return 0, [line + sub_threshold_band_suffix(seen, now) + rising_rate_suffix(seen, now)]
 
 
 def sub_threshold_band_suffix(seen: list[dict], now: float) -> str:
@@ -240,6 +241,33 @@ def sub_threshold_band_suffix(seen: list[dict], now: float) -> str:
     return (f"; sub-threshold band {BAND_S:g}-{STALL_S:g} s: {seconds} probe-second(s) in "
             f"{RECURRENCE_S / 3600:.0f} h (worst {worst['total']:.2f}s, most recent "
             f"{(now - last) / 60:.0f} min ago)")
+
+
+RATE_WINDOW_S = 1800.0
+RATE_BASELINE_WINDOWS = 12
+RATE_MIN_S = 1.0
+
+
+def rising_rate_suffix(seen: list[dict], now: float) -> str:
+    """Quiet-line rate of root probes >= RATE_MIN_S per 30 min, against the 6 h median.
+
+    2026-11-24: the single-stall RED fired on one 6.0 s probe while the rate of 1 s+ probes had
+    already jumped to 13 per 30 min for two windows, against a median of 2 over the prior 6 h.
+    A rise like that is the lead the 5 s verdict cannot give. This names it on the quiet line
+    and does not move the verdict; promoting it to RED is a separate decision.
+    """
+    times = [r["at"] for r in seen if r.get("event") == "slow" and (r.get("total") or 0) >= RATE_MIN_S
+             and now - r["at"] < RATE_WINDOW_S * (RATE_BASELINE_WINDOWS + 1)]
+    def count(i: int) -> int:
+        lo, hi = RATE_WINDOW_S * i, RATE_WINDOW_S * (i + 1)
+        return len({int(t) for t in times if lo <= now - t < hi})
+    recent = count(0)
+    if recent == 0 and not times:
+        return ""
+    baseline = statistics.median(count(i) for i in range(1, RATE_BASELINE_WINDOWS + 1))
+    trend = "rising" if recent >= 2 * max(baseline, 1) and recent >= 5 else "not rising"
+    return (f"; probes >= {RATE_MIN_S:g} s: {recent} in the last {RATE_WINDOW_S / 60:.0f} min "
+            f"vs 6 h median {baseline:g} per {RATE_WINDOW_S / 60:.0f} min ({trend})")
 
 
 def load(paths: list[Path]) -> list[dict]:
