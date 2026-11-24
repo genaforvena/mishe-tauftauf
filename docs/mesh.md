@@ -31,7 +31,7 @@ is owed to it, and it ends in a *yield*: the mind's recorded hand-back, with its
 A *receipt* is what a wake left behind: an attributed Git commit or a registered
 artifact. A yield that says `changed` is not a receipt by itself. The other
 terms used in the decision and routing sections, such as *ledger* and *outcome*,
-are defined in the glossary at the top of [Decision rungs](decision-rungs.md).
+are listed under "Terms used below" near the top of [Decision rungs](decision-rungs.md).
 
 ## What the couplings actually are
 
