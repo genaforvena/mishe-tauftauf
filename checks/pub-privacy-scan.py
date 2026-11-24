@@ -117,6 +117,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import http.client
 import json
 import os
 import re
@@ -125,7 +126,6 @@ import sys
 import time
 import urllib.error
 import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -317,11 +317,41 @@ def read_key(env_file: str) -> str:
     return key
 
 
+_API_PARTS = urllib.parse.urlsplit(API)
+_CONNECTION: dict = {"conn": None}
+
+
+def _fetch(path: str, headers: dict) -> bytes:
+    """One GET over a kept-alive HTTPS connection.
+
+    2026-11-24: every request paid a fresh TLS handshake (1-5 s each to dev.to
+    from this host), and the scan makes some 300 sequential requests, so a run
+    reached its 540 s ceiling and the producer failed. One reused connection
+    answers in about 0.35 s. A non-2xx answer raises urllib's HTTPError and a
+    transport failure raises URLError, so callers and the retry loop are
+    unchanged; a failed connection is dropped and the next call reconnects.
+    """
+    conn = _CONNECTION["conn"]
+    if conn is None:
+        conn = http.client.HTTPSConnection(_API_PARTS.netloc, timeout=25)
+        _CONNECTION["conn"] = conn
+    try:
+        conn.request("GET", _API_PARTS.path + path, headers=headers)
+        resp = conn.getresponse()
+        body = resp.read()
+    except (OSError, http.client.HTTPException) as err:
+        conn.close()
+        _CONNECTION["conn"] = None
+        raise urllib.error.URLError(err) from err
+    if resp.status >= 400:
+        raise urllib.error.HTTPError(API + path, resp.status, resp.reason, resp.headers, None)
+    return body
+
+
 def get(path: str, key: str | None = None):
     headers = {"User-Agent": "mesh-pub/1.0"}
     if key:
         headers["api-key"] = key
-    req = urllib.request.Request(API + path, headers=headers)
     # Retries for a transient transport failure (2026-11-22: an SSL
     # UNEXPECTED_EOF left 4 live items UNKNOWN in one run, and one retry at 2 s
     # still left 5 UNKNOWN at 13:01Z).  Three attempts with growing backoff.
@@ -329,8 +359,7 @@ def get(path: str, key: str | None = None):
     delays = (2, 5)
     for attempt in range(len(delays) + 1):
         try:
-            with urllib.request.urlopen(req, timeout=25) as resp:
-                return json.load(resp)
+            return json.loads(_fetch(path, headers))
         except urllib.error.HTTPError:
             raise
         except urllib.error.URLError:

@@ -1014,5 +1014,78 @@ def test_a_clean_url_is_not_read_as_a_violation():
                           **NO_TERMS) == []
 
 
+
+class _FakeResponse:
+    def __init__(self, status, body):
+        self.status, self.body = status, body
+        self.reason = "OK" if status < 400 else "Error"
+        self.headers = {}
+
+    def read(self):
+        return self.body
+
+
+class _FakeConnection:
+    opened = 0
+
+    def __init__(self, host, timeout=None):
+        _FakeConnection.opened += 1
+
+    def request(self, method, url, headers=None):
+        self.url = url
+
+    def getresponse(self):
+        return _FakeResponse(200, b'[{"id": 1}]')
+
+    def close(self):
+        pass
+
+
+def test_consecutive_requests_share_one_connection():
+    """2026-11-24: a fresh TLS handshake per request made the scan exceed its 540 s ceiling."""
+    from unittest import mock
+    scan = load_scan()
+    scan._CONNECTION["conn"] = None
+    _FakeConnection.opened = 0
+    with mock.patch.object(scan.http.client, "HTTPSConnection", _FakeConnection):
+        assert scan.get("/articles/me?per_page=1", "k") == [{"id": 1}]
+        assert scan.get("/comments?a_id=2") == [{"id": 1}]
+    assert _FakeConnection.opened == 1
+    scan._CONNECTION["conn"] = None
+
+
+def test_an_http_error_is_an_answer_and_a_dropped_connection_is_a_transport_error():
+    """A 404 raises HTTPError without retry; a dropped socket raises URLError and is redialled."""
+    from unittest import mock
+    scan = load_scan()
+
+    class NotFound(_FakeConnection):
+        def getresponse(self):
+            return _FakeResponse(404, b"{}")
+
+    class Dropped(_FakeConnection):
+        def getresponse(self):
+            raise ConnectionResetError("reset by peer")
+
+    scan._CONNECTION["conn"] = None
+    with mock.patch.object(scan.http.client, "HTTPSConnection", NotFound):
+        try:
+            scan.get("/articles/404")
+            raise AssertionError("a 404 must raise HTTPError")
+        except urllib.error.HTTPError as err:
+            assert err.code == 404
+    scan._CONNECTION["conn"] = None
+    with mock.patch.object(scan.http.client, "HTTPSConnection", Dropped), \
+            mock.patch.object(scan.time, "sleep"):
+        try:
+            scan.get("/articles/dropped")
+            raise AssertionError("a dropped connection must raise URLError")
+        except urllib.error.HTTPError:
+            raise AssertionError("a dropped connection is not an HTTP answer")
+        except urllib.error.URLError:
+            pass
+    assert scan._CONNECTION["conn"] is None
+
+
 if __name__ == "__main__":
     sys.exit(0)
