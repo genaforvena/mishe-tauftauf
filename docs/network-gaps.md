@@ -6,7 +6,8 @@ Speed, day-trend, baseline and Wi-Fi channel/noise/counter rows rechecked 2026-1
 duty's verdict, the live Wi-Fi line's device naming and the driver's error-rate wording rechecked
 2026-11-18; the day-trend label and its empty-bucket gap rechecked 2026-11-19; the "Worse than
 usual?" busy-hour baseline rechecked 2026-11-20; the per-device reach row (the DEVICE PING
-freshness, future-timestamp and reply rules, and the `network-device-reach` duty) rechecked 2026-11-21.
+freshness, future-timestamp and reply rules, and the `network-device-reach` duty) rechecked 2026-11-21;
+the outage list's probe-silence lines and the sing-box/tun0 terms rechecked 2026-11-24.
 
 Status words: **BUILT** (the window shows it with an age or UNKNOWN), **PARTLY** (some of it is
 shown), **MISSING** (not measured or not shown).
@@ -22,6 +23,7 @@ Terms used below:
 - **iwinfo / iwpriv**: the router's read-only Wi-Fi tools. `iwinfo` reports a radio's channel and noise; `iwpriv ... stat` prints the driver's own counters.
 - **PER**: packet error rate, the share of frames the driver counts as lost. **tx_per** is that figure as stored in the router read.
 - **self-limit**: the load and free-RAM level above which the measuring job backs off on the router.
+- **sing-box / tun0**: sing-box is the VPN program on the router; tun0 is the virtual network interface it creates for the tunnel. The VPN row reads whether both exist and whether bytes move through tun0.
 
 ## Reachability and quality
 
@@ -72,7 +74,7 @@ Terms used below:
 | Sparkline (last hour) | BUILT | sparklines on gateway, web and DNS lines (last 40 probes, about 40 minutes) |
 | Last day sparkline | BUILT | `usuality_line()` / `day_spark()` show a 40-bucket trend of web latency over the loaded day's rows, labelled `trend 24 h` at the line (the loaded span, not the 40-probe window); the header now says "sparklines = last 40 probes unless labelled", and the per-site lines keep their 40-probe (~40 min) sparklines. A bucket with no answered check draws as `·` (a gap), not skipped, so a dead stretch stays visible |
 | "Worse than usual?" | BUILT | `usuality_line()` compares the median of the last 10 web samples with a typical and shows both numbers, with UNKNOWN / STALE guards. The typical is the busy hours' own median (retained busy-hour samples excluding the newest 60, still labelled "of evenings") during the 16-20 UTC busy hours, where pages run structurally elevated (16/17/18h web medians 609/671/562 ms on 2026-11-20 17:20Z, against about 350 ms overnight) and the pooled day median reads "slower than usual" on every ordinary peak hour; outside them (or without enough busy-hour samples) it is the last-day median excluding the most recent 60, labelled "of samples". The headline qualifies a flagged slowdown with "for the evening" so it cannot read as a whole-day claim |
-| Outages with start and end | BUILT | `outage_lines()` from `outage_episodes()` |
+| Outages with start and end | BUILT | `outage_lines()` from `outage_episodes()`; a silence of more than 15 min between two probe rows is listed as `NO PROBES ... UNKNOWN, not calm` (`probe_gaps()`, rechecked 2026-11-24), never as calm |
 
 ## Next gaps, in order of value
 
