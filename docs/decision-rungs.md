@@ -91,7 +91,7 @@ Read `sole_signal_receipts` alongside the claimed yield rates. For clean yields 
 
 ## Docs-naming seam (repo-change, System 0)
 
-`mishe_tauftauf.repo_change_docs.docs_naming()` answers which reader docs name a changed source path, from the changed paths alone. For each path it searches the reader corpus defined by `docs_tools.search_docs` (README.md and immediate `docs/*.md`, symlinks excluded) for three identifiers: the full relative path, the dotted module name for `src/` Python files, and the file stem. A hit must match the whole identifier, not a substring. A path with no hit is a complete negative, and an unreadable corpus raises rather than reporting a false no-hit.
+`mishe_tauftauf.repo_change_docs.docs_naming()` answers which reader docs name a changed source path, from the changed paths alone. For each path it searches the reader corpus defined by `docs_tools.search_docs` (README.md and immediate `docs/*.md`, symlinks excluded) for three identifiers: the full relative path, the dotted module name for `src/` Python files, and the file stem. The stem is dropped when it is shorter than three characters or is a generic name (`__init__`, `readme`, `conftest`, `test`, `tests`, `docs`), because it would match nearly every doc. A hit must match the whole identifier, not a substring. A path with no hit is a complete negative, and an unreadable corpus raises rather than reporting a false no-hit.
 
 This is evidence for a later rung, not a decision. The builtin `repo-change` duty (`duties.json`, every 900 s, `max_age` 2700 s) runs that seam for each changed path. It publishes the newest commit with per-subscriber deltas for `pub` and `docs`, calls no model and wakes no one itself.
 
