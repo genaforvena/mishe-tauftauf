@@ -163,7 +163,9 @@ window; it simply shows no running wake.
   its block carries the mind's latest words and its last tool call, while a Claude wake writes one
   JSON document at the end and its block says the engine reports its output when the wake ends. The
   block says the wake is still running; it is not a failure. The block is per wake, so several
-  concurrent wakes each get their own.
+  concurrent wakes each get their own. A wake that ends without a yield receipt (a timeout or a
+  kill) prints `Settlement UNKNOWN: the engine ended without a yield receipt` above its last words,
+  so a missing settlement is never read as success.
 
 A pane loads its code once, when its process starts, from the runtime pin in force at that moment.
 The pin is the `runtime/current` link in the site, which names the release now running; only the
