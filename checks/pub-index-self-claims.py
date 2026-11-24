@@ -33,11 +33,13 @@ the account or the page cannot be read.  Exit codes: 0 GREEN, 2 RED, 3 UNKNOWN.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -105,12 +107,47 @@ def count_notices(bodies: dict[str, str], window: int) -> int:
                if (notice_position(body) or window + 1) <= window)
 
 
+_CONNECTION: dict = {"conn": None, "netloc": None}
+
+
+def _open(request, timeout: float = 30) -> bytes:
+    """One GET over a kept-alive HTTPS connection; returns the body bytes.
+
+    2026-11-24: every urlopen paid a fresh TLS handshake (1-5 s per request to
+    dev.to from this host) across a run of sequential reads, so the run hit its
+    300 s ceiling at 16:08Z and the producer failed. One reused connection keeps
+    urllib's exception contract: HTTPError for an answer of 300 or more,
+    URLError for a transport failure (the connection is then dropped and the
+    next call reconnects).
+    """
+    parts = urllib.parse.urlsplit(request.full_url)
+    if _CONNECTION["conn"] is None or _CONNECTION["netloc"] != parts.netloc:
+        if _CONNECTION["conn"] is not None:
+            _CONNECTION["conn"].close()
+        _CONNECTION["conn"] = http.client.HTTPSConnection(parts.netloc, timeout=timeout)
+        _CONNECTION["netloc"] = parts.netloc
+    conn = _CONNECTION["conn"]
+    target = parts.path + ("?" + parts.query if parts.query else "")
+    try:
+        conn.request("GET", target, headers=dict(request.header_items()))
+        resp = conn.getresponse()
+        body = resp.read()
+    except (OSError, http.client.HTTPException) as err:
+        conn.close()
+        _CONNECTION["conn"] = None
+        raise urllib.error.URLError(err) from err
+    if resp.status >= 300:
+        raise urllib.error.HTTPError(request.full_url, resp.status, resp.reason,
+                                     resp.headers, None)
+    return body
+
+
 def read_account(base: str, key: str) -> list[dict]:
     """Every article the account holds, published or not."""
     request = urllib.request.Request(
         base + "/api/articles/me/all?per_page=1000",
         headers={"api-key": key, "User-Agent": "mesh-pub/1.0"})
-    payload = json.load(urllib.request.urlopen(request, timeout=30))
+    payload = json.loads(_open(request))
     if not isinstance(payload, list):
         raise ValueError("the API did not answer with a list of articles")
     return payload
@@ -129,7 +166,7 @@ def read_article(base: str, key: str, article_id: int,
         request = urllib.request.Request(
             base + "/api/articles/%d" % article_id,
             headers={"api-key": key, "User-Agent": "mesh-pub/1.0"})
-        payload = json.load(urllib.request.urlopen(request, timeout=30))
+        payload = json.loads(_open(request))
     except urllib.error.HTTPError as err:
         if err.code != 404 or listing_row is None:
             raise
@@ -295,7 +332,7 @@ def read_threads(base: str, key: str, published: list[dict],
         request = urllib.request.Request(
             base + "/api/comments?a_id=%d" % article["id"],
             headers={"api-key": key, "User-Agent": "mesh-pub/1.0"})
-        comments = json.load(urllib.request.urlopen(request, timeout=30))
+        comments = json.loads(_open(request))
         if not isinstance(comments, list):
             raise ValueError("the comments of article %r are not a list"
                              % article.get("id"))
@@ -341,7 +378,7 @@ def _recover_tail(base: str, key: str, comments: list) -> list:
             base + "/api/comments/%s" % code,
             headers={"api-key": key, "User-Agent": "mesh-pub/1.0"})
         try:
-            node = json.load(urllib.request.urlopen(request, timeout=30))
+            node = json.loads(_open(request))
         except Exception:
             continue
         if not isinstance(node, dict):

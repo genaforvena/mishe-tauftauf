@@ -288,7 +288,7 @@ def _urlopen_404(request, timeout=30):
 
 def test_by_id_404_uses_the_published_listing_row(monkeypatch):
     """A live article that 404s by id is read from the listing, not UNKNOWN."""
-    monkeypatch.setattr(check.urllib.request, "urlopen", _urlopen_404)
+    monkeypatch.setattr(check, "_open", _urlopen_404)
     row = {"id": 5079796, "title": "A live post",
            "body_markdown": "A clean body."}
     article = check.read_article("https://dev.to", "key", 5079796,
@@ -299,7 +299,7 @@ def test_by_id_404_uses_the_published_listing_row(monkeypatch):
 
 def test_by_id_404_without_a_listing_row_stays_unknown(monkeypatch):
     """A 404 with no row is still unreadable, never a pass."""
-    monkeypatch.setattr(check.urllib.request, "urlopen", _urlopen_404)
+    monkeypatch.setattr(check, "_open", _urlopen_404)
     with pytest.raises(urllib.error.HTTPError):
         check.read_article("https://dev.to", "key", 5079796)
 
@@ -309,7 +309,7 @@ def test_other_http_error_does_not_use_the_listing_row(monkeypatch):
     def urlopen_429(request, timeout=30):
         raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests",
                                      None, None)
-    monkeypatch.setattr(check.urllib.request, "urlopen", urlopen_429)
+    monkeypatch.setattr(check, "_open", urlopen_429)
     row = {"id": 5079796, "body_markdown": "A clean body."}
     with pytest.raises(urllib.error.HTTPError):
         check.read_article("https://dev.to", "key", 5079796, listing_row=row)
