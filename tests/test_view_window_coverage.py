@@ -130,3 +130,23 @@ def test_unknown_when_a_live_pane_identity_is_unreadable(tmp_path, monkeypatch):
     def gone(pid):
         raise OSError("no such process")
     assert run_main(tmp_path, monkeypatch, completed(0, "delivery\t0\t0\t1\n"), commands=gone) == 3
+
+
+def test_window_for_does_not_match_a_view_name_that_is_only_a_suffix():
+    # counterexample found 2026-11-24: a live window running old_map_view.py was taken as map_view.py's
+    windows = [{"session": "outer", "name": "old-map", "command": ["python3", "tools/old_map_view.py"]}]
+    assert vwc.window_for("map_view.py", windows) is None
+    assert vwc.window_for("old_map_view.py", windows)["name"] == "old-map"
+
+
+def test_suffix_running_window_is_gap_for_the_unregistered_view_not_green():
+    windows = [{"session": "outer", "name": "old-map", "command": ["python3", "tools/old_map_view.py"]}]
+    gaps = vwc.evaluate(["map_view.py"], windows, {"old-map": [(False, 1)]},
+                        commands=running("python3 tools/old_map_view.py"))
+    assert len(gaps) == 1 and "no entry in operator/window-registry.json" in gaps[0]
+
+
+def test_sh_c_loop_wrapper_still_matches_the_view_name():
+    windows = [{"session": "outer", "name": "delivery",
+                "command": ["sh", "-c", "while :; do clear; python3 tools/delivery_view.py; sleep 60; done"]}]
+    assert vwc.window_for("delivery_view.py", windows)["name"] == "delivery"

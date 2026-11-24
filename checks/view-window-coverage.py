@@ -20,6 +20,7 @@ boundary decoders (plant_tmux, state_files); this file only compares decoded val
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -40,10 +41,16 @@ def registry_windows(registry) -> list[dict]:
     return [w for w in rows if isinstance(w, dict) and w.get("session") == "outer"]
 
 
+def runs_view(text: str, view: str) -> bool:
+    """True when ``text`` names ``view`` as a whole file name (``tools/map_view.py``, or inside a
+    ``sh -c`` string), not as the tail of another name (``tools/old_map_view.py``)."""
+    return re.search(r"(?:^|[\s/])" + re.escape(view) + r"(?![\w.-])", text) is not None
+
+
 def window_for(view: str, windows: list[dict]):
     for w in windows:
         command = w.get("command")
-        if isinstance(command, list) and any(view in str(arg) for arg in command):
+        if isinstance(command, list) and any(runs_view(str(arg), view) for arg in command):
             return w
     return None
 
@@ -95,7 +102,7 @@ def evaluate(view_names, windows, live, commands=pane_commands):
         if not alive:
             gaps.append(f"{view}: window {SESSION}:{name} has only dead panes; respawn it with the restorer")
             continue
-        if not any(f"tools/{view}" in line for pid in alive for line in commands(pid)):
+        if not any(runs_view(line, f"tools/{view}") for pid in alive for line in commands(pid)):
             gaps.append(f"{view}: window {SESSION}:{name} is live but no process in it runs tools/{view}; "
                         f"respawn it with the restorer")
     return gaps
