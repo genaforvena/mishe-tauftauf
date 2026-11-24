@@ -277,6 +277,41 @@ class FeedTests(unittest.TestCase):
             feed.path.write_bytes(old_bytes)
 
     @requires_tape_binary
+    def test_extended_role_view_equals_full_fold_over_mixed_tape(self):
+        # Differential: after every append, the incremental (extend) read must
+        # equal a forced full fold, for several roles, with source rows replaced,
+        # windows evicted and yields recorded. Seeded, so a failure reproduces.
+        import random
+        rng = random.Random(7)
+        roles = ["senses", "genome", "health"]
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed_module._ROLE_ENTRIES_CACHE.clear()
+            feed_module._ENTRIES_CACHE.clear()
+            for step in range(60):
+                kind = rng.choice(["seed", "noise", "dm", "reply", "yield"])
+                if kind == "seed":
+                    name = rng.choice(["health", "docs", "senses", "genome", "tape"])
+                    feed.append("seed", f"seed observation {name} sha256={rng.randrange(16**8):08x}" + "0" * 56)
+                elif kind == "noise":
+                    feed.append("sensor/noise", f"irrelevant {step}")
+                elif kind == "dm":
+                    feed.append("operator", f"[dm] to={rng.choice(roles)}\nmsg {step}")
+                elif kind == "reply":
+                    feed.append(rng.choice(roles), f"reply {step} to operator")
+                else:
+                    feed.append(rng.choice(roles), f"yield result=changed wall step {step}")
+                for role in roles:
+                    saved = dict(feed_module._ROLE_ENTRIES_CACHE)
+                    incremental = [(e.sequence, e.source, e.body) for e in feed.role_entries(role)]
+                    feed_module._ROLE_ENTRIES_CACHE.clear()
+                    feed_module._ENTRIES_CACHE.clear()
+                    full = [(e.sequence, e.source, e.body) for e in feed.role_entries(role, _force_full=True)]
+                    feed_module._ROLE_ENTRIES_CACHE.clear()
+                    feed_module._ROLE_ENTRIES_CACHE.update(saved)
+                    self.assertEqual(incremental, full, f"step {step} role {role}")
+
+    @requires_tape_binary
     @requires_records_binary
     def test_role_view_verifies_discarded_records_and_refuses_corruption(self):
         with tempfile.TemporaryDirectory() as directory:
