@@ -17,7 +17,7 @@ Terms used below:
 - **producer**: the job that measures one reading and reports it as a signal. Its age is the time of the last observation, and a silent or missing reading is UNKNOWN, not GREEN. An unchanged value is not a stopped producer; see [budget-json-contract](budget-json-contract.md) (signals and their freshness).
 - **GREEN / RED / UNKNOWN**: a duty's verdict. GREEN is OK, RED is a failure that wakes its resolver, UNKNOWN means no fresh evidence. See [how a mind chooses](how-a-mind-chooses.md).
 - **duty** and **detector**: a duty is one entry in `duties.json` that checks a producer's reading against a maximum age and names a resolver; its detector is the check that turns the reading into GREEN, RED or UNKNOWN.
-- **STALE**: the window's word for a reading older than its limit (usually 15 minutes); the value is still shown, marked with its age.
+- **STALE**: the window's word for a reading older than its limit: 15 minutes for router and egress readings, 5 minutes for the HOME INTERNET verdict (`STALE_S` and `STALE_ROUTER_S` in `tools/network_view.py`); the value is still shown, marked with its age.
 - **sparkline**: a row of block characters, one per probe or time bucket, showing the shape of recent values.
 - **iwinfo / iwpriv**: the router's read-only Wi-Fi tools. `iwinfo` reports a radio's channel and noise; `iwpriv ... stat` prints the driver's own counters.
 - **PER**: packet error rate, the share of frames the driver counts as lost. **tx_per** is that figure as stored in the router read.
@@ -42,7 +42,7 @@ Terms used below:
 | slot | status | evidence |
 | --- | --- | --- |
 | Download speed | PARTLY | `speed_line()`: last good 5 MB download in `speed.jsonl`, age shown, one night-time try (02-05 local) |
-| Upload speed | BUILT | `speed_up_line()` reads `speed-up.jsonl`: last good 2 MB upload with age, written by the same night-time duty with its own 30-minute failed-retry; UNKNOWN when never measured, last try failed, or older than 36 h. The producing duty's verdict follows a failed or stale upload and no attempt once the 02-05 window is open (`upload_state()`), so a night of failing uploads is UNKNOWN, not GREEN |
+| Upload speed | BUILT | `speed_up_line()` reads `speed-up.jsonl`: last good 2 MB upload with age, written by the same night-time duty with its own 30-minute failed-retry; UNKNOWN when never measured, last try failed, or older than 36 h. The producing duty's verdict follows a failed or stale upload and no attempt once the 02-05 window is open (`upload_state()` in `tools/network_speed.py`), so a night of failing uploads is UNKNOWN, not GREEN |
 | Method and age shown | BUILT | both speed lines give the method and hours since the reading |
 
 ## Home Wi-Fi
