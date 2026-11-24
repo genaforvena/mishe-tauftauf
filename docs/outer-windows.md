@@ -146,7 +146,7 @@ without a window is unfinished: the author adds the window and the row in the sa
 `view-window-coverage` duty (`checks/view-window-coverage.py`, every 300 s, resolver steward) is RED for a view
 with no registry entry, no live window, or a live window none of whose panes runs the view (a stale shell left
 in the window). A pane counts as running the view when its own process or a direct child's command line names
-`tools/<view>`, read from /proc. It is UNKNOWN when tmux or the registry cannot be read, or when a live pane's
+`tools/<view>` as a whole file name (`tools/old_map_view.py` does not count for `map_view`), read from /proc. It is UNKNOWN when tmux or the registry cannot be read, or when a live pane's
 process identity cannot be read. A report tool that only
 prints once (such as `delivery_view.py`) runs in a looped window command, as `budget` does.
 
