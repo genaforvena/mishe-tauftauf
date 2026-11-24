@@ -75,6 +75,19 @@ def parse_pane_dead_flags(text: str) -> dict[str, list[bool]]:
     return windows
 
 
+def parse_pane_rows(text: str) -> dict[str, list[tuple[bool, int]]]:
+    """Decode ``#{window_name}\\t#{pane_index}\\t#{pane_dead}\\t#{pane_pid}`` rows.
+
+    Returns window name -> [(dead, pid)] in tmux's row order. Malformed field counts or
+    non-numeric pids raise ValueError, like ``parse_pane_dead_flags``.
+    """
+    windows: dict[str, list[tuple[bool, int]]] = {}
+    for line in text.splitlines():
+        name, _index, dead, pid = line.split("\t")
+        windows.setdefault(name, []).append((dead == "1", int(pid)))
+    return windows
+
+
 def restore_arguments(argv=None):
     """Decode the standalone registry restorer's command-line options."""
     parser = argparse.ArgumentParser()
