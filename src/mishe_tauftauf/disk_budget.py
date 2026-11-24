@@ -37,6 +37,9 @@ RELEASES_KEEP = 8
 PRUNE_BATCH = 40
 """Removals per run, so one run's IO stays small beside the guard's io_pressure gate."""
 
+PRUNE_DEADLINE = 300
+"""Seconds one run may spend trying removals; the duty timeout is 600 s."""
+
 SCAN_TTL = 1800
 """A size scan walks millions of files; it is cached this long and run at idle IO priority."""
 
@@ -142,9 +145,15 @@ def prune_releases(home, *, keep: int = RELEASES_KEEP, batch: int = PRUNE_BATCH,
         # No readable moving pin means the protected set is incomplete: reclaim nothing.
         return []
     candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    doomed = candidates[keep:][-batch:]  # oldest first within the batch
+    # Oldest first. A refusal (a dirty worktree) is skipped, not retried: it used to fill the
+    # oldest-40 slice every run, so the reclaim stalled at about 29 per batch. Stop after
+    # ``batch`` removals or PRUNE_DEADLINE seconds, whichever comes first.
+    spare = list(reversed(candidates[keep:]))
     removed = []
-    for path in doomed:
+    started = time.monotonic()
+    for path in spare:
+        if len(removed) >= batch or time.monotonic() - started > PRUNE_DEADLINE:
+            break
         if remove is not None:
             ok = remove(path)
         else:

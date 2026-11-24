@@ -124,3 +124,26 @@ def test_prune_passes_linked_site_rows_so_their_pins_stay_protected(tmp_path, mo
     removed = disk_budget.prune_releases(home, keep=0, remove=lambda p: True)
     assert seen["registry_rows"] == rows
     assert removed  # the registry being readable does not stop the reclaim itself
+
+
+def test_prune_skips_refused_dirty_worktrees_and_still_reaches_the_batch(tmp_path, monkeypatch):
+    # Regression 2026-11-24: refused (dirty) worktrees sat in the oldest-40 slice every run, so
+    # the reclaim stalled near 29 per batch. Refusals are skipped and the batch is filled past them.
+    home = tmp_path / "site"
+    names = [f"{i:040x}" for i in range(1, 25)]
+    for i, name in enumerate(names):
+        wt = home / "releases" / name
+        wt.mkdir(parents=True)
+        (wt / ".git").write_text("gitdir: x")
+        os.utime(wt, (1000 + i, 1000 + i))
+    (home / "runtime").mkdir()
+    (home / "runtime" / "current").symlink_to(home / "releases" / names[-1])
+    (home / "health").mkdir()
+    (home / "health" / "linked-sites.json").write_text(json.dumps({"version": 1, "sites": []}))
+    monkeypatch.setattr(release_retention, "live_release_names", lambda h, **k: set())
+    dirty = set(names[:5])  # the five oldest refuse removal
+    removed = disk_budget.prune_releases(home, keep=2, batch=6,
+                                         remove=lambda p: p.name not in dirty)
+    assert len(removed) == 6
+    assert not set(removed) & dirty
+    assert removed == names[5:11]  # oldest clean ones, oldest first
