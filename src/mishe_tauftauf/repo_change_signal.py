@@ -26,7 +26,7 @@ from .repo_change_docs import docs_naming
 
 SIGNAL = "repo-change"
 PUB_SIGNAL = "repo-change-pub"   # reader-meaningful commits only; wakes pub, never the raw signal
-SYSTEM1_SIGNAL = "repo-change-system1"   # code commits only (src, tools, checks, duties); wakes system1, never the raw signal
+SYSTEM1_SIGNAL = "repo-change-system1"   # code commits only (src, tools, duties); wakes system1, never the raw signal
 CODE_AREAS = {"src", "tools", "duties"}  # areas a rung or commit-risk decision can depend on
 MAX_AGE_S = 6 * 3600
 REOFFER_S = 3600
@@ -295,7 +295,7 @@ def observe_pub(home, report: dict, *, now: float) -> None:
 
 
 def system1_verdict(report: dict) -> str | None:
-    """Newest commit in the report window that touches code (src, tools, checks, duties), or None.
+    """Newest commit in the report window that touches code (src, tools, duties), or None.
 
     System 1 reads commits for rung and commit-risk decisions; a docs-only or tests-only commit cannot move
     either. 2026-11-21: 24 of its wakes in 4 h were raw repo-change signals for docs-only commits and every
