@@ -842,6 +842,29 @@
       "covers": "enabled mishe-* units left dead after a containment trip: RED with the names and minutes dead while the tripped latch is absent (the drop-in's ConditionPathExists skips a restart that would otherwise succeed once the latch clears); with --act each dead unit is started once per dead episode after a 120 s grace; GREEN while the latch is present or no enabled unit is dead; UNKNOWN when systemctl or journalctl cannot be read"
     },
     {
+      "name": "unit-restart-churn",
+      "command": [
+        "{python}",
+        "{repo}/checks/unit-restart-churn.py",
+        "--home",
+        "{home}",
+        "--unit",
+        "light-cycle-monitor.service"
+      ],
+      "every": 120,
+      "timeout": 30,
+      "max_age": 300,
+      "resolver": "health",
+      "replaces": [],
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "covers": "a watched user unit (light-cycle-monitor.service) restarting in a loop before systemd's start limit trips: RED when it restarted at least 3 times within 15 min (Restart=always, a SIGKILL never enters failed so OnFailure does not fire); GREEN otherwise; UNKNOWN when systemctl cannot be read or the state cannot be saved"
+    },
+    {
       "name": "work-trial",
       "command": [
         "{python}",
