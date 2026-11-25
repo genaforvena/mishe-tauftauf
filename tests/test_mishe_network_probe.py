@@ -59,7 +59,11 @@ def test_row_has_the_python_shape(tmp_path):
     code, row, _ = run(tmp_path)
     assert code in (0, 2), f"a probe that ran must report healthy (0) or down (2), not {code}"
     assert row is not None, "the probe wrote no row"
-    assert set(row) == {"at", "gateway_ip", "gateway", "internet", "dns_ms"}
+    # 0.2.0 added the host pressure block (CONTRACT.md, "host" row).
+    assert set(row) == {"at", "gateway_ip", "gateway", "internet", "dns_ms", "host"}
+    assert set(row["host"]) == {"cpu_some10", "io_some10"}
+    for key in ("cpu_some10", "io_some10"):
+        assert row["host"][key] is None or isinstance(row["host"][key], float)
     # at: UTC, the format the Python probe wrote and the view parses.
     assert len(row["at"]) == 20 and row["at"].endswith("Z") and row["at"][10] == "T"
     assert set(row["internet"]) == {"gstatic", "cloudflare"}
