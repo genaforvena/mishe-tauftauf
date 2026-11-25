@@ -1241,9 +1241,11 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
     settlement. The window is a count, not a duration, so the sample is current
     as of the scan.
 
-    State is ``verified`` when the window holds no ``blocked`` receipt and
-    ``drift`` when one does. State is ``unknown`` when the tape is absent or
-    unreadable, so a source change cannot pass as a clean bill.
+    State is ``verified`` when the window holds settlements and none is
+    ``blocked``, and ``drift`` when one does. State is ``unknown`` when the
+    tape is absent or unreadable, or when the window is empty (no settlement
+    evidence at all), so neither a source change nor an absent writer can pass
+    as a clean bill.
     """
     def unknown(sample: str) -> dict[str, object]:
         return {"id": "sense.seed.settle-result-mix", "state": "unknown",
@@ -1288,6 +1290,9 @@ def _seed_settle_result_mix(home: Path) -> dict[str, object]:
               f"other={counts['other']} incidents={incidents} "
               f"since_last={'none' if since_last is None else since_last} "
               f"last_blocked={last_blocked_at}")
+    if not window:
+        return {"id": "sense.seed.settle-result-mix", "state": "unknown",
+                "sample": sample, "kind": "read", "window": 0}
     return {"id": "sense.seed.settle-result-mix",
             "state": "drift" if blocked_times else "verified",
             "sample": sample, "kind": "read", "window": len(window)}

@@ -7136,11 +7136,11 @@ def _settle(role, wake, result):
     return f"seed yield {role} wake={wake}\nTurn settled ({result}); notes"
 
 
-def test_settle_result_mix_empty_tape_is_not_verified(tmp_path, monkeypatch):
+def test_settle_result_mix_empty_tape_is_unknown_not_verified(tmp_path, monkeypatch):
     _seed_tape(monkeypatch, tmp_path, ["plain chat, no settlement"])
     result = discovery._seed_settle_result_mix(tmp_path)
     assert result["id"] == "sense.seed.settle-result-mix"
-    assert result["state"] == "verified"
+    assert result["state"] == "unknown"
     assert "n=0" in result["sample"] and "since_last=none" in result["sample"]
 
 
