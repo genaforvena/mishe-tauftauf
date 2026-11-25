@@ -78,13 +78,10 @@ reading. A dropped connection is retried before it counts as UNKNOWN: the privac
 scan makes three attempts (after 2 s, then 5 s), the account-count check makes two
 (one retry after 2 s). An HTTP error is an answer and is not retried.
 
-The check is a committed file, not a site-local script. It used to live at
-`SITE_HOME/pub/bin/pub-privacy-scan`, outside the repository, and the delivery
-gate's reviewer could not see it: on 2026-11-14 the review of the duty that
-runs it refused with "insufficient context to assess deeper defects", naming
-the scanner's exit-code contract as missing evidence. A reviewer can only judge
-bytes it is given, so a check whose contract lives outside the repository can
-never be reviewed. Its three siblings — `pub-index-self-claims.py`,
+The check is a committed file, not a site-local script. A reviewer can only
+judge bytes it is given, so a check whose contract lives outside the repository
+can never be reviewed; the scanner therefore lives in `checks/`, not under
+`SITE_HOME/pub/bin/`. Its three siblings — `pub-index-self-claims.py`,
 `pub-account-count-claims.py` and `pub-article-duplication.py` — are all
 committed under `checks/`, and this one is now the fourth.
 
@@ -97,13 +94,11 @@ The foreground run measures about 4.5 minutes (108 items, paced reads), so the
 duty's timeout is 540 s and its `max_age` is 7200 s. The scan is a public-API
 read; it never writes to DEV.to.
 
-What the scan reads grew five times on 2026-11-14, each time because reading
-the check found a place it did not look. It now reads the whole comment tree and
-the tail the list endpoint withholds (below), the **card description** of
-every live and draft article, the account's own **published profile**, and the
-**canonical URL** and **cover image** of every article. On 2026-11-15 the draft
-pre-flight stopped reading the whole file as one body, so it reads the title
-and the tags as the fields they are.
+The scan reads every place a published text can carry a term: the whole comment
+tree and the tail the list endpoint withholds (below), the **card description**
+of every live and draft article, the account's own **published profile**, and
+the **canonical URL** and **cover image** of every article. The draft pre-flight
+reads the title and the tags as the fields they are, not as part of one body.
 
 DEV shows the description on every card and in
 every link preview, and DEV freezes it at creation, so a corrected body keeps
@@ -169,30 +164,26 @@ is carried onto each item rather than fetched 108 times.
 
 One rule changed with it, and it was a wrong rule rather than a missing one.
 The site-local terms file carried the account owner's own name in `names`
-while its own note recorded that Ilya's voice answer of 2026-11-12 14:45Z
-allows naming him ("it is totally fine to mention me, mishe, mesh, all
+while its own note recorded the owner's grant that allows naming him ("it is totally fine to mention me, mishe, mesh, all
 projects"). The lane therefore refused bodies that named him — a rule
 contradicting the grant it was written from, which pushes an author to write
-around it instead of writing freely. The allowed names now live in
+around it instead of writing freely. The grant is recorded in the operator's
+standing approvals. The allowed names now live in
 `allowed.own_names` in the terms file, where the scanner reads them, and
 every other name stays forbidden.
 
-One behaviour changed in the move. A RED verdict now stays RED even when the
-publish to the bus fails: a violation we observed is an observation, not a
-missing one, and the duty maps exit 2 onto the bus itself. The site-local copy
-returned UNKNOWN for every verdict whose publish failed, including a RED, which
-masked a real violation behind a transport failure — the lane would read
-"nothing known" instead of "something wrong".
+A RED verdict stays RED even when the publish to the bus fails: a violation we
+observed is an observation, not a missing one. A failed publish must not turn a
+RED into UNKNOWN, because that would hide a real violation behind a transport
+failure.
 
 ## The write path refuses a rule break
 
-The rule above was enforced in one place only: the standing lane, over what was
-ALREADY published, on an hourly timer. The write path itself had one pre-flight
-— paragraph duplication — and not the other, even though the same check has a
-per-file mode (`--file`) that reads the title, the tags, the description, the
-canonical URL, the cover image and the body as the fields the publisher sends
-them. So a draft naming a device reached every reader first and the lane
-noticed it afterwards.
+The rule is enforced on the write path as well as by the standing lane over
+what is already published. The write path runs the same check's per-file mode
+(`--file`), which reads the title, the tags, the description, the canonical URL,
+the cover image and the body as the fields the publisher sends them, so a
+draft that names a private term is refused before any reader sees it.
 
 The publisher now runs that pre-flight before the write, exactly as it runs
 the committed bytes of the duplication detector: `git show
@@ -217,30 +208,14 @@ an hourly timer.
 
 ### Both gates refuse when a rule cannot be applied
 
-The write path has two gates, and the fifth question above — the
-paragraph-duplication detector that cannot be found — exists because they did
-not agree about what "the rule could not be applied" means.
+The write path has two gates, and they must agree about what "the rule could
+not be applied" means. Both refuse. "No rule was applied" is not "no rule was
+broken". If the paragraph-duplication detector is missing, the write is refused,
+as it is when the privacy rule check is missing; a refusal message must never
+depend on a name the script did not bind, so a refusal cannot end in a traceback.
 
-The privacy gate refused when the rule check was missing. The **duplication**
-gate did not: its whole block was guarded by "if the detector is there", so a
-missing detector meant no check at all on the body — the one defect that
-reaches a reader twice, in a paragraph the author read and approved once. It
-now refuses, as the privacy gate does. "No rule was applied" is not "no rule
-was broken", and two gates on one write path must not disagree about it.
-
-The privacy gate's refusal had a second defect, found the same day: the
-branch that handles a missing rule check built its message from a variable the
-script never defined, so the tool died with a `NameError` instead of refusing.
-The write still did not happen, so the account was safe, but a traceback is not
-a refusal and the operator reading the log could not tell a refused draft from
-a broken tool. Every name a refusal message reads is now bound before any
-branch that can reach it — a name bound inside a branch is missing in exactly
-the case that branch exists for.
-
-Both defects were invisible to the repository, because the publisher lives
-under the gitignored site home. The committed check is what makes them
-visible: it mutates the installed publisher and asks the same question again,
-and it fails RED on a publisher with either defect.
+The committed check proves this by mutating the installed publisher and asking
+the same question again; it fails RED on a publisher that lacks either refusal.
 
 `SITE/publication-check.json` is an object with `command` (nonempty argv list) and
 `timeout_seconds` (finite positive seconds, at most 300). Example command:
