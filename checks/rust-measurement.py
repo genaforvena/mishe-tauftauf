@@ -351,7 +351,7 @@ def binary_provenance(home: Path, repo: Path) -> dict:
     unreadable fact is named: one crate's unreadable record does not hide
     another's, because a person diagnosing the gap needs both.
     """
-    facts: dict = {"checked": 0, "drift": [], "broken": [], "unknown": None, "digests": {}}
+    facts: dict = {"checked": 0, "drift": [], "ahead": [], "broken": [], "unknown": None, "digests": {}}
     missing: list[str] = []
     unknowns: list[str] = []
     bin_dir = home / "bin"
@@ -385,6 +385,12 @@ def binary_provenance(home: Path, repo: Path) -> dict:
         if digest != recorded:
             facts["broken"].append(
                 f"{binary}: sha256 {digest[:12]} != install record {recorded[:12]}")
+        ahead = _git(repo, "merge-base", "--is-ancestor", pin, install_commit)
+        if ahead.returncode == 0:
+            # The bytes were built from source newer than this release: the release carries
+            # no source the installed bytes lack, so this is not drift. Named, never hidden.
+            facts["ahead"].append(f"{binary}: built from {install_commit[:8]}, newer than release {pin[:8]}")
+            continue
         diff = _git(repo, "diff", "--quiet", install_commit, pin, "--",
                     f":(glob)rust/{crate}/*.rs", f":(glob)rust/{crate}/**/*.rs",
                     *(f"rust/{crate}/{name}" for name in SOURCE_NAMES))

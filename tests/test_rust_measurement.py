@@ -372,6 +372,23 @@ def test_binary_provenance_flags_crate_source_newer_than_the_installed_bytes(tmp
     assert facts["broken"] == []
 
 
+def test_binary_provenance_built_ahead_of_release_is_not_drift(tmp_path):
+    # 2026-11-25: the network mind installed 0.2.0 from 79c137c4, which is newer than the
+    # served release 1257eb25. The release carries nothing those bytes lack, so it is named,
+    # not flagged RED as drift.
+    mod = check_module()
+    repo = _rust_release(tmp_path)
+    home = tmp_path / "site"
+    (repo / "rust" / "mishe-tape" / "src" / "main.rs").write_text("fn main() { }\n")
+    _commit(repo, "crate source the install is built from")
+    _install_all(home, repo)
+    subprocess.run(["git", "-C", str(repo), "reset", "--hard", "-q", "HEAD~1"], check=True)
+    facts = mod.binary_provenance(home, repo)
+    assert facts["checked"] == len(mod.CRATES)
+    assert facts["drift"] == [] and facts["broken"] == [] and facts["unknown"] is None
+    assert len(facts["ahead"]) == len(mod.CRATES) and "mishe-tape" in " ".join(facts["ahead"])
+
+
 def test_binary_provenance_flags_bytes_that_no_longer_match_their_record(tmp_path):
     mod = check_module()
     repo = _rust_release(tmp_path)
