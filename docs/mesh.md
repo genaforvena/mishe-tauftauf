@@ -18,7 +18,7 @@ than its declared age is `UNKNOWN`, not a pass.
 
 Seven built-in signals are easy to misread from their names alone:
 
-- `dispatch` is RED when a wake's dispatch record has stayed open longer than the larger of the engine's hard cap and the wake's soft deadline, plus five minutes. A wake that is still running inside that bound is GREEN.
+- `dispatch` is RED when the recorded start of an agent turn (a *wake*, defined below) has stayed open longer than the larger of the engine's hard cap and the wake's soft deadline, plus five minutes. A wake that is still running inside that bound is GREEN.
 - `ci` is the GitHub Actions result for the remote commit: pass is GREEN, fail is RED with its cause. While the newest run is still pending, the newest finished run decides; if no run has finished yet, the standing result stays.
 - `tape-lock` is RED only when the plant-wide tape lock (`.seed.lock`) cannot be taken across every attempt in one check. A lock held briefly by a writer is GREEN.
 - `delivery-requests` is RED while a delivery admission outlives its owner or a request is UNKNOWN. Otherwise it is GREEN.
