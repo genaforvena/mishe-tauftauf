@@ -1365,6 +1365,32 @@ def web_line(label, name, data):
     return f"  {label:<22}{now:>10}  {spark(vals)}  failed in last {min(len(vals), 40)}: {failed}"
 
 
+def host_busy_line(data):
+    """Whether this mesh-home machine was busy when the newest probe ran, next to its web timings.
+
+    The probe records kernel PSI `some avg10` for CPU and IO (rows from probe 0.2.0 on). A slow TLS
+    handshake on a busy host is host time, not uplink time, so a slow page with a busy host is named
+    as such. A row without the field (older probe, or PSI unreadable) is UNKNOWN, never "not busy".
+    The busy/slow words are a reading, not a verdict on the uplink.
+    """
+    last = data[-1] if data else None
+    if last is None:
+        return "  HOST BUSY     UNKNOWN (no probe row yet)"
+    a = age(last)
+    stamp = f"probe {last.get('at', '?')}, {a:.0f} s old" if a is not None else "probe age UNKNOWN"
+    host = last.get("host")
+    cpu = host.get("cpu_some10") if isinstance(host, dict) else None
+    if cpu is None:
+        return f"  HOST BUSY     UNKNOWN (CPU pressure not in that probe; {stamp})"
+    io_ = host.get("io_some10")
+    io_txt = f", disk/IO waiting {io_:.0f}%" if io_ is not None else ", disk/IO UNKNOWN"
+    text = f"CPU waiting {cpu:.0f}% of the time{io_txt}"
+    best = min((v for v in (web_ms(last, n) for n in last.get("internet") or {}) if v is not None), default=None)
+    if best is not None and best > SLOW_WEB_MS and cpu >= 50:
+        text += "; SLOW HERE: busy host, so slow pages are likely this machine, not the uplink"
+    return f"  HOST BUSY     {text} ({stamp})"
+
+
 def dns_line(data):
     """The home resolver's lookup time, with why the connect time below can be smaller.
 
@@ -1978,6 +2004,7 @@ def draw():
     out.append(web_line("gstatic.com", "gstatic", data))
     out.append(web_line("cloudflare.com", "cloudflare", data))
     out.append(dns_line(data))
+    out.append(host_busy_line(data))
     out.append("  WHERE TIME GOES  " + phase_line(data, facts=facts))
     out.append(usuality_line(data, facts=facts))
     out.append(spike_share_line(facts))
