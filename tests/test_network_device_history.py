@@ -51,6 +51,17 @@ class DeviceHistory(unittest.TestCase):
         self.assertIn("silent in 1 run over", phrase)
         self.assertIn("longest 0.1 h", phrase)
 
+    def test_a_run_with_no_containment_trip_is_named_unexplained(self):
+        rows = [row(NOW - 18000, False), row(NOW - 17800, False), row(NOW - 60, True)]
+        phrase = nb.device_outage_phrase(rows, NAME, NOW, paused=lambda a, b: None)
+        self.assertIn("1 with no containment trip logged, UNKNOWN not calm", phrase)
+
+    def test_a_run_inside_a_containment_pause_is_explained(self):
+        rows = [row(NOW - 18000, False), row(NOW - 17800, False), row(NOW - 60, True)]
+        phrase = nb.device_outage_phrase(rows, NAME, NOW, paused=lambda a, b: (a, b))
+        self.assertIn("each inside a containment pause", phrase)
+        self.assertNotIn("UNKNOWN not calm", phrase)
+
     def test_unreadable_or_future_rows_are_skipped(self):
         rows = [{"ts": "x", "devices": {NAME: {"ok": False}}}, row(NOW + 500, False), row(NOW - 60, True)]
         self.assertEqual(nb.device_outage_phrase(rows, NAME, NOW), "")

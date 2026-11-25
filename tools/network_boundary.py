@@ -530,7 +530,7 @@ def device_ping_sample(rows, now):
     return devices, max(age, 0), None
 
 
-def device_outage_phrase(rows, name, now, horizon=86400.0):
+def device_outage_phrase(rows, name, now, horizon=86400.0, paused=None):
     """Silent-ping runs for one device in the last horizon seconds, in plain words ("" when none).
 
     The newest row can be GREEN while the device was silent for hours before it; this keeps that
@@ -569,8 +569,12 @@ def device_outage_phrase(rows, name, now, horizon=86400.0):
     longest_h = max(e - s for s, e in runs) / 3600
     last = time.strftime("%H:%MZ", time.gmtime(runs[-1][1]))
     noun = "run" if len(runs) == 1 else "runs"
+    # A run with no containment pause logged across it is an unexplained silence, never a calm line.
+    unexplained = sum(1 for s, e in runs if not (paused is not None and paused(s, e)))
+    why = (f"; {unexplained} with no containment trip logged, UNKNOWN not calm" if unexplained else
+           "; each inside a containment pause")
     return (f"{name} silent in {len(runs)} {noun} over the last 24 h (longest {longest_h:.1f} h, "
-            f"last ended {last})")
+            f"last ended {last}{why})")
 
 
 def device_ping_plain_problem(result):
