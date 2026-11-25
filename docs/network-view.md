@@ -146,8 +146,9 @@ is not mistaken for a quiet mind.
   list no longer says `none`. When the journal shows a containment skip of the probe units inside the
   silence, the line names it instead (`NO PROBES ... host paused by containment trip HH:MMZ to HH:MMZ,
   UNKNOWN not calm`): the guard held the producers back, the router and probe did not fail. It is still
-  UNKNOWN; a failed or timed-out journal read leaves the plain form. Timestamps on different days carry the month and day, so a
-  multi-day span or an outage across midnight cannot read as a few hours; an outage still in progress
+  UNKNOWN; a failed or timed-out journal read leaves the plain form. The start of every outage carries the month and day
+  (`11-25 18:19Z to 18:22Z`, the end only repeating the date when it falls on another day), so an outage
+  read later cannot pass for today's, and a multi-day span or an outage across midnight cannot read as a few hours; an outage still in progress
   says "still down at the last probe" instead of inventing an end. The view reads the last 1440 probe
   rows (`rows()`), which at the current cadence is a few days, and the span line states that length.
 - `WAN LINK`: the WAN device's negotiated speed and duplex from the router's own
