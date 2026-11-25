@@ -121,7 +121,10 @@ def models_ever_seen(wakes: Path, skip: int, cache_path: Path | None = None) -> 
     for path in paths:
         if path.suffix not in ('.json', '.jsonl'):
             continue
-        size = path.stat().st_size
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue  # removed after the listing: a vanished output has no model to count
         hit = cache.get(path.name)
         if isinstance(hit, list) and len(hit) == 2 and hit[0] == size:
             name = hit[1]

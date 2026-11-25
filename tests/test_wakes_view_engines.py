@@ -258,3 +258,28 @@ def test_target_renderers_are_isolated_from_existing_package_and_each_other(tmp_
     with pytest.raises(FileNotFoundError):
         check.load_renderer(tmp_path / "missing")
     assert sys.modules["mishe_tauftauf.wall"] is original
+
+
+def test_output_removed_between_listing_and_cache_loop_is_skipped(tmp_path, monkeypatch):
+    # The sort stats each file once; the cache loop stats again. A file removed in between
+    # must not raise out of models_ever_seen (it was tolerated before the cache existed).
+    wakes = tmp_path / "wakes"
+    wakes.mkdir()
+    gone = wakes / "wake-1.prompt.out.json"
+    kept = wakes / "wake-2.prompt.out.json"
+    for p in (gone, kept):
+        p.write_text(json.dumps({"modelUsage": {"m-kept": {}}}), encoding="utf-8")
+    calls = {"gone": 0}
+    real_stat = Path.stat
+
+    def flaky_stat(self, *args, **kwargs):
+        if self.name == gone.name:
+            calls["gone"] += 1
+            if calls["gone"] >= 2:
+                raise FileNotFoundError(str(self))
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", flaky_stat)
+    seen = check.models_ever_seen(wakes, 0, tmp_path / "cache.json")
+    assert "m-kept" in seen
+    assert calls["gone"] >= 2
