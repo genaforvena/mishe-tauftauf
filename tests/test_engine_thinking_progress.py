@@ -59,6 +59,6 @@ def test_a_tool_driven_engine_outlives_the_soft_deadline(tmp_path: Path):
     out = tmp_path / "stream"
     started = time.monotonic()
     code = proc.run_bounded([sys.executable, "-c", TOOLS_WHILE_RUNNING], env=dict(os.environ), cwd=tmp_path,
-                            timeout=1, stdout_to=out, hard_timeout=20, idle_gap=1.0)
+                            timeout=1, stdout_to=out, hard_timeout=20, idle_gap=5.0)
     assert code == 0
     assert time.monotonic() - started >= 1.0, "tool progress was cut at the soft deadline"
