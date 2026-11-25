@@ -335,6 +335,12 @@ def run(args) -> int:
             command = args.cmd
             if not command:
                 raise ValueError("signal run needs a command after --")
+            # A producer that overruns its unit's TimeoutStartSec is SIGTERMed by systemd with no trace of
+            # where it was (2026-11-25 unit-restart-churn: check printed exit=0, process still alive 53 s later).
+            # Dump every thread's stack to the journal on SIGTERM, then let the default action terminate.
+            import faulthandler
+            import signal as _signal
+            faulthandler.register(_signal.SIGTERM, file=sys.stderr, all_threads=True, chain=True)
             code = producers.run(home, args.name, command, now=now, timeout=args.timeout,
                                 red_codes=tuple(int(c) for c in args.red_codes.split(",") if c != "none"),
                                 unknown_codes=tuple(int(c) for c in args.unknown_codes.split(",") if c != "none"))
