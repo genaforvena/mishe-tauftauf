@@ -503,6 +503,18 @@ def test_uplink_trend_says_same_when_the_hours_are_flat(tmp_path, monkeypatch):
     assert "about 330 per hour" in line and "about the same as the 6 earlier hours" in line
 
 
+def test_uplink_rate_names_the_average_since_boot(tmp_path, monkeypatch):
+    # 7 h of steady 330/h: the reader gets the boot-long average as scale, so a steady rate reads as normal.
+    now = 1_000_000.0
+    reads = _hourly_reads(now, [330] * 7)
+    _write_reads(tmp_path, monkeypatch, reads)
+    line = view.uplink_rate_line(now)
+    last = max(reads, key=lambda r: r["ts"])
+    expect = last["uplink"]["rx_dropped"] * 3600 / last["uptime_s"]
+    assert f"average since the router last booted about {expect:.0f} per hour" in line
+    assert "about 330 per hour" in line and "about the same as the 6 earlier hours" in line
+
+
 def test_uplink_trend_says_higher_when_this_hour_jumped(tmp_path, monkeypatch):
     now = 1_000_000.0
     reads = _hourly_reads(now, [100] * 6 + [600])

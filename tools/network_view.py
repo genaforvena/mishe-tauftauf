@@ -1322,9 +1322,14 @@ def uplink_rate_line(now=None):
     drops, span = got
     ago = now - recent[-1]["ts"]
     stale = "  STALE" if ago > STALE_ROUTER_S else ""
+    newest = max(reads, key=lambda r: r["ts"])
+    boot_txt = ""
+    if newest["uplink"].get("rx_dropped") is not None and newest["uptime_s"] >= 3600:
+        since_boot = newest["uplink"]["rx_dropped"] * 3600 / newest["uptime_s"]
+        boot_txt = f"; average since the router last booted about {since_boot:.0f} per hour"
     return (f"{drops} receive drops in the last {span / 60:.0f} min "
             f"(about {drops * 3600 / span:.0f} per hour), {uplink_trend_phrase(reads, now)}"
-            f"; read {ago:.0f} s ago{stale}")
+            f"{boot_txt}; read {ago:.0f} s ago{stale}")
 
 
 def gateway_line(data):
