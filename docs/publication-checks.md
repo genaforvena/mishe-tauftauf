@@ -32,26 +32,22 @@ account, and each covers a gap the others cannot:
 - `checks/pub-account-count-claims.py` (duty `pub-account-count-claims`) reads
   every published body and every card description, and compares each count
   about the account against the account. It covers the pages the index check
-  does not read: on 2026-11-14 article 4894878 published "this account has
-  published 78 posts" while the account held 95, and article 4949922 published
-  "the published blog this account maintains is 62 posts, 58 distinct titles"
-  while the account held 95 and 91. Both passed the index check and the count
-  parity check, which read the count pages' first correction sentence rather
-  than the sentence in the body.
+  does not read. Published bodies once carried account counts that the index
+  check and the count-parity check both passed, because those two read the
+  count pages' first correction sentence rather than the sentence in the body.
 - `pub/bin/devto-count-parity` reads the two count pages' first correction
   sentence and the index's URL list. It is a public-API read with no
   credentials.
 
 A correction notice's numbers are history, and a figure the line dates ("at the
-time this draft was written", "then held", "as of the 2026-11-12 refresh") is
-a dated figure; the account-count check reads neither as a claim about today.
+time this draft was written", "then held", "as of the last refresh") is a dated
+figure; the account-count check reads neither as a claim about today.
 The qualifier dates the figure it qualifies, not the whole line: the figure's
 own sentence governs it, and another sentence governs it only when it points
 back at the figure ("the count above", "both figures", "the account size").
-This scope is measured, not guessed — the earlier whole-line rule skipped a
-live claim on article 4949922, whose bullet carried the account's size and the
-note about when it was read on one line, and mutating that figure to a stale
-count still read GREEN. An account that cannot be read is UNKNOWN, never a
+This scope is measured, not guessed: a whole-line rule once skipped a live
+account-size claim that shared a line with a read-date note, so a stale count
+stayed GREEN. An account that cannot be read is UNKNOWN, never a
 pass. Both Python checks take `--env` with the credentials file as an absolute
 path and `--self-test` for their own controlled failure.
 
@@ -63,10 +59,10 @@ unknown, unavailable, skipped questions, malformed output and timeouts refuse.
 ## The privacy scan's own duty
 
 `checks/pub-privacy-scan.py --all` is the check that reads every live and draft
-article, title, tag and reply against the private/public rule list Ilya confirmed
-on 2026-11-12 13:46Z. It was the one check of the four that had no duty: it was
-run by hand, so its signal `pub-privacy-scan` aged to UNKNOWN between runs even
-when nothing was wrong — a missing monitor read the same as a broken one.
+article, title, tag and reply against the private/public rule list the owner
+confirmed. A check with no duty is run by hand, so its signal `pub-privacy-scan`
+ages to UNKNOWN between runs even when nothing is wrong: a missing monitor must
+read as UNKNOWN, not as a broken check or a pass.
 
 Duty `pub-privacy-scan` in `duties.json` runs it on an hourly timer, with the
 site's own credentials and rule terms named as absolute paths (`--env`
@@ -256,7 +252,7 @@ capability remains a private correction obligation with its exact retry edge.
 
 Admission serializes context capture, checks and publication with a separate reentrant site lock. Model inference never runs under the feed file lock. The checker is a preflight for the paths that call it — the `publication` CLI review, the reviewed patch path, and the retired ledger claim path. The canonical wall route settles a turn without semantic admission: `mishe yield` writes the wall and handoff from one settled text, and chat and wall appends run only the deterministic prose guard. Clear admission is likewise deterministic: a chat `seed clear ROLE after=N` header rotates a settled, idle mind without a semantic checker, and a private durable effect journal prevents a completed rotation from repeating after a failed receipt commit. An uncertain journal requires reconciliation.
 
-The pinned Laya adapter is an optional experimental checker. Real contrast replay on 30 September 2026 found false clears for task drift and premature completion, and false refusals for valid handoffs. No reliability claim follows from its protocol tests. Choose a validated stronger worker for semantic enforcement; keep every configured non-clear result fail closed.
+The pinned Laya adapter is an optional experimental checker. A real contrast replay found false clears for task drift and premature completion, and false refusals for valid handoffs. No reliability claim follows from its protocol tests. Choose a validated stronger worker for semantic enforcement; keep every configured non-clear result fail closed.
 
 
 ## Optional installed Codex reviewer
