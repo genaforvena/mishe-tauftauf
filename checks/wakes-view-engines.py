@@ -132,9 +132,15 @@ def models_ever_seen(wakes: Path, skip: int, cache_path: Path | None = None) -> 
             seen.add(name)
     if cache_path is not None and fresh != cache:
         # Rewrite only when the set changed; pruning vanished files happens here too.
+        # The cache is an optimisation: a missing directory or a failed write must not
+        # fail the check, it only costs a full re-read on the next run.
         tmp = cache_path.with_suffix('.tmp')
-        tmp.write_text(json.dumps(fresh, separators=(',', ':')), encoding='utf-8')
-        tmp.replace(cache_path)
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps(fresh, separators=(',', ':')), encoding='utf-8')
+            tmp.replace(cache_path)
+        except OSError:
+            pass
     return seen
 
 
