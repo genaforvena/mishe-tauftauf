@@ -169,7 +169,8 @@ router consumes:
   and with what token values.
 - `router_text.py` — the engine router's own stream and the wake-concurrency JSON
   files: retry-after-ms extraction, JSON-lines event streams, routing ledger events,
-  and cooling-key splitting. It also reads the last terminal assistant error from a
+  cooling-key splitting, and the model-id provider prefix (`opencode-go/x` ->
+  `opencode-go`) that the engine router uses to cool a provider. It also reads the last terminal assistant error from a
   bounded tail of an OMP stream, so `wake-waste` can name an OpenCode Go key or
   subscription failure. When the tail cannot be read, the wake still counts as a
   yield-less wake without the provider label, and the message names the missing detail
