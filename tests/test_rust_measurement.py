@@ -676,3 +676,12 @@ def test_cached_view_disagreeing_with_the_rebuild_is_red(tmp_path):
         capture_output=True, text=True, timeout=120)
     assert proc.returncode == 2, (proc.returncode, proc.stderr)
     assert "cached role view" in proc.stderr and "senses" in proc.stderr
+
+
+def test_cache_state_none_is_unknown_not_hit():
+    # No tape: the feed never sets role_cache_miss, so the child emits null.
+    # Null must not print as a cache hit.
+    check = check_module()
+    assert check._cache_state(None) == "UNKNOWN"
+    assert check._cache_state(True) == "MISS"
+    assert check._cache_state(False) == "hit"

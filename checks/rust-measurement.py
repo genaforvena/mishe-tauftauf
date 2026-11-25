@@ -298,6 +298,13 @@ def host_guard(max_load: float | None, min_free_kb: int,
     return None, facts
 
 
+def _cache_state(role_cache_miss: bool | None) -> str:
+    """Render the feed diagnostics flag; None means the fold never set it (no tape)."""
+    if role_cache_miss is None:
+        return "UNKNOWN"
+    return "MISS" if role_cache_miss else "hit"
+
+
 def fold_role(repo: Path, home: Path, role: str, timeout: int,
               variant: str = "forced") -> dict:
     """Measure one role's read in a fresh child process.
@@ -514,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
                         f"{r['maxrss_kb'] // 1024} MB {r['entries']} entries, live "
                         f"{r['live']['fold_cpu_s']} CPU-s view "
                         f"{'equal' if r['live']['view_digest'] == r['view_digest'] else 'DIFFERS'}"
-                        f", cache {'MISS' if r['live']['role_cache_miss'] else 'hit'}"
+                        f", cache {_cache_state(r['live']['role_cache_miss'])}"
                         for r in readings)
     by_exe = "; ".join(
         f"{r['role']}: " + ", ".join(f"{name} {secs:g}" for name, secs in r["child_cpu_by_exe"].items())
