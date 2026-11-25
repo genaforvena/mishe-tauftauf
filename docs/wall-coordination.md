@@ -197,9 +197,7 @@ specific target, previous pin and set of commands.
 
 Run `python3 tools/delivery_view.py --home .mishe-tauftauf` to compare the check
 and fence times for the newest ten deliveries and the full reporting window.
-On 2026-11-20 the fence averaged about 17 minutes for the newest ten. In the
-24 hours ending at 04:29 UTC on 2026-11-22, 52 deliveries averaged 21 seconds
-at the fence and 8 minutes 42 seconds in checks.
+Read the current numbers there; this page does not keep a snapshot.
 
 The quiet poll gives delivery up to 120 seconds to find a gap between wakes.
 If there is still no gap, delivery holds new wakes and waits for running wakes
@@ -405,13 +403,11 @@ cadence already delivered the target or a descendant, verify the
 intended change in the running release and retain the refusal as recorded. If
 the change is still owed, base any new request on the pin you just observed.
 
-Retained requests through 2026-11-20 put a number on this case: 9 of 25 were
-refused for a stale previous SHA; in 6 of the 9 the target was already an
-ancestor of the installed pin when the refusal was written, and every refusal
-waited 0.5–3.5 h between request and admission (two were already stale at
-creation). The guard is right — a request stays bound to the pin its wake
-started from — but "failed" here usually means the cadence already delivered
-the change. Verify before acting:
+Retained requests have shown this case often: most refusals for a stale previous
+SHA were written after the target was already an ancestor of the installed pin,
+and a refusal can wait hours between request and admission. The guard is right —
+a request stays bound to the pin its wake started from — but "failed" here
+usually means the cadence already delivered the change. Verify before acting:
 
 ```sh
 PIN=$(basename "$(readlink -f SITE_HOME/runtime/current)")
