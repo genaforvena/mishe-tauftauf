@@ -29,6 +29,21 @@ def once_worker(home: str) -> None:
     Feed(home).append_runtime_once("mishe-tauftauf", "wake requested top-pain sensor for entry 1")
 
 
+def role_reader_worker(home: str, rounds: int, out: str) -> None:
+    # A separate process reads the role view while another process appends and
+    # persists the role cache. The last view it saw is written for the parent.
+    feed = Feed(home)
+    for _ in range(rounds):
+        feed.role_entries("health")
+    Path(out).write_text("done")
+
+
+def role_writer_worker(home: str, steps: int) -> None:
+    feed = Feed(home)
+    for step in range(steps):
+        feed.append("seed", f"seed observation health sha256={step:08x}" + "0" * 56)
+
+
 class FeedTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -310,6 +325,32 @@ class FeedTests(unittest.TestCase):
                     feed_module._ROLE_ENTRIES_CACHE.clear()
                     feed_module._ROLE_ENTRIES_CACHE.update(saved)
                     self.assertEqual(incremental, full, f"step {step} role {role}")
+
+    @requires_tape_binary
+    def test_two_process_role_readers_agree_with_full_fold_while_appending(self):
+        # Race coverage the single-process differential misses: a writer appends
+        # while two reader processes read and persist the role cache. Each
+        # reader's final view must equal a forced full fold of the final tape.
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed.append("seed", "seed observation health sha256=" + "a" * 64)
+            outs = [str(Path(directory) / f"view-{n}.json") for n in range(2)]
+            procs = [multiprocessing.Process(target=role_writer_worker, args=(directory, 40))]
+            procs += [multiprocessing.Process(target=role_reader_worker, args=(directory, 25, out)) for out in outs]
+            for proc in procs:
+                proc.start()
+            for proc in procs:
+                proc.join(120)
+                self.assertEqual(proc.exitcode, 0)
+            # A fresh process-local cache: the incremental read must load the
+            # role cache the concurrent readers left on disk and match a full fold.
+            feed_module._ROLE_ENTRIES_CACHE.clear()
+            feed_module._ENTRIES_CACHE.clear()
+            incremental = [(e.sequence, e.source, e.body) for e in Feed(directory).role_entries("health")]
+            feed_module._ROLE_ENTRIES_CACHE.clear()
+            feed_module._ENTRIES_CACHE.clear()
+            full = [(e.sequence, e.source, e.body) for e in Feed(directory).role_entries("health", _force_full=True)]
+            self.assertEqual(incremental, full)
 
     @requires_tape_binary
     @requires_records_binary
