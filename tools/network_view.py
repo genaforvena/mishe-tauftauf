@@ -678,20 +678,38 @@ def wan_link_line(now=None):
 GUARD_TRIP_MARKER = "/var/lib/mishe-containment/tripped"
 
 
-def guard_line(now=None, marker=GUARD_TRIP_MARKER):
-    """Whether the host guard's trip marker is present: the usual reason a router read goes STALE.
+GUARD_TRIP_RECORD_GLOB = "tripped-*.json"  # the guard now writes one record per trip, not a bare marker
+RECENT_TRIP_S = 6 * 3600  # a record older than this does not explain a current gap
 
-    Read-only stat. Any error other than "absent" is UNKNOWN, never a calm clear.
+
+def guard_line(now=None, marker=GUARD_TRIP_MARKER):
+    """Whether the host guard tripped recently: the usual reason a router read goes STALE.
+
+    Two signs are read, both as plain stats: the bare marker file (older guard), and the newest
+    `tripped-*.json` trip record beside it (current guard). A recent record is named as a trip even
+    though the latch itself is not read here. Any read error is UNKNOWN, never a calm clear.
     """
     now = time.time() if now is None else now
     try:
         mtime = os.stat(marker).st_mtime
+        return (f"TRIPPED {(now - mtime) / 60:.0f} min ago: the guard holds back the router units "
+                "and their readings go STALE until it is rearmed")
     except FileNotFoundError:
-        return "clear (no trip marker; the router and window units may run)"
+        pass
     except OSError as exc:
         return f"UNKNOWN (trip marker could not be read: {exc.strerror or type(exc).__name__})"
-    return (f"TRIPPED {(now - mtime) / 60:.0f} min ago: the guard holds back the router units "
-            "and their readings go STALE until it is rearmed")
+    try:
+        records = list(Path(marker).parent.glob(GUARD_TRIP_RECORD_GLOB))
+        newest = max((r.stat().st_mtime for r in records), default=None)
+    except OSError as exc:
+        return f"UNKNOWN (trip records could not be read: {exc.strerror or type(exc).__name__})"
+    if newest is None:
+        return "clear (no trip marker or trip record; the router and window units may run)"
+    age = now - newest
+    if age < RECENT_TRIP_S:
+        return (f"TRIP RECORD {age / 60:.0f} min ago (latch not read here): the guard may still hold "
+                "back the router units, and their readings go STALE until it is rearmed")
+    return f"clear (no trip marker; last trip record {age / 3600:.1f} h ago)"
 
 
 EGRESS_STATE = SITE / "health" / "egress.json"

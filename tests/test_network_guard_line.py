@@ -51,3 +51,22 @@ def test_unreadable_marker_is_unknown(tmp_path):
     if os.geteuid() == 0:  # root reads through mode 000; the UNKNOWN branch cannot be forced here
         return
     assert line.startswith("UNKNOWN")
+
+
+def test_recent_trip_record_is_named_though_bare_marker_is_gone(tmp_path):
+    # the guard now writes tripped-<ns>.json records; a fresh one must not read as a calm clear
+    record = tmp_path / "tripped-1795567161284062546.json"
+    record.write_text("{}")
+    line = view.guard_line(now=time.time(), marker=str(tmp_path / "tripped"))
+    assert line.startswith("TRIP RECORD")
+    assert "latch not read here" in line
+
+
+def test_old_trip_record_is_clear(tmp_path):
+    record = tmp_path / "tripped-1793189424987208050.json"
+    record.write_text("{}")
+    old = time.time() - 48 * 3600
+    os.utime(record, (old, old))
+    line = view.guard_line(now=time.time(), marker=str(tmp_path / "tripped"))
+    assert line.startswith("clear")
+    assert "last trip record" in line
