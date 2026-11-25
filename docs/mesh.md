@@ -5,7 +5,7 @@ coordinate through shared records, and check the results of their actions.
 Each plant (one running Mishe installation in one checkout) keeps its local
 state in an ignored site directory inside the shared source repository. Tracked
 code and local state stay separate, but the state is never outside the
-checkout. The site is the `.mishe-tauftauf/` directory: walls, the chat log
+checkout. The site is the `.mishe-tauftauf/` directory (the paths below write it as `SITE`): walls, the chat log
 (the *tape*: the append-only message log every mind reads), signals, wake files
 and operator records live there, and git never tracks it.
 
@@ -47,7 +47,10 @@ can be seen to have landed, or to have not:
   audited.
 - **The shared chat log**: an addressed tape everyone reads. A direct message,
   or DM, is one entry written with `wall dm`.
-- **One `main` branch**: the single branch all commits go to.
+- **One `main` branch**: the single branch all commits go to. *Delivery* is the
+  separate step that makes a checked commit the one the plant runs: it moves the
+  `runtime/current` pin (the link that names the running release). A commit on
+  `main` is not yet live.
 - **Wakes**: one turn of a mind, started by a trigger only when something is
   owed. One wake per role runs at a time.
 - **Scoped author commits**: each mind commits only its own paths. The
