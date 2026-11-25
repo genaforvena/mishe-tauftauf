@@ -196,7 +196,7 @@ def test_outage_episodes_list_start_and_end_and_still_down():
     assert view.outage_episodes(data) == [("2026-11-10T10:01:00Z", "2026-11-10T10:05:00Z"),
                                           ("2026-11-10T10:06:00Z", None)]
     lines = view.outage_lines(data)
-    assert lines[0] == "  DOWN 10:01Z to 10:05Z (4 min)"
+    assert lines[0] == "  DOWN 11-10 10:01Z to 10:05Z (4 min)"
     assert lines[1] == "  DOWN since 11-10 10:06Z, still down at the last probe"
 
 
@@ -224,7 +224,7 @@ def test_probe_silence_is_named_unknown_between_two_calm_probes_and_sorted_with_
     data = [_probe("2026-11-10T10:00:00Z", False), _probe("2026-11-10T10:03:00Z", True),
             _probe("2026-11-10T10:06:00Z", False), _probe("2026-11-10T11:00:00Z", False)]
     lines = view.outage_lines(data)
-    assert lines[0] == "  DOWN 10:03Z to 10:06Z (3 min)"
+    assert lines[0] == "  DOWN 11-10 10:03Z to 10:06Z (3 min)"
     assert lines[1] == "  NO PROBES 11-10 10:06Z to 11-10 11:00Z (54 min): UNKNOWN, not calm"
 
 

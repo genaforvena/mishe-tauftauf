@@ -379,8 +379,9 @@ def outage_lines(data, paused=None):
         if end is None:
             timed.append((nb.utc_epoch(start), f"  DOWN since {at_short(start)}, still down at the last probe"))
         else:
+            # always dated: a same-day clock range without the date reads as today's outage
             same_day = at_short(start)[:5] == at_short(end)[:5]
-            when = (f"{start[11:16]}Z to {end[11:16]}Z" if same_day
+            when = (f"{at_short(start)} to {end[11:16]}Z" if same_day
                     else f"{at_short(start)} to {at_short(end)}")
             mins = (nb.utc_epoch(end) - nb.utc_epoch(start)) / 60
             timed.append((nb.utc_epoch(start), f"  DOWN {when} ({mins:.0f} min)"))
