@@ -75,9 +75,13 @@ offered again on the next sweep.
   signal registry; it is also the way a new unit or drop-in takes effect.
 - `mishe inbox touch ROLE` wakes a role if it is owed a wake.
 - `mishe signal observe NAME VALUE` records a reading for a declared signal.
-- `mishe release revert --id ID` moves the pin back to the previous committed
-  release, for a delivered promotion record `ID`; the local recovery notes
-  describe the procedure (that file is not shipped).
+- `mishe release revert --id ID` takes a delivered promotion record `ID` back to
+  the release it replaced. It refuses unless the record is `delivered` and the
+  consumer configuration is unchanged since promotion. It then restores the
+  configuration saved before promotion, points the pin at the previous release,
+  and runs the record's observe command against it. The record ends `reverted`
+  when that probe passes, or `UNKNOWN` when it fails or cannot run; an `UNKNOWN`
+  revert needs a reading, not a retry (`release_promotion.revert`).
 
 ## Messages and outcomes
 
