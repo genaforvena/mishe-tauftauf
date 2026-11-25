@@ -218,6 +218,7 @@ print(json.dumps({
                          if hasattr(os, "wait4") else None),
     "record_decisions": diagnostics.get("record_decisions"),
     "checkpoint_rebuilt": diagnostics.get("checkpoint_rebuilt"),
+    "role_cache_miss": diagnostics.get("role_cache_miss"),
     "cpu_pressure_some_avg10_before": p0,
     "cpu_pressure_some_avg10_after": p1,
     "memory_pressure_some_avg10_before": m0,
@@ -474,7 +475,8 @@ def main(argv: list[str] | None = None) -> int:
             live = fold_role(repo, home, role, args.timeout, "live")
             reading["live"] = {key: live[key] for key in
                                ("cpu_s", "children_cpu_s", "fold_cpu_s", "elapsed_s",
-                                "maxrss_kb", "entries", "view_digest", "checkpoint_rebuilt")}
+                                "maxrss_kb", "entries", "view_digest", "checkpoint_rebuilt",
+                                "role_cache_miss")}
             readings.append(reading)
     except (RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
         print(f"rust-measurement: UNKNOWN fold failed: {exc}", file=sys.stderr)
@@ -512,6 +514,7 @@ def main(argv: list[str] | None = None) -> int:
                         f"{r['maxrss_kb'] // 1024} MB {r['entries']} entries, live "
                         f"{r['live']['fold_cpu_s']} CPU-s view "
                         f"{'equal' if r['live']['view_digest'] == r['view_digest'] else 'DIFFERS'}"
+                        f", cache {'MISS' if r['live']['role_cache_miss'] else 'hit'}"
                         for r in readings)
     by_exe = "; ".join(
         f"{r['role']}: " + ", ".join(f"{name} {secs:g}" for name, secs in r["child_cpu_by_exe"].items())

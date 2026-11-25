@@ -1283,12 +1283,18 @@ class Feed:
                         if cached is not None and cached["metadata"] == metadata:
                             cached["view"] = tuple(_role_view(cached["projection"]))
                             _ROLE_ENTRIES_CACHE[key] = cached
+                            if _fold_diagnostics is not None:
+                                _fold_diagnostics.update(role_cache_miss=False,
+                                                         checkpoint_rebuilt=False)
                             return list(cached["view"])
                     if cached is not None and valid and cached["metadata"] == metadata:
                         _ROLE_ENTRIES_CACHE.move_to_end(key)
                         full = _ENTRIES_CACHE.get(str(self.path))
                         if full and tuple(full[0]) == metadata:
                             _ENTRIES_CACHE.pop(str(self.path), None)
+                        if _fold_diagnostics is not None:
+                            _fold_diagnostics.update(role_cache_miss=False,
+                                                     checkpoint_rebuilt=False)
                         return list(cached["view"])
                 extending = (cached is not None and valid and cached["metadata"][0] == metadata[0]
                              and cached["metadata"][1] < metadata[1])
@@ -1354,7 +1360,8 @@ class Feed:
             handle.close()
         if _fold_diagnostics is not None:
             _fold_diagnostics.update(record_decisions=dict(decision_counts),
-                                     checkpoint_rebuilt=not valid)
+                                     checkpoint_rebuilt=not valid,
+                                     role_cache_miss=(not extending and not _force_full))
         view = tuple(_role_view(projection))
         with _ENTRIES_CACHE_LOCK:
             current = _ROLE_ENTRIES_CACHE.get(key)

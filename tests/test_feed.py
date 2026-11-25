@@ -293,6 +293,21 @@ class FeedTests(unittest.TestCase):
             feed.path.write_bytes(old_bytes)
 
     @requires_tape_binary
+    def test_role_cache_miss_flag_separates_cold_fold_from_hit(self):
+        # The measurement producer reads this flag: a cold role read is a MISS,
+        # a repeat read of an unchanged tape is a hit.
+        with tempfile.TemporaryDirectory() as directory:
+            feed = Feed(directory)
+            feed.append("seed", "seed observation health sha256=" + "a" * 64)
+            feed_module._ROLE_ENTRIES_CACHE.clear()
+            feed_module._ENTRIES_CACHE.clear()
+            cold, warm = {}, {}
+            Feed(directory).role_entries("health", _fold_diagnostics=cold)
+            Feed(directory).role_entries("health", _fold_diagnostics=warm)
+            self.assertIs(cold["role_cache_miss"], True)
+            self.assertIs(warm["role_cache_miss"], False)
+
+    @requires_tape_binary
     def test_extended_role_view_equals_full_fold_over_mixed_tape(self):
         # Differential: after every append, the incremental (extend) read must
         # equal a forced full fold, for several roles, with source rows replaced,
