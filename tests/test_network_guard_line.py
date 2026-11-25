@@ -70,3 +70,14 @@ def test_old_trip_record_is_clear(tmp_path):
     line = view.guard_line(now=time.time(), marker=str(tmp_path / "tripped"))
     assert line.startswith("clear")
     assert "last trip record" in line
+
+
+def test_unlistable_trip_records_are_unknown_not_clear(tmp_path, monkeypatch):
+    # A directory that stat can reach but not list must not read as "no trip record" (a calm clear).
+    # Forced by patching scandir, so it holds for root too (root can list a mode-000 directory).
+    def denied(path):
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(view.os, "scandir", denied)
+    line = view.guard_line(marker=str(tmp_path / "tripped"))
+    assert line.startswith("UNKNOWN"), line

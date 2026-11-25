@@ -6,6 +6,7 @@ a few facts from the router over ssh (never writes there).  Anything not measure
 is shown as UNKNOWN.  The network mind improves this file.
 """
 import ast
+import fnmatch
 import hashlib
 import json
 import os
@@ -698,9 +699,19 @@ def guard_line(now=None, marker=GUARD_TRIP_MARKER):
         pass
     except OSError as exc:
         return f"UNKNOWN (trip marker could not be read: {exc.strerror or type(exc).__name__})"
+    # os.scandir, not Path.glob: on CPython 3.12 glob silently yields nothing when the directory
+    # cannot be listed (PermissionError), which would read as a calm clear.
     try:
-        records = list(Path(marker).parent.glob(GUARD_TRIP_RECORD_GLOB))
-        newest = max((r.stat().st_mtime for r in records), default=None)
+        newest = None
+        with os.scandir(Path(marker).parent) as entries:
+            for entry in entries:
+                if not fnmatch.fnmatch(entry.name, GUARD_TRIP_RECORD_GLOB):
+                    continue
+                try:
+                    mtime = entry.stat().st_mtime
+                except FileNotFoundError:  # rotated away between listing and stat
+                    continue
+                newest = mtime if newest is None else max(newest, mtime)
     except OSError as exc:
         return f"UNKNOWN (trip records could not be read: {exc.strerror or type(exc).__name__})"
     if newest is None:
