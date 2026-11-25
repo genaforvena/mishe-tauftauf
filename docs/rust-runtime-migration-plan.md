@@ -53,15 +53,15 @@ Exit codes for producers: 0 GREEN, 2 RED, anything else an unobserved run that a
 | Streamed tape reader | `feed.py:333` (`_iter_streamed_feed`), `:489` (`iter_feed_file`) | Bounded memory. |
 | Whole-tape reader | `feed.py:992` (`read_bytes`), `:1406` (`Feed.entries`) | Reads and parses the whole tape. |
 | Record envelope verification | `feed.py:1125` (`_verify_records`), `:1259` (`role_entries`) | Calls `records.py`. |
-| Record envelope sha256 and kind index | `records.py:180` (sha256 check in `envelope`), `:203` (`KindIndex`), `:231` (commit), `:291` (`executemany`) | At deac4dd1, the names `VerifiedStore`, `lookup`, `cached_payload` no longer exist under `records.py`; which store replaced them is not yet checked (UNKNOWN). The old sqlite size note (544 MB) is not re-measured. |
+| Record envelope sha256 and kind index | `records.py:180` (sha256 check in `envelope`), `:203` (`KindIndex`), `:231` (commit), `:291` (`executemany`) | At deac4dd1, the names `VerifiedStore`, `lookup`, `cached_payload` no longer exist under `records.py`; live callers are `outcome_events.py:117` (`KindIndex`) and `store_census.py:93` (`record_head`); whether they replaced the old verified-store role is not established (UNKNOWN). The old sqlite size note (544 MB) is not re-measured. |
 | Role projection | `feed.py:508` (`_role_fold`), `feed.py:49` (`_ROLE_ENTRIES_CACHE`, process-local), `feed.py:1259` (`role_entries`) | Cache is in process; cold CLI processes always rescan. |
 | Checkpoint index | `feed.py:25` (`INDEX_STRIDE = 128`), `:1035` (`_read_checkpoint`), `:1099` (`_publish_checkpoint`) | Used to validate cache, not to skip the scan. |
 | Identity index | `feed.py:909` (`_malformed_receipt`, `meta.malformed` count) | sqlite `feed.identities.sqlite3` (23.5 MB, not re-measured). |
 | Wall context | `wall.py:912` (`context`), `:927`, `:1012` | Calls `role_entries`. |
 | Wake dossier | `wake.py:127` (`role_entries`) | One process per wake. |
 | Migration | `migrate.py:29` (`role_entries`) | |
-| Discovery scan | `discovery.py:7217` (`scan`), `discovery.py:4602` (`iter_feed_file`, DM-disposition sense) | Module is 7,632 lines. |
-| CLI | `cli.py:173-176` (`cmd_wall show`), `:277-281` (`cmd_feed`, whole tape), `:143-147` (`_require_site_role`) | |
+| Discovery scan | `discovery.py:7658` (`scan`), `discovery.py:4858` (`iter_feed_file` call; imported at `:62`) | Module is 8,111 lines. |
+| CLI | `cli.py:172-175` (`cmd_wall show`), `:276-280` (`cmd_feed`, whole tape), `:141-146` (`_require_site_role`) | |
 
 ### 1.3 Tape scale and fan-out
 
@@ -148,11 +148,11 @@ Reading:
 
 ### 2.6 Not measured (UNKNOWN, with safe trigger)
 
-- `mishe feed` (`cli.py:277-281`, whole-tape parse and print): not run. Trigger: loadavg < 2, MemAvailable > 8 GB, no containment trip for 24 h, and a preserved tape copy rather than live `chat.log`.
+- `mishe feed` (`cli.py:276-280`, whole-tape parse and print): not run. Trigger: loadavg < 2, MemAvailable > 8 GB, no containment trip for 24 h, and a preserved tape copy rather than live `chat.log`.
 - Scaling of parse and verify against tape size: UNKNOWN. Needs a preserved-copy series (25/50/100/200 MB prefixes, one repetition each) under the same trigger.
 - Cold-page-cache `wall show`: UNKNOWN. Cache dropping is forbidden.
 - Number of cold tape scans per wake: UNKNOWN. Hypothesis: each wake process pays one cold scan through `wake.py:127`. Settle it by reading one wake's journal or tracing `openat` on a copy.
-- `discover scan` profile (tape iteration at `discovery.py:4602` versus scanner logic): UNKNOWN. Writes a snapshot, so it is not a read-only baseline.
+- `discover scan` profile (tape iteration at `discovery.py:4858` versus scanner logic): UNKNOWN. Writes a snapshot, so it is not a read-only baseline.
 - Serialization cost of handing ~300k parsed entries from a Rust process to Python (for `entries()` callers): UNKNOWN. This decides whether the single-authority slice is viable (section 6).
 
 ## 3. Candidates, ranking and the first Rust core slice
@@ -172,7 +172,7 @@ Reading:
 | 3 | S1: derived role projection for cold readers | Python | 18 s per cold `wall show` (2.2); cache is process-local (`feed.py:53`). | Candidate. Overlaps the verified store (3.1). Benefit threshold in 3.4. |
 | 4 | S2: `readings` cadence or window-limited tape work | Python | 5.9k CPU-s/day (2.4). Cause unprofiled. | Deferred until the `discover scan` profile exists. Scheduler change, strong. |
 | 5 | S3: diagnose `doctor` exit-1 runs | Python | Current failure, cause UNKNOWN (2.4). | Diagnosis first; no migration. |
-| — | R2: Rust rewrite of `discovery.py` | Rust | No measured scanner cost; 7,632 lines. | **Rejected** for now. |
+| — | R2: Rust rewrite of `discovery.py` | Rust | No measured scanner cost; 8,111 lines. | **Rejected** for now. |
 | — | R3: Rust CLI front end | Rust | Startup 0.09 s, import 54 ms; cost is data-dependent. | **Rejected**: no startup problem. |
 | — | R4: Rust dispatch or host-capacity | Rust | Dispatch is cheap by design; host-capacity has no CPU sample; containment-adjacent. | **Rejected**: no measured benefit; protected limits. |
 | — | R5: resident feed service over IPC | either | Adds a resident process; the 2026-11-03 OOM concerns resident readers. | **Rejected**: speculative, and reintroduces the resident-memory failure. |
@@ -501,7 +501,7 @@ is the template), with a differential test that runs without the Python runtime.
 | Cold role projection | 0.218–0.281 CPU-s live (persisted cache), 5.685–5.703 rebuild (§10.21). The 15.2 s user figure was the pre-`367e3775` rebuild. | `feed._ROLE_ENTRIES_CACHE` (process-local) + `feed.role-cache/<role>.json` (cross-process, `367e3775`) | same | C — abandoned (§10.21) |
 | Identity index | 23.5 MB sqlite, not timed | `feed.py:527-576` | malformed-count consumers | Kept, not scheduled |
 | `readings`, `doctor`, `observer-checks` producers | 5.9k, 2.9k, 2.5k CPU-s per day | `producers.py`, the producer scripts | systemd units | Deferred (S2, S3) |
-| `discovery.py` scanner | 890 CPU-s / 6 h, 870 MB peak, every 10 min (consumer-perf, pin `7ce12523`); 24.2 CPU-s and 941 MB peak per run at pin `b3d2cd85` (2026-11-10) | `discovery.py` (7,889 lines) | `mishe-producer-readings` | Candidate again (R2 falsified). Measured 2026-11-09 on a tape copy (298,870 entries, 213 MB, 2 GB cgroup cap): one `sample()` makes five `Feed.entries()` calls, but only the first does the verified read (6.2 CPU-s); the other four hit the process-local `_ENTRIES_CACHE` (about 0.01 s each). Unverified read: 1.5 CPU-s, 604 MB peak. The 43.5 CPU-s "cold verified read" from that copy is **retired**: it was measured without an index checkpoint. Against the live tape with a checkpoint the cold read is 6.08 CPU-s and a bounded indexed read is 0.01 CPU-s (section 10.3). The live per-run cost is now explained: 67.7% of the cold read is record verification, and the scan read the whole tape three times before S2.2 and reads it once now. See section 10 for the S2 decision. |
+| `discovery.py` scanner | 890 CPU-s / 6 h, 870 MB peak, every 10 min (consumer-perf, pin `7ce12523`); 24.2 CPU-s and 941 MB peak per run at pin `b3d2cd85` (2026-11-10) | `discovery.py` (8,111 lines) | `mishe-producer-readings` | Candidate again (R2 falsified). Measured 2026-11-09 on a tape copy (298,870 entries, 213 MB, 2 GB cgroup cap): one `sample()` makes five `Feed.entries()` calls, but only the first does the verified read (6.2 CPU-s); the other four hit the process-local `_ENTRIES_CACHE` (about 0.01 s each). Unverified read: 1.5 CPU-s, 604 MB peak. The 43.5 CPU-s "cold verified read" from that copy is **retired**: it was measured without an index checkpoint. Against the live tape with a checkpoint the cold read is 6.08 CPU-s and a bounded indexed read is 0.01 CPU-s (section 10.3). The live per-run cost is now explained: 67.7% of the cold read is record verification, and the scan read the whole tape three times before S2.2 and reads it once now. See section 10 for the S2 decision. |
 | Dispatch, host-capacity, budget | Cheap by design; no CPU sample; containment-adjacent | `producers.py`, `budget.sh` | units | Rejected (R4) |
 
 ### 9.3 Ordered slices, with acceptance, rollback and build budget
