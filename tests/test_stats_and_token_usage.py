@@ -11,7 +11,7 @@ import pytest
 from mishe_tauftauf import stats_boundary, token_usage
 
 NOW = 1_792_712_432_436  # fixed now for deterministic windowing
-TTL_MS = 60_000
+TTL_MS = 1_800_000  # stats-refresh duty max_age
 
 
 def create_messages_db(path: Path):
@@ -224,12 +224,12 @@ def test_stale_db_mtime(tmp_path):
     insert_row(db, timestamp=NOW, total_tokens=10, input_tokens=10, cost_total=0.01)
     home = tmp_path / "home"
     home.mkdir()
-    # set mtime 2 minutes ago -> stale (>60s)
-    old = time.time() - 120
+    # set mtime 31 minutes ago -> stale (>1800s, the stats-refresh duty's max_age)
+    old = time.time() - 1860
     os.utime(db, (old, old))
     rep = token_usage.report(home, window="all", now_ms=int(time.time() * 1000), db_path=db)
     assert rep["state"] == "STALE"
-    assert rep["age_seconds"] is not None and rep["age_seconds"] > 60
+    assert rep["age_seconds"] is not None and rep["age_seconds"] > 1800
     # fresh
     os.utime(db, None)
     rep2 = token_usage.report(home, window="all", now_ms=int(time.time() * 1000), db_path=db)

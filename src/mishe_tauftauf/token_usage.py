@@ -22,7 +22,9 @@ WINDOWS = {
     "all": None,
 }
 
-TTL_MS = 60_000
+# Matches the stats-refresh duty's max_age (duties.json): the duty refreshes
+# stats.db every 900 s, so a 60 s TTL read STALE for most of every cycle.
+TTL_MS = 1_800_000
 
 
 def _iso(ms):
