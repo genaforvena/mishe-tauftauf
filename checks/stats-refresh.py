@@ -47,7 +47,12 @@ def stats_db_path() -> Path:
 def refresh(timeout: float, memory_max: str) -> tuple[int, str]:
     """Run ``omp stats --json`` in a memory-capped scope; return (rc, stderr tail)."""
     cmd = ["omp", "stats", "--json"]
-    if subprocess.run(["systemd-run", "--version"], capture_output=True).returncode == 0:
+    try:
+        probe = subprocess.run(["systemd-run", "--version"], capture_output=True)
+    except OSError as exc:
+        # No systemd-run: running omp uncapped would break the memory-cap contract above.
+        return UNKNOWN, f"systemd-run unavailable: {exc}"
+    if probe.returncode == 0:
         cmd = ["systemd-run", "--user", "--scope", "--quiet", "-p", f"MemoryMax={memory_max}", *cmd]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
