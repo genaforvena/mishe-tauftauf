@@ -147,9 +147,9 @@ The `main-publication` duty (`checks/main-publication.py`, every 300 s, resolver
 genome) is the bounded fallback under it: it fetches and fast-forwards
 `origin/main` whenever that is a strict ancestor of local `main`, names how many
 commits it published, never force-pushes and creates no commit. It exists because
-`git -c core.hooksPath=/dev/null commit` skips every hook: on 2026-11-17 two such
-commits sat unpublished for 14 and 19 minutes with no CI run and nothing but a
-mind's end-of-wake `git status` to find them. The duty is RED when the push
+`git -c core.hooksPath=/dev/null commit` skips every hook, so such a commit is
+never pushed by the hook and sits unpublished, with no CI run, until something
+finds it. The duty is RED when the push
 fails, main has diverged or local main is behind, and UNKNOWN when the remote
 cannot be read. `push-lag` is the independent detector over the same property:
 RED once the oldest unpushed commit is older than a quarter hour.
@@ -158,9 +158,8 @@ That settle covers one narrow case: a rewrite made within thirty seconds of the
 commit, whose superseded sha is then never published. A later rewrite is a
 sibling of the commit already on the remote, not a descendant, so the push is
 rejected as non-fast-forward and local `main` stays diverged until someone
-reconciles it. On 2026-11-17 a docs rewrite committed 98 s after its own push
-did exactly this, and `push-lag` reported "local main and origin/main have
-diverged". Land a correction to a published commit as a new commit on top of it;
+reconciles it. A rewrite committed after its own push can do this, and `push-lag`
+then reports "local main and origin/main have diverged". Land a correction to a published commit as a new commit on top of it;
 to repair a divergence, keep the published commit and re-apply the newer content
 above it, then confirm the tree you intended is unchanged against the rewrite
 you preserved (`git diff PRESERVED HEAD` prints nothing) and that the remote
