@@ -308,6 +308,19 @@ def test_output_removed_before_sort_does_not_raise(tmp_path, monkeypatch):
     assert "m-kept" in seen
 
 
+@pytest.mark.parametrize("payload", ["[1, 2]", '"text"', "42", "null"])
+def test_non_object_cache_file_is_a_miss_not_an_error(tmp_path, payload):
+    # A hand-edited cache that parses as JSON but is not an object must read as an empty cache.
+    wakes = tmp_path / "wakes"
+    wakes.mkdir()
+    kept = wakes / "wake-2.prompt.out.json"
+    kept.write_text(json.dumps({"modelUsage": {"m-kept": {}}}), encoding="utf-8")
+    cache = tmp_path / "cache.json"
+    cache.write_text(payload, encoding="utf-8")
+    seen = check.models_ever_seen(wakes, 0, cache)
+    assert "m-kept" in seen
+
+
 def test_jsonl_output_removed_before_it_is_read_does_not_raise(tmp_path, monkeypatch):
     # model_name opens .jsonl outputs with no guard. A file removed between the listing and
     # the open must read as "no model", not raise out of the sort or the cache loop.

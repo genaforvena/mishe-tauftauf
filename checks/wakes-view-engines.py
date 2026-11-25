@@ -131,6 +131,8 @@ def models_ever_seen(wakes: Path, skip: int, cache_path: Path | None = None) -> 
             cache = json.loads(cache_path.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             cache = {}
+        if not isinstance(cache, dict):
+            cache = {}  # a hand-edited cache that is valid JSON but not an object is just a miss
     fresh: dict = {}
     seen = set()
     for path in paths:
