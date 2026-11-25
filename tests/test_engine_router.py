@@ -221,6 +221,9 @@ class FakeEngine:
         if action == "rate-limited-retry-after-capped":
             raise EngineRateLimited("provider rate limit before any tool call: 429 Rate limit exceeded"
                                     ". retry-after-ms=40000000")
+        if action == "daily-free-cap":
+            raise EngineRateLimited("provider rate limit before any tool call: 429 Rate limit exceeded: "
+                                    "free-models-per-day. retry-after-ms=75260565")
         if action == "exhausted":
             raise EngineExhausted("account out of quota before any tool call")
         if action == "spent-after-effect":
@@ -745,6 +748,21 @@ def test_a_retry_after_above_eight_hours_is_capped(routed):
     assert fallback["cool_off_s"] == router.MAX_RETRY_AFTER_COOL_OFF_S
     state = json.loads((routed / "engine" / router.STATE).read_text())["cooling"]
     assert state[router.role_key("health", router.candidate_key(GO))] == NOW_MS + router.MAX_RETRY_AFTER_COOL_OFF_S * 1000
+
+
+def test_a_daily_free_cap_cools_the_account_for_the_stated_reset(routed):
+    """Spontaneous free wakes failed on every free model in turn: the free-models-per-day cap is account-wide."""
+    FakeEngine.script = {GO["model"]: "daily-free-cap", MINI["model"]: "yield"}
+    eng = router.for_role(routed, "health")
+    eng.run(routed / "p.md", env=_env(routed, "k30"), cwd=routed, timeout=5)
+    events = [json.loads(x) for x in (routed / "engine" / router.LEDGER).read_text().splitlines()]
+    fallback = events[1]
+    assert fallback["event"] == "fallback" and fallback["scope"] == "account"
+    # the provider's reset (about 20.9 h) is honoured up to the one-day quota ceiling, not cut to 8 h
+    assert fallback["cool_off_s"] == 75260.565
+    state = json.loads((routed / "engine" / router.STATE).read_text())["cooling"]
+    assert state[router.candidate_key(GO)] == NOW_MS + 75260565
+    assert router.role_key("health", router.candidate_key(GO)) not in state
 
 
 def test_a_retry_after_cap_is_separate_from_the_backoff_ceiling(tmp_path):

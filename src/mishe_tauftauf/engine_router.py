@@ -48,7 +48,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import engine_policy as policy
-from .router_text import file_lines, iso_ms, ledger_events, load_json, retry_after_ms, split_cooling_key
+from .router_text import file_lines, is_daily_free_cap, iso_ms, ledger_events, load_json, retry_after_ms, split_cooling_key
 from . import owed, signal_store
 from . import yielding
 from .model_policy import refuse_banned_model
@@ -617,6 +617,14 @@ class RoutedEngine:
             return QwenEngine(cand["model"])
         return OmpEngine(cand["model"], thinking=cand.get("thinking"))
 
+    def _account_candidates(self, cand: dict) -> list:
+        """Every route on the same provider account as ``cand`` (the candidate alone when it has no account)."""
+        account = cand.get("account")
+        if account is None:
+            return [cand]
+        return [c for roles in (self.routes.get("roles") or {}).values() for c in roles
+                if c.get("account") == account] or [cand]
+
     def _cool(self, cand: dict, now_ms: float, *, role_only: bool = False, off_ms: float | None = None,
               force: bool = False) -> None:
         # The Claude safety net is never cooled: a cooled last candidate leaves the role with no engine.
@@ -759,6 +767,19 @@ class RoutedEngine:
                 # later, and a quota window on the shared key would idle every role for it.
                 now = time.time() * 1000
                 parsed = retry_after_ms(exc)
+                if parsed is not None and is_daily_free_cap(exc):
+                    # The free-models-per-day cap is the key's whole daily allowance, shared by every free
+                    # model on it: each one would fail the same way until the stated reset. Cool all of them
+                    # for the reset (not one role's candidate for 8 h), so spontaneous admission skips rather
+                    # than failing a wake on each model in turn.
+                    off = min(parsed, MAX_QUOTA_COOL_OFF_S * 1000)
+                    record(self.home, {"role": self.role, "event": "fallback", "wake": key_wake, "key": key,
+                                       "reason": f"rate limited (daily free cap): {exc}", "scope": "account",
+                                       "cool_off_s": off / 1000}, now_ms=now)
+                    for sibling in self._account_candidates(cand):
+                        self._cool(sibling, now, off_ms=off, force=True)
+                    tried.add(key)
+                    continue
                 if parsed is not None:
                     off = min(parsed, MAX_RETRY_AFTER_COOL_OFF_S * 1000)
                 else:

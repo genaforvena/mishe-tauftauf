@@ -21,6 +21,11 @@ def retry_after_ms(text) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def is_daily_free_cap(text) -> bool:
+    """True when the provider refused on its free-models-per-day cap, which is shared by every free model on the key."""
+    return "free-models-per-day" in str(text)
+
+
 def load_json(path: Path):
     """Decode a UTF-8 JSON file; raises OSError/ValueError like json.loads."""
     return json.loads(path.read_text(encoding="utf-8"))
