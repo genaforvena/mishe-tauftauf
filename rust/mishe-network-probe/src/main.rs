@@ -117,6 +117,17 @@ struct Row {
     gateway: Option<Gateway>,
     internet: Vec<Site>,
     dns_ms: Option<f64>,
+    host: Host,
+}
+
+/// How busy this machine was when the row was taken: the `some avg10` share
+/// of time at least one task waited for CPU or IO (kernel PSI). A slow TLS
+/// handshake on a busy host is not an uplink problem; the window needs this
+/// number next to the timings. `None` when /proc/pressure could not be read.
+#[derive(Default)]
+struct Host {
+    cpu_some10: Option<f64>,
+    io_some10: Option<f64>,
 }
 
 fn probe() -> Result<Row, String> {
@@ -130,7 +141,26 @@ fn probe() -> Result<Row, String> {
         internet.push(fetch(name, url, status)?);
     }
     let dns_ms = dns_ms();
-    Ok(Row { at: utc_now(), gateway_ip, gateway, internet, dns_ms })
+    Ok(Row { at: utc_now(), gateway_ip, gateway, internet, dns_ms, host: host_pressure() })
+}
+
+fn host_pressure() -> Host {
+    Host {
+        cpu_some10: pressure_some10("/proc/pressure/cpu"),
+        io_some10: pressure_some10("/proc/pressure/io"),
+    }
+}
+
+/// The `some avg10` value from a PSI file, e.g. `some avg10=86.00 avg60=...`.
+fn pressure_some10(path: &str) -> Option<f64> {
+    let text = std::fs::read_to_string(path).ok()?;
+    parse_some10(&text)
+}
+
+fn parse_some10(text: &str) -> Option<f64> {
+    let line = text.lines().find(|l| l.starts_with("some "))?;
+    let token = line.split_whitespace().find_map(|t| t.strip_prefix("avg10="))?;
+    token.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
 /// The default route's address. `Ok(None)` when there is no default route;
@@ -326,6 +356,7 @@ fn json_row(row: &Row) -> String {
         Some(v) => json_f64(v),
         None => "null".to_string(),
     });
+    let _ = write!(out, ",\"host\":{{\"cpu_some10\":{},\"io_some10\":{}}}", opt_f64(row.host.cpu_some10), opt_f64(row.host.io_some10));
     out.push('}');
     out
 }
@@ -358,6 +389,13 @@ fn round1(value: f64) -> f64 {
 /// The shortest form that reads back as the same double, like Python's repr.
 fn json_f64(value: f64) -> String {
     format!("{value:?}")
+}
+
+fn opt_f64(value: Option<f64>) -> String {
+    match value {
+        Some(v) => json_f64(v),
+        None => "null".to_string(),
+    }
 }
 
 // -------------------------------------------------------------------- tools

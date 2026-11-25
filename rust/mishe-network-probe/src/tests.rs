@@ -137,12 +137,23 @@ fn a_row_keeps_the_python_field_set() {
             Site { name: "cloudflare".to_string(), ok: false, curl_exit: Some(28), connect_ms: None, tls_ms: None, total_ms: None },
         ],
         dns_ms: Some(0.7),
+        host: Host { cpu_some10: Some(86.0), io_some10: None },
     };
     let text = json_row(&row);
     assert!(text.starts_with("{\"at\":\"2026-11-09T22:18:03Z\",\"gateway_ip\":\"192.168.8.1\","));
     assert!(text.contains("\"gateway\":{\"loss_pct\":0.0,\"min_ms\":0.393"));
     assert!(text.contains("\"gstatic\":{\"ok\":true,\"connect_ms\":4.4,\"tls_ms\":220.4,\"total_ms\":300.4}"));
     assert!(text.contains("\"cloudflare\":{\"ok\":false,\"curl_exit\":28}"));
-    assert!(text.ends_with("\"dns_ms\":0.7}"));
+    assert!(text.contains("\"dns_ms\":0.7,\"host\":{\"cpu_some10\":86.0,\"io_some10\":null}}"), "host pressure is appended after dns_ms, null when unread");
+    assert!(text.ends_with("}"));
     assert!(!text.contains(", "), "the row keeps Python's compact separators");
+}
+
+#[test]
+fn psi_some_avg10_is_read_and_a_bad_file_is_none() {
+    let text = "some avg10=86.00 avg60=85.07 avg300=67.81 total=55685588917\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n";
+    assert_eq!(parse_some10(text), Some(86.0));
+    assert_eq!(parse_some10("full avg10=1.00\n"), None, "no some line is UNKNOWN");
+    assert_eq!(parse_some10("some avg10=abc\n"), None, "a garbled value is UNKNOWN");
+    assert_eq!(parse_some10(""), None);
 }

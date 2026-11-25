@@ -64,7 +64,7 @@ One line of JSON, appended to `HOME/network/probe.jsonl`, with no spaces
 between separators (the retired Python probe's exact form):
 
 ```json
-{"at":"2026-11-09T22:18:03Z","gateway_ip":"192.168.8.1","gateway":{"loss_pct":0.0,"min_ms":0.393,"avg_ms":0.462,"max_ms":0.496,"jitter_ms":0.036},"internet":{"gstatic":{"ok":true,"connect_ms":4.4,"tls_ms":220.4,"total_ms":300.4},"cloudflare":{"ok":true,"connect_ms":2.3,"tls_ms":202.7,"total_ms":268.7}},"dns_ms":0.7}
+{"at":"2026-11-09T22:18:03Z","gateway_ip":"192.168.8.1","gateway":{"loss_pct":0.0,"min_ms":0.393,"avg_ms":0.462,"max_ms":0.496,"jitter_ms":0.036},"internet":{"gstatic":{"ok":true,"connect_ms":4.4,"tls_ms":220.4,"total_ms":300.4},"cloudflare":{"ok":true,"connect_ms":2.3,"tls_ms":202.7,"total_ms":268.7}},"dns_ms":0.7,"host":{"cpu_some10":86.0,"io_some10":0.0}}
 ```
 
 | Field | Meaning |
@@ -74,6 +74,7 @@ between separators (the retired Python probe's exact form):
 | `gateway` | `null`, or an object with `loss_pct` and, when ping reported them, `min_ms`, `avg_ms`, `max_ms`, `jitter_ms` |
 | `internet` | one object per site, keyed by name (`gstatic`, `cloudflare`) |
 | `dns_ms` | resolution time in milliseconds, or `null` when the lookup failed |
+| `host` | how busy this machine was at the row: `cpu_some10` and `io_some10` are the kernel PSI `some avg10` percentages from `/proc/pressure/cpu` and `/proc/pressure/io`, each `null` when unread. A slow handshake on a busy host is not an uplink problem; the window reads them together. Added in 0.2.0. |
 
 A site object is either `{"ok":true,"connect_ms":…,"tls_ms":…,"total_ms":…}`
 (all three timings present, one decimal place) or
