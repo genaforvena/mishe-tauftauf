@@ -39,25 +39,25 @@ Common to all producer units: `Type=oneshot`, `KillMode=control-group`, `MemoryH
 | `mishe-doctor` | `doctor --unit-dir … --prefix mishe --repo … --pythonpath …` | 300 s | 2 min / 1 min 30 s | not a duty |
 | `mishe-wake@<role>` (genome, senses, steward, pub, operator, docs, health, field-review) | `wake <role> --repo … --timeout 1800` | path-triggered (`mishe-wake-<role>.path`) | 1 h 35 min / 20 s | `mishe-wake@.service` |
 
-Exit codes for producers: 0 GREEN, 2 RED, anything else an unobserved run that ages to UNKNOWN (`producers.py:26-43`).
+Exit codes for producers: 0 GREEN, 2 RED, anything else an unobserved run that ages to UNKNOWN (`producers.py:84`, `run`).
 
-### 1.2 Source call sites (pinned snapshot, `runtime/current/src/mishe_tauftauf/`)
+### 1.2 Source call sites (pinned snapshot, `runtime/current/src/mishe_tauftauf/`, line numbers checked against release deac4dd1 on 2026-11-25)
 
 | Responsibility | Location | Notes |
 |---|---|---|
-| Producer runner | `producers.py:26-43` (`run`) | Bounded subprocess, detail file, observe. |
-| Dispatch producer | `producers.py:46-57` (`dispatch`) | Reads dispatch records only. |
-| Producer table | `producers.py:98` (`produce`), `:105` (`load`) | |
+| Producer runner | `producers.py:84` (`run`) | Bounded subprocess, detail file, observe. |
+| Dispatch producer | `producers.py:179` (`dispatch`), `:165` (`dispatch_open_bound`) | Reads dispatch records only. |
+| Producer table | `producers.py:342` (`produce`), `:368` (`load`) | |
 | Signal observation | `runtime_cli.py:177` (`signal` subparsers), `:190` (`signal run` parser), `:217` (`run`), `signal_store.py` (`observe`) | |
-| Tape framing (header/body validation) | `feed.py:259` (`iter_feed_entries`), `:283`, `:303`, `:310` (malformed raises `FeedError`) | Raises at the first fault. |
-| Streamed tape reader | `feed.py:149` (`_iter_streamed_feed`), `:352` (`iter_feed_file`) | Bounded memory. |
-| Whole-tape reader | `feed.py:610-614` (`read_bytes`), `:973` (`Feed.entries`) | Reads and parses the whole tape. |
-| Record envelope verification | `feed.py:742` (`_verify_records`), `:908` (verified generator in `role_entries`) | Calls `records.py`. |
-| Verified-payload store | `records.py:229` (`VerifiedStore`), `:268` (`lookup`), `:314` (`verified_store`), `:323` (`cached_payload`); envelope sha256 at `records.py:208` | sqlite file `records.verified.sqlite3` (544 MB). |
-| Role projection | `feed.py:444` (`_role_fold`), `feed.py:53` (`_ROLE_ENTRIES_CACHE`, process-local), `feed.py:862-930` (`role_entries`) | Cache is in process; cold CLI processes always rescan. |
-| Checkpoint index | `feed.py:29` (`INDEX_STRIDE = 128`), `:653` (`_read_checkpoint`), `:717` (`_publish_checkpoint`) | Used to validate cache, not to skip the scan. |
-| Identity index | `feed.py:527-576` (`_malformed_receipt`, `meta.malformed` count), `:1128` | sqlite `feed.identities.sqlite3` (23.5 MB). |
-| Wall context | `wall.py:865-886` (`context`), `:880`, `:965` | Calls `role_entries`. |
+| Tape framing (header/body validation) | `feed.py:194` (`parse_feed`), `:303` (`_spawn_frames`), `:333` (`_iter_streamed_feed`); `FeedError` raised at `feed.py:92`, `:329` | Framing is done by a helper binary spawned from `_spawn_frames`. Raises at the first fault. |
+| Streamed tape reader | `feed.py:333` (`_iter_streamed_feed`), `:489` (`iter_feed_file`) | Bounded memory. |
+| Whole-tape reader | `feed.py:992` (`read_bytes`), `:1406` (`Feed.entries`) | Reads and parses the whole tape. |
+| Record envelope verification | `feed.py:1125` (`_verify_records`), `:1259` (`role_entries`) | Calls `records.py`. |
+| Record envelope sha256 and kind index | `records.py:180` (sha256 check in `envelope`), `:203` (`KindIndex`), `:231` (commit), `:291` (`executemany`) | At deac4dd1, the names `VerifiedStore`, `lookup`, `cached_payload` no longer exist under `records.py`; which store replaced them is not yet checked (UNKNOWN). The old sqlite size note (544 MB) is not re-measured. |
+| Role projection | `feed.py:508` (`_role_fold`), `feed.py:49` (`_ROLE_ENTRIES_CACHE`, process-local), `feed.py:1259` (`role_entries`) | Cache is in process; cold CLI processes always rescan. |
+| Checkpoint index | `feed.py:25` (`INDEX_STRIDE = 128`), `:1035` (`_read_checkpoint`), `:1099` (`_publish_checkpoint`) | Used to validate cache, not to skip the scan. |
+| Identity index | `feed.py:909` (`_malformed_receipt`, `meta.malformed` count) | sqlite `feed.identities.sqlite3` (23.5 MB, not re-measured). |
+| Wall context | `wall.py:912` (`context`), `:927`, `:1012` | Calls `role_entries`. |
 | Wake dossier | `wake.py:52` (`role_entries`) | One process per wake. |
 | Migration | `migrate.py:29` (`role_entries`) | |
 | Discovery scan | `discovery.py:7217` (`scan`), `discovery.py:4602` (`iter_feed_file`, DM-disposition sense) | Module is 7,632 lines. |
@@ -102,7 +102,7 @@ Import: `python -X importtime -c "import mishe_tauftauf.cli"` gives 53.9 ms cumu
 
 ### 2.3 Where the 18 s goes (one cProfile run of `wall show --owner genome`)
 
-One run, same guard, pinned snapshot, no writes (`baseline/profile_wall_show.prof`, `profile_wall_show.top.txt`). Under cProfile the run took 35.3 s wall and 32.6 s user, so per-function times are inflated (about 2×). Use the proportions, not the absolute seconds, and do not add the fractions below; they overlap.
+One run, same guard, pinned snapshot, no writes (`baseline/profile_wall_show.prof`, `profile_wall_show.top.txt`). The `feed.py` and `records.py` line numbers below are from the profiled snapshot, not from release deac4dd1 (see 1.2 for current lines); the function names are kept as the evidence record. Under cProfile the run took 35.3 s wall and 32.6 s user, so per-function times are inflated (about 2×). Use the proportions, not the absolute seconds, and do not add the fractions below; they overlap.
 
 | Component (cumulative in profile) | Share of profiled 35.1 s | Frames |
 |---|---|---|
@@ -180,19 +180,19 @@ Reading:
 
 ### 3.3 The first Rust core slice (T1), precisely
 
-**What it owns.** One responsibility: turning the chat tape into verified entries and role projections. It owns framing, header and body validation, record envelope verification (sha256 check against `records.py:208`), the verified-payload lookup and store (`records.py:229-323`), and the role fold (`feed.py:444`). It does not own locking or writes to the tape, and it does not own sending or appending. It is a core slice, not a runtime rewrite.
+**What it owns.** One responsibility: turning the chat tape into verified entries and role projections. It owns framing, header and body validation, record envelope verification (sha256 check against `records.py:180`), the verified-payload lookup and store (names moved at deac4dd1; see 1.2), and the role fold (`feed.py:508`). It does not own locking or writes to the tape, and it does not own sending or appending. It is a core slice, not a runtime rewrite.
 
 **Bounded program contract** (a new program, e.g. `mishe-tape`; name is a proposal):
 
 - `mishe-tape entries --tape PATH --home SITE [--start N] [--limit N]`: writes entries as length-prefixed records to stdout (binary, fixed header with sequence, timestamp, source, body length, body bytes, plus home reference); diagnostics on stderr.
 - `mishe-tape role --tape PATH --home SITE --role ROLE`: writes the role projection as one JSON object to stdout.
 - `mishe-tape verify --tape PATH --home SITE`: exit 0 when the whole tape verifies; exit 2 when a fault is found and writes the first fault as a single line on stderr, preserving the original text; any other exit code (crash, spawn failure) is unobserved.
-- Reads a preserved shared lock: the caller (Python) holds the shared lock during the capture (`feed.py:875-890`), passes the captured size with `--size N`, and the program reads only that prefix.
-- Writes: none to the tape. The verified-store updates are the only writes, performed with the same batching semantics as `records.py:299` and the same directory-identity check (`records.py:96`).
+- Reads a preserved shared lock: the caller (Python) holds the shared lock during the capture (`feed.py:1273`, `:1388`, `:1484` at deac4dd1), passes the captured size with `--size N`, and the program reads only that prefix.
+- Writes: none to the tape. The verified-store updates are the only writes, performed with the same batching semantics and directory-identity check as the store they replace (the old `records.py:299` and `:96` references moved; see 1.2).
 
 **Authoritative consumers that call it:**
-- `Feed.entries()` (`feed.py:973`), via `entries` subcommand, for all 44 callers.
-- `Feed.role_entries()` (`feed.py:862`), via `role` subcommand, for `wall.py:880`, `wall.py:965`, `wake.py:52`, `migrate.py:29`.
+- `Feed.entries()` (`feed.py:1406`), via `entries` subcommand, for all 44 callers (count not re-checked).
+- `Feed.role_entries()` (`feed.py:1259`), via `role` subcommand, for `wall.py:927`, `wall.py:1012`, `wake.py:52`, `migrate.py:29` (the last two not re-checked).
 
 **Predecessor retired in the same release:**
 - `feed.py:149` `_iter_streamed_feed`, `:259` `iter_feed_entries`, `:398` `_iter_text_lines`, `:742` `_verify_records`, `:444` `_role_fold`, `:53` `_ROLE_ENTRIES_CACHE`, `:862-930` `role_entries` body (replaced by a subprocess wrapper), `records.py:229-323` verified-store logic (`VerifiedStore`, `lookup`, `store`, `cached_payload`, `verified_store`), `feed.py:610-614` whole-tape `read_bytes` path used by `entries()`.
