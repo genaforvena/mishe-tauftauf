@@ -16,7 +16,7 @@ changes. The periodic check that writes a signal is a *duty*, declared in
 when the reading is not OK or its verdict is RED or UNKNOWN. A reading older
 than its declared age is `UNKNOWN`, not a pass.
 
-Seven built-in signals are easy to misread from their names alone:
+Eight built-in signals are easy to misread from their names alone:
 
 - `dispatch` is RED when the recorded start of an agent turn (a *wake*, defined below) has stayed open longer than the larger of the engine's hard cap (the time the run is cut at, later only while it still produces output) and the wake's soft deadline (the time it is asked to finish by), plus five minutes. A wake that is still running inside that bound is GREEN.
 - `ci` is the GitHub Actions result for the remote commit: pass is GREEN, fail is RED with its cause. While the newest run is still pending, the newest finished run decides; if no run has finished yet, the standing result stays.
@@ -25,6 +25,7 @@ Seven built-in signals are easy to misread from their names alone:
 - `memory-samples` appends memory pressure, anonymous memory and charged memory rows to the sample store every three minutes. A reading that cannot be taken writes no row, and when none can be taken the signal is UNKNOWN. Nothing is carried forward from an older sample.
 - `footprint` shows the latest anonymous memory, charged memory and pressure samples from the last 15 minutes side by side. If any one of the three is missing it is UNKNOWN, not the value of an older sample.
 - `repo-change` reports the newest commit on the checkout and each subscriber's delta. A failed read is UNKNOWN with its cause, never GREEN.
+- `disk-budget` is GREEN while the disks Mishe needs have room and what it owns is within its limits. It also reclaims unreferenced release worktrees when their tree is over its ceiling. An unreadable disk or size makes it UNKNOWN, never GREEN.
 
 A *mind* is one agent that holds a role, such as Genome (which pushes `main`) or Docs (this book).
 A *wall* is a mind's shared status page. A *wake* is one turn of a mind, started only when something
