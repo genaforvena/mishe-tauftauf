@@ -83,6 +83,11 @@ def candidate_key(c: dict) -> str:
     return f"{c['engine']}:{c['model']}:{c['account'] or '-'}"
 
 
+def _free_provider(c: dict) -> str:
+    """The provider a free route draws its daily allowance from: the model's prefix (``opencode-go/x`` -> ``opencode-go``)."""
+    return c["model"].partition("/")[0]
+
+
 def role_key(role: str, key: str) -> str:
     """Cool-off key for a (role, candidate) pair: a timeout belongs to the role's task, not the model."""
     return f"{role}|{key}"
@@ -618,12 +623,15 @@ class RoutedEngine:
         return OmpEngine(cand["model"], thinking=cand.get("thinking"))
 
     def _daily_cap_siblings(self, cand: dict) -> list:
-        """Routes the free-models-per-day cap also refuses: ``cand`` and every free route on the key.
+        """Routes the free-models-per-day cap also refuses: ``cand`` and every free route on its provider.
 
-        The cap is the key's whole daily free allowance, so each free model fails the same way. Paid
-        routes, including ones on the same account, have their own windows and stay in service.
+        The cap is one provider's daily free allowance, so each free model from that provider fails the
+        same way. Free routes from other providers, and paid routes including ones on the same account,
+        have their own windows and stay in service.
         """
-        free = [c for roles in (self.routes.get("roles") or {}).values() for c in roles if c.get("free") is True]
+        provider = _free_provider(cand)
+        free = [c for roles in (self.routes.get("roles") or {}).values() for c in roles
+                if c.get("free") is True and _free_provider(c) == provider]
         return [cand] + free
 
     def _cool(self, cand: dict, now_ms: float, *, role_only: bool = False, off_ms: float | None = None,

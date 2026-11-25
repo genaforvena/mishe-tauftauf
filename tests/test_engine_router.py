@@ -773,15 +773,17 @@ def test_a_daily_free_cap_cools_every_free_route_but_not_paid_siblings(tmp_path,
     monkeypatch.setattr(router.RoutedEngine, "_build", lambda self, cand: FakeEngine(cand["model"]))
     free_a = {"engine": "omp", "model": "opencode-go/free-a", "account": None, "free": True}
     free_b = {"engine": "omp", "model": "opencode-go/free-b", "account": None, "free": True}
+    free_other = {"engine": "omp", "model": "longcat/free-c", "account": None, "free": True}
     paid = {"engine": "omp", "model": "opencode-go/paid", "account": "go-a"}
     FakeEngine.script = {free_a["model"]: "daily-free-cap", paid["model"]: "yield"}
-    routes_file(tmp_path, {"health": [free_a, paid, free_b]})
+    routes_file(tmp_path, {"health": [free_a, paid, free_b, free_other]})
     eng = router.for_role(tmp_path, "health")
     eng.run(tmp_path / "p.md", env=_env(tmp_path, "k31"), cwd=tmp_path, timeout=5)
     state = json.loads((tmp_path / "engine" / router.STATE).read_text())["cooling"]
     assert state[router.candidate_key(free_a)] == NOW_MS + 75260565
     assert state[router.candidate_key(free_b)] == NOW_MS + 75260565
     assert router.candidate_key(paid) not in state
+    assert router.candidate_key(free_other) not in state
 
 
 def test_a_retry_after_cap_is_separate_from_the_backoff_ceiling(tmp_path):
