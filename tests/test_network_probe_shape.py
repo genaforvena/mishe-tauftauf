@@ -31,6 +31,11 @@ class ProbeStateTests(unittest.TestCase):
     def test_fresh_row_without_host_is_red(self):
         self.assertEqual(care.probe_state(row(host=None), NOW + 60)[0], 2)
 
+    def test_null_pressure_reading_is_unknown_not_a_crash(self):
+        for host in ({"cpu_some10": None, "io_some10": 7.6}, {"cpu_some10": 11.3, "io_some10": None}):
+            code, message = care.probe_state(row(host=host), NOW + 60)
+            self.assertEqual(code, 3, message)
+
     def test_stale_row_is_unknown_even_without_host(self):
         self.assertEqual(care.probe_state(row(host=None), NOW + 3600)[0], 3)
 

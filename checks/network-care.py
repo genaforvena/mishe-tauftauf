@@ -564,6 +564,9 @@ def probe_state(row, now):
     host = row.get("host")
     if not isinstance(host, dict) or "cpu_some10" not in host or "io_some10" not in host:
         return 2, f"network-care: probe row {row['at']} lacks the host block; the 0.2.0 probe is not writing (RED)"
+    values = (host["cpu_some10"], host["io_some10"])
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+        return 3, f"network-care: probe row {row['at']} host block has a non-numeric pressure reading {values!r} (UNKNOWN)"
     return 0, f"network-care: probe GREEN (row {row['at']}, host cpu {host['cpu_some10']:.1f} %, io {host['io_some10']:.1f} %)"
 
 
