@@ -48,7 +48,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import engine_policy as policy
-from .router_text import file_lines, is_daily_free_cap, iso_ms, ledger_events, load_json, retry_after_ms, split_cooling_key
+from .router_text import file_lines, is_daily_free_cap, iso_ms, ledger_events, load_json, model_provider, retry_after_ms, split_cooling_key
 from . import owed, signal_store
 from . import yielding
 from .model_policy import refuse_banned_model
@@ -85,7 +85,7 @@ def candidate_key(c: dict) -> str:
 
 def _free_provider(c: dict) -> str:
     """The provider a free route draws its daily allowance from: the model's prefix (``opencode-go/x`` -> ``opencode-go``)."""
-    return c["model"].partition("/")[0]
+    return model_provider(c["model"])
 
 
 def role_key(role: str, key: str) -> str:

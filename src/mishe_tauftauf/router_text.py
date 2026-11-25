@@ -96,6 +96,11 @@ def split_cooling_key(key: str) -> tuple:
     return role, cand
 
 
+def model_provider(model: str) -> str:
+    """The provider prefix of a model id: ``opencode-go/x`` -> ``opencode-go``."""
+    return str(model).partition("/")[0]
+
+
 def file_lines(path: Path) -> list:
     return path.read_text(encoding="utf-8").splitlines()
 
