@@ -68,3 +68,24 @@ def test_unreadable_unit_is_unknown():
 
     code, _, _ = mod.evaluate({}, ["u.service"], 1000.0, broken, 900, 3)
     assert code == 3
+
+
+def test_failed_unit_is_red_even_with_frozen_counter():
+    # A unit that exhausted its start limit stops restarting: the counter is flat, so the churn window
+    # alone reads 0. The failed state must still be RED (2026-11-25 light-cycle-monitor, GREEN for 23 h).
+    mod = _load()
+    host = _Host()
+    state, now = {}, 1000.0
+    mod.evaluate(state, ["u.service"], now, host.run, 900, 3)
+    host.count, host.active = 6, "failed"
+    code, lines, state = mod.evaluate(state, ["u.service"], now + 1200, host.run, 900, 3)
+    assert code == 2, lines
+    assert any("failed after 6 restart" in line for line in lines), lines
+
+
+def test_failed_unit_is_red_on_first_sample():
+    mod = _load()
+    host = _Host()
+    host.count, host.active = 6, "failed"
+    code, lines, _ = mod.evaluate({}, ["u.service"], 1000.0, host.run, 900, 3)
+    assert code == 2, lines

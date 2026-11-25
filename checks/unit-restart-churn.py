@@ -10,6 +10,7 @@ For each --unit (default light-cycle-monitor.service):
   * the NRestarts count and ActiveState are sampled and appended to the site state file;
   * churn = NRestarts now minus the oldest sample inside the window (--window seconds, default 900);
   * churn >= --threshold (default 3) is RED (exit 2), naming the unit, its churn and its ActiveState;
+  * ActiveState "failed" (start limit reached, counter frozen) is RED (exit 2) whatever the churn window says;
   * a counter that goes down (the unit was stopped and started by hand) restarts the baseline, not a RED;
   * the first sample of a unit is a baseline: GREEN with "baseline recorded".
 
@@ -78,6 +79,14 @@ def evaluate(state, units, now, run, window, threshold):
         samples = [s for s in state.get(name, []) if now - s[0] <= window and s[1] <= count]
         samples.append([now, count])
         new_state[name] = samples[-200:]
+        # A unit that hit its start limit sits in "failed" and its counter stops growing, so the churn
+        # window reads 0 while the unit is dead (2026-11-25: light-cycle-monitor failed at 00:00Z, GREEN here
+        # for 23 h). "failed" is RED on its own, whatever the window says.
+        if active == "failed":
+            line = f"{name}: failed after {count} restart(s) (NRestarts={count}, {active}); start limit reached"
+            lines.append(line)
+            churning.append(line)
+            continue
         if len(samples) == 1:
             lines.append(f"{name}: baseline recorded (NRestarts={count}, {active})")
             continue
@@ -90,7 +99,8 @@ def evaluate(state, units, now, run, window, threshold):
     if errors:
         return 3, [f"cannot observe {len(errors)} unit(s): " + "; ".join(errors)] + lines, new_state
     if churning:
-        return 2, [f"restart loop: {len(churning)} unit(s) over {threshold} restarts in {window // 60} min"] + lines, \
+        return 2, [f"restart loop or failed unit: {len(churning)} unit(s) over {threshold} restarts in "
+                    f"{window // 60} min, or failed"] + lines, \
             new_state
     return 0, [f"restart churn: 0 unit(s) over {threshold} in {window // 60} min"] + lines, new_state
 
