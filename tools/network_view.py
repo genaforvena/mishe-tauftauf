@@ -898,7 +898,9 @@ def devices_line(now=None):
         else:
             parts.append(f"{name} {result['avg_ms']:.0f} ms avg, {result['loss_pct']:.0f}% loss")
     status = "UNKNOWN: " if unknown else ""
-    return status + "; ".join(parts) + f"; read {age / 60:.0f} min ago"
+    history = [h for name in sorted(devices) if (h := nb.device_outage_phrase(rows, name, now))]
+    hist_txt = f"; {'; '.join(history)}" if history else ""
+    return status + "; ".join(parts) + hist_txt + f"; read {age / 60:.0f} min ago"
 
 
 def _data_size(n):

@@ -518,7 +518,9 @@ def devices_state(rows, now):
         return 3, "network-care: per-device ping UNKNOWN (" + "; ".join(problems) + ")"
     parts = [f"{name} {res['avg_ms']:.1f} ms avg, {res['loss_pct']:.0f}% loss"
              for name, res in entries]
-    return 0, "network-care: devices GREEN (" + "; ".join(parts) + ")"
+    history = [h for name, _ in entries if (h := nb.device_outage_phrase(rows, name, now))]
+    tail = f"; history: {'; '.join(history)}" if history else ""
+    return 0, "network-care: devices GREEN (" + "; ".join(parts) + ")" + tail
 
 
 def devices(home):

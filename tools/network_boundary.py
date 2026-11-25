@@ -529,6 +529,42 @@ def device_ping_sample(rows, now):
     return devices, max(age, 0), None
 
 
+def device_outage_phrase(rows, name, now, horizon=86400.0):
+    """Silent-ping runs for one device in the last horizon seconds, in plain words ("" when none).
+
+    The newest row can be GREEN while the device was silent for hours before it; this keeps that
+    history visible without turning an answering device into a failure. A run is consecutive failed
+    samples; its length is the span between its first and last failed sample.
+    """
+    runs = []
+    start = end = None
+    for row in rows:
+        if not isinstance(row, dict) or not _nonnegative_number(row.get("ts")):
+            continue
+        ts = row["ts"]
+        if ts > now or now - ts > horizon:
+            continue
+        result = (row.get("devices") or {}).get(name) if isinstance(row.get("devices"), dict) else None
+        if not isinstance(result, dict):
+            continue
+        if result.get("ok") is not True:
+            if start is None:
+                start = ts
+            end = ts
+        elif start is not None:
+            runs.append((start, end))
+            start = None
+    if start is not None:
+        runs.append((start, end))
+    if not runs:
+        return ""
+    longest_h = max(e - s for s, e in runs) / 3600
+    last = time.strftime("%H:%MZ", time.gmtime(runs[-1][1]))
+    noun = "run" if len(runs) == 1 else "runs"
+    return (f"{name} silent in {len(runs)} {noun} over the last 24 h (longest {longest_h:.1f} h, "
+            f"last ended {last})")
+
+
 def device_ping_plain_problem(result):
     """The reply problem in plain words for the window and the detector alike.
 
