@@ -306,3 +306,25 @@ def test_output_removed_before_sort_does_not_raise(tmp_path, monkeypatch):
     assert newest.get("m-kept") == kept
     seen = check.models_ever_seen(wakes, 0, tmp_path / "cache.json")
     assert "m-kept" in seen
+
+
+def test_jsonl_output_removed_before_it_is_read_does_not_raise(tmp_path, monkeypatch):
+    # model_name opens .jsonl outputs with no guard. A file removed between the listing and
+    # the open must read as "no model", not raise out of the sort or the cache loop.
+    wakes = tmp_path / "wakes"
+    wakes.mkdir()
+    gone = wakes / "wake-1.prompt.out.jsonl"
+    kept = wakes / "wake-2.prompt.out.json"
+    gone.write_text('{"model": "m-gone"}\n', encoding="utf-8")
+    kept.write_text(json.dumps({"modelUsage": {"m-kept": {}}}), encoding="utf-8")
+    real_open = Path.open
+
+    def vanished_open(self, *args, **kwargs):
+        if self.name == gone.name:
+            raise FileNotFoundError(str(self))
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", vanished_open)
+    assert check.model_name(gone) is None
+    seen = check.models_ever_seen(wakes, 0, tmp_path / "cache.json")
+    assert "m-kept" in seen

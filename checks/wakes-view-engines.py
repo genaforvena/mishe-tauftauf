@@ -78,10 +78,13 @@ def model_name(path: Path, read_size: int = 1024 * 1024) -> str | None:
         if isinstance(usage, dict) and usage:
             return sorted(usage)[0].rsplit('/', 1)[-1]
         return None
-    with path.open('rb') as handle:
-        size = path.stat().st_size
-        handle.seek(max(0, size - read_size))
-        found = MODEL_RE.findall(handle.read())
+    try:
+        with path.open('rb') as handle:
+            size = path.stat().st_size
+            handle.seek(max(0, size - read_size))
+            found = MODEL_RE.findall(handle.read())
+    except OSError:
+        return None  # removed after the listing: nothing to read, so no model to count
     return found[-1].decode('utf-8', 'replace').rsplit('/', 1)[-1] if found else None
 
 
