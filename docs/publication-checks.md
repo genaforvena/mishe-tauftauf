@@ -35,7 +35,7 @@ account, and each covers a gap the others cannot:
   does not read. Published bodies once carried account counts that the index
   check and the count-parity check both passed, because those two read the
   count pages' first correction sentence rather than the sentence in the body.
-- `pub/bin/devto-count-parity` reads the two count pages' first correction
+- `SITE_HOME/pub/bin/devto-count-parity` reads the two count pages' first correction
   sentence and the index's URL list. It is a public-API read with no
   credentials.
 
