@@ -85,7 +85,7 @@ def test_red_low_reason_is_not_doubled_in_stored_detail(tmp_path, capsys):
     assert code == 2
     assert "budget-opencode-go: RED" in out
     assert "eta 30m to depletion" in out and "reset in 6.0h" in out
-    assert out.count("go-a window used 98% (LOW)") == 1
+    assert out.count("go-a 7d window used 98% (LOW)") == 1
 
 
 def test_burn_runs_out_before_reset_is_red():

@@ -41,19 +41,20 @@ def _num(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def _window_verdict(w: dict, now: float) -> tuple[str, str] | None:
-    """(verdict, cause) for one FRESH window, or None when the window is malformed."""
+def _window_verdict(w: dict, now: float, name: str) -> tuple[str, str] | None:
+    """(verdict, cause) for one FRESH window, or None when the window is malformed.
+    The cause names the window (5h or 7d): a 100%-used weekly reads differently from a spent 5h."""
     used, reset, eta = w.get("used"), w.get("reset_at"), w.get("eta_s")
     if not _num(used) or not _num(reset):
         return None
     if used > USED_LOW:
-        cause = f"{ACCOUNT} window used {used * 100:.0f}% (LOW)"
+        cause = f"{ACCOUNT} {name} window used {used * 100:.0f}% (LOW)"
         if _num(eta) and _num(reset):
             cause += (f"; eta {eta / 60:.0f}m to depletion"
                       f"; reset in {(reset - now) / 3600:.1f}h")
         return "low", cause
     if _num(eta) and used >= BURN_MIN_USED and now + eta < reset:
-        return "runs-out", (f"{ACCOUNT} window burns out in {eta / 3600:.1f} h "
+        return "runs-out", (f"{ACCOUNT} {name} window burns out in {eta / 3600:.1f} h "
                             f"before reset in {(reset - now) / 3600:.1f} h (RUNS OUT BEFORE RESET)")
     return "ok", ""
 
@@ -167,7 +168,7 @@ def evaluate(budget: dict, ledger: dict, now: float, weekly_usd=None) -> tuple[i
         w = windows.get(name)
         if not isinstance(w, dict) or w.get("state") != "FRESH":
             continue
-        verdict, why = _window_verdict(w, now)
+        verdict, why = _window_verdict(w, now, name)
         if verdict is None:
             return UNKNOWN, f"{ACCOUNT} {name} window malformed (unmeasured)"
         if verdict != "ok":
