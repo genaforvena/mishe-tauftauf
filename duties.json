@@ -421,6 +421,27 @@
       "covers": "the codex-a 5h and 7d windows (openai-codex): spent-window LOW and UNKNOWN when a window is not FRESH; burn is not judged"
     },
     {
+      "name": "stats-refresh",
+      "command": [
+        "{python}",
+        "{repo}/checks/stats-refresh.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 900,
+      "timeout": 180,
+      "max_age": 1800,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "steward",
+      "replaces": [],
+      "covers": "omp stats.db freshness for mishe stats: runs omp stats --json every 15 min under MemoryMax=2G and goes RED when stats.db is still older than 30 min after a successful refresh; UNKNOWN when the refresh fails or times out"
+    },
+    {
       "name": "signal-coverage",
       "command": [
         "{python}",
