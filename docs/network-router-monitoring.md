@@ -69,7 +69,10 @@ the self-limit, the probe itself holds off: it skips the ssh for 15 minutes and 
 row instead, so a busy router is not hammered while the window still shows the last real reading.
 The gate reads the 5-minute average, not a single 1-minute burst.
 
-The window's HOST GUARD line says whether the host guard's trip marker
-(`/var/lib/mishe-containment/tripped`) is present. A trip makes the router units skip, so the router
-readings go STALE; the guard line names that cause. It is a read-only stat; an unreadable marker shows
-UNKNOWN, never a clear.
+The window's HOST GUARD line reads two plain stats: the older bare trip marker
+(`/var/lib/mishe-containment/tripped`) and the newest `tripped-*.json` trip record beside it (the
+current guard writes one per trip). A trip makes the router units skip, so the router readings go
+STALE; the guard line names that cause. A trip record under 6 hours old is named as a trip, with its
+age, but the latch itself is not read, so the line may still say the guard holds the units when it
+does not; an older record reads clear with its age. It is read-only; an unreadable marker or record
+shows UNKNOWN, never a clear.
