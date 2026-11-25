@@ -160,6 +160,12 @@ is not mistaken for a quiet mind.
   `wan_link`, or the kernel reports no speed; a step backwards in the last hour (a reboot
   or driver reset) still counts the drops since it and reads "at least N in the last hour
   (counters reset by a reboot)", never "none". STALE past 15 minutes.
+- `HOST BUSY` reports how busy this machine was when the newest probe ran: the kernel's CPU and
+  disk/IO pressure (the share of time tasks waited, from `/proc/pressure`, as in `network-probe`
+  0.2.0 rows). When CPU waiting is 50% or more and the best web check was slow, it adds
+  `SLOW HERE: busy host, so slow pages are likely this machine, not the uplink`. A probe older than
+  0.2.0 carries no host reading, so the line says UNKNOWN for CPU rather than zero. The line shows
+  UNKNOWN when no probe row exists yet.
 - `DEVICE PING` shows each named household device's average ping and loss, along with the age
   of the newest reading in `network/devices.jsonl`. The line shows UNKNOWN when a device did
   not answer or its result is unreadable, and names the affected device. When the reading's
