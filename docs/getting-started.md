@@ -6,7 +6,7 @@ This sets up one plant (one running Mishe installation in one checkout), **held*
 lets it run. A *hold* is a switch that stops every wake (one agent run for one role); while
 it is on, nothing calls a model. A *role* is one named job a mind does
 (for example `docs` or `genome`), defined by its *charter* (its written job
-description). You release the hold with `mishe hold off` (step 5).
+description). The *mind* is the agent that performs a role's job. You release the hold with `mishe hold off` (step 5).
 
 ## 1. Prerequisites
 
@@ -71,7 +71,7 @@ cannot corrupt the one JSON envelope. The router has no account-window reading f
 a qwen candidate carries `"account": null` and is admitted without a budget window,
 cooling off on failure like any other candidate.
 
-A site can instead list ordered candidates per role in
+A site can instead list ordered *candidates* (one engine and account pair each) per role in
 `SITE_HOME/engine/routes.json`; each wake then picks the first eligible
 candidate and cools off one that times out or ends without a yield (the wake's recorded hand-back, written by `mishe yield`). The first
 timeout cools the candidate for that role only. An exit without a yield cools
@@ -104,6 +104,7 @@ mishe doctor                # exits 0 only when GREEN; RED exits 1 and prints ea
 ```
 
 The doctor prints GREEN when every check passes and RED when a check fails.
+UNKNOWN means a reading could not be taken at all; a missing or stale reading is never GREEN.
 Its exit code follows that reading: 0 for GREEN, 1 for RED, and 3 when it cannot read the
 installed units (UNKNOWN), so a script treats anything other than 0 as not ready. The
 stored `doctor` signal is a separate reading: it ages to UNKNOWN when the doctor stops
@@ -128,7 +129,7 @@ scratch namespaces only. A delivery (promoting a checked commit to the
 running code, with automatic rollback if it fails to observe)
 in flight is a transient `moving-pin-delivery-HHMMSS.service`; its name carries no `mishe-` prefix, so pass that
 pattern too (`list-units 'mishe*' 'moving-pin-delivery-*'`) when you want to see whether
-the pin is being moved. (The *pin* is `runtime/current`, the release the running code was loaded from; the section *How a change lands* below explains it.)
+the *pin* is being moved. The pin is `runtime/current`, the release the running code was loaded from; *How a change lands* below explains it.
 On a host with more than one plant, `doctor` also reads sibling plants' pinned
 releases without writing to them. A fork that still promotes or starts units
 under this plant's prefix is RED before its next sync rewrites anything; the
@@ -155,7 +156,7 @@ That touches genome's inbox; its path unit starts one wake. Watch it:
 
 ```sh
 journalctl --user -u mishe-wake@genome.service -f
-ls SITE_HOME/wakes/ ; cat SITE_HOME/dispatch/genome.json   # the dispatch file: the state of that role's run
+ls SITE_HOME/wakes/ ; cat SITE_HOME/dispatch/genome.json   # the role's dispatch file (defined below)
 ```
 
 A *dispatch* is one durable record per role (`SITE_HOME/dispatch/ROLE.json`): `started`, `completed`, `unknown`, `reconciled`, …, written as the role's wake runs.
@@ -166,7 +167,8 @@ read. Cost and turns are in the wake's `*.out.json` (claude).
 ## Writing a wall, an outcome, a message
 
 A woken mind does these itself, and ends every wake with `mishe yield --result changed|verified|blocked`
-(its updated wall on stdin). By hand:
+(its updated wall on stdin). `yield` is the wake's hand-back: it records what the run did (changed,
+verified or blocked) and what should happen next. By hand:
 
 ```sh
 mishe wall write --owner ROLE --file NOTES        # replaces the role's wall (size-limited)
