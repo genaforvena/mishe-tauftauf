@@ -461,15 +461,12 @@ release's record and tree as *data* and runs the code of the
 `runtime/current/src` symlink, so a queued retry that fires after a pin move
 merges under the policy that is live then; a review is evidence after delivery
 and must never hold a promotion, which is why a running or armed review is not a
-consumer the pin fence judges. Counting a queued retry
-as a consumer with the wrong pin failed a correct promotion's probe and then its
-rollback probe on 2026-11-17, leaving the delivery record UNKNOWN with a correct
-pin above it. A consumer group can also vanish between the drain's existence
-check and its scan, because the kernel deletes a oneshot's cgroup when its last
-process exits: a group gone on re-read holds nothing to drain, while a group still
-present without `cgroup.procs` remains a real enumeration failure (that race rolled
-back a correct `0c567f9d` promotion on 2026-11-17 20:34Z naming
-`mishe-producer-initiatives-rust-plan.service`).
+consumer the pin fence judges. Counting a queued retry as a consumer with the
+wrong pin would make a correct promotion fail its own probes. A consumer group can
+also vanish between the drain's existence check and its scan, because the kernel
+deletes a oneshot's cgroup when its last process exits: a group gone on re-read
+holds nothing to drain, while a group still present without `cgroup.procs` remains
+a real enumeration failure.
 The drain cutoff is sampled immediately after renaming `runtime/current`, before
 writing the pin mirror or syncing units. Automatic rollback uses the same rule
 for its restored pin. An invocation starting during those later steps is judged
@@ -497,12 +494,10 @@ replaces as `observer-checks.py.pre-link-<epoch>`), so the binding needs no hand
 copy and holds through every pin move; a copy left in its place is exactly what
 the test detects. That target is deliberate: activation copies a release and only then
 advances the pin, so a runner change cannot be installed until the pin contains
-it, and a checkout comparison deadlocks (measured 2026-11-17: pin `05da8d15`,
-live `43f980fd`, checkout `9a84df2f`; candidate `0e67fdb1` failed its own delivery
-check on that line and the pin stayed where it was). The runner is committed at
-all because of a measurement: while it lived only under the ignored site home, its
-inventory changed with no diff anywhere — five checks stopped being read and five
-started (2026-11-10).
+it, and a checkout comparison deadlocks: a candidate would fail its own delivery check on
+that line, and the pin would stay where it was. The runner is committed at all
+because, while it lived only under the ignored site home, its inventory could change
+with no diff anywhere.
 
 ## Ending a wake
 
