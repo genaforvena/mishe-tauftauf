@@ -62,14 +62,14 @@ can be seen to have landed, or to have not:
 
 "Mesh" is a hypothesis (a claim to test, not yet a finding) about that
 coordination, not a description of it. Read
-it against use: which records, wakes and locks in fact route work, and which
-land nothing. A plant can make many messages, reviews or wakes without landing
+it against use: which records, wakes and locks in fact carry work to its next
+step, and which land nothing. A plant can make many messages, reviews or wakes without landing
 results, and the volume of connections is not the measure of them. What each
 connection did is recorded, and the record is the check.
 
 The name is not a diagram. Reducing the couplings to a picture of a flat
 network closes the question the name is meant to keep open. The knots are the
-points where a coupling routes work, or fails to, and they are real:
+points where a coupling carries work to its next step, or fails to, and they are real:
 
 - A trigger wakes a mind only when something is owed.
 - A wake ends in a `yield`, the mind's recorded hand-back, with its result.
