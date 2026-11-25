@@ -16,7 +16,7 @@ Terms used below:
 - **Yield**: the last step of a wake, which records its result (`changed`, `verified` or `blocked`).
 - **Changed rate**: the share of yielded wakes whose result is `changed`.
 - **Receipt**: what a wake left behind, an attributed commit or a registered artifact.
-- **Signal** and **duty**: a published reading and the periodic check that turns it into GREEN, RED or UNKNOWN. See [wall coordination](wall-coordination.md).
+- **Signal** and **duty**: a published reading, whose state is `OK` while fresh, and the periodic check that gives it a verdict, GREEN, RED or UNKNOWN. See [wall coordination](wall-coordination.md).
 - **Ack** and **cursor**: a subscriber's ack moves its cursor past a commit, so that commit is not delivered to it again.
 - **Internal-only**: a commit whose subject starts with `chore`, `style`, `typo`, `whitespace`, `pin` or `pinbump`, or that touches none of `src`, `tools`, `duties`, `docs` or `tests` (`is_noise` in `repo_change_signal.py`). When the `pub` role (the publication mind; its job is listed in [mesh](mesh.md)) reads the delta, internal-only commits and docs-only commits are skipped (`pub_verdict`), so neither one owes pub a read. Docs-only means every touched path is under `docs/`, `tests/` or `checks/` (`docs_only`); a commit that also touches `src`, `tools` or `duties` still counts.
 
