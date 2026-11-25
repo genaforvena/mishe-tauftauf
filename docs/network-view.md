@@ -161,7 +161,9 @@ is not mistaken for a quiet mind.
   not answer or its result is unreadable, and names the affected device. When the reading's
   neighbour state is `FAILED` or `INCOMPLETE`, ARP itself got no answer, so the line says
   `not answering the LAN (no ARP answer)`: the device is asleep or firewalled, not a fault on the
-  router side. A missing or unreadable reading, a timestamp more than five seconds in the future,
+  router side. A device that is still associated on Wi-Fi and whose router counters have not moved
+  over the last six reads also gets `router counters unchanged over the last 6 reads (associated but
+  not answering)` on the same line, so the two facts read as one. A missing or unreadable reading, a timestamp more than five seconds in the future,
   or a reading older than 15 minutes also shows UNKNOWN. Readings older than 15 minutes are marked STALE. The five-minute
   `network-device-reach` duty logs the same problems and lets its last GREEN expire 15 minutes
   after the last usable observation.
