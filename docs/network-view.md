@@ -164,7 +164,11 @@ is not mistaken for a quiet mind.
   router side. A device that is still associated on Wi-Fi and whose router counters have not moved
   over the last six reads also gets `router counters unchanged over the last 6 reads (associated but
   not answering)` on the same line, so the two facts read as one. A missing or unreadable reading, a timestamp more than five seconds in the future,
-  or a reading older than 15 minutes also shows UNKNOWN. Readings older than 15 minutes are marked STALE. The five-minute
+  or a reading older than 15 minutes also shows UNKNOWN. Readings older than 15 minutes are marked STALE.
+  A device that failed to answer in consecutive samples during the last 24 hours also gets a history
+  phrase on the same line, e.g. `iMac-Rozalia silent in 3 runs over the last 24 h (longest 3.2 h, last ended
+  HH:MMZ)`. It is shown beside the verdict and does not change it: a device that answers again still reads
+  as answering. The five-minute
   `network-device-reach` duty logs the same problems and lets its last GREEN expire 15 minutes
   after the last usable observation.
 - `router (LAN)` (in the reachability table): the newest probe's latency, loss and jitter beside a
