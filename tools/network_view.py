@@ -1927,7 +1927,7 @@ def draw():
     out.append("  ROUTER LOAD   " + router_health_line() + "   (read-only, one read per 5 min)")
     out.append("  DEVICE PING   " + devices_line() + "   (named household devices, read-only pings)")
     out.append("  VPN           " + vpn_line() + "   (read-only, router process list and tun0)")
-    out.append("  HOST GUARD    " + guard_line() + "   (read-only, marker file only)")
+    out.append("  HOST GUARD    " + guard_line() + "   (read-only, trip marker and trip records)")
     exit_lines = exit_line().split("\n")
     out.append("  EXIT NODE     " + exit_lines[0] + "   (read-only, the egress duty's file)")
     out.extend(exit_lines[1:])
