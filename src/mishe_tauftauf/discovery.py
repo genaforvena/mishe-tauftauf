@@ -6491,7 +6491,9 @@ def _space_light_name_freeze(home: Path, row: dict, now: float) -> dict:
     row.update(reason="light-stream-frozen",
                sample="Note3 light UNKNOWN: light-stream-frozen"
                       + (f" {detail}" if detail else "")
-                      + f"; provenance={SPACE_SOURCE}")
+                      + f"; provenance={SPACE_SOURCE}"
+                      + "; this is the body-app light stream only, separate from the"
+                        " adb sampler row (raw, lux not verified)")
     _space_light_record_freeze(home, row, previous, now)
     return row
 
