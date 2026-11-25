@@ -85,8 +85,20 @@ def model_name(path: Path, read_size: int = 1024 * 1024) -> str | None:
     return found[-1].decode('utf-8', 'replace').rsplit('/', 1)[-1] if found else None
 
 
+def newest_first(wakes: Path) -> list[Path]:
+    """Retained outputs newest first. An output removed after the listing is dropped, not raised."""
+    listed = []
+    for path in wakes.glob('wake-*.prompt.out.*'):
+        try:
+            listed.append((path.stat().st_mtime_ns, path))
+        except OSError:
+            continue  # removed between the listing and the stat: nothing to count or render
+    listed.sort(key=lambda item: item[0], reverse=True)
+    return [path for _, path in listed]
+
+
 def newest_per_model(wakes: Path, limit: int) -> dict[str, Path]:
-    paths = sorted(wakes.glob('wake-*.prompt.out.*'), key=lambda p: p.stat().st_mtime_ns, reverse=True)[:limit]
+    paths = newest_first(wakes)[:limit]
     newest: dict[str, Path] = {}
     for path in paths:
         if path.suffix not in ('.json', '.jsonl'):
@@ -109,7 +121,7 @@ def models_ever_seen(wakes: Path, skip: int, cache_path: Path | None = None) -> 
     name and size. A run then reads only files it has not seen before; re-reading
     every retained output each pass pulled tens of GB through the page cache.
     """
-    paths = sorted(wakes.glob('wake-*.prompt.out.*'), key=lambda p: p.stat().st_mtime_ns, reverse=True)[skip:]
+    paths = newest_first(wakes)[skip:]
     cache: dict = {}
     if cache_path is not None:
         try:

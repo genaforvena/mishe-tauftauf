@@ -283,3 +283,26 @@ def test_output_removed_between_listing_and_cache_loop_is_skipped(tmp_path, monk
     seen = check.models_ever_seen(wakes, 0, tmp_path / "cache.json")
     assert "m-kept" in seen
     assert calls["gone"] >= 2
+
+
+def test_output_removed_before_sort_does_not_raise(tmp_path, monkeypatch):
+    # The newest-first sort stats every listed output. A file removed between the glob and
+    # that stat must be dropped from both newest_per_model and models_ever_seen, not raised.
+    wakes = tmp_path / "wakes"
+    wakes.mkdir()
+    gone = wakes / "wake-1.prompt.out.json"
+    kept = wakes / "wake-2.prompt.out.json"
+    for p in (gone, kept):
+        p.write_text(json.dumps({"modelUsage": {"m-kept": {}}}), encoding="utf-8")
+    real_stat = Path.stat
+
+    def vanished_stat(self, *args, **kwargs):
+        if self.name == gone.name:
+            raise FileNotFoundError(str(self))
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", vanished_stat)
+    newest = check.newest_per_model(wakes, 10)
+    assert newest.get("m-kept") == kept
+    seen = check.models_ever_seen(wakes, 0, tmp_path / "cache.json")
+    assert "m-kept" in seen
