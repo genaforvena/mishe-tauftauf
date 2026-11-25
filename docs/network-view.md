@@ -143,7 +143,10 @@ is not mistaken for a quiet mind.
   (11-14 16:57Z to 11-18 02:06Z)`). A silence of more than 15 minutes between two probe rows (the probe
   runs every 3 minutes) is listed too, as `NO PROBES <start> to <end> (N min): UNKNOWN, not calm`, in
   time order with the DOWN runs; a silence is never read as a calm stretch, and with one present the
-  list no longer says `none`. Timestamps on different days carry the month and day, so a
+  list no longer says `none`. When the journal shows a containment skip of the probe units inside the
+  silence, the line names it instead (`NO PROBES ... host paused by containment trip HH:MMZ to HH:MMZ,
+  UNKNOWN not calm`): the guard held the producers back, the router and probe did not fail. It is still
+  UNKNOWN; a failed or timed-out journal read leaves the plain form. Timestamps on different days carry the month and day, so a
   multi-day span or an outage across midnight cannot read as a few hours; an outage still in progress
   says "still down at the last probe" instead of inventing an end. The view reads the last 1440 probe
   rows (`rows()`), which at the current cadence is a few days, and the span line states that length.
