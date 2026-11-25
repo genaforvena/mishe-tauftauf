@@ -58,7 +58,7 @@ Exit codes for producers: 0 GREEN, 2 RED, anything else an unobserved run that a
 | Checkpoint index | `feed.py:25` (`INDEX_STRIDE = 128`), `:1035` (`_read_checkpoint`), `:1099` (`_publish_checkpoint`) | Used to validate cache, not to skip the scan. |
 | Identity index | `feed.py:909` (`_malformed_receipt`, `meta.malformed` count) | sqlite `feed.identities.sqlite3` (23.5 MB, not re-measured). |
 | Wall context | `wall.py:912` (`context`), `:927`, `:1012` | Calls `role_entries`. |
-| Wake dossier | `wake.py:52` (`role_entries`) | One process per wake. |
+| Wake dossier | `wake.py:127` (`role_entries`) | One process per wake. |
 | Migration | `migrate.py:29` (`role_entries`) | |
 | Discovery scan | `discovery.py:7217` (`scan`), `discovery.py:4602` (`iter_feed_file`, DM-disposition sense) | Module is 7,632 lines. |
 | CLI | `cli.py:173-176` (`cmd_wall show`), `:277-281` (`cmd_feed`, whole tape), `:143-147` (`_require_site_role`) | |
@@ -66,7 +66,7 @@ Exit codes for producers: 0 GREEN, 2 RED, anything else an unobserved run that a
 ### 1.3 Tape scale and fan-out
 
 - Tape: `chat.log`, 209,420,968 bytes at 23:34Z (`feed.py:517` selects it). 298,161 entries (profile count of `_verify_records` calls).
-- `Feed.entries()` callers: 44 across 13 modules. `role_entries()` callers: 4 (`wall.py:880`, `:965`, `wake.py:52`, `migrate.py:29`).
+- `Feed.entries()` callers: 44 across 13 modules. `role_entries()` callers: 4 (`wall.py:927`, `:1012`, `wake.py:127`, `migrate.py:29`).
 - `observer-checks` does not read the tape directly (no `chat`, `Feed`, `entries` reference in its site-local program, which the public tree excludes). It does run `cli append` (line 314), which writes to the tape, and runs configured check programs (line 256). Whether those child programs read the tape is UNKNOWN; the list of them was not traced.
 
 ### 1.4 Constraints, history and incidents
@@ -74,7 +74,7 @@ Exit codes for producers: 0 GREEN, 2 RED, anything else an unobserved run that a
 - Containment: producer units carry `ConditionPathExists=!/var/lib/mishe-containment/tripped`. In 24 h, `readings` was skipped 2×, `observer-checks` 2×, `doctor` 5×, `household-activity` 3×, `host-capacity` 12×, `dispatch` 24×. At 23:46Z the tripped file is absent.
 - 22:48Z: `mishe-producer-readings.service` was SIGKILLed (`code=killed, status=9/KILL`), 150.3 MiB peak, 28.8 s CPU (`journalctl --user -u mishe-producer-readings.service`).
 - **OOM 2026-11-03, verified in the journal (user journal, `journalctl --user --since "2026-11-03 13:00" --until "2026-11-03 15:00"`):** `tmux-spawn-…` scopes were OOM-killed at 13:09:53Z, 13:53:03Z and 14:08:01Z; `mishe-host-guard.service` was stopped at 13:09:54Z and 13:53:05Z; then `-.slice`, `mishe.slice` and `mishe-lifeline.slice` each report "killed by the OOM killer" at 13:57:02Z.
-- The comment at `feed.py:901-905` says "2026-11-03 13:53Z" and cites "oom_kill 47->48" for supervisors on the 3 GiB lifeline slice. The journal's lifeline kill is at 13:57:02Z, and the 13:53:03Z kill is a tmux scope. The comment's time is approximately right and does not match the lifeline kill exactly.
+- The comment at `feed.py:1315` (formerly 901-905) says "2026-11-03 13:53Z" and cites "oom_kill 47->48" for supervisors on the 3 GiB lifeline slice. The journal's lifeline kill is at 13:57:02Z, and the 13:53:03Z kill is a tmux scope. The comment's time is approximately right and does not match the lifeline kill exactly.
 - Causal link from the tape read path to that OOM: UNKNOWN. The journal does not name the killed process, and no kernel log for that window survives (`journalctl -k` shows nothing for 11-03; boot history starts 11-05).
 
 ## 2. Baseline
@@ -151,7 +151,7 @@ Reading:
 - `mishe feed` (`cli.py:277-281`, whole-tape parse and print): not run. Trigger: loadavg < 2, MemAvailable > 8 GB, no containment trip for 24 h, and a preserved tape copy rather than live `chat.log`.
 - Scaling of parse and verify against tape size: UNKNOWN. Needs a preserved-copy series (25/50/100/200 MB prefixes, one repetition each) under the same trigger.
 - Cold-page-cache `wall show`: UNKNOWN. Cache dropping is forbidden.
-- Number of cold tape scans per wake: UNKNOWN. Hypothesis: each wake process pays one cold scan through `wake.py:52`. Settle it by reading one wake's journal or tracing `openat` on a copy.
+- Number of cold tape scans per wake: UNKNOWN. Hypothesis: each wake process pays one cold scan through `wake.py:127`. Settle it by reading one wake's journal or tracing `openat` on a copy.
 - `discover scan` profile (tape iteration at `discovery.py:4602` versus scanner logic): UNKNOWN. Writes a snapshot, so it is not a read-only baseline.
 - Serialization cost of handing ~300k parsed entries from a Rust process to Python (for `entries()` callers): UNKNOWN. This decides whether the single-authority slice is viable (section 6).
 
@@ -192,7 +192,7 @@ Reading:
 
 **Authoritative consumers that call it:**
 - `Feed.entries()` (`feed.py:1406`), via `entries` subcommand, for all 44 callers (count not re-checked).
-- `Feed.role_entries()` (`feed.py:1259`), via `role` subcommand, for `wall.py:927`, `wall.py:1012`, `wake.py:52`, `migrate.py:29` (the last two not re-checked).
+- `Feed.role_entries()` (`feed.py:1259`), via `role` subcommand, for `wall.py:927`, `wall.py:1012`, `wake.py:127`, `migrate.py:29` (re-checked at deac4dd1).
 
 **Predecessor retired in the same release:**
 - `feed.py:149` `_iter_streamed_feed`, `:259` `iter_feed_entries`, `:398` `_iter_text_lines`, `:742` `_verify_records`, `:444` `_role_fold`, `:53` `_ROLE_ENTRIES_CACHE`, `:862-930` `role_entries` body (replaced by a subprocess wrapper), `records.py:229-323` verified-store logic (`VerifiedStore`, `lookup`, `store`, `cached_payload`, `verified_store`), `feed.py:610-614` whole-tape `read_bytes` path used by `entries()`.
@@ -380,7 +380,7 @@ Even if steps 1–7 went smoothly, the observation window and review waits take 
 13. Full-tape `entries` Python baseline (not yet measured, 6.1).
 14. Whether the `mishe-wake` processes are in a mind window during any build (6.2).
 15. Malformed-evidence form: `FeedError` text and the `meta.malformed` count are identified (`feed.py:283-310`, `:527-576`), but the full list of malformed-evidence artifacts the repo keeps is not inventoried.
-16. The 2026-11-03 OOM time mismatch with the `feed.py:901-905` comment (1.4).
+16. The 2026-11-03 OOM time mismatch with the `feed.py:1315` comment (1.4).
 17. Test coverage of the verified store under concurrency (2.5 covers role views, not `records.py` concurrency).
 
 ## 8. Implementation status (owner update: the inner rust-plan mind owns delivery)
