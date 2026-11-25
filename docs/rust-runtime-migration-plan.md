@@ -48,7 +48,7 @@ Exit codes for producers: 0 GREEN, 2 RED, anything else an unobserved run that a
 | Producer runner | `producers.py:26-43` (`run`) | Bounded subprocess, detail file, observe. |
 | Dispatch producer | `producers.py:46-57` (`dispatch`) | Reads dispatch records only. |
 | Producer table | `producers.py:98` (`produce`), `:105` (`load`) | |
-| Signal observation | `runtime_cli.py:129` (parser), `:153` (`run`), `signal_store.py` (`observe`) | |
+| Signal observation | `runtime_cli.py:177` (`signal` subparsers), `:190` (`signal run` parser), `:217` (`run`), `signal_store.py` (`observe`) | |
 | Tape framing (header/body validation) | `feed.py:259` (`iter_feed_entries`), `:283`, `:303`, `:310` (malformed raises `FeedError`) | Raises at the first fault. |
 | Streamed tape reader | `feed.py:149` (`_iter_streamed_feed`), `:352` (`iter_feed_file`) | Bounded memory. |
 | Whole-tape reader | `feed.py:610-614` (`read_bytes`), `:973` (`Feed.entries`) | Reads and parses the whole tape. |

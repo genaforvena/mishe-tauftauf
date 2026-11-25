@@ -118,7 +118,7 @@ them. Updated 2026-11-15 after the operator DM 301336.
    launch path). Input: `duties.json` and a duty name. Output: the producer's
    status and its `timeout`-bounded exit. Stable: the file format is fixed.
    Testable: a fixture duties file with a stub producer. Measured 2026-11-15: the
-   Python part only expands the manifest at timer generation (`runtime_cli.py:397`,
+   Python part only expands the manifest at timer generation (`runtime_cli.py:468`, the sync path,
    `plant_boot.py:103`), not per run. 60 duties expand in 4.5 ms, so it does not
    pay as a binary and is not a candidate. Duties run as systemd units, not through
    this module.
