@@ -162,7 +162,7 @@ is not mistaken for a quiet mind.
   (counters reset by a reboot)", never "none". STALE past 15 minutes.
 - `HOST BUSY` reports how busy this machine was when the newest probe ran: the kernel's CPU and
   disk/IO pressure (the share of time tasks waited, from `/proc/pressure`, as in `network-probe`
-  0.2.0 rows). When CPU waiting is 50% or more and the best web check was slow, it adds
+  0.2.0 rows). When CPU waiting is 50% or more and the best web check took over 1.5 s, it adds
   `SLOW HERE: busy host, so slow pages are likely this machine, not the uplink`. A probe older than
   0.2.0 carries no host reading, so the line says UNKNOWN for CPU rather than zero. The line shows
   UNKNOWN when no probe row exists yet.
