@@ -20,6 +20,16 @@
       "decision": "Adopted for the building block, retired for the loop. The internal loop was deleted in 943276d9 and stays deleted. docs_tools.search_docs stays because repo_change_docs.docs_naming calls it (the docs-naming seam of the repo-change initiative). The narrative in docs/agent-step-experiments.md is local and gitignored; its status line now says so.",
       "consumer_or_evidence": "src/mishe_tauftauf/repo_change_docs.py imports search_docs; tests/test_docs_tools.py covers it",
       "paths": ["src/mishe_tauftauf/docs_tools.py", "tests/test_docs_tools.py"]
+    },
+    {
+      "id": "rssi-motion",
+      "owner": "senses",
+      "started": "2026-11-25",
+      "decision_due": "2026-12-02",
+      "status": "running",
+      "decision": "",
+      "consumer_or_evidence": "duty rssi-motion (hourly) writes senses/map/rssi-motion.json; go ahead = a variance feature beats the level and a day-shift null (verdict SIGNAL) and a consumer such as the map rssi line reads it; retire = still NO_SIGNAL at the decision date after the phone-still and per-hour strata have been tried",
+      "paths": ["tools/rssi_motion.py", "tools/rssi_text.py", "tests/test_rssi_motion.py"]
     }
   ]
 }
