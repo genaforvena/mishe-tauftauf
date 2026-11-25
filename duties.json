@@ -895,10 +895,10 @@
       ],
       "every": 120,
       "timeout": 60,
-      "max_age": 180,
+      "max_age": 300,
       "resolver": "genome",
       "replaces": [],
-      "covers": "Deterministic evidence/deadline sweep independent of next-due rearming; failure or missing sweep output remains UNKNOWN within three minutes."
+      "covers": "Deterministic evidence/deadline sweep independent of next-due rearming; failure or missing sweep output remains UNKNOWN within five minutes."
     },
     {
       "name": "audio-hint-livingroom",
