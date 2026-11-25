@@ -166,7 +166,8 @@ is not mistaken for a quiet mind.
   not answering)` on the same line, so the two facts read as one. A missing or unreadable reading, a timestamp more than five seconds in the future,
   or a reading older than 15 minutes also shows UNKNOWN. Readings older than 15 minutes are marked STALE.
   A device that failed to answer in consecutive samples during the last 24 hours also gets a history
-  phrase on the same line, e.g. `iMac-Rozalia silent in 3 runs over the last 24 h (longest 3.2 h, last ended
+  phrase on the same line. A gap of more than 15 minutes between two samples was not measured, so it
+  ends a run rather than extending it, e.g. `iMac-Rozalia silent in 3 runs over the last 24 h (longest 3.2 h, last ended
   HH:MMZ)`. It is shown beside the verdict and does not change it: a device that answers again still reads
   as answering. The five-minute
   `network-device-reach` duty logs the same problems and lets its last GREEN expire 15 minutes
