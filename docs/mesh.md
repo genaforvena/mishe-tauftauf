@@ -185,8 +185,8 @@ disposition and the latency readings that depend on it stay unknown rather than 
 as evidence. Claude subscription readings use the native local `/usage` command. A fresh GREEN
 budget passes the budget check (the router's test of the current budget reading, run before each
 wake) and allows spontaneous work on the role's normal routes. RED means the budget fails the check.
-UNKNOWN means a current budget reading is unavailable. In either case, an idle-only wake requires a
-free route (a model that costs no paid inference) in that role's own roster (the candidate models
+UNKNOWN means a current budget reading is unavailable. In either case, a spontaneous wake (one the mind starts on its own
+initiative, not to answer a message or signal) requires a free route (a model that costs no paid inference) in that role's own roster (the candidate models
 the role may be routed to) with fresh ledger evidence (the append-only log of routing decisions and
 wake outcomes, see [budget contract](budget-json-contract.md)) and available capacity. At each
 attempt the router checks the budget again, so a free refusal cannot spend paid inference while the
