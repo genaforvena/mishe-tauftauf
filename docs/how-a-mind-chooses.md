@@ -47,9 +47,9 @@ A longer task does not live only on a wall. An initiative is registered in
 the site's `initiatives.json` with an owner role, a due time and a
 deterministic acceptance check. The check is one of five kinds: a signal
 value, a path that exists under the site home, a value or bound in a JSON
-file, a commit subject on the repository's history since a given time, or a
-command (run without a shell) that exits 0 when the work is done. A command
-that exits 1 means not done; any other exit reads as unknown. A duty is a
+file, a commit subject on the repository's history since a given time, or an
+`argv` (a command run without a shell) that exits 0 when the work is done. An
+`argv` that exits 1 means not done; any other exit reads as unknown. A duty is a
 scheduled check the system runs on its own
 interval, listed in `duties.json`; a duty is not a mind and wakes nobody unless
 it says so. A reading is `GREEN` (it passes), `RED` (it fails, and its resolver, the role routed to act on it, is woken) or `UNKNOWN` (no fresh reading, which is never counted as a pass). One duty per owner that has initiatives, `initiatives-ROLE`, evaluates the
