@@ -8,11 +8,13 @@
   wifi      the read-only iwinfo channel/noise and frame-loss sub-readings are present and plausible
   load      the router's own load/free-RAM self-limit is not breached for long
   devices   the named household devices answer their own pings (network/devices.jsonl)
+  probe     the newest network-probe row is fresh and carries the 0.2.0 host block (cpu/io pressure)
 
 Exit: 0 GREEN, 2 RED (the window is missing/wrong, or the mind has gone quiet), 3 UNKNOWN
 (tmux or git cannot be read).  Nothing here holds a signal GREEN by hand.
 """
 import argparse
+import calendar
 import hashlib
 import json
 import os
@@ -534,9 +536,51 @@ def devices(home):
     return code
 
 
+PROBE_MAX_AGE_S = 900
+
+
+def newest_probe_row(home):
+    """The last JSON line of network/probe.jsonl, read from the tail only (the file is large)."""
+    with open(home / "network" / "probe.jsonl", "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        size = fh.tell()
+        fh.seek(max(0, size - 65536))
+        lines = [ln for ln in fh.read().splitlines() if ln.strip()]
+    return json.loads(lines[-1]) if lines else None
+
+
+def probe_state(row, now):
+    """0 GREEN when the newest probe row is fresh and has the host block; 2 RED when a fresh row lacks it
+    (the 0.2.0 probe is not what is writing); 3 UNKNOWN when there is no row or it is stale/unreadable."""
+    if not isinstance(row, dict) or not isinstance(row.get("at"), str):
+        return 3, "network-care: probe log has no readable newest row (UNKNOWN)"
+    try:
+        at = calendar.timegm(time.strptime(row["at"], "%Y-%m-%dT%H:%M:%SZ"))
+    except ValueError:
+        return 3, f"network-care: probe row time {row['at']!r} unreadable (UNKNOWN)"
+    age = now - at
+    if age < -60 or age > PROBE_MAX_AGE_S:
+        return 3, f"network-care: newest probe row {row['at']} is {age:.0f} s old (UNKNOWN)"
+    host = row.get("host")
+    if not isinstance(host, dict) or "cpu_some10" not in host or "io_some10" not in host:
+        return 2, f"network-care: probe row {row['at']} lacks the host block; the 0.2.0 probe is not writing (RED)"
+    return 0, f"network-care: probe GREEN (row {row['at']}, host cpu {host['cpu_some10']:.1f} %, io {host['io_some10']:.1f} %)"
+
+
+def probe(home):
+    try:
+        row = newest_probe_row(home)
+    except (OSError, ValueError) as exc:
+        print(f"network-care: probe log unreadable: {exc}", file=sys.stderr)
+        return 3
+    code, message = probe_state(row, time.time())
+    print(message, file=sys.stderr if code else sys.stdout)
+    return code
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("what", choices=("window", "progress", "uplink", "vpn", "wifi", "load", "devices"))
+    ap.add_argument("what", choices=("window", "progress", "uplink", "vpn", "wifi", "load", "devices", "probe"))
     ap.add_argument("--home", type=Path, required=True)
     ap.add_argument("--repo", type=Path, required=True)
     ap.add_argument("--session", default="plants")
@@ -551,6 +595,8 @@ def main():
         return load(a.home)
     if a.what == "devices":
         return devices(a.home)
+    if a.what == "probe":
+        return probe(a.home)
     return window(a.session, a.home, a.repo) if a.what == "window" else progress(a.home, a.repo)
 
 

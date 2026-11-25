@@ -1205,6 +1205,30 @@
       "replaces": []
     },
     {
+      "name": "network-probe-shape",
+      "command": [
+        "{python}",
+        "{repo}/checks/network-care.py",
+        "probe",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}"
+      ],
+      "every": 300,
+      "timeout": 30,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "network",
+      "covers": "the newest network-probe row (network/probe.jsonl) is at most 15 min old and carries the 0.2.0 host block (cpu_some10, io_some10); RED when a fresh row lacks it (the 0.2.0 probe is not what writes the reading), UNKNOWN when the log has no readable newest row or the row is stale",
+      "replaces": []
+    },
+    {
       "name": "network-speed",
       "command": [
         "{python}",
