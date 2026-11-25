@@ -21,7 +21,9 @@ decisions (`select`: a candidate chosen for a wake) and wake outcomes (`outcome`
 `yielded`, `timeout`, or `no yield (exit N)`, which may add `quota spent after acting`)
 in `engine/routing-ledger.jsonl`; the ledger sections
 count its rows. **Cooling** holds a candidate out of selection until a time (`until`,
-epoch milliseconds) and names the reason, such as a timeout. The **native tap** is
+epoch milliseconds) and names the reason, such as a timeout. A free-models-per-day 429 with a
+stated reset cools every free route on the key until that reset, not only the candidate that
+failed; paid routes, including ones on the same account, stay in service. The **native tap** is
 `operator/budget/claude_ratelimit_tap.py`, which copies Claude's own `/usage` figures
 into `claude-native-quota.json`. The **engine status** is the `quota.json` file the
 engine writes with each account's windows.
