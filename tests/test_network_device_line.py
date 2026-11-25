@@ -158,3 +158,33 @@ def test_non_object_device_value_is_unreadable_not_a_crash(monkeypatch, tmp_path
     line = view.devices_line(now=now)
     assert line.startswith("UNKNOWN")
     assert "iPad-Rozalia unreadable ping result" in line
+
+
+def test_associated_silent_device_with_frozen_counters_is_linked(monkeypatch, tmp_path):
+    """Associated on Wi-Fi but not answering, and the router's counters for it did not move: say so."""
+    now = 10_000.0
+    point_at(monkeypatch, tmp_path, [
+        {"ts": now - 60, "devices": {"iMac-Rozalia": {"ok": False, "why": "no reply",
+                                                       "neigh": "INCOMPLETE", "wifi": "ASSOCIATED"}}},
+    ])
+    reads = [{"ok": True, "ts": now - 600 + i, "clients": [
+        {"name": "iMac-Rozalia", "rx": 144.0, "tx": 130.0, "dbm": -28},
+        {"name": "iPhone", "rx": 100.0 + i, "tx": 50.0 + i, "dbm": -27},
+    ]} for i in range(view.FROZEN_READS)]
+    monkeypatch.setattr(view, "router_rows", lambda: reads)
+    line = view.devices_line(now=now)
+    assert "iMac-Rozalia not answering the LAN (no ARP answer), still on Wi-Fi" in line
+    assert "counters unchanged over the last 6 reads" in line
+    assert line.startswith("UNKNOWN")
+
+
+def test_associated_silent_device_without_frozen_counters_is_not_linked(monkeypatch, tmp_path):
+    now = 10_000.0
+    point_at(monkeypatch, tmp_path, [
+        {"ts": now - 60, "devices": {"iMac-Rozalia": {"ok": False, "why": "no reply",
+                                                       "neigh": "INCOMPLETE", "wifi": "ASSOCIATED"}}},
+    ])
+    monkeypatch.setattr(view, "router_rows", lambda: [])
+    line = view.devices_line(now=now)
+    assert "still on Wi-Fi" in line
+    assert "counters unchanged" not in line

@@ -881,11 +881,18 @@ def devices_line(now=None):
 
     parts = []
     unknown = False
+    try:
+        frozen = set(frozen_clients(router_rows()))
+    except Exception:  # the router log is optional here; a missing read just adds no link
+        frozen = set()
     for name, result in sorted(devices.items()):
         problem = nb.device_ping_plain_problem(result)
         if problem:
             if isinstance(result, dict) and result.get("wifi") == "ASSOCIATED":
                 problem += ", still on Wi-Fi"
+                if name in frozen:
+                    problem += (f", router counters unchanged over the last {FROZEN_READS} reads"
+                                " (associated but not answering)")
             parts.append(f"{name} {problem}")
             unknown = True
         else:
