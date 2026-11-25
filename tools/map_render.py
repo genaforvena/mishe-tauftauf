@@ -584,7 +584,8 @@ def svg(rows, activity, rssi, fp_doc, fp_error):
                     conf, " UNKNOWN" if unknown else ""))
     # footer: what the picture says and what it does not
     ly = plan_bottom + 30
-    lines = []
+    lines = ["Rendered %s (this picture is as of that time; an old time means the map has not refreshed)."
+             % NOW.strftime("%Y-%m-%dT%H:%M:%SZ")]
     if fp_doc:
         total = fp_doc.get("total_area_m2") if isinstance(fp_doc.get("total_area_m2"), dict) else {}
         lines.append("Plan: schematic, from floorplan.json (written %s). Total %s m2 [%s]. "

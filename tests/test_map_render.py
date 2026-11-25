@@ -399,6 +399,14 @@ def test_footer_states_leave_one_out_and_camera_coverage(tmp_path):
     assert "Blind spot:" in svg
 
 
+def test_footer_states_the_render_time_so_a_stale_map_is_visible(tmp_path):
+    site = _site(tmp_path, _activity({}))
+    _floorplan(site)
+    _, svg = _render(site)
+    assert "Rendered 20" in svg
+    assert "has not refreshed" in svg
+
+
 def _history(site, text):
     path = site / "senses/map/rssi-history.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
