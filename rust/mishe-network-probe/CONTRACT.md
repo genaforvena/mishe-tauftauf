@@ -1,4 +1,4 @@
-# mishe-network-probe contract (version 0.1, responsibility: one network probe row)
+# mishe-network-probe contract (version 0.2.0, responsibility: one network probe row)
 
 Status: LIVE. The Python probe (`checks/network_probe.py`) is retired; the
 `network-probe` duty runs this binary. Differentially checked against the
