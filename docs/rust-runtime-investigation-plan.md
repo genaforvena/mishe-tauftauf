@@ -345,3 +345,26 @@ a real wake misses the cache. The live reading is taken on a hit at this pin, an
 the history carries no cache-miss counter, so the frequency stays UNKNOWN. The safe
 trigger to collect it is a role-cache miss counter in the feed, read with the
 `live` reading on the next pin change.
+
+### 10.71 Every role cache is a hit-extend at 01:50Z (2026-11-25)
+
+10.70 left the cache-miss frequency UNKNOWN and named a role-cache miss counter as
+the safe trigger. A cheaper deterministic snapshot answers the narrower question
+first — is any role paying the cold full fold right now? — without a counter or a
+fold. The probe
+`.mishe-tauftauf/artifacts/rust-plan-20261107/probe_role_cache_state.py` opens the
+live tape under the shared lock and calls `_load_role_cache` for each role, the
+same predicate `role_entries` uses, and classifies the result.
+
+At 01:50Z, 30/30 role caches are HIT-extend, 0 MISS. Every cached offset is behind
+the live offset (e.g. rust-plan +487 B, genome +14,184 B, omp +32,284,437 B), so a
+fresh reader extends a valid projection and never rebuilds. The matching live
+reading at this pin (`checks/rust-measurement.py --roles rust-plan`) is 0.007 CPU-s
+with `view equal`, against 3.547 reader + 3.336 children = 6.884 CPU-s for the
+forced fold over the same 2,156 entries. The cold full fold — the only path where a
+Rust seam could pay — is not being paid at this snapshot.
+
+What this settles: the live role read is on the extend path across all roles now,
+so the costliest seam is not the role read. What it does not settle: the frequency
+over time; one snapshot is not a rate. The 10.70 counter stays the trigger for the
+rate, and this probe is the bounded action that shows the current state is all-hit.
