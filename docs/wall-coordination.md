@@ -12,7 +12,7 @@ Terms used below (wake, dossier and yield are defined in [How a mind chooses](ho
 - **Dispatch lock**: the shared lock every running wake holds; delivery takes it exclusively.
 - **Fence**: the delivery's wait for running wakes to release the dispatch lock. The delivery view reports it as a stage.
 - **Delivery admission record**: the marker a delivery consumer writes under the dispatch lock while it activates or recovers a release. It keeps new engines from starting until the delivery finishes; an interrupted delivery keeps its record until someone reconciles it.
-- **Signal**: a declared reading (OK, RED or UNKNOWN) that a check or producer publishes.
+- **Signal**: a declared reading that a check or producer publishes. Its state is `OK` while the reading is fresh and not `OK` otherwise. A verdict (GREEN, RED or UNKNOWN) is what a duty or view reports on it, and a fresh signal can still carry a RED verdict.
 - **Duty**: a periodic check with a named resolver, such as `main-publication`.
 - **UNKNOWN**: a reading with no trustworthy evidence behind it, because the evidence is missing, stale or failed. It is never treated as green.
 - **Steward**: the role that keeps an area's work moving. Stewardship does not give exclusive permission to repair the area.
