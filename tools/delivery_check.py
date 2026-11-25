@@ -14,7 +14,7 @@ is a separate writable filesystem (the same convention as ``operator/dual_probe.
 overriding both.  The suite's own temp follows the same rule (``suite_temp``): it is exported as
 ``TMPDIR``, so pytest's per-run numbered base temp (``pytest-of-<user>/pytest-N``, with its own
 retention) lands on the scratch mount's short ``t`` directory, else the environment default, with
-``MISHE_TEST_TMPDIR`` overriding.  The suite runs with two xdist workers; the temp must stay short
+``MISHE_TEST_TMPDIR`` overriding.  The suite runs with ``SUITE_WORKERS`` xdist workers (four); the temp must stay short
 enough for a worker's tmux socket (``check_worker_tmpdir``).  Exit status is the suite's, or 2
 when a build or the temp bound fails.
 """
