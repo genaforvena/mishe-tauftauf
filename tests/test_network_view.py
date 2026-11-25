@@ -1313,3 +1313,54 @@ def test_spike_row_counts_samples_when_the_baseline_is_too_thin():
     line = view.spike_share_line(facts)
     assert "UNKNOWN" not in line
     assert "3 of the last 10 web probes over 1 s" in line
+
+
+def test_a_gap_during_a_containment_pause_names_the_trip_not_a_bare_unknown():
+    # shape of the 2026-11-24 silence (16:12 -> 17:05Z): the producers were skipped by the guard
+    data = [_probe("2026-11-24T16:12:12Z", False), _probe("2026-11-24T17:05:48Z", False)]
+    a = view.nb.utc_epoch("2026-11-24T16:12:12Z")
+    b = view.nb.utc_epoch("2026-11-24T17:05:48Z")
+    pause = (view.nb.utc_epoch("2026-11-24T16:14:02Z"), view.nb.utc_epoch("2026-11-24T17:05:48Z"))
+    lines = view.outage_lines(data, paused=lambda x, y: pause if (x, y) == (a, b) else None)
+    assert lines[0] == ("  NO PROBES 11-24 16:12Z to 11-24 17:05Z (54 min): host paused by containment "
+                        "trip 16:14Z to 17:05Z, UNKNOWN not calm")
+
+
+def test_a_gap_with_no_pause_on_record_stays_plain_unknown():
+    data = [_probe("2026-11-24T16:12:12Z", False), _probe("2026-11-24T17:05:48Z", False)]
+    assert view.outage_lines(data)[0].endswith("UNKNOWN, not calm")
+    assert view.outage_lines(data, paused=lambda x, y: None)[0].endswith("UNKNOWN, not calm")
+
+
+def test_containment_pause_reads_the_skip_lines_of_the_network_producers(monkeypatch):
+    journal = "\n".join([
+        "2026-11-24T16:14:02+00:00 mesh-home systemd[1116]: mishe-arm.service - Re-arm was skipped "
+        "because of an unmet condition check (ConditionPathExists=!/var/lib/mishe-containment/tripped).",
+        "2026-11-24T16:14:04+00:00 mesh-home systemd[1116]: mishe-producer-network-probe.service - "
+        "Mishe producer network-probe was skipped because of an unmet condition check "
+        "(ConditionPathExists=!/var/lib/mishe-containment/tripped).",
+        "2026-11-24T16:40:00+00:00 mesh-home systemd[1116]: mishe-producer-network-devices.service - "
+        "skipped because of an unmet condition check (ConditionPathExists=!/var/lib/mishe-containment/tripped).",
+        "2026-11-24T19:00:00+00:00 mesh-home systemd[1116]: mishe-producer-network-probe.service - "
+        "skipped because of an unmet condition check (ConditionPathExists=!/var/lib/mishe-containment/tripped).",
+    ])
+
+    class Run:
+        returncode = 0
+        stdout = journal
+
+    view._pause_cache.clear()
+    monkeypatch.setattr(view.subprocess, "run", lambda *args, **kwargs: Run())
+    a = view.nb.utc_epoch("2026-11-24T16:12:12Z")
+    b = view.nb.utc_epoch("2026-11-24T17:05:48Z")
+    start, end = view.containment_pause(a, b)
+    assert (view.hhmm(start), view.hhmm(end)) == ("16:14", "16:40")
+
+
+def test_a_failed_journal_read_is_no_pause_so_the_gap_stays_unknown(monkeypatch):
+    def boom(*args, **kwargs):
+        raise OSError("no journalctl")
+
+    view._pause_cache.clear()
+    monkeypatch.setattr(view.subprocess, "run", boom)
+    assert view.containment_pause(1795536000, 1795540000) is None

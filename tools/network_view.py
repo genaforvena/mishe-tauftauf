@@ -357,8 +357,11 @@ def covered(seconds):
     return f"{seconds / 86400:.1f} days"
 
 
-def outage_lines(data):
-    """The outage list for the window: when the home internet was DOWN in the probes we hold."""
+def outage_lines(data, paused=None):
+    """The outage list for the window: when the home internet was DOWN in the probes we hold.
+
+    `paused(a, b)` names a containment pause that explains a silence (see containment_pause).
+    """
     seen = [r for r in data if "internet" in r and r.get("at")]
     if not seen:
         return ["  UNKNOWN (no secure-web probes to read outages from)"]
@@ -368,7 +371,7 @@ def outage_lines(data):
                if begin is not None and finish is not None and finish >= begin else "")
     span = f"over the last {len(seen)} probes{stretch} ({at_short(first)} to {at_short(last)})"
     episodes = outage_episodes(data)
-    gaps = probe_gaps(seen)
+    gaps = probe_gaps(seen, paused)
     if not episodes and not gaps:
         return [f"  none {span}"]
     timed = []
@@ -389,11 +392,13 @@ def outage_lines(data):
 PROBE_GAP_S = 900  # the probe runs every 3 min; a silence this long is a gap, never a calm stretch
 
 
-def probe_gaps(seen):
+def probe_gaps(seen, paused=None):
     """(epoch, line) for each silence of more than PROBE_GAP_S between two secure-web probe rows.
 
     Probes that never ran say nothing about the internet, so an outage list that only names DOWN
-    runs would read a multi-hour silence as calm. Each gap is named as UNKNOWN instead.
+    runs would read a multi-hour silence as calm. Each gap is named as UNKNOWN instead. When
+    `paused(a, b)` returns (start_epoch, end_epoch) of a host containment pause inside the gap, the
+    line names that pause: the producers were held back by the guard, not by the router or probe.
     """
     gaps = []
     for before, after in zip(seen, seen[1:]):
@@ -402,9 +407,54 @@ def probe_gaps(seen):
         except ValueError:
             continue
         if a is not None and b is not None and b - a > PROBE_GAP_S:
-            gaps.append((a, f"  NO PROBES {at_short(before['at'])} to {at_short(after['at'])} "
-                            f"({(b - a) / 60:.0f} min): UNKNOWN, not calm"))
+            span = f"{at_short(before['at'])} to {at_short(after['at'])} ({(b - a) / 60:.0f} min)"
+            pause = paused(a, b) if paused is not None else None
+            if pause:
+                gaps.append((a, f"  NO PROBES {span}: host paused by containment trip "
+                                f"{hhmm(pause[0])}Z to {hhmm(pause[1])}Z, UNKNOWN not calm"))
+            else:
+                gaps.append((a, f"  NO PROBES {span}: UNKNOWN, not calm"))
     return gaps
+
+
+def hhmm(epoch):
+    return time.strftime("%H:%M", time.gmtime(epoch))
+
+
+CONTAINMENT_SKIP = "ConditionPathExists=!/var/lib/mishe-containment/tripped"
+PROBE_UNITS = ("mishe-producer-network-probe", "mishe-producer-network-devices")
+_pause_cache = {}
+
+
+def containment_pause(a, b):
+    """(start, end) epochs of the containment skips of the network producers inside [a, b], or None.
+
+    Read from the journal, where systemd logs each producer skipped by its unmet condition check,
+    not from the trip file (the trip file can be gone by the time the gap is drawn). A failed or
+    timed-out read is None, so the gap stays plain UNKNOWN rather than being explained away.
+    """
+    key = (int(a), int(b))
+    if key in _pause_cache:
+        return _pause_cache[key]
+    found = None
+    try:
+        since = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(a - 60))
+        until = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(b + 60))
+        run = subprocess.run(["nice", "-n", "10", "journalctl", "--since", since, "--until", until,
+                              "--no-pager", "-o", "short-iso"],
+                             capture_output=True, text=True, timeout=8)
+        if run.returncode == 0:
+            for line in run.stdout.splitlines():
+                if CONTAINMENT_SKIP not in line or not any(u in line for u in PROBE_UNITS):
+                    continue
+                stamp = nb.utc_epoch(line[:25].replace("+00:00", "Z")) if len(line) > 25 else None
+                if stamp is None or not (a <= stamp <= b):
+                    continue
+                found = (stamp, stamp) if found is None else (found[0], stamp)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        found = None
+    _pause_cache[key] = found
+    return found
 
 
 def router_facts():
@@ -1929,7 +1979,7 @@ def draw():
     out.append("  UPLOAD        " + speed_up_line(nb_speed_up_rows()))
     out.append("")
     out.append("  OUTAGES (home internet DOWN, from the probes)")
-    out.extend(outage_lines(data))
+    out.extend(outage_lines(data, containment_pause))
     # A long device name or several weak clients must not wrap the row and push the frame's header
     # off the pane; wifi_pane_rows moves the overflow to an indented continuation row.
     wifi_note = f"   (read-only live read; weak below {WEAK_WIFI_DBM} dBm; names recorded)"
