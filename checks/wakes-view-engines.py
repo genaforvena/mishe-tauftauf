@@ -97,22 +97,44 @@ def newest_per_model(wakes: Path, limit: int) -> dict[str, Path]:
     return newest
 
 
-def models_ever_seen(wakes: Path, skip: int) -> set[str]:
+def models_ever_seen(wakes: Path, skip: int, cache_path: Path | None = None) -> set[str]:
     """Model names in the retained outputs the newest `skip` files do not cover.
 
     `newest_per_model` bounds rendering work, but it is the wrong bound for the
     question "has this model ever produced output": a quiet model ages past a fixed
     window and reads as never-run. Callers union this set with the rendered window
     to answer existence over every retained output.
+
+    Retained outputs are written once, so each file's model name is cached by file
+    name and size. A run then reads only files it has not seen before; re-reading
+    every retained output each pass pulled tens of GB through the page cache.
     """
     paths = sorted(wakes.glob('wake-*.prompt.out.*'), key=lambda p: p.stat().st_mtime_ns, reverse=True)[skip:]
+    cache: dict = {}
+    if cache_path is not None:
+        try:
+            cache = json.loads(cache_path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            cache = {}
+    fresh: dict = {}
     seen = set()
     for path in paths:
         if path.suffix not in ('.json', '.jsonl'):
             continue
-        name = model_name(path)
+        size = path.stat().st_size
+        hit = cache.get(path.name)
+        if isinstance(hit, list) and len(hit) == 2 and hit[0] == size:
+            name = hit[1]
+        else:
+            name = model_name(path)
+        fresh[path.name] = [size, name]
         if name:
             seen.add(name)
+    if cache_path is not None and fresh != cache:
+        # Rewrite only when the set changed; pruning vanished files happens here too.
+        tmp = cache_path.with_suffix('.tmp')
+        tmp.write_text(json.dumps(fresh, separators=(',', ':')), encoding='utf-8')
+        tmp.replace(cache_path)
     return seen
 
 
@@ -292,7 +314,7 @@ def evaluate(home: Path, repo: Path, limit: int, do_route: bool) -> tuple[int, l
     if missing:
         # A model absent from the render window may still have produced output the
         # window no longer covers: existence is the pending question, not recency.
-        older = models_ever_seen(home / 'wakes', limit)
+        older = models_ever_seen(home / 'wakes', limit, home / 'checks' / 'wakes-view-engines-models.json')
         pending = [f'role {role}: model {model} ({engine}) has no retained wake output yet; UNKNOWN until its first wake renders'
                    for role, engine, model in missing if model not in older]
     if failures:
