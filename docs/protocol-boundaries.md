@@ -38,7 +38,10 @@ nothing else:
   exception: a `seed yield` body may carry a line that begins `Turn settled (STATE);`.
   The first such line sets the yield's `result`. `discovery.py` reads it as the
   wake's settlement in the `sense.seed.settle-result-mix` reading; `seed_board.py`
-  reads it into `Work.result`, but that path has no production caller. Other
+  reads it into `Work.result`, but that path has no production caller. Nothing in
+  the current `src/` writes that line: `mishe yield` (`yielding.settle`) records the
+  result in the yield receipt and the wall, not in the chat tape, so the reader
+  only sees it in tapes written by an older build or in test fixtures. Other
   later lines stay prose. A malformed reserved control sentence from that source
   raises `ProtocolError` instead of being read as ordinary chat.
 - `decode_site_sync` reads the coordinator's `[site-sync]` marker from the `sync`
