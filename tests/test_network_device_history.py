@@ -26,17 +26,30 @@ class DeviceHistory(unittest.TestCase):
 
     def test_two_runs_counted_and_newest_answer_does_not_hide_them(self):
         rows = [
-            row(NOW - 20000, False), row(NOW - 19000, False), row(NOW - 18000, True),
-            row(NOW - 9000, False), row(NOW - 8000, False), row(NOW - 7000, True),
+            row(NOW - 20000, False), row(NOW - 19800, False), row(NOW - 19600, False), row(NOW - 19400, True),
+            row(NOW - 9000, False), row(NOW - 8800, False), row(NOW - 8600, True),
             row(NOW - 60, True),
         ]
         phrase = nb.device_outage_phrase(rows, NAME, NOW)
         self.assertIn("silent in 2 runs over the last 24 h", phrase)
-        self.assertIn("longest 0.3 h", phrase)
+        self.assertIn("longest 0.1 h", phrase)
 
     def test_failures_older_than_24h_are_ignored(self):
         rows = [row(NOW - 90000, False), row(NOW - 89000, False), row(NOW - 60, True)]
         self.assertEqual(nb.device_outage_phrase(rows, NAME, NOW), "")
+
+    def test_unmeasured_gap_does_not_extend_a_run(self):
+        # two failed samples 5 h apart with no rows between: the gap is UNKNOWN, not 5 h of silence
+        rows = [row(NOW - 18000, False), row(NOW - 13000, False), row(NOW - 60, True)]
+        phrase = nb.device_outage_phrase(rows, NAME, NOW)
+        self.assertIn("silent in 2 runs over the last 24 h", phrase)
+        self.assertIn("longest 0.0 h", phrase)
+
+    def test_failed_samples_within_gap_limit_still_form_one_run(self):
+        rows = [row(NOW - 3000, False), row(NOW - 2800, False), row(NOW - 2600, False), row(NOW - 60, True)]
+        phrase = nb.device_outage_phrase(rows, NAME, NOW)
+        self.assertIn("silent in 1 run over", phrase)
+        self.assertIn("longest 0.1 h", phrase)
 
     def test_unreadable_or_future_rows_are_skipped(self):
         rows = [{"ts": "x", "devices": {NAME: {"ok": False}}}, row(NOW + 500, False), row(NOW - 60, True)]

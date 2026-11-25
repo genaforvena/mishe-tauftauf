@@ -488,6 +488,7 @@ def decode_router_rows(text):
 
 
 DEVICE_PING_MAX_AGE_S = 15 * 60
+DEVICE_GAP_S = 900  # device pings run about every 3.5 min; a silence this long is unmeasured, not silent
 
 
 def read_device_ping_rows(path):
@@ -534,16 +535,23 @@ def device_outage_phrase(rows, name, now, horizon=86400.0):
 
     The newest row can be GREEN while the device was silent for hours before it; this keeps that
     history visible without turning an answering device into a failure. A run is consecutive failed
-    samples; its length is the span between its first and last failed sample.
+    samples; its length is the span between its first and last failed sample. A gap of more than
+    DEVICE_GAP_S between two samples was not measured, so it never extends a run: the run ends at
+    its last failed sample before the gap.
     """
     runs = []
     start = end = None
+    prev = None
     for row in rows:
         if not isinstance(row, dict) or not _nonnegative_number(row.get("ts")):
             continue
         ts = row["ts"]
         if ts > now or now - ts > horizon:
             continue
+        if prev is not None and ts - prev > DEVICE_GAP_S and start is not None:
+            runs.append((start, end))
+            start = None
+        prev = ts
         result = (row.get("devices") or {}).get(name) if isinstance(row.get("devices"), dict) else None
         if not isinstance(result, dict):
             continue
