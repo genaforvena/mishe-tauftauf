@@ -617,13 +617,14 @@ class RoutedEngine:
             return QwenEngine(cand["model"])
         return OmpEngine(cand["model"], thinking=cand.get("thinking"))
 
-    def _account_candidates(self, cand: dict) -> list:
-        """Every route on the same provider account as ``cand`` (the candidate alone when it has no account)."""
-        account = cand.get("account")
-        if account is None:
-            return [cand]
-        return [c for roles in (self.routes.get("roles") or {}).values() for c in roles
-                if c.get("account") == account] or [cand]
+    def _daily_cap_siblings(self, cand: dict) -> list:
+        """Routes the free-models-per-day cap also refuses: ``cand`` and every free route on the key.
+
+        The cap is the key's whole daily free allowance, so each free model fails the same way. Paid
+        routes, including ones on the same account, have their own windows and stay in service.
+        """
+        free = [c for roles in (self.routes.get("roles") or {}).values() for c in roles if c.get("free") is True]
+        return [cand] + free
 
     def _cool(self, cand: dict, now_ms: float, *, role_only: bool = False, off_ms: float | None = None,
               force: bool = False) -> None:
@@ -769,14 +770,14 @@ class RoutedEngine:
                 parsed = retry_after_ms(exc)
                 if parsed is not None and is_daily_free_cap(exc):
                     # The free-models-per-day cap is the key's whole daily allowance, shared by every free
-                    # model on it: each one would fail the same way until the stated reset. Cool all of them
-                    # for the reset (not one role's candidate for 8 h), so spontaneous admission skips rather
+                    # model on it: each one would fail the same way until the stated reset. Cool every free
+                    # route for the reset (not one role's candidate for 8 h), so spontaneous admission skips rather
                     # than failing a wake on each model in turn.
                     off = min(parsed, MAX_QUOTA_COOL_OFF_S * 1000)
                     record(self.home, {"role": self.role, "event": "fallback", "wake": key_wake, "key": key,
                                        "reason": f"rate limited (daily free cap): {exc}", "scope": "account",
                                        "cool_off_s": off / 1000}, now_ms=now)
-                    for sibling in self._account_candidates(cand):
+                    for sibling in self._daily_cap_siblings(cand):
                         self._cool(sibling, now, off_ms=off, force=True)
                     tried.add(key)
                     continue

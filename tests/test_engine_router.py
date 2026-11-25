@@ -765,6 +765,25 @@ def test_a_daily_free_cap_cools_the_account_for_the_stated_reset(routed):
     assert router.role_key("health", router.candidate_key(GO)) not in state
 
 
+def test_a_daily_free_cap_cools_every_free_route_but_not_paid_siblings(tmp_path, monkeypatch):
+    """Reviewer defect: a free candidate has no account, so the cap cooled only itself and the next free
+    model failed the same way; a paid route on the same account was cooled although its window is its own."""
+    monkeypatch.setattr(router, "live_status", lambda home: status(**{"go-a": account()}))
+    monkeypatch.setattr(router.time, "time", lambda: NOW_MS / 1000)
+    monkeypatch.setattr(router.RoutedEngine, "_build", lambda self, cand: FakeEngine(cand["model"]))
+    free_a = {"engine": "omp", "model": "opencode-go/free-a", "account": None, "free": True}
+    free_b = {"engine": "omp", "model": "opencode-go/free-b", "account": None, "free": True}
+    paid = {"engine": "omp", "model": "opencode-go/paid", "account": "go-a"}
+    FakeEngine.script = {free_a["model"]: "daily-free-cap", paid["model"]: "yield"}
+    routes_file(tmp_path, {"health": [free_a, paid, free_b]})
+    eng = router.for_role(tmp_path, "health")
+    eng.run(tmp_path / "p.md", env=_env(tmp_path, "k31"), cwd=tmp_path, timeout=5)
+    state = json.loads((tmp_path / "engine" / router.STATE).read_text())["cooling"]
+    assert state[router.candidate_key(free_a)] == NOW_MS + 75260565
+    assert state[router.candidate_key(free_b)] == NOW_MS + 75260565
+    assert router.candidate_key(paid) not in state
+
+
 def test_a_retry_after_cap_is_separate_from_the_backoff_ceiling(tmp_path):
     """The reviewer defect: the two caps returned to one constant."""
     assert router.MAX_RETRY_AFTER_COOL_OFF_S == 28800
