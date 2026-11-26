@@ -589,6 +589,9 @@ def device_ping_plain_problem(result):
     neigh = result.get("neigh") if isinstance(result, dict) else None
     if neigh in ("FAILED", "INCOMPLETE"):
         return "not answering the LAN (no ARP answer)"
+    if neigh == "PROBE":
+        # The kernel is still actively probing for it: not a verdict yet, and not "no reply (no reply)".
+        return "not answering the LAN yet (ARP still probing)"
     return problem
 
 
@@ -598,7 +601,9 @@ def device_ping_reply_problem(result):
         return "unreadable ping result"
     if result.get("ok") is False:
         why = result.get("why")
-        return f"no reply ({why})" if isinstance(why, str) and why else "no reply"
+        if isinstance(why, str) and why and why != "no reply":
+            return f"no reply ({why})"
+        return "no reply"
     avg = result.get("avg_ms")
     loss = result.get("loss_pct")
     if result.get("ok") is not True:

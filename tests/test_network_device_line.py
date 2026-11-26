@@ -150,6 +150,18 @@ def test_arp_silent_device_says_not_answering_the_lan(monkeypatch, tmp_path):
     assert "no reply (no reply)" not in line
 
 
+def test_arp_probing_device_is_not_called_no_reply_twice(monkeypatch, tmp_path):
+    """The live iMac state 2026-11-26: ARP still PROBE, associated. Say it plainly, once."""
+    now = 10_000.0
+    point_at(monkeypatch, tmp_path, [
+        {"ts": now - 60, "devices": {"iMac-Rozalia": {"ok": False, "why": "no reply",
+                                                       "neigh": "PROBE", "wifi": "ASSOCIATED"}}},
+    ])
+    line = view.devices_line(now=now)
+    assert "iMac-Rozalia not answering the LAN yet (ARP still probing), still on Wi-Fi" in line
+    assert "no reply (no reply)" not in line
+
+
 def test_non_object_device_value_is_unreadable_not_a_crash(monkeypatch, tmp_path):
     now = 10_000.0
     point_at(monkeypatch, tmp_path, [
