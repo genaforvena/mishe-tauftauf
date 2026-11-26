@@ -28,12 +28,14 @@
       "covers": "a wake left open (started/unknown) longer than 30 minutes"
     },
     {
-      "name": "egress",
+      "name": "egress-mesh-home",
       "command": [
         "{python}",
         "{home}/checks/exit-node-egress.py",
+        "--target",
+        "mesh-home",
         "--state",
-        "{home}/health/egress.json"
+        "{home}/health/egress-mesh-home.json"
       ],
       "every": 300,
       "timeout": 120,
@@ -49,7 +51,55 @@
         "exit-node-egress",
         "exit-node-egress-alert"
       ],
-      "covers": "tailscale exit-node egress for each client"
+      "covers": "tailscale exit-node egress for mesh-home (one client; split from the aggregate egress duty so one unreachable client does not hide the others)"
+    },
+    {
+      "name": "egress-note3",
+      "command": [
+        "{python}",
+        "{home}/checks/exit-node-egress.py",
+        "--target",
+        "note3",
+        "--state",
+        "{home}/health/egress-note3.json"
+      ],
+      "every": 300,
+      "timeout": 120,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "health",
+      "replaces": [
+        "egress"
+      ],
+      "covers": "tailscale exit-node egress for note3 (adb path)"
+    },
+    {
+      "name": "egress-imac-rozalia",
+      "command": [
+        "{python}",
+        "{home}/checks/exit-node-egress.py",
+        "--target",
+        "imac-rozalia",
+        "--state",
+        "{home}/health/egress-imac-rozalia.json"
+      ],
+      "every": 300,
+      "timeout": 120,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "health",
+      "replaces": [],
+      "covers": "egress for imac-rozalia; UNKNOWN while the imac is off the LAN (resolver network)"
     },
     {
       "name": "guard-bytes",
