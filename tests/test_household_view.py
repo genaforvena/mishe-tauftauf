@@ -465,3 +465,24 @@ def test_phones_signal_lines_fail_closed(tmp_path, monkeypatch):
     detail.write_text(json.dumps({"note3": {"status": "ok"}}))
     assert hv.phones_signal_lines() == [
         "  signal   redmi10 UNKNOWN (no entry in detail)"]
+
+
+def test_phones_signal_lines_name_a_silent_body_app_beside_ok_sampler(tmp_path, monkeypatch):
+    import json
+    detail = tmp_path / "household-phones.detail"
+    monkeypatch.setattr(hv, "PHONES_DETAIL", detail)
+    body_app = {"status": "silent", "reason": "Note3 body-app stream silent 43.5 days (light and RSSI)"}
+    detail.write_text(json.dumps({"note3": {"status": "ok", "body_app": body_app},
+                                  "redmi10": {"status": "ok"}}))
+    lines = hv.phones_signal_lines()
+    assert lines == ["  signal   note3 body app silent: "
+                     "Note3 body-app stream silent 43.5 days (light and RSSI)"]
+
+
+def test_phones_signal_lines_live_body_app_adds_nothing(tmp_path, monkeypatch):
+    import json
+    detail = tmp_path / "household-phones.detail"
+    monkeypatch.setattr(hv, "PHONES_DETAIL", detail)
+    detail.write_text(json.dumps({"note3": {"status": "ok", "body_app": {"status": "live"}},
+                                  "redmi10": {"status": "ok"}}))
+    assert hv.phones_signal_lines() == []

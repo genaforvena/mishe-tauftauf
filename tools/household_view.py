@@ -195,6 +195,11 @@ def phones_signal_lines():
             lines.append(f"  signal   {body} UNKNOWN (no entry in detail)")
             continue
         status = part.get("status")
+        body_app = part.get("body_app")
+        if isinstance(body_app, dict) and body_app.get("status") in ("silent", "unknown"):
+            # the sampler can be ok while the body app's own stream is silent
+            lines.append(f"  signal   {body} body app {body_app.get('status')}: "
+                         f"{str(body_app.get('reason') or 'no receipt')[:160]}")
         if status == "ok":
             continue
         reason = str(part.get("reason") or "no reason recorded")
