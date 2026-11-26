@@ -442,6 +442,45 @@ def revive_units(h: Host, p: Probe, r: Result, *, dry_run: bool) -> None:
                 r.say(f'rebuilding the views failed: {b.first_line(err)}')
 
 
+PRODUCER_GLOBS = ('mishe-producer-*.service', 'm2shell-producer-*.service')
+
+
+def kick_skipped(h: Host, r: Result, *, dry_run: bool) -> None:
+    """After a rearm, start the producer oneshots the trip skipped. They carry ConditionPathExists=!tripped, so
+    systemd records ConditionResult=no and only their next timer tick would run them (2026-11-26: footprint failed
+    because its memory-sample producer sat out the latch for 37 minutes). A skipped unit whose condition still
+    fails just skips again, so starting one is harmless. Runs once per rearm; not tracked as owed."""
+    if not r.rearmed:
+        return
+    _, listing, _ = h.run(['systemctl', '--user', 'list-units', '--all', '--plain', '--no-legend', *PRODUCER_GLOBS])
+    down = [name for name, active, _sub, _desc in b.unit_rows(listing) if active != 'active']
+    if not down:
+        return
+    _, shown, _ = h.run(['systemctl', '--user', 'show', '-p', 'Id', '-p', 'ConditionResult', *down])
+    skipped, unit = [], None
+    for line in (shown or '').splitlines():
+        key, _, value = line.partition('=')
+        if key == 'Id':
+            unit = value
+        elif key == 'ConditionResult' and value == 'no' and unit in down:
+            skipped.append(unit)
+    if not skipped:
+        return
+    if dry_run:
+        r.say(f'dry run: would start the producers the trip skipped: {", ".join(sorted(skipped))}')
+        return
+    failed = []
+    for name in sorted(skipped):
+        code, _, err = h.run(['systemctl', '--user', 'start', name], timeout=90)
+        r.actions.append(f'start {name}')
+        if code != 0:
+            failed.append(f'{name}: {b.first_line(err)}')
+    r.say(f'started the producers the trip skipped: {len(skipped)} unit(s)')
+    if failed:
+        r.code = max(r.code, 3)
+        r.say('starting skipped producers failed: ' + '; '.join(failed))
+
+
 def reoffer_wakes(h: Host, p: Probe, r: Result, *, dry_run: bool) -> None:
     """After a trip is cleared, the wakes the latch skipped are gone; nothing offers them again by itself
     (2026-11-20: 11 roles stayed asleep until `mishe hold off` was run by hand). A hold is respected."""
@@ -478,6 +517,7 @@ def run(h: Host, *, auto=False, dry_run=False, allow_repeat=False, diagnosis='')
         if not wait_normal(h, r):
             return r
         r.rearmed = True
+        kick_skipped(h, r, dry_run=dry_run)
         p = probe(h)
     elif p.state not in HEALTHY_STATES:
         r.say(f'the guard is {p.state}; waiting for it to settle before changing anything')

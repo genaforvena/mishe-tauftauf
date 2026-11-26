@@ -19,8 +19,9 @@ UNITS = ('mishe-wake-health.path loaded inactive dead Mishe wake triggers\n'
 class Fake(revive.Host):
     def __init__(self, tmp_path, *, latch=LATCH, emergency=False, ready=READY, inside=False, restores=(),
                  units=UNITS, views=False, io=0, restore_works=True, hold=False, life=None,
-                 inventory=(), archives=(), start_fails=(), enabled=True, windows=None):
+                 inventory=(), archives=(), start_fails=(), enabled=True, windows=None, shown=''):
         super().__init__(tmp_path / 'site', tmp_path / 'repo')
+        self.shown = shown
         self.t = NOW
         self.files, self.calls, self.inside, self.restores = {}, [], inside, list(restores)
         self.archives, self.start_fails, self.enabled, self.started = list(archives), set(start_fails), enabled, set()
@@ -79,6 +80,8 @@ class Fake(revive.Host):
             return 0, '', ''
         if argv[:3] == ['systemctl', '--user', 'is-enabled']:
             return 0, ('enabled' if self.enabled else 'disabled'), ''
+        if argv[:3] == ['systemctl', '--user', 'show']:
+            return 0, self.shown, ''
         if argv[0] == 'tmux' and 'list-windows' in argv:
             return 0, '\n'.join(self.windows or []) + '\n', ''
         if argv[0] == 'tmux':
@@ -339,6 +342,32 @@ def test_a_restored_trip_re_offers_the_wakes_it_skipped(tmp_path):
     h = Fake(tmp_path, units=HEALTHY, views=True, windows=FULL)
     r = revive.run(h, auto=True)
     assert HOLD_OFF in h.calls and 'mishe hold off (re-offer skipped wakes)' in r.actions
+
+
+PRODUCER_DOWN = 'mishe-producer-footprint.service loaded inactive dead x\n'
+PRODUCER_SKIPPED = 'Id=mishe-producer-footprint.service\nConditionResult=no\n\nId=mishe-producer-dispatch.service\nConditionResult=yes\n'
+
+
+def test_a_rearm_starts_the_producers_the_trip_skipped_and_not_the_others(tmp_path):
+    h = Fake(tmp_path, units=UNITS + PRODUCER_DOWN, shown=PRODUCER_SKIPPED, views=True, windows=FULL)
+    r = revive.run(h, auto=True)
+    assert r.code == 0
+    assert ['systemctl', '--user', 'start', 'mishe-producer-footprint.service'] in h.calls
+    assert ['systemctl', '--user', 'start', 'mishe-producer-dispatch.service'] not in h.calls
+    assert 'start mishe-producer-footprint.service' in r.actions
+
+
+def test_a_dry_run_that_rearms_nothing_starts_no_producer(tmp_path):
+    h = Fake(tmp_path, units=UNITS + PRODUCER_DOWN, shown=PRODUCER_SKIPPED, views=True, windows=FULL)
+    r = revive.run(h, auto=True, dry_run=True)
+    assert not [c for c in h.calls if c[:3] == ['systemctl', '--user', 'start'] and 'footprint' in c[3]]
+    assert not any('producers the trip skipped' in line for line in r.lines)
+
+
+def test_a_healthy_plant_with_no_trip_starts_no_producer(tmp_path):
+    h = Fake(tmp_path, latch=None, units=UNITS + PRODUCER_DOWN, shown=PRODUCER_SKIPPED, views=True, windows=FULL)
+    revive.run(h)
+    assert not [c for c in h.calls if c[:3] == ['systemctl', '--user', 'show']]
 
 
 def test_a_held_plant_or_a_dry_run_never_gets_hold_off(tmp_path):
