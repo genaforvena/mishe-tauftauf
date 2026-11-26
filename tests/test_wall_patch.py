@@ -1,3 +1,4 @@
+import base64
 import json
 import sys
 import pytest
@@ -1476,3 +1477,33 @@ def test_default_cwd_keeps_checkout_binding(tmp_path):
     home, source, checkout = _artifact_fixture(tmp_path)
     artifacts = wall_patch.command_artifacts(home, [["python", "tools/check.py"]])
     assert list(artifacts) == [str((checkout / "tools" / "check.py").resolve())]
+
+
+def test_review_survives_a_binary_manifest_entry(tmp_path, monkeypatch):
+    # f6cfe81a carried docs/screens/*.png; wall_patch.review decoded every entry as
+    # UTF-8 and lost the review as "'utf-8' codec can't decode byte 0x89".
+    assert wall_patch._reviewable_text({"bytes": base64.b64encode(b"\x89PNG\r\n\x1a\n\x00").decode()}).startswith(
+        "<binary, not UTF-8: 9 bytes, sha256 ")
+    assert wall_patch._reviewable_text({"bytes": base64.b64encode("héllo\n".encode()).decode()}) == "héllo\n"
+    assert wall_patch._reviewable_text(None) == ""
+    home, source, deployed = layout(tmp_path)
+    wall_patch.prepare(home, "change", ["src/mishe_tauftauf/example.py"])
+    source.write_text("after\n")
+    (home / "patch-review.json").write_text(json.dumps({"command": [sys.executable, "-c", "pass"]}))
+    seen = {}
+
+    def spy(command, encoded, timeout):
+        request = json.loads(encoded.decode())
+        seen["files"] = request["context"]["patch"]["files"]
+        return json.dumps({"version": 1, "input_hash": request["input_hash"],
+                           "results": [{"id": "PATCH", "verdict": "clear", "reason": "ok", "evidence": []}]}).encode()
+
+    monkeypatch.setattr(wall_patch, "_worker", spy)
+    wall_patch.check(home, "change", [sys.executable, "-c", "pass"])
+    record = wall_patch.status(home, "change")
+    record["files"]["docs/screens/shot.png"] = {
+        "before": None, "runtime_before": None,
+        "after": {"bytes": base64.b64encode(b"\x89PNG\r\n\x1a\n\x00\xff").decode(), "mode": 0o644}}
+    wall_patch.review(home, record)
+    shot = seen["files"]["docs/screens/shot.png"]
+    assert shot["after_text"].startswith("<binary, not UTF-8: 10 bytes")

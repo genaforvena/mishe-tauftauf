@@ -740,6 +740,22 @@ def review_question(record):
     return _POST_DELIVERY_QUESTION if record.get("review_kind") == "ordinary-post-delivery" else _PRE_ACTIVATION_QUESTION
 
 
+def _reviewable_text(entry):
+    """The reviewer's text for one manifest entry: UTF-8 text, or a marker for binary.
+
+    A release that carries an image (docs/screens/*.png) used to fail the whole
+    review as ``'utf-8' codec can't decode byte 0x89`` (f6cfe81a, 2026-11-26).
+    A binary entry keeps its size and sha256 so the reviewer still sees it changed.
+    """
+    if not entry:
+        return ""
+    raw = base64.b64decode(entry["bytes"])
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return f"<binary, not UTF-8: {len(raw)} bytes, sha256 {hashlib.sha256(raw).hexdigest()}>\n"
+
+
 def review(home, record):
     from .codex_review import validate_response
     config_path = home / "patch-review.json"
@@ -752,8 +768,7 @@ def review(home, record):
     # it needs; say so rather than claiming a complete context.
     context_complete = not (context["omitted_over_limit"] or context["truncated"] or context["unresolved"])
     for name, values in record["files"].items():
-        texts = {key: base64.b64decode(values[key]["bytes"]).decode("utf-8") if values[key] else ""
-                 for key in ("before", "after", "runtime_before")}
+        texts = {key: _reviewable_text(values[key]) for key in ("before", "after", "runtime_before")}
         # Full after-text for every manifest file: an unchanged dependency has an
         # empty diff, so without this the reviewer sees only its hash.
         changes = {"after_text": texts["after"],
@@ -769,7 +784,7 @@ def review(home, record):
     if "delivery_plan" in record:
         plan = record["delivery_plan"]
         evidence["delivery_plan"] = {key: value for key, value in plan.items() if key != "artifacts"}
-        evidence["delivery_scripts"] = {name: base64.b64decode(value["bytes"]).decode("utf-8")
+        evidence["delivery_scripts"] = {name: _reviewable_text(value)
                                         for name, value in plan["artifacts"].items()}
     # Bacchelli §VI.B: rationale ("what changed and why") determines reviewer
     # understanding; include it when present so the understanding gate can
