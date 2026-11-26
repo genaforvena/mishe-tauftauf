@@ -23,6 +23,7 @@ import json
 import statistics
 import sys
 import time
+from bisect import bisect_left
 from collections import defaultdict
 from pathlib import Path
 
@@ -50,12 +51,22 @@ def load_rows(path: Path) -> list[dict]:
     return rows
 
 
+def _window(times: list[float], samples: list[tuple[float, float]], lo: float, hi: float) -> list[float]:
+    """Lumas of samples with lo <= t < hi; ``times`` is the sorted time column of ``samples``."""
+    return [l for _, l in samples[bisect_left(times, lo):bisect_left(times, hi)]]
+
+
 def lamp_steps(samples: list[tuple[float, float]]) -> list[float]:
-    """Times of lamp steps in one room's sorted (t, luma) samples."""
+    """Times of lamp steps in one room's sorted (t, luma) samples.
+
+    Windows are found by bisection, so the cost is O(n log n) rather than O(n^2)
+    (the quadratic scan took ~20 s of CPU per rebuild on the household rows).
+    """
     steps = []
+    times = [t for t, _ in samples]
     for t, _ in samples:
-        after = [l for u, l in samples if t <= u < t + AFTER_S]
-        before = [l for u, l in samples if t - BEFORE_HI_S <= u < t - BEFORE_LO_S]
+        after = _window(times, samples, t, t + AFTER_S)
+        before = _window(times, samples, t - BEFORE_HI_S, t - BEFORE_LO_S)
         if len(after) < 2 or len(before) < 2:
             continue
         if abs(statistics.median(after) - statistics.median(before)) >= STEP_LUMA:
