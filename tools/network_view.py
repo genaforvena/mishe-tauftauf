@@ -794,8 +794,10 @@ def guard_line(now=None, marker=GUARD_TRIP_MARKER, router_read_at=None):
     return f"clear (no trip marker; last trip record {age / 3600:.1f} h ago)"
 
 
-EGRESS_STATE = SITE / "health" / "egress.json"
-EGRESS_STALE_S = 900  # the egress duty runs every 5 minutes; 15 minutes without a write is stale
+EGRESS_CLIENTS = ("mesh-home", "note3", "imac-rozalia")
+# One file per client, written by the per-client egress duties (health/egress-<client>.json).
+EGRESS_FILES = [SITE / "health" / f"egress-{client}.json" for client in EGRESS_CLIENTS]
+EGRESS_STALE_S = 900  # the egress duties run every 5 minutes; 15 minutes without a write is stale
 
 
 def plain_name(name):
@@ -828,8 +830,46 @@ def wifi_presence(now=None, path=ROUTER_LOG):
     return out
 
 
-def exit_line(now=None, path=EGRESS_STATE, presence=None):
-    """EXIT NODE in plain words: each client's tailscale exit-node state from the egress duty's file.
+def exit_entries(now, paths):
+    """One entry per client across the per-client files, plus the oldest reading's age in minutes.
+
+    A missing, unreadable or stale file makes its clients UNKNOWN, never GREEN.
+    """
+    entries, ages = [], []
+    for path in paths:
+        client = path.stem.removeprefix("egress-")
+        try:
+            mtime = os.stat(path).st_mtime
+            with open(path, encoding="utf-8") as fh:
+                results = json.load(fh).get("results") or []
+        except FileNotFoundError:
+            entries.append({"client": client, "state": "UNKNOWN",
+                            "reasons": ["no reading yet: the egress duty has not written its file"]})
+            continue
+        except (OSError, ValueError, AttributeError) as exc:
+            entries.append({"client": client, "state": "UNKNOWN",
+                            "reasons": [f"exit-node file could not be read: {type(exc).__name__}"]})
+            continue
+        age_min = (now - mtime) / 60
+        ages.append(age_min)
+        if now - mtime > EGRESS_STALE_S:
+            entries.append({"client": client, "state": "UNKNOWN",
+                            "reasons": [f"last exit-node reading is {age_min:.0f} min old"]})
+            continue
+        if not results:
+            entries.append({"client": client, "state": "UNKNOWN", "reasons": ["reading lists no clients"]})
+            continue
+        for r in results:
+            state = str(r.get("state", "UNKNOWN"))
+            if state not in ("GREEN", "RED"):
+                state = "UNKNOWN"
+            entries.append({"client": str(r.get("client", client))[:24], "state": state,
+                            "reasons": list(r.get("reasons") or [])})
+    return entries, ages
+
+
+def exit_line(now=None, paths=None, presence=None):
+    """EXIT NODE in plain words: each client's tailscale exit-node state from the egress duties' files.
 
     Read-only. A missing, unreadable or stale file is UNKNOWN, never a calm all-GREEN. A client that
     is still in the Wi-Fi listing while it does not answer is explained that way: the duty's ssh
@@ -837,42 +877,25 @@ def exit_line(now=None, path=EGRESS_STATE, presence=None):
     looks the same, and the household sees its name in the Wi-Fi line right above.
     """
     now = time.time() if now is None else now
-    try:
-        mtime = os.stat(path).st_mtime
-        with open(path, encoding="utf-8") as fh:
-            results = json.load(fh).get("results") or []
-    except FileNotFoundError:
-        return "UNKNOWN (no exit-node reading yet: the egress duty has not written its file)"
-    except (OSError, ValueError, AttributeError) as exc:
-        return f"UNKNOWN (exit-node file could not be read: {type(exc).__name__})"
-    age_min = (now - mtime) / 60
-    if now - mtime > EGRESS_STALE_S:
-        return f"UNKNOWN (last exit-node reading is {age_min:.0f} min old)"
-    if not results:
-        return f"UNKNOWN (exit-node reading is {age_min:.0f} min old and lists no clients)"
-    states = []
-    normalized = {}
-    for r in results:
-        name = str(r.get("client", "?"))[:24]
-        state = str(r.get("state", "UNKNOWN"))
-        if state not in ("GREEN", "RED"):
-            state = "UNKNOWN"
-        normalized[id(r)] = state
-        states.append(f"{name} {state}")
-    bad = [r for r in results if r.get("state") != "GREEN"]
-    head = "all GREEN" if not bad else f"{len(bad)} of {len(results)} not GREEN"
-    lines = [f"{head}: " + ", ".join(states) + f"; read {age_min:.0f} min ago"]
+    entries, ages = exit_entries(now, EGRESS_FILES if paths is None else paths)
+    if not entries:
+        return "UNKNOWN (no exit-node reading yet)"
+    bad = [e for e in entries if e["state"] != "GREEN"]
+    states = [f"{e['client'][:24]} {e['state']}" for e in entries]
+    head = "all GREEN" if not bad else f"{len(bad)} of {len(entries)} not GREEN"
+    tail = f"; oldest reading {max(ages):.0f} min ago" if ages else ""
+    lines = [f"{head}: " + ", ".join(states) + tail]
     wifi = (wifi_presence(now) if presence is None else presence) if bad else {}
-    for r in bad[:REASON_CLIENTS]:
-        name = str(r.get("client", "?"))[:24]
+    for e in bad[:REASON_CLIENTS]:
+        name = e["client"][:24]
         dbm = wifi.get(plain_name(name))
         if dbm is not None:
-            lines.append(" " * 17 + f"{name} {normalized[id(r)]}: still on Wi-Fi at {dbm} dBm; "
+            lines.append(" " * 17 + f"{name} {e['state']}: still on Wi-Fi at {dbm} dBm; "
                                     "not answering ssh (it may be asleep)")
             continue
-        why = first_reason(r)
+        why = first_reason(e)
         if why:
-            lines.append(" " * 17 + f"{name} {normalized[id(r)]}: {why}")
+            lines.append(" " * 17 + f"{name} {e['state']}: {why}")
     return "\n".join(lines)
 
 
@@ -2054,7 +2077,7 @@ def draw():
     out.append("  HOST GUARD    " + guard_line(router_read_at=router_read_at_s()) +
                "   (read-only, trip marker and trip records)")
     exit_lines = exit_line().split("\n")
-    out.append("  EXIT NODE     " + exit_lines[0] + "   (read-only, the egress duty's file)")
+    out.append("  EXIT NODE     " + exit_lines[0] + "   (read-only, the egress duties' files)")
     out.extend(exit_lines[1:])
     out.append("")
     out.append("  note: pings to public addresses are not used: the router answers them itself,")
