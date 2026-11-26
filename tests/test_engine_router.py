@@ -1022,3 +1022,37 @@ def test_admit_keeps_a_one_slot_free_route_to_one_of_two_concurrent_wakes(tmp_pa
     selects = [json.loads(line) for line in (tmp_path / "engine" / router.LEDGER).read_text().splitlines()
                if '"select"' in line]
     assert len(selects) == 1
+
+
+DAY_MS = 24 * 3600 * 1000
+
+
+def paced_account(remaining, left_fraction, duration_ms=7 * DAY_MS):
+    reset = router._iso(NOW_MS + left_fraction * duration_ms)
+    return {"state": "FRESH", "provider": "openai-codex", "reason": None,
+            "windows": [{"limit": "rolling-7d", "window": "7d", "remaining_fraction": remaining,
+                         "reset_at": reset, "duration_ms": duration_ms, "provider_status": None, "state": "FRESH"}]}
+
+
+def test_pace_floor_is_the_time_share_left_in_long_windows_only():
+    assert router.pace_floor(paced_account(0.5, 0.36), NOW_MS) == pytest.approx(0.36, abs=1e-3)
+    assert router.pace_floor(paced_account(0.5, 0.36, duration_ms=5 * 3600 * 1000), NOW_MS) == 0.0   # 5h: not paced
+    assert router.pace_floor({"windows": [{"reset_at": RESET}]}, NOW_MS) == 0.0                       # no duration
+    assert router.pace_floor({"windows": []}, NOW_MS) == 0.0
+
+
+def test_a_paced_candidate_waits_when_ahead_of_pace_and_an_important_lane_still_runs():
+    st = status(**{"codex-a": paced_account(remaining=0.18, left_fraction=0.36)})    # 18% quota, 36% time left
+    terra = {"engine": "codex", "model": "gpt-6.1-terra", "account": "codex-a"}
+    assert router._eligible("docs", dict(terra, pace=True), st, NOW_MS)[0] is False
+    assert router._eligible("steward", dict(SOL, reserve_pct=0.05), st, NOW_MS)[0] is True
+    ahead = status(**{"codex-a": paced_account(remaining=0.60, left_fraction=0.36)})
+    assert router._eligible("docs", dict(terra, pace=True), ahead, NOW_MS)[0] is True
+
+
+def test_pace_is_validated_and_kept_by_load_routes(tmp_path):
+    routes_file(tmp_path, {"docs": [dict(SOL, pace=True)]})
+    assert router.load_routes(tmp_path)["roles"]["docs"][0]["pace"] is True
+    routes_file(tmp_path, {"docs": [dict(SOL, pace="yes")]})
+    with pytest.raises(ValueError, match="invalid pace"):
+        router.load_routes(tmp_path)

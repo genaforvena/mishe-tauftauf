@@ -152,9 +152,14 @@ def load_routes(home) -> dict | None:
             if reserve is not None and (isinstance(reserve, bool) or not isinstance(reserve, (int, float))
                                         or not 0 <= reserve < 1):
                 raise ValueError(f"invalid reserve_pct for {role!r}: {c!r}")
+            pace = c.get("pace")
+            if pace is not None and not isinstance(pace, bool):
+                raise ValueError(f"invalid pace for {role!r}: {c!r}")
             entry = {"engine": c["engine"], "model": c["model"], "account": account}
             if reserve is not None:
                 entry["reserve_pct"] = float(reserve)
+            if pace:
+                entry["pace"] = True
             if tmo is not None:
                 entry["timeout_s"] = tmo
             if hard is not None:
@@ -276,6 +281,29 @@ def running_candidates(home, *, now_ms: float, horizon_s: float) -> dict:
     return counts
 
 
+PACE_MIN_WINDOW_MS = 24 * 3600 * 1000
+"""Only windows of a day or longer are paced: a short window refills before pacing could matter."""
+
+
+def pace_floor(row: dict, now_ms: float) -> float:
+    """Pure: the largest share of any long window that is still ahead in time, in [0, 1].
+
+    A window that has 36% of its time left should keep at least 36% of its quota for a candidate
+    that is paced; at 18% remaining that candidate is not admitted, an unpaced one still is.
+    A window without a duration or a future reset contributes nothing.
+    """
+    floor = 0.0
+    for w in row.get("windows") or []:
+        duration = w.get("duration_ms")
+        reset = policy._parse_reset(w.get("reset_at"))
+        if not isinstance(duration, (int, float)) or duration < PACE_MIN_WINDOW_MS or reset is None:
+            continue
+        left = (reset - now_ms) / duration
+        if left > 0:
+            floor = max(floor, min(left, 1.0))
+    return floor
+
+
 def _eligible(role: str, cand: dict, status, now_ms) -> tuple[bool, str]:
     if cand.get("free") is True:
         return True, "free model (no account window to read; failures cool it off)"
@@ -296,6 +324,13 @@ def _eligible(role: str, cand: dict, status, now_ms) -> tuple[bool, str]:
     # reserve_pct: the share of a window kept back from routing. Unset keeps the policy default (0.15); an owner
     # who has decided to spend a subscription closer to its limit sets it per candidate in routes.json.
     reserve = {"reserve_pct": cand["reserve_pct"]} if cand.get("reserve_pct") is not None else {}
+    if cand.get("pace") is True:
+        # A paced candidate (a lane that is not important) may only spend a long window no faster than time
+        # passes, so the share an important lane needs at the end of the window is not burned early.
+        floor = pace_floor(row, now_ms)
+        base = float(reserve.get("reserve_pct", 0.15))
+        if floor > base:
+            reserve = {"reserve_pct": floor}
     result = policy.decide(role=role, status=status, allowlist={role: [route]},
                            current_route=None, now_ms=now_ms, reservations=None, **reserve)
     if result.get("decision") == "select":
