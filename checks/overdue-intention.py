@@ -104,6 +104,15 @@ def _budget_state(home: Path, role: str, now: float):
     return "UNKNOWN", None, f"budget signal {name} is {state}"
 
 
+def _charter_note(home: Path, role: str) -> str:
+    """Name a missing charter: owed.check only dispatches roles whose charters/ROLE.md exists, so a RED with no
+    charter is a roster fault, not a timer or budget fault. Observed 2026-11-26: discover and witness intentions
+    went RED with no hint that their charters were absent from the site."""
+    if (home / "charters" / f"{role}.md").is_file():
+        return ""
+    return f"; role has no charter (charters/{role}.md missing), so no wake can dispatch it"
+
+
 def _hold_reason(home: Path):
     """Name the hold that blocks wakes right now, or None. A present hold file is a fact even if unreadable."""
     hold = home / "hold"
@@ -148,13 +157,13 @@ def evaluate(home: Path, now: float, grace: float = GRACE_S):
         if item.get("spontaneous"):
             state, _, reason = _budget_state(home, role, now)
             if state == "OK":
-                red.append(f"{role}/{item['id']} overdue {late} min, not woken although {reason}")
+                red.append(f"{role}/{item['id']} overdue {late} min, not woken although {reason}" + _charter_note(home, role))
             elif state == "RED":
                 held.append(f"{role}/{item['id']} overdue {late} min, intentionally held: {reason}")
             else:
                 unknown.append(f"{role}/{item['id']} overdue {late} min, held by UNKNOWN evidence: {reason}")
         else:
-            red.append(f"{role}/{item['id']} overdue {late} min with no wake and no hold")
+            red.append(f"{role}/{item['id']} overdue {late} min with no wake and no hold" + _charter_note(home, role))
     lines = []
     lines += [f"RED: {r}" for r in red]
     lines += [f"UNKNOWN: {u}" for u in unknown] + [f"UNKNOWN: {p}" for p in problems]

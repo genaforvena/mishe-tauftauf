@@ -166,3 +166,23 @@ def test_non_object_budget_signal_is_unknown_not_a_crash(tmp_path, payload):
     os.utime(seen_path, (NOW - 10, NOW - 10))
     code, lines = check.evaluate(home, NOW)
     assert code == 3 and any("not a JSON object" in line for line in lines)
+
+
+def test_red_names_a_role_with_no_charter(tmp_path):
+    home = _site(tmp_path, budget=_budget("OK", "GREEN"))
+    code, lines = check.evaluate(home, NOW)
+    assert code == 2 and any("role has no charter (charters/docs.md missing)" in line for line in lines)
+
+
+def test_red_does_not_blame_a_charter_when_one_exists(tmp_path):
+    home = _site(tmp_path, budget=_budget("OK", "GREEN"))
+    _write(home / "charters" / "docs.md", "# docs\n")
+    code, lines = check.evaluate(home, NOW)
+    assert code == 2 and any("not woken" in line for line in lines)
+    assert not any("no charter" in line for line in lines)
+
+
+def test_non_spontaneous_red_names_a_missing_charter(tmp_path):
+    home = _site(tmp_path, spontaneous=False, budget=_budget("OK", "GREEN"))
+    code, lines = check.evaluate(home, NOW)
+    assert code == 2 and any("with no wake and no hold; role has no charter" in line for line in lines)
