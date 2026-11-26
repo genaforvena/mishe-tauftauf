@@ -146,14 +146,14 @@ Owed means something happened that the role has not seen: a message, a signal th
 changed, a follow-up that came due. A fresh site starts with no reasons owed, so
 nothing runs until something changes. The first change can come from the site
 itself: when a declared producer stores its first successful reading, its signal
-moves past the subscribed resolver's cursor and that resolver is owed one wake, with
+moves past the subscribed resolver's cursor (the record of what that role has already seen) and that resolver is owed one wake, with
 no DM (a direct message, one addressed entry in the chat log) involved. To create work by hand, for example:
 
 ```sh
 mishe wall dm --source operator --to genome --text "Please read the README and tell me what is unclear."
 ```
 
-That touches genome's inbox; its path unit starts one wake. Watch it:
+That touches genome's inbox (the mail file that role is triggered by); its path unit starts one wake. Watch it:
 
 ```sh
 journalctl --user -u mishe-wake@genome.service -f
