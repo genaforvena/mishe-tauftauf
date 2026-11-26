@@ -10,5 +10,8 @@
   },
   "types": {
     "errors": 304
+  },
+  "coverage": {
+    "percent": 81.87
   }
 }
