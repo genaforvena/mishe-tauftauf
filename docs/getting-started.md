@@ -148,9 +148,13 @@ It prints `running` once the hold is gone (`held` if the hold file is still ther
 Owed means something happened that the role has not seen: a message, a signal that
 changed, a follow-up that came due. A fresh site starts with no reasons owed, so
 nothing runs until something changes. The first change can come from the site
-itself: when a declared producer stores its first successful reading, its signal
-moves past the subscribed resolver's cursor (the record of what that role has already seen) and that resolver is owed one wake, with
-no DM (a direct message, one addressed entry in the chat log) involved. To create work by hand, for example:
+itself: when a declared producer stores its first reading, its signal moves past
+each subscribed resolver's cursor (the record of what that role has already seen),
+and that resolver is owed one wake, with no DM (a direct message, one addressed
+entry in the chat log) involved. The first reading counts even when it is not OK:
+a failed read stores UNKNOWN and still moves the signal. The exception is a signal
+registered to wake on state only, which wakes its resolver only on an actionable
+reading (not OK, or a RED or UNKNOWN verdict). To create work by hand, for example:
 
 ```sh
 mishe wall dm --source operator --to genome --text "Please read the README and tell me what is unclear."
