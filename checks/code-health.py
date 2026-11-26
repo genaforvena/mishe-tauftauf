@@ -28,6 +28,7 @@ when it exists, else this interpreter); install them with
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -45,9 +46,9 @@ class Unknown(Exception):
     pass
 
 
-def _run(cmd, cwd, timeout=TOOL_TIMEOUT):
+def _run(cmd, cwd, timeout=TOOL_TIMEOUT, *, env=None):
     try:
-        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
     except FileNotFoundError as exc:
         raise Unknown(f"{cmd[0]} not found") from exc
     except subprocess.TimeoutExpired as exc:
@@ -107,8 +108,11 @@ def read_coverage(path, now, max_age_days):
 def measure_coverage(python, repo, out):
     """Run the suite under coverage.py and write the JSON report (slow: minutes)."""
     data = Path(out).with_suffix(".data")
+    # The producer imports its CLI from the live release. Pytest must import
+    # the checkout it is measuring, even when those are different trees.
+    env = {**os.environ, "PYTHONPATH": str(Path(repo).resolve() / "src")}
     done = _run([python, "-m", "coverage", "run", "--source=src", f"--data-file={data}", "-m", "pytest", "-q"],
-                repo, timeout=3000)
+                repo, timeout=3000, env=env)
     if "No module named" in done.stderr:
         raise Unknown("coverage is not installed for " + python)
     if done.returncode != 0:

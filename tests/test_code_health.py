@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -68,6 +69,30 @@ def test_invalid_coverage_total_returns_unknown(tmp_path, capsys, total):
                        "--coverage-json", str(report)])
     assert code == 3
     assert "UNKNOWN" in capsys.readouterr().err
+
+
+def test_coverage_measures_the_requested_checkout_under_a_pinned_pythonpath(tmp_path, monkeypatch):
+    pytest.importorskip("coverage")
+    repo = tmp_path / "checkout"
+    release = tmp_path / "release"
+    for tree in (repo, release):
+        package = tree / "src" / "mishe_tauftauf"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("origin = " + repr(tree.name) + "\n")
+    (repo / "conftest.py").write_bytes((REPO / "conftest.py").read_bytes())
+    (repo / "test_origin.py").write_text(
+        "import mishe_tauftauf\n"
+        "def test_origin():\n"
+        "    assert mishe_tauftauf.origin == 'checkout'\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", str(release / "src"))
+    monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+    monkeypatch.chdir(tmp_path)
+    report = tmp_path / "coverage.json"
+
+    check.measure_coverage(sys.executable, Path("checkout"), report)
+
+    assert check.read_coverage(report, time.time(), 9) == {"percent": 100.0}
 
 
 def test_missing_tool_is_unknown_not_green(tmp_path, capsys):
