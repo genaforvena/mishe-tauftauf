@@ -294,13 +294,47 @@ def test_an_incident_without_a_recorded_unit_is_left_red(tmp_path):
     assert store.read(tmp_path, name, now=NOW + 60).value == "RED"
 
 
-def test_the_sweep_clears_a_recovered_failure(tmp_path, monkeypatch):
+def test_the_sweep_checks_multiple_unit_recoveries_in_one_manager_request(tmp_path, monkeypatch):
+    import subprocess
+
     from mishe_tauftauf import work_boundary, work_state
-    unit, name = "mishe-wake@docs.service", "failed-mishe-wake-docs-service"
-    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
-    monkeypatch.setattr(work_boundary, "unit_last_exit", lambda u: (NOW + 100, True))
-    work_state.sweep(tmp_path, repo=tmp_path, now=NOW + 120, notify=lambda *a: None)
-    assert store.read(tmp_path, name, now=NOW + 120).value == "GREEN"
+
+    latest = "Thu 1970-01-01 01:25:00 UTC"  # NOW + 100
+    rows = {
+        "mishe-producer-work-watch.service": {"Result": "success", "ExecMainStatus": "0",
+                                             "ExecMainExitTimestamp": latest, "ActiveState": "inactive"},
+        "mishe-dual-probe.service": {"Result": "success", "ActiveState": "active",
+                                    "ActiveEnterTimestamp": latest},
+        "mishe-producer-work-trial.service": {"Result": "exit-code", "ExecMainStatus": "2",
+                                             "ExecMainExitTimestamp": latest, "ActiveState": "failed"},
+        "mishe-producer-observer-checks.service": None,
+        "mishe-wake@.service": None,
+    }
+    notices = []
+    for unit in rows:
+        failure.report(tmp_path, unit, now=NOW, notify=lambda *args: notices.append(args))
+    assert len(notices) == len(rows)
+    calls = []
+
+    def run(argv, **kwargs):
+        if argv[0] == "journalctl":
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="")
+        assert argv[0] == "systemctl"
+        assert "mishe-wake@.service" not in argv
+        calls.append(argv)
+        blocks = ["\n".join([f"Id={unit}", *(f"{k}={v}" for k, v in values.items())])
+                  for unit, values in rows.items() if unit in argv and values is not None]
+        return subprocess.CompletedProcess(argv, int(len(calls) == 1), stdout="\n\n".join(blocks), stderr="")
+
+    monkeypatch.setattr(work_boundary.subprocess, "run", run)
+    now = NOW + 100 + failure.RECOVERY_STABLE_S
+    work_state.sweep(tmp_path, repo=tmp_path, now=now, notify=lambda *a: None)
+    assert all(store.read(tmp_path, failure.units.signal_name(unit), now=now).value == "RED" for unit in rows)
+    work_state.sweep(tmp_path, repo=tmp_path, now=now, notify=lambda *a: None)
+    assert [store.read(tmp_path, failure.units.signal_name(unit), now=now).value for unit in rows] == [
+        "GREEN", "GREEN", "RED", "RED", "RED",
+    ]
+    assert len(calls) == 2
 
 
 def _expired_producer_failure(tmp_path, name, *, incident=None):

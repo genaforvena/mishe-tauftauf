@@ -99,9 +99,7 @@ def clear_recovered(home, *, now, last_exit=None, active_since=None) -> list[str
     """
     from . import work_boundary
     home = Path(home)
-    last_exit = last_exit or work_boundary.unit_last_exit
-    active_since = active_since or work_boundary.unit_active_since
-    cleared = []
+    candidates = []
     for name in sorted(signal_store.registry(home)):
         if not work_boundary.failure_signal(name):
             continue
@@ -123,7 +121,6 @@ def clear_recovered(home, *, now, last_exit=None, active_since=None) -> list[str
         unit = _unit_for(name, incident)
         if unit is None:
             continue
-        exit_ = last_exit(unit)
         if already_green:
             # A recovered record is kept fresh by the unit's next clean run, and the sweep is the only thing that looks
             # at the unit while the record is GREEN: without it the record ages into a false UNKNOWN that wakes its
@@ -145,9 +142,19 @@ def clear_recovered(home, *, now, last_exit=None, active_since=None) -> list[str
             since = reading.get("observed_at")     # a RED reading is cleared by an exit after the RED was observed
         if not isinstance(since, (int, float)):
             continue
+        candidates.append((name, unit, since, already_green, reading, incident))
+
+    properties = (work_boundary.unit_recovery_properties({unit for _, unit, *_ in candidates})
+                  if last_exit is None or active_since is None else {})
+    cleared = []
+    for name, unit, since, already_green, reading, incident in candidates:
+        values = properties.get(unit, {})
+        exit_ = last_exit(unit) if last_exit else work_boundary.unit_last_exit(unit, values)
         exited_clean = bool(exit_ and exit_[1] and exit_[0] > since)
         # A long-running unit has no exit to show: it recovered if it has stayed active since the failure, for a while.
-        started = None if exited_clean else active_since(unit)
+        started = None
+        if not exited_clean:
+            started = active_since(unit) if active_since else work_boundary.unit_active_since(values)
         # A still-flagged record needs the unit to have (re)started after the failure it records. An already-GREEN
         # recovered record needs only a stable-active unit: a long-running unit's start time is fixed, so
         # ``started > since`` would fail on every pass after the refresh that moved the stamp, and the record would
@@ -155,6 +162,10 @@ def clear_recovered(home, *, now, last_exit=None, active_since=None) -> list[str
         running_clean = started is not None and now - started >= RECOVERY_STABLE_S \
             and (already_green or started > since)
         if not (exited_clean or running_clean):
+            continue
+        # A failure handler can publish a new reading while the manager call is in flight.
+        if (signal_store.recorded(home, name) != reading
+                or read_json(home / "work/incidents" / f"{name}.json") != incident):
             continue
         if already_green:
             signal_store.refresh(home, name, now=now)     # not an edge: never rewrites NAME.json, never wakes a subscriber
