@@ -6,9 +6,14 @@ written as calm; a missing or crashed observation ages to UNKNOWN in the runtime
 
 Checks, in order (each failure is RED with its own reason):
   1. model file present with the expected size (model.pth, 1867929118 bytes)
-  2. mesh-voice-clone.service active
-  3. the daemon socket accepts a connection
-  4. a no-sound synthesis probe: mesh-voice-say writes a temp wav, length > 0, deleted
+  2. mesh-voice-clone.socket active (the daemon is on demand: systemd holds the socket and starts
+     mesh-voice-clone.service on the first request; the service exits after its idle period, so
+     "inactive" is the normal resting state and "failed" is RED)
+  3. warm daemon only: the socket accepts a connection. A cold daemon is never connected to,
+     because a connection would load the model
+  4. a no-sound synthesis probe: mesh-voice-say writes a temp wav, length > 0, deleted. Run while
+     the daemon is warm, and when cold at most once per COLD_PROBE_INTERVAL (the probe loads the
+     model, which is what on-demand avoids)
 
 Bounded self-healing, each step recorded in the heal state file with its result:
   step 1  start the unit: at most 2 starts per 30 min
@@ -37,6 +42,8 @@ PART = MODEL_DIR / "model.pth.part"
 MODEL_SIZE = 1867929118
 MODEL_URL = "https://huggingface.co/coqui/XTTS-v2/resolve/main/model.pth"
 UNIT = "mesh-voice-clone.service"
+SOCKET_UNIT = "mesh-voice-clone.socket"
+COLD_PROBE_INTERVAL = 6 * 3600
 SOCK = Path(os.environ.get("MESH_CLONE_SOCK", HOME / ".mesh/voice-clone/xtts.sock"))
 VOICE_SAY = HOME / ".local/bin/mesh-voice-say"
 MESH_TG = HOME / ".local/bin/mesh-tg"
@@ -77,8 +84,8 @@ def pid_alive(pid) -> bool:
         return False
 
 
-def unit_active() -> str:
-    p = subprocess.run(["systemctl", "--user", "is-active", UNIT],
+def unit_active(unit: str = UNIT) -> str:
+    p = subprocess.run(["systemctl", "--user", "is-active", unit],
                        capture_output=True, text=True, timeout=20)
     return p.stdout.strip() or f"rc={p.returncode}"
 
@@ -126,15 +133,18 @@ def heal_model(state: dict, now: float, steps: list) -> None:
     steps.append("model: started resumable download to model.pth.part (pid %d)" % proc.pid)
 
 
-def heal_unit(state: dict, now: float, steps: list, verb: str) -> None:
-    """Step 1: start (or restart) the unit, at most twice per 30 min."""
+def heal_unit(state: dict, now: float, steps: list, verb: str, unit: str = SOCKET_UNIT) -> None:
+    """Step 1: start (or restart) the socket unit, at most twice per 30 min.
+
+    The service itself is never started here: it is on demand, and starting it would load the model
+    for nobody."""
     state["restarts"] = recent(state["restarts"], RESTART_WINDOW, now)
     if len(state["restarts"]) >= RESTART_MAX:
         steps.append("unit: start budget spent (2 per 30 min)")
         return
-    subprocess.run(["systemctl", "--user", verb, UNIT], capture_output=True, text=True, timeout=60)
+    subprocess.run(["systemctl", "--user", verb, unit], capture_output=True, text=True, timeout=60)
     state["restarts"].append(now)
-    steps.append(f"unit: {verb} issued")
+    steps.append(f"unit: {verb} {unit} issued")
 
 
 def alert(state: dict, now: float, text: str, steps: list) -> None:
@@ -178,19 +188,30 @@ def main(argv=None) -> int:
         reasons.append(f"model file missing or not {MODEL_SIZE} bytes")
         heal_model(state, now, steps)
 
+    sock_unit = unit_active(SOCKET_UNIT)
     unit = unit_active()
-    sock = False
-    if unit != "active":
-        reasons.append(f"unit {UNIT} is {unit}")
+    warm = unit == "active"
+    if sock_unit != "active":
+        reasons.append(f"unit {SOCKET_UNIT} is {sock_unit}")
         heal_unit(state, now, steps, "start")
-    else:
-        sock = socket_live()
-        if not sock:
+    elif unit in ("failed", "activating", "deactivating"):
+        # failed: the daemon crashed (Restart=on-failure gave up); the next request would retry,
+        # but a crash is a finding, so it is RED until it runs again. The others are transitions.
+        if unit == "failed":
+            reasons.append(f"unit {UNIT} is failed")
+            heal_unit(state, now, steps, "reset-failed", UNIT)
+    elif warm:
+        if not socket_live():
             reasons.append("daemon socket not accepting connections")
-            heal_unit(state, now, steps, "restart")
+            heal_unit(state, now, steps, "restart", UNIT)
+    elif not SOCK.exists():
+        reasons.append(f"{SOCKET_UNIT} is active but {SOCK} is missing")
+        heal_unit(state, now, steps, "restart")
 
-    if unit == "active" and sock and model_ok():
+    if not reasons and model_ok() and (warm or now - state.get("probed_at", 0) >= COLD_PROBE_INTERVAL):
         ok_probe, detail = probe()
+        state["probed_at"] = now
+        steps.append(("warm " if warm else "cold ") + detail)
         if not ok_probe:
             reasons.append(detail)
 
@@ -200,7 +221,7 @@ def main(argv=None) -> int:
     state["last"] = {"t": round(now, 1), "reasons": reasons, "steps": steps}
     save_state(state_path, state)
 
-    result = {"signal": "voice.clone.ready", "t": round(now, 1), "ok": not reasons,
+    result = {"signal": "voice.clone.ready", "t": round(now, 1), "ok": not reasons, "daemon": "warm" if warm else unit,
               "reasons": reasons, "steps": steps, "model_bytes": MODEL.stat().st_size if MODEL.exists() else 0}
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0 if not reasons else 2

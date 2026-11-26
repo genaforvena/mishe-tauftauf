@@ -592,7 +592,8 @@ def voice_lines():
                               capture_output=True, text=True, timeout=5).stdout.strip() or "?"
     except (OSError, subprocess.SubprocessError):
         pass
-    state = "OK" if (size == XTTS_SIZE and unit == "active" and live) else "RED"
+    # on demand: the unit rests "inactive" while systemd holds the socket; "failed" or no socket is RED
+    state = "OK" if (size == XTTS_SIZE and unit in ("active", "inactive") and live) else "RED"
     return ["  VOICE clone: %s  (%s, unit %s, socket %s)  synth probe not wired yet" %
             (state, model, unit, "present" if live else "absent")]
 

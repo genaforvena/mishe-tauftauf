@@ -971,7 +971,7 @@
       "timeout": 300,
       "max_age": 1500,
       "resolver": "senses",
-      "covers": "voice.clone.ready: clone model file, mesh-voice-clone unit, daemon socket and a no-sound synthesis probe, with bounded self-healing",
+      "covers": "voice.clone.ready: clone model file, mesh-voice-clone.socket (the daemon is on demand), the daemon socket and a no-sound synthesis probe while warm or every 6 h when cold, with bounded self-healing",
       "replaces": []
     },
     {
