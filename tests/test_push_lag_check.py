@@ -119,3 +119,25 @@ def test_a_persistent_remote_read_failure_is_still_undecidable(tmp_path, monkeyp
     monkeypatch.setattr(lag, 'git', down)
     code, lines = lag.evaluate(work, T0, attempts=3, pause=0)
     assert code == 3 and 'cannot read origin/main' in lines[0] and len(calls) == 3
+
+
+def test_a_hanging_remote_is_bounded_under_the_duty_timeout(tmp_path, monkeypatch):
+    """The duty runner kills the check at its declared timeout, so a hanging remote must return exit 3 first."""
+    import json
+    _, work = clone_with_remote(tmp_path)
+    timeouts = []
+
+    def hang(repo, *args, timeout=45.0):
+        if args[:1] == ('ls-remote',):
+            timeouts.append(timeout)
+            return 124, "timed out"
+        return 0, ''
+
+    monkeypatch.setattr(lag, 'git', hang)
+    code, lines = lag.evaluate(work, T0, pause=2.0)
+    duties = json.loads((REPO / 'duties.json').read_text())['duties']
+    duty_timeout = next(d['timeout'] for d in duties if d['name'] == 'push-lag')
+    assert code == 3 and 'cannot read' in lines[0]
+    assert len(timeouts) == lag.REMOTE_ATTEMPTS and all(t == lag.REMOTE_TIMEOUT_S for t in timeouts)
+    worst_case = sum(timeouts) + 2.0 * (lag.REMOTE_ATTEMPTS - 1)
+    assert worst_case < duty_timeout

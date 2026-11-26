@@ -42,14 +42,18 @@ def _span(seconds: float) -> str:
 
 
 REMOTE_ATTEMPTS = 3
+REMOTE_TIMEOUT_S = 20.0
 """A single dropped TLS handshake (2026-11-26 16:58Z: gnutls 'non-properly terminated') read as exit 3 and
-turned the producer RED for a network blip. The remote read is retried a few times before the answer is UNKNOWN."""
+turned the producer RED for a network blip. The remote read is retried a few times before the answer is UNKNOWN.
+Worst case is REMOTE_ATTEMPTS * REMOTE_TIMEOUT_S plus the pauses (about 64 s), which must stay under the
+push-lag duty timeout (90 s in duties.json), so a hanging remote returns the exit-3 answer instead of being killed."""
 
 
-def read_remote_main(repo: Path, remote: str, attempts: int = REMOTE_ATTEMPTS, pause: float = 2.0) -> tuple[int, str]:
+def read_remote_main(repo: Path, remote: str, attempts: int = REMOTE_ATTEMPTS, pause: float = 2.0,
+                     timeout: float = REMOTE_TIMEOUT_S) -> tuple[int, str]:
     code, out = 127, ""
     for attempt in range(attempts):
-        code, out = git(repo, "ls-remote", remote, "refs/heads/main")
+        code, out = git(repo, "ls-remote", remote, "refs/heads/main", timeout=timeout)
         if code == 0 and out:
             break
         if attempt + 1 < attempts and pause:
