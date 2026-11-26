@@ -135,9 +135,12 @@ tree: a token that resolves outside it (a
 spelled `..` segment, which the adapter permits) or that does not resolve to a
 regular file in it is dropped, never read or handed over, never guessed. A file
 whose bytes are not UTF-8 is
-dropped too — `patch_text.is_utf8` gates it — because `wall_patch.review` reads
-every entry as UTF-8 and one undecodable file would otherwise lose the whole
-review as a `review_error`. Measured cause: the docs releases
+dropped too — `patch_text.is_utf8` gates it — because the reviewer receives
+described files as readable text. The changed manifest is different:
+`wall_patch.review` reads each entry through `patch_text.reviewable_text`, so a
+binary entry (an image in a release) reaches the reviewer as a size-and-sha256
+marker instead of failing the whole review as a `review_error` (bc2e7941,
+cf64f762). Measured cause: the docs releases
 19fb7646 and c87cd884 reviewed "unknown" because `docs/network-view.md` describes
 `checks/network-care.py`'s RED/UNKNOWN arms, which the reviewer never received.
 `tests/test_release_promotion.py::test_ordinary_review_supplies_a_file_the_changed_document_describes`
