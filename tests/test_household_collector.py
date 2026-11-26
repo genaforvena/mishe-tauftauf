@@ -169,6 +169,16 @@ def test_stale_redmi_reason_names_the_effective_reader_limit(tmp_path):
     assert out["status"] == "stale" and "requires <=120s" in out["reason"]
 
 
+def test_stale_redmi_reason_says_when_the_phone_last_sent(tmp_path):
+    # a person reads the wall clock of the last phone row, not only a count of seconds
+    now = 1795714493.0
+    last = 1795686468  # 09:47:48Z, the last row the household window showed
+    log = _redmi_log(tmp_path, [(last, "light lux=4.0 accuracy=3")])
+    out = hc.redmi_summary(str(tmp_path), now, log_path=log)
+    assert out["status"] == "stale" and "last sent a row at 09:47:48Z" in out["reason"]
+    assert "7.8 h ago" in out["reason"]
+
+
 def test_fresh_redmi_stream_row_with_values_is_ok(tmp_path):
     now = time.time()
     log = _redmi_log(tmp_path, [(now - 4, "battery level=0.84 charging=false"),

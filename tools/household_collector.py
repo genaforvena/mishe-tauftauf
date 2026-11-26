@@ -20,6 +20,7 @@ duty detail.
 from __future__ import annotations
 
 import argparse
+import datetime
 import glob
 import importlib.util
 import json
@@ -256,8 +257,9 @@ def redmi_summary(site: str, now: float, log_path: str | None = None) -> dict:
         out["status"] = "stale"
         # The reader's 120 s gate decides freshness first; 900 s only labels a long outage as stale.
         # Naming both keeps phones.jsonl from implying that a 900 s old row was acceptable.
-        out["reason"] = (f"Redmi10 stream row {age:.0f}s old "
-                         f"(reader requires <={MAX_ROW_AGE_S:.0f}s; stale beyond {REDMI_MAX_AGE_S:.0f}s)")
+        last_utc = datetime.datetime.fromtimestamp(float(last), datetime.timezone.utc).strftime("%H:%M:%SZ")
+        out["reason"] = (f"Redmi10 phone last sent a row at {last_utc} ({age / 3600:.1f} h ago; "
+                         f"row {age:.0f}s old, reader requires <={MAX_ROW_AGE_S:.0f}s, stale beyond {REDMI_MAX_AGE_S:.0f}s)")
     elif row.get("state") != "verified" or not v:
         # a fresh heartbeat (or a row older than the reader's own 120 s rule) is not a reading
         out["status"] = "unknown"
