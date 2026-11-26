@@ -119,7 +119,8 @@ not create: `network`, `operator`, `pub`, `rust-plan`, `steward` and `system1`. 
 `SITE_HOME/charters/`, or you accept the RED while you read on. Lines that name a host's
 own units or probes (for example `wrapper` or `root-fs probe`) depend on the machine, not on the install.
 
-`sync` writes the user units (`mishe-wake@.service`, a path unit per role, *producer*
+`sync` writes the user units (`mishe-wake@.service`, a path unit per role (a systemd unit
+that starts the role's wake when its inbox file or a signal it subscribes to changes), *producer*
 timers, `mishe-failed@`, the doctor). A producer is a timer that runs one check, writes its
 signal and exits; it is the only thing that polls and enables the paths and timers.
 `systemctl --user list-units 'mishe*'` shows them. Units are named under `--prefix`
