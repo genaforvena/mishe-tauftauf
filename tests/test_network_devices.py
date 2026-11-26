@@ -153,3 +153,26 @@ class WifiStateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WifiByMac(unittest.TestCase):
+    """A renamed client still reads ASSOCIATED through its MAC's router id; a stranger reads ABSENT."""
+
+    MAC = "7C:C3:A1:A5:20:D7"
+
+    def _home(self, clients, ts):
+        import json
+        import tempfile
+        home = Path(tempfile.mkdtemp())
+        (home / "network").mkdir()
+        (home / "network" / "router.jsonl").write_text(
+            json.dumps({"ts": ts, "ok": True, "clients": clients}) + "\n")
+        return home
+
+    def test_renamed_device_matches_by_mac_id(self):
+        home = self._home([{"id": devices.network_router.client_id(self.MAC), "name": "Mac-mini"}], NOW)
+        self.assertEqual(devices.wifi_state(home, "iMac-Rozalia", self.MAC, now=NOW), "ASSOCIATED")
+
+    def test_absent_device_is_absent(self):
+        home = self._home([{"id": "00000000", "name": "stranger"}], NOW)
+        self.assertEqual(devices.wifi_state(home, "iMac-Rozalia", self.MAC, now=NOW), "ABSENT")

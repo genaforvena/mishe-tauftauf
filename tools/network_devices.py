@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import network_boundary as nb  # noqa: E402  - all text decoding lives in the boundary
+import network_router  # noqa: E402  - client_id: the router's short hash of a MAC, the same id it writes
 
 SITE = Path(os.environ.get("MISHE_TAUFTAUF_HOME") or os.environ.get("MISHE_SEED_HOME") or ".mishe-tauftauf")
 LOG_NAME = "devices.jsonl"
@@ -26,9 +27,10 @@ PINGS = 5
 PING_TIMEOUT_S = 25
 KEEP_S = 2 * 86400
 
-# name the household recognises -> LAN address. Addresses stay in this file, never in the rows.
+# name the household recognises -> LAN address and MAC. Addresses and MACs stay in this file, never in the rows.
+# The MAC is matched through the router's client id (a hash), so a renamed device still reads ASSOCIATED.
 DEVICES = (
-    ("iMac-Rozalia", "192.168.8.214"),
+    ("iMac-Rozalia", "192.168.8.214", "7C:C3:A1:A5:20:D7"),
 )
 
 def ping(address):
@@ -64,8 +66,10 @@ def _plain(name):
     return "".join(ch for ch in str(name).lower() if ch.isalnum())
 
 
-def wifi_state(home, name, now=None):
+def wifi_state(home, name, mac=None, now=None):
     """Whether the router's newest reading lists the device as a Wi-Fi client: ASSOCIATED, ABSENT, or UNKNOWN.
+
+    A client matches by its MAC's id (when the device's MAC is known) or by its hostname.
 
     Read from SITE/network/router.jsonl only (no extra SSH). Only a fresh, successful router read counts:
     a stopped router producer must not explain a silent device with hours-old data. A device associated
@@ -82,7 +86,10 @@ def wifi_state(home, name, now=None):
     if not isinstance(last.get("clients"), list):
         return "UNKNOWN"
     names = {_plain(c.get("name")) for c in last["clients"] if isinstance(c, dict) and c.get("name")}
-    return "ASSOCIATED" if _plain(name) in names else "ABSENT"
+    ids = {c.get("id") for c in last["clients"] if isinstance(c, dict)}
+    if _plain(name) in names or (mac and network_router.client_id(mac) in ids):
+        return "ASSOCIATED"
+    return "ABSENT"
 
 
 def _read_text(path):
@@ -103,10 +110,10 @@ def _read_rows(path):
 def run(home, now=None):
     now = time.time() if now is None else now
     result = {}
-    for name, address in DEVICES:
+    for name, address, mac in DEVICES:
         result[name] = ping(address)
         result[name]["neigh"] = neighbour_state(address)
-        result[name]["wifi"] = wifi_state(home, name)
+        result[name]["wifi"] = wifi_state(home, name, mac, now=now)
     row = {
         "ts": now,
         "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
