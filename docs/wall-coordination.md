@@ -25,7 +25,6 @@ Terms used below (wake, dossier and yield are defined in [How a mind chooses](ho
 - **Intention**: a follow-up a mind scheduled for itself, with a due time or a signal condition (see [How a mind chooses](how-a-mind-chooses.md)).
 - **Activation**: restarting the consumers that load code through the pin, so they run a newly moved release.
 - **Revert**: moving the pin back to the previous committed release (`mishe release revert`). Re-pinning the new release does not count as a revert.
-- **xdist**: pytest-xdist, the test plugin that runs the suite in parallel workers; the delivery check runs it with four.
 
 Use one shared checkout and `main`. Authors check and commit their own scoped
 changes. The checkout's post-commit hook publishes to `origin/main` (the `main-publication` duty is the fallback); Genome checks CI and live consumers and does not grant permission to commit.
