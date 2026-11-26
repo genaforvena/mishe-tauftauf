@@ -523,8 +523,19 @@ def test_elapsed_window_burn_is_not_used_when_history_or_window_length_is_missin
     reset = NOW + 2 * 3600
     assert bp.elapsed_window_burn(0.0, reset, "5h", NOW) is None          # nothing used yet
     assert bp.elapsed_window_burn(0.6, reset, "9h", NOW) is None          # unknown window length
-    assert bp.elapsed_window_burn(0.6, NOW + 4.9 * 3600, "5h", NOW) is None  # under 0.25 h elapsed
+    assert bp.elapsed_window_burn(0.6, NOW + 4.9 * 3600, "5h", NOW) is None  # under 1 h elapsed
     assert bp.elapsed_window_burn(0.6, None, "5h", NOW) is None
+
+
+def test_twenty_minutes_into_a_five_hour_window_is_not_a_burn_forecast():
+    # 2026-11-26 claude 5h: 10% used, reset in 4h40m (20 min elapsed). The 20-minute extrapolation (30%/h,
+    # ETA 2h57m) read RED against a reset that the real ~7%/h trend clears. No forecast before 1 h elapsed.
+    reset = NOW + (5 * 3600 - 20 * 60)
+    assert bp.elapsed_window_burn(0.10, reset, "5h", NOW) is None
+    w = bp.build_accounts(None, {"state": "FRESH", "source": "claude-native-usage",
+                                 "five_hour": {"observed_at": NOW - 10, "resets_at": reset, "used_percentage": 10}},
+                          NOW, None)["claude"]["windows"]["5h"]
+    assert w["eta_s"] is None and w["burn_source"] is None
 
 
 def test_retired_routerai_candidates_are_listed_retired_not_unclassified(tmp_path):

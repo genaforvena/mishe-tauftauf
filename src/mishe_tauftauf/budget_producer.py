@@ -34,7 +34,7 @@ BURN_HISTORY_S = 6 * 3600.0   # history considered for burn; older points are dr
 BURN_MIN_SPAN_S = 1500.0      # a burn needs at least this much observed span
 BURN_RESET_TOL_S = 120.0      # points from a previous window (different reset) are not the same window
 WINDOW_DURATION_S = {"5h": 5 * 3600.0, "7d": 7 * 24 * 3600.0}  # elapsed-window fallback needs the window length
-BURN_ELAPSED_MIN_H = 0.25     # the elapsed-window estimate needs this much elapsed window time (legacy budget_view rule)
+BURN_ELAPSED_MIN_H = 1.0      # the elapsed-window estimate needs this much elapsed window time (was 0.25: 2026-11-26 claude 5h read RED on 20 min of window, 10% used -> 30%/h -> ETA 2h57m against a 4h40m reset; the real trend was ~7%/h)
 ENGINE_HISTORY = "quota-history.jsonl"         # rows: {at, q: {"acct/window": [remaining, reset]}}
 
 
