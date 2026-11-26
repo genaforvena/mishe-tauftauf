@@ -114,3 +114,23 @@ def test_router_read_taken_before_the_record_does_not_clear_the_trip(tmp_path):
     line = view.guard_line(now=now, marker=str(tmp_path / "tripped"), router_read_at=now - 10 * 60)
     assert "may still hold back" in line
     assert "running again" not in line
+
+
+def test_failed_router_run_newer_than_record_is_not_a_fresh_read(tmp_path, monkeypatch):
+    """A failed router run written after the trip record must not read as the units running again."""
+    now = time.time()
+    rec = tmp_path / "tripped-1.json"
+    rec.write_text("{}")
+    os.utime(rec, (now - 3 * 60, now - 3 * 60))
+    log = tmp_path / "router.jsonl"
+    import json
+    log.write_text(
+        json.dumps({"ts": now - 600, "ok": True}) + "\n"
+        + json.dumps({"ts": now - 60, "ok": False}) + "\n"
+    )
+    monkeypatch.setattr(view, "ROUTER_LOG", log)
+    read_at = view.router_read_at_s()
+    assert read_at == now - 600  # the failed row at now-60 is not a read
+    line = view.guard_line(now=now, marker=str(tmp_path / "tripped"), router_read_at=read_at)
+    assert "running again" not in line
+    assert "may still hold back" in line

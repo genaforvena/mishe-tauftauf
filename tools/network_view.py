@@ -735,11 +735,15 @@ RECENT_TRIP_S = 6 * 3600  # a record older than this does not explain a current 
 
 
 def router_read_at_s():
-    """Epoch time of the newest router read recorded, or None when no read is recorded."""
-    rows_ = router_rows()
-    if not rows_:
+    """Epoch time of the newest SUCCESSFUL router read, or None when none is recorded.
+
+    A failed run writes a row too (ok false) and proves nothing about the router units, so it must
+    not make a trip record look superseded.
+    """
+    good = [r for r in router_rows() if r.get("ok")]
+    if not good:
         return None
-    return rows_[-1]["ts"]
+    return good[-1]["ts"]
 
 
 def guard_line(now=None, marker=GUARD_TRIP_MARKER, router_read_at=None):
