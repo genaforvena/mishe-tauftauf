@@ -2254,6 +2254,26 @@ def test_disk_trend_low_minimum_reads_drift(tmp_path):
     assert "below" in result["sample"]
 
 
+def test_disk_trend_countdown_starts_from_current_level_not_recovered_dip(tmp_path):
+    """A recovered dip in the trailing 24 h must not anchor the floor countdown."""
+    home = tmp_path / "site"
+    home.mkdir()
+    now = datetime(2026, 10, 16, 17, 0, 0, tzinfo=timezone.utc)
+    hours = 14 * 24
+    for i in range(hours + 1):
+        t = now - timedelta(hours=hours - i)
+        level = 300 - 200 * i / hours  # linear drain 300 -> 100 GiB
+        if now - timedelta(hours=12) <= t <= now - timedelta(hours=6):
+            level = 12  # a dip, since recovered
+        _scan(home, t.strftime("%Y-%m-%dT%H:%M:%SZ"), int(level * 2**30))
+    result = discovery._disk_trend(home, now=now)
+    assert result["state"] == "drift"
+    assert "min24=12.0GiB" in result["sample"]
+    # drain ~14.3 GiB/day from 100 GiB now, floor 10 GiB: about 6.3 days, not 0.1.
+    assert result["days_to_floor"] is not None
+    assert 6.0 < result["days_to_floor"] < 6.6
+
+
 def _fake_git_show(checkout: Path):
     """A ``git show <sha>:<rel>`` handler serving the worktree file under ``checkout``."""
     def _run(cmd):

@@ -3373,7 +3373,11 @@ def _disk_trend(home: Path, now: datetime | None = None) -> dict[str, object]:
                          and len({sign for _label, sign in signs}) == 1
                          and signs[0][1] != "0")
 
-    days_to_floor = ((min24 - _DISK_TREND_FLOOR_BYTES) / drain) if drain > 0 else None
+    # The countdown starts from the level now, not from the trailing minimum:
+    # a past dip that has since recovered is a fact about the past, and a
+    # floor countdown anchored on it reads "0.1 days" for a disk that is filling.
+    current_bytes = rows[-1][1]
+    days_to_floor = ((current_bytes - _DISK_TREND_FLOOR_BYTES) / drain) if drain > 0 else None
 
     reasons: list[str] = []
     if min24 < _DISK_TREND_NEAR_BYTES:
