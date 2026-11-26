@@ -84,7 +84,9 @@ command can exit successfully. Treat absent or ambiguous output as UNKNOWN.
 
 The `signal-coverage` duty also starts through the pinned CLI. From an
 independent launcher it can flag a missed cadence when both the `.seen` and
-`.ran` stamps age past the limit. A retained pin producer can refresh both
+`.ran` stamps age past the limit. When the producer's user journal shows it
+skipped by the host guard's containment condition in that gap, the reason names
+the skips instead: a trip, not a dead producer, and still RED until the next run. A retained pin producer can refresh both
 shared stamps, so coverage can show GREEN while the installed pin producer
 still skips its checker.
 
