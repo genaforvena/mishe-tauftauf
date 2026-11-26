@@ -2,8 +2,8 @@
 
 ## Why this exists
 
-Mishe's Python runtime is about 49,500 lines. Eight Rust crates (about 3,100
-lines) already sit beside it, each one a small program with a stdin/argument
+Mishe's Python runtime (`src/`) is about 56,100 lines. Eight Rust crates (about
+3,500 lines, tests included) already sit beside it, each one a small program with a stdin/argument
 and stdout/exit-code boundary. This document says what counts as a Mishe binary,
 which existing seams already meet that bar, and which responsibilities come next.
 The goal is architecture first: small programs Python composes, each with one
