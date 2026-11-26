@@ -237,6 +237,39 @@ UPLINK_RED_PER_HOUR = 400      # rx_dropped per hour above this for the full spa
 WAN_FLAP_RED = 3               # carrier drops inside the window that mean a cable or port fault
 
 
+GATE_SKIP_MARKS = ("mishe-producer-network-", "unmet condition check", "mishe-containment/tripped")
+
+
+def gate_skips_between(last_ts, now):
+    """Count network producers the systemd condition gate skipped in (last_ts, now], from the user
+    journal.  A skip line is the trip gate's own evidence (ConditionPathExists on the containment latch),
+    unlike the containment pressure samples, which fall in most quiet windows too.  Returns None when the
+    journal cannot be read, so the caller keeps the plain age message."""
+    try:
+        r = subprocess.run(["journalctl", "--user", "--no-pager", "-o", "cat",
+                            "--since", f"@{int(last_ts)}", "--until", f"@{int(now) + 1}"],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    return sum(1 for line in r.stdout.splitlines() if all(mark in line for mark in GATE_SKIP_MARKS))
+
+
+def stale_message(what, last_ts, now):
+    """The UNKNOWN text for a reading that is too old.  When the journal shows network producers skipped
+    by their condition gate in the same gap, the text says the gap is a trip skip, not a calm network.
+    It stays UNKNOWN, never GREEN."""
+    base = f"network-care: newest {what} reading is {(now - last_ts) / 60:.0f} min old"
+    skips = gate_skips_between(last_ts, now)
+    if skips is None:
+        return base
+    if skips:
+        return (base + f"; {skips} network producer run(s) were skipped by their containment condition in "
+                "that gap (a trip, not a dead probe; still UNKNOWN until the next run)")
+    return base + "; no producer was skipped by a condition in that gap, so check the producer itself"
+
+
 def uplink_state(rows, now):
     """Judge the WAN receive-drop rate and the physical link from router readings (dicts with 'ts',
     'uplink' and 'wan_link').
@@ -263,7 +296,7 @@ def uplink_state(rows, now):
     fresh.sort()
     last_ts, _, last_err, last_link = fresh[-1]
     if now - last_ts > UPLINK_MAX_AGE_S:
-        return 3, f"network-care: newest router uplink reading is {(now - last_ts) / 60:.0f} min old"
+        return 3, stale_message("router uplink", last_ts, now)
     if last_err > 0:
         return 2, f"network-care: eth0 has {last_err} receive errors (a link fault, not drops)"
     if not last_link or last_link.get("speed_mbps") is None:
@@ -363,7 +396,7 @@ def vpn_state(rows, now):
     ts, v = fresh[-1]
     ago = now - ts
     if ago > VPN_MAX_AGE_S:
-        return 3, f"network-care: newest VPN reading is {ago / 60:.0f} min old"
+        return 3, stale_message("VPN", ts, now)
     if not v.get("ps_ok"):
         return 3, "network-care: sing-box UNKNOWN (router process list not read)"
     if v.get("sing_box") is False:
@@ -421,7 +454,7 @@ def wifi_state(rows, now):
     ts, radios = fresh[-1]
     ago = now - ts
     if ago > WIFI_MAX_AGE_S:
-        return 3, f"network-care: newest Wi-Fi radio reading is {ago / 60:.0f} min old"
+        return 3, stale_message("Wi-Fi radio", ts, now)
     parts = []
     missing = []
     missing_per = []
@@ -487,7 +520,7 @@ def load_state(rows, now):
         return 3, "network-care: no router load reading in the last six hours"
     ago = sample["ago_s"]
     if ago > LOAD_MAX_AGE_S:
-        return 3, f"network-care: newest router load reading is {ago / 60:.0f} min old"
+        return 3, stale_message("router load", now - ago, now)
     text = (f"load {sample['load']:.2f} (5 min), free RAM {sample['mem_mb']:.0f} MB; "
             f"limit load {nb.LOAD_LIMIT:g}, free RAM {nb.MEM_FLOOR_MB:.0f} MB")
     if not sample["over"]:
