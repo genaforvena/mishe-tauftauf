@@ -3825,7 +3825,7 @@ def _release(home: Path, sha: str, *, worktree: bool = True, age_days: float = 0
 
 
 def _bounded_bytes(monkeypatch) -> None:
-    monkeypatch.setattr(discovery, "_release_tree_bytes", lambda root: 1024)
+    monkeypatch.setattr(discovery, "_release_tree_bytes", lambda root, **_: 1024)
 
 
 def test_release_retention_absent_releases_reads_unknown(tmp_path, monkeypatch):
@@ -3903,7 +3903,7 @@ def test_release_retention_unread_bytes_are_unknown(tmp_path, monkeypatch):
     home = tmp_path / "site"
     (home / "releases").mkdir(parents=True)
     monkeypatch.setattr(discovery, "_referenced_release_names", lambda: set())
-    monkeypatch.setattr(discovery, "_release_tree_bytes", lambda root: None)
+    monkeypatch.setattr(discovery, "_release_tree_bytes", lambda root, **_: None)
     reading = discovery._repo_release_retention(home)
     assert reading["state"] == "unknown"
     assert "bytes=unread" in reading["sample"]
@@ -3969,7 +3969,7 @@ def test_release_retention_keeps_known_drift_when_bytes_unread(tmp_path, monkeyp
     for i in range(discovery._RELEASE_RETENTION_KEEP + 1):
         _release(home, f"{i + 1:040x}")
     monkeypatch.setattr(discovery, "_referenced_release_names", lambda: set())
-    monkeypatch.setattr(discovery, "_release_tree_bytes", lambda root: None)
+    monkeypatch.setattr(discovery, "_release_tree_bytes", lambda root, **_: None)
     reading = discovery._repo_release_retention(home)
     assert reading["state"] == "drift"
     assert "bytes=unread" in reading["sample"]
@@ -4024,7 +4024,7 @@ def test_release_retention_byte_ceiling_reads_drift(tmp_path, monkeypatch):
     for i in range(2):
         _release(home, f"{i + 1:040x}", age_days=30 - i)
     monkeypatch.setattr(discovery, "_referenced_release_names", lambda: {live})
-    monkeypatch.setattr(discovery, "_release_tree_bytes", lambda root: 3 * 2**30)
+    monkeypatch.setattr(discovery, "_release_tree_bytes", lambda root, **_: 3 * 2**30)
     reading = discovery._repo_release_retention(home)
     assert reading["state"] == "drift"
     assert reading["bytes"] == 3 * 2**30
@@ -7325,3 +7325,31 @@ def test_a_scan_killed_inside_sample_keeps_the_sub_stage_trace(tmp_path: Path) -
     assert "sample:start" in events
     assert "stage:snapshot:start" in events
     assert any(event.startswith("failed RuntimeError") for event in events)
+
+
+def test_release_tree_walk_stops_past_ceiling(tmp_path, monkeypatch):
+    root = tmp_path / "releases"
+    for i in range(20):
+        (root / f"w{i}").mkdir(parents=True)
+        (root / f"w{i}" / "blob").write_bytes(b"x" * 100)
+    visited = []
+    original_lstat = os.lstat
+
+    def counting_lstat(path, *args, **kwargs):
+        visited.append(str(path))
+        return original_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "lstat", counting_lstat)
+    total = discovery._release_tree_bytes(root, ceiling=250)
+    assert total is not None and total > 250
+    blobs = [p for p in visited if p.endswith("blob")]
+    assert 0 < len(blobs) < 20
+
+
+def test_release_tree_walk_entry_cap_routes_unknown(tmp_path):
+    root = tmp_path / "releases"
+    for i in range(5):
+        (root / f"w{i}").mkdir(parents=True)
+        (root / f"w{i}" / "blob").write_bytes(b"x")
+    assert discovery._release_tree_bytes(root, max_entries=4) is None
+    assert discovery._release_tree_bytes(root, max_entries=5) == 5

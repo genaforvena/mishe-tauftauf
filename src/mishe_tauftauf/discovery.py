@@ -4005,6 +4005,10 @@ releases still reads drift."""
 _RELEASE_RETENTION_GROWTH_WINDOW_DAYS = 7
 """Trailing window for the created-release count reported as growth evidence."""
 
+_RELEASE_TREE_MAX_ENTRIES = 200_000
+"""Files the byte walk may visit before it gives up and reads the total as unknown."""
+"""Trailing window for the created-release count reported as growth evidence."""
+
 
 def _referenced_release_names(unit_root: Path | None = None) -> set[str]:
     """Release shas referenced by a live process environment or an installed unit.
@@ -4048,13 +4052,21 @@ def _pointer_release_names(home: Path) -> set[str]:
         return set()
 
 
-def _release_tree_bytes(root: Path) -> int | None:
+def _release_tree_bytes(root: Path, *, ceiling: int | None = None,
+                        max_entries: int = _RELEASE_TREE_MAX_ENTRIES) -> int | None:
     """Total apparent size of ``root`` in bytes, or None when it cannot be measured.
 
-    An unreadable directory or file makes the total unmeasured; a partial
-    count cannot establish that the complete tree is below the byte ceiling.
+    The walk is bounded so the scan never reads a whole worktree forest on the
+    IO path: it stops as soon as the running total exceeds ``ceiling`` (a partial
+    total above the ceiling already proves the ceiling is exceeded, so the caller
+    gets that lower bound and treats it as ``>=``), and it stops with None after
+    ``max_entries`` names visited without either a complete total or proof of
+    exceedance. An unreadable directory or file makes the total unmeasured; a
+    partial count cannot establish that the complete tree is below the byte
+    ceiling.
     """
     total = 0
+    visited = 0
 
     def onerror(error: OSError) -> None:
         raise error
@@ -4062,7 +4074,12 @@ def _release_tree_bytes(root: Path) -> int | None:
     try:
         for dirpath, _dirnames, filenames in os.walk(root, onerror=onerror):
             for name in filenames:
+                visited += 1
+                if visited > max_entries:
+                    return None
                 total += os.lstat(os.path.join(dirpath, name)).st_size
+                if ceiling is not None and total > ceiling:
+                    return total
     except OSError:
         return None
     return total
@@ -4117,7 +4134,7 @@ def _repo_release_retention(home: Path, now: datetime | None = None) -> dict[str
                 created += 1
         except OSError:
             continue
-    total_bytes = _release_tree_bytes(releases)
+    total_bytes = _release_tree_bytes(releases, ceiling=_RELEASE_RETENTION_MAX_BYTES)
 
     reasons: list[str] = []
     if over:
@@ -4127,7 +4144,9 @@ def _repo_release_retention(home: Path, now: datetime | None = None) -> dict[str
                        f"{_RELEASE_RETENTION_MAX_BYTES / 2**30:.0f} GiB")
     state = "drift" if reasons else "unknown" if total_bytes is None else "verified"
     oldest_text = "none" if oldest is None else f"{oldest:.1f}d"
-    bytes_text = "unread" if total_bytes is None else f"{total_bytes / 2**30:.2f}GiB"
+    bounded = total_bytes is not None and total_bytes > _RELEASE_RETENTION_MAX_BYTES
+    bytes_text = ("unread" if total_bytes is None
+                  else f"{'>=' if bounded else ''}{total_bytes / 2**30:.2f}GiB")
     sample = (f"worktrees={len(worktrees)} live={len(live)} reclaimable={len(reclaimable)} "
               f"legacy={len(legacy)} kept={len(kept)} over={len(over)} "
               f"oldest={oldest_text} "
