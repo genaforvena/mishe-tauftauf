@@ -78,6 +78,18 @@ def unit_rows(text) -> list[tuple[str, str, str, str]]:
     return rows
 
 
+def unit_condition_no(text) -> list[str]:
+    """Units whose ConditionResult is 'no', from `systemctl show -p Id -p ConditionResult <units>`."""
+    skipped, unit = [], None
+    for line in (text or '').splitlines():
+        key, _, value = line.partition('=')
+        if key == 'Id':
+            unit = value
+        elif key == 'ConditionResult' and value == 'no' and unit:
+            skipped.append(unit)
+    return skipped
+
+
 def session_names(text) -> list[str]:
     return [line.strip() for line in (text or '').splitlines() if line.strip()]
 

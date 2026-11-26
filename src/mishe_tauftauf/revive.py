@@ -457,13 +457,7 @@ def kick_skipped(h: Host, r: Result, *, dry_run: bool) -> None:
     if not down:
         return
     _, shown, _ = h.run(['systemctl', '--user', 'show', '-p', 'Id', '-p', 'ConditionResult', *down])
-    skipped, unit = [], None
-    for line in (shown or '').splitlines():
-        key, _, value = line.partition('=')
-        if key == 'Id':
-            unit = value
-        elif key == 'ConditionResult' and value == 'no' and unit in down:
-            skipped.append(unit)
+    skipped = [unit for unit in b.unit_condition_no(shown) if unit in down]
     if not skipped:
         return
     if dry_run:

@@ -193,6 +193,7 @@ def test_boundary_decoders_never_trust_malformed_input():
     assert b.unit_kind('mishe-wake-docs.path') == 'wake-path' and b.unit_kind('run-x.scope') == 'other'
     assert b.unit_kind('mishe-wake@docs.service') == 'wake-service' and b.unit_kind('mishe-producer-x.service') == 'service'
     assert b.unit_rows('a.service loaded failed failed Some thing\nshort\n') == [('a.service', 'failed', 'failed', 'Some thing')]
+    assert b.unit_condition_no('Id=a.service\nConditionResult=no\nId=b.service\nConditionResult=yes\n') == ['a.service']
 
 
 PHONE = ('light-cycle-monitor.service', 'android-body-rendezvous.service')
