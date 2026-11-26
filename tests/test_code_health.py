@@ -59,6 +59,17 @@ def test_coverage_report_missing_stale_or_malformed_is_unknown(tmp_path):
         check.read_coverage(report, now, 9)
 
 
+@pytest.mark.parametrize("total", ['"NaN"', "1e999", "null", "true", "-0.001", "100.001"])
+def test_invalid_coverage_total_returns_unknown(tmp_path, capsys, total):
+    (tmp_path / check.BASELINE).write_text('{"coverage": {"percent": 81.87}}')
+    report = tmp_path / "coverage.json"
+    report.write_text('{"totals": {"percent_covered": ' + total + '}}')
+    code = check.main(["--home", str(tmp_path), "--repo", str(tmp_path), "--only", "coverage",
+                       "--coverage-json", str(report)])
+    assert code == 3
+    assert "UNKNOWN" in capsys.readouterr().err
+
+
 def test_missing_tool_is_unknown_not_green(tmp_path, capsys):
     (tmp_path / check.BASELINE).write_text(json.dumps({"lint": {}}))
     code = check.main(["--home", str(tmp_path), "--repo", str(tmp_path), "--only", "lint",

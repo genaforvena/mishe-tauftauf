@@ -17,8 +17,8 @@ Per facet, with ``--only lint|types|coverage`` selecting one:
 - AMBER (exit 0): the code is better than the baseline; lower the baseline with
                   ``--write-baseline`` so the gain cannot silently be lost again.
 - UNKNOWN (exit 3): the tool is missing, timed out, printed output that could not be decoded,
-                  or (coverage) the report is missing or older than ``--max-age-days``.  A missing
-                  tool is never green.
+                  or (coverage) the report is invalid, missing or older than ``--max-age-days``.
+                  A missing tool is never green.
 - GREEN: equal to the baseline.
 
 ``--write-baseline`` only lowers: it refuses to record a higher count, so the baseline cannot be
@@ -94,7 +94,14 @@ def read_coverage(path, now, max_age_days):
         total = json.loads(path.read_text(encoding="utf-8"))["totals"]["percent_covered"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise Unknown(f"coverage report {path} has no totals.percent_covered") from exc
-    return {"percent": round(float(total), 2)}
+    invalid_total = f"coverage report {path} has an invalid totals.percent_covered (expected 0 to 100)"
+    try:
+        percent = float(total)
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise Unknown(invalid_total) from exc
+    if isinstance(total, bool) or not 0 <= percent <= 100:
+        raise Unknown(invalid_total)
+    return {"percent": round(percent, 2)}
 
 
 def measure_coverage(python, repo, out):
