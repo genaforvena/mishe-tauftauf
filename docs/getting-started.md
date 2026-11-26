@@ -36,7 +36,7 @@ export PATH="$PWD/bin:$PATH" MISHE_SEED_HOME="$PWD/.mishe-tauftauf"
 tools/install-rust-binaries.sh              # builds the Rust components into $MISHE_SEED_HOME/bin (needs cargo)
 ```
 
-`init` alone is not enough: the tape (the shared message log), records and signal readers are Rust binaries that
+`init` alone is not enough: the tape (the shared message log), records and signal readers are Rust binaries (the signal readers are the programs that read each producer's stored reading) that
 refuse to run (they *fail closed*: stop rather than guess) until the install script has put them, each with a checksum record (its sha256 hash, a fingerprint of the exact file), in the site's `bin/`.
 
 The site (`SITE_HOME`, the directory `$MISHE_SEED_HOME` points to) holds everything
@@ -56,10 +56,9 @@ that give it a model). By default a role wakes on `claude` with `claude-haiku-5-
 
 `codex` runs the `codex` CLI (`codex exec`) with the login that CLI already holds; Mishe
 copies no credential into an engine store. A plant runs it only where its own
-`engine/routes.json` names `codex` — this plant's does, on the `codex-a` account — but
-that route does not settle a sandbox mode. Codex wakes run with `-s danger-full-access`:
-the operator decided on 2026-11-18 that codex minds work without the codex sandbox, as
-claude and omp minds do; the host guard and the protected limits are the boundary. Its
+`engine/routes.json` names `codex`; that route does not settle a sandbox mode. Codex wakes
+run with `-s danger-full-access`, so they work without the codex sandbox, as claude and
+omp minds do; the host guard and the protected limits are the boundary. Its
 *account window* (the account's plan usage for the current period, which the router reads to
 decide whether the account still has room) comes from the codex CLI's own rollout files,
 so an account that has not run lately reads STALE and the router (the component that picks which engine and account runs each wake) skips it.
@@ -117,17 +116,18 @@ A fresh site is usually RED here, and that is expected. The repository declares 
 not create: `network`, `operator`, `pub`, `rust-plan`, `steward` and `system1`. Each one shows as
 `resolver role 'X' has no charter`. GREEN needs a charter for each of them in
 `SITE_HOME/charters/`, or you accept the RED while you read on. Lines that name a host's
-own units or probes (for example `wrapper` or `root-fs probe`) depend on the machine, not on the install.
+own units or probes (for example the `wrapper`, the launcher the `mishe` command runs through, or the
+`root-fs probe`, a check of how long the root filesystem takes to flush writes) depend on the machine, not on the install.
 
 `sync` writes the user units (`mishe-wake@.service`, a path unit per role (a systemd unit
-that starts the role's wake when its inbox file or a signal it subscribes to changes), *producer*
+that starts the role's wake when its inbox file or a signal it subscribes to changes), producer
 timers, `mishe-failed@`, the doctor). A producer is a timer that runs one check, writes its
-signal and exits; it is the only thing that polls and enables the paths and timers.
+signal and exits; producer timers are the only thing that polls and enables the paths and timers.
 `systemctl --user list-units 'mishe*'` shows them. Units are named under `--prefix`
 (default `mishe`) and written to `--unit-dir` (default `~/.config/systemd/user`). A
 host that already runs a plant must give a second plant its own `--prefix` and
-`--unit-dir`, or its `sync` rewrites the first plant's units; `--no-slices` is for
-scratch namespaces only. A delivery (promoting a checked commit to the
+`--unit-dir`, or its `sync` rewrites the first plant's units; `--no-slices` (skips the
+systemd resource groups the units are otherwise placed in) is for scratch namespaces only. A delivery (promoting a checked commit to the
 running code, with automatic rollback if it fails to observe)
 in flight is a transient `moving-pin-delivery-HHMMSS.service`; its name carries no `mishe-` prefix, so pass that
 pattern too (`list-units 'mishe*' 'moving-pin-delivery-*'`) when you want to see whether
@@ -202,7 +202,7 @@ wakes.
 
 ## How a change lands
 
-A mind owns a durable area and carries useful initiatives (one piece of work, followed from investigation to an observed result) through investigation,
+A mind owns a durable area (a long-lived part of the project it stewards) and carries useful initiatives (one piece of work, followed from investigation to an observed result) through investigation,
 implementation, checks, delivery and observation. Stop at a meaningful work or
 execution boundary and leave concrete continuation. Critical verification belongs
 inside the initiative; use peer messages for action, transfer, material impact or
