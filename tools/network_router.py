@@ -84,6 +84,15 @@ def backoff_reason(rows, now):
     return None
 
 
+def last_load_row(rows):
+    """The newest row that carries a real router load, or None. Skipped rows use it so the window can
+    still say what the router last read, and how old that reading is, while the probe holds off."""
+    for row in reversed(rows):
+        if isinstance(row.get("router_load"), dict):
+            return row
+    return None
+
+
 def measure(now=None):
     """One read-only router pass. Returns a row; never raises."""
     now = time.time() if now is None else now
@@ -116,7 +125,14 @@ def main(argv=None):
     except OSError:
         kept = []
     reason = backoff_reason(kept, now)
-    row = _row(now, error=reason) if reason else measure(now)
+    if reason:
+        row = _row(now, error=reason)
+        last = last_load_row(kept)
+        if last is not None:
+            row["last_load"] = last["router_load"]
+            row["last_load_age_s"] = round(now - last.get("ts", now))
+    else:
+        row = measure(now)
     kept.append(row)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")

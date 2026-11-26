@@ -185,3 +185,18 @@ def test_main_skips_ssh_while_held_off(tmp_path, monkeypatch):
     assert calls == []
     last = _json.loads((home / "network" / "router.jsonl").read_text().splitlines()[-1])
     assert last["ok"] is False and "self-limit" in last["error"]
+
+
+def test_skipped_row_carries_last_real_load_and_its_age(tmp_path, monkeypatch):
+    home = tmp_path
+    (home / "network").mkdir()
+    import json as _json
+    import time as _time
+    now = _time.time()
+    (home / "network" / "router.jsonl").write_text(_json.dumps(_loaded(now - 120, 1.4, 200.0)) + "\n")
+    monkeypatch.setattr(nr, "measure", lambda now=None: {"ts": now, "ok": True})
+    assert nr.main(["--home", str(home)]) == 3
+    last = _json.loads((home / "network" / "router.jsonl").read_text().splitlines()[-1])
+    assert last["ok"] is False and "self-limit" in last["error"]
+    assert last["last_load"]["mem_available_mb"] == 200.0
+    assert 115 <= last["last_load_age_s"] <= 130
