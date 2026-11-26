@@ -734,21 +734,22 @@ GUARD_TRIP_RECORD_GLOB = "tripped-*.json"  # the guard now writes one record per
 RECENT_TRIP_S = 6 * 3600  # a record older than this does not explain a current gap
 
 
-def router_read_age_s(now=None):
-    """Seconds since the newest router read was recorded, or None when no read is recorded."""
+def router_read_at_s():
+    """Epoch time of the newest router read recorded, or None when no read is recorded."""
     rows_ = router_rows()
     if not rows_:
         return None
-    return (time.time() if now is None else now) - rows_[-1]["ts"]
+    return rows_[-1]["ts"]
 
 
-def guard_line(now=None, marker=GUARD_TRIP_MARKER, router_read_age=None):
+def guard_line(now=None, marker=GUARD_TRIP_MARKER, router_read_at=None):
     """Whether the host guard tripped recently: the usual reason a router read goes STALE.
 
     Two signs are read, both as plain stats: the bare marker file (older guard), and the newest
     `tripped-*.json` trip record beside it (current guard). A recent record is named as a trip even
-    though the latch itself is not read here. When the router was read fresh since that record, the
-    line says so: the units are running again, so the record is history, not a current hold.
+    though the latch itself is not read here. When the router was read fresh AND that read is newer
+    than the record, the line says so: the units are running again, so the record is history, not a
+    current hold. A read taken before the record proves nothing about the trip and is not used.
     Any read error is UNKNOWN, never a calm clear.
     """
     now = time.time() if now is None else now
@@ -779,9 +780,10 @@ def guard_line(now=None, marker=GUARD_TRIP_MARKER, router_read_age=None):
         return "clear (no trip marker or trip record; the router and window units may run)"
     age = now - newest
     if age < RECENT_TRIP_S:
-        if router_read_age is not None and router_read_age < STALE_ROUTER_S:
+        read_age = None if router_read_at is None else now - router_read_at
+        if read_age is not None and read_age < STALE_ROUTER_S and router_read_at > newest:
             return (f"TRIP RECORD {age / 60:.0f} min ago, but the router was read "
-                    f"{router_read_age:.0f} s ago, so the router units are running again "
+                    f"{read_age:.0f} s ago, after the record, so the router units are running again "
                     "(the latch itself is not read here)")
         return (f"TRIP RECORD {age / 60:.0f} min ago (latch not read here): the guard may still hold "
                 "back the router units, and their readings go STALE until it is rearmed")
@@ -2045,7 +2047,7 @@ def draw():
     out.append("  ROUTER LOAD   " + router_health_line() + "   (read-only, one read per 5 min)")
     out.append("  DEVICE PING   " + devices_line() + "   (named household devices, read-only pings)")
     out.append("  VPN           " + vpn_line() + "   (read-only, router process list and tun0)")
-    out.append("  HOST GUARD    " + guard_line(router_read_age=router_read_age_s()) +
+    out.append("  HOST GUARD    " + guard_line(router_read_at=router_read_at_s()) +
                "   (read-only, trip marker and trip records)")
     exit_lines = exit_line().split("\n")
     out.append("  EXIT NODE     " + exit_lines[0] + "   (read-only, the egress duty's file)")

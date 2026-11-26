@@ -90,9 +90,9 @@ def test_recent_trip_record_with_fresh_router_read_says_units_run_again(tmp_path
     record.write_text("{}")
     past = time.time() - 71 * 60
     os.utime(record, (past, past))
-    line = view.guard_line(now=time.time(), marker=str(tmp_path / "tripped"), router_read_age=28.0)
+    line = view.guard_line(now=time.time(), marker=str(tmp_path / "tripped"), router_read_at=time.time() - 28.0)
     assert line.startswith("TRIP RECORD 71 min ago")
-    assert "router was read 28 s ago" in line
+    assert "router was read 28 s ago, after the record" in line
     assert "running again" in line
     assert "may still hold back" not in line
 
@@ -100,5 +100,17 @@ def test_recent_trip_record_with_fresh_router_read_says_units_run_again(tmp_path
 def test_recent_trip_record_with_stale_router_read_still_warns(tmp_path):
     record = tmp_path / "tripped-1795567161284062546.json"
     record.write_text("{}")
-    line = view.guard_line(now=time.time(), marker=str(tmp_path / "tripped"), router_read_age=3600.0)
+    line = view.guard_line(now=time.time(), marker=str(tmp_path / "tripped"), router_read_at=time.time() - 3600.0)
     assert "may still hold back" in line
+
+
+def test_router_read_taken_before_the_record_does_not_clear_the_trip(tmp_path):
+    # the 2026-11-26 review case: record 3 min ago, last router read 10 min ago. The read is older than
+    # the record, so it says nothing about the units now; the line must keep the warning.
+    record = tmp_path / "tripped-1795567161284062546.json"
+    record.write_text("{}")
+    now = time.time()
+    os.utime(record, (now - 3 * 60, now - 3 * 60))
+    line = view.guard_line(now=now, marker=str(tmp_path / "tripped"), router_read_at=now - 10 * 60)
+    assert "may still hold back" in line
+    assert "running again" not in line
