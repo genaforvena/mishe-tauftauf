@@ -344,3 +344,44 @@ def test_webcam_held_on_every_attempt_exits_unknown_not_a_crash(tmp_path, monkey
     assert hc.main(["camera", "--room", "living room", "--source", "webcam", "--site", str(tmp_path)]) == 4
     row = json.loads((tmp_path / "spatial/work/household/signatures.jsonl").read_text().splitlines()[-1])
     assert row["reason_code"] == "device_busy" and row["status"] == "unavailable" and "grid" not in row
+
+
+def _note3_body_space(tmp_path, receipt_epoch):
+    body = tmp_path / "body"
+    body.mkdir(exist_ok=True)
+    node = {"node": "note3", "light": {"consumer_receipt_epoch_s": receipt_epoch},
+            "wifi_link_rssi": {"consumer_receipt_epoch_s": receipt_epoch}}
+    (body / "space.json").write_text(json.dumps({"nodes": [node]}))
+
+
+def test_note3_sampler_fresh_but_body_app_silent_is_flagged(tmp_path):
+    f = tmp_path / "spatial/work/household/note3_samples_run1.jsonl"
+    f.parent.mkdir(parents=True)
+    now = time.time()
+    f.write_text(json.dumps({"wall_ts": now - 5,
+                             "sensors": {"light": {"status": "ok", "values": [0.0, 2300.0, 0.0]},
+                                         "accelerometer": {"status": "ok", "values": [0, 0, 10]}}}) + "\n")
+    _note3_body_space(tmp_path, now - 43 * 86400)
+    out = hc.note3_summary(str(tmp_path), now)
+    assert out["status"] == "ok"
+    assert out["body_app"]["status"] == "silent"
+    assert "43.0 days" in out["body_app"]["reason"]
+    assert "sampler fresh" in out["note"]
+
+
+def test_note3_body_app_live_has_no_note(tmp_path):
+    f = tmp_path / "spatial/work/household/note3_samples_run1.jsonl"
+    f.parent.mkdir(parents=True)
+    now = time.time()
+    f.write_text(json.dumps({"wall_ts": now - 5,
+                             "sensors": {"light": {"status": "ok", "values": [0.0, 2300.0, 0.0]},
+                                         "accelerometer": {"status": "ok", "values": [0, 0, 10]}}}) + "\n")
+    _note3_body_space(tmp_path, now - 10)
+    out = hc.note3_summary(str(tmp_path), now)
+    assert out["body_app"]["status"] == "live" and "note" not in out
+
+
+def test_note3_body_app_missing_is_unknown_not_silent(tmp_path):
+    now = time.time()
+    out = hc.note3_body_app(str(tmp_path), now)
+    assert out["status"] == "unknown"

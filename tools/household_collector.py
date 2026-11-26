@@ -175,6 +175,33 @@ def newest_note3(site: str):
     return best
 
 
+def note3_body_app(site: str, now: float) -> dict:
+    """Receipt age of the Note3 body-app perception stream (light and RSSI).
+
+    The adb sampler above is a different path: it can stay fresh while the
+    body app's own stream has been silent for weeks. This reads the shared body
+    boundary (site/body/space.json) so the summary shows both, never one alone.
+    """
+    try:
+        data = json.loads(site_path(site, "body/space.json").read_text())
+        node = next(n for n in data["nodes"] if n.get("node") == "note3")
+    except (OSError, ValueError, KeyError, StopIteration, TypeError):
+        return {"status": "unknown", "reason": "body-app boundary unreadable or no note3 node"}
+    ages = {}
+    for key in ("light", "wifi_link_rssi"):
+        receipt = (node.get(key) or {}).get("consumer_receipt_epoch_s")
+        ages[key] = None if not isinstance(receipt, (int, float)) else round(now - receipt, 1)
+    known = [a for a in ages.values() if a is not None]
+    if not known:
+        return {"status": "unknown", "reason": "no body-app receipt for light or RSSI",
+                "receipt_age_s": ages}
+    worst = max(known)
+    status = "live" if worst <= NOTE3_MAX_AGE_S else "silent"
+    return {"status": status, "receipt_age_s": ages,
+            "reason": (f"Note3 body-app stream silent {worst / 86400:.1f} days (light and RSSI)"
+                       if status == "silent" else None)}
+
+
 def note3_summary(site: str, now: float) -> dict:
     row = newest_note3(site)
     if row is None:
@@ -187,7 +214,12 @@ def note3_summary(site: str, now: float) -> dict:
            "light_raw": light.get("values") if light.get("status") == "ok" else None,
            "light_note": "raw channels; lux channel not verified",
            "accel": accel.get("values") if accel.get("status") == "ok" else None,
-           "battery_pct": (row.get("battery") or {}).get("level_pct")}
+           "battery_pct": (row.get("battery") or {}).get("level_pct"),
+           "body_app": note3_body_app(site, now)}
+    if out["status"] == "ok" and out["body_app"].get("status") == "silent":
+        # the sampler is alive; the body app's own light/RSSI stream is not
+        out["note"] = (f"sampler fresh, but {out['body_app']['reason'].split(' (')[0]}; "
+                       "the raw light above comes from the sampler only")
     if out["status"] == "stale":
         out["reason"] = f"Note3 sample {age:.0f}s old (limit {NOTE3_MAX_AGE_S:.0f}s): sampler stopped"
     elif row.get("status") == "unknown":
