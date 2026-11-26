@@ -81,3 +81,24 @@ def test_unlistable_trip_records_are_unknown_not_clear(tmp_path, monkeypatch):
     monkeypatch.setattr(view.os, "scandir", denied)
     line = view.guard_line(marker=str(tmp_path / "tripped"))
     assert line.startswith("UNKNOWN"), line
+
+
+def test_recent_trip_record_with_fresh_router_read_says_units_run_again(tmp_path):
+    # the 2026-11-26 case: a trip 71 min ago, router read 28 s ago. The line must not say the guard
+    # "may still hold back" the router units when their readings are fresh.
+    record = tmp_path / "tripped-1795567161284062546.json"
+    record.write_text("{}")
+    past = time.time() - 71 * 60
+    os.utime(record, (past, past))
+    line = view.guard_line(now=time.time(), marker=str(tmp_path / "tripped"), router_read_age=28.0)
+    assert line.startswith("TRIP RECORD 71 min ago")
+    assert "router was read 28 s ago" in line
+    assert "running again" in line
+    assert "may still hold back" not in line
+
+
+def test_recent_trip_record_with_stale_router_read_still_warns(tmp_path):
+    record = tmp_path / "tripped-1795567161284062546.json"
+    record.write_text("{}")
+    line = view.guard_line(now=time.time(), marker=str(tmp_path / "tripped"), router_read_age=3600.0)
+    assert "may still hold back" in line
