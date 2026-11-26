@@ -1613,7 +1613,7 @@
         3
       ],
       "resolver": "health",
-      "covers": "an initiative owned by health in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "covers": "an initiative owned by health in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing or a check cannot be evaluated (a charter-less owner's item is reported UNKNOWN by the steward duty, not here)",
       "replaces": []
     },
     {
@@ -1638,7 +1638,7 @@
         3
       ],
       "resolver": "senses",
-      "covers": "an initiative owned by senses in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "covers": "an initiative owned by senses in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing or a check cannot be evaluated (a charter-less owner's item is reported UNKNOWN by the steward duty, not here)",
       "replaces": []
     },
     {
@@ -1663,7 +1663,7 @@
         3
       ],
       "resolver": "steward",
-      "covers": "an initiative owned by steward in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "covers": "an initiative owned by steward in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing or a check cannot be evaluated (a charter-less owner's item is reported UNKNOWN by the steward duty, not here)",
       "replaces": []
     },
     {
@@ -1771,7 +1771,7 @@
         3
       ],
       "resolver": "system1",
-      "covers": "an initiative owned by system1 in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "covers": "an initiative owned by system1 in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing or a check cannot be evaluated (a charter-less owner's item is reported UNKNOWN by the steward duty, not here)",
       "replaces": []
     },
     {
@@ -1796,7 +1796,7 @@
         3
       ],
       "resolver": "genome",
-      "covers": "an initiative owned by genome in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "covers": "an initiative owned by genome in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing or a check cannot be evaluated (a charter-less owner's item is reported UNKNOWN by the steward duty, not here)",
       "replaces": []
     },
     {
@@ -1821,7 +1821,7 @@
         3
       ],
       "resolver": "field-review",
-      "covers": "an initiative owned by field-review in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "covers": "an initiative owned by field-review in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing or a check cannot be evaluated (a charter-less owner's item is reported UNKNOWN by the steward duty, not here)",
       "replaces": []
     },
     {
@@ -1846,7 +1846,7 @@
         3
       ],
       "resolver": "pub",
-      "covers": "an initiative owned by pub in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "covers": "an initiative owned by pub in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing or a check cannot be evaluated (a charter-less owner's item is reported UNKNOWN by the steward duty, not here)",
       "replaces": []
     },
     {
@@ -1871,7 +1871,7 @@
         3
       ],
       "resolver": "rust-plan",
-      "covers": "an initiative owned by rust-plan in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "covers": "an initiative owned by rust-plan in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing or a check cannot be evaluated (a charter-less owner's item is reported UNKNOWN by the steward duty, not here)",
       "replaces": []
     },
     {
