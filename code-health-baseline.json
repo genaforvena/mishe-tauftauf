@@ -1,0 +1,14 @@
+{
+  "doc": "Ratchet baselines for checks/code-health.py. Counts may only fall; never widen to pass a change.",
+  "lint": {
+    "F401": 171,
+    "F541": 24,
+    "F601": 1,
+    "F811": 38,
+    "F821": 8,
+    "F841": 33
+  },
+  "types": {
+    "errors": 304
+  }
+}

@@ -30,3 +30,16 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 mishe_tauftauf = ["seed_*.md"]
+
+# Code-health ratchets (checks/code-health.py).  Rules are the defect-finding set only
+# (syntax errors plus pyflakes); style rules are not a signal.
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["pytest-of-*", "analysis", "artifacts", "research", "experiments"]
+
+[tool.ruff.lint]
+select = ["E9", "F"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

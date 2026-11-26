@@ -183,4 +183,20 @@ jobs:
       # case where a dated note on the same line used to swallow a live
       # figure, so that gap stays closed.
       - run: python checks/pub-account-count-claims.py --self-test
-      - run: python -m pytest -q
+      # Code health is three ratchets against code-health-baseline.json (lint, types,
+      # coverage): a count may fall, never rise.  Pinned tool versions keep the counts
+      # reproducible; one interpreter measures them because mypy's count depends on it.
+      - name: Lint and type ratchets
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip install ruff==0.17.6 mypy==2.4.1 coverage==7.17.5
+          python checks/code-health.py --repo . --only lint --only types
+      - name: Tests (with the coverage ratchet)
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m coverage run --source=src -m pytest -q
+          python -m coverage json -o coverage.json
+          python checks/code-health.py --repo . --only coverage --coverage-json coverage.json
+      - name: Tests
+        if: matrix.python-version != '3.12'
+        run: python -m pytest -q
