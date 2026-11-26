@@ -699,7 +699,7 @@
       ],
       "every": 3600,
       "timeout": 60,
-      "max_age": 7200,
+      "max_age": 10800,
       "red_codes": [2],
       "unknown_codes": [3],
       "resolver": "genome",
