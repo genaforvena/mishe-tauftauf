@@ -815,6 +815,9 @@
       "every": 600,
       "timeout": 45,
       "max_age": 1800,
+      "unknown_codes": [
+        3
+      ],
       "resolver": "genome",
       "replaces": [],
       "covers": "the scheduler keeps the pending next-due timer instead of restarting it on every arm (commit 606330ad): pairs each of THIS plant's mishe-next-due timer starts in the last five minutes with a due handler run and is RED when more than 10 starts had none (156 starts against 1 run measured at release 4f0962ae, 2026-11-18 09:47Z); a neighbour plant sharing the user systemd manager is excluded by --home, and arm.py tags timer names with the site home so neither plant stops the other's timer; UNKNOWN when the journal is unreadable or no timer was started in the window, since next-due-armed owns whether a timer exists"
