@@ -122,7 +122,7 @@ is not mistaken for a quiet mind.
   over 6 earlier nights (28.1 to 41.1)` or `faster than usual` tells a reader whether the number is
   a bad night. One or two earlier nights are named instead of being called typical, and with none
   the line says `first night measured, no usual yet` rather than inventing a baseline.
-- `EXIT NODE`: each client's exit-node state from the `egress` duty's file with the file's age. A
+- `EXIT NODE`: each client's exit-node state from that client's `egress-<client>` duty file with the file's age. A
   client that is not GREEN gets an indented line with that duty's own first reason, cut to one
   line at a word boundary, for at most three clients, so an UNKNOWN or RED client says why it is
   not GREEN (for example "the client could not be reached: …"). When that client is still in the
