@@ -126,6 +126,19 @@ def decode_lossy(data):
     return data.decode("utf-8", errors="replace")
 
 
+def reviewable_text(raw):
+    """The reviewer's text for raw file bytes: UTF-8 text, or a marker for binary.
+
+    A binary entry (an image in a release) keeps its size and sha256 so the
+    reviewer still sees it changed, rather than failing the whole review.
+    """
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        import hashlib
+        return f"<binary, not UTF-8: {len(raw)} bytes, sha256 {hashlib.sha256(raw).hexdigest()}>\n"
+
+
 def is_utf8(data):
     """Whether ``data`` decode as UTF-8 — the form a review entry is read in.
 

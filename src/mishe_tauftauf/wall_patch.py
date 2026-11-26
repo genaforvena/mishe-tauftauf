@@ -20,8 +20,8 @@ import subprocess
 from . import consumer_fence
 from .argv_text import decode_argv
 from .patch_text import (decode_b64_text, decode_lossy, import_candidates, in_package,
-                         is_python, last_segment, module_file, source_parts, split_lines,
-                         split_lines_keepends)
+                         is_python, last_segment, module_file, reviewable_text, source_parts,
+                         split_lines, split_lines_keepends)
 from .git_base_text import committed_snapshot
 from .observations import validate_slug
 from .post_check import _save, _worker
@@ -749,11 +749,7 @@ def _reviewable_text(entry):
     """
     if not entry:
         return ""
-    raw = base64.b64decode(entry["bytes"])
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return f"<binary, not UTF-8: {len(raw)} bytes, sha256 {hashlib.sha256(raw).hexdigest()}>\n"
+    return reviewable_text(base64.b64decode(entry["bytes"]))
 
 
 def review(home, record):
