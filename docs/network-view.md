@@ -23,6 +23,8 @@ One JSON object per line, oldest first.
 | `wan_link` | only when `ok` is true and the default route's device was named: `{"device": str, "speed_mbps": int or null, "duplex": str or null, "carrier_up": int or null, "carrier_down": int or null}` from the router's own `/sys/class/net/<device>/{speed,duplex,carrier_up_count,carrier_down_count}`; the carrier counts are cumulative since boot, a field the kernel did not report is `null` (never zero), `null` when no device was named |
 | `router_load` | only when `ok` is true: `{"load_1m": float, "load_5m": float, "mem_available_mb": float}` from the router's `/proc/loadavg` and `MemAvailable`; `null` when the read carries neither a load nor free RAM |
 | `error` | only when `ok` is false: the failure text, or a `skipped: …` reason when the pass was held off over the router's self-limit (see `docs/network-router-monitoring.md`) |
+| `last_load` | only on a skipped row, and only when an earlier row carried a real `router_load`: that newest reading, copied as it was (same shape as `router_load`), so the window can still show the last load while the probe holds off |
+| `last_load_age_s` | only on a skipped row that carries `last_load`: whole seconds between that reading's `ts` and the skipped row's `ts` |
 
 Each client:
 
