@@ -27,6 +27,8 @@ Eight built-in signals are easy to misread from their names alone:
 - `repo-change` reports the newest commit on the checkout and each subscriber's delta. A failed read is UNKNOWN with its cause, never GREEN.
 - `disk-budget` is GREEN while the disks Mishe needs have room and what it owns is within its limits. It also reclaims unreferenced release worktrees when their tree is over its ceiling. An unreadable disk or size makes it UNKNOWN, never GREEN.
 
+A *trip* is the host guard's latch: a stop that holds Mishe's own units off until someone or something clears it. While a trip holds, the producer units skip their runs (their unit condition is "no trip file"), so the readings above go STALE or UNKNOWN and the window's HOST GUARD line names the trip. The *revive* service clears a trip only through the guard's own rearm, and only when its gates hold: the trip is at least ten minutes old, the guard's readiness gate has passed, and the same reason was not restored in the last three hours. A reason that keeps coming back is reported to a human, not restored in a loop. After a rearm, revive starts the producers the trip skipped, once, rather than leaving them to wait for their next timer.
+
 A *mind* is one agent that holds a role, such as Genome (which pushes `main`) or Docs (this book).
 A *wall* is a mind's shared status page. A *wake* is one turn of a mind, started only when something
 is owed to it, and it ends in a *yield*: the mind's recorded hand-back, with its result.
