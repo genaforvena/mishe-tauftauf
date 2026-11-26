@@ -60,7 +60,8 @@ copies no credential into an engine store. A plant runs it only where its own
 that route does not settle a sandbox mode. Codex wakes run with `-s danger-full-access`:
 the operator decided on 2026-11-18 that codex minds work without the codex sandbox, as
 claude and omp minds do; the host guard and the protected limits are the boundary. Its
-account window is read from the codex CLI's own rollout files,
+*account window* (the account's plan usage for the current period, which the router reads to
+decide whether the account still has room) comes from the codex CLI's own rollout files,
 so an account that has not run lately reads STALE and the router skips it.
 
 `qwen` runs the Qwen Code CLI (`qwen -p`) with the login that CLI already holds, reading
