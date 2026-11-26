@@ -1733,6 +1733,56 @@
       "replaces": []
     },
     {
+      "name": "initiatives-field-review",
+      "command": [
+        "{python}",
+        "{repo}/checks/initiatives.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}",
+        "--owner",
+        "field-review"
+      ],
+      "every": 900,
+      "timeout": 60,
+      "max_age": 2700,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "field-review",
+      "covers": "an initiative owned by field-review in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "replaces": []
+    },
+    {
+      "name": "initiatives-pub",
+      "command": [
+        "{python}",
+        "{repo}/checks/initiatives.py",
+        "--home",
+        "{home}",
+        "--repo",
+        "{repo}",
+        "--owner",
+        "pub"
+      ],
+      "every": 900,
+      "timeout": 60,
+      "max_age": 2700,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "pub",
+      "covers": "an initiative owned by pub in SITE/initiatives.json is past its due time and its acceptance check says not done; UNKNOWN when the register is missing, an owner has no charter, or a check cannot be evaluated",
+      "replaces": []
+    },
+    {
       "name": "initiatives-rust-plan",
       "command": [
         "{python}",
