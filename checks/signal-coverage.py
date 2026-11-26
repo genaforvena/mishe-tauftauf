@@ -215,7 +215,9 @@ def _attended(intervals: dict[str, list[tuple[float, float]]] | None,
 
 
 def _dispositioned(home: Path, repo: Path, name: str, now: float):
-    """The unexpired disposition record for signal ``name``, else None. An unreadable
+    """The unexpired disposition record for signal ``name``, else None. A role intentionally
+    absent (operator-parked, ``parked:<name>``) answers for its own signal too: its UNKNOWN is
+    by design, not an ignored reading (audio-hint-livingroom, DM #300947). An unreadable
     store is None (the finding stays visible), never an implicit mute."""
     try:
         import sys
@@ -223,7 +225,8 @@ def _dispositioned(home: Path, repo: Path, name: str, now: float):
         if src not in sys.path:
             sys.path.insert(0, src)
         from mishe_tauftauf import dispositions
-        return dispositions.active(Path(home), name, now=now)
+        return (dispositions.active(Path(home), name, now=now)
+                or dispositions.active(Path(home), "parked:" + name, now=now))
     except Exception:  # noqa: BLE001 - a broken store must not hide a finding
         return None
 

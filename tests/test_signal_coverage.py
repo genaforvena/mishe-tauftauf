@@ -151,6 +151,20 @@ def test_unexpired_disposition_parks_an_ignored_reading(tmp_path, monkeypatch):
     assert any("dispositioned known by senses" in n for n in report["counts"]["notes"])
 
 
+def test_operator_parked_role_answers_its_own_ignored_signal(tmp_path, monkeypatch):
+    """A role intentionally absent (parked:<name>) is read back for its signal: a past-bound
+    UNKNOWN is a note, not an ignored cause (audio-hint-livingroom, DM #300947)."""
+    _clear_systemctl(monkeypatch)
+    from mishe_tauftauf import dispositions
+    home, sigdir = site(tmp_path, {"mic": {**register_entry(), "reoffer": 3600.0}})
+    observed(sigdir, "mic", value=None, state="UNKNOWN", at=NOW - 3 * MAX_AGE, seen=NOW - 60)
+    dispositions.park(home, "mic", "operator", "DM #300947 listener stays disabled",
+                      ttl=3600, now=NOW - 60)
+    code, report = mod.run(home, NOW, sigdir=sigdir)
+    assert not any("mic" in c for c in report["causes"])
+    assert any("dispositioned parked by operator" in n for n in report["counts"]["notes"])
+
+
 def test_expired_disposition_returns_the_ignored_finding(tmp_path, monkeypatch):
     _clear_systemctl(monkeypatch)
     from mishe_tauftauf import dispositions
