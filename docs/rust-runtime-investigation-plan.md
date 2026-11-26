@@ -339,6 +339,12 @@ The differential is the digest equality: a cached view that disagrees with the
 rebuilt tape is RED (`disagree`), and `tests/test_rust_measurement.py` pins that
 case with a stale-cache fixture. The 33 measurement tests pass.
 
+A `disagree` line also says `tape moved during the pair: True|False`, from the
+tape's inode, size and mtime read before and after the forced and live folds
+(commit a9a40c2c). `True` means the two views were read from different tape
+states, a sampling race rather than a cache fault; the verdict is still RED
+either way, so read the field before blaming the cache.
+
 What this settles: on a cache hit the role read costs about 0.1–0.2 CPU-s, so no
 Rust seam exists in the role read on that path. What it does not settle: how often
 a real wake misses the cache. The live reading is taken on a hit at this pin, and
