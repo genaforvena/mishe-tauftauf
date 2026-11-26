@@ -140,8 +140,10 @@ message names the sibling and the prefix to restore.
 ## 5. Start
 
 ```sh
-mishe hold off              # releases the hold and starts a wake for each role that is owed one, 150 s apart
+mishe hold off              # releases the hold and starts a wake for each role that is owed one
 ```
+
+It prints `running` once the hold is gone (`held` if the hold file is still there). A role that was already started less than 150 s earlier is not started again by this call.
 
 Owed means something happened that the role has not seen: a message, a signal that
 changed, a follow-up that came due. A fresh site starts with no reasons owed, so
