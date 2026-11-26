@@ -330,6 +330,11 @@ is not mistaken for a quiet mind.
   losing frames. STALE past 15 minutes.
 - `UNKNOWN`: the log has no reading, or the last read failed.
 - `STALE`: the last good reading is older than 15 minutes.
+- A too-old router uplink, VPN, Wi-Fi or router load reading says `newest <reading> reading is N min old`.
+  When the journal shows network producers skipped by their containment condition in that gap, it adds
+  `; N network producer run(s) were skipped by their containment condition`: the host was paused by a
+  containment trip, not a dead network. The reading stays UNKNOWN, never calm. With no skip in the gap it
+  says `no producer was skipped by a condition in that gap, so check the producer itself`.
 - Trends and weekday baselines are UNKNOWN until two days of comparable rows exist.
 
 ## Limits
