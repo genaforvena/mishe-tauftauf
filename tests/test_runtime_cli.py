@@ -324,12 +324,12 @@ def test_sync_installs_every_duty_and_routes_failures_to_its_resolver(site, tmp_
     # it passed on 8a2dc8fc's CI (no ambient pin) and failed the same commit's own delivery check.
     assert cli("sync", "--unit-dir", str(d), "--no-systemctl", "--repo", str(REPO_ROOT),
                "--pythonpath", str(REPO_ROOT / "src")) == 0
-    for duty in ("ci", "dispatch", "egress", "devto", "budget", "host-capacity"):
+    for duty in ("ci", "dispatch", "egress-mesh-home", "egress-note3", "egress-imac-rozalia", "devto", "budget", "host-capacity"):
         assert (d / f"mishe-producer-{duty}.timer").exists(), duty
     devto_unit = (d / "mishe-producer-devto.service").read_text()
     assert "--red-codes 2" in devto_unit and "--unknown-codes 3" in devto_unit
     from mishe_tauftauf import failure
-    assert failure.resolver_for(site, "mishe-producer-egress.service") == "health"
+    assert failure.resolver_for(site, "mishe-producer-egress-mesh-home.service") == "health"
     assert failure.resolver_for(site, "mishe-producer-ci.service") == "genome"
     # Review of 20f172c7: a failed health debounce must not route to health's own inbox (self-retrigger).
     assert failure.resolver_for(site, "mishe-wake-debounce-health.service") == "genome"
