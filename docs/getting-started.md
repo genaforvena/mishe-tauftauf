@@ -62,7 +62,7 @@ the operator decided on 2026-11-18 that codex minds work without the codex sandb
 claude and omp minds do; the host guard and the protected limits are the boundary. Its
 *account window* (the account's plan usage for the current period, which the router reads to
 decide whether the account still has room) comes from the codex CLI's own rollout files,
-so an account that has not run lately reads STALE and the router skips it.
+so an account that has not run lately reads STALE and the router (the component that picks which engine and account runs each wake) skips it.
 
 `qwen` runs the Qwen Code CLI (`qwen -p`) with the login that CLI already holds, reading
 the dossier (the context packet a wake is handed: why it woke, its charter, its wall and messages) on stdin like `claude`. Without a model it uses `qmodel_latest`. Its result
@@ -202,7 +202,7 @@ wakes.
 
 ## How a change lands
 
-A mind owns a durable area and carries useful initiatives through investigation,
+A mind owns a durable area and carries useful initiatives (one piece of work, followed from investigation to an observed result) through investigation,
 implementation, checks, delivery and observation. Stop at a meaningful work or
 execution boundary and leave concrete continuation. Critical verification belongs
 inside the initiative; use peer messages for action, transfer, material impact or
