@@ -47,6 +47,7 @@ SHIFT_DAYS = [d for d in range(-12, 13) if d != 0]   # 24 shifts: smallest possi
 AUC_MIN, P_MAX, LEAD_MIN = 0.60, 0.05, 0.03
 STALE_S = 6 * 3600     # newest RSSI row older than this: the log stopped, say so
 FEATURES = ("rssi_std", "rssi_step", "level_dev")
+MIN_HOUR_POS, MIN_HOUR_NEG = 3, 5   # per hour-of-day stratum: active and calm buckets needed
 
 
 def read_log(path, first_epoch):
@@ -144,6 +145,32 @@ def score(feats, label, shift_s=0):
     return {f: auc(pos[f], neg[f]) for f in FEATURES}, n_pos, n_neg
 
 
+def stratified(feats, label, shift_s=0):
+    """Mean over hours of day (UTC) of the per-hour AUC, so the daily rhythm cannot carry the score.
+
+    A stratum counts only with MIN_HOUR_POS active and MIN_HOUR_NEG calm buckets; the result says how many
+    hours were used. Shifting by whole days keeps each bucket's hour, so the day-shift null is the right one.
+    Limit: a rhythm that starts inside an hour leaks into its boundary hours; hour strata cannot remove it.
+    """
+    pos = {h: {f: [] for f in FEATURES} for h in range(24)}
+    neg = {h: {f: [] for f in FEATURES} for h in range(24)}
+    for t, active in label.items():
+        row = feats.get(t - shift_s)
+        if row is None:
+            continue
+        hour = (t // 3600) % 24
+        for f in FEATURES:
+            (pos if active else neg)[hour][f].append(row[f])
+    out = {f: [] for f in FEATURES}
+    for h in range(24):
+        if len(pos[h][FEATURES[0]]) < MIN_HOUR_POS or len(neg[h][FEATURES[0]]) < MIN_HOUR_NEG:
+            continue
+        for f in FEATURES:
+            out[f].append(auc(pos[h][f], neg[h][f]))
+    used = len(out[FEATURES[0]])
+    return used, {f: (sum(v) / used if used else None) for f, v in out.items()}
+
+
 def study(feats, label):
     obs, n_pos, n_neg = score(feats, label)
     if n_pos + n_neg < MIN_JOINED or n_pos < MIN_ACTIVE:
@@ -159,10 +186,23 @@ def study(feats, label):
     best = max(("rssi_std", "rssi_step"), key=lambda f: obs[f])
     lead = obs[best] - obs["level_dev"]
     sig = obs[best] >= AUC_MIN and p[best] <= P_MAX and lead >= LEAD_MIN
+    hours, s_obs = stratified(feats, label)
+    s_nulls = {f: [] for f in FEATURES}
+    for d in SHIFT_DAYS:
+        _, s_res = stratified(feats, label, d * 86400)
+        for f in FEATURES:
+            if s_res[f] is not None:
+                s_nulls[f].append(s_res[f])
+    s_p = {f: round((1 + sum(1 for x in s_nulls[f] if x >= s_obs[f])) / (1 + len(s_nulls[f])), 3)
+           if s_obs[f] is not None else None for f in FEATURES}
     return {"state": "SIGNAL" if sig else "NO_SIGNAL", "joined": n_pos + n_neg, "active": n_pos,
             "auc": {f: round(obs[f], 3) for f in FEATURES}, "p_shift_null": p,
             "null_auc_median": {f: round(sorted(nulls[f])[len(nulls[f]) // 2], 3) for f in FEATURES},
-            "best_variance_feature": best, "lead_over_level": round(lead, 3)}
+            "best_variance_feature": best, "lead_over_level": round(lead, 3),
+            "stratified_by_hour": {"hours_used": hours,
+                                   "auc": {f: round(s_obs[f], 3) if s_obs[f] is not None else None for f in FEATURES},
+                                   "p_shift_null": s_p,
+                                   "note": "mean over UTC hours of day of per-hour AUC; verdict above is unchanged"}}
 
 
 def run(site, log, now):

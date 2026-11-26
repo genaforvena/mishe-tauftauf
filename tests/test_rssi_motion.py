@@ -125,3 +125,28 @@ def test_main_writes_file_and_exit_code(tmp_path, capsys):
         T0 + 10 * DAY + 60, rm.rt.datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")])
     assert code == 0 and (site / "senses/map/rssi-motion.json").exists()
     assert capsys.readouterr().out.startswith("rssi-motion: ")
+
+
+def test_stratified_by_hour_sees_planted_jitter_and_drops_the_clock_only_rhythm():
+    f, lab = make(18, planted=True)
+    hours, s = rm.stratified(f, lab)
+    assert hours >= 2 and s["rssi_std"] > 0.6
+    # whole-hour rhythm: hour strata remove it. A rhythm that starts mid-hour leaks into the boundary hours
+    # (the stratified score is per hour, so it cannot separate buckets within one hour); see stratified().
+    rng = random.Random(3)
+    feats, label = {}, {}
+    for i in range(18 * 96):
+        t = T0 + i * rm.BUCKET_S
+        busy = (i % 96) in range(32, 64)
+        step = (2.5 if busy else 1.0) + rng.random()
+        feats[t] = {"rssi_std": step, "rssi_step": step, "level_dev": rng.random(), "phone_acc_std": None}
+        label[t] = busy and rng.random() < 0.9
+    _, s_rhythm = rm.stratified(feats, label)
+    assert s_rhythm["rssi_std"] < 0.6
+
+
+def test_stratified_skips_thin_hours_and_reports_none_when_no_hour_qualifies():
+    f, lab = make(1, planted=True)
+    hours, s = rm.stratified(f, lab)
+    assert hours <= 24 and all((v is None) == (hours == 0) or hours > 0 for v in s.values())
+    assert rm.stratified({}, {})[0] == 0 and rm.stratified({}, {})[1]["rssi_std"] is None
