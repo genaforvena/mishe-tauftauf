@@ -3544,7 +3544,7 @@ Three duplications are live and ranked for deletion:
 |---|---|---|---|
 | 1 | `feed.py:24` `FRAME_START_RE`; frame-index scans at `:1067`, `:1418`, `:1465` | `feed.py:415` `_frame_offsets` → `mishe-tape frames --offsets` | one decision, three sites within one module |
 | 2 | `records.py:31,144-187,203-302` Python envelope/payload/kind verifier; `outcome_events.py:204` calls `records.envelope(entry)` for a kind the child already wrote to `facts.kind` | `mishe-records verify` decision line (`records 0.4`) | one classifier call, but a protocol/durable boundary |
-| 3 | eight `systemctl show` `KEY=VALUE` decoders: `release_boundary.py:54`, `work_boundary.py:136-167`, `consumer_fence.py:34`, `boot_rearm.py:90`, `discovery.py:1846/1958/2024` | `mishe-systemd-show` | eight modules; do last |
+| 3 | eight `systemctl show` `KEY=VALUE` decoders: `release_boundary.py:54`, `work_boundary.py` (`unit_recovery_properties` batch decoder, `unit_last_exit`, `unit_active_since`, `unit_properties`, `failure_signature`; 8778e23f, 2026-11-26, added `unit_recovery_properties`: one `systemctl show` for the whole recovery sweep, still a Python `KEY=VALUE` split, so it stays in this rank-3 debt), `consumer_fence.py:34`, `boot_rearm.py:90`, `discovery.py:1846/1958/2024` | `mishe-systemd-show` | eight modules; do last |
 
 Decision: rank 1 is the next slice, subject to one measurement — confirm
 `_frame_offsets` can produce the same index bytes for a whole-tape read without a
