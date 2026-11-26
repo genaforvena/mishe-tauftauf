@@ -7667,6 +7667,14 @@ def _no_trace(_event: str) -> None:
     return None
 
 
+def _stack_dump_fired(stack_path: Path) -> bool:
+    """True when the scan's faulthandler dump wrote anything (the scan crossed its dump threshold)."""
+    try:
+        return stack_path.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def _scan_trace(path: Path, started: float, event: str) -> None:
     """Append one timestamped stage line. Each line is opened and closed, so a SIGKILLed scan keeps every
     stage it reached; the epoch column lines up with the producer's journal `start=` to split pre-scan from in-scan time."""
@@ -7747,7 +7755,10 @@ def scan(home: Path) -> Path:
         _notify_scan(home, snapshot, previous, artifact)
         attempt["status"] = "succeeded"
         _write_attempt(home, attempt)
-        trace_path.unlink(missing_ok=True)
+        # A clean run removes its trace, unless the stack dump fired (the scan crossed the dump
+        # threshold and then finished): that trace is the only stage evidence of the slow run.
+        if not _stack_dump_fired(stack_path):
+            trace_path.unlink(missing_ok=True)
     except Exception as error:
         trace(f"failed {type(error).__name__} at {attempt.get('stage')}")
         attempt.update(status="failed", error=f"{type(error).__name__}: {error}")

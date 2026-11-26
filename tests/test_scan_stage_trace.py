@@ -81,3 +81,23 @@ def test_killed_scan_keeps_the_last_stage_it_reached(tmp_path: Path) -> None:
     text = traces[0].read_text(encoding="utf-8")
     assert "sample:start" in text
     assert "sample:done" not in text and "succeeded" not in text
+
+
+def test_slow_clean_scan_keeps_trace_when_its_stack_dump_fired(tmp_path: Path) -> None:
+    # A scan that crosses its dump threshold and then finishes must keep its stage trace:
+    # the trace (with the stack dump) is the only evidence of where a slow run spent its time.
+    value = {"created": "2026-01-01T00:00:00Z", "node": "node", "observations": []}
+
+    def slow_sample(home, trace=None):
+        time.sleep(0.5)
+        return value
+
+    with patch("mishe_tauftauf.discovery.SCAN_STACK_DUMP_S", 0.1), \
+            patch("mishe_tauftauf.discovery.sample", side_effect=slow_sample):
+        scan(tmp_path)
+    traces = _traces(tmp_path)
+    assert len(traces) == 1
+    text = traces[0].read_text(encoding="utf-8")
+    assert "sample:start" in text and "sample:done" in text and "publication" in text
+    stacks = sorted((tmp_path / "signals").glob("readings-scan-stack-*.txt"))
+    assert len(stacks) == 1 and "Timeout" in stacks[0].read_text(encoding="utf-8")
