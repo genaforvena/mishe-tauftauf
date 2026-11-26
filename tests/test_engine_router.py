@@ -1052,6 +1052,15 @@ def test_a_paced_candidate_waits_when_ahead_of_pace_and_an_important_lane_still_
     assert router._eligible("docs", dict(terra, pace=True), ahead, NOW_MS)[0] is True
 
 
+def test_a_paced_candidate_holds_when_the_weekly_reading_is_absent():
+    short_only = paced_account(remaining=0.20, left_fraction=0.43, duration_ms=5 * 3600 * 1000)
+    st = status(**{"codex-a": short_only})    # 5h window only, as a fresh rollout can report it
+    terra = {"engine": "codex", "model": "gpt-6.1-terra", "account": "codex-a"}
+    ok, reason = router._eligible("docs", dict(terra, pace=True), st, NOW_MS)
+    assert ok is False and "weekly reading absent" in reason
+    assert router._eligible("docs", dict(terra), st, NOW_MS)[0] is True
+
+
 @pytest.mark.parametrize(
     ("weekly_remaining", "weekly_state", "expected"),
     [

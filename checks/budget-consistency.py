@@ -60,6 +60,7 @@ PACED_ROUTING_EXPECTED = {
     "behind-pace": "claude",
     "unpaced": "codex",
     "ahead-of-pace": "codex",
+    "weekly-absent": "claude",
 }
 
 
@@ -237,6 +238,7 @@ def exercise_pacing(site, clock):
         "behind-pace": [True, 0.18],
         "unpaced": [False, 0.18],
         "ahead-of-pace": [True, 0.60],
+        "weekly-absent": [True, None],
     }
     write_json(site / "engine" / "routes.json", {"version": 1, "roles": {
         case: [dict(codex, pace=paced), paid] for case, (paced, _) in cases.items()
@@ -244,10 +246,9 @@ def exercise_pacing(site, clock):
     routes = engine_router.load_routes(site)["roles"]
     choices = {}
     for case, (_, weekly_remaining) in cases.items():
-        windows = {
-            "5h": {"remaining": 0.20, "reset_at": clock + 3600},
-            "7d": {"remaining": weekly_remaining, "reset_at": clock + 3 * 86400},
-        }
+        windows = {"5h": {"remaining": 0.20, "reset_at": clock + 3600}}
+        if weekly_remaining is not None:
+            windows["7d"] = {"remaining": weekly_remaining, "reset_at": clock + 3 * 86400}
         write_json(site / "engine" / "budget.json", {"schema": 1, "produced_at": clock, "accounts": {
             "codex-a": {"provider": "openai-codex", "state": "FRESH", "windows": {
                 name: dict(window, observed_at=clock, state="FRESH") for name, window in windows.items()

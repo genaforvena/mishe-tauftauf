@@ -322,7 +322,12 @@ def _eligible(role: str, cand: dict, status, now_ms) -> tuple[bool, str]:
     if result.get("decision") != "select":
         return False, f"{alias} {result.get('decision')}: {result.get('reason')}"
     if cand.get("pace") is True:
-        for window in row.get("windows") or []:
+        # A paced route needs the weekly reading itself. A provider row with only a short window
+        # (no long window to pace) must not fall through as if the week were unpaced.
+        windows = row.get("windows") or []
+        if not any(_is_num(w.get("duration_ms")) and w["duration_ms"] >= PACE_MIN_WINDOW_MS for w in windows):
+            return False, f"{alias} weekly reading absent: paced route holds without it"
+        for window in windows:
             floor = pace_floor(window, now_ms)
             remaining = window.get("remaining_fraction")
             if floor > 0 and _is_num(remaining) and remaining <= floor:
