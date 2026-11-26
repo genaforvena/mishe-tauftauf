@@ -41,11 +41,28 @@ def _span(seconds: float) -> str:
     return f"{seconds / 3600:.1f} h" if seconds >= 3600 else f"{seconds / 60:.0f} min"
 
 
-def evaluate(repo: Path, now: float, max_age: float = MAX_AGE_S, remote: str = "origin") -> tuple[int, list[str]]:
+REMOTE_ATTEMPTS = 3
+"""A single dropped TLS handshake (2026-11-26 16:58Z: gnutls 'non-properly terminated') read as exit 3 and
+turned the producer RED for a network blip. The remote read is retried a few times before the answer is UNKNOWN."""
+
+
+def read_remote_main(repo: Path, remote: str, attempts: int = REMOTE_ATTEMPTS, pause: float = 2.0) -> tuple[int, str]:
+    code, out = 127, ""
+    for attempt in range(attempts):
+        code, out = git(repo, "ls-remote", remote, "refs/heads/main")
+        if code == 0 and out:
+            break
+        if attempt + 1 < attempts and pause:
+            time.sleep(pause)
+    return code, out
+
+
+def evaluate(repo: Path, now: float, max_age: float = MAX_AGE_S, remote: str = "origin",
+             attempts: int = REMOTE_ATTEMPTS, pause: float = 2.0) -> tuple[int, list[str]]:
     code, head = git(repo, "rev-parse", "HEAD")
     if code != 0:
         return 3, [f"cannot read local HEAD: {head[:120]}"]
-    code, out = git(repo, "ls-remote", remote, "refs/heads/main")
+    code, out = read_remote_main(repo, remote, attempts, pause)
     if code != 0 or not out:
         return 3, [f"cannot read {remote}/main: {out[:160] or 'no such ref'}"]
     theirs = out.split()[0]

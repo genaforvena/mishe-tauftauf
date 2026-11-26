@@ -86,3 +86,36 @@ def test_cli_exit_code(tmp_path):
     done = subprocess.run([sys.executable, str(REPO / 'checks/push-lag.py'), '--repo', str(work), '--max-age-hours', '0.0001'],
                           capture_output=True, text=True)
     assert done.returncode == 2 and 'unpushed' in done.stdout
+
+
+def test_a_transient_remote_read_failure_is_retried_not_undecidable(tmp_path, monkeypatch):
+    _, work = clone_with_remote(tmp_path)
+    real_git = lag.git
+    calls = []
+
+    def flaky(repo, *args, timeout=45.0):
+        if args[:1] == ('ls-remote',):
+            calls.append(args)
+            if len(calls) == 1:
+                return 128, "gnutls_handshake() failed: The TLS connection was non-properly terminated."
+        return real_git(repo, *args, timeout=timeout)
+
+    monkeypatch.setattr(lag, 'git', flaky)
+    code, lines = lag.evaluate(work, T0, pause=0)
+    assert code == 0 and 'has HEAD' in lines[0] and len(calls) == 2
+
+
+def test_a_persistent_remote_read_failure_is_still_undecidable(tmp_path, monkeypatch):
+    _, work = clone_with_remote(tmp_path)
+    real_git = lag.git
+    calls = []
+
+    def down(repo, *args, timeout=45.0):
+        if args[:1] == ('ls-remote',):
+            calls.append(args)
+            return 128, "unable to access"
+        return real_git(repo, *args, timeout=timeout)
+
+    monkeypatch.setattr(lag, 'git', down)
+    code, lines = lag.evaluate(work, T0, attempts=3, pause=0)
+    assert code == 3 and 'cannot read origin/main' in lines[0] and len(calls) == 3
