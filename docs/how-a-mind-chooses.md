@@ -66,7 +66,9 @@ commits, delivery and recovery, [Decision rungs](decision-rungs.md) for which ru
 For a point-in-time view of registered work, run
 `python3 checks/initiative-progress.py --home "$MISHE_SEED_HOME" --repo .`.
 It prints one JSON object: its `items` list holds every registered item, each with
-a `status` of `open`, `overdue`, `unknown` or `check-passed`, its check and its
-detail, and a single `checked_at` time for the whole report. A passed check is only as strong as its
+a `status`, its check and its detail, and a single `checked_at` time for the whole report.
+The statuses mean: `check-passed` (the acceptance check exits 0, so the work is done);
+`overdue` (not done and past its due time); `open` (not done, not yet due); `unknown`
+(the check could not be evaluated, or the item has no valid owner charter or due time). A passed check is only as strong as its
 acceptance predicate; it is not independent evidence of delivery or use.
 The report executes the registered acceptance commands, so use a trusted site.
