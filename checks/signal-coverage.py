@@ -86,6 +86,25 @@ def _ran_at(sigdir: Path, name: str) -> float | None:
         return None
 
 
+GATE_SKIP_MARK = "unmet condition check"
+
+
+def _gate_skips(name: str, since: float, now: float) -> int | None:
+    """How many times the user unit mishe-producer-<name> was skipped by its containment condition
+    (ConditionPathExists=!/var/lib/mishe-containment/tripped) in (since, now], from the user journal.
+    None when the journal cannot be read: the caller then keeps the plain missed-cadence text."""
+    try:
+        r = subprocess.run(["journalctl", "--user", "--no-pager", "-o", "cat",
+                            "--since", f"@{int(since)}", "--until", f"@{int(now) + 1}"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    unit = f"mishe-producer-{name}."   # the dot keeps 'devto' from matching 'devto-article-duplication'
+    return sum(1 for line in r.stdout.splitlines() if unit in line and GATE_SKIP_MARK in line)
+
+
 def _failing_units(now: float) -> tuple[list[str], str | None]:
     """Failed mishe-producer-* user units, or (names, note) when systemctl cannot answer."""
     binary = os.environ.get("MISHE_SYSTEMCTL_BIN", "systemctl")
@@ -311,8 +330,18 @@ def run(home: Path, now: float, *, repo: Path | None = None,
         beat = max((t for t in (seen, _ran_at(sigdir, name)) if t is not None), default=None)
         if beat is not None and now - beat > max_age:
             counts["stale"] += 1
+            skips = _gate_skips(name, beat, now)
+            if skips:
+                # A containment-gate skip is the trip's evidence, not a producer that forgot its
+                # cadence: still RED (the reading is not fresh), but the cause says which it is.
+                why = (f"{skips} run(s) skipped by the containment condition in that gap "
+                       "(a trip, not a dead producer; RED until the next run)")
+            elif skips is None:
+                why = "producer missed cadence (journal unreadable, skips unknown)"
+            else:
+                why = "producer missed cadence"
             causes.append(f"stale: {name} freshness stamp {(now - beat) / 60:.0f} min old "
-                          f"(max_age {max_age / 60:.0f} min) — producer missed cadence")
+                          f"(max_age {max_age / 60:.0f} min) — {why}")
             identities.append(f"stale:{name}")
             continue
         if name == SELF:

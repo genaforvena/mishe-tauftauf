@@ -583,3 +583,32 @@ def test_producer_reads_the_declared_event_and_keeps_it_out_of_the_reason(tmp_pa
     assert signal_store.observe(home, "gamma", "RED", now=NOW, source="t", event="e1", reason="r")
     assert not signal_store.observe(home, "gamma", "RED", now=NOW, source="t", event="e1", reason="r")
     assert signal_store.observe(home, "gamma", "RED", now=NOW, source="t", event="e2", reason="r")
+
+
+def test_gate_skips_count_only_the_named_producer(monkeypatch):
+    # A stale producer's gap is a containment skip when its own unit was skipped by the condition gate.
+    # 'devto' must not absorb 'devto-article-duplication' skips (the unit dot keeps names apart).
+    journal = "\n".join([
+        "mishe-producer-devto-article-duplication.service - Mishe producer devto-article-duplication was skipped because of an unmet condition check (ConditionPathExists=!/var/lib/mishe-containment/tripped).",
+        "mishe-producer-devto.service - Mishe producer devto was skipped because of an unmet condition check (ConditionPathExists=!/var/lib/mishe-containment/tripped).",
+        "mishe-producer-signal-coverage.service - Mishe producer signal-coverage was skipped because of an unmet condition check (ConditionPathExists=!/var/lib/mishe-containment/tripped).",
+        "mishe-producer-signal-coverage.service - Mishe producer signal-coverage started.",
+    ])
+
+    class Done:
+        returncode = 0
+        stdout = journal
+
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: Done())
+    assert mod._gate_skips("devto", 0, 10) == 1
+    assert mod._gate_skips("signal-coverage", 0, 10) == 1
+    assert mod._gate_skips("observer-checks", 0, 10) == 0
+
+
+def test_gate_skips_unreadable_journal_is_unknown(monkeypatch):
+    class Failed:
+        returncode = 1
+        stdout = ""
+
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: Failed())
+    assert mod._gate_skips("devto", 0, 10) is None
