@@ -117,7 +117,9 @@ def _capture_mac(out: Path, host: str) -> None:
             if run.returncode == 255:  # ssh's own failure code: no connection to the Mac
                 raise DeviceUnreachable("ssh exited 255")
             if run.returncode != 0:
-                raise RuntimeError(f"remote capture failed rc={run.returncode}")
+                # Keep the Mac's own stderr tail: an rc alone cannot tell a swiftc error from a camera refusal.
+                tail = " | ".join((run.stderr or "").strip().splitlines()[-3:])[-300:]
+                raise RuntimeError(f"remote capture failed rc={run.returncode}" + (f": {tail}" if tail else ""))
             subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{host}:{remote}.jpg", str(out)],
                            check=True, timeout=60)
         except subprocess.SubprocessError as exc:

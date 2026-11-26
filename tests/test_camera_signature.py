@@ -217,6 +217,19 @@ def test_remote_capture_failure_is_not_unreachable(monkeypatch):
     assert out["status"] == "unavailable" and "reason_code" not in out
 
 
+def test_remote_capture_failure_reason_keeps_the_mac_stderr(monkeypatch):
+    # 2026-11-26: rc=2 with no stderr in the reason left the RED unit undiagnosable; the tail must survive.
+    monkeypatch.setattr(cam.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    def remote_fails(args, **kwargs):
+        return subprocess.CompletedProcess(args, 2, "", "a\nb\nerror: camera busy\n")
+
+    monkeypatch.setattr(cam.subprocess, "run", remote_fails)
+    out = cam.run("mac", "ilya@192.168.8.214", "", None)
+    assert out["status"] == "unavailable" and "reason_code" not in out
+    assert "remote capture failed rc=2" in out["reason"] and "error: camera busy" in out["reason"]
+
+
 def test_fswebcam_busy_on_every_attempt_is_device_busy_not_a_crash(tmp_path, monkeypatch):
     """Observed 2026-11-08/09: every bounded attempt finds the V4L2 input held; that is missing input, not a failed capture."""
     attempts = []
