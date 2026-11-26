@@ -41,6 +41,7 @@ RED when some role has no working candidate.
 import argparse
 import fcntl
 import json
+import math
 import os
 import time
 from contextlib import contextmanager
@@ -285,23 +286,15 @@ PACE_MIN_WINDOW_MS = 24 * 3600 * 1000
 """Only windows of a day or longer are paced: a short window refills before pacing could matter."""
 
 
-def pace_floor(row: dict, now_ms: float) -> float:
-    """Pure: the largest share of any long window that is still ahead in time, in [0, 1].
-
-    A window that has 36% of its time left should keep at least 36% of its quota for a candidate
-    that is paced; at 18% remaining that candidate is not admitted, an unpaced one still is.
-    A window without a duration or a future reset contributes nothing.
-    """
-    floor = 0.0
-    for w in row.get("windows") or []:
-        duration = w.get("duration_ms")
-        reset = policy._parse_reset(w.get("reset_at"))
-        if not isinstance(duration, (int, float)) or duration < PACE_MIN_WINDOW_MS or reset is None:
-            continue
-        left = (reset - now_ms) / duration
-        if left > 0:
-            floor = max(floor, min(left, 1.0))
-    return floor
+def pace_floor(window: dict, now_ms: float) -> float:
+    """Share of a long window still ahead in time, or zero when it cannot be paced."""
+    duration = window.get("duration_ms")
+    if not _is_num(duration) or duration < PACE_MIN_WINDOW_MS:
+        return 0.0
+    reset = policy._parse_reset(window.get("reset_at"))
+    if reset is None:
+        return 0.0
+    return max(0.0, min((reset - now_ms) / duration, 1.0))
 
 
 def _eligible(role: str, cand: dict, status, now_ms) -> tuple[bool, str]:
@@ -324,18 +317,21 @@ def _eligible(role: str, cand: dict, status, now_ms) -> tuple[bool, str]:
     # reserve_pct: the share of a window kept back from routing. Unset keeps the policy default (0.15); an owner
     # who has decided to spend a subscription closer to its limit sets it per candidate in routes.json.
     reserve = {"reserve_pct": cand["reserve_pct"]} if cand.get("reserve_pct") is not None else {}
-    if cand.get("pace") is True:
-        # A paced candidate (a lane that is not important) may only spend a long window no faster than time
-        # passes, so the share an important lane needs at the end of the window is not burned early.
-        floor = pace_floor(row, now_ms)
-        base = float(reserve.get("reserve_pct", 0.15))
-        if floor > base:
-            reserve = {"reserve_pct": floor}
     result = policy.decide(role=role, status=status, allowlist={role: [route]},
                            current_route=None, now_ms=now_ms, reservations=None, **reserve)
-    if result.get("decision") == "select":
-        return True, result.get("reason") or f"{alias} healthy"
-    return False, f"{alias} {result.get('decision')}: {result.get('reason')}"
+    if result.get("decision") != "select":
+        return False, f"{alias} {result.get('decision')}: {result.get('reason')}"
+    if cand.get("pace") is True:
+        for window in row.get("windows") or []:
+            floor = pace_floor(window, now_ms)
+            remaining = window.get("remaining_fraction")
+            if floor > 0 and _is_num(remaining) and remaining <= floor:
+                name = window.get("limit") or window.get("window") or "window"
+                return False, (
+                    f"{alias} {name} pace: {remaining:.1%} quota remaining, "
+                    f"{floor:.1%} of window left"
+                )
+    return True, result.get("reason") or f"{alias} healthy"
 
 
 def choose(role: str, candidates: list, status, cooling: dict, now_ms: float,
@@ -474,7 +470,7 @@ def ranked_candidates(home, role: str, routes: dict, *, now_ms: float) -> list:
 
 
 def _is_num(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _budget_windows(windows, now) -> tuple[list, list]:
@@ -482,7 +478,8 @@ def _budget_windows(windows, now) -> tuple[list, list]:
 
     The file keys its windows by label (``5h``, ``7d``) and stores ``remaining`` and an
     epoch ``reset_at``; the policy iterates window rows with ``remaining_fraction`` and an
-    ISO ``reset_at``. A window missing either number is left out rather than guessed at.
+    ISO ``reset_at``. Known fixed-length labels also carry their duration for pacing.
+    A window missing either number is left out rather than guessed at.
     A window the file labels FRESH is re-aged here against ``now``: the producer's label is
     only true at production time, so a window that has since outlived MAX_AGE_S or reset is STALE.
     Returns ``(rows, malformed)``: the names of dropped windows are reported so the account cannot
@@ -499,8 +496,10 @@ def _budget_windows(windows, now) -> tuple[list, list]:
             state = w.get("state")
             if state == "FRESH" and not budget_producer.window_fresh_at(w.get("observed_at"), reset_at, now):
                 state = "STALE"
+            duration_s = budget_producer.WINDOW_DURATION_S.get(name)
             rows.append({"window": name, "limit": name, "remaining_fraction": float(remaining),
-                         "reset_at": _iso(reset_at * 1000), "provider_status": None, "state": state})
+                         "reset_at": _iso(reset_at * 1000), "provider_status": None, "state": state,
+                         "duration_ms": duration_s * 1000 if duration_s is not None else None})
         else:
             malformed.append(name)
     return rows, malformed

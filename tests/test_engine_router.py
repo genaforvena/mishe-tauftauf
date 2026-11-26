@@ -1035,10 +1035,12 @@ def paced_account(remaining, left_fraction, duration_ms=7 * DAY_MS):
 
 
 def test_pace_floor_is_the_time_share_left_in_long_windows_only():
-    assert router.pace_floor(paced_account(0.5, 0.36), NOW_MS) == pytest.approx(0.36, abs=1e-3)
-    assert router.pace_floor(paced_account(0.5, 0.36, duration_ms=5 * 3600 * 1000), NOW_MS) == 0.0   # 5h: not paced
-    assert router.pace_floor({"windows": [{"reset_at": RESET}]}, NOW_MS) == 0.0                       # no duration
-    assert router.pace_floor({"windows": []}, NOW_MS) == 0.0
+    weekly = paced_account(0.5, 0.36)["windows"][0]
+    short = paced_account(0.5, 0.36, duration_ms=5 * 3600 * 1000)["windows"][0]
+    assert router.pace_floor(weekly, NOW_MS) == pytest.approx(0.36, abs=1e-3)
+    assert router.pace_floor(short, NOW_MS) == 0.0
+    assert router.pace_floor({"reset_at": RESET}, NOW_MS) == 0.0
+    assert router.pace_floor(dict(weekly, reset_at=router._iso(NOW_MS)), NOW_MS) == 0.0
 
 
 def test_a_paced_candidate_waits_when_ahead_of_pace_and_an_important_lane_still_runs():
@@ -1048,6 +1050,32 @@ def test_a_paced_candidate_waits_when_ahead_of_pace_and_an_important_lane_still_
     assert router._eligible("steward", dict(SOL, reserve_pct=0.05), st, NOW_MS)[0] is True
     ahead = status(**{"codex-a": paced_account(remaining=0.60, left_fraction=0.36)})
     assert router._eligible("docs", dict(terra, pace=True), ahead, NOW_MS)[0] is True
+
+
+@pytest.mark.parametrize(
+    ("weekly_remaining", "weekly_state", "expected"),
+    [
+        (0.18, "FRESH", HAIKU),
+        (0.60, "FRESH", SOL),
+        (0.60, "STALE", HAIKU),
+        (float("nan"), "FRESH", HAIKU),
+    ],
+)
+def test_pacing_reads_budget_file_and_applies_only_to_long_windows(
+    tmp_path, weekly_remaining, weekly_state, expected
+):
+    # The short window exceeds its normal reserve but is below the weekly pace floor.
+    budget_file(tmp_path, {"codex-a": {
+        "provider": "openai-codex", "state": "FRESH",
+        "windows": {"5h": budget_window(0.20), "7d": budget_window(
+            weekly_remaining, reset_in_s=3 * 86400, state=weekly_state
+        )},
+    }})
+    routes_file(tmp_path, {"docs": [dict(SOL, pace=True), HAIKU]})
+    routes = router.load_routes(tmp_path)["roles"]
+    live = router.live_status(tmp_path)
+    decision = router.choose("docs", routes["docs"], live, {}, time.time() * 1000)
+    assert decision["key"] == router.candidate_key(expected)
 
 
 def test_pace_is_validated_and_kept_by_load_routes(tmp_path):

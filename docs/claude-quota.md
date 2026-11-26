@@ -99,10 +99,12 @@ Status: no code applies a 50% gate, and the router does not read the policy.
   provided its other window and route checks pass. With 4% remaining, that
   candidate is held in reserve. The routing ledger's “all windows healthy” reason
   describes the candidate's reserve check.
-- A candidate with `"pace": true` also keeps back the share of each window of a day or longer that is still
-  ahead in time: at 36% of a 7-day window left, it needs more than 36% of the quota remaining. Mark the
-  candidates of lanes that are not important with it; an important lane's candidate (for example
-  `gpt-6.2-sol` with `reserve_pct` 0.05) is not paced, so the end of the window stays for it.
+- A candidate with `"pace": true` needs more quota remaining than the share of each known
+  fixed-length window of a day or longer that is still ahead in time. With 36% of its 7-day
+  window left, it needs more than 36% of that quota remaining. The 5-hour window keeps its
+  usual reserve. Priority candidates can use the weekly reserve with an unpaced route, such
+  as `gpt-6.2-sol` with `reserve_pct` 0.05. The `budget-consistency` duty probes the pinned
+  router every five minutes and alerts Steward if this selection rule fails.
 - A role can use `budget-claude` to admit spontaneous intentions. The owed check
   (`owed.py`: is there an unread message, a moved signal or a due intention for
   this role?) also accepts fresh free-route evidence from the plant's budget snapshot, but only

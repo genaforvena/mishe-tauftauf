@@ -229,16 +229,30 @@ def test_detector_judges_the_pinned_bytes_not_the_checkout(tmp_path: Path):
     assert code == bc.GREEN, result
     assert result["admission"]["scheduler_file"].startswith(str((REPO / "src").resolve()))
     assert result["admission"]["idle_routing"] == bc.IDLE_ROUTING_EXPECTED
+    assert result["admission"]["paced_routing"] == bc.PACED_ROUTING_EXPECTED
 
 
-def test_regressed_idle_fallback_publishes_red_and_wakes_steward(tmp_path, monkeypatch):
+@pytest.mark.parametrize(("gate", "replacement", "detail_key", "case", "observed"), [
+    (
+        "free_only = spontaneous_only and not owed._budget_green(self.home, now, self.role)",
+        "free_only = False",
+        "idle_routing", "free-refuses", [["free", "paid"], "completed"],
+    ),
+    (
+        'if cand.get("pace") is True:',
+        "if False:",
+        "paced_routing", "behind-pace", "codex",
+    ),
+])
+def test_routing_regression_publishes_red_and_wakes_steward(
+    tmp_path, monkeypatch, gate, replacement, detail_key, case, observed
+):
     pin = tmp_path / "pin-src"
     shutil.copytree(REPO / "src", pin)
     router = pin / "mishe_tauftauf" / "engine_router.py"
     source = router.read_text()
-    gate = "free_only = spontaneous_only and not owed._budget_green(self.home, now, self.role)"
     assert gate in source
-    router.write_text(source.replace(gate, "free_only = False", 1))
+    router.write_text(source.replace(gate, replacement, 1))
     home = tmp_path / "home"
     budget = _admit_budget(800.0)
     (home / "engine").mkdir(parents=True)
@@ -255,4 +269,4 @@ def test_regressed_idle_fallback_publishes_red_and_wakes_steward(tmp_path, monke
     assert signal_store.read(home, name, now=NOW).value == "RED"
     assert f"signal:{name}" in owed.check(home, "steward", now=NOW).reasons
     detail = json.loads((home / "signals" / f"{name}.detail").read_text())
-    assert detail["admission"]["idle_routing"]["free-refuses"] == [["free", "paid"], "completed"]
+    assert detail["admission"][detail_key][case] == observed

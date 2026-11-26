@@ -21,6 +21,8 @@ Checks (RED when any fails):
   - a pinned wake with only a due spontaneous intention under RED runs a paid candidate, or fails to
     choose an available free candidate when one is in its own roster. Synthetic delegates record
     selection and fallback without invoking a provider.
+  - pinned routing admits a paced candidate below its weekly pace, holds an unpaced candidate
+    for the same reading, or applies the weekly pace to the short window.
 
 Exit status:
   0  GREEN: every account row matches its windows and, at the file's own produced_at, no window is
@@ -53,6 +55,11 @@ IDLE_ROUTING_EXPECTED = {
     "other-role-free": [[], "skipped"],
     "paid-first": [["free"], "completed"],
     "free-refuses": [["free"], "failed"],
+}
+PACED_ROUTING_EXPECTED = {
+    "behind-pace": "claude",
+    "unpaced": "codex",
+    "ahead-of-pace": "codex",
 }
 
 
@@ -224,6 +231,32 @@ def exercise(site, roster, refuse=False):
                                starter=lambda *_: None, mail_reader=lambda *_: [])
     return [attempts, result.outcome]
 
+def exercise_pacing(site, clock):
+    codex = {"engine": "codex", "model": "gpt-6.2-sol", "account": "codex-a"}
+    cases = {
+        "behind-pace": [True, 0.18],
+        "unpaced": [False, 0.18],
+        "ahead-of-pace": [True, 0.60],
+    }
+    write_json(site / "engine" / "routes.json", {"version": 1, "roles": {
+        case: [dict(codex, pace=paced), paid] for case, (paced, _) in cases.items()
+    }})
+    routes = engine_router.load_routes(site)["roles"]
+    choices = {}
+    for case, (_, weekly_remaining) in cases.items():
+        windows = {
+            "5h": {"remaining": 0.20, "reset_at": clock + 3600},
+            "7d": {"remaining": weekly_remaining, "reset_at": clock + 3 * 86400},
+        }
+        write_json(site / "engine" / "budget.json", {"schema": 1, "produced_at": clock, "accounts": {
+            "codex-a": {"provider": "openai-codex", "state": "FRESH", "windows": {
+                name: dict(window, observed_at=clock, state="FRESH") for name, window in windows.items()
+            }},
+        }})
+        choice = engine_router.choose(case, routes[case], engine_router.live_status(site), {}, clock * 1000)
+        choices[case] = (choice["candidate"] or {}).get("engine")
+    return choices
+
 with TemporaryDirectory(prefix="idle-budget-", dir=Path(home) / "engine") as path:
     base = Path(path)
     idle_routing = {
@@ -231,8 +264,9 @@ with TemporaryDirectory(prefix="idle-budget-", dir=Path(home) / "engine") as pat
         "paid-first": exercise(base / "rank", [paid, free]),
         "free-refuses": exercise(base / "refusal", [free, paid], refuse=True),
     }
+    paced_routing = exercise_pacing(base / "pace", time.time())
 print(json.dumps({"file": yielding.__file__, "decided": bool(yielding.spare_budget(home, now)),
-                  "idle_routing": idle_routing}))
+                  "idle_routing": idle_routing, "paced_routing": paced_routing}))
 """
 
 
@@ -261,6 +295,7 @@ def check_admission(home: Path, data: dict, now: float) -> tuple[list, dict]:
         imported = Path(probe["file"]).resolve()
         decided = probe["decided"]
         routing = probe["idle_routing"]
+        paced = probe["paced_routing"]
     except (ValueError, KeyError, TypeError):
         return [], {"available": False, "reason": "pinned scheduler probe printed no decision", "scheduler_src": str(src)}
     if not imported.is_relative_to(src) or not isinstance(decided, bool):
@@ -271,15 +306,21 @@ def check_admission(home: Path, data: dict, now: float) -> tuple[list, dict]:
     ):
         return [], {"available": False, "reason": "pinned scheduler probe printed no idle routing evidence",
                     "scheduler_src": str(src)}
+    if not isinstance(paced, dict) or paced.keys() != PACED_ROUTING_EXPECTED.keys():
+        return [], {"available": False, "reason": "pinned scheduler probe printed no paced routing evidence",
+                    "scheduler_src": str(src)}
     raw = raw_admission(data, now)
     summary = {"available": True, "decided": decided, "raw": raw, "scheduler_src": str(src),
-               "scheduler_file": str(imported), "idle_routing": routing}
+               "scheduler_file": str(imported), "idle_routing": routing, "paced_routing": paced}
     problems = []
     if decided != raw:
         problems.append(f"admission disagrees: scheduler spare_budget={decided}, raw fields={raw}")
     for case, expected in IDLE_ROUTING_EXPECTED.items():
         if routing[case] != expected:
             problems.append(f"RED-budget idle routing {case}: observed {routing[case]!r}, expected {expected!r}")
+    for case, expected in PACED_ROUTING_EXPECTED.items():
+        if paced[case] != expected:
+            problems.append(f"weekly quota routing {case}: observed {paced[case]!r}, expected {expected!r}")
     return problems, summary
 
 

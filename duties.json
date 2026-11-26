@@ -376,7 +376,7 @@
         ]
       },
       "replaces": [],
-      "covers": "budget accounts consistency and freshness"
+      "covers": "budget account consistency, freshness, and pinned routing under RED budget and weekly quota pacing"
     },
     {
       "name": "budget-opencode-go",
