@@ -235,7 +235,9 @@ def test_ci_gate_runs_before_the_test_suite():
     gate_index = next(i for i, line in enumerate(lines)
                       if "checks/shipped-book-promises.py" in line
                       and not line.startswith("#"))
+    # The test step may be a plain `- run: python -m pytest -q` or a multi-line
+    # block (coverage run ... -m pytest); match any live line that runs pytest.
     pytest_index = next(i for i, line in enumerate(lines)
-                         if line.startswith("- run: python -m pytest -q"))
+                        if "-m pytest" in line and not line.startswith("#"))
     assert gate_index < pytest_index, (
         "the shipped-book promise gate must run before the test suite")
