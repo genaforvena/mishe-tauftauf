@@ -550,10 +550,20 @@ ROUTERAI_LLM_SPEND_LIMIT = 200  # operator DM 301051; see build_routerai for the
 ROUTERAI_BALANCE_HISTORY = "engine/routerai-balance.jsonl"
 
 
-def _last_history_row(path: Path) -> dict | None:
-    """The newest decodable row of an append-only jsonl (decoding is read_jsonl_rows' boundary)."""
-    rows = read_jsonl_rows(path)
-    return rows[-1] if rows else None
+def _last_account_history_at(path: Path, account: str, now: float) -> float | None:
+    """Latest usable observation for this account in the shared burn history."""
+    observations = []
+    for row in _history_rows(path, now):
+        samples = row.get("q")
+        if not isinstance(samples, dict):
+            continue
+        if any(
+            split_quota_label(label)[0] == account
+            and isinstance(sample, list) and len(sample) == 2 and all(_num(v) for v in sample)
+            for label, sample in samples.items()
+        ):
+            observations.append(row["at"])
+    return max(observations, default=None)
 
 
 def append_codex_history(home: Path, now: float, codex: dict | None) -> None:
@@ -562,22 +572,24 @@ def append_codex_history(home: Path, now: float, codex: dict | None) -> None:
     a flat 7d reading (81% used for hours) still reported a 10h44m runs-out ETA. Only a FRESH reading is
     written; a stale or absent one writes nothing, so its gap stays UNKNOWN, not zero.
     The row is stamped with the engine's observation time (the windows' observed_at), never the producer
-    clock, and a reading whose observation time is not newer than the last row is not re-recorded."""
+    clock. Compare that time with the last Codex observation because the shared file also has
+    collector rows for other accounts, stamped with their collection time."""
     if not codex or codex.get("state") != "FRESH":
         return
+    alias = codex_alias()
     q = {}
     observed = []
     for window, w in (codex.get("windows") or {}).items():
         if isinstance(w, dict) and _num(w.get("remaining")) and _num(w.get("reset_at")):
-            q[f"{codex_alias()}/{window}"] = [w["remaining"], w["reset_at"]]
+            q[f"{alias}/{window}"] = [w["remaining"], w["reset_at"]]
             if _num(w.get("observed_at")):
                 observed.append(w["observed_at"])
     if not q or not observed:
         return
     at = max(observed)
     path = home / "operator" / "budget" / ENGINE_HISTORY
-    last = _last_history_row(path)
-    if last is not None and _num(last.get("at")) and at <= last["at"]:
+    last = _last_account_history_at(path, alias, now)
+    if last is not None and at <= last:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:

@@ -762,3 +762,28 @@ def test_codex_row_is_stamped_with_observation_time_and_unchanged_reading_is_not
     bp.append_codex_history(tmp_path, NOW + 600, newer)
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     assert [r["at"] for r in rows] == [old_obs, NOW + 300]
+
+
+def test_codex_history_deduplicates_across_interleaved_provider_rows(tmp_path):
+    reset = NOW + 4 * 86400
+    path = tmp_path / "operator" / "budget" / bp.ENGINE_HISTORY
+
+    def codex_reading(observed_at, remaining):
+        return {"state": "FRESH", "windows": {"7d": {
+            "remaining": remaining, "reset_at": reset, "observed_at": observed_at,
+        }}}
+
+    prior = codex_reading(NOW - 1800, 0.13)
+    latest = codex_reading(NOW - 90, 0.09)
+    bp.append_codex_history(tmp_path, NOW - 1800, prior)
+    with path.open("a") as history:
+        history.write(json.dumps({"at": NOW, "q": {"go-a/7d": [0.0, reset]}}) + "\n")
+    bp.append_codex_history(tmp_path, NOW, latest)
+    with path.open("a") as history:
+        history.write(json.dumps({"at": NOW + 60, "q": {"go-a/7d": [0.0, reset]}}) + "\n")
+    bp.append_codex_history(tmp_path, NOW + 60, latest)
+    bp.append_codex_history(tmp_path, NOW + 60, prior)
+
+    points = bp.load_burn_history(tmp_path, NOW + 60)[("codex-a", "7d")]
+    assert points == [(NOW - 1800, 0.87, reset), (NOW - 90, 0.91, reset)]
+    assert bp.recent_burn(points, reset) == pytest.approx(0.04 / (1710 / 3600))

@@ -23,6 +23,8 @@ Checks (RED when any fails):
     selection and fallback without invoking a provider.
   - pinned routing admits a paced candidate below its weekly pace, holds an unpaced candidate
     for the same reading, or applies the weekly pace to the short window.
+  - the pinned budget producer drops a fresh Codex observation after an unrelated collector row,
+    or records a duplicate, older observation, or stale reading in the synthetic history.
 
 Exit status:
   0  GREEN: every account row matches its windows and, at the file's own produced_at, no window is
@@ -62,6 +64,7 @@ PACED_ROUTING_EXPECTED = {
     "ahead-of-pace": "codex",
     "weekly-absent": "claude",
 }
+CODEX_HISTORY_EXPECTED = {"interleaved-provider": [1800, 90]}
 
 
 def _num(value) -> bool:
@@ -181,7 +184,7 @@ def raw_admission(data: dict, now: float) -> bool:
 
 # Run in a fresh interpreter (-I: no PYTHONPATH, no cwd on sys.path) so no cached module can stand in for the
 # pinned bytes. The child prints the file it actually imported and the decision it actually made.
-_PROBE = """
+_PROBE = r"""
 import json, sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -190,7 +193,7 @@ from unittest.mock import patch
 
 src, home, now = sys.argv[1], sys.argv[2], float(sys.argv[3])
 sys.path.insert(0, src)
-from mishe_tauftauf import engine_router, engines, intentions, signal_store, wake, yielding
+from mishe_tauftauf import budget_producer, engine_router, engines, intentions, signal_store, wake, yielding
 from mishe_tauftauf.state_files import write_json
 
 role = "idle-budget-probe"
@@ -258,6 +261,28 @@ def exercise_pacing(site, clock):
         choices[case] = (choice["candidate"] or {}).get("engine")
     return choices
 
+def exercise_codex_history(site, clock):
+    reset = clock + 3 * 86400
+    path = site / "operator" / "budget" / budget_producer.ENGINE_HISTORY
+    path.parent.mkdir(parents=True)
+    prior = {"at": clock - 1800, "q": {"codex-a/7d": [0.13, reset]}}
+    other = {"at": clock, "q": {"go-a/7d": [0.0, reset]}}
+    path.write_text(json.dumps(prior) + "\n" + json.dumps(other) + "\n")
+
+    def record(observed_at, remaining, state="FRESH"):
+        budget_producer.append_codex_history(site, clock, {"state": state, "windows": {"7d": {
+            "remaining": remaining, "reset_at": reset, "observed_at": observed_at, "state": state,
+        }}})
+
+    record(clock - 90, 0.09)
+    with path.open("a") as history:
+        history.write(json.dumps(other) + "\n")
+    record(clock - 90, 0.09)
+    record(clock - 1800, 0.13)
+    record(clock - 30, 0.08, state="STALE")
+    points = budget_producer.load_burn_history(site, clock).get(("codex-a", "7d"), [])
+    return {"interleaved-provider": [clock - at for at, _, _ in points]}
+
 with TemporaryDirectory(prefix="idle-budget-", dir=Path(home) / "engine") as path:
     base = Path(path)
     idle_routing = {
@@ -266,8 +291,10 @@ with TemporaryDirectory(prefix="idle-budget-", dir=Path(home) / "engine") as pat
         "free-refuses": exercise(base / "refusal", [free, paid], refuse=True),
     }
     paced_routing = exercise_pacing(base / "pace", time.time())
+    codex_history = exercise_codex_history(base / "history", int(now))
 print(json.dumps({"file": yielding.__file__, "decided": bool(yielding.spare_budget(home, now)),
-                  "idle_routing": idle_routing, "paced_routing": paced_routing}))
+                  "idle_routing": idle_routing, "paced_routing": paced_routing,
+                  "codex_history": codex_history}))
 """
 
 
@@ -297,6 +324,7 @@ def check_admission(home: Path, data: dict, now: float) -> tuple[list, dict]:
         decided = probe["decided"]
         routing = probe["idle_routing"]
         paced = probe["paced_routing"]
+        history = probe["codex_history"]
     except (ValueError, KeyError, TypeError):
         return [], {"available": False, "reason": "pinned scheduler probe printed no decision", "scheduler_src": str(src)}
     if not imported.is_relative_to(src) or not isinstance(decided, bool):
@@ -310,9 +338,13 @@ def check_admission(home: Path, data: dict, now: float) -> tuple[list, dict]:
     if not isinstance(paced, dict) or paced.keys() != PACED_ROUTING_EXPECTED.keys():
         return [], {"available": False, "reason": "pinned scheduler probe printed no paced routing evidence",
                     "scheduler_src": str(src)}
+    if not isinstance(history, dict) or not isinstance(history.get("interleaved-provider"), list):
+        return [], {"available": False, "reason": "pinned producer probe printed no Codex history evidence",
+                    "scheduler_src": str(src)}
     raw = raw_admission(data, now)
     summary = {"available": True, "decided": decided, "raw": raw, "scheduler_src": str(src),
-               "scheduler_file": str(imported), "idle_routing": routing, "paced_routing": paced}
+               "scheduler_file": str(imported), "idle_routing": routing, "paced_routing": paced,
+               "codex_history": history}
     problems = []
     if decided != raw:
         problems.append(f"admission disagrees: scheduler spare_budget={decided}, raw fields={raw}")
@@ -322,6 +354,8 @@ def check_admission(home: Path, data: dict, now: float) -> tuple[list, dict]:
     for case, expected in PACED_ROUTING_EXPECTED.items():
         if paced[case] != expected:
             problems.append(f"weekly quota routing {case}: observed {paced[case]!r}, expected {expected!r}")
+    if history != CODEX_HISTORY_EXPECTED:
+        problems.append(f"Codex quota history: observed sample ages {history!r}, expected {CODEX_HISTORY_EXPECTED!r}")
     return problems, summary
 
 

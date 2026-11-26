@@ -232,27 +232,35 @@ def test_detector_judges_the_pinned_bytes_not_the_checkout(tmp_path: Path):
     assert result["admission"]["paced_routing"] == bc.PACED_ROUTING_EXPECTED
 
 
-@pytest.mark.parametrize(("gate", "replacement", "detail_key", "case", "observed"), [
+@pytest.mark.parametrize(("module", "gate", "replacement", "detail_key", "case", "observed"), [
     (
+        "engine_router",
         "free_only = spontaneous_only and not owed._budget_green(self.home, now, self.role)",
         "free_only = False",
         "idle_routing", "free-refuses", [["free", "paid"], "completed"],
     ),
     (
+        "engine_router",
         'if cand.get("pace") is True:',
         "if False:",
         "paced_routing", "behind-pace", "codex",
     ),
+    (
+        "budget_producer",
+        "last = _last_account_history_at(path, alias, now)",
+        "last = now",
+        "codex_history", "interleaved-provider", [1800],
+    ),
 ])
-def test_routing_regression_publishes_red_and_wakes_steward(
-    tmp_path, monkeypatch, gate, replacement, detail_key, case, observed
+def test_budget_regression_publishes_red_and_wakes_steward(
+    tmp_path, monkeypatch, module, gate, replacement, detail_key, case, observed
 ):
     pin = tmp_path / "pin-src"
     shutil.copytree(REPO / "src", pin)
-    router = pin / "mishe_tauftauf" / "engine_router.py"
-    source = router.read_text()
+    source_file = pin / "mishe_tauftauf" / f"{module}.py"
+    source = source_file.read_text()
     assert gate in source
-    router.write_text(source.replace(gate, replacement, 1))
+    source_file.write_text(source.replace(gate, replacement, 1))
     home = tmp_path / "home"
     budget = _admit_budget(800.0)
     (home / "engine").mkdir(parents=True)

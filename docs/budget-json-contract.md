@@ -62,8 +62,9 @@ native observations and statusLine renders and is retained as historical evidenc
 
 Codex-a burn uses `operator/budget/quota-history.jsonl`. `budget-produce` appends one row per
 observation (`{"at": …, "q": {"codex-a/5h": [remaining, reset_at], …}}`). `at` is the engine's
-observed_at for the reading, never the producer's collection time, and a reading whose observation
-time is not newer than the last row is not re-recorded. A stale or absent codex reading writes no
+`observed_at` for the reading. Deduplication compares against the newest usable Codex observation
+in the burn history. Collector rows for other accounts can carry later collection times without
+preventing a fresh Codex reading from being recorded. A stale or absent Codex reading writes no
 row, so its burn is not measured until a fresh reading arrives, and the window-elapsed estimate
 applies meanwhile; a missing row is not a zero burn.
 
@@ -264,7 +265,9 @@ The checkout declares a `budget-consistency` duty in `duties.json`: every 300 s,
 immediately, and a missing or stale observation is UNKNOWN. The check exercises the pinned
 wake caller against three synthetic RED-budget cases. It expects a paid-only role to stay
 idle, a mixed roster to select its free route and a free refusal to end without a paid call.
-The duty covers budget-account states, freshness, paid pacing and those idle-routing scenarios. The
+The duty covers budget-account states, freshness, paid pacing and those idle-routing scenarios.
+It also gives the pinned budget producer a shared history with an interleaved collector row and
+checks that a fresh Codex reading is retained exactly once at its observation time. The
 `mishe-producer-budget-consistency.timer` fires every 300 s, the unit runs the check from the
 pinned release and publishes the verdict as `budget-consistency`. The `budget` duty publishes the readings it judges.
 
