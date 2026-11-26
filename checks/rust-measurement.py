@@ -230,6 +230,17 @@ print(json.dumps({
 """
 
 
+def _tape_stat(home: Path):
+    # The tape's identity while the forced and cached folds run. A RED that
+    # shows the tape moved between them is a sampling race, not a cache fault.
+    # Same tape-path rule as Feed.__init__, read here without importing the feed.
+    tape = home / ("chat.log" if (home / "chat.log").exists() or not (home / "feed").exists() else "feed")
+    try:
+        st = os.stat(tape)
+        return [st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns]
+    except OSError:
+        return None
+
 def online_cpus() -> int:
     """The CPUs this process may run on, never zero."""
     try:
@@ -484,8 +495,11 @@ def main(argv: list[str] | None = None) -> int:
     readings = []
     try:
         for role in roles:
+            tape_before = _tape_stat(home)
             reading = fold_role(repo, home, role, args.timeout)
             live = fold_role(repo, home, role, args.timeout, "live")
+            tape_after = _tape_stat(home)
+            reading["tape"] = {"before": tape_before, "after": tape_after}
             reading["live"] = {key: live[key] for key in
                                ("cpu_s", "children_cpu_s", "fold_cpu_s", "elapsed_s",
                                 "maxrss_kb", "entries", "view_digest", "checkpoint_rebuilt",
@@ -519,9 +533,10 @@ def main(argv: list[str] | None = None) -> int:
             over.append(f"{r['role']} rss {r['maxrss_kb'] // 1024} MB > "
                         f"{args.rss_trigger_kb // 1024} MB")
         if live["view_digest"] != r["view_digest"] or live["entries"] != r["entries"]:
+            moved = r["tape"]["before"] != r["tape"]["after"]
             disagree.append(f"{r['role']}: cached view {live['view_digest']} "
                             f"({live['entries']} entries) != rebuilt {r['view_digest']} "
-                            f"({r['entries']} entries)")
+                            f"({r['entries']} entries); tape moved during the pair: {moved}")
     summary = "; ".join(f"{r['role']} reader {r['cpu_s']} + children "
                         f"{r['children_cpu_s']} = {r['fold_cpu_s']} CPU-s "
                         f"{r['maxrss_kb'] // 1024} MB {r['entries']} entries, live "
