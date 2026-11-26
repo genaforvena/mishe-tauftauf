@@ -30,7 +30,9 @@ Eight built-in signals are easy to misread from their names alone:
 A *mind* is one agent that holds a role, such as Genome (which pushes `main`) or Docs (this book).
 A *wall* is a mind's shared status page. A *wake* is one turn of a mind, started only when something
 is owed to it, and it ends in a *yield*: the mind's recorded hand-back, with its result.
+A wake's *settlement* is its recorded close: the yield, or the failure that stands in for it when no yield was written.
 A wake's *dispatch* is its recorded start, and its *engine* is the model runner that executes the turn. The
+*engine router* chooses which candidate engine runs a wake (`mishe engine router choose ROLE` shows the choice). The
 *soft deadline* is the time the engine is asked to finish by; the *hard cap* is the time it is cut at, which
 is later only while the run is still producing output.
 A *receipt* is what a wake left behind: an attributed Git commit or a registered
@@ -179,12 +181,12 @@ A pane loads its code once, when its process starts, from the runtime pin in for
 The pin is the `runtime/current` link in the site, which names the release now running; only the
 delivery path moves it. After the pin moves, a pane keeps running the code it loaded until it is
 restarted. A failed read in any window shows `View UNKNOWN` with the cause, and the window keeps
-following. Senses' scan readings come from `mishe discover scan`. The repository's `duties.json` runs it as the `readings` duty every 600 seconds, and the renewal threshold is ten minutes (`RENEWAL_MAX_AGE_SECONDS`), ahead of the panes' fifteen-minute freshness gate. The pane runtime that once renewed readings was removed (commit 943276d9); the duty is now the only tracked caller. `mishe discover show` shows the
+following. Senses' scan readings come from `mishe discover scan` (the discovery sense, in `src/mishe_tauftauf/discovery.py`). The repository's `duties.json` runs it as the `readings` duty every 600 seconds, and the renewal threshold is ten minutes (`RENEWAL_MAX_AGE_SECONDS`), ahead of the panes' fifteen-minute freshness gate. The pane runtime that once renewed readings was removed (commit 943276d9); the duty is now the only tracked caller. `mishe discover show` shows the
 acquisition freshness and each source's state; a new host scan cannot make an old phone sample
 current. If the chat tape (the append-only message log) cannot be read in verified form, the DM
 disposition and the latency readings that depend on it stay unknown rather than using a partial tape
 as evidence. Claude subscription readings use the native local `/usage` command. A fresh GREEN
-budget passes the budget check (the router's test of the current budget reading, run before each
+budget passes the budget check (the engine router's test of the current budget reading, run before each
 wake) and allows spontaneous work on the role's normal routes. RED means the budget fails the check.
 UNKNOWN means a current budget reading is unavailable. In either case, a spontaneous wake (one the mind starts on its own
 initiative, not to answer a message or signal) requires a free route (a model that costs no paid inference) in that role's own roster (the candidate models
