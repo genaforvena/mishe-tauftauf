@@ -28,6 +28,10 @@ sys.path.insert(0, str(Path.cwd() / "src"))
 from mishe_tauftauf import release_boundary  # noqa: E402
 
 SCRATCH_MOUNT = Path("/mnt/mishe-scratch")
+# The spare drive (its own filesystem on this host). Used for the suite's temp when the scratch mount is
+# absent, so pytest's tmp_path churn stays off the root filesystem (2026-11-26 health: a delivery run filled
+# /tmp/pytest-of-mesh-home on root while root free fell toward the guard's 10 GiB trip).
+SPARE_TMP_MOUNT = Path("/var/tmp")
 SUITE_WORKERS = 4
 """Delivery-suite workers: CPUs are shared with live wake engines, so not ``-n auto``.
 
@@ -58,6 +62,13 @@ def scratch_mount() -> Path | None:
     """The scratch mount when it is a separate, writable filesystem, else None."""
     if os.path.ismount(SCRATCH_MOUNT) and os.access(SCRATCH_MOUNT, os.W_OK):
         return SCRATCH_MOUNT
+    return None
+
+
+def spare_tmp_mount() -> Path | None:
+    """The spare drive's temp mount when it is a separate, writable filesystem, else None."""
+    if os.path.ismount(SPARE_TMP_MOUNT) and os.access(SPARE_TMP_MOUNT, os.W_OK):
+        return SPARE_TMP_MOUNT
     return None
 
 
@@ -131,7 +142,7 @@ def suite_temp() -> Path | None:
     override = os.environ.get("MISHE_TEST_TMPDIR")
     if override:
         return Path(override)
-    scratch = scratch_mount()
+    scratch = scratch_mount() or spare_tmp_mount()
     return scratch / "t" if scratch is not None else None
 
 

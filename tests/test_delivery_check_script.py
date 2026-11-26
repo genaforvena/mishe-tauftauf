@@ -88,6 +88,13 @@ def test_suite_temp_prefers_a_separate_writable_scratch_mount(tmp_path, monkeypa
     assert dc.suite_temp() == dc.SCRATCH_MOUNT / "t"
 
 
+def test_suite_temp_falls_back_to_the_spare_drive_not_root(monkeypatch):
+    monkeypatch.delenv("MISHE_TEST_TMPDIR", raising=False)
+    monkeypatch.setattr(dc.os.path, "ismount", lambda p: p == dc.SPARE_TMP_MOUNT)
+    monkeypatch.setattr(dc.os, "access", lambda p, mode: True)
+    assert dc.suite_temp() == dc.SPARE_TMP_MOUNT / "t"
+
+
 def test_suite_temp_keeps_the_default_without_a_writable_scratch_mount(monkeypatch):
     monkeypatch.delenv("MISHE_TEST_TMPDIR", raising=False)
     monkeypatch.setattr(dc.os.path, "ismount", lambda p: False)
