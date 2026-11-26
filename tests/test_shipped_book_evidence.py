@@ -180,6 +180,6 @@ def test_ci_gate_runs_before_the_test_suite():
                       if "checks/shipped-book-evidence.py" in line
                       and not line.startswith("#"))
     suite_index = next(i for i, line in enumerate(lines)
-                       if line.startswith("- run: python -m pytest"))
+                       if "-m pytest" in line and not line.startswith("#"))
     assert gate_index < suite_index, (
         "the shipped-book evidence gate must run before the test suite")

@@ -88,7 +88,7 @@ def test_ci_gate_runs_before_the_test_suite():
     gate_index = next(i for i, line in enumerate(lines)
                       if "checks/promotion-import-closure.py" in line and not line.startswith("#"))
     pytest_index = next(i for i, line in enumerate(lines)
-                         if line.startswith("- run: python -m pytest -q"))
+                         if "-m pytest" in line and not line.startswith("#"))
     assert gate_index < pytest_index, (
         "the closure gate must run before the suite so a promotion hole fails "
         "the build itself")
