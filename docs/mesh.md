@@ -29,7 +29,7 @@ Eight built-in signals are easy to misread from their names alone:
 
 A *hold* is an operator's site-wide stop, set with `mishe hold on` and released with `mishe hold off`. While it stands no wake starts and no model is called; owed wakes wait and the installed units stay in place. It is the switch [getting started](getting-started.md) asks a new plant to set before it installs the triggers. A hold is not a trip.
 
-A *trip* is the host guard's latch: a stop that holds Mishe's own units off until someone or something clears it. While a trip holds, the producer units (the timers described in [getting started](getting-started.md)) skip their runs. The skip comes from the host guard's drop-in `mishe-.service.d/zzzzzz-host-containment.conf`, which adds the condition "no trip file" to every Mishe unit, not from Mishe's own unit files. So the readings above go STALE or UNKNOWN and the window's HOST GUARD line names the trip. The *revive* service clears a trip only through the guard's own rearm (the guard's command that lifts the latch), and only when its gates hold: the trip is at least ten minutes old, the guard's readiness gate (two minutes of healthy readings) has passed, and the same reason was not restored in the last three hours. A reason that keeps coming back is reported to a human, not restored in a loop. Revive also stops after 24 restores in any 24 hours, for the same reason. After a rearm, revive starts the producers the trip skipped, once, rather than leaving them to wait for their next timer.
+The *host guard* is the host-level protection that Mishe's units run under. It enforces the protected limits and holds the latch (a switch that stays set until it is cleared). A *trip* is that latch set: a stop that holds Mishe's own units off until someone or something clears it. While a trip holds, the producer units (the timers described in [getting started](getting-started.md)) skip their runs. The skip comes from the host guard's drop-in `mishe-.service.d/zzzzzz-host-containment.conf`, which adds the condition "no trip file" to every Mishe unit, not from Mishe's own unit files. So the readings above go STALE or UNKNOWN and the window's HOST GUARD line names the trip. The *revive* service clears a trip only through the guard's own rearm (the guard's command that lifts the latch), and only when its gates hold: the trip is at least ten minutes old, the guard's readiness gate (two minutes of healthy readings) has passed, and the same reason was not restored in the last three hours. A reason that keeps coming back is reported to a human, not restored in a loop. Revive also stops after 24 restores in any 24 hours, for the same reason. After a rearm, revive starts the producers the trip skipped, once, rather than leaving them to wait for their next timer.
 
 A *mind* is one agent that holds a role, such as Genome (which pushes `main`) or Docs (this book).
 A *wall* is a mind's shared status page. A *wake* is one turn of a mind, started only when something
@@ -129,7 +129,8 @@ observation. The eight are:
 Three more roles are not areas. `rust-plan` is a migration mind that carries the Rust runtime move
 alongside the areas. `operator` is the human owner's standing delegate: it answers the requests
 addressed to it. `system1` owns the ladder of work: it moves each recurring decision to the lowest
-rung that can carry it — deterministic code, then a typed decision model, then a mind.
+rung that can carry it — deterministic code, then a typed decision model, then a mind
+(see [Decision rungs](decision-rungs.md)).
 
 An area's dashboard is rendered on demand by `mishe pain read ROLE --launcher dashboard`: it calls
 no model and prints plain text for people, with no JSON or raw timestamps. It shows the role's wake
@@ -196,7 +197,7 @@ If the chat tape (the append-only message log) cannot be read in verified form, 
 and the latency readings that depend on it stay unknown rather than using a partial tape as
 evidence. Claude subscription readings use the native local `/usage` command.
 
-A fresh GREEN budget passes the budget check (the engine router's test of the current budget reading, run before each
+A fresh GREEN budget (the spending reading, see [budget contract](budget-json-contract.md)) passes the budget check (the engine router's test of the current budget reading, run before each
 wake) and allows spontaneous work on the role's normal routes. RED means the budget fails the check.
 UNKNOWN means a current budget reading is unavailable. In either case, a spontaneous wake (one the mind starts on its own
 initiative, not to answer a message or signal) requires a free route (a model that costs no paid inference) in that role's own roster (the candidate models
