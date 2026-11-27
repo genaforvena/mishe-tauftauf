@@ -985,8 +985,12 @@ def devices_line(now=None):
             if isinstance(result, dict) and result.get("wifi") == "ASSOCIATED":
                 problem += ", still on Wi-Fi"
                 if name in frozen:
-                    problem += f", router counters unchanged over the last {FROZEN_READS} reads"
-                problem += " (a sleeping device looks like this; not a network fault)"
+                    # Frozen counters cannot tell a sleeping device from a dead link: stay neutral.
+                    problem += (f", router counters unchanged over the last {FROZEN_READS} reads"
+                                " (associated but not answering; a sleeping device or a dead link"
+                                " can look like this)")
+                else:
+                    problem += " (a sleeping device looks like this; not a network fault)"
             parts.append(f"{name} {problem}")
             unknown = True
         else:

@@ -187,7 +187,8 @@ def test_associated_silent_device_with_frozen_counters_is_linked(monkeypatch, tm
     line = view.devices_line(now=now)
     assert "iMac-Rozalia not answering the LAN (no ARP answer), still on Wi-Fi" in line
     assert "counters unchanged over the last 6 reads" in line
-    assert "a sleeping device looks like this; not a network fault" in line
+    assert "(associated but not answering; a sleeping device or a dead link can look like this)" in line
+    assert "not a network fault" not in line
     assert line.startswith("UNKNOWN")
 
 
