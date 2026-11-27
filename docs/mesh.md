@@ -190,7 +190,7 @@ delivery path moves it. After the pin moves, a pane keeps running the code it lo
 restarted. A failed read in any window shows `View UNKNOWN` with the cause, and the window keeps
 following.
 
-Senses' scan readings come from `mishe discover scan` (the discovery sense, in `src/mishe_tauftauf/discovery.py`). The repository's `duties.json` runs it as the `readings` duty every 600 seconds, and the renewal threshold is ten minutes (`RENEWAL_MAX_AGE_SECONDS`), ahead of the panes' fifteen-minute freshness gate. The pane runtime that once renewed readings was removed (commit 943276d9); the duty is now the only tracked caller.
+Senses' scan readings come from `mishe discover scan` (the discovery sense, in `src/mishe_tauftauf/discovery.py`). The repository's `duties.json` runs it as the `readings` duty every 600 seconds, and the renewal threshold is ten minutes (`RENEWAL_MAX_AGE_SECONDS`), ahead of the fifteen-minute freshness gate the panes applied while they had their own runtime. That runtime was removed (commit 943276d9); the duty is now the only tracked caller, and no view module in `src/` compares a reading's age with 900 seconds.
 
 `mishe discover show` shows the acquisition freshness and each source's state; a new host scan
 cannot make an old phone sample current.
