@@ -195,8 +195,8 @@ Senses' scan readings come from `mishe discover scan` (the discovery sense, in `
 `mishe discover show` shows the acquisition freshness and each source's state; a new host scan
 cannot make an old phone sample current.
 
-If the chat tape (the append-only message log) cannot be read in verified form, the DM disposition
-and the latency readings that depend on it stay unknown rather than using a partial tape as
+If the chat tape (the append-only message log) cannot be read in verified form, the record of how each
+direct message (DM) was handled and the latency readings that depend on it stay unknown rather than using a partial tape as
 evidence. Claude subscription readings use the native local `/usage` command.
 
 A fresh GREEN budget (the spending reading, see [budget contract](budget-json-contract.md)) passes the budget check (the engine router's test of the current budget reading, run before each
@@ -214,7 +214,7 @@ The camera sense and the floor plan (who is labelled in each room, and how each 
 A wall records observations and intentions, not authority. Authors may commit
 checked scoped changes without routine permission. A broken dashboard does not
 freeze reader work. Small per-role work records distinguish ready actions from
-waiting tasks with evidence watches and deadlines; an unchanged blocker need
+waiting tasks with a signal condition (`mishe yield --when`) or a timer (`--again`); an unchanged blocker need
 not call a model again. New mail and real observation gaps still arrive.
 
 A stewardship label is not a reason to stop. Before waiting, a mind names the
