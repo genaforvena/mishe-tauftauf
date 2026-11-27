@@ -35,6 +35,32 @@ class StreamTest(unittest.TestCase):
             self.assertEqual(st3["last_success"], st2["last_success"])
             self.assertEqual(json.loads((home / ns.STATUS_NAME).read_text())["ok"], False)
 
+    def _run_remote(self, logread_body, logread_exit):
+        """Run the real REMOTE string under sh with a fake logread on PATH (the router's shell is sh)."""
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as d:
+            fake = Path(d) / "logread"
+            fake.write_text(f"#!/bin/sh\nprintf '%s' '{logread_body}'\nexit {logread_exit}\n")
+            fake.chmod(0o755)
+            env = dict(os.environ, PATH=f"{d}:{os.environ['PATH']}")
+            return subprocess.run(["sh", "-c", ns.REMOTE], capture_output=True, text=True, env=env)
+
+    def test_failed_logread_is_nonzero_even_with_empty_output(self):
+        r = self._run_remote("", 1)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "")
+
+    def test_successful_logread_with_no_sing_box_lines_is_zero(self):
+        r = self._run_remote("Fri Nov 27 16:22:10 2026 daemon.info dnsmasq: x", 0)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout, "")
+
+    def test_sing_box_lines_pass_through(self):
+        r = self._run_remote("Fri Nov 27 16:22:10 2026 daemon.err sing-box[1]: ERROR[2] x", 0)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("sing-box[1]", r.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

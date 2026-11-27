@@ -34,7 +34,9 @@ MSK = dt.timezone(dt.timedelta(hours=3))  # logread prints the router's local zo
 # logread stamp: "Fri Nov 27 16:22:10 2026 " then the line body.
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 STAMP = re.compile(r"^\w{3} (\w{3}) +(\d+) (\d\d:\d\d:\d\d) (\d{4}) ")
-REMOTE = "nice -n 10 logread 2>/dev/null | grep 'sing-box' | tail -n 3000"
+# logread's own status decides the read: a pipeline would report tail's status and hide a failed logread.
+# grep finding no sing-box lines is a quiet router, not a failure, so only the logread step can exit non-zero.
+REMOTE = "out=$(nice -n 10 logread 2>/dev/null) || exit 1; printf '%s\\n' \"$out\" | grep 'sing-box' | tail -n 3000"
 
 
 def to_utc_line(raw):
