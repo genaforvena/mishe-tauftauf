@@ -185,3 +185,25 @@ def test_a_child_does_not_extend_the_hard_cap(tmp_path: Path):
         proc.run_bounded([sys.executable, "-c", _waits_on_child(60)],
                          env=dict(os.environ), cwd=tmp_path, timeout=1, stdout_to=out,
                          hard_timeout=3, idle_gap=1.0)
+
+
+ONE_DOCUMENT_LATE = "import time,sys\ntime.sleep(10)\nprint('{\"result\": \"done\"}', flush=True)\n"
+
+
+def test_a_one_document_engine_is_cut_after_its_idle_gap_past_the_deadline(tmp_path: Path):
+    """Pins the current claude-engine behaviour the planned stream-json change will alter.
+
+    ``engine_claude.command`` runs ``--output-format json``: the CLI writes one document at the
+    end, so a run that works silently emits nothing while it works. Past the soft deadline that
+    silence is judged by the idle gap alone, so such a run is cut one idle gap after the deadline
+    even though it is still working (no tool child to defer the cut). Streaming per-event output
+    would give the run progress and remove this cut; until that change lands this test documents
+    the bound it depends on.
+    """
+    out = tmp_path / "stream"
+    started = time.monotonic()
+    with pytest.raises(EngineTimeout) as caught:
+        proc.run_bounded([sys.executable, "-c", ONE_DOCUMENT_LATE], env=dict(os.environ), cwd=tmp_path,
+                         timeout=1, stdout_to=out, hard_timeout=30, idle_gap=1.0)
+    assert "no output for" in str(caught.value), f"cut by another path: {caught.value}"
+    assert time.monotonic() - started < 6, "the silent run was held past its idle gap"
