@@ -38,7 +38,7 @@ def test_unavailable_hours_are_excluded_from_the_series(tmp_path):
     rows += [_row(d, h, 0.9) for d in range(8, 16) for h in range(24)]
     site = _site(tmp_path, rows)
     out = mp.build(str(site), datetime.datetime.now(UTC))
-    assert out["bedroom_hours"] == {"total": 360, "camera_available": 336}
+    assert {k: out["bedroom_hours"][k] for k in ("total", "camera_available")} == {"total": 360, "camera_available": 336}
     assert out["rooms"]["bedroom"]["train_hours"] == 192
 
 
@@ -101,3 +101,20 @@ def test_learned_prior_not_adopted_when_heldout_contradicts_training(tmp_path):
     night = out["night_bedroom"]
     assert night["adopted"] is False
     assert night["brier_learned"] > night["brier_hand_set"]
+
+
+def test_stale_feature_store_does_not_adopt_a_prior(tmp_path):
+    # Same clean pattern as the adoption test, but the store stopped 60 days ago: the learner
+    # must not present an old held-out win as current.
+    rows = []
+    for d in list(range(68, 76)) + list(range(61, 67)):
+        rows.append(_row(d, 21, 0.9))
+        rows.append(_row(d, 22, 0.9))
+        rows.append(_row(d, 23, 0.001))
+        rows.append(_row(d, 0, 0.001))
+    site = _site(tmp_path, rows)
+    out = mp.build(str(site), datetime.datetime.now(UTC))
+    night = out["night_bedroom"]
+    assert night["adopted"] is False
+    assert "stale" in night["reason"] and "hand-set" in night["reason"]
+    assert out["bedroom_hours"]["newest_age_hours"] > mp.STALE_HOURS

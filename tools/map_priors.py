@@ -33,6 +33,7 @@ import sys
 HOLDOUT_DAYS = 6
 MIN_N = 3
 MIN_HELDOUT = 20
+STALE_HOURS = 48
 HAND_NIGHT = 0.4
 NIGHT_UTC = (21, 5)  # same assumed window as tools/map_render.py
 
@@ -133,6 +134,14 @@ def build(site, now):
         out["bedroom_hours"] = {"total": hours_total, "camera_available": hours_usable}
         return out
     out["bedroom_hours"] = {"total": hours_total, "camera_available": hours_usable}
+    # The cut is relative to the newest row, so a stalled feature store would otherwise
+    # "hold out" weeks-old data and adopt a prior with no freshness signal. Refuse when stale.
+    age_h = (now - series[-1][0]).total_seconds() / 3600
+    out["bedroom_hours"]["newest_age_hours"] = round(age_h, 1)
+    if age_h > STALE_HOURS:
+        out["night_bedroom"]["reason"] = ("newest camera-available hour is %.0f h old (limit %d h): "
+                                          "feature store stale, hand-set %.1f kept" % (age_h, STALE_HOURS, HAND_NIGHT))
+        return out
     median = statistics.median(m for _, m in series)
     cut = series[-1][0] - dt.timedelta(days=HOLDOUT_DAYS)
     train = [(t, 1 if m > median else 0) for t, m in series if t < cut]
