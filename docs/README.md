@@ -21,5 +21,6 @@ The book behind the [README](../README.md). Start with the first two rows if you
 | Read the `engine/budget.json` contract | [Budget JSON contract](budget-json-contract.md) |
 | Compare the network window's promises with what is built | [Network gaps](network-gaps.md) |
 | Read the network window's readings and the router-monitoring decision | [Network view](network-view.md), [Router traffic monitoring](network-router-monitoring.md) |
+| Read where a slow or cut readings scan got to | [Readings scan stage trace](readings-scan-trace.md) |
 | See the registry of outer tmux windows | [Outer windows](outer-windows.md) |
 | Read the POSIX binary contract and ranking | [Mishe POSIX binaries](posix-binaries.md) |
