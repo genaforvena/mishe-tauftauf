@@ -155,6 +155,34 @@ prints once (such as `delivery_view.py`) runs in a looped window command, as `bu
 Create a window: `tmux new-window -t plants -d -n NAME 'env MISHE_TAUFTAUF_HOME=... python3 tools/X_view.py'`.
 Never type into another plant's panes. Keep this table current when a window is added or retired.
 
+## Senses behind the map: camera and floor plan
+
+The camera sense asks the plant's owner, in the owner's own chat, who is in
+the room. The `frame-label-tick` duty (declared in `duties.json`) runs `tools/frame_label_tick.py` every five minutes: it sweeps frames
+older than 24 hours, applies the replies that arrived, and when a room's
+picture has changed enough it sends at most three photos per eight hours and
+waits for the answer. Every reply consumed is recorded as its own receipt (a
+row marked `applied`, `unmatched` or `malformed`), so a
+reply that cannot be matched is visible rather than silently dropped. A stored
+answer that the current parser would read differently is a stale label: the
+duty exits RED while any stale label stays uncorrected, so the recurrence is
+routed instead of sitting in the label record. Frames are deleted once used,
+and the household's consent decides
+which room may be asked at all.
+
+The floor plan (`SITE/senses/map/floorplan.json`, in the ignored site home, not in git) labels every value with where it
+came from. The file's own `provenance_kinds` key defines the five words:
+`given` is stated by a person in a DM or label and is not measured by a sensor;
+`measured` is read from a sensor or a physical measurement, with its source;
+`inferred` is derived from sensing, with the method, sample count and
+uncertainty recorded; `assumed` is a drawing placeholder and is not evidence;
+`unknown` means no value yet. A field that is absent reads as `unknown`. The
+renderer (`tools/map_render.py`) draws `assumed` rooms with dashed outlines and
+the tag "assumed", and marks the blind spot as "BLIND SPOT (inferred)". Tokens
+are not part of the floor plan; the render step places them from evidence and
+they stay UNKNOWN until labelled fits pass leave-one-out, a test that predicts each
+labelled point from the others (the file's note, as written, records 0 of 3).
+
 ## Restoring missing windows
 
 `tools/tmux_restore.py` brings back outer and inner windows that are gone or whose panes died.
