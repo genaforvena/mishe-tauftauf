@@ -171,7 +171,7 @@ window; it simply shows no running wake.
   messages.
 - **`git` window.** Replays recent canonical Git history, then follows new commits.
 - **`wakes` window.** Replays recent wake starts, settlements and outputs, then follows. A finished
-  wake prints its final answer here; for an `omp` wake (one of the four coding agents a role can
+  wake prints its final answer here; for an `omp` (oh-my-pi) wake (one of the four coding agents a role can
   wake on, with `claude`, `codex` and `qwen`), a terse closing line is shown with what the mind said
   just before it. While a wake runs, the window adds a progress block about every ten minutes,
   marked `RUNNING`: an `omp` wake streams JSONL (JSON Lines: one JSON object per line) events, so

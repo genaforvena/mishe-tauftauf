@@ -15,7 +15,7 @@ description). The *mind* is the agent that performs a role's job. You release th
   in the clone (Python 3.11+ reads TOML from the standard library).
 - A Rust toolchain (`cargo` via rustup): step 2 builds the Rust components the
   site's readers need, each on the version pinned in its `rust/*/rust-toolchain.toml`.
-- At least one authenticated coding agent: **`claude`** (Claude Code), **`omp`**,
+- At least one authenticated coding agent: **`claude`** (Claude Code), **`omp`** (oh-my-pi, a coding-agent CLI that runs many model providers),
   **`codex`** (the `codex` CLI's own login), or **`qwen`** (Qwen Code).
   Mishe supplies neither the model nor credentials; usage counts against your plan.
 - Optional: GitHub CLI `gh` with repository access, for the CI reading (CI is the automated test run). Without it
