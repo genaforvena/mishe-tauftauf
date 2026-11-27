@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Does Wi-Fi RSSI *variability* track camera-seen household activity better than RSSI level?
 
-Usage: python3 -I tools/rssi_motion.py --site SITE [--log PATH] [--now ISO]
+Usage: python3 -I tools/rssi_motion.py --site SITE [--log PATH] [--now ISO] [--vantage redmi10|router-station]
+
+--vantage router-station reads SITE/network/router.jsonl (client "Redmi-10" dbm, one row per poll,
+about every 5.6 min) with MIN_RSSI_ROUTER rows per bucket; it writes rssi-motion-router-station.json and
+leaves the phone result untouched.
 
 Question (go-ahead or retire by the date in experiments.json): over 15-minute buckets,
 is the jitter of the Redmi10 phone-to-AP RSSI (std, mean |step|) a better signal of
@@ -39,7 +43,10 @@ rt = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(rt)
 
 BUCKET_S = 900
-MIN_RSSI = 60          # of ~180 rows a 15-minute bucket should hold at 5 s cadence
+MIN_RSSI = 60          # of ~180 rows a 15-minute bucket should hold at 5 s cadence (Redmi10 vantage)
+MIN_RSSI_ROUTER = 2    # the router-station logs one client row every ~5.6 min: 2-3 rows per bucket
+ROUTER_CLIENT = "Redmi-10"
+VANTAGES = ("redmi10", "router-station")
 MIN_ACCEL = 20
 MIN_JOINED = 300
 MIN_ACTIVE = 20
@@ -68,18 +75,47 @@ def read_log(path, first_epoch):
     return buckets, newest
 
 
+def read_router(path, first_epoch, client=ROUTER_CLIENT):
+    """Router-station vantage: the AP's dBm for one named client, one row per poll (JSON lines).
+
+    Same shape as read_log: bucket start epoch -> {rssi: [dbm], acc: []} plus the newest RSSI epoch.
+    Rows with no usable ts or no such client are skipped, never guessed.
+    """
+    buckets, newest = {}, None
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            ts = row.get("ts") if isinstance(row, dict) else None
+            if not isinstance(ts, (int, float)) or ts < first_epoch:
+                continue
+            for cl in row.get("clients") or []:
+                if not isinstance(cl, dict) or cl.get("name") != client:
+                    continue
+                dbm = cl.get("dbm")
+                if not isinstance(dbm, (int, float)):
+                    continue
+                epoch = int(ts)
+                b = buckets.setdefault(epoch - epoch % BUCKET_S, {"rssi": [], "acc": []})
+                b["rssi"].append(dbm)
+                newest = epoch if newest is None or epoch > newest else newest
+    return buckets, newest
+
+
 def std(xs):
     m = sum(xs) / len(xs)
     return math.sqrt(sum((x - m) ** 2 for x in xs) / len(xs))
 
 
-def features(buckets):
+def features(buckets, min_rssi=MIN_RSSI):
     allv = sorted(v for b in buckets.values() for v in b["rssi"])
     median = allv[len(allv) // 2] if allv else None
     out = {}
     for t, b in buckets.items():
         r = b["rssi"]
-        if len(r) < MIN_RSSI:
+        if len(r) < min_rssi:
             continue
         mean = sum(r) / len(r)
         out[t] = {
@@ -205,9 +241,9 @@ def study(feats, label):
                                    "note": "mean over UTC hours of day of per-hour AUC; verdict above is unchanged"}}
 
 
-def run(site, log, now):
+def run(site, log, now, vantage="redmi10"):
     """The study result dict; UNKNOWN with a reason for every missing or stale input."""
-    out = {"generated_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "schema": "rssi-motion/v1"}
+    out = {"generated_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "schema": "rssi-motion/v1", "vantage": vantage}
     try:
         cam = rt.read_json(os.path.join(site, "spatial/work/household/activity.json"))
         rooms = camera_buckets(cam)
@@ -216,21 +252,32 @@ def run(site, log, now):
     starts = [t for rows in rooms.values() for t in rows]
     if not starts:
         return dict(out, state="UNKNOWN", reason="no usable camera buckets")
-    if log is None:
+    if vantage not in VANTAGES:
+        return dict(out, state="UNKNOWN", reason=f"unknown vantage {vantage!r}")
+    min_rssi = MIN_RSSI
+    if vantage == "router-station":
+        min_rssi = MIN_RSSI_ROUTER
+        log = log or os.path.join(site, "network/router.jsonl")
         try:
-            tbl = rt.read_json(os.path.join(site, "senses/map/rssi-table.json"))
-            log = next(v["source"] for v in tbl["vantages"] if v.get("vantage") == "redmi10")
-        except (OSError, ValueError, KeyError, StopIteration):
-            return dict(out, state="UNKNOWN", reason="rssi-table.json names no redmi10 log source")
-    try:
-        buckets, newest = read_log(log, min(starts) - BUCKET_S)
-    except OSError as exc:
-        return dict(out, state="UNKNOWN", reason=f"observations log unreadable: {exc}")
+            buckets, newest = read_router(log, min(starts) - BUCKET_S)
+        except OSError as exc:
+            return dict(out, state="UNKNOWN", reason=f"router log unreadable: {exc}")
+    else:
+        if log is None:
+            try:
+                tbl = rt.read_json(os.path.join(site, "senses/map/rssi-table.json"))
+                log = next(v["source"] for v in tbl["vantages"] if v.get("vantage") == "redmi10")
+            except (OSError, ValueError, KeyError, StopIteration):
+                return dict(out, state="UNKNOWN", reason="rssi-table.json names no redmi10 log source")
+        try:
+            buckets, newest = read_log(log, min(starts) - BUCKET_S)
+        except OSError as exc:
+            return dict(out, state="UNKNOWN", reason=f"observations log unreadable: {exc}")
     if newest is None:
         return dict(out, state="UNKNOWN", reason="no RSSI rows in the log inside the camera window")
     age = now.timestamp() - newest
-    feats, median = features(buckets)
-    out.update(log=log, rssi_median_dbm=median, rssi_buckets=len(feats),
+    feats, median = features(buckets, min_rssi)
+    out.update(log=log, min_rssi_rows_per_bucket=min_rssi, rssi_buckets=len(feats),
                newest_rssi_age_s=round(age), camera_buckets={r: len(v) for r, v in rooms.items()})
     still = [r["phone_acc_std"] for r in feats.values() if r["phone_acc_std"] is not None]
     out["phone_motion_known_buckets"] = len(still)
@@ -264,10 +311,13 @@ def summary(res):
 
 
 def main(argv=None):
-    args = rt.parse_cli(argv if argv is not None else sys.argv[1:], __doc__)
+    args = rt.parse_cli(argv if argv is not None else sys.argv[1:], __doc__,
+                        extra=lambda p: p.add_argument("--vantage", default="redmi10", choices=VANTAGES,
+                                                       help="redmi10 (phone, default) or router-station"))
     now = rt.parse_iso(args.now) if args.now else datetime.datetime.now(datetime.timezone.utc)
-    res = run(args.site, args.log, now)
-    dest = os.path.join(args.site, "senses/map/rssi-motion.json")
+    res = run(args.site, args.log, now, args.vantage)
+    name = "rssi-motion.json" if args.vantage == "redmi10" else f"rssi-motion-{args.vantage}.json"
+    dest = os.path.join(args.site, "senses/map/" + name)
     tmp = dest + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(res, fh, indent=1)

@@ -150,3 +150,27 @@ def test_stratified_skips_thin_hours_and_reports_none_when_no_hour_qualifies():
     hours, s = rm.stratified(f, lab)
     assert hours <= 24 and all((v is None) == (hours == 0) or hours > 0 for v in s.values())
     assert rm.stratified({}, {})[0] == 0 and rm.stratified({}, {})[1]["rssi_std"] is None
+
+
+def test_router_vantage_reads_only_the_named_client_and_keeps_sparse_buckets(tmp_path):
+    site = write_site(tmp_path, T0 + 10 * DAY)
+    rows = []
+    for i in range(10 * 96 * 3):   # one router poll every 300 s over the camera window
+        t = T0 + i * 300
+        cl = [{"name": "Redmi-10", "dbm": -30 - (i * 7) % 5}, {"name": "iPad-Rozalia", "dbm": -20}]
+        rows.append(json.dumps({"ts": t, "clients": cl}))
+    rows.append(json.dumps({"ts": T0 + 50, "clients": [{"name": "Redmi-10", "dbm": None}]}))
+    rows.append("not json")
+    (tmp_path / "router.jsonl").write_text("\n".join(rows) + "\n")
+    buckets, newest = rm.read_router(str(tmp_path / "router.jsonl"), T0)
+    assert newest == T0 + (10 * 96 * 3 - 1) * 300
+    assert all(-40 < v < -20 for b in buckets.values() for v in b["rssi"])
+    assert sum(len(b["rssi"]) for b in buckets.values()) == 10 * 96 * 3
+    now = rm.rt.datetime.datetime.fromtimestamp(newest, rm.rt.datetime.timezone.utc)
+    res = rm.run(str(site), str(tmp_path / "router.jsonl"), now, vantage="router-station")
+    assert res["vantage"] == "router-station"
+    assert res["min_rssi_rows_per_bucket"] == rm.MIN_RSSI_ROUTER
+    assert res["state"] in ("NO_SIGNAL", "SIGNAL", "UNKNOWN")
+    assert res.get("rssi_buckets", 0) > 0
+    bad = rm.run(str(site), None, now, vantage="nope")
+    assert bad["state"] == "UNKNOWN"

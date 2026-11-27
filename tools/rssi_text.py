@@ -18,11 +18,13 @@ def read_json(path):
         return json.load(fh)
 
 
-def parse_cli(argv, description):
+def parse_cli(argv, description, extra=None):
     p = argparse.ArgumentParser(description=description)
     p.add_argument("--site", required=True)
     p.add_argument("--now", help="ISO UTC time (testing); default host clock")
     p.add_argument("--log", help="Redmi10 observations log (default: the source named by rssi-table.json)")
+    if extra is not None:
+        extra(p)
     return p.parse_args(argv)
 
 
