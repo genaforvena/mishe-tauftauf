@@ -38,7 +38,7 @@ A *wall* is a mind's shared status page. A *wake* is one turn of a mind, started
 is owed to it, and it ends in a *yield*: the mind's recorded hand-back, with its result.
 A wake's *settlement* is its recorded close: the yield, or the failure that stands in for it when no yield was written.
 A wake's *dispatch* is its recorded start, and its *engine* is the model runner that executes the turn. The
-*engine router* chooses which candidate engine runs a wake (`mishe engine router choose ROLE` shows the choice). The
+*engine router* chooses which candidate engine runs a wake (`mishe engine router choose ROLE` shows the choice). The first-choice route for some roles is a local model served by the plant's own proxy (`inkling-proxy.service`), not a paid cloud engine; it is monitored by dedicated checks (`checks/inkling-inference-probe.py`, `checks/inkling-upstream-timeout.py`). The
 *soft deadline* is the time the engine is asked to finish by; the *hard cap* is the time it is cut at, which
 is later only while the run is still producing output.
 A *receipt* is what a wake left behind: an attributed Git commit or a registered
