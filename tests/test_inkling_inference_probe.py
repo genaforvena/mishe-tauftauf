@@ -121,3 +121,54 @@ def test_non_completion_body_is_unknown():
 def test_exit_codes_match_duty_registration():
     check = _load()
     assert check.main(["--url", "http://127.0.0.1:1/v1/chat/completions", "--deadline", "1"]) == 2
+
+
+def _activity_server(reading, pinged):
+    class Route(_Answer):
+        def do_GET(self):  # noqa: N802
+            body = json.dumps(reading).encode()
+            self.send_response(200 if reading is not None else 404)
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):  # noqa: N802
+            pinged.append(1)
+            super().do_POST()
+
+    return _serve(Route)
+
+
+def _judge(reading):
+    check, pinged = _load(), []
+    server = _activity_server(reading, pinged)
+    try:
+        verdict, detail = check.probe(f"http://127.0.0.1:{server.server_port}/v1/chat/completions", "m", 5.0)
+    finally:
+        server.shutdown()
+        server.server_close()
+    return verdict, detail, bool(pinged)
+
+
+def test_a_route_busy_and_producing_is_green_without_a_ping():
+    """The route serves one request at a time: a ping during a wake waits behind it and misses its deadline."""
+    verdict, detail, pinged = _judge({"busy": True, "quiet_s": 40.0, "since_agent_reply_s": 900.0})
+    assert (verdict, pinged) == ("GREEN", False), detail
+
+
+def test_a_route_busy_and_silent_too_long_is_red():
+    verdict, detail, pinged = _judge({"busy": True, "quiet_s": 200.0, "since_agent_reply_s": 900.0})
+    assert (verdict, pinged) == ("RED", False) and "silent" in detail, detail
+
+
+def test_a_recent_agent_reply_is_evidence_and_the_cached_context_is_left_alone():
+    """A ping between a wake's turns evicts its cached context (about 80 s per turn at 70k tokens, 2026-11-27)."""
+    verdict, detail, pinged = _judge({"busy": False, "quiet_s": None, "since_agent_reply_s": 300.0})
+    assert (verdict, pinged) == ("GREEN", False), detail
+
+
+def test_an_idle_route_is_still_pinged():
+    for reading in ({"busy": False, "quiet_s": None, "since_agent_reply_s": 1200.0},
+                    {"busy": False, "quiet_s": None, "since_agent_reply_s": None}, {"unexpected": 1}, None):
+        verdict, detail, pinged = _judge(reading)
+        assert (verdict, pinged) == ("GREEN", True), (reading, detail)
