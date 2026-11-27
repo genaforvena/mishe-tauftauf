@@ -46,6 +46,25 @@ def test_unreadable_journal_is_unknown():
     assert check.main(["--window", "900"], read=broken, now=lambda: 0.0) == 3
 
 
+def test_missing_unit_is_unknown_not_green():
+    # journalctl on a nonexistent unit exits 0 with no lines; the load-state probe must turn that into UNKNOWN.
+    check = _load()
+    import subprocess as sp
+
+    real_run = sp.run
+
+    def fake_run(args, **kwargs):
+        if args[:2] == ["systemctl", "--user"]:
+            return sp.CompletedProcess(args, 0, stdout="not-found\n", stderr="")
+        raise AssertionError("journalctl must not run for a unit that is not loaded")
+
+    check.subprocess.run = fake_run
+    try:
+        assert check.main(["--unit", "gone.service"], now=lambda: 0.0) == 3
+    finally:
+        check.subprocess.run = real_run
+
+
 def test_main_returns_red_from_injected_journal():
     check = _load()
     assert check.main([], read=lambda unit, since: [TIMEOUT_1824], now=lambda: 0.0) == 2

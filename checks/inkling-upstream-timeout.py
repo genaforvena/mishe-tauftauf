@@ -28,7 +28,18 @@ WINDOW_SECONDS = 900
 
 
 def read_journal(unit: str, since_epoch: float) -> list[str]:
-    """Journal lines for ``unit`` since ``since_epoch``. Raises RuntimeError if journalctl fails."""
+    """Journal lines for ``unit`` since ``since_epoch``. Raises RuntimeError if the unit is not loaded or journalctl fails.
+
+    A unit that does not exist yields an empty journal, which would read as GREEN; the load-state probe keeps a
+    missing proxy UNKNOWN instead.
+    """
+    load = subprocess.run(
+        ["systemctl", "--user", "show", "-p", "LoadState", "--value", unit],
+        capture_output=True, text=True, timeout=30,
+    )
+    state = load.stdout.strip()
+    if load.returncode != 0 or state != "loaded":
+        raise RuntimeError(f"unit {unit} is not loaded (LoadState={state or load.returncode})")
     res = subprocess.run(
         ["journalctl", "--user", "-u", unit, f"--since=@{int(since_epoch)}", "--no-pager", "--output=cat"],
         capture_output=True, text=True, timeout=30,
