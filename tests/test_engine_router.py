@@ -1099,7 +1099,7 @@ def test_a_candidate_with_a_longer_cut_is_told_its_own_time_budget(tmp_path, mon
     """The prompt is built before the engine is chosen and states the earliest cut of any candidate."""
     long = {"engine": "omp", "model": "local/slow", "account": None, "free": True, "hard_timeout_s": 4200}
     short = {"engine": "claude", "model": "claude-haiku-5-5", "account": None, "hard_timeout_s": 2100}
-    path = routes_file(tmp_path, {"pub": [long, short]})
+    routes_file(tmp_path, {"pub": [long, short]})
     data = json.loads((tmp_path / "engine" / router.ROUTES).read_text())
     data["hard_timeout_s"] = 4200
     (tmp_path / "engine" / router.ROUTES).write_text(json.dumps(data))
