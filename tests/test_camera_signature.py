@@ -265,3 +265,16 @@ def test_fswebcam_partly_busy_then_no_frame_stays_a_crash(tmp_path, monkeypatch)
     monkeypatch.setattr(cam.shutil, "which", lambda name: f"/usr/bin/{name}")
     out = cam.run("webcam", None, "/dev/video0", None)
     assert out["status"] == "unavailable" and "reason_code" not in out
+
+
+def test_remote_capture_failure_with_empty_stderr_keeps_the_stdout_tail(monkeypatch):
+    # 2026-11-27: rc=2 with empty stderr gave "rc=2" alone; the Mac's stdout tail must carry the reason.
+    monkeypatch.setattr(cam.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+
+    def remote_fails(args, **kwargs):
+        return subprocess.CompletedProcess(args, 2, "camera refused: no permission\n", "")
+
+    monkeypatch.setattr(cam.subprocess, "run", remote_fails)
+    out = cam.run("mac", "ilya@192.168.8.214", "", None)
+    assert out["status"] == "unavailable" and "reason_code" not in out
+    assert "remote capture failed rc=2" in out["reason"] and "camera refused" in out["reason"]
