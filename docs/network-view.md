@@ -173,7 +173,7 @@ is not mistaken for a quiet mind.
   not answer or its result is unreadable, and names the affected device. When the reading's
   neighbour state is `FAILED` or `INCOMPLETE`, ARP itself got no answer, so the line says
   `not answering the LAN (no ARP answer)`: the device is asleep or firewalled, not a fault on the
-  router side. A device that is still associated on Wi-Fi also gets `still on Wi-Fi` on the same line; when its router counters have not moved over the last six reads it additionally gets `router counters unchanged over the last 6 reads (associated but not answering)`, so the two facts read as one. When the router log does not show the device as frozen (or no router read is available), the line instead says `(a sleeping device looks like this; not a network fault)`, so a sleeping device is not read as a router fault. A missing or unreadable reading, a timestamp more than five seconds in the future,
+  router side. A device that is still associated on Wi-Fi also gets `still on Wi-Fi` on the same line, and always gets `(a sleeping device looks like this; not a network fault)`, so a sleeping device is not read as a router fault. When its router counters have not moved over the last six reads it additionally gets `router counters unchanged over the last 6 reads`, so the two facts read as one. A missing or unreadable reading, a timestamp more than five seconds in the future,
   or a reading older than 15 minutes also shows UNKNOWN. Readings older than 15 minutes are marked STALE.
   A device that failed to answer in consecutive samples during the last 24 hours also gets a history
   phrase on the same line. A gap of more than 15 minutes between two samples was not measured, so it
