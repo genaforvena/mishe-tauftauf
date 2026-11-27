@@ -7,7 +7,9 @@ UTC hour of day. The proxy is deliberately crude and is named as such: an hour i
 room's camera motion is above the median of all its observed hours. It is a stand-in for occupancy,
 not occupancy; no labels and no people are involved.
 
-Training: hours before the cut (the last HOLDOUT_DAYS days are held out). A learned hour needs at
+Training: hours before the cut (the last HOLDOUT_DAYS days are held out). Only hours whose
+bedroom camera frames were available enter the series — an hour with every frame unavailable
+carries no motion reading even when the producer writes a number. A learned hour needs at
 least MIN_N training samples, otherwise it stays null and the renderer falls back.
 
 Scoring: Brier score on held-out night hours (the same window the renderer's hand-set night prior
@@ -110,15 +112,27 @@ def build(site, now):
         out["night_bedroom"]["reason"] = "feature store missing or empty: UNKNOWN"
         return out
     series = []
+    hours_total = hours_usable = 0
     for r in rows:
         cam = r.get("camera", {}).get("bedroom", {})
-        if isinstance(cam, dict) and isinstance(cam.get("motion"), (int, float)):
-            t = dt.datetime.fromtimestamp(r["t"], dt.timezone.utc)
-            series.append((t, float(cam["motion"])))
+        if not isinstance(cam, dict):
+            continue
+        if isinstance(cam.get("motion"), (int, float)):
+            hours_total += 1
+            # An hour whose frames were all unavailable carries no motion reading; the
+            # producer still writes a number there, so availability — not the number's
+            # presence — decides whether the hour is usable evidence.
+            if cam.get("unavailable", 0) == 0:
+                hours_usable += 1
+                t = dt.datetime.fromtimestamp(r["t"], dt.timezone.utc)
+                series.append((t, float(cam["motion"])))
     series.sort()
     if len(series) < 2:
-        out["night_bedroom"]["reason"] = "too few bedroom motion hours: UNKNOWN"
+        out["night_bedroom"]["reason"] = ("too few camera-available bedroom hours (%d of %d): UNKNOWN"
+                                           % (len(series), hours_total))
+        out["bedroom_hours"] = {"total": hours_total, "camera_available": hours_usable}
         return out
+    out["bedroom_hours"] = {"total": hours_total, "camera_available": hours_usable}
     median = statistics.median(m for _, m in series)
     cut = series[-1][0] - dt.timedelta(days=HOLDOUT_DAYS)
     train = [(t, 1 if m > median else 0) for t, m in series if t < cut]
