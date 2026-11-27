@@ -113,7 +113,8 @@
     "tools/health_view.py",
     "tools/map_view.py",
     "tools/map_tiles.py",
-    "tools/map_priors.py"
+    "tools/map_priors.py",
+    "tools/network_singbox_stream.py"
   ],
   "legacy": {
     "src/mishe_tauftauf/access.py": {
