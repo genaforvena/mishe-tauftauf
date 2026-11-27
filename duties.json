@@ -1595,6 +1595,27 @@
       "replaces": []
     },
     {
+      "name": "wake-compaction-loop",
+      "command": [
+        "{python}",
+        "{repo}/checks/wake-compaction-loop.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 300,
+      "timeout": 60,
+      "max_age": 900,
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "health",
+      "covers": "an active wake (stream written in the last 15 min) that has overflowed its context at least twice (length-stopped turns plus context-full compactions) without issuing mishe yield: RED names the wake, role and counts from a bounded 4 MB tail; UNKNOWN when the wake directory is missing; failed-mishe-wake-* only fires at process exit, so this is the earlier signal",
+      "replaces": []
+    },
+    {
       "name": "wake-memory-floor",
       "command": [
         "{python}",
