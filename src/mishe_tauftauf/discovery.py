@@ -7692,6 +7692,35 @@ def _scan_trace(path: Path, started: float, event: str) -> None:
         pass  # tracing is evidence, never a reason to fail the scan
 
 
+def _keep_scan_timing(home: Path, trace_path: Path, scan_id: str) -> None:
+    """Append one line per clean scan to signals/readings-scan-timing.jsonl: the snapshot stage's seconds and
+    the io/memory pressure lines at its start and end. Clean traces are otherwise deleted, so without this
+    the snapshot cost is only visible on overruns. Failure to record is never a reason to fail the scan."""
+    try:
+        events: dict[str, tuple[float, str]] = {}
+        for line in trace_path.read_text(encoding="utf-8").splitlines():
+            parts = line.split(" ", 2)
+            if len(parts) < 3:
+                continue
+            event, _, host = parts[2].partition(" | ")
+            elapsed = float(parts[1].removeprefix("+").removesuffix("s"))
+            events[event] = (elapsed, host)
+        start = events.get("stage:snapshot:start")
+        done = events.get("stage:snapshot:done")
+        total = max((elapsed for elapsed, _ in events.values()), default=None)
+        record = {
+            "scan_id": scan_id,
+            "snapshot_s": round(done[0] - start[0], 3) if start and done else None,
+            "total_s": round(total, 3) if total is not None else None,
+            "snapshot_start_host": start[1] if start else None,
+            "snapshot_done_host": done[1] if done else None,
+        }
+        with (home / "signals" / "readings-scan-timing.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+    except (OSError, ValueError):
+        pass
+
+
 def scan(home: Path) -> Path:
     """Acquire and publish a receipt; notification failure never rolls it back."""
     previous = latest(home)
@@ -7764,6 +7793,7 @@ def scan(home: Path) -> Path:
         # A clean run removes its trace, unless the stack dump fired (the scan crossed the dump
         # threshold and then finished): that trace is the only stage evidence of the slow run.
         if not _stack_dump_fired(stack_path):
+            _keep_scan_timing(home, trace_path, scan_id)
             trace_path.unlink(missing_ok=True)
     except Exception as error:
         trace(f"failed {type(error).__name__} at {attempt.get('stage')}")

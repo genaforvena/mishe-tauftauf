@@ -1,6 +1,7 @@
 """The readings scan leaves a per-stage trace: a clean scan removes it, a killed scan keeps the last stage reached."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -103,3 +104,23 @@ def test_slow_clean_scan_keeps_trace_when_its_stack_dump_fired(tmp_path: Path) -
     assert "sample:start" in text and "sample:done" in text and "publication" in text
     stacks = sorted((tmp_path / "signals").glob("readings-scan-stack-*.txt"))
     assert len(stacks) == 1 and "Timeout" in stacks[0].read_text(encoding="utf-8")
+
+
+def test_clean_scan_keeps_one_snapshot_timing_line(tmp_path: Path) -> None:
+    value = {"created": "2026-01-01T00:00:00Z", "node": "node", "observations": []}
+
+    def slow_sample(home, trace=None):
+        trace("stage:snapshot:start")  # sample() reports its snapshot stage through the trace callback
+        time.sleep(0.05)
+        trace("stage:snapshot:done")
+        return value
+
+    with patch("mishe_tauftauf.discovery.sample", side_effect=slow_sample):
+        scan(tmp_path)
+    lines = (tmp_path / "signals" / "readings-scan-timing.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    # The forced slow sample is inside the snapshot stage, so its seconds cover the sleep.
+    assert record["snapshot_s"] is not None and record["snapshot_s"] >= 0.04
+    assert record["total_s"] >= record["snapshot_s"]
+    assert " psi_io=" in record["snapshot_done_host"]
