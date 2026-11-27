@@ -159,8 +159,12 @@ def clear_recovered(home, *, now, last_exit=None, active_since=None) -> list[str
         # recovered record needs only a stable-active unit: a long-running unit's start time is fixed, so
         # ``started > since`` would fail on every pass after the refresh that moved the stamp, and the record would
         # age to a false UNKNOWN anyway (2026-11-16: the dual-probe service, active since 11-14 00:50Z).
+        # A wake unit is not a long-running service: it runs one engine and its success is its clean exit (the yield).
+        # Being active for a while proves nothing (2026-11-27: senses GREEN at 22:02Z while its 22:00:21Z run had
+        # just failed without a yield), so only a service may clear on stable activity.
+        is_wake = unit.startswith("mishe-wake@")
         running_clean = started is not None and now - started >= RECOVERY_STABLE_S \
-            and (already_green or started > since)
+            and (already_green or (started > since and not is_wake))
         if not (exited_clean or running_clean):
             continue
         # A failure handler can publish a new reading while the manager call is in flight.

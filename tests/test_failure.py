@@ -415,6 +415,21 @@ def test_a_restarted_long_running_unit_clears_after_it_is_stably_active(tmp_path
     assert store.read(tmp_path, name, now=later).value == "GREEN"
 
 
+def test_a_wake_unit_active_for_a_while_does_not_clear_its_failure(tmp_path):
+    # 2026-11-27: failed-mishe-wake-senses-service went GREEN while its run, started after a failed exit, was still
+    # running. A wake is one engine run: only its clean exit (the yield) shows it recovered.
+    unit, name = "mishe-wake@senses.service", "failed-mishe-wake-senses-service"
+    failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
+    never_exited = lambda u: None
+    later = NOW + failure.RECOVERY_STABLE_S + 60
+    assert failure.clear_recovered(tmp_path, now=later, last_exit=never_exited,
+                                   active_since=lambda u: NOW + 60) == []
+    assert store.read(tmp_path, name, now=later).value == "RED"
+    # the run exits 0 after the RED reading: observed GREEN
+    assert failure.clear_recovered(tmp_path, now=later + 60, last_exit=lambda u: (later + 30, True)) == [name]
+    assert store.read(tmp_path, name, now=later + 60).value == "GREEN"
+
+
 def test_a_unit_active_since_before_the_failure_does_not_clear_it(tmp_path):
     unit, name = "mishe-dual-probe.service", "failed-mishe-dual-probe-service"
     failure.report(tmp_path, unit, now=NOW, notify=lambda *a: None)
