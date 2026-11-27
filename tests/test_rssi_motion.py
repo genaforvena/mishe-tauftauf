@@ -174,3 +174,28 @@ def test_router_vantage_reads_only_the_named_client_and_keeps_sparse_buckets(tmp
     assert res.get("rssi_buckets", 0) > 0
     bad = rm.run(str(site), None, now, vantage="nope")
     assert bad["state"] == "UNKNOWN"
+
+
+def test_router_refuses_non_finite_json_and_keeps_the_median_key(tmp_path):
+    # NaN / Infinity are not JSON: a NaN ts used to pass isinstance and crash int(ts) in read_router
+    rows = [
+        '{"ts": NaN, "clients": [{"name": "Redmi-10", "dbm": -40}]}',
+        '{"ts": ' + str(T0 + 10) + ', "clients": [{"name": "Redmi-10", "dbm": Infinity}]}',
+        '{"ts": ' + str(T0 + 20) + ', "clients": [{"name": "Redmi-10", "dbm": -41}]}',
+        '{"ts": -Infinity, "clients": [{"name": "Redmi-10", "dbm": -41}]}',
+    ]
+    path = tmp_path / "router.jsonl"
+    path.write_text("\n".join(rows) + "\n")
+    buckets, newest = rm.read_router(str(path), T0)
+    assert newest == T0 + 20
+    assert [v for b in buckets.values() for v in b["rssi"]] == [-41]
+    try:
+        rm.rt.parse_json_line('{"ts": NaN}')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("parse_json_line accepted NaN")
+    site = write_site(tmp_path, T0 + 10 * DAY)
+    now = rm.rt.datetime.datetime.fromtimestamp(T0 + 20, rm.rt.datetime.timezone.utc)
+    res = rm.run(str(site), str(path), now, vantage="router-station")
+    assert "rssi_median_dbm" in res

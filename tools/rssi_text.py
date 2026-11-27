@@ -18,9 +18,17 @@ def read_json(path):
         return json.load(fh)
 
 
+def _refuse_constant(name):
+    raise ValueError(f"non-finite JSON constant {name}")
+
+
 def parse_json_line(line):
-    """One JSON-lines row (router log) -> the decoded object; raises ValueError when malformed."""
-    return json.loads(line)
+    """One JSON-lines row (router log) -> the decoded object; raises ValueError when malformed.
+
+    NaN, Infinity and -Infinity are refused: they are not JSON, and a non-finite
+    ts or dbm would otherwise pass the type checks and corrupt the study.
+    """
+    return json.loads(line, parse_constant=_refuse_constant)
 
 
 def parse_cli(argv, description, extra=None):

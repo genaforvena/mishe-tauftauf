@@ -89,13 +89,13 @@ def read_router(path, first_epoch, client=ROUTER_CLIENT):
             except ValueError:
                 continue
             ts = row.get("ts") if isinstance(row, dict) else None
-            if not isinstance(ts, (int, float)) or ts < first_epoch:
+            if not isinstance(ts, (int, float)) or not math.isfinite(ts) or ts < first_epoch:
                 continue
             for cl in row.get("clients") or []:
                 if not isinstance(cl, dict) or cl.get("name") != client:
                     continue
                 dbm = cl.get("dbm")
-                if not isinstance(dbm, (int, float)):
+                if not isinstance(dbm, (int, float)) or not math.isfinite(dbm):
                     continue
                 epoch = int(ts)
                 b = buckets.setdefault(epoch - epoch % BUCKET_S, {"rssi": [], "acc": []})
@@ -277,7 +277,7 @@ def run(site, log, now, vantage="redmi10"):
         return dict(out, state="UNKNOWN", reason="no RSSI rows in the log inside the camera window")
     age = now.timestamp() - newest
     feats, median = features(buckets, min_rssi)
-    out.update(log=log, min_rssi_rows_per_bucket=min_rssi, rssi_buckets=len(feats),
+    out.update(log=log, rssi_median_dbm=median, min_rssi_rows_per_bucket=min_rssi, rssi_buckets=len(feats),
                newest_rssi_age_s=round(age), camera_buckets={r: len(v) for r, v in rooms.items()})
     still = [r["phone_acc_std"] for r in feats.values() if r["phone_acc_std"] is not None]
     out["phone_motion_known_buckets"] = len(still)
