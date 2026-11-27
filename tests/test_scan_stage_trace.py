@@ -44,8 +44,10 @@ def test_failed_scan_keeps_its_trace_with_the_failing_stage(tmp_path: Path) -> N
     traces = _traces(tmp_path)
     assert len(traces) == 1
     lines = traces[0].read_text(encoding="utf-8").splitlines()
-    events = [line.split(" ", 2)[2] for line in lines]
+    events = [line.split(" ", 2)[2].split(" | ")[0] for line in lines]
     assert events == ["enter", "sample:start", "failed OSError at acquisition"]
+    # Each stage line carries this scan's write total and the host pressure, so a stall can be attributed.
+    assert all(" | wbytes=" in line and " psi_mem=" in line and " psi_io=" in line for line in lines)
 
 
 def test_killed_scan_keeps_the_last_stage_it_reached(tmp_path: Path) -> None:

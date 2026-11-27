@@ -7340,7 +7340,7 @@ def test_a_scan_killed_inside_sample_keeps_the_sub_stage_trace(tmp_path: Path) -
 
     traces = list((home / "signals").glob("readings-scan-trace-*.txt"))
     assert len(traces) == 1
-    events = [line.split(" ", 2)[2] for line in traces[0].read_text().splitlines()]
+    events = [line.split(" ", 2)[2].split(" | ")[0] for line in traces[0].read_text().splitlines()]
     assert events[0] == "enter"
     assert "sample:start" in events
     assert "stage:snapshot:start" in events

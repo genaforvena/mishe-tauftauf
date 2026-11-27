@@ -7675,13 +7675,39 @@ def _stack_dump_fired(stack_path: Path) -> bool:
         return False
 
 
+def _host_stage_sample() -> str:
+    """Cheap host pressure and this scan's own write total, appended to each stage line.
+
+    ``wbytes`` is the scan process's bytes written to storage (its /proc/self/io write_bytes), so a stall
+    can be attributed to the scan itself; the PSI ``avg10`` values say whether the host was under memory or
+    I/O pressure at that stage. Any unreadable file reads as ``?`` rather than failing the scan."""
+    def psi(name: str) -> str:
+        try:
+            head = Path(f"/proc/pressure/{name}").read_text(encoding="ascii").splitlines()
+            fields = dict(item.split("=", 1) for item in head[0].split()[1:])
+            full = ""
+            if len(head) > 1:
+                full = "/" + dict(item.split("=", 1) for item in head[1].split()[1:]).get("avg10", "?")
+            return fields.get("avg10", "?") + full
+        except (OSError, IndexError, ValueError):
+            return "?"
+
+    try:
+        wbytes = next(int(line.split()[1]) for line in Path("/proc/self/io").read_text(encoding="ascii").splitlines()
+                      if line.startswith("write_bytes:"))
+    except (OSError, StopIteration, ValueError, IndexError):
+        wbytes = "?"
+    return f"| wbytes={wbytes} psi_mem={psi('memory')} psi_io={psi('io')}"
+
+
 def _scan_trace(path: Path, started: float, event: str) -> None:
     """Append one timestamped stage line. Each line is opened and closed, so a SIGKILLed scan keeps every
-    stage it reached; the epoch column lines up with the producer's journal `start=` to split pre-scan from in-scan time."""
+    stage it reached; the epoch column lines up with the producer's journal `start=` to split pre-scan from in-scan time.
+    The host sample trails the event after `` | ``, so the event text itself stays unchanged."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(f"{time.time():.3f} +{time.monotonic() - started:.3f}s {event}\n")
+            handle.write(f"{time.time():.3f} +{time.monotonic() - started:.3f}s {event} {_host_stage_sample()}\n")
     except OSError:
         pass  # tracing is evidence, never a reason to fail the scan
 
