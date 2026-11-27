@@ -1646,6 +1646,52 @@ def phase_line(data, now=None, facts=None):
             f" (nights ~{night:.0f}, evenings ~{evening:.0f}); last probe {a:.0f} s ago{split}{note}")
 
 
+SLOW_HANDSHAKE_MS = 600      # the secure handshake is about 280 ms when healthy; an hour above this is slow
+SLOW_SINCE_MIN_ROWS = 3      # fewer measured rows in an hour make that hour UNKNOWN, not slow or fast
+
+
+def slow_since_line(data):
+    """Since when the secure handshake has stayed above SLOW_HANDSHAKE_MS, counted in whole UTC hours.
+
+    Walks back from the newest hour while each hour's median handshake stays slow. An hour with too
+    few measured rows is UNKNOWN and ends the run, so the start is then only "at least" that hour;
+    so does the start of the window. Says nothing when the newest hour is not slow.
+    """
+    hours = {}
+    for row in data:
+        try:
+            epoch = nb.utc_epoch(row["at"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        v = _sample_mean(row, "handshake_ms")
+        if v is not None:
+            hours.setdefault(int(epoch // 3600), []).append(v)
+    if not hours:
+        return "UNKNOWN (no measured handshake rows)"
+
+    def median_of(h):
+        vals = hours.get(h, [])
+        return statistics.median(vals) if len(vals) >= SLOW_SINCE_MIN_ROWS else None
+
+    newest = max(hours)
+    latest = median_of(newest)
+    if latest is None:
+        return f"UNKNOWN (newest hour {time.strftime('%H:%M', time.gmtime(newest * 3600))}Z has too few handshake rows)"
+    if latest <= SLOW_HANDSHAKE_MS:
+        return f"not slow in the newest hour (median {latest:.0f} ms)"
+    start, earliest = newest, min(hours)
+    while start - 1 >= earliest:
+        prev = median_of(start - 1)
+        if prev is None or prev <= SLOW_HANDSHAKE_MS:
+            break
+        start -= 1
+    edge = "at least " if start == earliest or median_of(start - 1) is None else ""
+    since = time.strftime("%Y-%m-%d %H:%M", time.gmtime(start * 3600))
+    hours_slow = newest - start + 1
+    return (f"handshake slow ({SLOW_HANDSHAKE_MS} ms+) since {edge}{since}Z, "
+            f"{hours_slow} hour{'s' if hours_slow != 1 else ''}; newest hour median {latest:.0f} ms")
+
+
 def day_spark(samples, buckets=USUAL_BUCKETS):
     """Bucket web-latency samples across the loaded window into `buckets` means for a sparkline."""
     if not samples:
@@ -2054,6 +2100,7 @@ def draw():
     out.append(dns_line(data))
     out.append(host_busy_line(data))
     out.append("  WHERE TIME GOES  " + phase_line(data, facts=facts))
+    out.append("  SLOW SINCE    " + slow_since_line(data))
     out.append(usuality_line(data, facts=facts))
     out.append(spike_share_line(facts))
     out.append("")
