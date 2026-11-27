@@ -987,6 +987,8 @@ def devices_line(now=None):
                 if name in frozen:
                     problem += (f", router counters unchanged over the last {FROZEN_READS} reads"
                                 " (associated but not answering)")
+                else:
+                    problem += " (a sleeping device looks like this; not a network fault)"
             parts.append(f"{name} {problem}")
             unknown = True
         else:
