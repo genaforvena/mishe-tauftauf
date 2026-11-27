@@ -32,6 +32,7 @@
     "src/mishe_tauftauf/host_capacity.py",
     "src/mishe_tauftauf/host_containment.py",
     "src/mishe_tauftauf/host_radio.py",
+    "src/mishe_tauftauf/host_stage_text.py",
     "src/mishe_tauftauf/memory_stat_text.py",
     "src/mishe_tauftauf/observations.py",
     "src/mishe_tauftauf/omp_usage_text.py",
