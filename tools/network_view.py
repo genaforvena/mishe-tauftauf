@@ -990,7 +990,8 @@ def devices_line(now=None):
                                 " (associated but not answering; a sleeping device or a dead link"
                                 " can look like this)")
                 else:
-                    problem += " (a sleeping device looks like this; not a network fault)"
+                    # Only frozen-free counters prove movement; without a frozen read this stays neutral.
+                    problem += " (associated but not answering; no router counters to tell a sleeping device from a dead link)"
             parts.append(f"{name} {problem}")
             unknown = True
         else:

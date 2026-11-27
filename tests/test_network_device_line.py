@@ -200,5 +200,7 @@ def test_associated_silent_device_without_frozen_counters_is_not_linked(monkeypa
     ])
     monkeypatch.setattr(view, "router_rows", lambda: [])
     line = view.devices_line(now=now)
-    assert "still on Wi-Fi (a sleeping device looks like this; not a network fault)" in line
+    assert "still on Wi-Fi (associated but not answering; no router counters to tell a sleeping device from a dead link)" in line
     assert "counters unchanged" not in line
+    assert "not a network fault" not in line
+    assert "sleeping device looks like this" not in line
