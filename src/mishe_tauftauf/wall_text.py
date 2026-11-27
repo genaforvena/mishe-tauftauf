@@ -17,6 +17,7 @@ share their normalization with.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import re
@@ -153,6 +154,15 @@ def sender_role(source: str) -> str:
     return source.removeprefix("mind/")
 
 
+_DM_CANONICAL = re.compile(r"\[dm\] to=(\S+)")
+
+
+@functools.lru_cache(maxsize=256)
+def _natural_dm_pattern(source: str, me: str) -> re.Pattern:
+    """The natural-prose address pattern for one sender, compiled once per sender instead of per feed record."""
+    return re.compile(rf"(?:(?:{re.escape(source)}|{re.escape(me)})\s+)?to[=\s]\s*([a-z][a-z0-9-]*)(?![\w/-])", re.IGNORECASE)
+
+
 def dm_recipient(text: str, source: str, roles=()) -> str | None:
     """The recipient of an addressed first line, or None.
 
@@ -163,10 +173,12 @@ def dm_recipient(text: str, source: str, roles=()) -> str | None:
     ``append`` uses it so a DM written through the plain CLI wakes its recipient like ``wall dm``.
     """
     first = text.splitlines()[0] if text else ""
-    match = re.fullmatch(r"\[dm\] to=(\S+)", first)
+    match = _DM_CANONICAL.fullmatch(first)
     me = source.removeprefix("mind/")                          # the sender's own role, whether it signs as ROLE or mind/ROLE
     if match is None:
-        natural = re.match(rf"(?:(?:{re.escape(source)}|{re.escape(me)})\s+)?to[=\s]\s*([a-z][a-z0-9-]*)(?![\w/-])", first, re.IGNORECASE)   # a malformed [dm] line stays rejected
+        if "to" not in first.lower():                          # the natural form needs a literal "to"; most first lines lack it
+            return None
+        natural = _natural_dm_pattern(source, me).match(first)   # a malformed [dm] line stays rejected
         if natural is not None and natural.group(1).lower() in set(roles) and natural.group(1).lower() != me:
             return natural.group(1).lower()
         return None

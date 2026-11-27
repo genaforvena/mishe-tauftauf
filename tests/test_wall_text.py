@@ -1,7 +1,7 @@
 """Ownership comparison for wall notes: the approved wall-text adapter."""
 import hashlib
 import pytest
-from mishe_tauftauf.wall_text import decode_audit_entries, document_digest, is_peer_copy
+from mishe_tauftauf.wall_text import decode_audit_entries, dm_recipient, document_digest, is_peer_copy
 
 
 def test_identical_notes_are_a_peer_copy():
@@ -81,3 +81,19 @@ def test_reviewer_command_uses_the_checked_model_id():
     assert cmd[cmd.index("--model") + 1] == "claude-haiku-5-5"
     with pytest.raises(ValueError):
         wall_review.reviewer_command("claude-sonnet-5-5")
+
+
+def test_dm_recipient_natural_and_canonical_forms_survive_the_cached_fast_path():
+    roles = ("genome", "senses")
+    # canonical [dm] line; malformed line stays rejected
+    assert dm_recipient("[dm] to=genome\nhi", "senses", roles) == "genome"
+    assert dm_recipient("[dm] to=senses\nhi", "senses", roles) is None
+    assert dm_recipient("[dm] to=Genome\nhi", "senses", roles) is None
+    # natural prose names only a declared role, never the sender itself
+    assert dm_recipient("senses to genome: hi", "senses", roles) == "genome"
+    assert dm_recipient("To genome: hi", "mind/senses", roles) == "genome"
+    assert dm_recipient("genome to genome: hi", "genome", roles) is None
+    assert dm_recipient("to undeclared: hi", "senses", roles) is None
+    # first lines without a literal "to" never match
+    assert dm_recipient("tokens and totals", "senses", roles) is None
+    assert dm_recipient("", "senses", roles) is None
