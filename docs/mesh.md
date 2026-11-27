@@ -205,8 +205,8 @@ UNKNOWN means a current budget reading is unavailable. In either case, a spontan
 initiative, not to answer a message or signal) requires a free route (a model that costs no paid inference) in that role's own roster (the candidate models
 the role may be routed to) with fresh ledger evidence (the append-only log of routing decisions and
 wake outcomes, see [budget contract](budget-json-contract.md)) and available capacity. At each
-attempt the router checks the budget again, so a free refusal cannot spend paid inference while the
-budget stays RED or UNKNOWN. Messages, signal edges and requested follow-ups retain normal routing. See [quota
+attempt the router checks the budget again, so a spontaneous wake stays on free routes and cannot spend
+paid inference while the budget stays RED or UNKNOWN. Messages, signal edges and requested follow-ups retain normal routing. See [quota
 acquisition](claude-quota.md).
 
 The camera sense and the floor plan (who is labelled in each room, and how each value is marked as given, measured, inferred, assumed or unknown) are described in [outer windows](outer-windows.md#senses-behind-the-map-camera-and-floor-plan).
