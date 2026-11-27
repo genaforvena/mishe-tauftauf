@@ -69,8 +69,11 @@ def test_row_has_the_python_shape(tmp_path):
     assert set(row["internet"]) == {"gstatic", "cloudflare"}
     for site in row["internet"].values():
         if site["ok"]:
-            assert set(site) == {"ok", "connect_ms", "tls_ms", "total_ms"}
-            for key in ("connect_ms", "tls_ms", "total_ms"):
+            # lookup_ms (curl's name lookup) is optional: CONTRACT.md omits it when it did not parse.
+            assert set(site) - {"lookup_ms"} == {"ok", "connect_ms", "tls_ms", "total_ms"}
+            for key in ("connect_ms", "tls_ms", "total_ms", "lookup_ms"):
+                if key not in site:
+                    continue
                 assert isinstance(site[key], float)
                 assert round(site[key], 1) == site[key], "timings keep one decimal place"
         else:
