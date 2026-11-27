@@ -1342,6 +1342,24 @@
       "replaces": []
     },
     {
+      "name": "network-singbox-stream",
+      "command": [
+        "{python}",
+        "{repo}/tools/network_singbox_stream.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 120,
+      "timeout": 30,
+      "max_age": 600,
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "network",
+      "covers": "the router's sing-box log lines collected read-only every 2 min into analysis/router-singbox-stream.log (deduped, UTC-stamped) so probe timing can be joined over hours; its status file records the last attempt and last success; UNKNOWN when the router read fails or the collector has not run within 10 min",
+      "replaces": []
+    },
+    {
       "name": "network-router-load",
       "command": [
         "{python}",
