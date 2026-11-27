@@ -26,3 +26,19 @@ def test_unreadable_journal_keeps_plain_age_message(monkeypatch):
     monkeypatch.setattr(care, "gate_skips_between", lambda last, now: None)
     msg = care.stale_message("Wi-Fi radio", 1000.0, 1000.0 + 16 * 60)
     assert msg == "network-care: newest Wi-Fi radio reading is 16 min old"
+
+
+def test_journal_bytes_that_are_not_utf8_are_counted_not_crashed(monkeypatch):
+    # 2026-11-27: one journal line held a non-UTF-8 byte (0xc4); strict decoding crashed the router-load
+    # gate and the duty went RED. The count must survive it.
+    import subprocess
+
+    raw = (b"mishe-producer-network-router-load: \xc4 odd bytes\n"
+           b"mishe-producer-network-probe unmet condition check mishe-containment/tripped\n")
+
+    def fake_run(argv, **kw):
+        assert kw.get("errors") == "replace"
+        return subprocess.CompletedProcess(argv, 0, stdout=raw.decode("utf-8", kw["errors"]), stderr="")
+
+    monkeypatch.setattr(care.subprocess, "run", fake_run)
+    assert care.gate_skips_between(1000.0, 2000.0) == 1
