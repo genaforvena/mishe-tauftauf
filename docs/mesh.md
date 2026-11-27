@@ -195,9 +195,10 @@ Senses' scan readings come from `mishe discover scan` (the discovery sense, in `
 `mishe discover show` shows the acquisition freshness and each source's state; a new host scan
 cannot make an old phone sample current.
 
-If the chat tape (the append-only message log) cannot be read in verified form, the record of how each
-direct message (DM) was handled and the latency readings that depend on it stay unknown rather than using a partial tape as
-evidence. Claude subscription readings use the native local `/usage` command.
+If the chat tape (the append-only message log) cannot be read in verified form, the latency readings that
+depend on it stay UNKNOWN rather than using a partial tape as evidence. Only machine-addressed mail in a
+fixed form gets a triage row in `decision-log/dm-triage.jsonl`; prose direct messages (DMs) are read by the
+mind itself. Claude subscription readings use the native local `/usage` command.
 
 A fresh GREEN budget (the spending reading, see [budget contract](budget-json-contract.md)) passes the budget check (the engine router's test of the current budget reading, run before each
 wake) and allows spontaneous work on the role's normal routes. RED means the budget fails the check.
