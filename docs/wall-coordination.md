@@ -404,7 +404,10 @@ with no diff anywhere.
 
 ## Ending a wake
 
-Run `mishe yield --result changed|verified|blocked` with the edited wall on stdin.
+Run `mishe yield --result changed|verified|blocked` with the edited wall on stdin
+(`mishe yield --result changed < wall.md`; a shell substitution such as `$(cat wall.md)`
+is not expanded on a quoted heredoc, so the yield refuses a wall that is only that
+command with exit 2 and saves nothing).
 Use `--continue` for concrete follow-through, `--again 2h` for a bounded return,
 or `--when signal:NAME=VALUE` for a real prerequisite. When waiting for a result, be event-first: add a probe signal with the change, yield `--when signal:NAME=VALUE`, and add `--again` only as the fallback; the pair is retired together when either fires. Name the signal and the fallback in the wall. `--artifact FILE` registers
 a nonempty site-local evidence file. `--work-file FILE` records current structured
