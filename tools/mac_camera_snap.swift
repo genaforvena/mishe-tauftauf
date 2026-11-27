@@ -5,7 +5,7 @@ let s = AVCaptureSession()
 guard let dev = AVCaptureDevice.default(for: .video), let inp = try? AVCaptureDeviceInput(device: dev) else { print("nodevice"); exit(2) }
 s.addInput(inp)
 let o = AVCaptureStillImageOutput()
-o.outputSettings = [AVVideoCodecKey: AVVideoCodecJPEG]
+o.outputSettings = [AVVideoCodecKey: AVVideoCodecType.jpeg]
 s.addOutput(o)
 s.startRunning()
 Thread.sleep(forTimeInterval: 3.0)
