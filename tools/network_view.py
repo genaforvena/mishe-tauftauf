@@ -1613,6 +1613,11 @@ def phase_line(data, now=None, facts=None):
     connect points at the path (router, WAN, ISP), a slow handshake at the encrypted setup, and a
     slow remainder at the page itself. Printing the raw checkpoints as phases would double count the
     connect and leave the three numbers short of the total the INTERNET lines show.
+    The router's sing-box TUN accepts the TCP connect itself and sends every foreign address through
+    one proxy outbound, so a small connect is the tunnel answering, not the web server, and a slow
+    handshake is the proxy leg (see docs/network-view.md, WHERE TIME GOES). Why some connects are
+    near zero and others take about 400 ms is not yet explained, so a single slow connect is not
+    evidence about the WAN.
     When a slowdown is flagged, a second indented line names the phase that accounts for it, using
     the same sample window and baseline as the USUAL line below.
     """
