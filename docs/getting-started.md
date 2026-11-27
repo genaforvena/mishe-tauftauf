@@ -119,23 +119,32 @@ not create: `network`, `operator`, `pub`, `rust-plan`, `steward` and `system1`. 
 own units or probes (for example the `wrapper`, the launcher the `mishe` command runs through, or the
 `root-fs probe`, a check of how long the root filesystem takes to flush writes) depend on the machine, not on the install.
 
-`sync` writes the user units (`mishe-wake@.service`, a path unit per role (a systemd unit
-that starts the role's wake when its inbox file or a signal it subscribes to changes), producer
-timers, `mishe-failed@`, the doctor). A producer is a timer that runs one check, writes its
-signal and exits; producer timers are the only thing that polls and enables the paths and timers.
+`sync` writes the user units. They are:
+
+- `mishe-wake@.service`: the wake unit, one per role. A path unit (a systemd unit that
+  starts the role's wake when its inbox file or a signal it subscribes to changes) starts it.
+- producer timers: a *producer* is a timer that runs one check, writes its signal and exits.
+  Producer timers are the only thing that polls, and they are what enables the paths and timers.
+- `mishe-failed@` and the doctor.
+
 `systemctl --user list-units 'mishe*'` shows them. Units are named under `--prefix`
-(default `mishe`) and written to `--unit-dir` (default `~/.config/systemd/user`). A
-host that already runs a plant must give a second plant its own `--prefix` and
-`--unit-dir`, or its `sync` rewrites the first plant's units; `--no-slices` (skips the
-systemd resource groups the units are otherwise placed in) is for scratch namespaces only. A delivery (promoting a checked commit to the
-running code, with automatic rollback if it fails to observe)
-in flight is a transient `moving-pin-delivery-HHMMSS.service`; its name carries no `mishe-` prefix, so pass that
-pattern too (`list-units 'mishe*' 'moving-pin-delivery-*'`) when you want to see whether
-the *pin* is being moved. The pin is `runtime/current`, the release the running code was loaded from; *How a change lands* below explains it.
-On a host with more than one plant, `doctor` also reads sibling plants' pinned
-releases without writing to them. A fork that still promotes or starts units
-under this plant's prefix is RED before its next sync rewrites anything; the
-message names the sibling and the prefix to restore.
+(default `mishe`) and written to `--unit-dir` (default `~/.config/systemd/user`).
+
+- A host that already runs a plant must give a second plant its own `--prefix` and
+  `--unit-dir`. Otherwise its `sync` rewrites the first plant's units.
+- `--no-slices` skips the systemd resource groups the units are otherwise placed in. Use it
+  for scratch namespaces only.
+
+A delivery (promoting a checked commit to the running code, with automatic rollback if it
+fails to observe) in flight is a transient `moving-pin-delivery-HHMMSS.service`. Its name
+carries no `mishe-` prefix, so pass that pattern too:
+`list-units 'mishe*' 'moving-pin-delivery-*'`. The *pin* is `runtime/current`, the release
+the running code was loaded from. *How a change lands* below explains it.
+
+On a host with more than one plant, `doctor` also reads sibling plants' pinned releases
+without writing to them. A fork that still promotes or starts units under this plant's
+prefix is RED before its next sync rewrites anything. The message names the sibling and
+the prefix to restore.
 
 ## 5. Start
 
