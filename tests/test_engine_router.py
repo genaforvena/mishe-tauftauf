@@ -1093,3 +1093,34 @@ def test_pace_is_validated_and_kept_by_load_routes(tmp_path):
     routes_file(tmp_path, {"docs": [dict(SOL, pace="yes")]})
     with pytest.raises(ValueError, match="invalid pace"):
         router.load_routes(tmp_path)
+
+
+def test_a_candidate_with_a_longer_cut_is_told_its_own_time_budget(tmp_path, monkeypatch):
+    """The prompt is built before the engine is chosen and states the earliest cut of any candidate."""
+    long = {"engine": "omp", "model": "local/slow", "account": None, "free": True, "hard_timeout_s": 4200}
+    short = {"engine": "claude", "model": "claude-haiku-5-5", "account": None, "hard_timeout_s": 2100}
+    path = routes_file(tmp_path, {"pub": [long, short]})
+    data = json.loads((tmp_path / "engine" / router.ROUTES).read_text())
+    data["hard_timeout_s"] = 4200
+    (tmp_path / "engine" / router.ROUTES).write_text(json.dumps(data))
+    prompt = tmp_path / "p.md"
+    prompt.write_text("This wake is cut at 35 minutes of engine time.\n")
+    seen = []
+
+    class Recorder:
+        def __init__(self, cand):
+            self.model = cand["model"]
+
+        def run(self, prompt_file, **kwargs):
+            seen.append((self.model, prompt_file.read_text()))
+            if self.model == "local/slow":
+                raise router.EngineNotStarted("down")
+            return 0
+
+    monkeypatch.setattr(router.RoutedEngine, "_build", lambda self, cand: Recorder(cand))
+    router.RoutedEngine(tmp_path, "pub", router.load_routes(tmp_path)).run(
+        prompt, env=_env(tmp_path, "k-budget"), cwd=tmp_path, timeout=1800)
+    assert [model for model, _ in seen] == ["local/slow", "claude-haiku-5-5"]
+    assert "cut at 70 minutes" in seen[0][1] and "yield by minute 65" in seen[0][1]
+    # The fallback candidate has the cut the prompt already states: the correction must not carry over.
+    assert seen[1][1] == "This wake is cut at 35 minutes of engine time.\n"

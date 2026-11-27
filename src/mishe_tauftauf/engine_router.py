@@ -768,9 +768,30 @@ class RoutedEngine:
         cap = float(min(caps))
         return cap if cap > limit else None
 
+    def _tell_cut(self, prompt_file, base: str | None, timeout: float, cut: float) -> None:
+        """State this candidate's own cut in the prompt when it is not the one the dossier planned.
+
+        The dossier is written before a candidate is chosen and states the earliest cut of any of them, so a
+        candidate allowed to run longer paced itself to the wrong clock. Rebuilt from ``base`` for every
+        candidate, so a fallback never inherits the previous correction.
+        """
+        if base is None:
+            return
+        from . import dossier
+        planned = int(dossier.engine_ceiling(self.home, self.role, timeout) // 60)
+        minutes = int(cut // 60)
+        text = base
+        if minutes != planned:
+            text += (f"\n## Time budget for this engine\n\nCorrection to the time budget above: on the engine "
+                     f"running this wake it is cut at {minutes} minutes, not {planned}. Plan against {minutes} and "
+                     f"yield by minute {max(1, minutes - 5)} at the latest.\n")
+        Path(prompt_file).write_text(text, encoding="utf-8")
+
     def run(self, prompt_file, *, env, cwd, timeout, on_start=None, spontaneous_only=False) -> int:
         key_wake = env.get("MISHE_WAKE_KEY")
         tried: set = set()
+        prompt = Path(prompt_file)
+        base = prompt.read_text(encoding="utf-8") if prompt.is_file() else None
         while True:
             now = time.time()
             now_ms = now * 1000
@@ -796,8 +817,10 @@ class RoutedEngine:
             engine = self._build(cand)
             try:
                 limit = min(timeout, cand["timeout_s"]) if cand.get("timeout_s") else timeout
+                hard = self.hard_cap(limit, cand)
+                self._tell_cut(prompt_file, base, timeout, hard or limit)
                 code = engine.run(prompt_file, env=dict(env, **self.extra_env), cwd=cwd, timeout=limit,
-                                  on_start=on_start, hard_timeout=self.hard_cap(limit, cand))
+                                  on_start=on_start, hard_timeout=hard)
             except EngineExhausted as exc:
                 # The account is out of quota: no effect, and every role on that account would fail the same
                 # way, so cool the account key (shared by all roles) for a window rather than a role retry.
