@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import intentions, owed, signal_store, units, wall_text
+from . import intentions, owed, revive_boundary, signal_store, units, wall_text
 from .state_files import read_json, write_json
 
 DEFAULT_RESOLVER = "health"
@@ -162,7 +162,7 @@ def clear_recovered(home, *, now, last_exit=None, active_since=None) -> list[str
         # A wake unit is not a long-running service: it runs one engine and its success is its clean exit (the yield).
         # Being active for a while proves nothing (2026-11-27: senses GREEN at 22:02Z while its 22:00:21Z run had
         # just failed without a yield), so only a service may clear on stable activity.
-        is_wake = unit.startswith("mishe-wake@")
+        is_wake = revive_boundary.unit_kind(unit) == "wake-service"
         running_clean = started is not None and now - started >= RECOVERY_STABLE_S \
             and (already_green or (started > since and not is_wake))
         if not (exited_clean or running_clean):
