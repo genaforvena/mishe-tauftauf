@@ -2004,7 +2004,7 @@ def test_promote_does_not_overwrite_a_review_merged_after_its_last_save(tmp_path
     repo, home, old, sha = tree
 
     def merge_between(home_, record):
-        path = next((home_ / "work/releases").glob("*.json"))
+        path = home_ / "work/releases" / f"{record['id']}.json"
         current = read_json(path)
         current.update(review_pending=False, review=dict(verdict="OK"))
         write_json(path, current)
@@ -2024,7 +2024,8 @@ def test_promote_persists_signal_error_without_losing_a_merged_review(tmp_path, 
     repo, home, old, sha = tree
 
     def fail_signal(home_, record):
-        path = next((home_ / "work/releases").glob("*.json"))
+        # Name the record by its id: the fixture also leaves the previous release on disk, and glob order is not stable.
+        path = home_ / "work/releases" / f"{record['id']}.json"
         current = read_json(path)
         current.update(review_pending=False, review=dict(verdict="OK"))
         write_json(path, current)
