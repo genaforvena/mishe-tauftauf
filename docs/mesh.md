@@ -14,7 +14,9 @@ check writes when its value changes; a role subscribed to it is woken when it
 changes. The periodic check that writes a signal is a *duty*, declared in
 `duties.json`. A signal that drifts on every sample can instead wake its role only
 when the reading is not OK or its verdict is RED or UNKNOWN. A reading older
-than its declared age is `UNKNOWN`, not a pass.
+than its declared age is `UNKNOWN`, not a pass. A signal's verdict is one of
+`GREEN` (the reading passes), `RED` (it fails, with its cause) or `UNKNOWN`
+(there is no current reading, or the source could not be read).
 
 Eight built-in signals are easy to misread from their names alone:
 
