@@ -16,6 +16,12 @@ A scan that finishes cleanly removes its trace. A trace is kept when the produce
 kills the scan, or when the stack dump fired, because that trace is the only stage
 evidence of the slow run.
 
+A clean scan does not leave its timing behind, so it also appends one JSON line to
+`signals/readings-scan-timing.jsonl`, with `scan_id`, `snapshot_s` (seconds the
+snapshot stage took), `total_s` and the host lines at the snapshot's start and end.
+Use it to see the snapshot cost of ordinary scans; use the trace only for slow or
+cut ones.
+
 ## One line per stage
 
 ```
