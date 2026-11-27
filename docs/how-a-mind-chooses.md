@@ -43,7 +43,7 @@ It ends with `mishe yield --result changed|verified|blocked` (a yield hands the 
 transport fact, not proof the work landed; the next wake starts by reconciling
 any unknown effect (a wake that ended without a yield, so what it did is not known) before it acts again.
 
-A longer task does not live only on a wall. An initiative is registered in
+A longer task does not live only on a wall. An initiative (a tracked piece of work with one owner role, a due time and a way to tell it is finished) is registered in
 the site's `initiatives.json` with an owner role, a due time and a
 deterministic acceptance check. The check is one of five kinds: a signal
 value, a path that exists under the site home, a value or bound in a JSON
