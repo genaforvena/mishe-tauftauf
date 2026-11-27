@@ -80,7 +80,7 @@ the wait and cools the candidate for every role, up to four base windows. A
 yield resets the repeat count. Roles absent from that file keep using
 `engines/ROLE.json`.
 `mishe engine router choose ROLE` dry-runs the choice and `mishe engine router
-ledger` shows recent selections.
+ledger` shows the most recent routing events (selections, fallbacks and outcomes).
 
 A candidate may carry `max_parallel`: the number of wakes that may use it at
 once. When the candidate is already at its cap the router skips it and the wake
