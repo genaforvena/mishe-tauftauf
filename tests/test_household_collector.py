@@ -395,3 +395,23 @@ def test_note3_body_app_missing_is_unknown_not_silent(tmp_path):
     now = time.time()
     out = hc.note3_body_app(str(tmp_path), now)
     assert out["status"] == "unknown"
+
+
+def test_redmi_ok_without_current_wifi_rssi_carries_presence_note(tmp_path):
+    # lux and battery are fresh (ok), but no current Wi-Fi RSSI: the note must say no presence sighting
+    now = time.time()
+    log = _redmi_log(tmp_path, [(now - 5, "light lux=4.0 accuracy=3"),
+                                (now - 5, "battery level=0.84 charging=false")])
+    out = hc.redmi_summary(str(tmp_path), now, log_path=log)
+    assert out["status"] == "ok"
+    assert "no presence sighting" in out["note"]
+
+
+def test_redmi_ok_with_current_wifi_rssi_has_no_presence_note(tmp_path):
+    now = time.time()
+    log = _redmi_log(tmp_path, [(now - 5, "light lux=4.0 accuracy=3"),
+                                (now - 5, "battery level=0.84 charging=false"),
+                                (now - 5, "wifi_link_rssi_dbm=-56")])
+    out = hc.redmi_summary(str(tmp_path), now, log_path=log)
+    assert out["status"] == "ok"
+    assert "note" not in out

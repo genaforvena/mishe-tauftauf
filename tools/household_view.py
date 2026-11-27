@@ -201,6 +201,9 @@ def phones_signal_lines():
             lines.append(f"  signal   {body} body app {body_app.get('status')}: "
                          f"{str(body_app.get('reason') or 'no receipt')[:160]}")
         if status == "ok":
+            if part.get("note"):
+                # ok means fresh lux/battery; a note says what the ok does not cover (e.g. no Wi-Fi presence)
+                lines.append(f"  signal   {body} ok, but {str(part['note'])[:160]}")
             continue
         reason = str(part.get("reason") or "no reason recorded")
         lines.append(f"  signal   {body} {status or 'UNKNOWN'}: {reason[:160]}")

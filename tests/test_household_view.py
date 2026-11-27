@@ -486,3 +486,14 @@ def test_phones_signal_lines_live_body_app_adds_nothing(tmp_path, monkeypatch):
     detail.write_text(json.dumps({"note3": {"status": "ok", "body_app": {"status": "live"}},
                                   "redmi10": {"status": "ok"}}))
     assert hv.phones_signal_lines() == []
+
+
+def test_phones_signal_lines_name_redmi_presence_gap_beside_ok(tmp_path, monkeypatch):
+    import json
+    detail = tmp_path / "household-phones.detail"
+    monkeypatch.setattr(hv, "PHONES_DETAIL", detail)
+    note = "Wi-Fi RSSI not current (link down): no presence sighting from this phone; lux and battery only"
+    detail.write_text(json.dumps({"note3": {"status": "ok"},
+                                  "redmi10": {"status": "ok", "note": note}}))
+    assert hv.phones_signal_lines() == [
+        "  signal   redmi10 ok, but " + note[:160]]

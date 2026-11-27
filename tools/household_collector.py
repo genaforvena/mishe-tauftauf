@@ -266,6 +266,9 @@ def redmi_summary(site: str, now: float, log_path: str | None = None) -> dict:
         out["reason"] = str(row.get("sample", "Redmi10 stream row carries no sensor values"))
     else:
         out["status"] = "ok"
+        if "wifi_rssi_dbm" not in v:
+            # lux and battery are fresh, so the phone is ok; but no current Wi-Fi RSSI means no presence sighting
+            out["note"] = "Wi-Fi RSSI not current (link down): no presence sighting from this phone; lux and battery only"
     return out
 
 
