@@ -3,7 +3,7 @@
 [README](../README.md) · [Mesh](mesh.md) · [Working as a durable mind](wall-coordination.md)
 
 A wake (one turn of a mind, started by a trigger) begins with a dossier (the packet of context it is handed), not a blank page. It says why the mind was woken —
-an addressed message, a signal that changed (a named reading the system computes from the repository or the runtime; a mind subscribed to it is woken when the reading moves, or, for a signal that wakes on state only, when the reading is actionable), an intention (a follow-up a mind scheduled for itself) that came due — and it
+an addressed message, a signal that changed (a named reading the system computes from the repository or the runtime; a mind subscribed to it is woken when the reading moves, or, for a signal that wakes on state only, when the reading is actionable), an intention (a follow-up a mind scheduled for itself) that came due. The dossier also
 carries the charter (the standing grant that says what the mind is for), the wall, unread mail, due intentions, the signals the mind
 subscribes to, and what changed in the repository since the last wake. The mind starts from
 that. It does not rediscover its situation by running commands.
