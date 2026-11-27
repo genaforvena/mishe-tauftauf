@@ -198,7 +198,9 @@ is not mistaken for a quiet mind.
   (`time_appconnect` minus `time_connect`), and the rest of the page (`time_total` minus
   `time_appconnect`). curl reports all three as cumulative checkpoints from the start of the
   request, so printing them raw would double count the connect and leave the figures short of the
-  page total.
+  page total. When the newest probe carries curl's name lookup (`lookup_ms`, `time_namelookup`),
+  the reaching-the-site figure also names that lookup as "(name lookup N ms of it)": the lookup is
+  inside the connect, not a fourth phase. Rows without the field show no such clause.
   Reading the split: the router's sing-box sends every foreign address (all but `.ru`, `.su` and
   private addresses) through one proxy outbound, so gstatic and cloudflare take the same path. A
   connect of about 2 ms is the local tunnel stack answering, not the web server. A slow handshake
