@@ -85,7 +85,7 @@ def read_router(path, first_epoch, client=ROUTER_CLIENT):
     with open(path, encoding="utf-8", errors="replace") as fh:
         for line in fh:
             try:
-                row = json.loads(line)
+                row = rt.parse_json_line(line)
             except ValueError:
                 continue
             ts = row.get("ts") if isinstance(row, dict) else None

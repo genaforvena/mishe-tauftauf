@@ -18,6 +18,11 @@ def read_json(path):
         return json.load(fh)
 
 
+def parse_json_line(line):
+    """One JSON-lines row (router log) -> the decoded object; raises ValueError when malformed."""
+    return json.loads(line)
+
+
 def parse_cli(argv, description, extra=None):
     p = argparse.ArgumentParser(description=description)
     p.add_argument("--site", required=True)
