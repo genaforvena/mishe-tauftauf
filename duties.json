@@ -556,6 +556,24 @@
       "covers": "root-drive fsync stalls of 5 s or more in the last 900 s, from the dual-probe mirror; the signal was registered with no producer and went UNKNOWN on 2026-11-14 11:01Z"
     },
     {
+      "name": "root-fs-band",
+      "command": [
+        "{python}",
+        "{repo}/checks/root-fs-band.py",
+        "--home",
+        "{home}"
+      ],
+      "every": 120,
+      "timeout": 60,
+      "max_age": 600,
+      "unknown_codes": [
+        3
+      ],
+      "resolver": "health",
+      "replaces": [],
+      "covers": "root-drive sub-threshold band: probes >= 1 s in the last 30 min at least twice the 6 h median and at least 5, the lead the 5 s root-fs-stall RED cannot give"
+    },
+    {
       "name": "inotify-headroom",
       "command": [
         "{python}",

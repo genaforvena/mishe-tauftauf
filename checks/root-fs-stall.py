@@ -256,18 +256,27 @@ def rising_rate_suffix(seen: list[dict], now: float) -> str:
     A rise like that is the lead the 5 s verdict cannot give. This names it on the quiet line
     and does not move the verdict; promoting it to RED is a separate decision.
     """
+    recent, baseline, any_slow = rate_counts(seen, now)
+    if recent == 0 and not any_slow:
+        return ""
+    trend = "rising" if is_rising(recent, baseline) else "not rising"
+    return (f"; probes >= {RATE_MIN_S:g} s: {recent} in the last {RATE_WINDOW_S / 60:.0f} min "
+            f"vs 6 h median {baseline:g} per {RATE_WINDOW_S / 60:.0f} min ({trend})")
+
+
+def rate_counts(seen: list[dict], now: float) -> tuple[int, float, bool]:
+    """(probe-seconds >= RATE_MIN_S in the last RATE_WINDOW_S, their 6 h median, any such probe at all)."""
     times = [r["at"] for r in seen if r.get("event") == "slow" and (r.get("total") or 0) >= RATE_MIN_S
              and now - r["at"] < RATE_WINDOW_S * (RATE_BASELINE_WINDOWS + 1)]
     def count(i: int) -> int:
         lo, hi = RATE_WINDOW_S * i, RATE_WINDOW_S * (i + 1)
         return len({int(t) for t in times if lo <= now - t < hi})
-    recent = count(0)
-    if recent == 0 and not times:
-        return ""
     baseline = statistics.median(count(i) for i in range(1, RATE_BASELINE_WINDOWS + 1))
-    trend = "rising" if recent >= 2 * max(baseline, 1) and recent >= 5 else "not rising"
-    return (f"; probes >= {RATE_MIN_S:g} s: {recent} in the last {RATE_WINDOW_S / 60:.0f} min "
-            f"vs 6 h median {baseline:g} per {RATE_WINDOW_S / 60:.0f} min ({trend})")
+    return count(0), baseline, bool(times)
+
+
+def is_rising(recent: int, baseline: float) -> bool:
+    return recent >= 2 * max(baseline, 1) and recent >= 5
 
 
 def load(paths: list[Path]) -> list[dict]:

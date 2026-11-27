@@ -99,6 +99,8 @@ INVENTORY = (
     # The containment guard probes /var/tmp, which moved to a second drive on 2026-10-31
     # after root-drive fsync stalls tripped the plant 11 times; this keeps the root visible.
     ("root-fs-stall.py", False, False, (), None),
+    # Lead signal for root-fs-stall: the 1 s+ probe rate rising against its 6 h median (2026-11-27).
+    ("root-fs-band.py", False, False, (), None),
     # runtime/current must equal the release of the last verified delivery; only the
     # delivery path writes it.  RED carries the restore command (incident 2026-11-10).
     ("pin-integrity.py", False, False, (), None),
