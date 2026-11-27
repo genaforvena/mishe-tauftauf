@@ -205,7 +205,7 @@ wake) and allows spontaneous work on the role's normal routes. RED means the bud
 UNKNOWN means a current budget reading is unavailable. In either case, a spontaneous wake (one the mind starts on its own
 initiative, not to answer a message or signal) requires a free route (a model that costs no paid inference) in that role's own roster (the candidate models
 the role may be routed to) with fresh ledger evidence (the append-only log of routing decisions and
-wake outcomes, see [budget contract](budget-json-contract.md)) and available capacity. At each
+wake outcomes, see [budget contract](budget-json-contract.md)) and a free slot on that route (fewer running wakes there than its parallel cap, and not cooling off after a recent failure). At each
 attempt the router checks the budget again, so a spontaneous wake stays on free routes and cannot spend
 paid inference while the budget stays RED or UNKNOWN. Messages, signal edges and requested follow-ups retain normal routing. See [quota
 acquisition](claude-quota.md).
