@@ -443,7 +443,7 @@ def containment_pause(a, b):
         until = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(b + 60))
         run = subprocess.run(["nice", "-n", "10", "journalctl", "--since", since, "--until", until,
                               "--no-pager", "-o", "short-iso"],
-                             capture_output=True, text=True, timeout=8)
+                             capture_output=True, text=True, errors="replace", timeout=8)
         if run.returncode == 0:
             for line in run.stdout.splitlines():
                 if CONTAINMENT_SKIP not in line or not any(u in line for u in PROBE_UNITS):

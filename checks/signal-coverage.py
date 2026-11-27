@@ -96,8 +96,8 @@ def _gate_skips(name: str, since: float, now: float) -> int | None:
     try:
         r = subprocess.run(["journalctl", "--user", "--no-pager", "-o", "cat",
                             "--since", f"@{int(since)}", "--until", f"@{int(now) + 1}"],
-                           capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
+                           capture_output=True, text=True, errors="replace", timeout=10)
+    except (OSError, subprocess.SubprocessError, ValueError):
         return None
     if r.returncode != 0:
         return None

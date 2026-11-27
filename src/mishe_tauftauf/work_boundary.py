@@ -148,8 +148,8 @@ def _journal_last_exit(unit):
     try:
         result = subprocess.run(["journalctl", "--user", "-u", unit, "-o", "short-unix", "--no-pager", "-n", "50",
                                  "-g", "^Finished |Failed with result|Failed to start"],
-                                capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
+                                capture_output=True, text=True, errors="replace", timeout=10)
+    except (OSError, subprocess.SubprocessError, ValueError):
         return None
     if result.returncode:
         return None
