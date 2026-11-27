@@ -29,7 +29,7 @@ def run(home: Path, *extra: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(CHECK), "--home", str(home), "--repo", str(REPO),
          "--roles", "senses", "--no-artifact",
-         "--max-cpu-pressure", "100000", "--max-mem-pressure", "100000", *extra],
+         "--max-cpu-pressure", "100000", "--max-mem-pressure", "100000", "--min-free-kb", "0", *extra],
         capture_output=True, text=True, timeout=120)
 
 
@@ -138,7 +138,7 @@ def test_artifact_records_the_reading(tmp_path):
         [sys.executable, str(CHECK), "--home", str(home), "--repo", str(REPO),
          "--roles", "senses", "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000",
          "--max-load", "100000", "--max-cpu-pressure", "100000",
-         "--max-mem-pressure", "100000"],
+         "--max-mem-pressure", "100000", "--min-free-kb", "0"],
         capture_output=True, text=True, timeout=120)
     assert proc.returncode == 0, proc.stderr
     data = json.loads((home / "artifacts" / "rust-plan-20261107"
@@ -226,7 +226,7 @@ def test_duty_measures_release_source_not_editable_checkout(tmp_path):
     command[1] = str(CHECK)
     proc = subprocess.run(command + ["--roles", "senses", "--max-load", "100000",
                                      "--max-cpu-pressure", "100000",
-                                     "--max-mem-pressure", "100000",
+                                     "--max-mem-pressure", "100000", "--min-free-kb", "0",
                                      "--no-artifact"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stderr
     assert "3 entries" in proc.stdout
@@ -243,7 +243,7 @@ def test_history_appends_a_completed_sample_with_its_guard(tmp_path):
         [sys.executable, str(CHECK), "--home", str(home), "--repo", str(REPO),
          "--roles", "senses", "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000",
          "--max-load", "100000", "--max-cpu-pressure", "100000",
-         "--max-mem-pressure", "100000"],
+         "--max-mem-pressure", "100000", "--min-free-kb", "0"],
         capture_output=True, text=True, timeout=120)
     assert proc.returncode == 0, proc.stderr
     lines = (home / "artifacts" / "rust-plan-20261107"
@@ -442,7 +442,7 @@ def test_installed_binary_drift_is_red_not_green(tmp_path):
         [sys.executable, str(CHECK), "--home", str(home), "--repo", str(repo),
          "--roles", "senses", "--cpu-trigger", "1000", "--rss-trigger-kb", "10000000",
          "--max-load", "100000", "--max-cpu-pressure", "100000",
-         "--max-mem-pressure", "100000"], capture_output=True, text=True, timeout=120)
+         "--max-mem-pressure", "100000", "--min-free-kb", "0"], capture_output=True, text=True, timeout=120)
     assert proc.returncode == 2, proc.stdout + proc.stderr
     assert "RED installed Rust bytes" in proc.stderr and "mishe-tape" in proc.stderr
     record = json.loads((home / "artifacts" / "rust-plan-20261107"
@@ -457,7 +457,7 @@ def test_sample_records_verified_release_and_imported_feed(tmp_path):
     proc = subprocess.run(
         [sys.executable, str(CHECK), "--home", str(home), "--repo", str(repo),
          "--roles", "senses", "--max-load", "100000", "--max-cpu-pressure", "100000",
-         "--max-mem-pressure", "100000"], capture_output=True, text=True, timeout=30)
+         "--max-mem-pressure", "100000", "--min-free-kb", "0"], capture_output=True, text=True, timeout=30)
     assert proc.returncode == 0, proc.stderr
     artifact = json.loads((home / "artifacts" / "rust-plan-20261107" /
                            "rust-measurement-latest.json").read_text())
@@ -485,7 +485,7 @@ def test_changed_release_during_fold_is_unknown(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(mod, "fold_role", change_then_fold)
     assert mod.main(["--home", str(home), "--repo", str(repo), "--roles", "senses",
                      "--max-load", "100000", "--max-cpu-pressure", "100000",
-                     "--max-mem-pressure", "100000"]) == 3
+                     "--max-mem-pressure", "100000", "--min-free-kb", "0"]) == 3
     assert "UNKNOWN" in capsys.readouterr().err
     record = json.loads((home / mod.ARTIFACT_DIR / "rust-measurement-history.jsonl").read_text())
     assert record["verdict"] == "unknown"
@@ -504,7 +504,7 @@ def test_binary_changed_during_fold_is_unknown(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(mod, "fold_role", change_then_fold)
     assert mod.main(["--home", str(home), "--repo", str(repo), "--roles", "senses",
                      "--max-load", "100000", "--max-cpu-pressure", "100000",
-                     "--max-mem-pressure", "100000"]) == 3
+                     "--max-mem-pressure", "100000", "--min-free-kb", "0"]) == 3
     assert "installed binary provenance changed" in capsys.readouterr().err
 
 
@@ -521,7 +521,7 @@ def test_wrong_import_path_is_unknown(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(mod, "fold_role", wrong_import)
     assert mod.main(["--home", str(home), "--repo", str(repo), "--roles", "senses",
                      "--max-load", "100000", "--max-cpu-pressure", "100000",
-                     "--max-mem-pressure", "100000"]) == 3
+                     "--max-mem-pressure", "100000", "--min-free-kb", "0"]) == 3
     assert "fold imported feed from outside" in capsys.readouterr().err
 
 
@@ -542,7 +542,7 @@ def test_simultaneous_provenance_failures_remain_in_diagnostics(tmp_path, monkey
     monkeypatch.setattr(mod, "fold_role", change_during_fold)
     assert mod.main(["--home", str(home), "--repo", str(repo), "--roles", "senses",
                      "--max-load", "100000", "--max-cpu-pressure", "100000",
-                     "--max-mem-pressure", "100000"]) == 3
+                     "--max-mem-pressure", "100000", "--min-free-kb", "0"]) == 3
     stderr = capsys.readouterr().err
     artifact = json.loads((home / mod.ARTIFACT_DIR / "rust-measurement-latest.json").read_text())
     history = json.loads((home / mod.ARTIFACT_DIR / "rust-measurement-history.jsonl").read_text())
@@ -689,7 +689,7 @@ def test_cached_view_disagreeing_with_the_rebuild_is_red(tmp_path):
     proc = subprocess.run(
         [sys.executable, str(CHECK), "--home", str(home), "--repo", str(repo),
          "--roles", "senses", "--no-artifact", "--max-load", "100000",
-         "--max-cpu-pressure", "100000", "--max-mem-pressure", "100000"],
+         "--max-cpu-pressure", "100000", "--max-mem-pressure", "100000", "--min-free-kb", "0"],
         capture_output=True, text=True, timeout=120)
     assert proc.returncode == 2, (proc.returncode, proc.stderr)
     assert "cached role view" in proc.stderr and "senses" in proc.stderr
