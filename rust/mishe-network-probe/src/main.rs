@@ -24,7 +24,7 @@ const INTERNET: [(&str, &str, u16); 2] = [
     ("cloudflare", "https://www.cloudflare.com/cdn-cgi/trace", 200),
 ];
 const DNS_NAME: &str = "www.wikipedia.org";
-const CURL_FMT: &str = "%{http_code} %{time_connect} %{time_appconnect} %{time_total}";
+const CURL_FMT: &str = "%{http_code} %{time_connect} %{time_appconnect} %{time_total} %{time_namelookup}";
 
 /// Exit codes of the contract.
 const EXIT_OK: i32 = 0;
@@ -109,6 +109,9 @@ struct Site {
     connect_ms: Option<f64>,
     tls_ms: Option<f64>,
     total_ms: Option<f64>,
+    /// curl `%{time_namelookup}`: the name lookup alone, so a slow connect can be split into
+    /// "the resolver answered slowly" and "the TCP connect was slow".
+    lookup_ms: Option<f64>,
 }
 
 struct Row {
@@ -227,8 +230,10 @@ fn fetch(name: &str, url: &str, expected: u16) -> Result<Site, String> {
             connect_ms: None,
             tls_ms: None,
             total_ms: None,
+            lookup_ms: None,
         });
     }
+    let lookup_ms = lookup(&stdout);
     let (connect, tls, total) = match timings(&stdout) {
         Some(values) => values,
         // A timing line that does not parse is not a successful measurement.
@@ -240,6 +245,7 @@ fn fetch(name: &str, url: &str, expected: u16) -> Result<Site, String> {
                 connect_ms: None,
                 tls_ms: None,
                 total_ms: None,
+                lookup_ms: None,
             })
         }
     };
@@ -250,6 +256,7 @@ fn fetch(name: &str, url: &str, expected: u16) -> Result<Site, String> {
         connect_ms: Some(connect),
         tls_ms: Some(tls),
         total_ms: Some(total),
+        lookup_ms,
     })
 }
 
@@ -260,19 +267,29 @@ fn site_ok(stdout: &str, code: Option<i32>, expected: u16) -> bool {
         return false;
     }
     let parts: Vec<&str> = stdout.split_whitespace().collect();
-    parts.len() == 4 && parts[0] == expected.to_string()
+    parts.len() == 5 && parts[0] == expected.to_string()
 }
 
 /// The three timings of curl's `-w` line, in milliseconds with one decimal.
 fn timings(stdout: &str) -> Option<(f64, f64, f64)> {
     let parts: Vec<&str> = stdout.split_whitespace().collect();
-    if parts.len() != 4 {
+    if parts.len() != 5 {
         return None;
     }
     let connect = parts[1].parse::<f64>().ok().map(|v| round1(v * 1000.0))?;
     let tls = parts[2].parse::<f64>().ok().map(|v| round1(v * 1000.0))?;
     let total = parts[3].parse::<f64>().ok().map(|v| round1(v * 1000.0))?;
     Some((connect, tls, total))
+}
+
+/// The name lookup alone, from curl's `%{time_namelookup}` (the last field), in milliseconds.
+/// `None` when it does not parse: the site is still measured, the lookup just is not known.
+fn lookup(stdout: &str) -> Option<f64> {
+    let parts: Vec<&str> = stdout.split_whitespace().collect();
+    if parts.len() != 5 {
+        return None;
+    }
+    parts[4].parse::<f64>().ok().map(|v| round1(v * 1000.0))
 }
 
 /// DNS resolution time through the home resolver.
@@ -344,6 +361,9 @@ fn json_row(row: &Row) -> String {
             }
             if let Some(v) = site.total_ms {
                 let _ = write!(out, ",\"total_ms\":{}", json_f64(v));
+            }
+            if let Some(v) = site.lookup_ms {
+                let _ = write!(out, ",\"lookup_ms\":{}", json_f64(v));
             }
             out.push('}');
         } else {

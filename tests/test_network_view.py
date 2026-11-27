@@ -1007,6 +1007,19 @@ def test_phase_line_splits_reaching_the_site_from_the_handshake():
     assert "last probe" in line
 
 
+def test_phase_line_names_the_lookup_inside_reaching_the_site_when_measured():
+    row = _fresh_phase_row(70.0, 900.0)
+    for name in ("gstatic", "cloudflare"):
+        row["internet"][name]["lookup_ms"] = 68.0
+    line = view.phase_line([row])
+    assert "reaching the site 70 ms (name lookup 68 ms of it)" in line
+    assert "secure handshake 830 ms" in line
+
+
+def test_phase_line_reads_unchanged_without_a_lookup_field():
+    assert "(name lookup" not in view.phase_line([_fresh_phase_row(70.0, 900.0)])
+
+
 def test_phase_line_names_both_hosts_when_one_handshake_stalls():
     row = _fresh_phase_row(70.0, 900.0)
     row["internet"]["gstatic"]["tls_ms"] = 299.0

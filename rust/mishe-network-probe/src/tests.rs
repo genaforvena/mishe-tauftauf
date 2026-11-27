@@ -75,18 +75,18 @@ fn rtt_is_none_without_the_line() {
 #[test]
 fn a_site_is_ok_only_on_the_expected_status() {
     // The expected status came back with curl's exit 0.
-    assert!(site_ok("204 0.002 0.798 0.863", Some(0), 204));
+    assert!(site_ok("204 0.002 0.798 0.863 0.001", Some(0), 204));
     // A wrong status is an intercepting or captive page: not a pass.
-    assert!(!site_ok("302 0.01 0.02 0.03", Some(0), 204));
+    assert!(!site_ok("302 0.01 0.02 0.03 0.001", Some(0), 204));
     // A timeout is not a pass either.
-    assert!(!site_ok("000 0.000 0.000 8.001", Some(28), 204));
+    assert!(!site_ok("000 0.000 0.000 8.001 0.000", Some(28), 204));
     // A curl that failed has no timing line at all.
     assert!(!site_ok("", Some(7), 204));
 }
 
 #[test]
 fn timings_are_milliseconds_with_one_decimal() {
-    let (connect, tls, total) = timings("204 0.002 0.798 0.863").expect("timings");
+    let (connect, tls, total) = timings("204 0.002 0.798 0.863 0.072").expect("timings");
     assert_eq!(connect, 2.0);
     assert_eq!(tls, 798.0);
     assert_eq!(total, 863.0);
@@ -94,8 +94,21 @@ fn timings_are_milliseconds_with_one_decimal() {
 
 #[test]
 fn timings_reject_a_line_that_does_not_parse() {
-    assert!(timings("204 abc 0.798 0.863").is_none());
-    assert!(timings("204 0.002 0.798").is_none());
+    assert!(timings("204 abc 0.798 0.863 0.072").is_none());
+    assert!(timings("204 0.002 0.798 0.863").is_none(), "the lookup field is required");
+}
+
+#[test]
+fn lookup_is_the_last_field_in_milliseconds() {
+    assert_eq!(lookup("204 0.002 0.798 0.863 0.072"), Some(72.0));
+    assert_eq!(lookup("204 0.002 0.798 0.863 0.0011"), Some(1.1));
+    assert_eq!(lookup("204 0.002 0.798 0.863 x"), None, "an unreadable lookup is unknown, not zero");
+}
+
+#[test]
+fn site_ok_needs_the_full_five_field_line() {
+    assert!(site_ok("204 0.002 0.798 0.863 0.001", Some(0), 204));
+    assert!(!site_ok("204 0.002 0.798 0.863", Some(0), 204));
 }
 
 #[test]
@@ -133,8 +146,8 @@ fn a_row_keeps_the_python_field_set() {
         gateway_ip: Some("192.168.8.1".to_string()),
         gateway: Some(Gateway { loss_pct: 0.0, min_ms: Some(0.393), avg_ms: Some(0.462), max_ms: Some(0.496), jitter_ms: Some(0.036) }),
         internet: vec![
-            Site { name: "gstatic".to_string(), ok: true, curl_exit: None, connect_ms: Some(4.4), tls_ms: Some(220.4), total_ms: Some(300.4) },
-            Site { name: "cloudflare".to_string(), ok: false, curl_exit: Some(28), connect_ms: None, tls_ms: None, total_ms: None },
+            Site { name: "gstatic".to_string(), ok: true, curl_exit: None, connect_ms: Some(4.4), tls_ms: Some(220.4), total_ms: Some(300.4), lookup_ms: Some(72.0) },
+            Site { name: "cloudflare".to_string(), ok: false, curl_exit: Some(28), connect_ms: None, tls_ms: None, total_ms: None, lookup_ms: None },
         ],
         dns_ms: Some(0.7),
         host: Host { cpu_some10: Some(86.0), io_some10: None },
@@ -142,7 +155,7 @@ fn a_row_keeps_the_python_field_set() {
     let text = json_row(&row);
     assert!(text.starts_with("{\"at\":\"2026-11-09T22:18:03Z\",\"gateway_ip\":\"192.168.8.1\","));
     assert!(text.contains("\"gateway\":{\"loss_pct\":0.0,\"min_ms\":0.393"));
-    assert!(text.contains("\"gstatic\":{\"ok\":true,\"connect_ms\":4.4,\"tls_ms\":220.4,\"total_ms\":300.4}"));
+    assert!(text.contains("\"gstatic\":{\"ok\":true,\"connect_ms\":4.4,\"tls_ms\":220.4,\"total_ms\":300.4,\"lookup_ms\":72.0}"));
     assert!(text.contains("\"cloudflare\":{\"ok\":false,\"curl_exit\":28}"));
     assert!(text.contains("\"dns_ms\":0.7,\"host\":{\"cpu_some10\":86.0,\"io_some10\":null}}"), "host pressure is appended after dns_ms, null when unread");
     assert!(text.ends_with("}"));

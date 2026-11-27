@@ -76,8 +76,10 @@ between separators (the retired Python probe's exact form):
 | `dns_ms` | resolution time in milliseconds, or `null` when the lookup failed |
 | `host` | how busy this machine was at the row: `cpu_some10` and `io_some10` are the kernel PSI `some avg10` percentages from `/proc/pressure/cpu` and `/proc/pressure/io`, each `null` when unread. A slow handshake on a busy host is not an uplink problem; the window reads them together. Added in 0.2.0. |
 
-A site object is either `{"ok":true,"connect_ms":…,"tls_ms":…,"total_ms":…}`
-(all three timings present, one decimal place) or
+A site object is either `{"ok":true,"connect_ms":…,"tls_ms":…,"total_ms":…,"lookup_ms":…}`
+(the three timings present, one decimal place; `lookup_ms` is curl's
+`%{time_namelookup}`, the name lookup alone, and is omitted when it did not
+parse) or
 `{"ok":false,"curl_exit":N}` (curl's exit code; `-1` when curl could not be
 run at all). A failed site never carries timings, and a successful site never
 carries `curl_exit`.

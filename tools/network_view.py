@@ -1604,6 +1604,17 @@ def _clock_web_median(data, hours):
     return statistics.median([v for _, v in pool]), len(pool), _sample_span([t for t, _ in pool])
 
 
+def _lookup_part(row):
+    """The router-resolver share of "reaching the site", when the probe measured it.
+
+    The probe's `lookup_ms` is curl's name lookup alone, a checkpoint before the TCP connect, so it
+    sits inside the connect time. Rows from before the field existed carry none and read unchanged.
+    """
+    vals = [phase_ms(row, name, "lookup_ms") for name in SECURE_HOSTS]
+    vals = [v for v in vals if v is not None]
+    return f" (name lookup {sum(vals) / len(vals):.0f} ms of it)" if vals else ""
+
+
 def phase_line(data, now=None, facts=None):
     """Where a page load's time goes: three disjoint phases whose sum is the page's total time.
 
@@ -1639,7 +1650,7 @@ def phase_line(data, now=None, facts=None):
     usual = _hour_median(data, "handshake_ms", range(24))
     night = _hour_median(data, "handshake_ms", NIGHT_HOURS)
     evening = _hour_median(data, "handshake_ms", EVENING_HOURS)
-    sent = (f"reaching the site {conn:.0f} ms, secure handshake {hs:.0f} ms, "
+    sent = (f"reaching the site {conn:.0f} ms{_lookup_part(last)}, secure handshake {hs:.0f} ms, "
             f"rest of page {body:.0f} ms")
     split = _handshake_split(last)
     note = _slowdown_note(facts)
