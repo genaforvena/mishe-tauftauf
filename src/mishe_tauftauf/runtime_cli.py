@@ -12,6 +12,14 @@ EXIT = {"unknown": 3, "failed": 4}
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
+def _unexpanded_command(text: str) -> bool:
+    """One line that is wholly ``$(...)`` or backticks: a quoted heredoc passed the command, not its output."""
+    lone = text.strip()
+    if "\n" in lone or len(lone) < 3:
+        return False
+    return lone.startswith("$(") and lone.endswith(")") or lone[0] == lone[-1] == "`"
+
+
 def duration(text: str) -> float:
     if not text or text[-1] not in UNITS or not text[:-1].replace(".", "", 1).isdigit():
         raise argparse.ArgumentTypeError(f"duration {text!r} must look like 90s, 30m, 2h or 1d")
@@ -413,6 +421,10 @@ def run(args) -> int:
             return 2
         from .state_files import read_json
         text = args.file.read_text(encoding="utf-8") if args.file else sys.stdin.read()
+        if _unexpanded_command(text):
+            print("mishe: the wall text is only an unexpanded shell command, not its output; nothing was saved. "
+                  "Redirect the file into yield instead: mishe yield --result RESULT < wall.md", file=sys.stderr)
+            return 2
         message = yielding.settle(home, role, key, text=text, result=args.result, now=now,
                                   continue_=args.continue_, again=args.again, when=args.when,
                                   artifacts=args.artifact, work_record=read_json(args.work_file) if args.work_file else None)

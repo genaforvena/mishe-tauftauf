@@ -594,3 +594,28 @@ def test_doctor_completes_a_cycle_under_slow_tape_growth_without_a_stall(site, t
     for _ in range(5):
         assert cli("doctor", "--unit-dir", str(units_dir)) == 0
     assert json.loads((site / "doctor-feed-verified.json").read_text())["verified_at"] > 0
+
+
+@pytest.mark.parametrize("text", ["$(cat /tmp/wall.md)\n", "`cat wall.md`", "  $(< /tmp/wall.md)  "])
+def test_yield_refuses_a_wall_that_is_only_an_unexpanded_command(site, monkeypatch, capsys, tmp_path, text):
+    """A quoted heredoc saved the literal '$(cat /tmp/wall.md)' as a mind's wall (pub, 2026-11-27, 4 wakes)."""
+    monkeypatch.setenv("MISHE_ROLE", "genome")
+    monkeypatch.setenv("MISHE_WAKE_KEY", "wake-genome-1")
+    monkeypatch.setattr("mishe_tauftauf.yielding.settle", lambda *a, **k: pytest.fail("the wall was saved"))
+    body = tmp_path / "wall.md"
+    body.write_text(text)
+    assert cli("yield", "--result", "verified", "--file", str(body)) == 2
+    assert "unexpanded shell command" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("text", ["# wall\nran $(cat x) today", "$(date) was the stamp\nsecond line)", "Work"])
+def test_yield_accepts_prose_that_merely_mentions_commands(site, monkeypatch, tmp_path, text):
+    monkeypatch.setenv("MISHE_ROLE", "genome")
+    monkeypatch.setenv("MISHE_WAKE_KEY", "wake-genome-1")
+    saved = []
+    monkeypatch.setattr("mishe_tauftauf.yielding.settle", lambda *a, **k: saved.append(k["text"]) or "ok")
+    monkeypatch.setattr("mishe_tauftauf.arm.arm", lambda *a, **k: "")
+    body = tmp_path / "wall.md"
+    body.write_text(text)
+    assert cli("yield", "--result", "verified", "--file", str(body)) == 0
+    assert saved == [text]
