@@ -29,6 +29,29 @@ def parse_write_bytes(text: str) -> int:
     return next(int(line.split()[1]) for line in text.splitlines() if line.startswith("write_bytes:"))
 
 
+def snapshot_timing(trace_text: str) -> dict:
+    """Snapshot stage seconds and whole-scan seconds from one scan's stage trace.
+
+    Each line is ``<epoch> +<elapsed>s <event> | <host sample>``; the stage events are the ones
+    discovery.py writes. Missing stage events read as None rather than failing the caller."""
+    events: dict[str, tuple[float, str]] = {}
+    for line in trace_text.splitlines():
+        parts = line.split(" ", 2)
+        if len(parts) < 3:
+            continue
+        event, _, host = parts[2].partition(" | ")
+        events[event] = (float(parts[1].removeprefix("+").removesuffix("s")), host)
+    start = events.get("stage:snapshot:start")
+    done = events.get("stage:snapshot:done")
+    total = max((elapsed for elapsed, _ in events.values()), default=None)
+    return {
+        "snapshot_s": round(done[0] - start[0], 3) if start and done else None,
+        "total_s": round(total, 3) if total is not None else None,
+        "snapshot_start_host": start[1] if start else None,
+        "snapshot_done_host": done[1] if done else None,
+    }
+
+
 def _psi(name: str) -> str:
     try:
         return parse_psi_avg10((PRESSURE_DIR / name).read_text(encoding="ascii"))
