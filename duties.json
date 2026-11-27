@@ -978,6 +978,25 @@
       "covers": "the Inkling proxy (inkling-proxy.service) reporting upstream TimeoutError to its callers in the last 15 min: RED on any such line (2026-11-27 18:24 timeouts had no detector; the pub wake was lost at 18:54); GREEN otherwise; UNKNOWN when journalctl cannot be read"
     },
     {
+      "name": "inkling-inference-probe",
+      "command": [
+        "{python}",
+        "{repo}/checks/inkling-inference-probe.py"
+      ],
+      "every": 120,
+      "timeout": 40,
+      "max_age": 300,
+      "resolver": "health",
+      "replaces": [],
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "covers": "the local Inkling route (proxy on 127.0.0.1:8081) answering a 4-token completion within 20 s: RED on a silent route (no answer in 20 s, which the 180 s wake watchdog would only report after the 1800 s cap), a refused connection or a non-200 reply; GREEN otherwise; UNKNOWN when the body is not a chat completion. Exists because the 2026-11-27 18:51 to 18:54 pub hang passed /v1/models and /health and logged no proxy TimeoutError"
+    },
+    {
       "name": "work-trial",
       "command": [
         "{python}",
