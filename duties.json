@@ -957,6 +957,27 @@
       "covers": "a watched user unit (light-cycle-monitor.service) restarting in a loop before systemd's start limit trips: RED when it restarted at least 3 times within 15 min (Restart=always, a SIGKILL never enters failed so OnFailure does not fire); GREEN otherwise; UNKNOWN when systemctl cannot be read or the state cannot be saved"
     },
     {
+      "name": "inkling-upstream-timeout",
+      "command": [
+        "{python}",
+        "{repo}/checks/inkling-upstream-timeout.py",
+        "--unit",
+        "inkling-proxy.service"
+      ],
+      "every": 120,
+      "timeout": 30,
+      "max_age": 300,
+      "resolver": "health",
+      "replaces": [],
+      "red_codes": [
+        2
+      ],
+      "unknown_codes": [
+        3
+      ],
+      "covers": "the Inkling proxy (inkling-proxy.service) reporting upstream TimeoutError to its callers in the last 15 min: RED on any such line (2026-11-27 18:24 timeouts had no detector; the pub wake was lost at 18:54); GREEN otherwise; UNKNOWN when journalctl cannot be read"
+    },
+    {
       "name": "work-trial",
       "command": [
         "{python}",
