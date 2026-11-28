@@ -523,6 +523,7 @@ def main(argv: list[str] | None = None) -> int:
 
     over = []
     disagree = []
+    raced = []
     for r in readings:
         live = r["live"]
         if r["cpu_s"] > args.cpu_trigger:
@@ -534,9 +535,13 @@ def main(argv: list[str] | None = None) -> int:
                         f"{args.rss_trigger_kb // 1024} MB")
         if live["view_digest"] != r["view_digest"] or live["entries"] != r["entries"]:
             moved = r["tape"]["before"] != r["tape"]["after"]
-            disagree.append(f"{r['role']}: cached view {live['view_digest']} "
-                            f"({live['entries']} entries) != rebuilt {r['view_digest']} "
-                            f"({r['entries']} entries); tape moved during the pair: {moved}")
+            # A tape that moved between the two folds is a sampling race: the
+            # views were built from different bytes, so no verdict is possible.
+            # Only a mismatch on a still tape is a cache fault (RED).
+            (raced if moved else disagree).append(
+                f"{r['role']}: cached view {live['view_digest']} "
+                f"({live['entries']} entries) != rebuilt {r['view_digest']} "
+                f"({r['entries']} entries); tape moved during the pair: {moved}")
     summary = "; ".join(f"{r['role']} reader {r['cpu_s']} + children "
                         f"{r['children_cpu_s']} = {r['fold_cpu_s']} CPU-s "
                         f"{r['maxrss_kb'] // 1024} MB {r['entries']} entries, live "
@@ -578,13 +583,14 @@ def main(argv: list[str] | None = None) -> int:
         append_history(home, {
             "measured_at": measured_at,
             "verdict": "red" if over or disagree or drift or broken else
-                       ("unknown" if unknown else "green"),
+                       ("unknown" if unknown or raced else "green"),
             "release": release,
             "provenance_error": release_error,
             "readings": readings,
             "guard": guard,
             "over": over,
             "disagree": disagree,
+            "raced": raced,
             "binaries": provenance,
         })
 
@@ -600,6 +606,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"rust-measurement: RED trigger hit, slice may reopen: {'; '.join(over)} [{summary}]",
               file=sys.stderr)
         return 2
+    if raced:
+        print("rust-measurement: UNKNOWN the tape moved during the cached/rebuilt pair, "
+              f"so the views cannot be compared; re-run on a quiet tape: {'; '.join(raced)}",
+              file=sys.stderr)
+        return 3
     if unknown:
         print("rust-measurement: UNKNOWN provenance unverified, the CPU reading "
               f"cannot be trusted as GREEN: {unknown} [{summary}]", file=sys.stderr)

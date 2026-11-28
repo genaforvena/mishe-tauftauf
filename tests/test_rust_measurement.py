@@ -695,6 +695,31 @@ def test_cached_view_disagreeing_with_the_rebuild_is_red(tmp_path):
     assert "cached role view" in proc.stderr and "senses" in proc.stderr
 
 
+def test_cached_view_mismatch_on_a_moving_tape_is_unknown_not_red(tmp_path):
+    # The tape grows between the cached read and the rebuild, so the two views
+    # were built from different bytes. That is a sampling race: UNKNOWN (exit 3),
+    # not a cache fault, and it must not be recorded as RED.
+    repo = _rust_release(tmp_path)
+    (repo / "src" / "mishe_tauftauf" / "feed.py").write_text(
+        "class Feed:\n"
+        "    def __init__(self, home): self.home = str(home)\n"
+        "    def role_entries(self, role, _force_full=False, _fold_diagnostics=None):\n"
+        "        with open(self.home + '/chat.log', 'a') as tape: tape.write('x')\n"
+        "        return [1, 2, 3] if _force_full else [1, 2]\n")
+    _commit(repo, "feed growing the tape during the pair")
+    home = tmp_path / "site"
+    home.mkdir()
+    (home / "chat.log").write_text("")
+    _install_all(home, repo)
+    proc = subprocess.run(
+        [sys.executable, str(CHECK), "--home", str(home), "--repo", str(repo),
+         "--roles", "senses", "--no-artifact", "--max-load", "100000",
+         "--max-cpu-pressure", "100000", "--max-mem-pressure", "100000", "--min-free-kb", "0"],
+        capture_output=True, text=True, timeout=120)
+    assert proc.returncode == 3, (proc.returncode, proc.stderr)
+    assert "UNKNOWN the tape moved" in proc.stderr and "RED" not in proc.stderr
+
+
 def test_cache_state_none_is_unknown_not_hit():
     # No tape: the feed never sets role_cache_miss, so the child emits null.
     # Null must not print as a cache hit.
