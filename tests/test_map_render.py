@@ -488,22 +488,26 @@ def test_fingerprint_that_is_a_list_is_unknown_and_render_completes(tmp_path):
     assert "Leave-one-out: UNKNOWN" in svg
 
 
-def test_night_prior_uses_learned_hour_only_when_adopted_and_sampled(tmp_path):
+def test_night_prior_uses_learned_hour_only_when_adopted_and_heldout_wins(tmp_path):
     site = Path(_site(tmp_path, _activity({})))
     mr.configure(str(site))
     assert mr.night_bedroom_prior(23) == (mr.NIGHT_BEDROOM, "hand-set prior %.1f" % mr.NIGHT_BEDROOM)
     priors = site / "senses/map/priors.json"
     priors.parent.mkdir(parents=True, exist_ok=True)
-    cell = {"p_active": 0.9, "n": 5}
+    cell = {"p_active": 0.9, "n": 30, "heldout_n": 25, "beats_hand_set": True}
     doc = {"night_bedroom": {"adopted": False}, "rooms": {"bedroom": {"by_hour_utc": {"23": cell}}}}
     priors.write_text(json.dumps(doc))
     assert mr.night_bedroom_prior(23)[0] == mr.NIGHT_BEDROOM  # not adopted: hand-set kept
     doc["night_bedroom"]["adopted"] = True
     priors.write_text(json.dumps(doc))
     assert mr.night_bedroom_prior(23)[0] == 0.9
-    cell["n"] = 2
+    cell["heldout_n"] = 5
     priors.write_text(json.dumps(doc))
-    assert mr.night_bedroom_prior(23)[0] == mr.NIGHT_BEDROOM  # thin hour: hand-set kept
+    assert mr.night_bedroom_prior(23)[0] == mr.NIGHT_BEDROOM  # thin held-out: hand-set kept
+    cell["heldout_n"] = 25
+    cell["beats_hand_set"] = False
+    priors.write_text(json.dumps(doc))
+    assert mr.night_bedroom_prior(23)[0] == mr.NIGHT_BEDROOM  # held-out does not beat hand-set: hand-set kept
     priors.write_text("not json")
     assert mr.night_bedroom_prior(23)[0] == mr.NIGHT_BEDROOM  # unreadable: hand-set kept
     for non_object in ("[]", "null", "3", '{"night_bedroom": {"adopted": true}, "rooms": []}'):

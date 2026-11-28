@@ -244,6 +244,7 @@ def markers(any_, room):
 # ASSUMED to be 21:00-05:00 UTC until Ilya confirms it (asked on Telegram).
 NIGHT_UTC = (21, 5)
 NIGHT_BEDROOM = 0.4   # night prior for the two humans, bedroom only
+MIN_HELDOUT = 20   # same held-out gate as tools/map_priors.py; per-hour cells must clear it
 FLOOR = 0.15          # last known room never decays below this
 PHONE_MAX_AGE_S = 120
 
@@ -257,8 +258,9 @@ def night_bedroom_prior(hour):
     """Learned bedroom night prior for this UTC hour, or the hand-set one.
 
     SITE/senses/map/priors.json is written by tools/map_priors.py. The learned value is used only when
-    its held-out score beat the hand-set constant (night_bedroom.adopted) and this hour has a sample
-    count; anything else (missing, stale, thin, not adopted) keeps NIGHT_BEDROOM.
+    the aggregate night_bedroom gate is adopted AND this hour's held-out evidence beats the hand-set
+    constant with enough held-out samples (heldout_n >= MIN_HELDOUT); anything else (missing, stale,
+    thin, not adopted) keeps NIGHT_BEDROOM.
     """
     try:
         with open(os.path.join(SITE, "senses", "map", "priors.json"), encoding="utf-8") as fh:
@@ -272,8 +274,11 @@ def night_bedroom_prior(hour):
         by_hour = bedroom.get("by_hour_utc") if isinstance(bedroom, dict) else None
         cell = by_hour.get(str(hour)) if isinstance(by_hour, dict) else None
         if isinstance(night, dict) and night.get("adopted") is True and isinstance(cell, dict):
-            if isinstance(cell.get("p_active"), (int, float)) and cell.get("n", 0) >= 3:
-                return float(cell["p_active"]), "learned prior %.2f (n=%d)" % (cell["p_active"], cell["n"])
+            if (isinstance(cell.get("p_active"), (int, float))
+                    and cell.get("heldout_n", 0) >= MIN_HELDOUT
+                    and cell.get("beats_hand_set") is True):
+                return float(cell["p_active"]), "learned prior %.2f (n=%d, heldout_n=%d)" % (
+                    cell["p_active"], cell.get("n", 0), cell["heldout_n"])
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         pass
     return NIGHT_BEDROOM, "hand-set prior %.1f" % NIGHT_BEDROOM
