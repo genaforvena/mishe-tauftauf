@@ -72,7 +72,16 @@ class EngineRateLimited(EngineRejected):
 
 
 class EngineTimeout(Exception):
-    """The engine ran past its bound; its effect is unknown."""
+    """The engine ran past its bound; its effect is unknown.
+
+    ``cut`` names the bound that ended the run (soft_deadline, idle_gap, stall, hard_cap or
+    first_output) and ``cut_at`` is the UTC epoch second of the decision, so the work record can
+    tell a cut from a clean finish.
+    """
+
+    def __init__(self, message: str = "", *, cut: str | None = None, cut_at: float | None = None):
+        super().__init__(message)
+        self.cut, self.cut_at = cut, cut_at
 
 
 @dataclass
@@ -390,6 +399,7 @@ def _execute_engine(home, role, key, *, engine, now, snap, mail, reconcile_of, r
         env = dict(os.environ, MISHE_SEED_HOME=str(home), MISHE_ROLE=role, MISHE_WAKE_KEY=key,
                    RIPGREP_CONFIG_PATH=str(_ripgrep_guard(home)))
         engine_started = time.monotonic()
+        cut = {"kind": "none", "at": None}
         try:
             options = {}
             if snap.spontaneous_only and reconcile_of is None:
@@ -402,6 +412,7 @@ def _execute_engine(home, role, key, *, engine, now, snap, mail, reconcile_of, r
         except EngineNotStarted as exc:
             return "failed", f"engine did not start: {exc}"
         except EngineTimeout as exc:
+            cut = {"kind": exc.cut or "unknown", "at": exc.cut_at}
             return "unknown", f"engine timed out: {exc}"
         if yielding.receipt_path(home, key).exists():
             return "yielded", f"engine exit {code}"
@@ -413,7 +424,7 @@ def _execute_engine(home, role, key, *, engine, now, snap, mail, reconcile_of, r
     finally:
         if engine_started is not None:
             work_receipts.complete(home, key, now=time.time(),
-                                   engine_seconds=time.monotonic() - engine_started)
+                                   engine_seconds=time.monotonic() - engine_started, cut=cut)
         if guard is not None:
             _finish_memory_guard(home, key, guard)
 

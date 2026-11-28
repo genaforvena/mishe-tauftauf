@@ -224,7 +224,7 @@ def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
                 try:
                     return process.wait(timeout=timeout)
                 except subprocess.TimeoutExpired as exc:
-                    raise EngineTimeout(f"exceeded {timeout:g}s") from exc
+                    raise _cut("soft_deadline", f"exceeded {timeout:g}s") from exc
             return _run_with_progress(process, timeout=timeout, hard_timeout=hard_timeout,
                                       watched=stdout_to, idle_gap=idle_gap,
                                       stall_gap=stall_gap if stall_gap is not None else STALL_GAP_S,
@@ -241,6 +241,11 @@ def run_bounded(command: list[str], *, env: dict, cwd: Path, timeout: float,
         for handle in (stdin, stdout, stderr):
             if hasattr(handle, "close"):
                 handle.close()
+
+
+def _cut(kind: str, message: str) -> EngineTimeout:
+    """The timeout for a run cut at ``kind`` (none is recorded for a clean finish), stamped at the cut."""
+    return EngineTimeout(message, cut=kind, cut_at=time.time())
 
 
 def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeout: float,
@@ -285,13 +290,13 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
     while True:
         now = time.monotonic()
         if now >= hard_at:
-            raise EngineTimeout(f"exceeded {hard_timeout:g}s (hard cap)")
+            raise _cut("hard_cap", f"exceeded {hard_timeout:g}s (hard cap)")
         size = reader.poll()
         if size is not None and last_size is not None and size > last_size:
             last_size = size
             last_growth = now
         if first_at is not None and now >= first_at and not saw_first(size):
-            raise EngineTimeout(f"no first output within {first_output_s:g}s")
+            raise _cut("first_output", f"no first output within {first_output_s:g}s")
         if now < soft_at:
             # A run that has produced output and then falls silent is stalled even before the soft
             # deadline. Cut it ``stall_gap`` seconds after its last growth rather than at the
@@ -308,12 +313,12 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
             # A wait tool's job state defers the cut too: a backgrounded bash job is not an OS
             # descendant, so _awaiting_tools alone cannot see it (genome 2026-11-17 19:04Z).
             if last_growth > start and now - last_growth >= stall_gap and _awaiting_tools(process) is False and not reader.awaiting_job(now, stall_gap):
-                raise EngineTimeout(f"silent {stall_gap:g}s before the {timeout:g}s deadline (no live child)")
+                raise _cut("stall", f"silent {stall_gap:g}s before the {timeout:g}s deadline (no live child)")
             boundary = soft_at
         else:
             if size is None or now - last_growth >= idle_gap:
                 if size is None or now >= defer_until or (_awaiting_tools(process) is False and not reader.awaiting_job(now, stall_gap)):
-                    raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
+                    raise _cut("idle_gap", f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
                 last_growth = now
             boundary = last_growth + idle_gap
         if first_at is not None and not first_seen:
@@ -337,10 +342,10 @@ def _run_with_progress(process: subprocess.Popen, *, timeout: float, hard_timeou
             last_size = size
             last_growth = now
         if now >= hard_at:
-            raise EngineTimeout(f"exceeded {hard_timeout:g}s (hard cap)")
+            raise _cut("hard_cap", f"exceeded {hard_timeout:g}s (hard cap)")
         if first_at is not None and now >= first_at and not saw_first(size):
-            raise EngineTimeout(f"no first output within {first_output_s:g}s")
+            raise _cut("first_output", f"no first output within {first_output_s:g}s")
         if now >= soft_at and (size is None or now - last_growth >= idle_gap):
             if size is None or now >= defer_until or (_awaiting_tools(process) is False and not reader.awaiting_job(now, stall_gap)):
-                raise EngineTimeout(f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
+                raise _cut("idle_gap", f"exceeded {timeout:g}s (no output for {idle_gap:g}s)")
             last_growth = now

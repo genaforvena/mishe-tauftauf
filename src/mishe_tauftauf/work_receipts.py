@@ -85,7 +85,7 @@ def artifact_matches(home, fact):
         return False
 
 
-def complete(home, key, *, now, engine_seconds=None):
+def complete(home, key, *, now, engine_seconds=None, cut=None):
     root = Path(home) / "wakes"
     start = read_json(root / f"{key}.work-start.json")
     if start is None:
@@ -96,6 +96,7 @@ def complete(home, key, *, now, engine_seconds=None):
     if any(not artifact_matches(home, a) for a in refs):
         result.update(evidence_state="UNKNOWN", classification="awaiting-evidence", error="artifact changed after settlement")
     result["engine_seconds"] = engine_seconds
+    result["cut"] = cut or {"kind": "none", "at": None}
     checks = []
     for path in root.glob(f"{key}.check-*.json"):
         try:
