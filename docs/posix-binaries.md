@@ -2,7 +2,7 @@
 
 ## Why this exists
 
-Mishe's Python runtime (`src/`) is about 56,100 lines. Eight Rust crates (about
+Mishe's Python runtime (`src/`) is about 56,400 lines. Eight Rust crates (about
 3,500 lines, tests included) already sit beside it, each one a small program with a stdin/argument
 and stdout/exit-code boundary. This document says what counts as a Mishe binary,
 which existing seams already meet that bar, and which responsibilities come next.
@@ -114,7 +114,7 @@ them. Updated 2026-11-15 after the operator DM 301336.
    0.051 CPU-s, and the former verifier could delay re-arming by 20 seconds in
    the controlled split stall. See [the comparison](rust-runtime-migration-plan.md#1071-in-process-freshness-removes-the-verifier-delay-2026-11-20).
 
-3. **Duty runner** (`src/mishe_tauftauf/duties.py`, 44 lines, plus the producer
+3. **Duty runner** (`src/mishe_tauftauf/duties.py`, 49 lines, plus the producer
    launch path). Input: `duties.json` and a duty name. Output: the producer's
    status and its `timeout`-bounded exit. Stable: the file format is fixed.
    Testable: a fixture duties file with a stub producer. Measured 2026-11-15: the
@@ -124,7 +124,7 @@ them. Updated 2026-11-15 after the operator DM 301336.
    this module.
 
 4. **Scheduler arm and feed remaining scan** (`src/mishe_tauftauf/feed.py`,
-   1,782 lines; `discovery.py` readings). Measured: one full scan 11.63 CPU-s,
+   1,936 lines; `discovery.py` readings). Measured: one full scan 11.63 CPU-s,
    674 MB RSS (scan-20261114T224141Z). Most byte work already runs through
    `mishe-tape` and `mishe-records`; what remains is the role fold and the
    readings that consume the shared snapshot. Measured 2026-11-15 on the live feed
