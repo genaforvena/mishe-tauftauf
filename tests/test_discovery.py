@@ -12,6 +12,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+import pytest
+
+from mishe_tauftauf.discovery import _cpu_busy, latest, renew_scan, scan, scan_age
+from mishe_tauftauf import argv_text, discovery
+from mishe_tauftauf import proc_table
+from mishe_tauftauf.feed import Feed
+from tests.tape_binary import pin_tape_binary  # noqa: F401  (fixture)
 
 
 def _sample_fast(home):
@@ -22,18 +29,9 @@ def _sample_fast(home):
     assert on. Each sample test paid it per call; the io-pressure test calls sample four times,
     so it cost ~43 s. Those rows stay host-independent here; the probes keep their own tests.
     """
-    from mishe_tauftauf import discovery
-
     with patch.object(discovery, "_unit_import_roots", return_value={}), \
             patch.object(discovery, "_installed_site_units", return_value=([], None)):
         return discovery.sample(home)
-import pytest
-
-from mishe_tauftauf.discovery import _cpu_busy, latest, renew_scan, scan, scan_age
-from mishe_tauftauf import argv_text, discovery
-from mishe_tauftauf import proc_table
-from mishe_tauftauf.feed import Feed
-from tests.tape_binary import pin_tape_binary  # noqa: F401  (fixture)
 
 class _TimeShim:
     """The ``time`` module with selected names replaced.
@@ -358,7 +356,6 @@ def test_inode_availability_uses_unprivileged_statvfs_count_and_fails_unknown(
         tmp_path: Path) -> None:
     from types import SimpleNamespace
 
-    from mishe_tauftauf import discovery
 
     with patch("mishe_tauftauf.discovery.os.statvfs",
                return_value=SimpleNamespace(f_bavail=12, f_frsize=4096, f_favail=7)):
@@ -471,7 +468,6 @@ def test_thermal_hwmon_is_deterministic_and_real_host_is_observational(tmp_path:
 
 
 def test_thermal_hwmon_reports_chip_name_and_skips_malformed_sensor(tmp_path: Path) -> None:
-    from mishe_tauftauf import discovery
 
     chip = tmp_path / "chip"
     chip.mkdir()
@@ -493,7 +489,6 @@ def test_thermal_hwmon_reports_chip_name_and_skips_malformed_sensor(tmp_path: Pa
 
 
 def test_thermal_parent_identity_distinguishes_same_named_channels(tmp_path: Path) -> None:
-    from mishe_tauftauf import discovery
 
     slots = []
     parents = []
@@ -527,7 +522,6 @@ def test_thermal_parent_identity_distinguishes_same_named_channels(tmp_path: Pat
 
 
 def test_thermal_leaves_a_sole_chip_unqualified(tmp_path: Path) -> None:
-    from mishe_tauftauf import discovery
 
     # A qualifier costs bytes on a sample line the dashboard truncates, so a chip
     # whose name no other chip shares keeps the shorter form.
@@ -553,7 +547,6 @@ def test_thermal_leaves_a_sole_chip_unqualified(tmp_path: Path) -> None:
 
 
 def test_thermal_qualifier_falls_back_when_parent_device_is_unresolvable(tmp_path: Path) -> None:
-    from mishe_tauftauf import discovery
 
     # The collision still has to be reported even when neither chip resolves a
     # parent device, so the qualifier falls back to a label that separates them
@@ -579,7 +572,6 @@ def test_thermal_qualifier_falls_back_when_parent_device_is_unresolvable(tmp_pat
 
 
 def test_thermal_hwmon_skips_out_of_range_sensor_values(tmp_path: Path) -> None:
-    from mishe_tauftauf import discovery
 
     chip = tmp_path / "chip"
     chip.mkdir()
@@ -622,7 +614,6 @@ def test_cpu_busy_uses_idle_subtraction_and_includes_steal(tmp_path: Path) -> No
             assert _cpu_busy(path=stat, samples=2, interval=0) == {}
 
 def test_cpu_busy_sample_is_short_window_and_unreadable_is_unknown(tmp_path: Path) -> None:
-    from mishe_tauftauf import discovery
 
     observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
     reading = observed["sense.proc.cpu-busy"]
@@ -3232,7 +3223,6 @@ def test_top_cpu_processes_reports_unknown_when_ps_is_unavailable() -> None:
 
 
 def test_sample_carries_a_bounded_top_cpu_read() -> None:
-    from mishe_tauftauf import discovery
 
     stdout = "  42  1001  117.0  1500 /usr/bin/llama-server --port 7000\n"
     with patch("mishe_tauftauf.discovery.subprocess.run",
