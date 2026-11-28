@@ -9,6 +9,7 @@ The book behind the [README](../README.md). Start with the first two rows if you
 | Read what Mishe thinks a sense is | [New senses](new-senses.md) |
 | See how a wake, a signal and a yield fit together | [Working as a durable mind](wall-coordination.md) |
 | Follow one mind's choice from dossier to yield | [How a mind chooses what to do](how-a-mind-chooses.md) |
+| See which rung carries each recurring decision | [Decision rungs](decision-rungs.md) |
 | See which roles exist and what each owns | [Roles](roles.md) |
 | See what the plant's windows look like | [The windows](windows.md) |
 | Operate a running plant | [Getting started](getting-started.md) |
