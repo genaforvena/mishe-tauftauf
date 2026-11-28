@@ -12,6 +12,21 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+
+def _sample_fast(home):
+    """``discovery.sample`` with the two systemd-bound unit probes inert.
+
+    ``sample`` takes about 13 s on this host, and about 7 s of that is ``_unit_import_roots``
+    (5.0 s) and ``_installed_site_units`` (2.5 s): ``systemctl`` calls the sample tests never
+    assert on. Each sample test paid it per call; the io-pressure test calls sample four times,
+    so it cost ~43 s. Those rows stay host-independent here; the probes keep their own tests.
+    """
+    from mishe_tauftauf import discovery
+
+    with patch.object(discovery, "_unit_import_roots", return_value={}), \
+            patch.object(discovery, "_installed_site_units", return_value=([], None)):
+        return discovery.sample(home)
 import pytest
 
 from mishe_tauftauf.discovery import _cpu_busy, latest, renew_scan, scan, scan_age
@@ -88,7 +103,7 @@ def test_memory_pressure_reports_unavailable_source_as_unknown(tmp_path: Path) -
         return original_read(path, limit)
 
     with patch("mishe_tauftauf.discovery._read", side_effect=without_pressure):
-        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
 
     assert observed["sense.proc.memory-pressure"] == {
         "id": "sense.proc.memory-pressure",
@@ -262,7 +277,7 @@ def test_cpu_pressure_reports_valid_sample_and_unavailable_source(tmp_path: Path
         return original_read(path, limit)
 
     with patch("mishe_tauftauf.discovery._read", side_effect=with_cpu_pressure):
-        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
 
     assert observed["sense.proc.cpu-pressure"] == {
         "id": "sense.proc.cpu-pressure",
@@ -279,7 +294,7 @@ def test_cpu_pressure_reports_valid_sample_and_unavailable_source(tmp_path: Path
         return original_read(path, limit)
 
     with patch("mishe_tauftauf.discovery._read", side_effect=malformed_cpu_pressure):
-        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
 
     assert observed["sense.proc.cpu-pressure"] == {
         "id": "sense.proc.cpu-pressure",
@@ -300,7 +315,7 @@ def test_cpu_pressure_reports_missing_source_as_unknown(tmp_path: Path) -> None:
         return original_read(path, limit)
 
     with patch("mishe_tauftauf.discovery._read", side_effect=without_cpu_pressure):
-        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
 
     assert observed["sense.proc.cpu-pressure"] == {
         "id": "sense.proc.cpu-pressure",
@@ -328,7 +343,7 @@ def test_io_pressure_requires_a_valid_some_row(tmp_path: Path) -> None:
             return original_read(path, limit)
 
         with patch("mishe_tauftauf.discovery._read", side_effect=with_io_pressure):
-            observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+            observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
         reading = observed["sense.proc.io-pressure"]
         assert reading["state"] == expected_state
         assert reading["kind"] == "read"
@@ -347,7 +362,7 @@ def test_inode_availability_uses_unprivileged_statvfs_count_and_fails_unknown(
 
     with patch("mishe_tauftauf.discovery.os.statvfs",
                return_value=SimpleNamespace(f_bavail=12, f_frsize=4096, f_favail=7)):
-        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
     assert observed["sense.disk.free"]["sample"] == 12 * 4096
     assert observed["sense.disk.inodes-available"] == {
         "id": "sense.disk.inodes-available",
@@ -357,7 +372,7 @@ def test_inode_availability_uses_unprivileged_statvfs_count_and_fails_unknown(
     }
 
     with patch("mishe_tauftauf.discovery.os.statvfs", side_effect=OSError):
-        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
     assert observed["sense.disk.inodes-available"] == {
         "id": "sense.disk.inodes-available",
         "state": "unknown",
@@ -391,7 +406,7 @@ def test_keyboard_counter_distinguishes_absent_source_from_unreadable_counter(tm
             return original_read(path, limit)
 
         with patch("mishe_tauftauf.discovery._read", side_effect=with_interrupts):
-            observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+            observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
         reading = observed["sense.input.keyboard-interrupt-count"]
         if expected_state == "verified":
             assert reading["state"] == "verified"
@@ -408,7 +423,7 @@ def test_keyboard_counter_distinguishes_absent_source_from_unreadable_counter(tm
             return original_read(path, limit)
 
         with patch("mishe_tauftauf.discovery._read", side_effect=with_keyboard_line):
-            observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+            observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
         assert observed["sense.input.keyboard-interrupt-count"] == {
             "id": "sense.input.keyboard-interrupt-count",
             "state": "verified",
@@ -417,7 +432,7 @@ def test_keyboard_counter_distinguishes_absent_source_from_unreadable_counter(tm
         }
     # The sample must never expose device paths or key content.
     with patch("mishe_tauftauf.discovery._read", side_effect=with_interrupts):
-        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
     assert "/dev/input" not in str(observed["sense.input.keyboard-interrupt-count"]["sample"])
 
 def test_thermal_hwmon_is_deterministic_and_real_host_is_observational(tmp_path: Path) -> None:
@@ -431,7 +446,7 @@ def test_thermal_hwmon_is_deterministic_and_real_host_is_observational(tmp_path:
     malformed.write_text("not-a-number\n", encoding="utf-8")
     (chip / "name").write_text("testchip\n", encoding="utf-8")
     with patch("mishe_tauftauf.discovery._thermal_slots", return_value=[valid, malformed]):
-        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
     assert observed["sense.thermal.hwmon"] == {
         "id": "sense.thermal.hwmon", "state": "verified",
         "sample": "testchip:temp1=42.5C",
@@ -447,10 +462,10 @@ def test_thermal_hwmon_is_deterministic_and_real_host_is_observational(tmp_path:
     ]
     if readable:
         with patch("mishe_tauftauf.discovery._thermal_slots", return_value=readable):
-            observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+            observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
         assert observed["sense.thermal.hwmon"]["state"] == "verified"
     with patch("mishe_tauftauf.discovery._thermal_slots", return_value=[]):
-        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
     assert observed["sense.thermal.hwmon"]["state"] == "unknown"
     assert observed["sense.thermal.hwmon"]["sample"] == "no readable hwmon temperature sensor"
 
@@ -466,7 +481,7 @@ def test_thermal_hwmon_reports_chip_name_and_skips_malformed_sensor(tmp_path: Pa
     (chip / "name").write_text("testchip\n", encoding="utf-8")
     (chip / "temp1_label").write_text("Package id 0\n", encoding="utf-8")
     with patch("mishe_tauftauf.discovery._thermal_slots", return_value=list(synthetic)):
-        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
     reading = observed["sense.thermal.hwmon"]
     assert reading["state"] == "verified"
     assert reading["sample"] == "testchip:temp1(Package id 0)=42.5C"
@@ -495,7 +510,7 @@ def test_thermal_parent_identity_distinguishes_same_named_channels(tmp_path: Pat
         parents.append(str(target.resolve()))
 
     with patch("mishe_tauftauf.discovery._thermal_slots", return_value=slots):
-        reading = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}[
+        reading = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}[
             "sense.thermal.hwmon"
         ]
 
@@ -527,7 +542,7 @@ def test_thermal_leaves_a_sole_chip_unqualified(tmp_path: Path) -> None:
 
     with patch("mishe_tauftauf.discovery._thermal_slots",
                return_value=[chip / "temp1_input"]):
-        reading = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}[
+        reading = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}[
             "sense.thermal.hwmon"
         ]
 
@@ -554,7 +569,7 @@ def test_thermal_qualifier_falls_back_when_parent_device_is_unresolvable(tmp_pat
         slots.append(chip / "temp1_input")
 
     with patch("mishe_tauftauf.discovery._thermal_slots", return_value=slots):
-        reading = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}[
+        reading = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}[
             "sense.thermal.hwmon"
         ]
 
@@ -575,7 +590,7 @@ def test_thermal_hwmon_skips_out_of_range_sensor_values(tmp_path: Path) -> None:
         slot.write_text(text, encoding="utf-8")
         with patch("mishe_tauftauf.discovery._thermal_slots",
                    return_value=[slot]):
-            observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+            observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
         reading = observed["sense.thermal.hwmon"]
         assert reading["state"] == "unknown", text
         assert reading["sample"] == "no readable hwmon temperature sensor", text
@@ -609,7 +624,7 @@ def test_cpu_busy_uses_idle_subtraction_and_includes_steal(tmp_path: Path) -> No
 def test_cpu_busy_sample_is_short_window_and_unreadable_is_unknown(tmp_path: Path) -> None:
     from mishe_tauftauf import discovery
 
-    observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+    observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
     reading = observed["sense.proc.cpu-busy"]
     assert reading["kind"] == "read"
     assert reading["state"] in {"verified", "unknown"}
@@ -618,11 +633,11 @@ def test_cpu_busy_sample_is_short_window_and_unreadable_is_unknown(tmp_path: Pat
         assert "busy=" in str(reading["sample"])
         assert "idle=" in str(reading["sample"])
     with patch("mishe_tauftauf.discovery._cpu_busy", return_value={"busy": 100.0, "idle": 0.0}):
-        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
     assert observed["sense.proc.cpu-busy"]["state"] == "verified"
     assert " high" in str(observed["sense.proc.cpu-busy"]["sample"])
     with patch("mishe_tauftauf.discovery._cpu_busy", return_value={}):
-        observed = {row["id"]: row for row in discovery.sample(tmp_path)["observations"]}
+        observed = {row["id"]: row for row in _sample_fast(tmp_path)["observations"]}
     assert observed["sense.proc.cpu-busy"]["state"] == "unknown"
     assert observed["sense.proc.cpu-busy"]["sample"] == "/proc/stat cpu fields unavailable"
     assert observed["sense.proc.cpu-busy"]["kind"] == "read"
@@ -3208,7 +3223,7 @@ def test_top_cpu_processes_reports_unknown_when_ps_is_unavailable() -> None:
         with patch("mishe_tauftauf.discovery.subprocess.run", side_effect=broken):
             rows = discovery._top_cpu_processes()
             assert rows == []
-            observed = {row["id"]: row for row in discovery.sample(Path("/nonexistent"))["observations"]}
+            observed = {row["id"]: row for row in _sample_fast(Path("/nonexistent"))["observations"]}
         reading = observed["sense.proc.top-cpu"]
         assert reading["state"] == "unknown"
         assert reading["sample"] == "ps process sample unavailable"
@@ -3224,7 +3239,7 @@ def test_sample_carries_a_bounded_top_cpu_read() -> None:
                return_value=_completed(stdout)), \
             patch("mishe_tauftauf.discovery._cpu_jiffies", side_effect=lambda pid: 100), \
             patch("mishe_tauftauf.discovery.time", _TimeShim(sleep=lambda seconds: None)):
-        observed = {row["id"]: row for row in discovery.sample(Path("/nonexistent"))["observations"]}
+        observed = {row["id"]: row for row in _sample_fast(Path("/nonexistent"))["observations"]}
     reading = observed["sense.proc.top-cpu"]
     assert reading["state"] == "verified"
     assert reading["kind"] == "read"
