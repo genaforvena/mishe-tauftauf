@@ -42,7 +42,8 @@ A wake's *dispatch* is its recorded start, and its *engine* is the model runner 
 *soft deadline* is the time the engine is asked to finish by; the *hard cap* is the time it is cut at, which
 is later only while the run is still producing output. The *idle gap* is how long the engine may go without
 producing output, past the soft deadline, before it is cut — even below the hard cap. A run that has gone
-quiet is not allowed to carry on silently.
+quiet is not allowed to carry on silently. Not all output counts: a window of the last 60 tool calls using
+at most 3 distinct calls reads as a loop, and its output is not progress.
 A *receipt* is what a wake left behind: an attributed Git commit or a registered
 artifact. A yield that says `changed` is not a receipt by itself. The other
 terms used in the decision and routing sections, such as *ledger* and *outcome*,
