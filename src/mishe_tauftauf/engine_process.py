@@ -23,8 +23,15 @@ from pathlib import Path
 from . import engine_boundary, proc_table
 from .wake import EngineNotStarted, EngineTimeout
 
-IDLE_GAP_S = 180.0
-"""How long the output may stay unchanged before the engine counts as idle."""
+IDLE_GAP_S = 300.0
+"""How long the output may stay unchanged, past the soft deadline, before the run is cut.
+
+Raised from 180 s on 2026-11-28: the inkling-local pub wake wake-pub-1795828299484870481 was cut at
+01:49:16Z, 3 s before its auto-compaction summary arrived. The proxy log shows that request sent at
+01:46:14Z (104 messages, tool_choice set) and answered at 01:49:13Z with a 13,990-character summary,
+about 179 s of silent generation at the normal ~20 tokens/s. Normal turns of ~400 characters take 8-20 s.
+A summary larger than about 5k tokens would still exceed 300 s; watch wake-waste for that case.
+"""
 STALL_GAP_S = 600.0
 """How long an engine may stay silent *before* the soft deadline before the run is cut.
 
