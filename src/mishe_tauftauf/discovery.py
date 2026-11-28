@@ -7509,7 +7509,9 @@ def sample(home: Path, trace=None) -> dict[str, object]:
     if not roots and (coverage_failure or installed_failure):
         coverage["sample"] = f"no imported root to read ({coverage_failure or installed_failure})"
     observed.append(coverage)
+    report("stage:observed:release-retention:start")
     observed.append(_repo_release_retention(home))
+    report("stage:observed:release-retention:done")
     observed.append(_repo_git_index_lock(home))
     observed.append(_repo_push_freshness(home))
     observed.append(_ghost_site_homes(home))
