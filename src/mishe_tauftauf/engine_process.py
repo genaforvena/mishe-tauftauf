@@ -149,6 +149,7 @@ class _ProgressReader:
         self.jobs: dict = {}
         self.job_states: dict = {}
         self.job_beats: dict = {}
+        self.repeat: dict = {}
 
     def poll(self) -> int | None:
         if self.path is None:
@@ -160,7 +161,7 @@ class _ProgressReader:
         except OSError:
             return None
         fresh: dict = {}
-        progress, consumed = engine_boundary.progress_bytes(data, self.jobs, fresh)
+        progress, consumed = engine_boundary.progress_bytes(data, self.jobs, fresh, self.repeat)
         for job, status in fresh.items():
             self.job_states[job] = status
             if status == 'running':

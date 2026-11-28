@@ -101,7 +101,39 @@ def job_states(line, states):
             states[entry['id']] = entry.get('status')
 
 
-def progress_bytes(data, jobs=None, states=None):
+TOOL_START_PREFIX = b'{"type":"tool_execution_start"'
+REPEAT_WINDOW = 60
+REPEAT_KEYS = 3
+"""A loop is the last ``REPEAT_WINDOW`` tool calls using at most ``REPEAT_KEYS`` distinct calls.
+
+The docs wake wake-docs-1795832242184929454 (2026-11-28) alternated two bash calls (``git status``
+and a ``grep`` over docs/) for most of its 2816 s, and its output kept growing, so the idle gap
+never cut it. A window of identical calls is not enough: the loop alternated. A working wake issues
+many distinct calls (edits, reads, different commands), so a full window with few distinct calls
+reads as a loop. Output while the window is looping is not progress.
+"""
+
+
+def note_tool_call(line, repeat):
+    """Record one tool call in ``repeat`` and set ``repeat['looping']`` for the window it ends.
+
+    The call's ``toolCallId`` is left out of the key: each call gets a fresh id, so a loop only
+    shows as repetition in the tool name and its arguments.
+    """
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return
+    if not isinstance(row, dict):
+        return
+    key = json.dumps([row.get('toolName'), row.get('args')], sort_keys=True, default=str)
+    window = repeat.setdefault('window', [])
+    window.append(key)
+    del window[:-REPEAT_WINDOW]
+    repeat['looping'] = len(window) == REPEAT_WINDOW and len(set(window)) <= REPEAT_KEYS
+
+
+def progress_bytes(data, jobs=None, states=None, repeat=None):
     """Split engine output bytes into (progress bytes, bytes consumed).
 
     Only complete lines count: the consumed figure stops at the last newline, so a
@@ -122,8 +154,12 @@ def progress_bytes(data, jobs=None, states=None):
         return 0, 0
     progress = 0
     for line in data[:end + 1].splitlines(keepends=True):
+        if repeat is not None and line.startswith(TOOL_START_PREFIX):
+            note_tool_call(line, repeat)
+        looping = repeat is not None and repeat.get('looping', False)
         if not line.startswith((HEARTBEAT_PREFIX, THINKING_PREFIX)):
-            progress += len(line)
+            if not looping:
+                progress += len(line)
         elif line.startswith(HEARTBEAT_PREFIX):
             if states is not None:
                 job_states(line, states)
