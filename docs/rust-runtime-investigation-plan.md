@@ -375,25 +375,23 @@ so the costliest seam is not the role read. What it does not settle: the frequen
 over time; one snapshot is not a rate. The 10.70 counter stays the trigger for the
 rate, and this probe is the bounded action that shows the current state is all-hit.
 
-### 10.72 The cache-miss rate is zero over 475 readings (2026-11-28)
+### 10.72 No cache miss in the 129 readings that recorded the flag (2026-11-28)
 
 10.70 left the cache-miss frequency UNKNOWN and named a role-cache miss counter
 as the safe trigger. The check now records `role_cache_miss` per reading (both
-forced and live) and appends it to `rust-measurement-history.jsonl`, so the rate
-is answerable from the history without a new counter in the feed.
+forced and live) and appends it to `rust-measurement-history.jsonl`. Only readings
+from 2026-11-25 03:23Z on carry the flag; older rows say nothing either way.
 
 At pin `c281acbc` (2026-11-28 10:38Z, host load1 10.03, memory pressure 0.00,
 MemAvailable 12.1 GB), a fresh run of `checks/rust-measurement.py` was GREEN:
 senses reader 3.876 + children 4.929 = 8.805 CPU-s, 111 MB, 36,389 entries,
 live 0.123 CPU-s, view equal, cache hit; genome reader 3.616 + children 3.832 =
 7.448 CPU-s, 107 MB, 30,344 entries, live 0.088 CPU-s, view equal, cache hit;
-binaries 8 checked. The history then carried 475 readings (forced and live),
-0 misses.
+binaries 8 checked. The history then held 475 role readings, of which 129
+carried the flag (each for the forced and the live read), with 0 misses.
 
-What this settles: the cold full fold is not being paid by any role in the
-history; every live reading is a cache hit. The 10.70 counter is therefore not
-needed as a new feed counter — the history's per-reading flag answers the rate.
-What it does not settle: a miss could still occur on a role that is not in the
-default `--roles` set (senses, genome), or on a tape state the current
-snapshot does not cover. The 10.71 probe remains the bounded action for the
-current state; the history is the rate.
+What this settles: none of the 129 flagged readings paid a cold full fold. What it
+does not settle: the other 346 readings (cache state UNKNOWN), misses between
+samples or on roles outside the default `--roles` set (senses, genome), and so
+whether the 10.70 counter is still wanted. An earlier version of this section
+counted unflagged readings as hits and reported "475 readings, 0 misses".
