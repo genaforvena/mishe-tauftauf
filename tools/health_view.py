@@ -61,7 +61,13 @@ def verdict_of(secs):
     if not v:
         return "UNKNOWN", "the pass gave no verdict"
     unmeasured = sum(int(m.group(1)) for l in secs.get("signals", []) if (m := re.match(r"UNKNOWN \((\d+)\)", l)))
-    note = f"; {unmeasured} signal(s) UNKNOWN (not measured, not GREEN)" if unmeasured else ""
+    stale = sum(int(m.group(1)) for l in secs.get("signals", []) if (m := re.match(r"STALE \((\d+)\)", l)))
+    notes = []
+    if unmeasured:
+        notes.append(f"{unmeasured} signal(s) UNKNOWN (not measured, not GREEN)")
+    if stale:
+        notes.append(f"{stale} signal(s) STALE (last value too old, not GREEN)")
+    note = ("; " + "; ".join(notes)) if notes else ""
     if any(l.startswith("RED") for l in secs.get("signals", [])):
         return "RED", "a signal is RED; see below" + note
     if v[0].startswith("NEEDS ATTENTION"):
@@ -96,11 +102,18 @@ def render(now=None):
     attention = secs.get("verdict", [])[1:]
     if attention:
         blocks.append(("NEEDS YOU OR STEWARD", ["  " + l for l in attention[:4]], False))
-    for name in ("guard, hold, views", "units", "wakes", "signals", "delivery", "resources"):
+    for name in ("guard, hold, views", "units", "wakes", "signals", "delivery", "resources", "observer"):
         if name in secs:
-            protected = name == "wakes"
+            # WAKES and OBSERVER are never trimmed: an UNKNOWN observation must always show its reason.
+            protected = name in ("wakes", "observer")
             body = secs[name] if protected else secs[name][:5]
+            if name == "signals":
+                # Non-GREEN lines first: a RED, UNKNOWN or STALE line must survive the trim.
+                body = sorted(secs[name], key=lambda l: l.startswith("GREEN"))[:5]
             blocks.append((name.upper(), ["  " + l for l in body], protected))
+    if "observer" not in secs:
+        # The pass printed no observer section: that is a measurement gap, shown as UNKNOWN, never silence.
+        blocks.append(("OBSERVER", ["  UNKNOWN: the tending pass printed no observer section (reason unknown)"], True))
     budget = WINDOW_ROWS - len(rows)
     budget -= sum(2 + len(body) for _, body, protected in blocks if protected)
     keep = {}

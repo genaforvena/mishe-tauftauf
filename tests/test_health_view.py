@@ -120,3 +120,50 @@ def test_wakes_are_not_pushed_out_by_other_sections(monkeypatch, tmp_path):
     assert all(name in " ".join(block) for name in names)
     assert len(lines) <= view.WINDOW_ROWS     # the other sections give way to fit, WAKES does not
     assert "UNITS" not in lines or len([l for l in lines if l.startswith("  unit ")]) < 9
+
+
+# --- OBSERVER and signal visibility: an UNKNOWN observation must always show its reason ----------
+
+OBSERVED = """# Mishe tending pass 2026-11-11 10:00:00Z  (host up 1h)
+
+## verdict
+NEEDS ATTENTION:
+- observer failed or partial (exit 1, UNKNOWN lines 1)
+
+## observer
+observer window from 2026-11-11T09:00:00Z: exit 1, 0 line(s)
+  observation UNKNOWN: journalctl invalid UTF-8 at stream byte 42; raw line saved to /x/invalid.bin
+"""
+
+
+def _render_with(monkeypatch, text):
+    monkeypatch.setattr(view, "run_tend", lambda: (text, None))
+    return view.render(now=1_800_000_000)
+
+
+def test_observer_unknown_reason_is_shown_not_trimmed(monkeypatch):
+    lines = _render_with(monkeypatch, OBSERVED)
+    assert "OBSERVER" in lines
+    assert any("observation UNKNOWN: journalctl invalid UTF-8" in l for l in lines)
+
+
+def test_missing_observer_section_is_shown_as_unknown(monkeypatch):
+    lines = _render_with(monkeypatch, CALM)
+    i = lines.index("OBSERVER")
+    assert "UNKNOWN" in lines[i + 1] and "reason" in lines[i + 1]
+
+
+def test_non_green_signals_survive_the_five_line_trim(monkeypatch):
+    many = "\n".join(f"GREEN{i} line" for i in range(9))
+    text = CALM.replace("GREEN: 85 of 85", "STALE (2): s1, s2\nUNKNOWN (1): u1\n" + many)
+    lines = _render_with(monkeypatch, text)
+    i = lines.index("SIGNALS")
+    block = lines[i + 1:i + 1 + 5]
+    assert any("STALE (2)" in l for l in block) and any("UNKNOWN (1)" in l for l in block)
+
+
+def test_stale_signals_are_named_in_the_verdict_note():
+    text = CALM.replace("GREEN: 85 of 85", "STALE (4): a, b, c, d\nGREEN: 81 of 85")
+    _, secs = view.sections(text)
+    v, why = view.verdict_of(secs)
+    assert v == "OK" and "4 signal(s) STALE" in why
