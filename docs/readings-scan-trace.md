@@ -48,12 +48,15 @@ it reached.
 
 1. `enter`: the scan started.
 2. `sample:start` and `sample:done`: the host sample for the readings. Between them the
-   sample writes its own stages, in this order: `stage:evidence:named-records`,
-   `stage:evidence:census` and `stage:evidence:hash` (each `:start` and `:done`), then
-   `stage:snapshot:start` and `stage:snapshot:done` (the one tape snapshot), then
-   `stage:tape-readings` and `stage:tape-readings:done` (the whole-tape readings),
-   then `stage:patch-invariant`, `stage:patch-dv-binding`, `stage:local-readings` and
-   `stage:body-network-readings` (each `:start` and `:done`). A cut between
+   sample writes its own stages, in this order: `stage:snapshot:start` and
+   `stage:snapshot:done` (the one tape snapshot), then `stage:tape-readings` and
+   `stage:tape-readings:done` (the whole-tape readings), with the evidence stages —
+   `stage:evidence:named-records`, `stage:evidence:census` and `stage:evidence:hash`
+   (each `:start` and `:done`) — reported inside the tape-readings window, then
+   `stage:patch-invariant`, `stage:patch-dv-binding`, `stage:local-readings` and
+   `stage:body-network-readings` (each `:start` and `:done`), then
+   `stage:observed:release-retention:start` and `stage:observed:release-retention:done`
+   (the release-retention walk over `releases/`). A cut between
    `sample:start` and `sample:done` is named by the last of these lines.
 3. `publication`: the receipt was written.
 4. `notification`: the scan's notification was sent. A failure here does not roll back
