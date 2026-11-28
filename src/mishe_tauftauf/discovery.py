@@ -4077,6 +4077,11 @@ def _release_tree_bytes(root: Path, *, ceiling: int | None = None,
 
     try:
         for dirpath, _dirnames, filenames in os.walk(root, onerror=onerror):
+            # Directories count toward the cap too: a worktree forest of many
+            # empty or near-empty directories otherwise walks without bound.
+            visited += 1
+            if visited > max_entries:
+                return None
             for name in filenames:
                 visited += 1
                 if visited > max_entries:

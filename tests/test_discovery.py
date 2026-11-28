@@ -7371,5 +7371,14 @@ def test_release_tree_walk_entry_cap_routes_unknown(tmp_path):
     for i in range(5):
         (root / f"w{i}").mkdir(parents=True)
         (root / f"w{i}" / "blob").write_bytes(b"x")
-    assert discovery._release_tree_bytes(root, max_entries=4) is None
-    assert discovery._release_tree_bytes(root, max_entries=5) == 5
+    # 6 directories (root + 5 children) and 5 files are visited: 11 entries.
+    assert discovery._release_tree_bytes(root, max_entries=10) is None
+    assert discovery._release_tree_bytes(root, max_entries=11) == 5
+
+
+def test_release_tree_directory_only_forest_hits_entry_cap(tmp_path):
+    root = tmp_path / "releases"
+    for i in range(50):
+        (root / f"d{i}").mkdir(parents=True)
+    assert discovery._release_tree_bytes(root, max_entries=20) is None
+    assert discovery._release_tree_bytes(root, max_entries=200) == 0
