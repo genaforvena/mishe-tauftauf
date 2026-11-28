@@ -40,7 +40,9 @@ A wake's *settlement* is its recorded close: the yield, or the failure that stan
 A wake's *dispatch* is its recorded start, and its *engine* is the model runner that executes the turn. The
 *engine router* chooses which candidate engine runs a wake (`mishe engine router choose ROLE` shows the choice). For some roles the first choice is a local model, Inkling, served by the plant's own proxy (`inkling-proxy.service`) rather than a paid cloud engine. Two checks watch it: `checks/inkling-inference-probe.py` and `checks/inkling-upstream-timeout.py`. The
 *soft deadline* is the time the engine is asked to finish by; the *hard cap* is the time it is cut at, which
-is later only while the run is still producing output.
+is later only while the run is still producing output. Past the soft deadline an engine that has produced no
+output for the *idle gap* is cut too, even below the hard cap — a run that has gone quiet is not allowed to
+carry on silently.
 A *receipt* is what a wake left behind: an attributed Git commit or a registered
 artifact. A yield that says `changed` is not a receipt by itself. The other
 terms used in the decision and routing sections, such as *ledger* and *outcome*,
