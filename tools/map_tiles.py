@@ -806,11 +806,13 @@ def camera_room_bias_line(site, now):
     flips = sorted(h for h, (n, k) in by_hour.items()
                    if n >= CAMERA_BIAS_MIN_HOUR_N and k * 2 <= n)
     pct = 100 * wins // len(shared)
+    newest_age_h = (now - shared[-1]).total_seconds() / 3600.0
+    newest_note = " (newest %.1f h old)" % newest_age_h
     if flips:
-        return "%s: bedroom busier in %d%% of %d shared buckets; living room leads at %s — not a person signal" % (
-            prefix, pct, len(shared), ", ".join("%02dZ" % h for h in flips))
-    return "%s: bedroom busier in %d%% of %d shared buckets and in all %d hours — near-constant, not a person signal" % (
-        prefix, pct, len(shared), len(by_hour))
+        return "%s: bedroom busier in %d%% of %d shared buckets%s; living room leads at %s — not a person signal" % (
+            prefix, pct, len(shared), newest_note, ", ".join("%02dZ" % h for h in flips))
+    return "%s: bedroom busier in %d%% of %d shared buckets%s and in all %d hours — near-constant, not a person signal" % (
+        prefix, pct, len(shared), newest_note, len(by_hour))
 
 
 def audio_room_line(site, now):
