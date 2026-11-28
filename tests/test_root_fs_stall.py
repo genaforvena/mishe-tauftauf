@@ -206,11 +206,14 @@ def test_missing_or_garbled_log(tmp_path):
 def test_load_unions_logs_and_the_later_file_wins(tmp_path):
     live = tmp_path / "live.jsonl"
     mirror = tmp_path / "mirror.jsonl"
-    live.write_text(json.dumps(rec(event="slow", at=NOW - 60, total=9.9)) + "\n"
-                    + json.dumps(rec(at=NOW, total=1.0)) + "\n")
-    mirror.write_text("garbage\n" + json.dumps(rec(at=NOW, total=1.0)) + "\n")
-    records = mod.load([live, mirror])
+    own = str(tmp_path)
+    live.write_text(json.dumps(rec(event="slow", at=NOW - 60, total=9.9, source=own)) + "\n"
+                    + json.dumps(rec(at=NOW, total=1.0, source=own)) + "\n")
+    updated = rec(at=NOW, total=1.1, source=own)
+    mirror.write_bytes(b"garbage\n\xff\n" + (json.dumps(updated) + "\n").encode())
+    records = mod.load([live, mirror], source=own)
     assert len(records) == 2                                  # shared (at,dir,event) deduped, garbage skipped
+    assert updated in records
     assert mod.evaluate(records, NOW)[0] == 2                 # the live-log-only stall is seen
 
 
@@ -232,6 +235,16 @@ def test_main_ignores_another_plants_rows(tmp_path):
                     + json.dumps({"dir": "root", "event": "slow", "at": now - 30, "total": 9.9}) + "\n"
                     + json.dumps({"dir": "root", "event": "minute", "at": now, "total": 1.0, "source": os.path.realpath(tmp_path)}) + "\n")
     assert mod.main(["--home", str(tmp_path), "--live-log", str(live)]) == 0
+
+
+def test_foreign_probe_cannot_overwrite_local_stall_at_same_timestamp(tmp_path):
+    live = tmp_path / "live.jsonl"
+    now = time.time()
+    own = str(tmp_path)
+    stall = rec(event="slow", at=now - 60, total=9.9, source=own)
+    foreign_stall = dict(stall, total=0.4, source=str(tmp_path / "other"))
+    live.write_text("\n".join(map(json.dumps, (stall, foreign_stall, rec(at=now, source=own)))) + "\n")
+    assert mod.main(["--home", own, "--live-log", str(live)]) == 2
 
 
 def test_green_line_names_the_sub_threshold_band_without_going_red():

@@ -48,10 +48,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live-log", default=stall.LIVE_LOG)
     args = parser.parse_args(argv)
     paths = [Path(args.live_log), Path(args.home) / "operator" / "dual-probe.jsonl"]
-    own = os.path.realpath(args.home)
-    records = [r for r in stall.load(paths) if r.get("source") == own]
+    records = stall.load(paths, source=os.path.realpath(args.home))
     if not records:
-        print(f"UNKNOWN: no readable probe log among {', '.join(str(p) for p in paths)}")
+        print(f"UNKNOWN: no readable local root probe records among {', '.join(str(p) for p in paths)}")
         return 3
     code, lines = evaluate(records, time.time())
     print({0: "OK", 2: "FAIL", 3: "UNKNOWN"}[code] + ": " + "; ".join(lines))

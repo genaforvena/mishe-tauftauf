@@ -11,10 +11,9 @@ full history) and mirrors only the last hour into SITE/operator/dual-probe.jsonl
 (the mirror trims each minute so it does not put a truncate-and-rewrite flush on
 the root drive).
 
-This check reads both: the window verdict comes from whichever log is freshest,
-and recurrence is counted over the union, so the "last 24 h" recurrence claim is
-backed by the probe's whole history while the tmpfs log is alive, and still by the
-durable mirror after it is gone.
+This check reads this plant's root records from both logs and deduplicates the
+overlap. The tmpfs log supplies the full recurrence history while it is alive.
+The durable mirror still supplies recent evidence if the tmpfs log is gone.
 
 Each stall line carries the stalled probe's io_psi (PSI io 'some' avg10): the
 share of the prior 10 s during which some task was stalled on I/O. A near-zero
@@ -279,22 +278,29 @@ def is_rising(recent: int, baseline: float) -> bool:
     return recent >= 2 * max(baseline, 1) and recent >= 5
 
 
-def load(paths: list[Path]) -> list[dict]:
-    """Union of the probe logs; a later file wins per (at, dir, event). Unreadable files are skipped."""
-    out: dict[tuple, dict] = {}
+def load(paths: list[Path], *, source: str) -> list[dict]:
+    """Stream the root rows for this plant. A later readable file wins per (at, event)."""
+    records: dict[tuple[float, str], dict] = {}
     for path in paths:
+        file_records: dict[tuple[float, str], dict] = {}
         try:
-            text = path.read_text()
+            with path.open("rb") as stream:
+                for line in stream:
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    if (not isinstance(record, dict) or record.get("source") != source
+                            or record.get("dir") != TARGET):
+                        continue
+                    at = record.get("at")
+                    event = record.get("event")
+                    if isinstance(at, (int, float)) and isinstance(event, str):
+                        file_records[at, event] = record
         except OSError:
             continue
-        for line in text.splitlines():
-            try:
-                record = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(record, dict):
-                out[(record.get("at"), record.get("dir"), record.get("event"))] = record
-    return list(out.values())
+        records.update(file_records)
+    return list(records.values())
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -304,13 +310,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="the probe's full-history log; read together with the durable mirror")
     args = parser.parse_args(argv)
     paths = [Path(args.live_log), Path(args.home) / "operator" / "dual-probe.jsonl"]
-    # The live log is shared by every plant's probe. Count only rows this plant's probe wrote
-    # (dual_probe.py stamps source=<its site home>); another plant's memory stalls are not this
-    # plant's root drive. Rows with no source are another plant's old-format probe and are dropped.
-    own = os.path.realpath(args.home)
-    records = [r for r in load(paths) if r.get("source") == own]
+    records = load(paths, source=os.path.realpath(args.home))
     if not records:
-        print(f"UNKNOWN: no readable probe log among {', '.join(str(p) for p in paths)}")
+        print(f"UNKNOWN: no readable local root probe records among {', '.join(str(p) for p in paths)}")
         return 3
     code, lines = evaluate(records, time.time())
     print({0: "OK", 2: "FAIL", 3: "UNKNOWN"}[code] + ": " + "; ".join(lines))
