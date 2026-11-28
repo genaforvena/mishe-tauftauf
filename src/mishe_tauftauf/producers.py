@@ -15,6 +15,7 @@ unit succeeds, so a routine stale sample does not mark the producer failed.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 import subprocess
 import sys
 import time
@@ -81,7 +82,34 @@ def _cause_key(text: str) -> str:
     return "".join(out)
 
 
+@contextmanager
+def _floor_held(home, name: str):
+    """Hold this producer's memory floor for its whole life, including the tail after its check.
+
+    A delivery's ``daemon-reload`` rewrites the protected drop-in's 1G onto every running unit
+    (2026-11-28 06:29:04Z, during main-publication and pin-delivery). A guard stopped when the
+    check exits leaves the tail -- signal write, journal, exit -- unguarded: both units then
+    sat at memory.high=1G for ~24 s and ``wake-memory-floor`` reported RED. The floor is
+    restored and re-asserted until the process itself is gone.
+    """
+    floor = _restore_memory_floor(home, name)
+    guard = (wake_memory.MemoryFloorGuard(floor["unit"]).start()
+             if floor.get("unit") else None)
+    try:
+        yield floor
+    finally:
+        if guard is not None:
+            guard.stop()
+            wake_memory.record_guard(Path(home) / "signals" / f"{name}.memory.json", guard)
+
+
 def run(home, name: str, command: list, *, now: float, timeout: float, red_codes=(2,), unknown_codes=()) -> int:
+    with _floor_held(home, name):
+        return _run(home, name, command, now=now, timeout=timeout,
+                    red_codes=red_codes, unknown_codes=unknown_codes)
+
+
+def _run(home, name: str, command: list, *, now: float, timeout: float, red_codes=(2,), unknown_codes=()) -> int:
     detail = Path(home) / "signals" / f"{name}.detail"
     detail.parent.mkdir(parents=True, exist_ok=True)
     scratch = detail.with_suffix(".detail.tmp")
@@ -92,9 +120,6 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
         print(f"mishe: {name}: ran start={_utc(started)} end={_utc(time.time())} "
               f"elapsed={time.monotonic() - clock:.1f}s limit={timeout:g}s outcome={outcome}", file=sys.stderr)
 
-    floor = _restore_memory_floor(home, name)
-    guard = (wake_memory.MemoryFloorGuard(floor["unit"]).start()
-             if floor.get("unit") else None)
     try:
         code = run_bounded(command, env=dict(os.environ), cwd=Path(home), timeout=timeout, stdout_to=scratch)
     except (EngineNotStarted, EngineTimeout) as exc:
@@ -105,10 +130,6 @@ def run(home, name: str, command: list, *, now: float, timeout: float, red_codes
         signal_store.observe_unknown(home, name, now=now, source=f"run:{command[0]}",
                                      reason=f"not run: {type(exc).__name__}")
         return 2
-    finally:
-        if guard is not None:
-            guard.stop()
-            wake_memory.record_guard(Path(home) / "signals" / f"{name}.memory.json", guard)
     ran(f"exit={code}")
     # Cadence heartbeat: the producer completed a run. A declared unknown exit leaves the
     # reading untouched, so without this the freshness stamp ages and coverage reports a missed cadence

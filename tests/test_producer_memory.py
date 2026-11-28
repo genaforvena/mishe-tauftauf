@@ -102,3 +102,23 @@ def test_the_check_still_owns_the_signal_outcome(home, monkeypatch):
     fake_unit(monkeypatch, "mishe-producer-readings.service", fake)
     assert producers.run(home, "readings", [PY, "-c", "import sys; sys.exit(2)"], now=NOW, timeout=10) == 0
     assert store.read(home, "readings", now=NOW).value == "RED"
+
+
+def test_the_floor_is_held_through_the_tail_after_the_check(home, monkeypatch):
+    """A reload that lands after the check exits (06:29:04Z, 2026-11-28) must still be repaired.
+
+    The guard lives for the whole producer, not only while the check runs: the tail after the
+    check (signal write, journal, exit) is where the unit sat at 1G for ~24 s.
+    """
+    import time as _time
+    fake = FakeCgroup(home, memory_high="1073741824")
+    fake_unit(monkeypatch, "mishe-producer-readings.service", fake)
+    with producers._floor_held(home, "readings"):
+        # The check has finished; a daemon-reload now rewrites the drop-in's 1G onto the live unit.
+        (fake.dir / "memory.high").write_text("1073741824", encoding="utf-8")
+        deadline = _time.monotonic() + 6
+        while _time.monotonic() < deadline and fake.high() != str(units.PRODUCER_MEMORY_HIGH_BYTES):
+            _time.sleep(0.2)
+    assert fake.high() == str(units.PRODUCER_MEMORY_HIGH_BYTES)
+    record = json.loads((home / "signals" / "readings.memory.json").read_text())
+    assert record["guard"]["repaired"] + record["guard"]["reverts"] >= 1
