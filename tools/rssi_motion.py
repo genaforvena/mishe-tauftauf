@@ -46,6 +46,9 @@ BUCKET_S = 900
 MIN_RSSI = 60          # of ~180 rows a 15-minute bucket should hold at 5 s cadence (Redmi10 vantage)
 MIN_RSSI_ROUTER = 2    # the router-station logs one client row every ~5.6 min: 2-3 rows per bucket
 ROUTER_CLIENT = "Redmi-10"
+# Senses-owned copy of the Redmi-10 router rows. network/router.jsonl keeps two days (about 190 poll
+# rows), which cannot reach MIN_JOINED; the copy keeps every row this client was seen, one per poll.
+ROUTER_ARCHIVE = "senses/map/router-station-redmi10.jsonl"
 VANTAGES = ("redmi10", "router-station")
 MIN_ACCEL = 20
 MIN_JOINED = 300
@@ -257,7 +260,7 @@ def run(site, log, now, vantage="redmi10"):
     min_rssi = MIN_RSSI
     if vantage == "router-station":
         min_rssi = MIN_RSSI_ROUTER
-        log = log or os.path.join(site, "network/router.jsonl")
+        log = log or os.path.join(site, ROUTER_ARCHIVE)
         try:
             buckets, newest = read_router(log, min(starts) - BUCKET_S)
         except OSError as exc:
@@ -310,21 +313,73 @@ def summary(res):
             f"p {p} vs day-shift null, {h['joined']} buckets, {h['active']} active")
 
 
-def main(argv=None):
-    args = rt.parse_cli(argv if argv is not None else sys.argv[1:], __doc__,
-                        extra=lambda p: p.add_argument("--vantage", default="redmi10", choices=VANTAGES,
-                                                       help="redmi10 (phone, default) or router-station"))
-    now = rt.parse_iso(args.now) if args.now else datetime.datetime.now(datetime.timezone.utc)
-    res = run(args.site, args.log, now, args.vantage)
-    name = "rssi-motion.json" if args.vantage == "redmi10" else f"rssi-motion-{args.vantage}.json"
-    dest = os.path.join(args.site, "senses/map/" + name)
+def archive_router(site, src=None, client=ROUTER_CLIENT):
+    """Append the named client's rows from network/router.jsonl to the senses archive, once per poll.
+
+    Read-only on the network side. Rows already archived (ts at or before the newest archived ts) are
+    skipped; rows without a usable dBm for the client are not kept. Returns the archive path.
+    """
+    src = src or os.path.join(site, "network/router.jsonl")
+    dest = os.path.join(site, ROUTER_ARCHIVE)
+    last = None
+    if os.path.exists(dest):
+        with open(dest, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    ts = rt.parse_json_line(line)["ts"]
+                except (ValueError, KeyError, TypeError):
+                    continue
+                last = ts if last is None or ts > last else last
+    new = []
+    with open(src, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            try:
+                row = rt.parse_json_line(line)
+            except ValueError:
+                continue
+            ts = row.get("ts") if isinstance(row, dict) else None
+            if not isinstance(ts, (int, float)) or not math.isfinite(ts) or (last is not None and ts <= last):
+                continue
+            seen = [cl for cl in row.get("clients") or []
+                    if isinstance(cl, dict) and cl.get("name") == client
+                    and isinstance(cl.get("dbm"), (int, float)) and math.isfinite(cl.get("dbm"))]
+            if seen:
+                new.append(json.dumps({"ts": ts, "clients": [{"name": client, "dbm": seen[0]["dbm"]}]}))
+    if new:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "a", encoding="utf-8") as fh:
+            fh.write("\n".join(new) + "\n")
+    return dest
+
+
+def write_result(site, vantage, res):
+    name = "rssi-motion.json" if vantage == "redmi10" else f"rssi-motion-{vantage}.json"
+    dest = os.path.join(site, "senses/map/" + name)
     tmp = dest + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(res, fh, indent=1)
         fh.write("\n")
     os.replace(tmp, dest)
-    print(summary(res))
-    return 3 if res["state"] == "UNKNOWN" else 0
+
+
+def main(argv=None):
+    args = rt.parse_cli(argv if argv is not None else sys.argv[1:], __doc__,
+                        extra=lambda p: p.add_argument("--vantage", default="redmi10", choices=VANTAGES,
+                                                       help="redmi10 (phone, default) or router-station"))
+    now = rt.parse_iso(args.now) if args.now else datetime.datetime.now(datetime.timezone.utc)
+    # Every run refreshes the router archive and both vantage results, so the hourly duty keeps the
+    # router-station stratum filling; the exit code follows the requested vantage only.
+    try:
+        archive_router(args.site)
+    except OSError:
+        pass  # the router-station result below reads the archive and reports UNKNOWN if it is missing
+    results = {}
+    for vantage in VANTAGES:
+        res = run(args.site, args.log if vantage == "redmi10" else None, now, vantage)
+        write_result(args.site, vantage, res)
+        results[vantage] = res
+        print(summary(res) if vantage == "redmi10" else f"[{vantage}] " + summary(res))
+    return 3 if results[args.vantage]["state"] == "UNKNOWN" else 0
 
 
 if __name__ == "__main__":

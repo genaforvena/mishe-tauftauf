@@ -199,3 +199,21 @@ def test_router_refuses_non_finite_json_and_keeps_the_median_key(tmp_path):
     now = rm.rt.datetime.datetime.fromtimestamp(T0 + 20, rm.rt.datetime.timezone.utc)
     res = rm.run(str(site), str(path), now, vantage="router-station")
     assert "rssi_median_dbm" in res
+
+
+def test_router_archive_keeps_each_poll_once_and_only_the_named_client(tmp_path):
+    # network/router.jsonl keeps two days; the senses archive must keep every Redmi-10 poll once.
+    src = tmp_path / "router.jsonl"
+    def row(ts, name, dbm):
+        return json.dumps({"ts": ts, "clients": [{"name": name, "dbm": dbm}]})
+    src.write_text("\n".join([row(T0 + 300, "Redmi-10", -61), row(T0 + 300, "Other", -40),
+                              row(T0 + 600, "Redmi-10", -63), "not json"]) + "\n")
+    dest = rm.archive_router(str(tmp_path), str(src))
+    assert len(open(dest).read().splitlines()) == 2
+    src.write_text(src.read_text() + row(T0 + 900, "Redmi-10", -62) + "\n" + row(T0 + 600, "Redmi-10", -63) + "\n")
+    rm.archive_router(str(tmp_path), str(src))
+    kept = [json.loads(line) for line in open(dest).read().splitlines()]
+    assert [k["ts"] for k in kept] == [T0 + 300, T0 + 600, T0 + 900]
+    assert all([c["name"] for c in k["clients"]] == ["Redmi-10"] for k in kept)
+    buckets, newest = rm.read_router(dest, T0)
+    assert newest == T0 + 900
