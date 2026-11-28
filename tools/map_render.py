@@ -165,8 +165,11 @@ def room_activity():
         data = json.load(open(ACTIVITY, encoding="utf-8"))
     except (OSError, ValueError):
         return {"_error": "activity.json missing or unreadable"}
+    summary = data.get("summary") or {}
+    unknown = summary.get("unknown_intervals") or {}
     for room, v in data.get("rooms", {}).items():
         # activity.json says "living room"; ROOMS and the SVG use "living_room"
+        original_room = room
         room = room.replace(" ", "_")
         dated, undated, future = [], 0, 0
         for b in v.get("buckets", []):
@@ -196,6 +199,8 @@ def room_activity():
             state = "UNKNOWN"
             reasons.append("no dated usable bucket")
             entry = {"last_usable_utc": None, "activity": None, "mean_luma": None, "age_s": None}
+        if state in ("historical", "UNKNOWN") and unknown.get(original_room):
+            reasons.append("camera unreachable or blind")
         entry.update(state=state, reason="; ".join(reasons), usable_buckets=v.get("usable_buckets"))
         out[room] = entry
     out["_generated_utc"] = data.get("generated_utc")
@@ -506,7 +511,9 @@ def activity_footer(activity):
         if state == "current":
             parts.append("%s activity %.3f (%s)" % (name, act["activity"], act["last_usable_utc"]))
         elif state == "historical":
-            parts.append("%s historical %.3f (%s), not current" % (name, act["activity"], act["last_usable_utc"]))
+            reason = act.get("reason") or ""
+            gap = " (camera unreachable or blind)" if "camera unreachable or blind" in reason else ""
+            parts.append("%s historical %.3f (%s), not current%s" % (name, act["activity"], act["last_usable_utc"], gap))
         else:
             parts.append("%s activity UNKNOWN" % name)
     return "Camera activity: " + "; ".join(parts)

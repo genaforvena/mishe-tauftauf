@@ -79,6 +79,33 @@ def test_previous_day_bucket_is_historical_not_busiest_now(tmp_path):
     assert "camera busiest room" not in evidence
     assert "historical only" in evidence
 
+def test_historical_room_names_camera_unreachable_when_summary_says_so(tmp_path):
+    now = _now()
+    yesterday = now - datetime.timedelta(days=1)
+    activity = _activity({"bedroom": [_bucket(yesterday, 0.2)]})
+    activity["summary"] = {"unknown_intervals": {"bedroom": [
+        {"from_utc": "20:50Z", "minutes": 551,
+         "reason": "no usable frame for over 300 s: camera unreachable or blind, not dark",
+         "to_utc": "06:02Z"}]}}
+    site = _site(tmp_path, activity)
+    state, svg = _render(site)
+    act = state["room_activity"]["bedroom"]
+    assert act["state"] == "historical"
+    assert "camera unreachable or blind" in act["reason"]
+    assert "camera unreachable or blind" in svg
+
+
+def test_historical_room_without_unknown_intervals_keeps_age_reason(tmp_path):
+    now = _now()
+    yesterday = now - datetime.timedelta(days=1)
+    site = _site(tmp_path, _activity({"bedroom": [_bucket(yesterday, 0.2)]}))
+    state, svg = _render(site)
+    act = state["room_activity"]["bedroom"]
+    assert act["state"] == "historical"
+    assert "camera unreachable or blind" not in act["reason"]
+    assert "newest usable bucket" in act["reason"]
+    assert "camera unreachable or blind" not in svg
+
 
 def test_bare_hhmm_label_has_no_date_and_is_unknown(tmp_path):
     now = _now()
