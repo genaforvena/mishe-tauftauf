@@ -12,10 +12,12 @@ bedroom camera frames were available enter the series — an hour with every fra
 carries no motion reading even when the producer writes a number. A learned hour needs at
 least MIN_N training samples, otherwise it stays null and the renderer falls back.
 
-Scoring: Brier score on held-out night hours (the same window the renderer's hand-set night prior
-covers), learned per-hour prior against the hand-set constant. The learned prior is ADOPTED only if
-it beats the hand-set constant on held-out hours and has enough held-out samples; otherwise
-map_render keeps its hand-set value. Adoption is recorded in priors.json, never assumed.
+Scoring: per-hour Brier score on held-out hours (every UTC hour, not just night), learned per-hour
+prior against the hand-set constant, recorded per hour in priors.json so the published priors carry
+their own held-out evidence. The learned prior is ADOPTED only on the aggregate night-hours window
+(the same window the renderer's hand-set night prior covers): it must beat the hand-set constant on
+held-out night hours and have enough held-out samples; otherwise map_render keeps its hand-set value.
+Adoption is recorded in priors.json, never assumed.
 
 Writes SITE/senses/map/priors.json (derived numbers only; never committed).
 
@@ -160,13 +162,37 @@ def build(site, now):
 
     out["descriptive"] = describe(rows)
 
+    # Per-hour held-out evidence: for every UTC hour, the Brier of the learned prior (or the
+    # hand-set fallback when the hour has too few training samples) against the hand-set constant
+    # on the held-out hours at that hour. Recorded per hour so the published priors carry their own
+    # evidence; the adoption gate below stays the aggregate night-hours one.
+    fallback = HAND_NIGHT
+    held_by_hour = {}
+    for t, y in test:
+        held_by_hour.setdefault(t.hour, []).append(y)
+    for h in range(24):
+        cell = out["rooms"]["bedroom"]["by_hour_utc"][str(h)]
+        ys = held_by_hour.get(h)
+        if not ys:
+            cell["heldout_n"] = 0
+            cell["brier_learned"] = None
+            cell["brier_hand_set"] = None
+            cell["beats_hand_set"] = None
+            continue
+        pred = learned[h] if learned[h] is not None else fallback
+        b_learn = sum((pred - y) ** 2 for y in ys) / len(ys)
+        b_hand = sum((fallback - y) ** 2 for y in ys) / len(ys)
+        cell["heldout_n"] = len(ys)
+        cell["brier_learned"] = round(b_learn, 4)
+        cell["brier_hand_set"] = round(b_hand, 4)
+        cell["beats_hand_set"] = b_learn < b_hand
+
     held = [(t.hour, y) for t, y in test if in_night(t.hour)]
     n = len(held)
     if n < MIN_HELDOUT:
         out["night_bedroom"]["reason"] = "held-out night hours %d < %d: hand-set %.1f kept" % (n, MIN_HELDOUT, HAND_NIGHT)
         out["night_bedroom"]["heldout_n"] = n
         return out
-    fallback = HAND_NIGHT
     b_hand = sum((fallback - y) ** 2 for _, y in held) / n
     b_learn = sum(((learned[h] if learned[h] is not None else fallback) - y) ** 2 for h, y in held) / n
     adopted = b_learn < b_hand

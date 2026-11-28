@@ -118,3 +118,46 @@ def test_stale_feature_store_does_not_adopt_a_prior(tmp_path):
     assert night["adopted"] is False
     assert "stale" in night["reason"] and "hand-set" in night["reason"]
     assert out["bedroom_hours"]["newest_age_hours"] > mp.STALE_HOURS
+
+def test_per_hour_heldout_evidence_recorded_for_hours_with_samples(tmp_path):
+    # Same clean pattern as the adoption test: days 8-15 train, days 1-6 held out.
+    # 21Z and 22Z active, 23Z and 0Z quiet in both windows.
+    rows = []
+    for d in list(range(8, 16)) + list(range(1, 7)):
+        rows.append(_row(d, 21, 0.9))
+        rows.append(_row(d, 22, 0.9))
+        rows.append(_row(d, 23, 0.001))
+        rows.append(_row(d, 0, 0.001))
+    site = _site(tmp_path, rows)
+    out = mp.build(str(site), datetime.datetime.now(UTC))
+    by_hour = out["rooms"]["bedroom"]["by_hour_utc"]
+    # Held-out hours at 21Z: six samples, all active; the learned prior wins there.
+    assert by_hour["21"]["heldout_n"] == 6
+    assert by_hour["21"]["brier_learned"] < by_hour["21"]["brier_hand_set"]
+    assert by_hour["21"]["beats_hand_set"] is True
+    # Held-out hours at 23Z: six samples, all quiet; the learned prior wins there too.
+    assert by_hour["23"]["heldout_n"] == 6
+    assert by_hour["23"]["beats_hand_set"] is True
+    # An hour with no held-out samples records zero and null briers, never a guess.
+    assert by_hour["5"]["heldout_n"] == 0
+    assert by_hour["5"]["brier_learned"] is None
+    assert by_hour["5"]["brier_hand_set"] is None
+    assert by_hour["5"]["beats_hand_set"] is None
+
+
+def test_per_hour_evidence_recorded_even_when_aggregate_not_adopted(tmp_path):
+    # One held-out night hour: the aggregate gate keeps the hand-set prior (n < MIN_HELDOUT),
+    # but the per-hour evidence for that hour is still recorded so the published priors carry it.
+    rows = []
+    for d in range(8, 16):
+        rows.append(_row(d, 21, 0.9))
+    rows.append(_row(0, 21, 0.9))
+    site = _site(tmp_path, rows)
+    out = mp.build(str(site), datetime.datetime.now(UTC))
+    night = out["night_bedroom"]
+    assert night["adopted"] is False
+    assert "hand-set" in night["reason"]
+    cell = out["rooms"]["bedroom"]["by_hour_utc"]["21"]
+    assert cell["heldout_n"] == 1
+    assert cell["brier_learned"] < cell["brier_hand_set"]
+    assert cell["beats_hand_set"] is True
