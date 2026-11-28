@@ -25,3 +25,9 @@ The book behind the [README](../README.md). Start with the first two rows if you
 | Read where a slow or cut readings scan got to | [Readings scan stage trace](readings-scan-trace.md) |
 | See the registry of outer tmux windows | [Outer windows](outer-windows.md) |
 | Read the POSIX binary contract and ranking | [Mishe POSIX binaries](posix-binaries.md) |
+| See how stewardship concentration is measured | [Mesh measures](mesh-measures.md) |
+| Read the quota acquisition rules | [Quota acquisition](claude-quota.md) |
+| Read the pin-delivery signal runbook | [Pin-delivery runbook](pin-delivery-runbook.md) |
+| Read where textual protocol interpretation belongs | [Protocol boundaries](protocol-boundaries.md) |
+| Read how forecasts about the house are written and scored | [House predictions](house-predictions.md) |
+| Read what the household feature store holds | [Household feature store](household-features.md) |
