@@ -600,6 +600,16 @@ def probe_state(row, now):
     values = (host["cpu_some10"], host["io_some10"])
     if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
         return 3, f"network-care: probe row {row['at']} host block has a non-numeric pressure reading {values!r} (UNKNOWN)"
+    internet = row.get("internet")
+    sites = [site for site in internet.values() if isinstance(site, dict) and site.get("ok") is True] \
+        if isinstance(internet, dict) else []
+    lookups = [site.get("lookup_ms") for site in sites if "lookup_ms" in site]
+    if any(not isinstance(v, (int, float)) or isinstance(v, bool) for v in lookups):
+        return 3, f"network-care: probe row {row['at']} has a non-numeric lookup_ms {lookups!r} (UNKNOWN)"
+    if sites and not lookups:
+        # The contract omits lookup_ms only when curl did not parse it, so a single missing site is not a fault;
+        # every reachable site lacking it means the 0.2.0 name-lookup timing has stopped being written.
+        return 2, f"network-care: probe row {row['at']} has no lookup_ms on any reachable site (RED)"
     return 0, f"network-care: probe GREEN (row {row['at']}, host cpu {host['cpu_some10']:.1f} %, io {host['io_some10']:.1f} %)"
 
 

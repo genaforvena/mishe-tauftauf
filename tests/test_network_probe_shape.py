@@ -39,6 +39,26 @@ class ProbeStateTests(unittest.TestCase):
     def test_stale_row_is_unknown_even_without_host(self):
         self.assertEqual(care.probe_state(row(host=None), NOW + 3600)[0], 3)
 
+    def test_reachable_sites_without_lookup_ms_is_red(self):
+        r = row()
+        r["internet"] = {"gstatic": {"ok": True, "connect_ms": 4.0}, "cloudflare": {"ok": True, "connect_ms": 5.0}}
+        self.assertEqual(care.probe_state(r, NOW + 60)[0], 2)
+
+    def test_one_site_lacking_lookup_ms_is_still_green(self):
+        r = row()
+        r["internet"] = {"gstatic": {"ok": True, "lookup_ms": 1.5}, "cloudflare": {"ok": True, "connect_ms": 5.0}}
+        self.assertEqual(care.probe_state(r, NOW + 60)[0], 0)
+
+    def test_failed_sites_do_not_require_lookup_ms(self):
+        r = row()
+        r["internet"] = {"gstatic": {"ok": False}, "cloudflare": {"ok": False}}
+        self.assertEqual(care.probe_state(r, NOW + 60)[0], 0)
+
+    def test_non_numeric_lookup_ms_is_unknown(self):
+        r = row()
+        r["internet"] = {"gstatic": {"ok": True, "lookup_ms": "fast"}}
+        self.assertEqual(care.probe_state(r, NOW + 60)[0], 3)
+
     def test_no_row_is_unknown(self):
         self.assertEqual(care.probe_state(None, NOW)[0], 3)
 

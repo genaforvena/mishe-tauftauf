@@ -1336,7 +1336,7 @@
         3
       ],
       "resolver": "network",
-      "covers": "the newest network-probe row (network/probe.jsonl) is at most 15 min old and carries the 0.2.0 host block (cpu_some10, io_some10); RED when a fresh row lacks it (the 0.2.0 probe is not what writes the reading), UNKNOWN when the log has no readable newest row or the row is stale",
+      "covers": "the newest network-probe row (network/probe.jsonl) is at most 15 min old and carries the 0.2.0 host block (cpu_some10, io_some10); RED when a fresh row lacks it (the 0.2.0 probe is not what writes the reading) or when every reachable internet site lacks the lookup_ms name-lookup timing, UNKNOWN when the log has no readable newest row, the row is stale, or lookup_ms is not numeric",
       "replaces": []
     },
     {
