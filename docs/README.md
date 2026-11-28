@@ -31,3 +31,7 @@ The book behind the [README](../README.md). Start with the first two rows if you
 | Read where textual protocol interpretation belongs | [Protocol boundaries](protocol-boundaries.md) |
 | Read how forecasts about the house are written and scored | [House predictions](house-predictions.md) |
 | Read what the household feature store holds | [Household feature store](household-features.md) |
+| See how code health is measured | [Code health](code-health.md) |
+| Read the Rust runtime migration initiative | [Rust runtime investigation plan](rust-runtime-investigation-plan.md) |
+| Read the Rust runtime migration plan | [Rust runtime migration plan](rust-runtime-migration-plan.md) |
+| Read the root-drive migration plan | [Root-drive migration plan](root-fs-migration-plan.md) |
