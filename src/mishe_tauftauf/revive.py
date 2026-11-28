@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from . import revive_boundary as b
@@ -442,29 +443,59 @@ def revive_units(h: Host, p: Probe, r: Result, *, dry_run: bool) -> None:
                 r.say(f'rebuilding the views failed: {b.first_line(err)}')
 
 
-PRODUCER_GLOBS = ('mishe-producer-*.service', 'm2shell-producer-*.service')
+PRODUCER_GLOB = 'mishe-producer-*.service'
+SYSTEMD_BUS = 'org.freedesktop.systemd1'
+
+
+def skipped_by_latch(h: Host, name: str) -> bool | None:
+    """systemctl show renders Conditions unprintable, so read the typed property."""
+    bus = ['busctl', '--user', '--json=short']
+    rc, out, _ = h.run([*bus, 'call', SYSTEMD_BUS, '/org/freedesktop/systemd1',
+                        SYSTEMD_BUS + '.Manager', 'GetUnit', 's', name], timeout=5)
+    unit = b.systemd_unit_object(out) if rc == 0 else None
+    if unit is None:
+        return None
+    rc, out, _ = h.run([*bus, 'get-property', SYSTEMD_BUS, unit, SYSTEMD_BUS + '.Unit', 'Conditions'], timeout=5)
+    return b.failed_latch_condition(out, STATE / 'tripped') if rc == 0 else None
 
 
 def kick_skipped(h: Host, r: Result, *, dry_run: bool) -> None:
-    """After a rearm, start the producer oneshots the trip skipped. They carry ConditionPathExists=!tripped, so
-    systemd records ConditionResult=no and only their next timer tick would run them (2026-11-26: footprint failed
-    because its memory-sample producer sat out the latch for 37 minutes). A skipped unit whose condition still
-    fails just skips again, so starting one is harmless. Runs once per rearm; not tracked as owed."""
+    """After a rearm, start this plant's producer oneshots that failed the latch condition."""
     if not r.rearmed:
         return
-    _, listing, _ = h.run(['systemctl', '--user', 'list-units', '--all', '--plain', '--no-legend', *PRODUCER_GLOBS])
-    down = [name for name, active, _sub, _desc in b.unit_rows(listing) if active != 'active']
+    rc, listing, err = h.run(['systemctl', '--user', 'list-units', '--all', '--plain', '--no-legend', PRODUCER_GLOB])
+    if rc != 0:
+        r.code = 3
+        r.say(f'UNDECIDABLE: cannot list producers after rearm: {b.first_line(err)}')
+        return
+    down = [name for name, active, _sub, _desc in b.unit_rows(listing)
+            if active != 'active' and fnmatchcase(name, PRODUCER_GLOB)]
     if not down:
         return
-    _, shown, _ = h.run(['systemctl', '--user', 'show', '-p', 'Id', '-p', 'ConditionResult', *down])
-    skipped = [unit for unit in b.unit_condition_no(shown) if unit in down]
+    rc, shown, err = h.run(['systemctl', '--user', 'show', '-p', 'Id', '-p', 'ConditionResult', *down])
+    if rc != 0:
+        r.code = 3
+        r.say(f'UNDECIDABLE: cannot read producer conditions after rearm: {b.first_line(err)}')
+        return
+    results = b.unit_condition_results(shown)
+    skipped = []
+    for name in sorted(down):
+        passed = results.get(name)
+        if passed is True:
+            continue
+        guard_failed = skipped_by_latch(h, name) if passed is False else None
+        if guard_failed is None:
+            r.code = 3
+            r.say(f'UNDECIDABLE: cannot read the failed condition for {name}; left to its timer')
+        elif guard_failed:
+            skipped.append(name)
     if not skipped:
         return
     if dry_run:
         r.say(f'dry run: would start the producers the trip skipped: {", ".join(sorted(skipped))}')
         return
     failed = []
-    for name in sorted(skipped):
+    for name in skipped:
         code, _, err = h.run(['systemctl', '--user', 'start', name], timeout=90)
         r.actions.append(f'start {name}')
         if code != 0:

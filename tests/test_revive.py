@@ -19,9 +19,10 @@ UNITS = ('mishe-wake-health.path loaded inactive dead Mishe wake triggers\n'
 class Fake(revive.Host):
     def __init__(self, tmp_path, *, latch=LATCH, emergency=False, ready=READY, inside=False, restores=(),
                  units=UNITS, views=False, io=0, restore_works=True, hold=False, life=None,
-                 inventory=(), archives=(), start_fails=(), enabled=True, windows=None, shown=''):
+                 inventory=(), archives=(), start_fails=(), enabled=True, windows=None, shown=None, conditions=None):
         super().__init__(tmp_path / 'site', tmp_path / 'repo')
         self.shown = shown
+        self.conditions = conditions or {}
         self.t = NOW
         self.files, self.calls, self.inside, self.restores = {}, [], inside, list(restores)
         self.archives, self.start_fails, self.enabled, self.started = list(archives), set(start_fails), enabled, set()
@@ -81,7 +82,14 @@ class Fake(revive.Host):
         if argv[:3] == ['systemctl', '--user', 'is-enabled']:
             return 0, ('enabled' if self.enabled else 'disabled'), ''
         if argv[:3] == ['systemctl', '--user', 'show']:
-            return 0, self.shown, ''
+            shown = self.shown if self.shown is not None else ''.join(
+                f'Id={name}\nConditionResult=yes\n\n' for name in argv[argv.index('ConditionResult') + 1:]
+            )
+            return 0, shown, ''
+        if argv[0] == 'busctl' and 'GetUnit' in argv:
+            return 0, json.dumps({'type': 'o', 'data': [f'/units/{argv[-1]}']}), ''
+        if argv[0] == 'busctl' and 'get-property' in argv:
+            return 0, self.conditions.get(argv[-3], ''), ''
         if argv[0] == 'tmux' and 'list-windows' in argv:
             return 0, '\n'.join(self.windows or []) + '\n', ''
         if argv[0] == 'tmux':
@@ -193,7 +201,9 @@ def test_boundary_decoders_never_trust_malformed_input():
     assert b.unit_kind('mishe-wake-docs.path') == 'wake-path' and b.unit_kind('run-x.scope') == 'other'
     assert b.unit_kind('mishe-wake@docs.service') == 'wake-service' and b.unit_kind('mishe-producer-x.service') == 'service'
     assert b.unit_rows('a.service loaded failed failed Some thing\nshort\n') == [('a.service', 'failed', 'failed', 'Some thing')]
-    assert b.unit_condition_no('Id=a.service\nConditionResult=no\nId=b.service\nConditionResult=yes\n') == ['a.service']
+    assert b.unit_condition_results('Id=a.service\nConditionResult=no\nId=b.service\nConditionResult=yes\n') == {
+        'a.service': False, 'b.service': True,
+    }
 
 
 PHONE = ('light-cycle-monitor.service', 'android-body-rendezvous.service')
@@ -347,15 +357,38 @@ def test_a_restored_trip_re_offers_the_wakes_it_skipped(tmp_path):
 
 PRODUCER_DOWN = 'mishe-producer-footprint.service loaded inactive dead x\n'
 PRODUCER_SKIPPED = 'Id=mishe-producer-footprint.service\nConditionResult=no\n\nId=mishe-producer-dispatch.service\nConditionResult=yes\n'
+GUARD_SKIP = ['ConditionPathExists', False, True, str(STATE / 'tripped'), -1]
+
+
+def condition_result(*rows):
+    return json.dumps({'type': 'a(sbbsi)', 'data': list(rows)})
 
 
 def test_a_rearm_starts_the_producers_the_trip_skipped_and_not_the_others(tmp_path):
-    h = Fake(tmp_path, units=UNITS + PRODUCER_DOWN, shown=PRODUCER_SKIPPED, views=True, windows=FULL)
+    foreign = 'm2shell-producer-footprint.service'
+    unrelated = 'mishe-producer-household-activity.service'
+    units = UNITS + PRODUCER_DOWN + ''.join(f'{name} loaded inactive dead x\n' for name in (foreign, unrelated))
+    shown = PRODUCER_SKIPPED + ''.join(f'\nId={name}\nConditionResult=no\n' for name in (foreign, unrelated))
+    conditions = {
+        '/units/mishe-producer-footprint.service': condition_result(GUARD_SKIP),
+        f'/units/{foreign}': condition_result(GUARD_SKIP),
+        f'/units/{unrelated}': condition_result(['ConditionPathExists', False, False, '/other-gate', -1]),
+    }
+    h = Fake(tmp_path, units=units, shown=shown, views=True, windows=FULL, conditions=conditions)
     r = revive.run(h, auto=True)
     assert r.code == 0
-    assert ['systemctl', '--user', 'start', 'mishe-producer-footprint.service'] in h.calls
-    assert ['systemctl', '--user', 'start', 'mishe-producer-dispatch.service'] not in h.calls
-    assert 'start mishe-producer-footprint.service' in r.actions
+    assert [action for action in r.actions if action.startswith('start ') and '-producer-' in action] == [
+        'start mishe-producer-footprint.service',
+    ]
+
+
+def test_unreadable_skip_evidence_is_unknown_and_starts_nothing(tmp_path):
+    h = Fake(tmp_path, units=UNITS + PRODUCER_DOWN, shown=PRODUCER_SKIPPED, views=True, windows=FULL,
+             conditions={'/units/mishe-producer-footprint.service': '{broken'})
+    r = revive.run(h, auto=True)
+    assert r.code == 3
+    assert any('mishe-producer-footprint.service' in line and 'UNDECIDABLE' in line for line in r.lines)
+    assert 'start mishe-producer-footprint.service' not in r.actions
 
 
 def test_a_dry_run_that_rearms_nothing_starts_no_producer(tmp_path):

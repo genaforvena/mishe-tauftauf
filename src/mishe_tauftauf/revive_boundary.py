@@ -78,16 +78,44 @@ def unit_rows(text) -> list[tuple[str, str, str, str]]:
     return rows
 
 
-def unit_condition_no(text) -> list[str]:
-    """Units whose ConditionResult is 'no', from `systemctl show -p Id -p ConditionResult <units>`."""
-    skipped, unit = [], None
+def unit_condition_results(text) -> dict[str, bool]:
+    """Read the last aggregate condition result for each loaded unit."""
+    results, unit = {}, None
     for line in (text or '').splitlines():
         key, _, value = line.partition('=')
         if key == 'Id':
             unit = value
-        elif key == 'ConditionResult' and value == 'no' and unit:
-            skipped.append(unit)
-    return skipped
+        elif key == 'ConditionResult' and unit and value in ('yes', 'no'):
+            results[unit] = value == 'yes'
+    return results
+
+
+def systemd_unit_object(text: str) -> str | None:
+    """Decode the object path returned by systemd's GetUnit method."""
+    reply = decode_json(text)
+    if not isinstance(reply, dict) or reply.get('type') != 'o':
+        return None
+    data = reply.get('data')
+    if isinstance(data, list) and len(data) == 1 and isinstance(data[0], str) and data[0].startswith('/'):
+        return data[0]
+    return None
+
+
+def failed_latch_condition(text: str, latch: Path) -> bool | None:
+    """Read systemd's typed Conditions property. A failed condition has result -1."""
+    reply = decode_json(text)
+    if not isinstance(reply, dict) or reply.get('type') != 'a(sbbsi)' or not isinstance(reply.get('data'), list):
+        return None
+    failed = False
+    for row in reply['data']:
+        if not isinstance(row, list) or len(row) != 5:
+            return None
+        kind, trigger, negated, path, result = row
+        if (not isinstance(kind, str) or type(trigger) is not bool or type(negated) is not bool
+                or not isinstance(path, str) or type(result) is not int):
+            return None
+        failed |= kind == 'ConditionPathExists' and not trigger and negated and path == str(latch) and result == -1
+    return failed
 
 
 def session_names(text) -> list[str]:
