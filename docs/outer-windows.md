@@ -16,7 +16,7 @@ Terms used below:
 
 | window | tool | owner | purpose |
 | --- | --- | --- | --- |
-| health | tools/health_view.py | steward | verdict of the tending pass (guard, units, wakes, signals, delivery) |
+| health | tools/health_view.py | steward | verdict of the tending pass (guard, units, wakes, signals, delivery); its OBSERVER block shows the tending pass's observer section unfiltered, and prints `UNKNOWN` with no other claim when that pass printed no observer section |
 | senses | tools/household_view.py | senses | the apartment map and what Mishe senses |
 | senses-map | tools/map_view.py | senses | terminal tile map of the apartment (rooms from floorplan.json, best-guess people from map-state.json), read-only; `--once` prints one frame; needs tools/map_render.py run first |
 | network | tools/network_view.py | network | home network and connection |
