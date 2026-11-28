@@ -124,3 +124,25 @@ def test_clean_scan_keeps_one_snapshot_timing_line(tmp_path: Path) -> None:
     assert record["snapshot_s"] is not None and record["snapshot_s"] >= 0.04
     assert record["total_s"] >= record["snapshot_s"]
     assert " psi_io=" in record["snapshot_done_host"]
+
+
+def test_slow_clean_scan_keeps_its_stage_trace_and_fast_one_removes_it(tmp_path: Path) -> None:
+    value = {"created": "2026-01-01T00:00:00Z", "node": "node", "observations": []}
+
+    def slow_sample(home, trace=None):
+        trace("stage:snapshot:start")
+        time.sleep(0.05)
+        trace("stage:snapshot:done")
+        return value
+
+    with patch.object(discovery, "SLOW_SNAPSHOT_TRACE_S", 0.01):
+        with patch("mishe_tauftauf.discovery.sample", side_effect=slow_sample):
+            scan(tmp_path)
+    # Over the threshold: the clean run keeps the trace, so the slow snapshot's stages are on disk.
+    assert len(_traces(tmp_path)) == 1
+    assert "stage:snapshot:done" in _traces(tmp_path)[0].read_text(encoding="utf-8")
+
+    with patch("mishe_tauftauf.discovery.sample", return_value=value):
+        scan(tmp_path)
+    # Under the threshold: no new trace; the earlier slow one is still there.
+    assert len(_traces(tmp_path)) == 1

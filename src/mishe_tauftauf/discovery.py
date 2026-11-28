@@ -7659,6 +7659,9 @@ def producer_label(home: Path, producer: object) -> str:
 
 
 SCAN_STACK_DUMP_S = 270
+# A clean scan whose snapshot stage takes longer than this keeps its stage trace: the timing line says how
+# long the snapshot ran, the trace says where the time went (2026-11-28: a 71.8 s clean snapshot left no trace).
+SLOW_SNAPSHOT_TRACE_S = 30.0
 """Seconds into a scan before its thread stacks are dumped; the readings producer cuts at 300 s."""
 
 
@@ -7692,16 +7695,18 @@ def _scan_trace(path: Path, started: float, event: str) -> None:
         pass  # tracing is evidence, never a reason to fail the scan
 
 
-def _keep_scan_timing(home: Path, trace_path: Path, scan_id: str) -> None:
+def _keep_scan_timing(home: Path, trace_path: Path, scan_id: str) -> float | None:
     """Append one line per clean scan to signals/readings-scan-timing.jsonl: the snapshot stage's seconds and
     the io/memory pressure lines at its start and end. Clean traces are otherwise deleted, so without this
-    the snapshot cost is only visible on overruns. Failure to record is never a reason to fail the scan."""
+    the snapshot cost is only visible on overruns. Returns the snapshot seconds, or None when unknown.
+    Failure to record is never a reason to fail the scan."""
     try:
         record = {"scan_id": scan_id, **host_stage_text.snapshot_timing(trace_path.read_text(encoding="utf-8"))}
         with (home / "signals" / "readings-scan-timing.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, sort_keys=True) + "\n")
+        return record.get("snapshot_s")
     except (OSError, ValueError):
-        pass
+        return None
 
 
 def scan(home: Path) -> Path:
@@ -7776,8 +7781,9 @@ def scan(home: Path) -> Path:
         # A clean run removes its trace, unless the stack dump fired (the scan crossed the dump
         # threshold and then finished): that trace is the only stage evidence of the slow run.
         if not _stack_dump_fired(stack_path):
-            _keep_scan_timing(home, trace_path, scan_id)
-            trace_path.unlink(missing_ok=True)
+            snapshot_s = _keep_scan_timing(home, trace_path, scan_id)
+            if snapshot_s is None or snapshot_s <= SLOW_SNAPSHOT_TRACE_S:
+                trace_path.unlink(missing_ok=True)
     except Exception as error:
         trace(f"failed {type(error).__name__} at {attempt.get('stage')}")
         attempt.update(status="failed", error=f"{type(error).__name__}: {error}")

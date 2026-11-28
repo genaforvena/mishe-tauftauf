@@ -12,9 +12,9 @@ Each scan has its own id, and its files are keyed by that id under `$site/signal
 - `readings-scan-stack-<scan_id>.txt`: the thread stacks, written only if the scan
   is still running 270 s in. The readings producer cuts a scan at 300 s.
 
-A scan that finishes cleanly removes its trace. A trace is kept when the producer
-kills the scan, or when the stack dump fired, because that trace is the only stage
-evidence of the slow run.
+A scan that finishes cleanly removes its trace, unless its snapshot stage took more than
+30 s (`SLOW_SNAPSHOT_TRACE_S`). A trace is also kept when the producer kills the scan,
+or when the stack dump fired, because that trace is the only stage evidence of the slow run.
 
 A clean scan does not leave its timing behind, so it also appends one JSON line to
 `signals/readings-scan-timing.jsonl`, with `scan_id`, `snapshot_s` (seconds the
