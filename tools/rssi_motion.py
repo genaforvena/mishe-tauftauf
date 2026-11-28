@@ -3,9 +3,9 @@
 
 Usage: python3 -I tools/rssi_motion.py --site SITE [--log PATH] [--now ISO] [--vantage redmi10|router-station]
 
---vantage router-station reads SITE/network/router.jsonl (client "Redmi-10" dbm, one row per poll,
-about every 5.6 min) with MIN_RSSI_ROUTER rows per bucket; it writes rssi-motion-router-station.json and
-leaves the phone result untouched.
+--vantage router-station reads SITE/senses/map/router-station-redmi10.jsonl (the senses archive of
+the Redmi-10 client's rows from network/router.jsonl, one row per poll, about every 5.6 min) with
+MIN_RSSI_ROUTER rows per bucket; it writes rssi-motion-router-station.json.
 
 Question (go-ahead or retire by the date in experiments.json): over 15-minute buckets,
 is the jitter of the Redmi10 phone-to-AP RSSI (std, mean |step|) a better signal of
@@ -15,7 +15,7 @@ Inputs (read-only):
   SITE/spatial/work/household/activity.json  camera room buckets (15 min, per room)
   the Redmi10 observations log               source named by SITE/senses/map/rssi-table.json,
                                              or --log; ~5 s RSSI rows, accelerometer when awake
-Output (overwritten each run): SITE/senses/map/rssi-motion.json, also printed.
+Output (overwritten each run): SITE/senses/map/rssi-motion.json and SITE/senses/map/rssi-motion-router-station.json, also printed.
 
 Method and honesty rules:
   - Label: a room bucket is "active" when its camera activity >= that room's own p90; the
