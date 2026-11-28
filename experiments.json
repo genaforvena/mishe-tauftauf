@@ -28,7 +28,7 @@
       "decision_due": "2026-12-02",
       "status": "running",
       "decision": "",
-      "consumer_or_evidence": "duty rssi-motion (hourly) writes senses/map/rssi-motion.json; go ahead = a variance feature beats the level and a day-shift null (verdict SIGNAL) and a consumer such as the map rssi line reads it; retire = still NO_SIGNAL at the decision date after the phone-still and per-hour strata have been tried",
+      "consumer_or_evidence": "duty rssi-motion (hourly) writes senses/map/rssi-motion.json (phone) and senses/map/rssi-motion-router-station.json (router-station, from the senses archive senses/map/router-station-redmi10.jsonl); go ahead = a variance feature beats the level and a day-shift null (verdict SIGNAL) and a consumer such as the map rssi line reads it; retire = still NO_SIGNAL at the decision date after the phone-still and per-hour strata have been tried",
       "paths": ["tools/rssi_motion.py", "tools/rssi_text.py", "tests/test_rssi_motion.py"]
     }
   ]

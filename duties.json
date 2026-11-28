@@ -1177,7 +1177,7 @@
       "max_age": 7200,
       "unknown_codes": [3],
       "resolver": "senses",
-      "covers": "study (experiment rssi-motion): does the Redmi10 RSSI jitter over 15-minute buckets track camera-seen activity better than the RSSI level, against a whole-day-shift null; writes senses/map/rssi-motion.json; GREEN means a fresh SIGNAL or NO_SIGNAL verdict was computed, UNKNOWN when the camera table, the phone log or its newest RSSI row is missing or stale",
+      "covers": "study (experiment rssi-motion): does the Redmi10 RSSI jitter over 15-minute buckets track camera-seen activity better than the RSSI level, against a whole-day-shift null; writes senses/map/rssi-motion.json (phone vantage) and senses/map/rssi-motion-router-station.json (router-station vantage, read from the senses archive senses/map/router-station-redmi10.jsonl that each run refreshes); GREEN means a fresh SIGNAL or NO_SIGNAL verdict was computed for the phone vantage, UNKNOWN when the camera table, the phone log or its newest RSSI row is missing or stale; router-station is UNKNOWN until its joined count reaches the minimum",
       "replaces": []
     },
     {
